@@ -33,7 +33,7 @@ const User = sequelize.define('User', {
     defaultValue: true
   },
   profilePicture: {
-    type: DataTypes.STRING,
+    type: DataTypes.TEXT, // TEXT for base64 image data
     allowNull: true
   },
   isFirstLogin: {

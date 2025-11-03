@@ -7,7 +7,7 @@ const addUserFields = async () => {
     // Add profilePicture field
     await sequelize.query(`
       ALTER TABLE users 
-      ADD COLUMN IF NOT EXISTS "profilePicture" VARCHAR(255);
+      ADD COLUMN IF NOT EXISTS "profilePicture" TEXT;
     `);
     
     // Add isFirstLogin field
@@ -31,7 +31,7 @@ const addUserFields = async () => {
     
     console.log('✅ User model fields added successfully!');
     console.log('📋 Added fields:');
-    console.log('   - profilePicture (VARCHAR)');
+    console.log('   - profilePicture (TEXT for base64 images)');
     console.log('   - isFirstLogin (BOOLEAN, default: true)');
     console.log('   - lastLogin (TIMESTAMP)');
     

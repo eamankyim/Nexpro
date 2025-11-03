@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
-const { User } = require('../models');
+const { User, InviteToken } = require('../models');
 const config = require('../config/config');
+const { Op } = require('sequelize');
 
 // Generate JWT Token
 const generateToken = (id) => {
@@ -14,13 +15,69 @@ const generateToken = (id) => {
 // @access  Public
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, inviteToken } = req.body;
 
+    // Validate required fields
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide name, email, and password'
+      });
+    }
+
+    // Check if invite token is required (for security, we want invites to be required)
+    if (!inviteToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invite token is required for registration'
+      });
+    }
+
+    // Validate and find invite token
+    const invite = await InviteToken.findOne({ where: { token: inviteToken } });
+
+    if (!invite) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid invite token'
+      });
+    }
+
+    if (invite.used) {
+      return res.status(400).json({
+        success: false,
+        message: 'This invite has already been used'
+      });
+    }
+
+    if (invite.expiresAt && new Date() > invite.expiresAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'This invite has expired'
+      });
+    }
+
+    // Verify email matches invite
+    if (invite.email.toLowerCase() !== email.toLowerCase()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email does not match the invite'
+      });
+    }
+
+    // Create user with role from invite
     const user = await User.create({
       name,
       email,
       password,
-      role
+      role: invite.role
+    });
+
+    // Mark invite as used
+    await invite.update({
+      used: true,
+      usedAt: new Date(),
+      usedBy: user.id
     });
 
     const token = generateToken(user.id);

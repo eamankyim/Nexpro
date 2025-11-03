@@ -8,6 +8,7 @@ const PricingTemplate = require('./PricingTemplate');
 const VendorPriceList = require('./VendorPriceList');
 const JobItem = require('./JobItem');
 const Invoice = require('./Invoice');
+const InviteToken = require('./InviteToken');
 
 // Define relationships
 Customer.hasMany(Job, { foreignKey: 'customerId', as: 'jobs' });
@@ -44,6 +45,13 @@ Invoice.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
 Job.hasMany(Invoice, { foreignKey: 'jobId', as: 'invoices' });
 Invoice.belongsTo(Job, { foreignKey: 'jobId', as: 'job' });
 
+// Invite token relationships
+User.hasMany(InviteToken, { foreignKey: 'createdBy', as: 'invitesCreated' });
+InviteToken.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+
+User.hasOne(InviteToken, { foreignKey: 'usedBy', as: 'inviteUsed' });
+InviteToken.belongsTo(User, { foreignKey: 'usedBy', as: 'user' });
+
 module.exports = {
   User,
   Customer,
@@ -54,7 +62,8 @@ module.exports = {
   PricingTemplate,
   VendorPriceList,
   JobItem,
-  Invoice
+  Invoice,
+  InviteToken
 };
 
 

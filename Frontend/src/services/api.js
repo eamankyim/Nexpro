@@ -33,7 +33,7 @@ api.interceptors.response.use(
       localStorage.removeItem('user');
       window.location.href = '/login';
     }
-    return Promise.reject(error.response?.data || error.message);
+    return Promise.reject(error);
   }
 );
 

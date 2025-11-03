@@ -29,6 +29,7 @@ const Dashboard = () => {
     return [today, today];
   });
   const [filteredData, setFilteredData] = useState(null);
+  const [activeFilter, setActiveFilter] = useState('today');
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   // Handle window resize for responsive behavior
@@ -62,6 +63,7 @@ const Dashboard = () => {
 
   const handleDateRangeChange = (dates) => {
     setDateRange(dates);
+    setActiveFilter(null); // Clear active filter when custom date range is used
     if (dates && dates[0] && dates[1]) {
       const startDate = dates[0].format('YYYY-MM-DD');
       const endDate = dates[1].format('YYYY-MM-DD');
@@ -76,6 +78,7 @@ const Dashboard = () => {
   const clearFilters = () => {
     setDateRange(null);
     setFilteredData(null);
+    setActiveFilter(null);
     fetchDashboardData();
   };
 
@@ -84,6 +87,7 @@ const Dashboard = () => {
     const today = dayjs();
     const dateRange = [today, today];
     setDateRange(dateRange);
+    setActiveFilter('today');
     fetchDashboardData(today.format('YYYY-MM-DD'), today.format('YYYY-MM-DD'));
   };
 
@@ -91,6 +95,7 @@ const Dashboard = () => {
     const yesterday = dayjs().subtract(1, 'day');
     const dateRange = [yesterday, yesterday];
     setDateRange(dateRange);
+    setActiveFilter('yesterday');
     fetchDashboardData(yesterday.format('YYYY-MM-DD'), yesterday.format('YYYY-MM-DD'));
   };
 
@@ -99,6 +104,7 @@ const Dashboard = () => {
     const endOfWeek = dayjs().endOf('isoWeek');
     const dateRange = [startOfWeek, endOfWeek];
     setDateRange(dateRange);
+    setActiveFilter('week');
     fetchDashboardData(startOfWeek.format('YYYY-MM-DD'), endOfWeek.format('YYYY-MM-DD'));
   };
 
@@ -107,6 +113,7 @@ const Dashboard = () => {
     const endOfMonth = dayjs().endOf('month');
     const dateRange = [startOfMonth, endOfMonth];
     setDateRange(dateRange);
+    setActiveFilter('month');
     fetchDashboardData(startOfMonth.format('YYYY-MM-DD'), endOfMonth.format('YYYY-MM-DD'));
   };
 
@@ -116,6 +123,7 @@ const Dashboard = () => {
     const endOfQuarter = startOfQuarter.add(2, 'months').endOf('month');
     const dateRange = [startOfQuarter, endOfQuarter];
     setDateRange(dateRange);
+    setActiveFilter('quarter');
     fetchDashboardData(startOfQuarter.format('YYYY-MM-DD'), endOfQuarter.format('YYYY-MM-DD'));
   };
 
@@ -124,6 +132,7 @@ const Dashboard = () => {
     const endOfYear = dayjs().endOf('year');
     const dateRange = [startOfYear, endOfYear];
     setDateRange(dateRange);
+    setActiveFilter('year');
     fetchDashboardData(startOfYear.format('YYYY-MM-DD'), endOfYear.format('YYYY-MM-DD'));
   };
 
@@ -213,7 +222,7 @@ const Dashboard = () => {
               <Button 
                 size={isMobile ? 'middle' : 'small'}
                 onClick={setTodayFilter}
-                type={(dateRange && dayjs().isSame(dateRange[0], 'day') && dayjs().isSame(dateRange[1], 'day')) || (!dateRange && !filteredData) ? 'primary' : 'default'}
+                type={activeFilter === 'today' ? 'primary' : 'default'}
               >
                 Today
               </Button>
@@ -222,7 +231,7 @@ const Dashboard = () => {
               <Button 
                 size={isMobile ? 'middle' : 'small'}
                 onClick={setYesterdayFilter}
-                type={dateRange && dayjs().subtract(1, 'day').isSame(dateRange[0], 'day') && dayjs().subtract(1, 'day').isSame(dateRange[1], 'day') ? 'primary' : 'default'}
+                type={activeFilter === 'yesterday' ? 'primary' : 'default'}
               >
                 Yesterday
               </Button>
@@ -231,7 +240,7 @@ const Dashboard = () => {
               <Button 
                 size={isMobile ? 'middle' : 'small'}
                 onClick={setThisWeekFilter}
-                type={dateRange && dayjs().startOf('isoWeek').isSame(dateRange[0], 'day') && dayjs().endOf('isoWeek').isSame(dateRange[1], 'day') ? 'primary' : 'default'}
+                type={activeFilter === 'week' ? 'primary' : 'default'}
               >
                 This Week
               </Button>
@@ -240,7 +249,7 @@ const Dashboard = () => {
               <Button 
                 size={isMobile ? 'middle' : 'small'}
                 onClick={setThisMonthFilter}
-                type={dateRange && dayjs().startOf('month').isSame(dateRange[0], 'day') && dayjs().endOf('month').isSame(dateRange[1], 'day') ? 'primary' : 'default'}
+                type={activeFilter === 'month' ? 'primary' : 'default'}
               >
                 This Month
               </Button>
@@ -249,7 +258,7 @@ const Dashboard = () => {
               <Button 
                 size={isMobile ? 'middle' : 'small'}
                 onClick={setThisQuarterFilter}
-                type={dateRange && dayjs().startOf('quarter').isSame(dateRange[0], 'day') && dayjs().endOf('quarter').isSame(dateRange[1], 'day') ? 'primary' : 'default'}
+                type={activeFilter === 'quarter' ? 'primary' : 'default'}
               >
                 This Quarter
               </Button>
@@ -258,7 +267,7 @@ const Dashboard = () => {
               <Button 
                 size={isMobile ? 'middle' : 'small'}
                 onClick={setThisYearFilter}
-                type={dateRange && dayjs().startOf('year').isSame(dateRange[0], 'day') && dayjs().endOf('year').isSame(dateRange[1], 'day') ? 'primary' : 'default'}
+                type={activeFilter === 'year' ? 'primary' : 'default'}
               >
                 This Year
               </Button>
@@ -329,7 +338,7 @@ const Dashboard = () => {
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col span={24}>
-          <Card title="Job Status Overview" bordered={false}>
+          <Card title="Job Status Overview">
             <Row gutter={16}>
               <Col xs={24} sm={8}>
                 <Statistic
@@ -359,7 +368,7 @@ const Dashboard = () => {
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col span={24}>
-          <Card title="Recent Jobs" bordered={false}>
+          <Card title="Recent Jobs">
             <Table
               dataSource={displayData?.recentJobs || []}
               columns={recentJobsColumns}

@@ -64,7 +64,7 @@ tmp/
 *.db
 
 # Package managers
-package-lock.json
+# Note: package-lock.json is needed for consistent builds
 yarn.lock
 pnpm-lock.yaml
 

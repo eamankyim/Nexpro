@@ -21,12 +21,14 @@ PORT=5000
 NODE_ENV=development
 
 # Database Configuration - Neon Database
-DATABASE_URL=postgresql://neondb_owner:npg_9Hkl6NPMrQfJ@ep-gentle-pine-aerwk2ql-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require
+# Get your connection string from https://console.neon.tech
+DATABASE_URL=postgresql://username:password@host:5432/database?sslmode=require
 
 # Alternative unpooled connection (if needed)
-DATABASE_URL_UNPOOLED=postgresql://neondb_owner:npg_9Hkl6NPMrQfJ@ep-gentle-pine-aerwk2ql.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require
+DATABASE_URL_UNPOOLED=postgresql://username:password@host:5432/database?sslmode=require
 
 # JWT Configuration
+# Generate a strong secret: openssl rand -base64 32
 JWT_SECRET=your_jwt_secret_key_here_change_this_in_production
 JWT_EXPIRE=7d
 
@@ -79,10 +81,9 @@ npm run dev
 ## 🔧 Database Configuration Details
 
 ### Connection Details
-- **Host**: ep-gentle-pine-aerwk2ql-pooler.c-2.us-east-2.aws.neon.tech
-- **Database**: neondb
-- **User**: neondb_owner
+- **Provider**: Neon PostgreSQL (Serverless)
 - **SSL**: Required (sslmode=require)
+- Get connection details from your Neon dashboard at https://console.neon.tech
 
 ### New User Fields Added
 - `profilePicture` - VARCHAR(255) - User avatar URL
@@ -115,9 +116,9 @@ npm run migrate:reset
 ```
 
 #### SSL Certificate Issues
-If you encounter SSL issues, try:
+If you encounter SSL issues, try adding a timeout:
 ```env
-DATABASE_URL=postgresql://neondb_owner:npg_9Hkl6NPMrQfJ@ep-gentle-pine-aerwk2ql-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require&connect_timeout=15
+DATABASE_URL=postgresql://username:password@host:5432/database?sslmode=require&connect_timeout=15
 ```
 
 ## 📊 Database Schema

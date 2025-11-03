@@ -8,6 +8,7 @@
     "dev": "nodemon server.js",
     "migrate": "node migrations/migrate.js",
     "seed": "node utils/seeder.js",
+    "reset": "node utils/resetForProduction.js",
     "generate-invoices": "node utils/generateMissingInvoices.js"
   },
   "keywords": [

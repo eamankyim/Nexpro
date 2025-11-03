@@ -9,6 +9,14 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
     min: 0,
     acquire: 30000,
     idle: 10000
+  },
+  dialectOptions: {
+    // Only use SSL for external databases (like Neon)
+    // Render internal network doesn't need SSL
+    ssl: process.env.DATABASE_URL?.includes('neon') ? {
+      require: true,
+      rejectUnauthorized: false
+    } : false
   }
 });
 

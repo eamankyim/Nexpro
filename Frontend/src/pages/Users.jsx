@@ -40,10 +40,13 @@ import {
   UnlockOutlined,
   MailOutlined,
   PhoneOutlined,
-  CalendarOutlined
+  CalendarOutlined,
+  LinkOutlined,
+  CopyOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import userService from '../services/userService';
+import inviteService from '../services/inviteService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -76,37 +79,19 @@ const Users = () => {
   const [passwordForm] = Form.useForm();
   const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [profileForm] = Form.useForm();
+  const [inviteModalVisible, setInviteModalVisible] = useState(false);
+  const [inviteForm] = Form.useForm();
+  const [generatedInviteLink, setGeneratedInviteLink] = useState(null);
+  const [isExistingInvite, setIsExistingInvite] = useState(false);
   const { user, isAdmin, isManager } = useAuth();
 
   useEffect(() => {
     fetchUsers();
-    fetchStats();
   }, [pagination.current, pagination.pageSize, filters]);
 
-  const fetchUsers = async () => {
-    try {
-      setLoading(true);
-      const params = {
-        page: pagination.current,
-        limit: pagination.pageSize,
-        ...filters
-      };
-      const response = await userService.getAll(params);
-      setUsers(response.data.data);
-      setPagination(prev => ({
-        ...prev,
-        total: response.data.count
-      }));
-    } catch (error) {
-      message.error('Failed to fetch users');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchStats = async () => {
-    try {
-      // Calculate stats from users data
+  // Calculate stats whenever users data changes
+  useEffect(() => {
+    if (users && users.length > 0) {
       const totalUsers = users.length;
       const activeUsers = users.filter(u => u.isActive).length;
       const adminUsers = users.filter(u => u.role === 'admin').length;
@@ -120,8 +105,27 @@ const Users = () => {
         managerUsers,
         staffUsers
       });
+    }
+  }, [users]);
+
+  const fetchUsers = async () => {
+    try {
+      setLoading(true);
+      const params = {
+        page: pagination.current,
+        limit: pagination.pageSize,
+        ...filters
+      };
+      const response = await userService.getAll(params);
+      setUsers(response.data.data || response.data);
+      setPagination(prev => ({
+        ...prev,
+        total: response.data.count || response.count
+      }));
     } catch (error) {
-      console.error('Failed to fetch stats:', error);
+      message.error('Failed to fetch users');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -133,6 +137,42 @@ const Users = () => {
       isActive: true
     });
     setModalVisible(true);
+  };
+
+  const handleInviteUser = () => {
+    inviteForm.resetFields();
+    inviteForm.setFieldsValue({
+      role: 'staff'
+    });
+    setGeneratedInviteLink(null);
+    setIsExistingInvite(false);
+    setInviteModalVisible(true);
+  };
+
+  const handleInviteSubmit = async (values) => {
+    try {
+      const response = await inviteService.generateInvite(values);
+      setGeneratedInviteLink(response.data.inviteUrl);
+      setIsExistingInvite(false);
+      message.success('Invite link generated successfully!');
+    } catch (error) {
+      console.log('Invite error object:', error);
+      console.log('Invite error.response:', error.response);
+      console.log('Invite error.response.data:', error.response?.data);
+      // If there's an existing invite, show the link instead of error
+      if (error.response?.data?.data?.inviteUrl) {
+        setGeneratedInviteLink(error.response.data.data.inviteUrl);
+        setIsExistingInvite(true);
+        message.info('This user has already been invited! Showing the existing invite link.');
+      } else {
+        message.error(error.response?.data?.message || 'Failed to generate invite link');
+      }
+    }
+  };
+
+  const handleCopyInviteLink = () => {
+    navigator.clipboard.writeText(generatedInviteLink);
+    message.success('Invite link copied to clipboard!');
   };
 
   const handleEdit = (user) => {
@@ -401,13 +441,21 @@ const Users = () => {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <h1 style={{ margin: 0 }}>Users Management</h1>
         {isAdmin && (
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={handleCreate}
-          >
-            Add User
-          </Button>
+          <Space>
+            <Button
+              icon={<LinkOutlined />}
+              onClick={handleInviteUser}
+            >
+              Invite User
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={handleCreate}
+            >
+              Add User
+            </Button>
+          </Space>
         )}
       </div>
 
@@ -831,6 +879,125 @@ const Users = () => {
           }
         ] : []}
       />
+
+      {/* Invite User Modal */}
+      <Modal
+        title="Invite New User"
+        open={inviteModalVisible}
+        onCancel={() => {
+          setInviteModalVisible(false);
+          setGeneratedInviteLink(null);
+        }}
+        footer={null}
+        width={600}
+      >
+        {!generatedInviteLink ? (
+          <Form
+            form={inviteForm}
+            layout="vertical"
+            onFinish={handleInviteSubmit}
+          >
+            <Form.Item
+              name="email"
+              label="Email Address"
+              rules={[
+                { required: true, message: 'Please enter email address' },
+                { type: 'email', message: 'Please enter valid email' }
+              ]}
+            >
+              <Input 
+                placeholder="user@example.com"
+                prefix={<MailOutlined />}
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="name"
+              label="Name (Optional)"
+              help="Pre-fills the signup form for the user"
+            >
+              <Input 
+                placeholder="John Doe"
+                prefix={<UserOutlined />}
+              />
+            </Form.Item>
+
+            <Form.Item
+              name="role"
+              label="Role"
+              rules={[{ required: true, message: 'Please select role' }]}
+            >
+              <Select placeholder="Select role">
+                {roleOptions.map(option => (
+                  <Option key={option.value} value={option.value}>
+                    {option.icon} {option.label}
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Alert
+              message="How It Works"
+              description="An invite link will be generated that you can share with the user. They'll click the link to complete registration."
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+
+            <Form.Item>
+              <Space>
+                <Button type="primary" htmlType="submit">
+                  Generate Invite Link
+                </Button>
+                <Button onClick={() => {
+                  setInviteModalVisible(false);
+                  setGeneratedInviteLink(null);
+                }}>
+                  Cancel
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
+        ) : (
+          <div>
+            <Alert
+              message={isExistingInvite ? "Existing Invite Found!" : "Invite Link Generated!"}
+              description={isExistingInvite 
+                ? "This user has already been invited. You can copy the existing invite link below."
+                : "Copy the link below and share it with the user. The link will expire in 7 days."}
+              type={isExistingInvite ? "warning" : "success"}
+              showIcon
+              style={{ marginBottom: 24 }}
+            />
+
+            <Input.Group compact>
+              <Input
+                value={generatedInviteLink}
+                readOnly
+                style={{ width: 'calc(100% - 100px)' }}
+              />
+              <Button
+                type="primary"
+                icon={<CopyOutlined />}
+                onClick={handleCopyInviteLink}
+                style={{ width: '100px' }}
+              >
+                Copy
+              </Button>
+            </Input.Group>
+
+            <Space style={{ marginTop: 16, width: '100%', justifyContent: 'flex-end' }}>
+              <Button onClick={() => {
+                setInviteModalVisible(false);
+                setGeneratedInviteLink(null);
+                setIsExistingInvite(false);
+              }}>
+                Close
+              </Button>
+            </Space>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 };
