@@ -36,10 +36,12 @@ exports.getExpenses = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const category = req.query.category;
     const status = req.query.status;
+    const jobId = req.query.jobId;
 
     const where = {};
-    if (category) where.category = category;
-    if (status) where.status = status;
+    if (category && category !== 'null') where.category = category;
+    if (status && status !== 'null') where.status = status;
+    if (jobId && jobId !== 'null') where.jobId = jobId;
 
     const { count, rows } = await Expense.findAndCountAll({
       where,
@@ -185,8 +187,24 @@ exports.deleteExpense = async (req, res, next) => {
 exports.getExpenseStats = async (req, res, next) => {
   try {
     const { sequelize } = require('../config/database');
+    const { jobId, startDate, endDate } = req.query;
+
+    let whereClause = {};
+    
+    // Add job filter if provided
+    if (jobId) {
+      whereClause.jobId = jobId;
+    }
+    
+    // Add date range filter if provided
+    if (startDate && endDate) {
+      whereClause.expenseDate = {
+        [Op.between]: [new Date(startDate), new Date(endDate)]
+      };
+    }
 
     const stats = await Expense.findAll({
+      where: whereClause,
       attributes: [
         'category',
         [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
@@ -195,9 +213,68 @@ exports.getExpenseStats = async (req, res, next) => {
       group: ['category']
     });
 
+    // Get total expenses for the period
+    const totalExpenses = await Expense.sum('amount', { where: whereClause }) || 0;
+    
+    // Get job-specific expenses if jobId is provided
+    let jobExpenses = null;
+    if (jobId) {
+      jobExpenses = await Expense.findAll({
+        where: { jobId },
+        include: [
+          { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] }
+        ],
+        order: [['expenseDate', 'DESC']]
+      });
+    }
+
     res.status(200).json({
       success: true,
-      data: stats
+      data: {
+        categoryStats: stats,
+        totalExpenses: parseFloat(totalExpenses).toFixed(2),
+        jobExpenses: jobExpenses
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get expenses by job
+// @route   GET /api/expenses/by-job/:jobId
+// @access  Private
+exports.getExpensesByJob = async (req, res, next) => {
+  try {
+    const { jobId } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await Expense.findAndCountAll({
+      where: { jobId },
+      limit,
+      offset,
+      include: [
+        { model: Vendor, as: 'vendor', attributes: ['id', 'name', 'company'] },
+        { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] }
+      ],
+      order: [['expenseDate', 'DESC']]
+    });
+
+    // Get total amount for this job
+    const totalAmount = await Expense.sum('amount', { where: { jobId } }) || 0;
+
+    res.status(200).json({
+      success: true,
+      count,
+      totalAmount: parseFloat(totalAmount).toFixed(2),
+      pagination: {
+        page,
+        limit,
+        totalPages: Math.ceil(count / limit)
+      },
+      data: rows
     });
   } catch (error) {
     next(error);

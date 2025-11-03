@@ -143,3 +143,8 @@ const Invoice = sequelize.define('Invoice', {
 module.exports = Invoice;
 
 
+
+
+
+
+

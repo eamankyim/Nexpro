@@ -28,8 +28,15 @@ const expenseService = {
   },
 
   // Get expense statistics
-  getStats: async () => {
-    return await api.get('/expenses/stats/overview');
+  getStats: async (params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    return await api.get(`/expenses/stats/overview?${queryString}`);
+  },
+
+  // Get expenses by job
+  getByJob: async (jobId, params = {}) => {
+    const queryString = new URLSearchParams(params).toString();
+    return await api.get(`/expenses/by-job/${jobId}?${queryString}`);
   }
 };
 

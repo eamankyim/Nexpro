@@ -12,6 +12,7 @@ exports.getUsers = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const search = req.query.search || '';
     const role = req.query.role;
+    const isActive = req.query.isActive;
 
     const where = {};
     if (search) {
@@ -20,8 +21,11 @@ exports.getUsers = async (req, res, next) => {
         { email: { [Op.iLike]: `%${search}%` } }
       ];
     }
-    if (role) {
+    if (role && role !== 'null') {
       where.role = role;
+    }
+    if (isActive && isActive !== 'null') {
+      where.isActive = isActive === 'true';
     }
 
     const { count, rows } = await User.findAndCountAll({

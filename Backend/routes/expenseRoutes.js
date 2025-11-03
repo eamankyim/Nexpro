@@ -5,7 +5,8 @@ const {
   createExpense,
   updateExpense,
   deleteExpense,
-  getExpenseStats
+  getExpenseStats,
+  getExpensesByJob
 } = require('../controllers/expenseController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -14,6 +15,7 @@ const router = express.Router();
 router.use(protect);
 
 router.get('/stats/overview', getExpenseStats);
+router.get('/by-job/:jobId', getExpensesByJob);
 
 router.route('/')
   .get(getExpenses)

@@ -201,13 +201,19 @@ GET http://localhost:5000/api/jobs?page=1&limit=10&status=pending
 Authorization: Bearer YOUR_TOKEN_HERE
 ```
 
+### Get Single Job
+```
+GET http://localhost:5000/api/jobs/:id
+Authorization: Bearer YOUR_TOKEN_HERE
+```
+
 ### Get Job Statistics
 ```
 GET http://localhost:5000/api/jobs/stats/overview
 Authorization: Bearer YOUR_TOKEN_HERE
 ```
 
-### Create Job
+### Create Job (with Job Items)
 ```
 POST http://localhost:5000/api/jobs
 Authorization: Bearer YOUR_TOKEN_HERE
@@ -215,15 +221,39 @@ Content-Type: application/json
 
 {
   "customerId": "CUSTOMER_UUID_HERE",
-  "title": "Business Cards",
-  "description": "1000 business cards with glossy finish",
-  "quantity": 1000,
-  "paperType": "Glossy",
-  "paperSize": "3.5x2",
-  "colorType": "color",
-  "quotedPrice": 150.00,
+  "title": "Business Cards for ABC Company",
+  "description": "Premium business cards",
+  "jobType": "Business Cards",
+  "status": "pending",
+  "priority": "medium",
+  "startDate": "2024-01-15",
+  "dueDate": "2024-01-25",
   "finalPrice": 150.00,
-  "dueDate": "2024-12-31"
+  "notes": "Customer wants matte finish",
+  "items": [
+    {
+      "category": "Business Cards",
+      "paperSize": "A4",
+      "description": "Standard business cards",
+      "quantity": 500,
+      "unitPrice": 0.30
+    }
+  ]
+}
+```
+
+**Note:** If status is "completed", an invoice will be automatically generated.
+
+Response when status is "completed":
+```json
+{
+  "success": true,
+  "data": { /* job data */ },
+  "invoice": {
+    "id": "uuid",
+    "invoiceNumber": "INV-202410-0001",
+    "message": "Invoice automatically generated"
+  }
 }
 ```
 
@@ -234,9 +264,118 @@ Authorization: Bearer YOUR_TOKEN_HERE
 Content-Type: application/json
 
 {
-  "status": "completed",
-  "completionDate": "2024-01-20"
+  "status": "completed"
 }
+```
+
+**Auto-Invoice Generation:**
+- When a job status changes to "completed", an invoice is automatically created
+- Completion date is automatically set to current timestamp
+- Invoice includes all job items and customer information
+- Default invoice settings: Net 30 payment terms, 0% tax, no discount
+- If invoice already exists for the job, no duplicate is created
+
+Response when changing to "completed":
+```json
+{
+  "success": true,
+  "data": { /* updated job data */ },
+  "invoice": {
+    "id": "uuid",
+    "invoiceNumber": "INV-202410-0001",
+    "message": "Invoice automatically generated"
+  }
+}
+```
+
+### Delete Job
+```
+DELETE http://localhost:5000/api/jobs/:id
+Authorization: Bearer YOUR_TOKEN_HERE
+```
+
+## Invoice Endpoints
+
+### Get All Invoices
+```
+GET http://localhost:5000/api/invoices?page=1&limit=10&status=draft
+Authorization: Bearer YOUR_TOKEN_HERE
+```
+
+### Get Single Invoice
+```
+GET http://localhost:5000/api/invoices/:id
+Authorization: Bearer YOUR_TOKEN_HERE
+```
+
+### Create Invoice (Manual)
+```
+POST http://localhost:5000/api/invoices
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "jobId": "JOB_UUID_HERE",
+  "dueDate": "2024-02-15",
+  "paymentTerms": "Net 30",
+  "taxRate": 12.5,
+  "discountType": "percentage",
+  "discountValue": 10,
+  "notes": "Thank you for your business",
+  "termsAndConditions": "Payment is due within 30 days"
+}
+```
+
+**Note:** Most invoices are auto-generated when jobs are completed. Manual creation is available as a fallback.
+
+### Update Invoice
+```
+PUT http://localhost:5000/api/invoices/:id
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "status": "sent",
+  "notes": "Updated notes"
+}
+```
+
+### Record Payment on Invoice
+```
+POST http://localhost:5000/api/invoices/:id/payment
+Authorization: Bearer YOUR_TOKEN_HERE
+Content-Type: application/json
+
+{
+  "amount": 150.00,
+  "paymentMethod": "credit_card",
+  "referenceNumber": "REF-12345",
+  "paymentDate": "2024-01-20"
+}
+```
+
+### Send Invoice
+```
+POST http://localhost:5000/api/invoices/:id/send
+Authorization: Bearer YOUR_TOKEN_HERE
+```
+
+### Cancel Invoice
+```
+POST http://localhost:5000/api/invoices/:id/cancel
+Authorization: Bearer YOUR_TOKEN_HERE
+```
+
+### Get Invoice Statistics
+```
+GET http://localhost:5000/api/invoices/stats/summary
+Authorization: Bearer YOUR_TOKEN_HERE
+```
+
+### Delete Invoice
+```
+DELETE http://localhost:5000/api/invoices/:id
+Authorization: Bearer YOUR_TOKEN_HERE
 ```
 
 ## Payment Endpoints

@@ -31,6 +31,18 @@ const User = sequelize.define('User', {
   isActive: {
     type: DataTypes.BOOLEAN,
     defaultValue: true
+  },
+  profilePicture: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+  isFirstLogin: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true
+  },
+  lastLogin: {
+    type: DataTypes.DATE,
+    allowNull: true
   }
 }, {
   timestamps: true,

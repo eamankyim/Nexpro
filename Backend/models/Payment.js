@@ -42,7 +42,7 @@ const Payment = sequelize.define('Payment', {
     allowNull: false
   },
   paymentMethod: {
-    type: DataTypes.ENUM('cash', 'check', 'credit_card', 'bank_transfer', 'other'),
+    type: DataTypes.ENUM('cash', 'mobile_money', 'check', 'credit_card', 'bank_transfer', 'other'),
     defaultValue: 'cash'
   },
   paymentDate: {
@@ -55,6 +55,10 @@ const Payment = sequelize.define('Payment', {
   status: {
     type: DataTypes.ENUM('pending', 'completed', 'failed', 'refunded'),
     defaultValue: 'completed'
+  },
+  description: {
+    type: DataTypes.TEXT,
+    allowNull: true
   },
   notes: {
     type: DataTypes.TEXT

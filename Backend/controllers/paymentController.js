@@ -37,10 +37,12 @@ exports.getPayments = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const type = req.query.type;
     const status = req.query.status;
+    const paymentMethod = req.query.paymentMethod;
 
     const where = {};
-    if (type) where.type = type;
-    if (status) where.status = status;
+    if (type && type !== 'null') where.type = type;
+    if (status && status !== 'null') where.status = status;
+    if (paymentMethod && paymentMethod !== 'null') where.paymentMethod = paymentMethod;
 
     const { count, rows } = await Payment.findAndCountAll({
       where,

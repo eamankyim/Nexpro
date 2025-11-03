@@ -75,6 +75,9 @@ const Job = sequelize.define('Job', {
     type: DataTypes.DATE,
     defaultValue: DataTypes.NOW
   },
+  startDate: {
+    type: DataTypes.DATE
+  },
   dueDate: {
     type: DataTypes.DATE
   },

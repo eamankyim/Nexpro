@@ -7,9 +7,23 @@ const { Op } = require('sequelize');
 // @access  Private
 exports.getDashboardOverview = async (req, res, next) => {
   try {
+    const { startDate, endDate } = req.query;
     const today = new Date();
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+    // Set date range for filtering
+    let dateFilter = {};
+    let filteredPeriodData = null;
+    
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999); // Include the entire end date
+      dateFilter = {
+        [Op.between]: [start, end]
+      };
+    }
 
     // Total customers and vendors
     const totalCustomers = await Customer.count({ where: { isActive: true } });
@@ -20,6 +34,34 @@ exports.getDashboardOverview = async (req, res, next) => {
     const pendingJobs = await Job.count({ where: { status: 'pending' } });
     const inProgressJobs = await Job.count({ where: { status: 'in_progress' } });
     const completedJobs = await Job.count({ where: { status: 'completed' } });
+
+    // Filtered jobs statistics (if date filter is applied)
+    let filteredJobs = null;
+    let filteredPendingJobs = null;
+    let filteredInProgressJobs = null;
+    let filteredCompletedJobs = null;
+    
+    if (Object.keys(dateFilter).length > 0) {
+      filteredJobs = await Job.count({ where: { createdAt: dateFilter } });
+      filteredPendingJobs = await Job.count({ 
+        where: { 
+          status: 'pending',
+          createdAt: dateFilter 
+        } 
+      });
+      filteredInProgressJobs = await Job.count({ 
+        where: { 
+          status: 'in_progress',
+          createdAt: dateFilter 
+        } 
+      });
+      filteredCompletedJobs = await Job.count({ 
+        where: { 
+          status: 'completed',
+          createdAt: dateFilter 
+        } 
+      });
+    }
 
     // This month jobs
     const thisMonthJobs = await Job.count({
@@ -48,6 +90,18 @@ exports.getDashboardOverview = async (req, res, next) => {
       }
     }) || 0;
 
+    // Filtered revenue (if date filter is applied)
+    let filteredRevenue = null;
+    if (Object.keys(dateFilter).length > 0) {
+      filteredRevenue = await Payment.sum('amount', {
+        where: {
+          type: 'income',
+          status: 'completed',
+          paymentDate: dateFilter
+        }
+      }) || 0;
+    }
+
     // Expense statistics
     const totalExpenses = await Expense.sum('amount') || 0;
 
@@ -59,13 +113,25 @@ exports.getDashboardOverview = async (req, res, next) => {
       }
     }) || 0;
 
+    // Filtered expenses (if date filter is applied)
+    let filteredExpenses = null;
+    if (Object.keys(dateFilter).length > 0) {
+      filteredExpenses = await Expense.sum('amount', {
+        where: {
+          expenseDate: dateFilter
+        }
+      }) || 0;
+    }
+
     // Pending payments
     const pendingPayments = await Payment.count({
       where: { status: 'pending' }
     });
 
-    // Recent jobs
+    // Recent jobs (filtered if date range is provided)
+    const recentJobsWhere = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
     const recentJobs = await Job.findAll({
+      where: recentJobsWhere,
       limit: 5,
       order: [['createdAt', 'DESC']],
       include: [
@@ -73,31 +139,54 @@ exports.getDashboardOverview = async (req, res, next) => {
       ]
     });
 
+    // Prepare response data
+    const responseData = {
+      summary: {
+        totalCustomers,
+        totalVendors,
+        totalJobs,
+        pendingJobs,
+        inProgressJobs,
+        completedJobs
+      },
+      thisMonth: {
+        jobs: thisMonthJobs,
+        revenue: parseFloat(thisMonthRevenue).toFixed(2),
+        expenses: parseFloat(thisMonthExpenses).toFixed(2),
+        profit: parseFloat(thisMonthRevenue - thisMonthExpenses).toFixed(2)
+      },
+      allTime: {
+        revenue: parseFloat(totalRevenue).toFixed(2),
+        expenses: parseFloat(totalExpenses).toFixed(2),
+        profit: parseFloat(totalRevenue - totalExpenses).toFixed(2)
+      },
+      pendingPayments,
+      recentJobs
+    };
+
+    // Add filtered period data if date filter is applied
+    if (Object.keys(dateFilter).length > 0) {
+      responseData.filteredPeriod = {
+        jobs: filteredJobs,
+        revenue: parseFloat(filteredRevenue).toFixed(2),
+        expenses: parseFloat(filteredExpenses).toFixed(2),
+        profit: parseFloat(filteredRevenue - filteredExpenses).toFixed(2)
+      };
+      
+      // Update summary with filtered data
+      responseData.summary = {
+        totalCustomers,
+        totalVendors,
+        totalJobs: filteredJobs,
+        pendingJobs: filteredPendingJobs,
+        inProgressJobs: filteredInProgressJobs,
+        completedJobs: filteredCompletedJobs
+      };
+    }
+
     res.status(200).json({
       success: true,
-      data: {
-        summary: {
-          totalCustomers,
-          totalVendors,
-          totalJobs,
-          pendingJobs,
-          inProgressJobs,
-          completedJobs
-        },
-        thisMonth: {
-          jobs: thisMonthJobs,
-          revenue: parseFloat(thisMonthRevenue).toFixed(2),
-          expenses: parseFloat(thisMonthExpenses).toFixed(2),
-          profit: parseFloat(thisMonthRevenue - thisMonthExpenses).toFixed(2)
-        },
-        allTime: {
-          revenue: parseFloat(totalRevenue).toFixed(2),
-          expenses: parseFloat(totalExpenses).toFixed(2),
-          profit: parseFloat(totalRevenue - totalExpenses).toFixed(2)
-        },
-        pendingPayments,
-        recentJobs
-      }
+      data: responseData
     });
   } catch (error) {
     next(error);

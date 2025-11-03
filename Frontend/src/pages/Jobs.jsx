@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Tag, Space, Input, Select, message, Modal, Form, InputNumber, DatePicker, Row, Col, Divider, Card, Alert } from 'antd';
-import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined } from '@ant-design/icons';
+import { Table, Button, Tag, Space, Input, Select, message, Modal, Form, InputNumber, DatePicker, Row, Col, Divider, Card, Alert, Descriptions, Timeline } from 'antd';
+import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, UserOutlined, EditOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import jobService from '../services/jobService';
 import customerService from '../services/customerService';
@@ -30,6 +30,7 @@ const Jobs = () => {
   const [pricingTemplates, setPricingTemplates] = useState([]);
   const [selectedJobType, setSelectedJobType] = useState(null);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [selectedTemplates, setSelectedTemplates] = useState({});
 
   // Job type configurations
   const jobTypeConfig = {
@@ -164,6 +165,7 @@ const Jobs = () => {
     form.resetFields();
     setSelectedJobType(null);
     setSelectedCustomer(null);
+    setSelectedTemplates({});
     setModalVisible(true);
     
     // Fetch customers and pricing templates
@@ -217,12 +219,63 @@ const Jobs = () => {
     });
   };
 
+  // Helper function to calculate discount based on quantity
+  const calculateDiscount = (template, quantity) => {
+    if (!template || !quantity) return { discountPercent: 0, discountAmount: 0 };
+
+    const unitPrice = parseFloat(template.pricePerUnit || 0);
+    const subtotal = unitPrice * quantity;
+
+    // Apply discount tiers if available
+    if (template.discountTiers && Array.isArray(template.discountTiers) && template.discountTiers.length > 0) {
+      for (const tier of template.discountTiers) {
+        const minQty = tier.minQuantity || 0;
+        const maxQty = tier.maxQuantity || Infinity;
+        
+        if (quantity >= minQty && quantity <= maxQty) {
+          const discountPercent = parseFloat(tier.discountPercent || 0);
+          const discountAmount = (subtotal * discountPercent) / 100;
+          
+          message.info(`${discountPercent}% discount applied for quantity ${quantity}!`, 3);
+          
+          return { discountPercent, discountAmount };
+        }
+      }
+    }
+
+    return { discountPercent: 0, discountAmount: 0 };
+  };
+
   const handleTemplateSelect = (templateId, itemIndex) => {
     const template = pricingTemplates.find(t => t.id === templateId);
-    if (!template) return;
+    
+    if (!templateId || !template) {
+      // Clear template selection for this item
+      setSelectedTemplates(prev => {
+        const updated = { ...prev };
+        delete updated[itemIndex];
+        return updated;
+      });
+      return;
+    }
+
+    // Store the selected template for this item
+    setSelectedTemplates(prev => ({
+      ...prev,
+      [itemIndex]: template
+    }));
 
     const items = form.getFieldValue('items') || [];
     const currentItem = items[itemIndex] || {};
+    
+    // Get current quantity or default to 1
+    const quantity = currentItem.quantity || 1;
+    
+    // Get original unit price (never changes)
+    const unitPrice = parseFloat(template.pricePerUnit || template.basePrice || 0);
+    
+    // Calculate discount if applicable
+    const { discountPercent, discountAmount } = calculateDiscount(template, quantity);
     
     // Auto-populate fields from template
     const updatedItems = [...items];
@@ -231,7 +284,10 @@ const Jobs = () => {
       category: template.category,
       paperSize: template.paperSize || currentItem.paperSize,
       description: template.description || currentItem.description,
-      unitPrice: parseFloat(template.pricePerUnit || template.basePrice || 0)
+      quantity: quantity,
+      unitPrice: unitPrice, // Original price, never changes
+      discountPercent: discountPercent,
+      discountAmount: discountAmount
     };
     
     form.setFieldsValue({ items: updatedItems });
@@ -253,13 +309,41 @@ const Jobs = () => {
     message.success(`Applied pricing template: ${template.name}`);
   };
 
+  // Handle quantity change with real-time discount recalculation
+  const handleQuantityChange = (itemIndex, newQuantity) => {
+    const template = selectedTemplates[itemIndex];
+    
+    if (!template) {
+      return; // No template selected, just use the quantity as-is
+    }
+
+    const items = form.getFieldValue('items') || [];
+    const currentItem = items[itemIndex] || {};
+    
+    // Recalculate discount with new quantity (unit price stays same)
+    const { discountPercent, discountAmount } = calculateDiscount(template, newQuantity);
+    
+    // Update the item with new quantity and recalculated discount
+    const updatedItems = [...items];
+    updatedItems[itemIndex] = {
+      ...currentItem,
+      quantity: newQuantity,
+      discountPercent: discountPercent,
+      discountAmount: discountAmount
+    };
+    
+    form.setFieldsValue({ items: updatedItems });
+  };
+
   const handleSubmit = async (values) => {
     try {
-      // Calculate total from items
+      // Calculate total from items (with discounts)
       let calculatedTotal = 0;
       if (values.items && values.items.length > 0) {
         calculatedTotal = values.items.reduce((sum, item) => {
-          return sum + (parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0));
+          const subtotal = parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0);
+          const discount = parseFloat(item.discountAmount || 0);
+          return sum + (subtotal - discount);
         }, 0);
         
         // Copy job description to each item if item description is empty
@@ -277,11 +361,19 @@ const Jobs = () => {
         finalPrice: calculatedTotal || values.finalPrice || 0,
       };
 
-      await jobService.create(jobData);
+      const response = await jobService.create(jobData);
+      
+      // Check if invoice was auto-generated
+      if (response.invoice) {
+        message.success(`Job created successfully! Invoice ${response.invoice.invoiceNumber} was automatically generated.`, 5);
+      } else {
       message.success('Job created successfully');
+      }
+      
       setModalVisible(false);
       setSelectedJobType(null);
       setSelectedCustomer(null);
+      setSelectedTemplates({});
       fetchJobs();
     } catch (error) {
       message.error(error.error || 'Failed to create job');
@@ -355,7 +447,7 @@ const Jobs = () => {
           }} 
           record={record}
           extraActions={[
-            record.status === 'completed' && !jobInvoices[record.id] && {
+            !jobInvoices[record.id] && {
               label: 'Generate Invoice',
               onClick: () => handleGenerateInvoice(record),
               icon: <FileTextOutlined />
@@ -411,131 +503,259 @@ const Jobs = () => {
         title="Job Details"
         width={700}
         showActions={false}
-        fields={viewingJob ? [
-          { label: 'Job Number', value: viewingJob.jobNumber },
-          { label: 'Title', value: viewingJob.title },
-          { label: 'Customer', value: viewingJob.customer?.name },
-          { label: 'Job Type', value: viewingJob.jobType || '-' },
-          { label: 'Description', value: viewingJob.description },
-          { 
-            label: 'Status', 
-            value: viewingJob.status,
-            render: (status) => (
-              <Tag color={statusColors[status]}>
-                {status?.replace('_', ' ').toUpperCase()}
-              </Tag>
-            )
-          },
-          { 
-            label: 'Priority', 
-            value: viewingJob.priority,
-            render: (priority) => (
-              <Tag color={priorityColors[priority]}>
-                {priority?.toUpperCase()}
-              </Tag>
-            )
-          },
+        tabs={viewingJob ? [
           {
-            label: 'Job Items / Services',
-            value: viewingJob.items,
-            render: (items) => {
-              if (!items || items.length === 0) return '-';
-              return (
-                <div style={{ marginTop: 8 }}>
-                  {items.map((item, idx) => (
-                    <Card key={idx} size="small" style={{ marginBottom: 8 }}>
-                      <Row gutter={16}>
-                        <Col span={12}>
-                          <strong>{item.category}</strong>
-                          {item.paperSize && item.paperSize !== 'N/A' && (
-                            <div style={{ fontSize: 12, color: '#888' }}>Paper Size: {item.paperSize}</div>
-                          )}
-                          {item.description && (
-                            <div style={{ fontSize: 12, color: '#666', marginTop: 4 }}>{item.description}</div>
-                          )}
-                        </Col>
-                        <Col span={4} style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: 12, color: '#888' }}>Qty</div>
-                          <div style={{ fontWeight: 'bold' }}>{item.quantity}</div>
-                        </Col>
-                        <Col span={4} style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: 12, color: '#888' }}>Unit Price</div>
-                          <div>₵{parseFloat(item.unitPrice || 0).toFixed(2)}</div>
-                        </Col>
-                        <Col span={4} style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: 12, color: '#888' }}>Total</div>
-                          <div style={{ fontWeight: 'bold', color: '#1890ff' }}>
-                            ₵{(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
+            key: 'details',
+            label: 'Details',
+            content: (
+              <Descriptions column={1} bordered>
+                <Descriptions.Item label="Job Number">
+                  {viewingJob.jobNumber}
+                </Descriptions.Item>
+                <Descriptions.Item label="Title">
+                  {viewingJob.title}
+                </Descriptions.Item>
+                <Descriptions.Item label="Customer">
+                  {viewingJob.customer?.name}
+                </Descriptions.Item>
+                <Descriptions.Item label="Job Type">
+                  {viewingJob.jobType || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="Description">
+                  {viewingJob.description}
+                </Descriptions.Item>
+                <Descriptions.Item label="Status">
+                  <Tag color={statusColors[viewingJob.status]}>
+                    {viewingJob.status?.replace('_', ' ').toUpperCase()}
+              </Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Priority">
+                  <Tag color={priorityColors[viewingJob.priority]}>
+                    {viewingJob.priority?.toUpperCase()}
+              </Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Final Price">
+                  <strong style={{ fontSize: 16, color: '#1890ff' }}>
+                    ₵{parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
+                  </strong>
+                </Descriptions.Item>
+                <Descriptions.Item label="Start Date">
+                  {viewingJob.startDate ? dayjs(viewingJob.startDate).format('MMM DD, YYYY') : 'N/A'}
+                </Descriptions.Item>
+                <Descriptions.Item label="Due Date">
+                  {viewingJob.dueDate ? dayjs(viewingJob.dueDate).format('MMM DD, YYYY') : 'N/A'}
+                </Descriptions.Item>
+                <Descriptions.Item label="Completion Date">
+                  {viewingJob.completionDate ? dayjs(viewingJob.completionDate).format('MMM DD, YYYY') : 'N/A'}
+                </Descriptions.Item>
+                <Descriptions.Item label="Notes">
+                  {viewingJob.notes || '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="Invoice">
+                  {(() => {
+                    const invoice = jobInvoices[viewingJob.id];
+                    if (!invoice) {
+                      return (
+                        <Space direction="vertical" size="small">
+                          <Button 
+                            type="primary" 
+                            icon={<FileTextOutlined />}
+                            onClick={() => handleGenerateInvoice(viewingJob)}
+                          >
+                            Generate Invoice
+                          </Button>
+                          <div style={{ fontSize: 12, color: '#999' }}>
+                            {viewingJob.status === 'completed' 
+                              ? 'Create invoice for completed job' 
+                              : 'Create proforma/advance invoice'}
                           </div>
-                        </Col>
-                      </Row>
-                    </Card>
-                  ))}
-                </div>
-              );
-            }
+                        </Space>
+                      );
+                    }
+                    return (
+                      <Space direction="vertical">
+                        <Tag color={invoice.status === 'paid' ? 'green' : 'orange'}>
+                          {invoice.invoiceNumber} - {invoice.status?.toUpperCase()}
+                        </Tag>
+                        <Button 
+                          size="small"
+                          onClick={() => {
+                            navigate('/invoices');
+                            handleCloseDrawer();
+                          }}
+                        >
+                          View Invoice
+                        </Button>
+                      </Space>
+                    );
+                  })()}
+                </Descriptions.Item>
+                <Descriptions.Item label="Created At">
+                  {viewingJob.createdAt ? new Date(viewingJob.createdAt).toLocaleString() : '-'}
+                </Descriptions.Item>
+              </Descriptions>
+            )
           },
-          { 
-            label: 'Final Price', 
-            value: viewingJob.finalPrice,
-            render: (price) => <strong style={{ fontSize: 16, color: '#1890ff' }}>₵{parseFloat(price || 0).toFixed(2)}</strong>
-          },
-          { 
-            label: 'Start Date', 
-            value: viewingJob.startDate,
-            render: (date) => date ? dayjs(date).format('MMM DD, YYYY') : 'N/A'
-          },
-          { 
-            label: 'Due Date', 
-            value: viewingJob.dueDate,
-            render: (date) => date ? dayjs(date).format('MMM DD, YYYY') : 'N/A'
-          },
-          { 
-            label: 'Completion Date', 
-            value: viewingJob.completionDate,
-            render: (date) => date ? dayjs(date).format('MMM DD, YYYY') : 'N/A'
-          },
-          { label: 'Notes', value: viewingJob.notes || '-' },
           {
-            label: 'Invoice',
-            value: jobInvoices[viewingJob.id],
-            render: (invoice) => {
-              if (!invoice) {
-                return viewingJob.status === 'completed' ? (
-                  <Button 
-                    type="primary" 
-                    icon={<FileTextOutlined />}
-                    onClick={() => handleGenerateInvoice(viewingJob)}
-                  >
-                    Generate Invoice
-                  </Button>
+            key: 'services',
+            label: 'Services',
+            content: (
+              <div>
+                {(!viewingJob.items || viewingJob.items.length === 0) ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: '#999' }}>
+                    No services/items added to this job
+                  </div>
                 ) : (
-                  <Tag color="default">No Invoice (Job not completed)</Tag>
-                );
-              }
-              return (
-                <Space direction="vertical">
-                  <Tag color={invoice.status === 'paid' ? 'green' : 'orange'}>
-                    {invoice.invoiceNumber} - {invoice.status?.toUpperCase()}
-                  </Tag>
-                  <Button 
-                    size="small"
-                    onClick={() => {
-                      navigate('/invoices');
-                      handleCloseDrawer();
-                    }}
-                  >
-                    View Invoice
-                  </Button>
-                </Space>
-              );
-            }
+                  <div>
+                    {viewingJob.items.map((item, idx) => (
+                      <Card key={idx} size="small" style={{ marginBottom: 12 }}>
+                        <Row gutter={16}>
+                          <Col span={12}>
+                            <div style={{ marginBottom: 8 }}>
+                              <strong style={{ fontSize: 14 }}>{item.category}</strong>
+                            </div>
+                            {item.paperSize && item.paperSize !== 'N/A' && (
+                              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+                                Paper Size: {item.paperSize}
+                              </div>
+                            )}
+                            {item.description && (
+                              <div style={{ fontSize: 12, color: '#666' }}>
+                                {item.description}
+                              </div>
+                            )}
+                          </Col>
+                          <Col span={4} style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Quantity</div>
+                            <div style={{ fontWeight: 'bold', fontSize: 14 }}>{item.quantity}</div>
+                          </Col>
+                          <Col span={4} style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Unit Price</div>
+                            <div style={{ fontSize: 14 }}>₵{parseFloat(item.unitPrice || 0).toFixed(2)}</div>
+                          </Col>
+                          <Col span={4} style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Total</div>
+                            <div style={{ fontWeight: 'bold', color: '#1890ff', fontSize: 14 }}>
+                              ₵{(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
+                            </div>
+                          </Col>
+                        </Row>
+                      </Card>
+                    ))}
+                    <div style={{ 
+                      marginTop: 16, 
+                      padding: '12px 16px', 
+                      background: '#f0f5ff', 
+                      borderRadius: 8,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <strong style={{ fontSize: 16 }}>Total:</strong>
+                      <strong style={{ fontSize: 18, color: '#1890ff' }}>
+                        ₵{parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
+                      </strong>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
           },
-          { 
-            label: 'Created At', 
-            value: viewingJob.createdAt,
-            render: (value) => value ? new Date(value).toLocaleString() : '-'
-          },
+          {
+            key: 'activities',
+            label: 'Activities',
+            content: (
+              <div style={{ padding: '16px 0' }}>
+                <Timeline
+                  items={[
+                    {
+                      color: 'green',
+                      dot: <CheckCircleOutlined style={{ fontSize: '16px' }} />,
+                      children: (
+                        <div>
+                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
+                            Job Created
+                          </div>
+                          <div style={{ color: '#666', fontSize: 12, marginBottom: 4 }}>
+                            {viewingJob.createdAt ? new Date(viewingJob.createdAt).toLocaleString() : '-'}
+                          </div>
+                          <div style={{ color: '#888', fontSize: 12 }}>
+                            <UserOutlined /> Created by: {viewingJob.assignedUser?.name || 'System'}
+                          </div>
+                        </div>
+                      )
+                    },
+                    ...(viewingJob.assignedUser ? [{
+                      color: 'blue',
+                      dot: <UserOutlined style={{ fontSize: '16px' }} />,
+                      children: (
+                        <div>
+                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
+                            Assigned To
+                          </div>
+                          <div style={{ color: '#666', fontSize: 12 }}>
+                            {viewingJob.assignedUser.name}
+                          </div>
+                          <div style={{ color: '#888', fontSize: 12 }}>
+                            {viewingJob.assignedUser.email}
+                          </div>
+                        </div>
+                      )
+                    }] : []),
+                    {
+                      color: statusColors[viewingJob.status] || 'blue',
+                      dot: <ClockCircleOutlined style={{ fontSize: '16px' }} />,
+                      children: (
+                        <div>
+                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
+                            Current Status
+                          </div>
+                          <div style={{ marginBottom: 4 }}>
+                            <Tag color={statusColors[viewingJob.status]}>
+                              {viewingJob.status?.replace('_', ' ').toUpperCase()}
+                            </Tag>
+                          </div>
+                          <div style={{ color: '#888', fontSize: 12 }}>
+                            Priority: <Tag color={priorityColors[viewingJob.priority]} size="small">
+                              {viewingJob.priority?.toUpperCase()}
+                            </Tag>
+                          </div>
+                        </div>
+                      )
+                    },
+                    ...(viewingJob.completionDate ? [{
+                      color: 'green',
+                      dot: <CheckCircleOutlined style={{ fontSize: '16px' }} />,
+                      children: (
+                        <div>
+                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
+                            Job Completed
+                          </div>
+                          <div style={{ color: '#666', fontSize: 12 }}>
+                            {dayjs(viewingJob.completionDate).format('MMM DD, YYYY [at] h:mm A')}
+                          </div>
+                        </div>
+                      )
+                    }] : []),
+                    ...(viewingJob.updatedAt && viewingJob.updatedAt !== viewingJob.createdAt ? [{
+                      color: 'gray',
+                      dot: <EditOutlined style={{ fontSize: '16px' }} />,
+                      children: (
+                        <div>
+                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
+                            Last Updated
+                          </div>
+                          <div style={{ color: '#666', fontSize: 12 }}>
+                            {new Date(viewingJob.updatedAt).toLocaleString()}
+                          </div>
+                        </div>
+                      )
+                    }] : [])
+                  ]}
+                />
+              </div>
+            )
+          }
         ] : []}
       />
 
@@ -805,6 +1025,7 @@ const Jobs = () => {
                             placeholder="1"
                             min={1}
                             size="large"
+                            onChange={(value) => handleQuantityChange(name, value)}
                           />
                         </Form.Item>
                       </Col>
@@ -832,7 +1053,9 @@ const Jobs = () => {
                             const currentItem = items[name] || {};
                             const qty = parseFloat(currentItem.quantity || 1);
                             const price = parseFloat(currentItem.unitPrice || 0);
-                            const total = qty * price;
+                            const discountAmount = parseFloat(currentItem.discountAmount || 0);
+                            const subtotal = qty * price;
+                            const total = subtotal - discountAmount;
                             
                             return (
                               <Form.Item label="Total">
@@ -840,10 +1063,10 @@ const Jobs = () => {
                                   padding: '8px 11px', 
                                   background: '#fff', 
                                   border: '1px solid #d9d9d9',
-                                  borderRadius: 8,
-                                  fontSize: 16,
-                                  fontWeight: 'bold',
-                                  color: '#1890ff',
+                                  borderRadius: 4,
+                                  fontSize: 14,
+                                  fontWeight: 600,
+                                  color: '#000',
                                   height: 40,
                                   display: 'flex',
                                   alignItems: 'center'
@@ -856,6 +1079,47 @@ const Jobs = () => {
                         </Form.Item>
                       </Col>
                     </Row>
+
+                    {/* Discount and Total Breakdown */}
+                    <Form.Item shouldUpdate noStyle>
+                      {() => {
+                        const items = form.getFieldValue('items') || [];
+                        const currentItem = items[name] || {};
+                        const qty = parseFloat(currentItem.quantity || 1);
+                        const price = parseFloat(currentItem.unitPrice || 0);
+                        const discountPercent = parseFloat(currentItem.discountPercent || 0);
+                        const discountAmount = parseFloat(currentItem.discountAmount || 0);
+                        const subtotal = qty * price;
+                        const total = subtotal - discountAmount;
+
+                        if (discountAmount > 0) {
+                          return (
+                            <div style={{ 
+                              padding: '8px 10px', 
+                              background: '#f5f5f5', 
+                              borderRadius: 4,
+                              marginTop: 8,
+                              marginBottom: 8
+                            }}>
+                              <Row justify="space-between" style={{ marginBottom: 2 }}>
+                                <Col style={{ color: '#666', fontSize: 13 }}>Subtotal:</Col>
+                                <Col style={{ fontWeight: 500, fontSize: 13 }}>₵{subtotal.toFixed(2)}</Col>
+                              </Row>
+                              <Row justify="space-between" style={{ marginBottom: 2 }}>
+                                <Col style={{ color: '#666', fontSize: 13 }}>Discount ({discountPercent}%):</Col>
+                                <Col style={{ fontWeight: 500, fontSize: 13 }}>-₵{discountAmount.toFixed(2)}</Col>
+                              </Row>
+                              <Divider style={{ margin: '4px 0', borderColor: '#d9d9d9' }} />
+                              <Row justify="space-between">
+                                <Col style={{ fontSize: 14, fontWeight: 600 }}>Total:</Col>
+                                <Col style={{ fontSize: 14, fontWeight: 600, color: '#000' }}>₵{total.toFixed(2)}</Col>
+                              </Row>
+                            </div>
+                          );
+                        }
+                        return null;
+                      }}
+                    </Form.Item>
 
                     <Button 
                       type="dashed" 
@@ -886,30 +1150,43 @@ const Jobs = () => {
           <Form.Item shouldUpdate noStyle>
             {() => {
               const items = form.getFieldValue('items') || [];
-              const total = items.reduce((sum, item) => {
+              const subtotal = items.reduce((sum, item) => {
                 const qty = parseFloat(item?.quantity || 1);
                 const price = parseFloat(item?.unitPrice || 0);
                 return sum + (qty * price);
               }, 0);
               
+              const totalDiscount = items.reduce((sum, item) => {
+                const discount = parseFloat(item?.discountAmount || 0);
+                return sum + discount;
+              }, 0);
+              
+              const total = subtotal - totalDiscount;
+              
               return (
-                <Row gutter={16}>
-                  <Col span={12}>
-                    <Form.Item label="Calculated Total">
-                      <div style={{ 
-                        padding: '12px 16px', 
-                        background: '#f0f5ff', 
-                        border: '2px solid #1890ff',
-                        borderRadius: 8,
-                        fontSize: 20,
-                        fontWeight: 'bold',
-                        color: '#1890ff'
-                      }}>
-                        ₵{total.toFixed(2)}
-                      </div>
-                    </Form.Item>
-                  </Col>
-                </Row>
+                <div style={{
+                  padding: '10px 12px',
+                  background: '#f5f5f5',
+                  border: '1px solid #d9d9d9',
+                  borderRadius: 4,
+                  marginBottom: 12
+                }}>
+                  <Row justify="space-between" style={{ marginBottom: 4 }}>
+                    <Col style={{ fontSize: 14, color: '#666' }}>Subtotal:</Col>
+                    <Col style={{ fontSize: 14, fontWeight: 500 }}>₵{subtotal.toFixed(2)}</Col>
+                  </Row>
+                  {totalDiscount > 0 && (
+                    <Row justify="space-between" style={{ marginBottom: 4 }}>
+                      <Col style={{ fontSize: 14, color: '#666' }}>Total Discount:</Col>
+                      <Col style={{ fontSize: 14, fontWeight: 500 }}>-₵{totalDiscount.toFixed(2)}</Col>
+                    </Row>
+                  )}
+                  <Divider style={{ margin: '6px 0', borderColor: '#d9d9d9' }} />
+                  <Row justify="space-between">
+                    <Col style={{ fontSize: 16, fontWeight: 'bold' }}>Grand Total:</Col>
+                    <Col style={{ fontSize: 18, fontWeight: 'bold', color: '#000' }}>₵{total.toFixed(2)}</Col>
+                  </Row>
+                </div>
               );
             }}
           </Form.Item>
@@ -926,7 +1203,7 @@ const Jobs = () => {
 
       {/* Generate Invoice Modal */}
       <Modal
-        title="Generate Invoice"
+        title={viewingJob?.status === 'completed' ? 'Generate Invoice' : 'Generate Proforma/Advance Invoice'}
         open={invoiceModalVisible}
         onCancel={() => setInvoiceModalVisible(false)}
         onOk={() => invoiceForm.submit()}
@@ -936,8 +1213,9 @@ const Jobs = () => {
         {viewingJob && (
           <>
             <Alert
-              message={`Generating invoice for Job: ${viewingJob.jobNumber} - ${viewingJob.title}`}
-              type="info"
+              message={`Generating ${viewingJob.status === 'completed' ? 'invoice' : 'proforma/advance invoice'} for Job: ${viewingJob.jobNumber} - ${viewingJob.title}`}
+              description={viewingJob.status !== 'completed' ? 'This invoice can be used for customer approval or advance payment before job completion.' : null}
+              type={viewingJob.status === 'completed' ? 'info' : 'warning'}
               style={{ marginBottom: 16 }}
             />
             <Form

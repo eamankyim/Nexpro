@@ -2,8 +2,14 @@ import api from './api';
 
 const dashboardService = {
   // Get dashboard overview
-  getOverview: async () => {
-    return await api.get('/dashboard/overview');
+  getOverview: async (startDate = null, endDate = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    
+    const queryString = params.toString();
+    const url = queryString ? `/dashboard/overview?${queryString}` : '/dashboard/overview';
+    return await api.get(url);
   },
 
   // Get revenue by month

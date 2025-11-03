@@ -1,5 +1,6 @@
 const { sequelize, testConnection } = require('../config/database');
 const models = require('../models');
+const addUserFields = require('./add-user-fields');
 
 const migrate = async () => {
   try {
@@ -13,8 +14,12 @@ const migrate = async () => {
     // alter: true means it will modify existing tables to match models
     await sequelize.sync({ alter: true });
     
+    // Add new user fields if they don't exist
+    await addUserFields();
+    
     console.log('\n✅ Database migration completed successfully!');
-    console.log('📊 All tables have been created/updated.\n');
+    console.log('📊 All tables have been created/updated.');
+    console.log('👤 User model has been enhanced with new fields.\n');
     
     process.exit(0);
   } catch (error) {
