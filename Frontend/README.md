@@ -1,6 +1,6 @@
-# Printing Press Management System - Frontend
+# NEXPro - Printing Press Management System - Frontend
 
-React + Ant Design frontend application for the Printing Press Management System.
+React + Ant Design frontend application for NEXPro - Printing Press Management System.
 
 ## 🚀 Quick Start
 

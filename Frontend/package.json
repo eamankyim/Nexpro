@@ -2,7 +2,7 @@
   "name": "printing-press-frontend",
   "version": "1.0.0",
   "private": true,
-  "description": "Printing Press Management System Frontend",
+  "description": "NEXPro - Printing Press Management System Frontend",
   "dependencies": {
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

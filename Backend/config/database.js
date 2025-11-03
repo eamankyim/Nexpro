@@ -7,13 +7,15 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
   pool: {
     max: 5,
     min: 0,
-    acquire: 30000,
+    acquire: 60000, // Increased timeout for connection acquisition
     idle: 10000
   },
   dialectOptions: {
-    // Only use SSL for external databases (like Neon)
+    // Only use SSL for external databases (like Neon, AWS, Render external)
     // Render internal network doesn't need SSL
-    ssl: process.env.DATABASE_URL?.includes('neon') ? {
+    ssl: process.env.DATABASE_URL?.includes('neon') || 
+         process.env.DATABASE_URL?.includes('amazonaws.com') || 
+         (process.env.DATABASE_URL?.includes('render.com') && !process.env.DATABASE_URL?.includes('internal')) ? {
       require: true,
       rejectUnauthorized: false
     } : false

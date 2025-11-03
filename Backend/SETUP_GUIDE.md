@@ -1,4 +1,4 @@
-# Printing Press Management System - Setup Guide
+# NEXPro - Printing Press Management System - Setup Guide
 
 ## 📋 Prerequisites
 

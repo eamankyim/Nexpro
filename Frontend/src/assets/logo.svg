@@ -1,0 +1,49 @@
+<svg width="200" height="80" viewBox="0 0 200 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="nexusGradient" x1="0%" y1="0%" x2="60%" y2="0%">
+      <stop offset="0%" style="stop-color:#60A5FA;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1E40AF;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Nexus text with gradient on N and e, solid on rest -->
+  <text x="8" y="48" font-family="'Segoe UI', Arial, sans-serif" font-size="42" font-weight="bold">
+    <tspan fill="url(#nexusGradient)">Ne</tspan>
+    <tspan fill="#1E3A8A">xu</tspan>
+    <tspan fill="#1E40AF">s</tspan>
+  </text>
+  
+  <!-- Creative Studios tagline -->
+  <text x="8" y="68" font-family="'Segoe UI', Arial, sans-serif" font-size="15" font-weight="bold" fill="#000000">
+    Creative Studios
+  </text>
+  
+  <!-- Colorful stylized X with four arrow segments -->
+  <g transform="translate(128, 22)">
+    <!-- Central intersection point -->
+    <circle cx="15" cy="15" r="2" fill="#333"/>
+    
+    <!-- Four colorful segments forming X -->
+    <!-- Top segment (left) - Yellow -->
+    <polygon points="0,0 10,0 15,5 5,5" fill="#FFD700"/>
+    
+    <!-- Top segment (right) - Magenta/Pink -->
+    <polygon points="20,0 30,0 30,5 25,5" fill="#FF00FF"/>
+    
+    <!-- Bottom segment (left) - Lime Green -->
+    <polygon points="0,30 5,25 5,20 0,30" fill="#00FF00"/>
+    
+    <!-- Bottom segment (right) - Light Blue/Cyan -->
+    <polygon points="30,30 25,25 25,20 30,20" fill="#00FFFF"/>
+    
+    <!-- Outer connecting lines -->
+    <line x1="5" y1="5" x2="0" y2="0" stroke="#FFD700" stroke-width="2" stroke-linecap="round"/>
+    <line x1="25" y1="5" x2="30" y2="0" stroke="#FF00FF" stroke-width="2" stroke-linecap="round"/>
+    <line x1="5" y1="25" x2="0" y2="30" stroke="#00FF00" stroke-width="2" stroke-linecap="round"/>
+    <line x1="25" y1="25" x2="30" y2="30" stroke="#00FFFF" stroke-width="2" stroke-linecap="round"/>
+    
+    <!-- Central cross -->
+    <line x1="5" y1="5" x2="25" y2="25" stroke="#333" stroke-width="2" stroke-linecap="round"/>
+    <line x1="25" y1="5" x2="5" y2="25" stroke="#333" stroke-width="2" stroke-linecap="round"/>
+  </g>
+</svg>

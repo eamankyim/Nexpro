@@ -1,6 +1,7 @@
 const { sequelize, testConnection } = require('../config/database');
 const models = require('../models');
 const addUserFields = require('./add-user-fields');
+const createInviteTokens = require('./create-invite-tokens');
 
 const migrate = async () => {
   try {
@@ -17,9 +18,13 @@ const migrate = async () => {
     // Add new user fields if they don't exist
     await addUserFields();
     
+    // Create invite_tokens table if it doesn't exist
+    await createInviteTokens.up(sequelize.getQueryInterface(), require('sequelize'));
+    
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 All tables have been created/updated.');
-    console.log('👤 User model has been enhanced with new fields.\n');
+    console.log('👤 User model has been enhanced with new fields.');
+    console.log('🎫 Invite tokens table ready.\n');
     
     process.exit(0);
   } catch (error) {

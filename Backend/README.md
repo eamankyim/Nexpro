@@ -1,4 +1,4 @@
-# Printing Press Management System - Backend API
+# NEXPro - Printing Press Management System - Backend API
 
 A comprehensive backend API for managing printing press operations including customers, jobs, vendors, payments, expenses, and pricing.
 

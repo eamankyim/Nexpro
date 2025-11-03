@@ -1,4 +1,4 @@
-# 🖨️ Printing Press Management System
+# 🖨️ NEXPro - Printing Press Management System
 
 A comprehensive full-stack web application for managing printing press operations including customers, jobs, vendors, payments, expenses, and pricing.
 

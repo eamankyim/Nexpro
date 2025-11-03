@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Layout, Menu, Avatar, Dropdown, Typography, theme } from 'antd';
 import {
@@ -21,12 +21,30 @@ const { Text } = Typography;
 
 const MainLayout = () => {
   const [collapsed, setCollapsed] = useState(false);
+  const [logoUrl, setLogoUrl] = useState(null);
+  const [logoError, setLogoError] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout, isAdmin } = useAuth();
   const {
     token: { colorBgContainer },
   } = theme.useToken();
+
+  useEffect(() => {
+    // Load the logo for dark background (sidebar has dark theme)
+    import('../assets/nexus logo for dark bg.png')
+      .then((module) => {
+        if (module && module.default) {
+          setLogoUrl(module.default);
+        } else {
+          setLogoError(true);
+        }
+      })
+      .catch(() => {
+        console.warn('Logo PNG not found. Please ensure nexus logo for dark bg.png is in src/assets/ folder.');
+        setLogoError(true);
+      });
+  }, []);
 
   const menuItems = [
     {
@@ -117,11 +135,68 @@ const MainLayout = () => {
           display: 'flex', 
           alignItems: 'center', 
           justifyContent: 'center',
-          color: 'white',
-          fontSize: collapsed ? 14 : 18,
-          fontWeight: 'bold'
+          padding: '12px',
+          overflow: 'hidden'
         }}>
-          {collapsed ? 'PP' : 'PrintPress'}
+          {logoUrl && !logoError ? (
+            collapsed ? (
+              <div style={{
+                height: 40,
+                width: 40,
+                overflow: 'hidden',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <img 
+                  src={logoUrl} 
+                  alt="NexPRO" 
+                  style={{
+                    height: '160%',
+                    width: 'auto',
+                    objectFit: 'contain',
+                    objectPosition: 'center',
+                    transform: 'translateY(-20%)',
+                    marginTop: '-5px',
+                    marginBottom: '-5px'
+                  }}
+                  onError={() => setLogoError(true)}
+                />
+              </div>
+            ) : (
+              <div style={{
+                height: 50,
+                width: '100%',
+                overflow: 'hidden',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <img 
+                  src={logoUrl} 
+                  alt="NexPRO" 
+                  style={{
+                    height: '160%',
+                    width: 'auto',
+                    objectFit: 'contain',
+                    objectPosition: 'center',
+                    transform: 'translateY(-20%)',
+                    marginTop: '-8px',
+                    marginBottom: '-8px'
+                  }}
+                  onError={() => setLogoError(true)}
+                />
+              </div>
+            )
+          ) : (
+            <div style={{
+              color: 'white',
+              fontSize: collapsed ? 14 : 18,
+              fontWeight: 'bold'
+            }}>
+              {collapsed ? 'NP' : 'NexPRO'}
+            </div>
+          )}
         </div>
         <Menu
           theme="dark"
