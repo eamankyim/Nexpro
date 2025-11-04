@@ -5,6 +5,7 @@ import invoiceService from '../services/invoiceService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import PrintableInvoice from '../components/PrintableInvoice';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
@@ -18,6 +19,7 @@ const Invoices = () => {
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingInvoice, setViewingInvoice] = useState(null);
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
+  const [printModalVisible, setPrintModalVisible] = useState(false);
   const [paymentForm] = Form.useForm();
   const [stats, setStats] = useState(null);
   const { isManager } = useAuth();
@@ -66,6 +68,11 @@ const Invoices = () => {
   const handleCloseDrawer = () => {
     setDrawerVisible(false);
     setViewingInvoice(null);
+  };
+
+  const handlePrint = (invoice) => {
+    setViewingInvoice(invoice);
+    setPrintModalVisible(true);
   };
 
   const handleRecordPayment = (invoice) => {
@@ -312,6 +319,7 @@ const Invoices = () => {
         onClose={handleCloseDrawer}
         title="Invoice Details"
         width={900}
+        onPrint={viewingInvoice ? () => handlePrint(viewingInvoice) : null}
         onCancel={isManager && viewingInvoice && viewingInvoice.status !== 'paid' && viewingInvoice.status !== 'cancelled' ? () => {
           handleCancelInvoice(viewingInvoice.id);
         } : null}
@@ -523,6 +531,30 @@ const Invoices = () => {
               </Row>
             </Form>
           </>
+        )}
+      </Modal>
+
+      {/* Print Invoice Modal */}
+      <Modal
+        title="Print Invoice"
+        open={printModalVisible}
+        onCancel={() => {
+          setPrintModalVisible(false);
+          setViewingInvoice(null);
+        }}
+        footer={null}
+        width="90%"
+        style={{ maxWidth: '1200px' }}
+        destroyOnClose
+      >
+        {viewingInvoice && (
+          <PrintableInvoice
+            invoice={viewingInvoice}
+            onClose={() => {
+              setPrintModalVisible(false);
+              setViewingInvoice(null);
+            }}
+          />
         )}
       </Modal>
     </div>
