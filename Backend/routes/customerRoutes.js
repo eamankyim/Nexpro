@@ -14,7 +14,7 @@ router.use(protect);
 
 router.route('/')
   .get(getCustomers)
-  .post(authorize('admin', 'manager'), createCustomer);
+  .post(authorize('admin', 'manager', 'staff'), createCustomer);
 
 router.route('/:id')
   .get(getCustomer)

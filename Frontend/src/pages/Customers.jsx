@@ -17,7 +17,7 @@ const Customers = () => {
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [searchText, setSearchText] = useState('');
   const [form] = Form.useForm();
-  const { isManager } = useAuth();
+  const { isManager, user } = useAuth();
   const [showReferralName, setShowReferralName] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingCustomer, setViewingCustomer] = useState(null);
@@ -212,7 +212,7 @@ const Customers = () => {
             style={{ width: 250 }}
             prefix={<SearchOutlined />}
           />
-          {isManager && (
+          {(isManager || user?.role === 'staff') && (
             <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
               Add Customer
             </Button>

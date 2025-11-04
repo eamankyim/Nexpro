@@ -35,7 +35,7 @@ const Jobs = () => {
   // Job type configurations
   const jobTypeConfig = {
     'Instant Service': {
-      types: ['Photocopying', 'Scanning', 'Lamination', 'Binding'],
+      types: ['Photocopying', 'Scanning', 'Printing', 'Lamination', 'Binding'],
       hideFields: ['startDate', 'dueDate', 'priority'],
       defaultValues: { priority: 'urgent', status: 'in_progress' },
       titleFormat: (type, customer) => `${type} for ${customer?.name || 'Customer'}`,
@@ -817,6 +817,7 @@ const Jobs = () => {
                   <Select.OptGroup label="Instant Service (No dates needed)">
                     <Option value="Photocopying">Photocopying</Option>
                     <Option value="Scanning">Scanning</Option>
+                    <Option value="Printing">Printing</Option>
                     <Option value="Lamination">Lamination</Option>
                     <Option value="Binding">Binding</Option>
                   </Select.OptGroup>
@@ -986,6 +987,7 @@ const Jobs = () => {
                             <Option value="Lamination">Lamination</Option>
                             <Option value="Photocopying">Photocopying</Option>
                             <Option value="Scanning">Scanning</Option>
+                            <Option value="Printing">Printing</Option>
                             <Option value="Design Services">Design Services</Option>
                             <Option value="Other">Other</Option>
                           </Select>

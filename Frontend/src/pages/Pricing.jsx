@@ -125,6 +125,7 @@ const Pricing = () => {
     'Lamination',
     'Photocopying',
     'Scanning',
+    'Printing',
     'Design Services',
     'Other'
   ];
