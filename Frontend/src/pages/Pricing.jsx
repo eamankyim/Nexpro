@@ -96,6 +96,28 @@ const Pricing = () => {
 
   const handleSubmit = async (values) => {
     try {
+      // Calculate custom price if custom size is selected
+      if (values.materialSize === 'Custom' && values.customHeight && values.customWidth && values.customUnit && values.pricePerSquareFoot) {
+        let calculatedPrice = 0;
+        if (values.customUnit === 'feet') {
+          calculatedPrice = values.customHeight * values.customWidth * values.pricePerSquareFoot;
+        } else if (values.customUnit === 'inches') {
+          calculatedPrice = (values.customHeight * values.customWidth * values.pricePerSquareFoot) / 144;
+        }
+        // Store calculated price in basePrice or a custom field
+        if (!values.basePrice || values.materialSize === 'Custom') {
+          values.basePrice = calculatedPrice;
+        }
+      }
+      
+      // Clean up custom fields if not using custom size
+      if (values.materialSize !== 'Custom') {
+        values.customHeight = undefined;
+        values.customWidth = undefined;
+        values.customUnit = undefined;
+        values.pricePerSquareFoot = undefined;
+      }
+      
       if (editingTemplate) {
         await pricingService.update(editingTemplate.id, values);
         message.success('Pricing template updated successfully');
@@ -112,25 +134,47 @@ const Pricing = () => {
   };
 
   const categories = [
-    'Black & White Printing',
-    'Color Printing',
-    'Large Format Printing',
-    'Business Cards',
-    'Brochures',
-    'Flyers',
-    'Posters',
-    'Banners',
-    'Booklets',
-    'Binding',
-    'Lamination',
-    'Photocopying',
-    'Scanning',
-    'Printing',
-    'Design Services',
+    { value: 'Black & White Printing', label: 'Black & White Printing' },
+    { value: 'Color Printing', label: 'Color Printing' },
+    { value: 'Large Format Printing', label: 'Large Format Printing' },
+    { value: 'Business Cards', label: 'Business Cards' },
+    { value: 'Brochures', label: 'Brochures' },
+    { value: 'Flyers', label: 'Flyers' },
+    { value: 'Posters', label: 'Posters' },
+    { value: 'Banners', label: 'Banners' },
+    { value: 'Booklets', label: 'Booklets' },
+    { value: 'Binding', label: 'Binding' },
+    { value: 'Lamination', label: 'Lamination' },
+    { value: 'Photocopying', label: 'Photocopying' },
+    { value: 'Scanning', label: 'Scanning' },
+    { value: 'Printing', label: 'Printing' },
+    { value: 'Design Services', label: 'Design Services' },
+    { value: 'Other', label: 'Other' }
+  ];
+
+  const materialTypes = [
+    'Plain Paper',
+    'Photo Paper',
+    'SAV (Self-Adhesive Vinyl)',
+    'Banner',
+    'One Way Vision',
+    'Canvas',
+    'Cardstock',
+    'Sticker Paper',
+    'Vinyl',
+    'Foam Board',
+    'Corrugated Board',
+    'Bond Paper',
+    'Glossy Paper',
+    'Matte Paper',
+    'Satin Paper',
+    'Transparent Vinyl',
+    'Mesh Material',
+    'Fabric',
     'Other'
   ];
 
-  const paperSizes = ['A4', 'A3', 'A5', 'Letter', 'Legal', 'Tabloid', 'Custom', 'N/A'];
+  const materialSizes = ['A4', 'A3', 'A5', 'Letter', 'Legal', 'Tabloid', 'Custom', 'N/A'];
 
   const columns = [
     {
@@ -210,7 +254,7 @@ const Pricing = () => {
             onChange={(value) => setFilters({ ...filters, category: value || '' })}
           >
             {categories.map(cat => (
-              <Option key={cat} value={cat}>{cat}</Option>
+              <Option key={cat.value} value={cat.value}>{cat.label}</Option>
             ))}
           </Select>
           <Select
@@ -272,7 +316,7 @@ const Pricing = () => {
               >
                 <Select placeholder="Select category" size="large">
                   {categories.map(cat => (
-                    <Option key={cat} value={cat}>{cat}</Option>
+                    <Option key={cat.value} value={cat.value}>{cat.label}</Option>
                   ))}
                 </Select>
               </Form.Item>
@@ -286,20 +330,156 @@ const Pricing = () => {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="paperType" label="Paper Type">
-                <Input placeholder="e.g., Glossy, Matte" size="large" />
+              <Form.Item name="materialType" label="Material Type">
+                <Select placeholder="Select material type" size="large" allowClear showSearch>
+                  {materialTypes.map(type => (
+                    <Option key={type} value={type}>{type}</Option>
+                  ))}
+                </Select>
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="paperSize" label="Paper Size">
-                <Select placeholder="Select paper size" size="large" allowClear>
-                  {paperSizes.map(size => (
+              <Form.Item name="materialSize" label="Material Size">
+                <Select 
+                  placeholder="Select material size" 
+                  size="large" 
+                  allowClear
+                  onChange={(value) => {
+                    if (value !== 'Custom') {
+                      form.setFieldsValue({
+                        customHeight: undefined,
+                        customWidth: undefined,
+                        customUnit: undefined,
+                        pricePerSquareFoot: undefined
+                      });
+                    }
+                  }}
+                >
+                  {materialSizes.map(size => (
                     <Option key={size} value={size}>{size}</Option>
                   ))}
                 </Select>
               </Form.Item>
             </Col>
           </Row>
+
+          {/* Custom Size Fields - Shown when Custom is selected */}
+          <Form.Item shouldUpdate={(prevValues, currentValues) => prevValues.materialSize !== currentValues.materialSize}>
+            {({ getFieldValue }) => {
+              const materialSize = getFieldValue('materialSize');
+              if (materialSize === 'Custom') {
+                return (
+                  <Row gutter={16} style={{ marginBottom: 16 }}>
+                    <Col span={6}>
+                      <Form.Item
+                        name="customHeight"
+                        label="Height"
+                        rules={[{ required: true, message: 'Please enter height' }]}
+                      >
+                        <InputNumber
+                          style={{ width: '100%' }}
+                          placeholder="Enter height"
+                          min={0}
+                          precision={2}
+                          size="large"
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item
+                        name="customWidth"
+                        label="Width/Length"
+                        rules={[{ required: true, message: 'Please enter width' }]}
+                      >
+                        <InputNumber
+                          style={{ width: '100%' }}
+                          placeholder="Enter width"
+                          min={0}
+                          precision={2}
+                          size="large"
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item
+                        name="customUnit"
+                        label="Unit"
+                        rules={[{ required: true, message: 'Please select unit' }]}
+                      >
+                        <Select placeholder="Select unit" size="large">
+                          <Option value="feet">Feet</Option>
+                          <Option value="inches">Inches</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item
+                        name="pricePerSquareFoot"
+                        label="Price per Square Foot"
+                        rules={[{ required: true, message: 'Please enter price per sqft' }]}
+                      >
+                        <InputNumber
+                          style={{ width: '100%' }}
+                          placeholder="0.00"
+                          prefix="₵"
+                          min={0}
+                          precision={2}
+                          size="large"
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                );
+              }
+              return null;
+            }}
+          </Form.Item>
+
+          {/* Calculated Price Display for Custom Size */}
+          <Form.Item shouldUpdate={(prevValues, currentValues) => 
+            prevValues.materialSize !== currentValues.materialSize ||
+            prevValues.customHeight !== currentValues.customHeight ||
+            prevValues.customWidth !== currentValues.customWidth ||
+            prevValues.customUnit !== currentValues.customUnit ||
+            prevValues.pricePerSquareFoot !== currentValues.pricePerSquareFoot
+          }>
+            {({ getFieldValue }) => {
+              const materialSize = getFieldValue('materialSize');
+              const height = getFieldValue('customHeight');
+              const width = getFieldValue('customWidth');
+              const unit = getFieldValue('customUnit');
+              const pricePerSqft = getFieldValue('pricePerSquareFoot');
+              
+              if (materialSize === 'Custom' && height && width && unit && pricePerSqft) {
+                let calculatedPrice = 0;
+                if (unit === 'feet') {
+                  calculatedPrice = height * width * pricePerSqft;
+                } else if (unit === 'inches') {
+                  calculatedPrice = (height * width * pricePerSqft) / 144;
+                }
+                
+                return (
+                  <Row gutter={16} style={{ marginBottom: 16 }}>
+                    <Col span={24}>
+                      <Card size="small" style={{ background: '#f0f9ff', border: '1px solid #91d5ff' }}>
+                        <Space>
+                          <strong>Calculated Price:</strong>
+                          <span style={{ fontSize: '18px', color: '#1890ff', fontWeight: 'bold' }}>
+                            ₵{calculatedPrice.toFixed(2)}
+                          </span>
+                          <span style={{ color: '#666', fontSize: '12px' }}>
+                            ({height} {unit === 'feet' ? 'ft' : 'in'} × {width} {unit === 'feet' ? 'ft' : 'in'} × ₵{pricePerSqft}/sqft
+                            {unit === 'inches' ? ' ÷ 144' : ''})
+                          </span>
+                        </Space>
+                      </Card>
+                    </Col>
+                  </Row>
+                );
+              }
+              return null;
+            }}
+          </Form.Item>
 
           <Row gutter={16}>
             <Col span={6}>
@@ -559,8 +739,13 @@ const Pricing = () => {
             render: (cat) => <Tag color="blue">{cat}</Tag>
           },
           { label: 'Job Type', value: viewingTemplate.jobType || '-' },
-          { label: 'Paper Type', value: viewingTemplate.paperType || '-' },
-          { label: 'Paper Size', value: viewingTemplate.paperSize || '-' },
+          { label: 'Material Type', value: viewingTemplate.materialType || viewingTemplate.paperType || '-' },
+          { label: 'Material Size', value: viewingTemplate.materialSize || viewingTemplate.paperSize || '-' },
+          ...(viewingTemplate.materialSize === 'Custom' || (viewingTemplate.materialSize === undefined && viewingTemplate.paperSize === 'Custom') ? [
+            { label: 'Custom Height', value: viewingTemplate.customHeight ? `${viewingTemplate.customHeight} ${viewingTemplate.customUnit || ''}` : '-' },
+            { label: 'Custom Width', value: viewingTemplate.customWidth ? `${viewingTemplate.customWidth} ${viewingTemplate.customUnit || ''}` : '-' },
+            { label: 'Price per Square Foot', value: viewingTemplate.pricePerSquareFoot ? `₵${parseFloat(viewingTemplate.pricePerSquareFoot).toFixed(2)}` : '-' },
+          ] : []),
           { 
             label: 'Color Type', 
             value: viewingTemplate.colorType,

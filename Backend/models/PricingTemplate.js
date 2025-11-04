@@ -24,6 +24,24 @@ const PricingTemplate = sequelize.define('PricingTemplate', {
   paperSize: {
     type: DataTypes.STRING
   },
+  materialType: {
+    type: DataTypes.STRING
+  },
+  materialSize: {
+    type: DataTypes.STRING
+  },
+  customHeight: {
+    type: DataTypes.DECIMAL(10, 2)
+  },
+  customWidth: {
+    type: DataTypes.DECIMAL(10, 2)
+  },
+  customUnit: {
+    type: DataTypes.ENUM('feet', 'inches')
+  },
+  pricePerSquareFoot: {
+    type: DataTypes.DECIMAL(10, 2)
+  },
   colorType: {
     type: DataTypes.ENUM('black_white', 'color', 'spot_color')
   },

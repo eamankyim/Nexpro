@@ -24,7 +24,7 @@ exports.getRevenueReport = async (req, res, next) => {
     if (groupBy === 'day') {
       revenueByPeriod = await Payment.findAll({
         attributes: [
-          [sequelize.fn('DATE', sequelize.col('paymentDate')), 'date'],
+          [sequelize.literal(`CAST("paymentDate" AS DATE)`), 'date'],
           [sequelize.fn('SUM', sequelize.col('amount')), 'totalRevenue'],
           [sequelize.fn('COUNT', sequelize.col('id')), 'count']
         ],
@@ -33,8 +33,9 @@ exports.getRevenueReport = async (req, res, next) => {
           status: 'completed',
           ...(Object.keys(dateFilter).length > 0 && { paymentDate: dateFilter })
         },
-        group: [sequelize.fn('DATE', sequelize.col('paymentDate'))],
-        order: [[sequelize.fn('DATE', sequelize.col('paymentDate')), 'ASC']]
+        group: [sequelize.literal(`CAST("paymentDate" AS DATE)`)],
+        order: [[sequelize.literal(`CAST("paymentDate" AS DATE)`), 'ASC']],
+        raw: true
       });
     } else if (groupBy === 'month') {
       revenueByPeriod = await Payment.findAll({
@@ -117,6 +118,7 @@ exports.getRevenueReport = async (req, res, next) => {
       }
     });
   } catch (error) {
+    console.error('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -189,15 +191,16 @@ exports.getExpenseReport = async (req, res, next) => {
     // Expenses by date
     const expensesByDate = await Expense.findAll({
       attributes: [
-        [sequelize.fn('DATE', sequelize.col('expenseDate')), 'date'],
+        [sequelize.literal(`CAST("expenseDate" AS DATE)`), 'date'],
         [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'count']
       ],
       where: {
         ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
       },
-      group: [sequelize.fn('DATE', sequelize.col('expenseDate'))],
-      order: [[sequelize.fn('DATE', sequelize.col('expenseDate')), 'ASC']]
+      group: [sequelize.literal(`CAST("expenseDate" AS DATE)`)],
+      order: [[sequelize.literal(`CAST("expenseDate" AS DATE)`), 'ASC']],
+      raw: true
     });
 
     // Total expenses
@@ -218,6 +221,7 @@ exports.getExpenseReport = async (req, res, next) => {
       }
     });
   } catch (error) {
+    console.error('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -334,6 +338,7 @@ exports.getOutstandingPaymentsReport = async (req, res, next) => {
       }
     });
   } catch (error) {
+    console.error('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -393,15 +398,16 @@ exports.getSalesReport = async (req, res, next) => {
     // Sales by date
     const salesByDate = await Job.findAll({
       attributes: [
-        [sequelize.fn('DATE', sequelize.col('createdAt')), 'date'],
+        [sequelize.literal(`CAST("createdAt" AS DATE)`), 'date'],
         [sequelize.fn('SUM', sequelize.col('finalPrice')), 'totalSales'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'jobCount']
       ],
       where: {
         ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
       },
-      group: [sequelize.fn('DATE', sequelize.col('createdAt'))],
-      order: [[sequelize.fn('DATE', sequelize.col('createdAt')), 'ASC']]
+      group: [sequelize.literal(`CAST("createdAt" AS DATE)`)],
+      order: [[sequelize.literal(`CAST("createdAt" AS DATE)`), 'ASC']],
+      raw: true
     });
 
     // Sales by status
@@ -436,6 +442,7 @@ exports.getSalesReport = async (req, res, next) => {
       }
     });
   } catch (error) {
+    console.error('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -489,6 +496,7 @@ exports.getProfitLossReport = async (req, res, next) => {
       }
     });
   } catch (error) {
+    console.error('Error in getRevenueReport:', error);
     next(error);
   }
 };
