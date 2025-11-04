@@ -1,17 +1,52 @@
 import React from 'react';
 import dayjs from 'dayjs';
-import logoImage from '../assets/nexus logo for light bg.png';
+import { PrinterOutlined, EnvironmentOutlined, PhoneOutlined, GlobalOutlined, MailOutlined, ShareAltOutlined } from '@ant-design/icons';
+import logoImage from '../assets/nexus logo for dark bg.png';
 
-const PrintableInvoice = ({ invoice, onClose }) => {
+const PrintableInvoice = ({ invoice, onClose, onPrint, onShare }) => {
   if (!invoice) return null;
 
   const handlePrint = () => {
     window.print();
+    if (onPrint) onPrint();
+  };
+
+  const handleShare = () => {
+    try {
+      // Create WhatsApp message with invoice details
+      const invoiceDate = dayjs(invoice.invoiceDate).format('MMMM DD, YYYY');
+      const dueDate = dayjs(invoice.dueDate).format('MMMM DD, YYYY');
+      
+      const shareText = `*Invoice ${invoice.invoiceNumber}*\n\n` +
+        `*Customer:* ${invoice.customer?.name || 'N/A'}\n` +
+        `${invoice.customer?.company ? `*Company:* ${invoice.customer.company}\n` : ''}` +
+        `*Invoice Date:* ${invoiceDate}\n` +
+        `*Due Date:* ${dueDate}\n` +
+        `*Total Amount:* ₵${parseFloat(invoice.totalAmount || 0).toFixed(2)}\n` +
+        `*Amount Paid:* ₵${parseFloat(invoice.amountPaid || 0).toFixed(2)}\n` +
+        `*Balance Due:* ₵${parseFloat(invoice.balance || 0).toFixed(2)}\n` +
+        `*Status:* ${invoice.status?.toUpperCase() || 'N/A'}\n\n` +
+        `_From ${companyInfo.name}_`;
+      
+      // Encode the message for URL
+      const encodedMessage = encodeURIComponent(shareText);
+      
+      // Create WhatsApp link
+      const whatsappUrl = `https://wa.me/${companyInfo.whatsapp}?text=${encodedMessage}`;
+      
+      // Open WhatsApp in a new window/tab
+      window.open(whatsappUrl, '_blank');
+      if (onShare) onShare();
+    } catch (error) {
+      console.error('Error sharing via WhatsApp:', error);
+      alert('Failed to open WhatsApp. Please try again.');
+    }
   };
 
   const companyInfo = {
     name: 'Nexus Creative Studio',
     phone: '0591403367',
+    whatsapp: '233591403367', // WhatsApp number with country code (no + or 0 at start)
     website: 'www.nexuscreativestudio.com',
     email: 'info@nexuscreativestudios.com',
     location: 'Oyarifa School Junction, Adenta Municipal'
@@ -40,45 +75,61 @@ const PrintableInvoice = ({ invoice, onClose }) => {
           }
           @page {
             size: A4;
-            margin: 0;
+            margin: 15mm 20mm;
           }
           .printable-invoice {
             width: 210mm;
-            min-height: 297mm;
-            padding: 20mm;
+            max-height: 594mm;
+            padding: 0;
             margin: 0 auto;
             background: white;
+            page-break-after: auto;
+          }
+          .invoice-header {
+            page-break-after: avoid;
+            page-break-inside: avoid;
+          }
+          .items-table {
+            page-break-inside: avoid;
+          }
+          .items-table thead {
+            display: table-header-group;
+          }
+          .items-table tbody tr {
+            page-break-inside: avoid;
+          }
+          .totals-section {
+            page-break-inside: avoid;
+          }
+          .notes-section {
+            page-break-inside: avoid;
           }
         }
         .printable-invoice {
           width: 210mm;
-          min-height: 297mm;
+          max-height: 594mm;
           padding: 20mm;
           margin: 0 auto;
           background: white;
           font-family: Arial, sans-serif;
           color: #000;
+          box-sizing: border-box;
         }
         .invoice-header {
           display: flex;
           justify-content: space-between;
-          margin-bottom: 30px;
-          padding-bottom: 20px;
+          margin-bottom: 20px;
+          padding-bottom: 15px;
           border-bottom: 2px solid #000;
         }
         .company-info {
           flex: 1;
         }
         .company-logo {
-          max-width: 150px;
-          max-height: 80px;
-          margin-bottom: 10px;
-        }
-        .company-name {
-          font-size: 24px;
-          font-weight: bold;
-          margin-bottom: 8px;
-          color: #000;
+          max-width: 570px;
+          max-height: 225px;
+          margin-top: -80px;
+          margin-bottom: -55px;
         }
         .company-details {
           font-size: 12px;
@@ -102,8 +153,8 @@ const PrintableInvoice = ({ invoice, onClose }) => {
         .invoice-details {
           display: grid;
           grid-template-columns: 1fr 1fr;
-          gap: 30px;
-          margin: 30px 0;
+          gap: 20px;
+          margin: 20px 0;
         }
         .billing-section {
           margin-bottom: 30px;
@@ -123,19 +174,20 @@ const PrintableInvoice = ({ invoice, onClose }) => {
           width: 100%;
           border-collapse: collapse;
           margin: 30px 0;
+          font-size: 11px;
         }
         .items-table th {
           background-color: #f5f5f5;
-          padding: 12px;
+          padding: 8px;
           text-align: left;
           font-weight: bold;
-          font-size: 12px;
+          font-size: 11px;
           border: 1px solid #ddd;
         }
         .items-table td {
-          padding: 10px 12px;
+          padding: 6px 8px;
           border: 1px solid #ddd;
-          font-size: 12px;
+          font-size: 11px;
         }
         .items-table tr:nth-child(even) {
           background-color: #fafafa;
@@ -173,8 +225,8 @@ const PrintableInvoice = ({ invoice, onClose }) => {
           color: #ff4d4f;
         }
         .notes-section {
-          margin-top: 40px;
-          padding-top: 20px;
+          margin-top: 20px;
+          padding-top: 15px;
           border-top: 1px solid #ddd;
         }
         .notes-title {
@@ -188,8 +240,8 @@ const PrintableInvoice = ({ invoice, onClose }) => {
           color: #666;
         }
         .footer {
-          margin-top: 50px;
-          padding-top: 20px;
+          margin-top: 20px;
+          padding-top: 15px;
           border-top: 1px solid #ddd;
           text-align: center;
           font-size: 10px;
@@ -202,12 +254,23 @@ const PrintableInvoice = ({ invoice, onClose }) => {
         <div className="invoice-header">
           <div className="company-info">
             <img src={logoImage} alt="Nexus Creative Studio" className="company-logo" />
-            <div className="company-name">{companyInfo.name}</div>
             <div className="company-details">
-              <div>📍 {companyInfo.location}</div>
-              <div>📞 {companyInfo.phone}</div>
-              <div>🌐 {companyInfo.website}</div>
-              <div>✉️ {companyInfo.email}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <EnvironmentOutlined style={{ fontSize: '14px' }} />
+                <span>{companyInfo.location}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <PhoneOutlined style={{ fontSize: '14px' }} />
+                <span>{companyInfo.phone}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                <GlobalOutlined style={{ fontSize: '14px' }} />
+                <span>{companyInfo.website}</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <MailOutlined style={{ fontSize: '14px' }} />
+                <span>{companyInfo.email}</span>
+              </div>
             </div>
           </div>
           <div className="invoice-info">
@@ -370,41 +433,6 @@ const PrintableInvoice = ({ invoice, onClose }) => {
         </div>
       </div>
 
-      {/* Print Button (hidden when printing) */}
-      <div className="no-print" style={{ textAlign: 'center', marginTop: 20, marginBottom: 20 }}>
-        <button
-          onClick={handlePrint}
-          style={{
-            padding: '12px 24px',
-            fontSize: '16px',
-            backgroundColor: '#1890ff',
-            color: 'white',
-            border: 'none',
-            borderRadius: '4px',
-            cursor: 'pointer',
-            fontWeight: 'bold'
-          }}
-        >
-          🖨️ Print Invoice
-        </button>
-        {onClose && (
-          <button
-            onClick={onClose}
-            style={{
-              padding: '12px 24px',
-              fontSize: '16px',
-              backgroundColor: '#f5f5f5',
-              color: '#333',
-              border: '1px solid #d9d9d9',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              marginLeft: '10px'
-            }}
-          >
-            Close
-          </button>
-        )}
-      </div>
     </>
   );
 };

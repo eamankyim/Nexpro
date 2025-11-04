@@ -10,6 +10,7 @@ import {
   DollarOutlined,
   ShoppingOutlined,
   TagOutlined,
+  BarChartOutlined,
   TeamOutlined,
   LogoutOutlined,
   SettingOutlined,
@@ -69,6 +70,11 @@ const MainLayout = () => {
       icon: <TagOutlined />,
       label: 'Pricing',
     },
+    {
+      key: '/reports',
+      icon: <BarChartOutlined />,
+      label: 'Reports',
+    },
     ...(isAdmin ? [{
       key: '/users',
       icon: <TeamOutlined />,
@@ -116,26 +122,49 @@ const MainLayout = () => {
           height: 64, 
           display: 'flex', 
           alignItems: 'center', 
-          justifyContent: 'flex-start',
-          padding: '0 16px',
+          justifyContent: 'center',
+          padding: '0 0px',
+          paddingLeft: collapsed ? '8px' : '16px',
+          paddingRight: collapsed ? '8px' : '16px',
           overflow: 'hidden'
         }}>
           <div style={{
-            color: 'white',
-            fontSize: collapsed ? 14 : 18,
+            fontSize: collapsed ? 24 : 32,
             fontWeight: 'bold',
-            textAlign: 'left'
+            textAlign: 'center',
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
           }}>
-            {collapsed ? 'NP' : 'NexPRO'}
+            {collapsed ? (
+              <span style={{ color: '#ffffff' }}>NP</span>
+            ) : (
+              <>
+                <span style={{ color: '#ffffff' }}>Nex</span>
+                <span style={{
+                  background: 'linear-gradient(135deg, #ffffff 0%, rgb(89, 0, 255) 30%, rgb(217, 0, 255) 100%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  backgroundClip: 'text',
+                  display: 'inline-block'
+                }}>PRO</span>
+              </>
+            )}
           </div>
         </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={menuItems}
-          onClick={({ key }) => navigate(key)}
-        />
+        <div style={{ 
+          paddingLeft: collapsed ? '8px' : '16px', 
+          paddingRight: collapsed ? '8px' : '16px' 
+        }}>
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={[location.pathname]}
+            items={menuItems}
+            onClick={({ key }) => navigate(key)}
+          />
+        </div>
       </Sider>
       <Layout style={{ marginLeft: collapsed ? 80 : 200 }}>
         <Header

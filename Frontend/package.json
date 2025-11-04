@@ -4,13 +4,14 @@
   "private": true,
   "description": "NEXPro - Printing Press Management System Frontend",
   "dependencies": {
+    "@ant-design/icons": "^5.2.6",
+    "antd": "^5.12.5",
+    "axios": "^1.6.2",
+    "dayjs": "^1.11.10",
+    "html2pdf.js": "^0.12.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^6.20.1",
-    "antd": "^5.12.5",
-    "@ant-design/icons": "^5.2.6",
-    "axios": "^1.6.2",
-    "dayjs": "^1.11.10",
     "recharts": "^2.10.3"
   },
   "devDependencies": {
@@ -42,5 +43,3 @@
     ]
   }
 }
-
-

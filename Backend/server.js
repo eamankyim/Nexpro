@@ -23,6 +23,7 @@ const pricingRoutes = require('./routes/pricingRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const inviteRoutes = require('./routes/inviteRoutes');
+const reportRoutes = require('./routes/reportRoutes');
 
 const app = express();
 
@@ -49,6 +50,7 @@ app.use('/api/pricing', pricingRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/invites', inviteRoutes);
+app.use('/api/reports', reportRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -76,7 +78,8 @@ app.get('/', (req, res) => {
       pricing: '/api/pricing',
       invoices: '/api/invoices',
       dashboard: '/api/dashboard',
-      invites: '/api/invites'
+      invites: '/api/invites',
+      reports: '/api/reports'
     }
   });
 });

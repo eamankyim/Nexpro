@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Table, Button, Modal, Form, Input, message, Space, Tag, Select, InputNumber, DatePicker, Row, Col, Descriptions, Statistic, Card, Divider } from 'antd';
-import { PlusOutlined, DollarCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, DollarCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, PrinterOutlined, DownloadOutlined } from '@ant-design/icons';
 import invoiceService from '../services/invoiceService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
@@ -73,6 +73,51 @@ const Invoices = () => {
   const handlePrint = (invoice) => {
     setViewingInvoice(invoice);
     setPrintModalVisible(true);
+  };
+
+  const handlePrintInvoice = () => {
+    window.print();
+  };
+
+  const handleDownloadInvoice = async () => {
+    if (!viewingInvoice) return;
+    
+    try {
+      message.loading({ content: 'Generating PDF...', key: 'download', duration: 0 });
+      
+      // Import html2pdf dynamically
+      const html2pdf = (await import('html2pdf.js')).default;
+      
+      // Find the invoice element
+      const invoiceElement = document.querySelector('.printable-invoice');
+      
+      if (!invoiceElement) {
+        message.error({ content: 'Invoice not found', key: 'download' });
+        return;
+      }
+      
+      // Configure PDF options
+      const opt = {
+        margin: 0,
+        filename: `Invoice_${viewingInvoice.invoiceNumber}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+      
+      // Generate PDF and save it
+      await html2pdf()
+        .set(opt)
+        .from(invoiceElement)
+        .save();
+      
+      message.destroy('download');
+      message.success({ content: 'PDF downloaded successfully!', key: 'download-success', duration: 3 });
+      
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      message.error({ content: 'Failed to generate PDF. Please try again.', key: 'download' });
+    }
   };
 
   const handleRecordPayment = (invoice) => {
@@ -155,14 +200,7 @@ const Invoices = () => {
       title: 'Job',
       dataIndex: ['job', 'jobNumber'],
       key: 'job',
-      render: (jobNumber, record) => (
-        <div>
-          <div>{jobNumber}</div>
-          {record.job?.title && (
-            <div style={{ fontSize: 12, color: '#888' }}>{record.job.title}</div>
-          )}
-        </div>
-      ),
+      render: (jobNumber) => jobNumber || '-',
     },
     {
       title: 'Invoice Date',
@@ -536,23 +574,54 @@ const Invoices = () => {
 
       {/* Print Invoice Modal */}
       <Modal
-        title="Print Invoice"
+        title={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+            <span>Print Invoice</span>
+            <Space>
+              <Button
+                icon={<DownloadOutlined />}
+                onClick={handleDownloadInvoice}
+              >
+                Download
+              </Button>
+              <Button
+                type="primary"
+                icon={<PrinterOutlined />}
+                onClick={handlePrintInvoice}
+                style={{ marginRight: 24 }}
+              >
+                Print
+              </Button>
+            </Space>
+          </div>
+        }
         open={printModalVisible}
         onCancel={() => {
           setPrintModalVisible(false);
-          setViewingInvoice(null);
+          // Don't clear viewingInvoice if drawer is still open
+          if (!drawerVisible) {
+            setViewingInvoice(null);
+          }
         }}
         footer={null}
         width="90%"
         style={{ maxWidth: '1200px' }}
         destroyOnClose
+        bodyStyle={{ 
+          maxHeight: '70vh', 
+          overflowY: 'auto',
+          padding: '20px'
+        }}
       >
         {viewingInvoice && (
           <PrintableInvoice
             invoice={viewingInvoice}
             onClose={() => {
               setPrintModalVisible(false);
-              setViewingInvoice(null);
+              // Don't clear viewingInvoice if drawer is still open
+              if (!drawerVisible) {
+                setViewingInvoice(null);
+              }
             }}
           />
         )}
