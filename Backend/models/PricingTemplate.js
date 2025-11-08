@@ -42,6 +42,11 @@ const PricingTemplate = sequelize.define('PricingTemplate', {
   pricePerSquareFoot: {
     type: DataTypes.DECIMAL(10, 2)
   },
+  pricingMethod: {
+    type: DataTypes.ENUM('unit', 'square_foot'),
+    defaultValue: 'unit',
+    comment: 'unit = quantity × unitPrice, square_foot = height × width × pricePerSquareFoot'
+  },
   colorType: {
     type: DataTypes.ENUM('black_white', 'color', 'spot_color')
   },

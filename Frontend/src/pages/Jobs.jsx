@@ -31,6 +31,7 @@ const Jobs = () => {
   const [selectedJobType, setSelectedJobType] = useState(null);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedTemplates, setSelectedTemplates] = useState({});
+  const [customJobType, setCustomJobType] = useState('');
 
   // Job type configurations
   const jobTypeConfig = {
@@ -59,7 +60,7 @@ const Jobs = () => {
       isInstant: false
     },
     'Design & Custom': {
-      types: ['Design Services', 'Custom Work', 'Other'],
+      types: ['Design & Print', 'Design Services', 'Custom Work', 'Other'],
       hideFields: [],
       defaultValues: { priority: 'high', status: 'pending' },
       titleFormat: (type, customer) => `${type} for ${customer?.name || 'Customer'}`,
@@ -166,6 +167,7 @@ const Jobs = () => {
     setSelectedJobType(null);
     setSelectedCustomer(null);
     setSelectedTemplates({});
+    setCustomJobType('');
     setModalVisible(true);
     
     // Fetch customers and pricing templates
@@ -184,12 +186,19 @@ const Jobs = () => {
   const handleCustomerChange = (customerId) => {
     const customer = customers.find(c => c.id === customerId);
     setSelectedCustomer(customer);
-    updateJobTitleAndDescription(selectedJobType, customer);
+    const baseJobType = selectedJobType === 'Other' ? 'Other' : selectedJobType;
+    const labelOverride = selectedJobType === 'Other' ? customJobType : undefined;
+    updateJobTitleAndDescription(baseJobType, customer, labelOverride);
   };
 
   const handleJobTypeChange = (jobType) => {
     setSelectedJobType(jobType);
     const config = getJobTypeCategory(jobType);
+    
+    if (jobType !== 'Other') {
+      setCustomJobType('');
+      form.setFieldsValue({ customJobType: undefined });
+    }
     
     // Apply default values
     form.setFieldsValue({
@@ -203,27 +212,55 @@ const Jobs = () => {
       message.info('Instant service - Due date set to today');
     }
     
-    updateJobTitleAndDescription(jobType, selectedCustomer);
+    const labelOverride = jobType === 'Other' ? customJobType : undefined;
+    updateJobTitleAndDescription(jobType, selectedCustomer, labelOverride);
   };
 
-  const updateJobTitleAndDescription = (jobType, customer) => {
+  const handleCustomJobTypeChange = (event) => {
+    const value = event.target.value;
+    setCustomJobType(value);
+    updateJobTitleAndDescription('Other', selectedCustomer, value);
+  };
+
+  const updateJobTitleAndDescription = (jobType, customer, customLabel) => {
     if (!jobType || !customer) return;
-    
-    const config = getJobTypeCategory(jobType);
-    const title = config.titleFormat(jobType, customer);
-    const description = config.descriptionFormat(jobType, customer);
-    
+
+    const effectiveLabel = (customLabel && customLabel.trim().length > 0) ? customLabel.trim() : jobType;
+    if (!effectiveLabel) return;
+
+    const configKey = jobType === 'Other' ? 'Other' : jobType;
+    const config = getJobTypeCategory(configKey);
+    const title = config.titleFormat(effectiveLabel, customer);
+    const description = config.descriptionFormat(effectiveLabel, customer);
+
     form.setFieldsValue({
       title,
       description
     });
   };
 
+  const resolveTemplateUnitPrice = (template) => {
+    if (!template) return 0;
+    const parseMoney = (value) => {
+      const parsed = parseFloat(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const pricePerUnit = parseMoney(template.pricePerUnit);
+    const basePrice = parseMoney(template.basePrice);
+    const pricePerSquareFoot = parseMoney(template.pricePerSquareFoot);
+
+    if (pricePerUnit > 0) return pricePerUnit;
+    if (pricePerSquareFoot > 0) return pricePerSquareFoot;
+
+    return basePrice;
+  };
+
   // Helper function to calculate discount based on quantity
-  const calculateDiscount = (template, quantity) => {
+  const calculateDiscount = (template, quantity, unitPriceOverride) => {
     if (!template || !quantity) return { discountPercent: 0, discountAmount: 0 };
 
-    const unitPrice = parseFloat(template.pricePerUnit || 0);
+    const unitPrice = unitPriceOverride ?? resolveTemplateUnitPrice(template);
     const subtotal = unitPrice * quantity;
 
     // Apply discount tiers if available
@@ -236,7 +273,9 @@ const Jobs = () => {
           const discountPercent = parseFloat(tier.discountPercent || 0);
           const discountAmount = (subtotal * discountPercent) / 100;
           
-          message.info(`${discountPercent}% discount applied for quantity ${quantity}!`, 3);
+          if (discountPercent > 0) {
+            message.info(`${discountPercent}% discount applied for quantity ${quantity}!`, 3);
+          }
           
           return { discountPercent, discountAmount };
         }
@@ -268,29 +307,52 @@ const Jobs = () => {
     const items = form.getFieldValue('items') || [];
     const currentItem = items[itemIndex] || {};
     
-    // Get current quantity or default to 1
-    const quantity = currentItem.quantity || 1;
+    // Check if template uses square-foot pricing
+    const isSquareFootPricing = template.pricingMethod === 'square_foot' || 
+                                ['SAV (Self-Adhesive Vinyl)', 'Banner', 'One Way Vision'].includes(template.materialType);
     
-    // Get original unit price (never changes)
-    const unitPrice = parseFloat(template.pricePerUnit || template.basePrice || 0);
-    
-    // Calculate discount if applicable
-    const { discountPercent, discountAmount } = calculateDiscount(template, quantity);
-    
-    // Auto-populate fields from template
-    const updatedItems = [...items];
-    updatedItems[itemIndex] = {
-      ...currentItem,
-      category: template.category,
-      paperSize: template.paperSize || currentItem.paperSize,
-      description: template.description || currentItem.description,
-      quantity: quantity,
-      unitPrice: unitPrice, // Original price, never changes
-      discountPercent: discountPercent,
-      discountAmount: discountAmount
-    };
-    
-    form.setFieldsValue({ items: updatedItems });
+    if (isSquareFootPricing) {
+      // For square-foot pricing, set up dimensions fields
+      const updatedItems = [...items];
+      updatedItems[itemIndex] = {
+        ...currentItem,
+        category: template.category,
+        materialType: template.materialType,
+        materialSize: template.materialSize || 'Custom',
+        description: template.description || currentItem.description,
+        pricingMethod: 'square_foot',
+        pricePerSquareFoot: parseFloat(template.pricePerSquareFoot || 0),
+        itemHeight: currentItem.itemHeight,
+        itemWidth: currentItem.itemWidth,
+        itemUnit: currentItem.itemUnit || 'feet',
+        quantity: 1, // Always 1 for square-foot pricing
+        unitPrice: 0, // Will be calculated when dimensions are entered
+        discountPercent: 0,
+        discountAmount: 0
+      };
+      form.setFieldsValue({ items: updatedItems });
+    } else {
+      // Standard unit-based pricing
+      const quantity = currentItem.quantity || 1;
+      const unitPrice = resolveTemplateUnitPrice(template);
+      const { discountPercent, discountAmount } = calculateDiscount(template, quantity, unitPrice);
+      
+      const updatedItems = [...items];
+      updatedItems[itemIndex] = {
+        ...currentItem,
+        category: template.category,
+        paperSize: template.paperSize || currentItem.paperSize,
+        materialType: template.materialType,
+        materialSize: template.materialSize,
+        description: template.description || currentItem.description,
+        quantity: quantity,
+        unitPrice: unitPrice,
+        pricingMethod: 'unit',
+        discountPercent: discountPercent,
+        discountAmount: discountAmount
+      };
+      form.setFieldsValue({ items: updatedItems });
+    }
     
     // Smart auto-fill for job-level fields if first item
     if (itemIndex === 0 && items.length === 1) {
@@ -321,7 +383,8 @@ const Jobs = () => {
     const currentItem = items[itemIndex] || {};
     
     // Recalculate discount with new quantity (unit price stays same)
-    const { discountPercent, discountAmount } = calculateDiscount(template, newQuantity);
+    const currentPrice = parseFloat(currentItem.unitPrice ?? resolveTemplateUnitPrice(template) ?? 0);
+    const { discountPercent, discountAmount } = calculateDiscount(template, newQuantity, currentPrice);
     
     // Update the item with new quantity and recalculated discount
     const updatedItems = [...items];
@@ -340,6 +403,27 @@ const Jobs = () => {
       // Calculate total from items (with discounts)
       let calculatedTotal = 0;
       if (values.items && values.items.length > 0) {
+        // Process items - calculate square-foot pricing if needed
+        values.items = values.items.map(item => {
+          // If square-foot pricing, ensure unitPrice is calculated
+          if ((item.pricingMethod === 'square_foot' || item.itemHeight || item.itemWidth) && 
+              item.itemHeight && item.itemWidth && item.pricePerSquareFoot) {
+            const height = parseFloat(item.itemHeight);
+            const width = parseFloat(item.itemWidth);
+            const unit = item.itemUnit || 'feet';
+            const pricePerSqft = parseFloat(item.pricePerSquareFoot);
+            
+            if (unit === 'feet') {
+              item.unitPrice = height * width * pricePerSqft;
+            } else if (unit === 'inches') {
+              item.unitPrice = (height * width * pricePerSqft) / 144;
+            }
+            item.quantity = 1; // Always 1 for square-foot pricing
+          }
+          
+          return item;
+        });
+        
         calculatedTotal = values.items.reduce((sum, item) => {
           const subtotal = parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0);
           const discount = parseFloat(item.discountAmount || 0);
@@ -351,6 +435,18 @@ const Jobs = () => {
           ...item,
           description: item.description || values.description || item.category
         }));
+      }
+
+      const finalJobType = values.jobType === 'Other' && values.customJobType
+        ? values.customJobType.trim()
+        : values.jobType;
+
+      values.jobType = finalJobType;
+      delete values.customJobType;
+
+      if (!values.jobType) {
+        message.error('Please specify the job type');
+        return;
       }
 
       // Format dates
@@ -374,6 +470,7 @@ const Jobs = () => {
       setSelectedJobType(null);
       setSelectedCustomer(null);
       setSelectedTemplates({});
+      setCustomJobType('');
       fetchJobs();
     } catch (error) {
       message.error(error.error || 'Failed to create job');
@@ -767,6 +864,10 @@ const Jobs = () => {
         width={1000}
         okText="Create Job"
         style={{ top: 20 }}
+        bodyStyle={{
+          maxHeight: '70vh',
+          overflowY: 'auto'
+        }}
       >
         <Form
           form={form}
@@ -833,6 +934,7 @@ const Jobs = () => {
                     <Option value="Banners">Banners</Option>
                   </Select.OptGroup>
                   <Select.OptGroup label="Design & Custom">
+                    <Option value="Design & Print">Design & Print</Option>
                     <Option value="Design Services">Design Services</Option>
                     <Option value="Custom Work">Custom Work</Option>
                     <Option value="Other">Other</Option>
@@ -841,6 +943,24 @@ const Jobs = () => {
               </Form.Item>
             </Col>
           </Row>
+
+          {selectedJobType === 'Other' && (
+            <Row gutter={16}>
+              <Col span={24}>
+                <Form.Item
+                  name="customJobType"
+                  label="Describe Job Type"
+                  rules={[{ required: true, message: 'Please describe the job type' }]}
+                >
+                  <Input
+                    placeholder="e.g., Vehicle Wrap Design"
+                    size="large"
+                    onChange={handleCustomJobTypeChange}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+          )}
 
           <Row gutter={16}>
             <Col span={24}>
@@ -952,13 +1072,23 @@ const Jobs = () => {
                               optionFilterProp="children"
                               onChange={(value) => handleTemplateSelect(value, name)}
                             >
-                              {pricingTemplates.map(template => (
-                                <Option key={template.id} value={template.id}>
-                                  {template.name} - {template.category} 
-                                  {template.pricePerUnit && ` (₵${parseFloat(template.pricePerUnit).toFixed(2)}/unit)`}
-                                  {!template.pricePerUnit && template.basePrice && ` (₵${parseFloat(template.basePrice).toFixed(2)})`}
-                                </Option>
-                              ))}
+                              {pricingTemplates.map(template => {
+                                const resolvedPrice = resolveTemplateUnitPrice(template);
+                                const hasUnitPricing = Number.isFinite(parseFloat(template.pricePerUnit)) && parseFloat(template.pricePerUnit) > 0;
+                                const hasSquareFootPricing = Number.isFinite(parseFloat(template.pricePerSquareFoot)) && parseFloat(template.pricePerSquareFoot) > 0;
+                                const priceLabel = (() => {
+                                  if (resolvedPrice <= 0) return '';
+                                  if (hasUnitPricing) return ` (₵${resolvedPrice.toFixed(2)}/unit)`;
+                                  if (hasSquareFootPricing) return ` (₵${resolvedPrice.toFixed(2)}/sq ft)`;
+                                  return ` (₵${resolvedPrice.toFixed(2)})`;
+                                })();
+                                return (
+                                  <Option key={template.id} value={template.id}>
+                                    {template.name} - {template.category}
+                                    {priceLabel}
+                                  </Option>
+                                );
+                              })}
                             </Select>
                           </Form.Item>
                         </Col>
@@ -989,6 +1119,7 @@ const Jobs = () => {
                             <Option value="Scanning">Scanning</Option>
                             <Option value="Printing">Printing</Option>
                             <Option value="Design Services">Design Services</Option>
+                          <Option value="Design & Print">Design & Print</Option>
                             <Option value="Other">Other</Option>
                           </Select>
                         </Form.Item>
@@ -1013,74 +1144,263 @@ const Jobs = () => {
                       </Col>
                     </Row>
 
-                    <Row gutter={16}>
-                      <Col span={8}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'quantity']}
-                          label="Quantity"
-                          rules={[{ required: true, message: 'Required' }]}
-                          initialValue={1}
-                        >
-                          <InputNumber
-                            style={{ width: '100%' }}
-                            placeholder="1"
-                            min={1}
-                            size="large"
-                            onChange={(value) => handleQuantityChange(name, value)}
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col span={8}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'unitPrice']}
-                          label="Unit Price"
-                          rules={[{ required: true, message: 'Required' }]}
-                        >
-                          <InputNumber
-                            style={{ width: '100%' }}
-                            placeholder="0.00"
-                            prefix="₵"
-                            min={0}
-                            precision={2}
-                            size="large"
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col span={8}>
-                        <Form.Item shouldUpdate noStyle>
-                          {() => {
-                            const items = form.getFieldValue('items') || [];
-                            const currentItem = items[name] || {};
-                            const qty = parseFloat(currentItem.quantity || 1);
-                            const price = parseFloat(currentItem.unitPrice || 0);
-                            const discountAmount = parseFloat(currentItem.discountAmount || 0);
-                            const subtotal = qty * price;
-                            const total = subtotal - discountAmount;
-                            
-                            return (
-                              <Form.Item label="Total">
-                                <div style={{ 
-                                  padding: '8px 11px', 
-                                  background: '#fff', 
-                                  border: '1px solid #d9d9d9',
-                                  borderRadius: 4,
-                                  fontSize: 14,
-                                  fontWeight: 600,
-                                  color: '#000',
-                                  height: 40,
-                                  display: 'flex',
-                                  alignItems: 'center'
-                                }}>
-                                  ₵{total.toFixed(2)}
+                    {/* Show different fields based on pricing method */}
+                    <Form.Item shouldUpdate={(prevValues, currentValues) => {
+                      const prevItems = prevValues.items || [];
+                      const currentItems = currentValues.items || [];
+                      const prevItem = prevItems[name];
+                      const currentItem = currentItems[name];
+                      return prevItem?.pricingMethod !== currentItem?.pricingMethod ||
+                             prevItem?.itemHeight !== currentItem?.itemHeight ||
+                             prevItem?.itemWidth !== currentItem?.itemWidth ||
+                             prevItem?.itemUnit !== currentItem?.itemUnit ||
+                             prevItem?.pricePerSquareFoot !== currentItem?.pricePerSquareFoot;
+                    }}>
+                      {({ getFieldValue }) => {
+                        const items = getFieldValue('items') || [];
+                        const currentItem = items[name] || {};
+                        const template = selectedTemplates[name];
+                        const isSquareFootPricing = currentItem.pricingMethod === 'square_foot' || 
+                                                   (template && (template.pricingMethod === 'square_foot' || 
+                                                   ['SAV (Self-Adhesive Vinyl)', 'Banner', 'One Way Vision'].includes(template.materialType)));
+                        
+                        if (isSquareFootPricing) {
+                          // Square foot pricing - show height, width, unit inputs
+                          const height = parseFloat(currentItem.itemHeight || 0);
+                          const width = parseFloat(currentItem.itemWidth || 0);
+                          const unit = currentItem.itemUnit || 'feet';
+                          const pricePerSqft = parseFloat(currentItem.pricePerSquareFoot || template?.pricePerSquareFoot || 0);
+                          
+                          let calculatedPrice = 0;
+                          if (height && width && pricePerSqft) {
+                            if (unit === 'feet') {
+                              calculatedPrice = height * width * pricePerSqft;
+                            } else if (unit === 'inches') {
+                              calculatedPrice = (height * width * pricePerSqft) / 144;
+                            }
+                          }
+                          
+                          return (
+                            <>
+                              <Row gutter={16}>
+                                <Col span={6}>
+                                  <Form.Item
+                                    {...restField}
+                                    name={[name, 'itemHeight']}
+                                    label="Height"
+                                    rules={[{ required: true, message: 'Required' }]}
+                                  >
+                                    <InputNumber
+                                      style={{ width: '100%' }}
+                                      placeholder="Enter height"
+                                      min={0}
+                                      precision={2}
+                                      size="large"
+                                      onChange={() => {
+                                        // Recalculate price when dimensions change
+                                        const items = form.getFieldValue('items') || [];
+                                        const item = items[name] || {};
+                                        const h = parseFloat(item.itemHeight || 0);
+                                        const w = parseFloat(item.itemWidth || 0);
+                                        const u = item.itemUnit || 'feet';
+                                        const psf = parseFloat(item.pricePerSquareFoot || template?.pricePerSquareFoot || 0);
+                                        
+                                        let price = 0;
+                                        if (h && w && psf) {
+                                          price = u === 'feet' ? h * w * psf : (h * w * psf) / 144;
+                                        }
+                                        
+                                        const updatedItems = [...items];
+                                        updatedItems[name] = { ...item, unitPrice: price };
+                                        form.setFieldsValue({ items: updatedItems });
+                                      }}
+                                    />
+                                  </Form.Item>
+                                </Col>
+                                <Col span={6}>
+                                  <Form.Item
+                                    {...restField}
+                                    name={[name, 'itemWidth']}
+                                    label="Width/Length"
+                                    rules={[{ required: true, message: 'Required' }]}
+                                  >
+                                    <InputNumber
+                                      style={{ width: '100%' }}
+                                      placeholder="Enter width"
+                                      min={0}
+                                      precision={2}
+                                      size="large"
+                                      onChange={() => {
+                                        const items = form.getFieldValue('items') || [];
+                                        const item = items[name] || {};
+                                        const h = parseFloat(item.itemHeight || 0);
+                                        const w = parseFloat(item.itemWidth || 0);
+                                        const u = item.itemUnit || 'feet';
+                                        const psf = parseFloat(item.pricePerSquareFoot || template?.pricePerSquareFoot || 0);
+                                        
+                                        let price = 0;
+                                        if (h && w && psf) {
+                                          price = u === 'feet' ? h * w * psf : (h * w * psf) / 144;
+                                        }
+                                        
+                                        const updatedItems = [...items];
+                                        updatedItems[name] = { ...item, unitPrice: price };
+                                        form.setFieldsValue({ items: updatedItems });
+                                      }}
+                                    />
+                                  </Form.Item>
+                                </Col>
+                                <Col span={6}>
+                                  <Form.Item
+                                    {...restField}
+                                    name={[name, 'itemUnit']}
+                                    label="Unit"
+                                    rules={[{ required: true, message: 'Required' }]}
+                                    initialValue="feet"
+                                  >
+                                    <Select 
+                                      placeholder="Select unit" 
+                                      size="large"
+                                      onChange={() => {
+                                        const items = form.getFieldValue('items') || [];
+                                        const item = items[name] || {};
+                                        const h = parseFloat(item.itemHeight || 0);
+                                        const w = parseFloat(item.itemWidth || 0);
+                                        const u = item.itemUnit || 'feet';
+                                        const psf = parseFloat(item.pricePerSquareFoot || template?.pricePerSquareFoot || 0);
+                                        
+                                        let price = 0;
+                                        if (h && w && psf) {
+                                          price = u === 'feet' ? h * w * psf : (h * w * psf) / 144;
+                                        }
+                                        
+                                        const updatedItems = [...items];
+                                        updatedItems[name] = { ...item, unitPrice: price };
+                                        form.setFieldsValue({ items: updatedItems });
+                                      }}
+                                    >
+                                      <Option value="feet">Feet</Option>
+                                      <Option value="inches">Inches</Option>
+                                    </Select>
+                                  </Form.Item>
+                                </Col>
+                                <Col span={6}>
+                                  <Form.Item label="Calculated Price">
+                                    <div style={{ 
+                                      padding: '8px 11px', 
+                                      background: '#f0f9ff', 
+                                      border: '1px solid #91d5ff',
+                                      borderRadius: 4,
+                                      fontSize: 14,
+                                      fontWeight: 600,
+                                      color: '#1890ff',
+                                      height: 40,
+                                      display: 'flex',
+                                      alignItems: 'center'
+                                    }}>
+                                      ₵{calculatedPrice.toFixed(2)}
+                                    </div>
+                                  </Form.Item>
+                                </Col>
+                              </Row>
+                              {pricePerSqft > 0 && (
+                                <div style={{ marginTop: 8, fontSize: 12, color: '#666' }}>
+                                  Price per sqft: ₵{pricePerSqft.toFixed(2)} | 
+                                  {height && width && unit && (
+                                    <span> {height}{unit === 'feet' ? 'ft' : 'in'} × {width}{unit === 'feet' ? 'ft' : 'in'}{unit === 'inches' ? ' ÷ 144' : ''} = ₵{calculatedPrice.toFixed(2)}</span>
+                                  )}
                                 </div>
+                              )}
+                              {/* Hidden field to store calculated unitPrice */}
+                              <Form.Item {...restField} name={[name, 'unitPrice']} hidden>
+                                <InputNumber value={calculatedPrice} />
                               </Form.Item>
-                            );
-                          }}
-                        </Form.Item>
-                      </Col>
-                    </Row>
+                              <Form.Item {...restField} name={[name, 'quantity']} hidden initialValue={1}>
+                                <InputNumber value={1} />
+                              </Form.Item>
+                              <Form.Item {...restField} name={[name, 'pricingMethod']} hidden initialValue="square_foot">
+                                <Input value="square_foot" />
+                              </Form.Item>
+                              <Form.Item {...restField} name={[name, 'pricePerSquareFoot']} hidden>
+                                <InputNumber value={pricePerSqft} />
+                              </Form.Item>
+                            </>
+                          );
+                        } else {
+                          // Standard unit-based pricing
+                          return (
+                            <Row gutter={16}>
+                              <Col span={8}>
+                                <Form.Item
+                                  {...restField}
+                                  name={[name, 'quantity']}
+                                  label="Quantity"
+                                  rules={[{ required: true, message: 'Required' }]}
+                                  initialValue={1}
+                                >
+                                  <InputNumber
+                                    style={{ width: '100%' }}
+                                    placeholder="1"
+                                    min={1}
+                                    size="large"
+                                    onChange={(value) => handleQuantityChange(name, value)}
+                                  />
+                                </Form.Item>
+                              </Col>
+                              <Col span={8}>
+                                <Form.Item
+                                  {...restField}
+                                  name={[name, 'unitPrice']}
+                                  label="Unit Price"
+                                  rules={[{ required: true, message: 'Required' }]}
+                                >
+                                  <InputNumber
+                                    style={{ width: '100%' }}
+                                    placeholder="0.00"
+                                    prefix="₵"
+                                    min={0}
+                                    precision={2}
+                                    size="large"
+                                  />
+                                </Form.Item>
+                              </Col>
+                              <Col span={8}>
+                                <Form.Item shouldUpdate noStyle>
+                                  {() => {
+                                    const items = form.getFieldValue('items') || [];
+                                    const currentItem = items[name] || {};
+                                    const qty = parseFloat(currentItem.quantity || 1);
+                                    const price = parseFloat(currentItem.unitPrice || 0);
+                                    const discountAmount = parseFloat(currentItem.discountAmount || 0);
+                                    const subtotal = qty * price;
+                                    const total = subtotal - discountAmount;
+                                    
+                                    return (
+                                      <Form.Item label="Total">
+                                        <div style={{ 
+                                          padding: '8px 11px', 
+                                          background: '#fff', 
+                                          border: '1px solid #d9d9d9',
+                                          borderRadius: 4,
+                                          fontSize: 14,
+                                          fontWeight: 600,
+                                          color: '#000',
+                                          height: 40,
+                                          display: 'flex',
+                                          alignItems: 'center'
+                                        }}>
+                                          ₵{total.toFixed(2)}
+                                        </div>
+                                      </Form.Item>
+                                    );
+                                  }}
+                                </Form.Item>
+                              </Col>
+                            </Row>
+                          );
+                        }
+                      }}
+                    </Form.Item>
 
                     {/* Discount and Total Breakdown */}
                     <Form.Item shouldUpdate noStyle>

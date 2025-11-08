@@ -96,26 +96,40 @@ const Pricing = () => {
 
   const handleSubmit = async (values) => {
     try {
-      // Calculate custom price if custom size is selected
-      if (values.materialSize === 'Custom' && values.customHeight && values.customWidth && values.customUnit && values.pricePerSquareFoot) {
-        let calculatedPrice = 0;
-        if (values.customUnit === 'feet') {
-          calculatedPrice = values.customHeight * values.customWidth * values.pricePerSquareFoot;
-        } else if (values.customUnit === 'inches') {
-          calculatedPrice = (values.customHeight * values.customWidth * values.pricePerSquareFoot) / 144;
-        }
-        // Store calculated price in basePrice or a custom field
-        if (!values.basePrice || values.materialSize === 'Custom') {
-          values.basePrice = calculatedPrice;
+      // Clean up custom dimension fields (these are only used in job creation, not template)
+      values.customHeight = undefined;
+      values.customWidth = undefined;
+      values.customUnit = undefined;
+      
+      // For Design Services, set default values for hidden fields
+      if (values.category === 'Design Services') {
+        values.pricingMethod = 'unit';
+        values.materialSize = 'N/A';
+        values.basePrice = values.basePrice || 0;
+        values.setupFee = values.setupFee || 0;
+        values.pricePerUnit = values.pricePerUnit || 0;
+        values.pricePerSquareFoot = 0;
+        values.minimumQuantity = 1;
+        values.maximumQuantity = undefined;
+        if (!values.colorType) {
+          values.colorType = 'color';
         }
       }
       
-      // Clean up custom fields if not using custom size
-      if (values.materialSize !== 'Custom') {
-        values.customHeight = undefined;
-        values.customWidth = undefined;
-        values.customUnit = undefined;
-        values.pricePerSquareFoot = undefined;
+      // For square-foot pricing materials, set default values for hidden fields
+      const isSquareFootPricing = values.pricingMethod === 'square_foot' || 
+                                  ['SAV (Self-Adhesive Vinyl)', 'Banner', 'One Way Vision'].includes(values.materialType);
+      
+      if (isSquareFootPricing && values.category !== 'Design Services') {
+        values.pricingMethod = 'square_foot';
+        values.basePrice = values.basePrice || 0;
+        values.setupFee = values.setupFee || 0;
+        values.pricePerUnit = 0;
+        values.minimumQuantity = 1;
+        values.maximumQuantity = undefined;
+        if (!values.colorType) {
+          values.colorType = 'color';
+        }
       }
       
       if (editingTemplate) {
@@ -291,6 +305,12 @@ const Pricing = () => {
         onOk={() => form.submit()}
         width={1000}
         okText={editingTemplate ? 'Update' : 'Create'}
+        style={{ top: 20 }}
+        bodyStyle={{
+          maxHeight: 'calc(100vh - 200px)',
+          overflowY: 'auto',
+          padding: '24px'
+        }}
       >
         <Form
           form={form}
@@ -323,100 +343,158 @@ const Pricing = () => {
             </Col>
           </Row>
 
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item name="jobType" label="Job Type">
-                <Input placeholder="e.g., Brochure, Flyer" size="large" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="materialType" label="Material Type">
-                <Select placeholder="Select material type" size="large" allowClear showSearch>
-                  {materialTypes.map(type => (
-                    <Option key={type} value={type}>{type}</Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="materialSize" label="Material Size">
-                <Select 
-                  placeholder="Select material size" 
-                  size="large" 
-                  allowClear
-                  onChange={(value) => {
-                    if (value !== 'Custom') {
-                      form.setFieldsValue({
-                        customHeight: undefined,
-                        customWidth: undefined,
-                        customUnit: undefined,
-                        pricePerSquareFoot: undefined
-                      });
-                    }
-                  }}
-                >
-                  {materialSizes.map(size => (
-                    <Option key={size} value={size}>{size}</Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-
-          {/* Custom Size Fields - Shown when Custom is selected */}
-          <Form.Item shouldUpdate={(prevValues, currentValues) => prevValues.materialSize !== currentValues.materialSize}>
+          {/* Show different fields based on category */}
+          <Form.Item shouldUpdate={(prevValues, currentValues) => prevValues.category !== currentValues.category}>
             {({ getFieldValue }) => {
-              const materialSize = getFieldValue('materialSize');
-              if (materialSize === 'Custom') {
+              const category = getFieldValue('category');
+              const isDesignService = category === 'Design Services';
+              
+              if (isDesignService) {
+                // For Design Services: Show design type and standard/premium
                 return (
-                  <Row gutter={16} style={{ marginBottom: 16 }}>
-                    <Col span={6}>
-                      <Form.Item
-                        name="customHeight"
-                        label="Height"
-                        rules={[{ required: true, message: 'Please enter height' }]}
+                  <Row gutter={16}>
+                    <Col span={12}>
+                      <Form.Item 
+                        name="jobType" 
+                        label="Design Type"
+                        rules={[{ required: true, message: 'Please select design type' }]}
                       >
-                        <InputNumber
-                          style={{ width: '100%' }}
-                          placeholder="Enter height"
-                          min={0}
-                          precision={2}
-                          size="large"
-                        />
-                      </Form.Item>
-                    </Col>
-                    <Col span={6}>
-                      <Form.Item
-                        name="customWidth"
-                        label="Width/Length"
-                        rules={[{ required: true, message: 'Please enter width' }]}
-                      >
-                        <InputNumber
-                          style={{ width: '100%' }}
-                          placeholder="Enter width"
-                          min={0}
-                          precision={2}
-                          size="large"
-                        />
-                      </Form.Item>
-                    </Col>
-                    <Col span={6}>
-                      <Form.Item
-                        name="customUnit"
-                        label="Unit"
-                        rules={[{ required: true, message: 'Please select unit' }]}
-                      >
-                        <Select placeholder="Select unit" size="large">
-                          <Option value="feet">Feet</Option>
-                          <Option value="inches">Inches</Option>
+                        <Select placeholder="Select design type" size="large" allowClear showSearch>
+                          <Option value="Logo Design">Logo Design</Option>
+                          <Option value="Label Design">Label Design</Option>
+                          <Option value="Flyer Design">Flyer Design</Option>
+                          <Option value="Brochure Design">Brochure Design</Option>
+                          <Option value="Business Card Design">Business Card Design</Option>
+                          <Option value="Poster Design">Poster Design</Option>
+                          <Option value="Banner Design">Banner Design</Option>
+                          <Option value="Package Design">Package Design</Option>
+                          <Option value="Brand Identity Design">Brand Identity Design</Option>
+                          <Option value="Social Media Design">Social Media Design</Option>
+                          <Option value="Website Design">Website Design</Option>
+                          <Option value="Other Design">Other Design</Option>
                         </Select>
                       </Form.Item>
                     </Col>
+                    <Col span={12}>
+                      <Form.Item 
+                        name="materialType" 
+                        label="Service Type"
+                        rules={[{ required: true, message: 'Please select service type' }]}
+                      >
+                        <Select placeholder="Select service type" size="large" allowClear>
+                          <Option value="Standard">Standard</Option>
+                          <Option value="Premium">Premium</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    {/* Hidden fields for design services */}
+                    <Form.Item name="materialSize" hidden initialValue="N/A">
+                      <Input value="N/A" />
+                    </Form.Item>
+                    <Form.Item name="pricingMethod" hidden initialValue="unit">
+                      <Input value="unit" />
+                    </Form.Item>
+                    <Form.Item name="colorType" hidden initialValue="color">
+                      <Select value="color" />
+                    </Form.Item>
+                    <Form.Item name="basePrice" hidden initialValue={0}>
+                      <InputNumber value={0} />
+                    </Form.Item>
+                    <Form.Item name="setupFee" hidden initialValue={0}>
+                      <InputNumber value={0} />
+                    </Form.Item>
+                    <Form.Item name="pricePerUnit" hidden>
+                      <InputNumber />
+                    </Form.Item>
+                    <Form.Item name="pricePerSquareFoot" hidden>
+                      <InputNumber />
+                    </Form.Item>
+                    <Form.Item name="minimumQuantity" hidden initialValue={1}>
+                      <InputNumber value={1} />
+                    </Form.Item>
+                    <Form.Item name="maximumQuantity" hidden>
+                      <InputNumber />
+                    </Form.Item>
+                  </Row>
+                );
+              } else {
+                // For other categories: Show standard fields
+                return (
+                  <Row gutter={16}>
+                    <Col span={8}>
+                      <Form.Item name="jobType" label="Job Type">
+                        <Input placeholder="e.g., Brochure, Flyer" size="large" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item 
+                        name="materialType" 
+                        label="Material Type"
+                      >
+                        <Select 
+                          placeholder="Select material type" 
+                          size="large" 
+                          allowClear 
+                          showSearch
+                          onChange={(value) => {
+                            // Auto-set pricing method for SAV, Banner, One Way Vision
+                            if (['SAV (Self-Adhesive Vinyl)', 'Banner', 'One Way Vision'].includes(value)) {
+                              form.setFieldsValue({ pricingMethod: 'square_foot' });
+                            } else if (value) {
+                              // For other materials, default to unit pricing
+                              const currentPricingMethod = form.getFieldValue('pricingMethod');
+                              if (!currentPricingMethod || currentPricingMethod === 'square_foot') {
+                                form.setFieldsValue({ pricingMethod: 'unit' });
+                              }
+                            }
+                          }}
+                        >
+                          {materialTypes.map(type => (
+                            <Option key={type} value={type}>{type}</Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="materialSize" label="Material Size">
+                        <Select 
+                          placeholder="Select material size" 
+                          size="large" 
+                          allowClear
+                        >
+                          {materialSizes.map(size => (
+                            <Option key={size} value={size}>{size}</Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                );
+              }
+            }}
+          </Form.Item>
+
+
+          {/* Show different fields based on pricing method and category */}
+          <Form.Item shouldUpdate={(prevValues, currentValues) => 
+            prevValues.pricingMethod !== currentValues.pricingMethod ||
+            prevValues.materialType !== currentValues.materialType ||
+            prevValues.category !== currentValues.category
+          }>
+            {({ getFieldValue }) => {
+              const pricingMethod = getFieldValue('pricingMethod');
+              const materialType = getFieldValue('materialType');
+              const category = getFieldValue('category');
+              
+              // Skip pricing fields for Design Services (they only need basePrice/pricePerUnit)
+              if (category === 'Design Services') {
+                return (
+                  <Row gutter={16}>
                     <Col span={6}>
                       <Form.Item
-                        name="pricePerSquareFoot"
-                        label="Price per Square Foot"
-                        rules={[{ required: true, message: 'Please enter price per sqft' }]}
+                        name="basePrice"
+                        label="Price"
+                        rules={[{ required: true, message: 'Required' }]}
                       >
                         <InputNumber
                           style={{ width: '100%' }}
@@ -428,141 +506,231 @@ const Pricing = () => {
                         />
                       </Form.Item>
                     </Col>
+                    {/* Hidden fields for design services */}
+                    <Form.Item name="pricingMethod" hidden initialValue="unit">
+                      <Input value="unit" />
+                    </Form.Item>
+                    <Form.Item name="setupFee" hidden initialValue={0}>
+                      <InputNumber value={0} />
+                    </Form.Item>
+                    <Form.Item name="pricePerUnit" hidden>
+                      <InputNumber value={0} />
+                    </Form.Item>
+                    <Form.Item name="pricePerSquareFoot" hidden>
+                      <InputNumber value={0} />
+                    </Form.Item>
+                    <Form.Item name="colorType" hidden initialValue="color">
+                      <Select value="color" />
+                    </Form.Item>
                   </Row>
                 );
               }
-              return null;
+              
+              // Auto-detect square-foot pricing for SAV, Banner, One Way Vision
+              const isSquareFootPricing = pricingMethod === 'square_foot' || 
+                                        ['SAV (Self-Adhesive Vinyl)', 'Banner', 'One Way Vision'].includes(materialType);
+              
+              if (isSquareFootPricing) {
+                // For square-foot pricing: Only show Price Per Square Foot (no other pricing fields)
+                return (
+                  <Row gutter={16}>
+                    <Col span={6}>
+                      <Form.Item 
+                        name="pricePerSquareFoot" 
+                        label="Price Per Square Foot"
+                        rules={[{ required: true, message: 'Required for square foot pricing' }]}
+                      >
+                        <InputNumber
+                          style={{ width: '100%' }}
+                          placeholder="0.00"
+                          prefix="₵"
+                          min={0}
+                          precision={2}
+                          size="large"
+                        />
+                      </Form.Item>
+                    </Col>
+                    {/* Hidden fields for square-foot pricing */}
+                    <Form.Item name="pricingMethod" hidden initialValue="square_foot">
+                      <Input value="square_foot" />
+                    </Form.Item>
+                    <Form.Item name="basePrice" hidden initialValue={0}>
+                      <InputNumber value={0} />
+                    </Form.Item>
+                    <Form.Item name="setupFee" hidden initialValue={0}>
+                      <InputNumber value={0} />
+                    </Form.Item>
+                    <Form.Item name="pricePerUnit" hidden>
+                      <InputNumber value={0} />
+                    </Form.Item>
+                    <Form.Item name="colorType" hidden>
+                      <Select value="color" />
+                    </Form.Item>
+                    <Form.Item name="minimumQuantity" hidden initialValue={1}>
+                      <InputNumber value={1} />
+                    </Form.Item>
+                    <Form.Item name="maximumQuantity" hidden>
+                      <InputNumber />
+                    </Form.Item>
+                  </Row>
+                );
+              } else {
+                // For unit-based pricing: Show all standard fields
+                return (
+                  <>
+                    <Row gutter={16}>
+                      <Col span={6}>
+                        <Form.Item
+                          name="pricingMethod"
+                          label="Pricing Method"
+                          initialValue="unit"
+                        >
+                          <Select placeholder="Select pricing method" size="large">
+                            <Option value="unit">By Unit (Quantity × Price)</Option>
+                            <Option value="square_foot">By Square Foot (Size × Price/Sqft)</Option>
+                          </Select>
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        <Form.Item
+                          name="colorType"
+                          label="Color Type"
+                        >
+                          <Select placeholder="Select color type" size="large">
+                            <Option value="black_white">Black & White</Option>
+                            <Option value="color">Color</Option>
+                            <Option value="spot_color">Spot Color</Option>
+                          </Select>
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        <Form.Item
+                          name="basePrice"
+                          label="Base Price"
+                          rules={[{ required: true, message: 'Required' }]}
+                        >
+                          <InputNumber
+                            style={{ width: '100%' }}
+                            placeholder="0.00"
+                            prefix="₵"
+                            min={0}
+                            precision={2}
+                            size="large"
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        <Form.Item name="setupFee" label="Setup Fee">
+                          <InputNumber
+                            style={{ width: '100%' }}
+                            placeholder="0.00"
+                            prefix="₵"
+                            min={0}
+                            precision={2}
+                            size="large"
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                    <Row gutter={16}>
+                      <Col span={6}>
+                        <Form.Item name="pricePerUnit" label="Price Per Unit">
+                          <InputNumber
+                            style={{ width: '100%' }}
+                            placeholder="0.00"
+                            prefix="₵"
+                            min={0}
+                            precision={2}
+                            size="large"
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
+                  </>
+                );
+              }
             }}
           </Form.Item>
 
-          {/* Calculated Price Display for Custom Size */}
+          {/* Show quantity fields based on category and pricing method */}
           <Form.Item shouldUpdate={(prevValues, currentValues) => 
-            prevValues.materialSize !== currentValues.materialSize ||
-            prevValues.customHeight !== currentValues.customHeight ||
-            prevValues.customWidth !== currentValues.customWidth ||
-            prevValues.customUnit !== currentValues.customUnit ||
-            prevValues.pricePerSquareFoot !== currentValues.pricePerSquareFoot
+            prevValues.pricingMethod !== currentValues.pricingMethod ||
+            prevValues.materialType !== currentValues.materialType ||
+            prevValues.category !== currentValues.category
           }>
             {({ getFieldValue }) => {
-              const materialSize = getFieldValue('materialSize');
-              const height = getFieldValue('customHeight');
-              const width = getFieldValue('customWidth');
-              const unit = getFieldValue('customUnit');
-              const pricePerSqft = getFieldValue('pricePerSquareFoot');
+              const pricingMethod = getFieldValue('pricingMethod');
+              const materialType = getFieldValue('materialType');
+              const category = getFieldValue('category');
               
-              if (materialSize === 'Custom' && height && width && unit && pricePerSqft) {
-                let calculatedPrice = 0;
-                if (unit === 'feet') {
-                  calculatedPrice = height * width * pricePerSqft;
-                } else if (unit === 'inches') {
-                  calculatedPrice = (height * width * pricePerSqft) / 144;
-                }
-                
+              // Skip quantity fields for Design Services
+              if (category === 'Design Services') {
                 return (
-                  <Row gutter={16} style={{ marginBottom: 16 }}>
-                    <Col span={24}>
-                      <Card size="small" style={{ background: '#f0f9ff', border: '1px solid #91d5ff' }}>
-                        <Space>
-                          <strong>Calculated Price:</strong>
-                          <span style={{ fontSize: '18px', color: '#1890ff', fontWeight: 'bold' }}>
-                            ₵{calculatedPrice.toFixed(2)}
-                          </span>
-                          <span style={{ color: '#666', fontSize: '12px' }}>
-                            ({height} {unit === 'feet' ? 'ft' : 'in'} × {width} {unit === 'feet' ? 'ft' : 'in'} × ₵{pricePerSqft}/sqft
-                            {unit === 'inches' ? ' ÷ 144' : ''})
-                          </span>
-                        </Space>
-                      </Card>
+                  <Row gutter={16}>
+                    <Col span={8}>
+                      <Form.Item name="isActive" label="Status" valuePropName="checked">
+                        <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
+                      </Form.Item>
+                    </Col>
+                    {/* Hidden quantity fields */}
+                    <Form.Item name="minimumQuantity" hidden initialValue={1}>
+                      <InputNumber value={1} />
+                    </Form.Item>
+                    <Form.Item name="maximumQuantity" hidden>
+                      <InputNumber />
+                    </Form.Item>
+                  </Row>
+                );
+              }
+              
+              const isSquareFootPricing = pricingMethod === 'square_foot' || 
+                                        ['SAV (Self-Adhesive Vinyl)', 'Banner', 'One Way Vision'].includes(materialType);
+              
+              if (!isSquareFootPricing) {
+                // Show quantity fields for unit-based pricing
+                return (
+                  <Row gutter={16}>
+                    <Col span={8}>
+                      <Form.Item name="minimumQuantity" label="Min Quantity">
+                        <InputNumber
+                          style={{ width: '100%' }}
+                          placeholder="1"
+                          min={1}
+                          size="large"
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="maximumQuantity" label="Max Quantity">
+                        <InputNumber
+                          style={{ width: '100%' }}
+                          placeholder="Optional"
+                          min={1}
+                          size="large"
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="isActive" label="Status" valuePropName="checked">
+                        <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                );
+              } else {
+                // For square-foot pricing: Only show status
+                return (
+                  <Row gutter={16}>
+                    <Col span={8}>
+                      <Form.Item name="isActive" label="Status" valuePropName="checked">
+                        <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
+                      </Form.Item>
                     </Col>
                   </Row>
                 );
               }
-              return null;
             }}
           </Form.Item>
-
-          <Row gutter={16}>
-            <Col span={6}>
-              <Form.Item
-                name="colorType"
-                label="Color Type"
-              >
-                <Select placeholder="Select color type" size="large">
-                  <Option value="black_white">Black & White</Option>
-                  <Option value="color">Color</Option>
-                  <Option value="spot_color">Spot Color</Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item
-                name="basePrice"
-                label="Base Price"
-                rules={[{ required: true, message: 'Required' }]}
-              >
-                <InputNumber
-                  style={{ width: '100%' }}
-                  placeholder="0.00"
-                  prefix="₵"
-                  min={0}
-                  precision={2}
-                  size="large"
-                />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item name="pricePerUnit" label="Price Per Unit">
-                <InputNumber
-                  style={{ width: '100%' }}
-                  placeholder="0.00"
-                  prefix="₵"
-                  min={0}
-                  precision={2}
-                  size="large"
-                />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item name="setupFee" label="Setup Fee">
-                <InputNumber
-                  style={{ width: '100%' }}
-                  placeholder="0.00"
-                  prefix="₵"
-                  min={0}
-                  precision={2}
-                  size="large"
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item name="minimumQuantity" label="Min Quantity">
-                <InputNumber
-                  style={{ width: '100%' }}
-                  placeholder="1"
-                  min={1}
-                  size="large"
-                />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="maximumQuantity" label="Max Quantity">
-                <InputNumber
-                  style={{ width: '100%' }}
-                  placeholder="Optional"
-                  min={1}
-                  size="large"
-                />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="isActive" label="Status" valuePropName="checked">
-                <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
-              </Form.Item>
-            </Col>
-          </Row>
 
           <Row gutter={16}>
             <Col span={24}>
