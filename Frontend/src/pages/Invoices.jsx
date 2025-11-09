@@ -131,6 +131,27 @@ const Invoices = () => {
     setPaymentModalVisible(true);
   };
 
+  const handleMarkAsPaid = async (invoice) => {
+    try {
+      const response = await invoiceService.markAsPaid(invoice.id);
+      const updatedInvoice = response?.data;
+
+      if (updatedInvoice && viewingInvoice?.id === updatedInvoice.id) {
+        setViewingInvoice(updatedInvoice);
+      }
+
+      message.success(response?.message || 'Invoice marked as paid');
+      setRefreshTrigger(prev => prev + 1);
+    } catch (error) {
+      const errorMessage =
+        error?.response?.data?.message ||
+        error?.error ||
+        error?.message ||
+        'Failed to mark invoice as paid';
+      message.error(errorMessage);
+    }
+  };
+
   const handlePaymentSubmit = async (values) => {
     try {
       await invoiceService.recordPayment(viewingInvoice.id, {
@@ -255,6 +276,10 @@ const Invoices = () => {
               onClick: () => handleRecordPayment(record),
               type: 'primary'
             },
+            parseFloat(record.balance || 0) > 0 && record.status !== 'cancelled' && isManager && {
+              label: 'Mark as Paid',
+              onClick: () => handleMarkAsPaid(record)
+            },
             record.status === 'draft' && isManager && {
               label: 'Send',
               onClick: () => handleSendInvoice(record.id)
@@ -358,6 +383,14 @@ const Invoices = () => {
         title="Invoice Details"
         width={900}
         onPrint={viewingInvoice ? () => handlePrint(viewingInvoice) : null}
+        onMarkPaid={
+          isManager &&
+          viewingInvoice &&
+          viewingInvoice.status !== 'paid' &&
+          viewingInvoice.status !== 'cancelled'
+            ? () => handleMarkAsPaid(viewingInvoice)
+            : null
+        }
         onCancel={isManager && viewingInvoice && viewingInvoice.status !== 'paid' && viewingInvoice.status !== 'cancelled' ? () => {
           handleCancelInvoice(viewingInvoice.id);
         } : null}

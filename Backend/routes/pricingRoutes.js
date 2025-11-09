@@ -17,12 +17,12 @@ router.post('/calculate', calculatePrice);
 
 router.route('/')
   .get(getPricingTemplates)
-  .post(authorize('admin', 'manager'), createPricingTemplate);
+  .post(authorize('admin', 'manager', 'staff'), createPricingTemplate);
 
 router.route('/:id')
   .get(getPricingTemplate)
-  .put(authorize('admin', 'manager'), updatePricingTemplate)
-  .delete(authorize('admin'), deletePricingTemplate);
+  .put(authorize('admin', 'manager', 'staff'), updatePricingTemplate)
+  .delete(authorize('admin', 'manager', 'staff'), deletePricingTemplate);
 
 module.exports = router;
 

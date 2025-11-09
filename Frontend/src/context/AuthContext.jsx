@@ -55,7 +55,7 @@ export const AuthProvider = ({ children }) => {
     loading,
     isAuthenticated: !!user,
     isAdmin: user?.role === 'admin',
-    isManager: user?.role === 'manager' || user?.role === 'admin',
+    isManager: ['admin', 'manager', 'staff'].includes(user?.role),
     isFirstLogin: user?.isFirstLogin === true,
   };
 

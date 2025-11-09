@@ -19,12 +19,12 @@ router.get('/by-job/:jobId', getExpensesByJob);
 
 router.route('/')
   .get(getExpenses)
-  .post(authorize('admin', 'manager'), createExpense);
+  .post(authorize('admin', 'manager', 'staff'), createExpense);
 
 router.route('/:id')
   .get(getExpense)
-  .put(authorize('admin', 'manager'), updateExpense)
-  .delete(authorize('admin'), deleteExpense);
+  .put(authorize('admin', 'manager', 'staff'), updateExpense)
+  .delete(authorize('admin', 'manager', 'staff'), deleteExpense);
 
 module.exports = router;
 

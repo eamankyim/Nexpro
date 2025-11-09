@@ -1,5 +1,5 @@
 import { Drawer, Descriptions, Button, Space, Popconfirm, Tabs } from 'antd';
-import { EditOutlined, DeleteOutlined, PrinterOutlined } from '@ant-design/icons';
+import { EditOutlined, DeleteOutlined, PrinterOutlined, CheckCircleOutlined } from '@ant-design/icons';
 
 /**
  * Reusable Details Drawer Component
@@ -25,6 +25,7 @@ const DetailsDrawer = ({
   onEdit,
   onDelete,
   onPrint,
+  onMarkPaid,
   showActions = true,
   deleteConfirmText = 'Are you sure you want to delete this item?'
 }) => {
@@ -51,7 +52,7 @@ const DetailsDrawer = ({
       width={width}
       destroyOnClose
       extra={
-        (showActions && (onEdit || onDelete || onPrint)) && (
+        (showActions && (onEdit || onDelete || onPrint || onMarkPaid)) && (
           <Space>
             {onPrint && (
               <Button
@@ -60,6 +61,15 @@ const DetailsDrawer = ({
                 onClick={onPrint}
               >
                 Print
+              </Button>
+            )}
+            {onMarkPaid && (
+              <Button
+                type="primary"
+                icon={<CheckCircleOutlined />}
+                onClick={onMarkPaid}
+              >
+                Mark as Paid
               </Button>
             )}
             {onEdit && (

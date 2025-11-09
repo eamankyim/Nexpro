@@ -6,11 +6,12 @@ const {
   getSalesReport,
   getProfitLossReport
 } = require('../controllers/reportController');
-const { protect } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
 router.use(protect);
+router.use(authorize('admin'));
 
 router.get('/revenue', getRevenueReport);
 router.get('/expenses', getExpenseReport);

@@ -189,22 +189,23 @@ exports.getExpenseStats = async (req, res, next) => {
     const { sequelize } = require('../config/database');
     const { jobId, startDate, endDate } = req.query;
 
-    let whereClause = {};
-    
-    // Add job filter if provided
+    const baseFilters = {};
+
     if (jobId) {
-      whereClause.jobId = jobId;
+      baseFilters.jobId = jobId;
     }
-    
-    // Add date range filter if provided
+
+    const dateFilters = {};
     if (startDate && endDate) {
-      whereClause.expenseDate = {
+      dateFilters.expenseDate = {
         [Op.between]: [new Date(startDate), new Date(endDate)]
       };
     }
 
+    const combinedFilters = { ...baseFilters, ...dateFilters };
+
     const stats = await Expense.findAll({
-      where: whereClause,
+      where: combinedFilters,
       attributes: [
         'category',
         [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
@@ -214,7 +215,28 @@ exports.getExpenseStats = async (req, res, next) => {
     });
 
     // Get total expenses for the period
-    const totalExpenses = await Expense.sum('amount', { where: whereClause }) || 0;
+    const totalExpensesRaw = await Expense.sum('amount', { where: combinedFilters }) || 0;
+    const totalExpenses = Number(parseFloat(totalExpensesRaw).toFixed(2));
+
+    // Get current month expenses
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    const endOfMonth = new Date(startOfMonth);
+    endOfMonth.setMonth(endOfMonth.getMonth() + 1);
+    endOfMonth.setDate(0);
+    endOfMonth.setHours(23, 59, 59, 999);
+
+    const monthlyWhereClause = {
+      ...baseFilters,
+      expenseDate: {
+        [Op.between]: [startOfMonth, endOfMonth]
+      }
+    };
+
+    const thisMonthExpensesRaw = await Expense.sum('amount', { where: monthlyWhereClause }) || 0;
+    const thisMonthExpenses = Number(parseFloat(thisMonthExpensesRaw).toFixed(2));
     
     // Get job-specific expenses if jobId is provided
     let jobExpenses = null;
@@ -232,7 +254,8 @@ exports.getExpenseStats = async (req, res, next) => {
       success: true,
       data: {
         categoryStats: stats,
-        totalExpenses: parseFloat(totalExpenses).toFixed(2),
+        totalExpenses,
+        thisMonthExpenses,
         jobExpenses: jobExpenses
       }
     });

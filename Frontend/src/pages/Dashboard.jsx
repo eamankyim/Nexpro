@@ -14,22 +14,20 @@ import dashboardService from '../services/dashboardService';
 import dayjs from 'dayjs';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
 import isoWeek from 'dayjs/plugin/isoWeek';
+import relativeTime from 'dayjs/plugin/relativeTime';
 
 // Extend dayjs with plugins
 dayjs.extend(weekOfYear);
 dayjs.extend(isoWeek);
+dayjs.extend(relativeTime);
 
 const { RangePicker } = DatePicker;
 
 const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [overview, setOverview] = useState(null);
-  const [dateRange, setDateRange] = useState(() => {
-    const today = dayjs();
-    return [today, today];
-  });
-  const [filteredData, setFilteredData] = useState(null);
-  const [activeFilter, setActiveFilter] = useState('today');
+  const [dateRange, setDateRange] = useState(null);
+  const [activeFilter, setActiveFilter] = useState(null);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   // Handle window resize for responsive behavior
@@ -43,9 +41,8 @@ const Dashboard = () => {
   }, []);
 
   useEffect(() => {
-    // Fetch today's data by default
-    const today = dayjs();
-    fetchDashboardData(today.format('YYYY-MM-DD'), today.format('YYYY-MM-DD'));
+    // Fetch overall data by default
+    fetchDashboardData();
   }, []);
 
   const fetchDashboardData = async (startDate = null, endDate = null) => {
@@ -53,7 +50,6 @@ const Dashboard = () => {
       setLoading(true);
       const response = await dashboardService.getOverview(startDate, endDate);
       setOverview(response.data);
-      setFilteredData(response.data);
     } catch (error) {
       message.error('Failed to load dashboard data');
     } finally {
@@ -70,14 +66,12 @@ const Dashboard = () => {
       fetchDashboardData(startDate, endDate);
     } else {
       // If no date range selected, fetch all data
-      setFilteredData(null);
       fetchDashboardData();
     }
   };
 
   const clearFilters = () => {
     setDateRange(null);
-    setFilteredData(null);
     setActiveFilter(null);
     fetchDashboardData();
   };
@@ -85,16 +79,16 @@ const Dashboard = () => {
   // Quick date filter functions
   const setTodayFilter = () => {
     const today = dayjs();
-    const dateRange = [today, today];
-    setDateRange(dateRange);
+    const range = [today, today];
+    setDateRange(range);
     setActiveFilter('today');
     fetchDashboardData(today.format('YYYY-MM-DD'), today.format('YYYY-MM-DD'));
   };
 
   const setYesterdayFilter = () => {
     const yesterday = dayjs().subtract(1, 'day');
-    const dateRange = [yesterday, yesterday];
-    setDateRange(dateRange);
+    const range = [yesterday, yesterday];
+    setDateRange(range);
     setActiveFilter('yesterday');
     fetchDashboardData(yesterday.format('YYYY-MM-DD'), yesterday.format('YYYY-MM-DD'));
   };
@@ -102,8 +96,8 @@ const Dashboard = () => {
   const setThisWeekFilter = () => {
     const startOfWeek = dayjs().startOf('isoWeek');
     const endOfWeek = dayjs().endOf('isoWeek');
-    const dateRange = [startOfWeek, endOfWeek];
-    setDateRange(dateRange);
+    const range = [startOfWeek, endOfWeek];
+    setDateRange(range);
     setActiveFilter('week');
     fetchDashboardData(startOfWeek.format('YYYY-MM-DD'), endOfWeek.format('YYYY-MM-DD'));
   };
@@ -111,8 +105,8 @@ const Dashboard = () => {
   const setThisMonthFilter = () => {
     const startOfMonth = dayjs().startOf('month');
     const endOfMonth = dayjs().endOf('month');
-    const dateRange = [startOfMonth, endOfMonth];
-    setDateRange(dateRange);
+    const range = [startOfMonth, endOfMonth];
+    setDateRange(range);
     setActiveFilter('month');
     fetchDashboardData(startOfMonth.format('YYYY-MM-DD'), endOfMonth.format('YYYY-MM-DD'));
   };
@@ -121,8 +115,8 @@ const Dashboard = () => {
     const currentQuarter = Math.floor(dayjs().month() / 3);
     const startOfQuarter = dayjs().startOf('year').add(currentQuarter * 3, 'months');
     const endOfQuarter = startOfQuarter.add(2, 'months').endOf('month');
-    const dateRange = [startOfQuarter, endOfQuarter];
-    setDateRange(dateRange);
+    const range = [startOfQuarter, endOfQuarter];
+    setDateRange(range);
     setActiveFilter('quarter');
     fetchDashboardData(startOfQuarter.format('YYYY-MM-DD'), endOfQuarter.format('YYYY-MM-DD'));
   };
@@ -130,8 +124,8 @@ const Dashboard = () => {
   const setThisYearFilter = () => {
     const startOfYear = dayjs().startOf('year');
     const endOfYear = dayjs().endOf('year');
-    const dateRange = [startOfYear, endOfYear];
-    setDateRange(dateRange);
+    const range = [startOfYear, endOfYear];
+    setDateRange(range);
     setActiveFilter('year');
     fetchDashboardData(startOfYear.format('YYYY-MM-DD'), endOfYear.format('YYYY-MM-DD'));
   };
@@ -142,6 +136,61 @@ const Dashboard = () => {
     completed: 'green',
     cancelled: 'red',
     on_hold: 'gray',
+  };
+
+  const getDueDateStatus = (dueDate) => {
+    if (!dueDate) {
+      return {
+        color: 'default',
+        label: 'No due date set',
+        formatted: '—'
+      };
+    }
+
+    const due = dayjs(dueDate);
+    const now = dayjs();
+
+    const formatted = due.format('MMM DD, YYYY');
+
+    if (!due.isValid()) {
+      return {
+        color: 'default',
+        label: 'Invalid due date',
+        formatted: '—'
+      };
+    }
+
+    const diffHours = due.diff(now, 'hour', true);
+
+    if (diffHours < 0) {
+      return {
+        color: 'red',
+        label: `Overdue · was due ${due.fromNow()}`,
+        formatted
+      };
+    }
+
+    if (diffHours <= 24) {
+      return {
+        color: 'red',
+        label: `Due ${due.fromNow()}`,
+        formatted
+      };
+    }
+
+    if (diffHours <= 72) {
+      return {
+        color: 'orange',
+        label: `Upcoming · due ${due.fromNow()}`,
+        formatted
+      };
+    }
+
+    return {
+      color: 'default',
+      label: `Due ${due.fromNow()}`,
+      formatted
+    };
   };
 
   const recentJobsColumns = [
@@ -176,6 +225,24 @@ const Dashboard = () => {
       key: 'createdAt',
       render: (date) => dayjs(date).format('MMM DD, YYYY'),
     },
+    {
+      title: 'Due Date',
+      dataIndex: 'dueDate',
+      key: 'dueDate',
+      render: (dueDate) => {
+        const { color, label, formatted } = getDueDateStatus(dueDate);
+        return (
+          <Space direction="vertical" size={0}>
+            <span>{formatted}</span>
+            {label && (
+              <Tag color={color} style={{ marginTop: 4 }}>
+                {label}
+              </Tag>
+            )}
+          </Space>
+        );
+      }
+    },
   ];
 
   if (loading) {
@@ -187,7 +254,14 @@ const Dashboard = () => {
   }
 
   // Use filtered data if available, otherwise use overview data
-  const displayData = filteredData || overview;
+  const displayData = overview;
+  const isFiltered = Boolean(dateRange && dateRange[0] && dateRange[1]);
+  const thisMonthSummary = displayData?.thisMonth || {};
+  const revenueValue = Number(thisMonthSummary.revenue ?? 0);
+  const expenseValue = Number(thisMonthSummary.expenses ?? 0);
+  const revenueTitle = isFiltered ? 'Selected Revenue' : "This Month's Revenue";
+  const expenseTitle = isFiltered ? 'Selected Expenses' : "This Month's Expenses";
+  const thisMonthRange = thisMonthSummary.range;
 
   return (
     <div>
@@ -196,83 +270,117 @@ const Dashboard = () => {
         <h1 style={{ marginBottom: 16, textAlign: isMobile ? 'center' : 'left' }}>Dashboard</h1>
         
         {/* Quick Date Filter Buttons */}
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: 8, 
-          flexWrap: 'wrap',
-          justifyContent: isMobile ? 'center' : 'flex-start',
-          marginBottom: 16
-        }}>
-          <span style={{ 
-            fontWeight: 500, 
-            color: '#666',
-            fontSize: isMobile ? '14px' : '16px',
-            whiteSpace: 'nowrap'
-          }}>
-            Quick filters:
-          </span>
-          <div style={{ 
-            display: 'flex', 
-            gap: 8, 
+        <div
+          style={{
+            display: 'flex',
             flexWrap: 'wrap',
-            justifyContent: isMobile ? 'center' : 'flex-start'
-          }}>
-            <Tooltip title="Show data for today only">
-              <Button 
-                size={isMobile ? 'middle' : 'small'}
-                onClick={setTodayFilter}
-                type={activeFilter === 'today' ? 'primary' : 'default'}
-              >
-                Today
-              </Button>
-            </Tooltip>
-            <Tooltip title="Show data for yesterday only">
-              <Button 
-                size={isMobile ? 'middle' : 'small'}
-                onClick={setYesterdayFilter}
-                type={activeFilter === 'yesterday' ? 'primary' : 'default'}
-              >
-                Yesterday
-              </Button>
-            </Tooltip>
-            <Tooltip title="Show data for this week (Monday to Sunday)">
-              <Button 
-                size={isMobile ? 'middle' : 'small'}
-                onClick={setThisWeekFilter}
-                type={activeFilter === 'week' ? 'primary' : 'default'}
-              >
-                This Week
-              </Button>
-            </Tooltip>
-            <Tooltip title="Show data for this month">
-              <Button 
-                size={isMobile ? 'middle' : 'small'}
-                onClick={setThisMonthFilter}
-                type={activeFilter === 'month' ? 'primary' : 'default'}
-              >
-                This Month
-              </Button>
-            </Tooltip>
-            <Tooltip title="Show data for this quarter">
-              <Button 
-                size={isMobile ? 'middle' : 'small'}
-                onClick={setThisQuarterFilter}
-                type={activeFilter === 'quarter' ? 'primary' : 'default'}
-              >
-                This Quarter
-              </Button>
-            </Tooltip>
-            <Tooltip title="Show data for this year">
-              <Button 
-                size={isMobile ? 'middle' : 'small'}
-                onClick={setThisYearFilter}
-                type={activeFilter === 'year' ? 'primary' : 'default'}
-              >
-                This Year
-              </Button>
-            </Tooltip>
+            gap: 12,
+            alignItems: isMobile ? 'stretch' : 'center',
+            justifyContent: isMobile ? 'center' : 'space-between',
+            marginBottom: 16,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: isMobile ? 'column' : 'row',
+              gap: 8,
+              alignItems: isMobile ? 'stretch' : 'center',
+            }}
+          >
+            <span
+              style={{
+                fontWeight: 500,
+                color: '#666',
+                fontSize: isMobile ? '14px' : '16px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Quick filters:
+            </span>
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+                justifyContent: isMobile ? 'center' : 'flex-start',
+              }}
+            >
+              <Tooltip title="Show data for today only">
+                <Button
+                  size={isMobile ? 'middle' : 'small'}
+                  onClick={setTodayFilter}
+                  type={activeFilter === 'today' ? 'primary' : 'default'}
+                >
+                  Today
+                </Button>
+              </Tooltip>
+              <Tooltip title="Show data for yesterday only">
+                <Button
+                  size={isMobile ? 'middle' : 'small'}
+                  onClick={setYesterdayFilter}
+                  type={activeFilter === 'yesterday' ? 'primary' : 'default'}
+                >
+                  Yesterday
+                </Button>
+              </Tooltip>
+              <Tooltip title="Show data for this week (Monday to Sunday)">
+                <Button
+                  size={isMobile ? 'middle' : 'small'}
+                  onClick={setThisWeekFilter}
+                  type={activeFilter === 'week' ? 'primary' : 'default'}
+                >
+                  This Week
+                </Button>
+              </Tooltip>
+              <Tooltip title="Show data for this month">
+                <Button
+                  size={isMobile ? 'middle' : 'small'}
+                  onClick={setThisMonthFilter}
+                  type={activeFilter === 'month' ? 'primary' : 'default'}
+                >
+                  This Month
+                </Button>
+              </Tooltip>
+              <Tooltip title="Show data for this quarter">
+                <Button
+                  size={isMobile ? 'middle' : 'small'}
+                  onClick={setThisQuarterFilter}
+                  type={activeFilter === 'quarter' ? 'primary' : 'default'}
+                >
+                  This Quarter
+                </Button>
+              </Tooltip>
+              <Tooltip title="Show data for this year">
+                <Button
+                  size={isMobile ? 'middle' : 'small'}
+                  onClick={setThisYearFilter}
+                  type={activeFilter === 'year' ? 'primary' : 'default'}
+                >
+                  This Year
+                </Button>
+              </Tooltip>
+            </div>
           </div>
+          <Space
+            direction={isMobile ? 'vertical' : 'horizontal'}
+            size={8}
+            style={{
+              width: isMobile ? '100%' : 'auto',
+              justifyContent: 'flex-end',
+            }}
+          >
+            <RangePicker
+              value={dateRange}
+              onChange={handleDateRangeChange}
+              allowClear
+              style={{ width: isMobile ? '100%' : 260 }}
+              format="YYYY-MM-DD"
+            />
+            <Button icon={<FilterOutlined />} onClick={clearFilters}>
+              Clear Filters
+            </Button>
+          </Space>
         </div>
       </div>
 
@@ -280,14 +388,29 @@ const Dashboard = () => {
         <Col xs={24} sm={12} lg={6}>
           <Card>
             <Statistic
-              title={dateRange ? "Revenue" : "Today's Revenue"}
-              value={dateRange ? (displayData?.filteredPeriod?.revenue || 0) : (displayData?.filteredPeriod?.revenue || 0)}
+              title={revenueTitle}
+              value={revenueValue}
               prefix="₵"
               valueStyle={{ color: '#3f8600' }}
+              precision={2}
               suffix={<RiseOutlined />}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
-              All-time: ₵{displayData?.allTime?.revenue || 0}
+              All-time: ₵{Number(displayData?.allTime?.revenue ?? 0).toFixed(2)}
+              {thisMonthRange && (
+                <div>
+                  <Tooltip
+                    title={`Range: ${dayjs(thisMonthRange.start).format('MMM DD, YYYY')} → ${dayjs(
+                      thisMonthRange.end
+                    ).format('MMM DD, YYYY')}`}
+                  >
+                    <span>
+                      Period: {dayjs(thisMonthRange.start).format('MMM DD')} -{' '}
+                      {dayjs(thisMonthRange.end).format('MMM DD')}
+                    </span>
+                  </Tooltip>
+                </div>
+              )}
             </div>
           </Card>
         </Col>
@@ -295,14 +418,29 @@ const Dashboard = () => {
         <Col xs={24} sm={12} lg={6}>
           <Card>
             <Statistic
-              title={dateRange ? "Expenses" : "Today's Expenses"}
-              value={dateRange ? (displayData?.filteredPeriod?.expenses || 0) : (displayData?.filteredPeriod?.expenses || 0)}
+              title={expenseTitle}
+              value={expenseValue}
               prefix="₵"
               valueStyle={{ color: '#cf1322' }}
+              precision={2}
               suffix={<FallOutlined />}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
-              All-time: ₵{displayData?.allTime?.expenses || 0}
+              All-time: ₵{Number(displayData?.allTime?.expenses ?? 0).toFixed(2)}
+              {thisMonthRange && (
+                <div>
+                  <Tooltip
+                    title={`Range: ${dayjs(thisMonthRange.start).format('MMM DD, YYYY')} → ${dayjs(
+                      thisMonthRange.end
+                    ).format('MMM DD, YYYY')}`}
+                  >
+                    <span>
+                      Period: {dayjs(thisMonthRange.start).format('MMM DD')} -{' '}
+                      {dayjs(thisMonthRange.end).format('MMM DD')}
+                    </span>
+                  </Tooltip>
+                </div>
+              )}
             </div>
           </Card>
         </Col>
@@ -368,7 +506,7 @@ const Dashboard = () => {
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col span={24}>
-          <Card title="Recent Jobs">
+          <Card title="Jobs In Progress">
             <Table
               dataSource={displayData?.recentJobs || []}
               columns={recentJobsColumns}

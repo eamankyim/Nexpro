@@ -80,10 +80,10 @@ const Expenses = () => {
         ...filters
       };
       const response = await expenseService.getAll(params);
-      setExpenses(response.data.data);
+      setExpenses(response.data || []);
       setPagination(prev => ({
         ...prev,
-        total: response.data.count
+        total: response.count || 0
       }));
     } catch (error) {
       message.error('Failed to fetch expenses');
@@ -347,7 +347,7 @@ const Expenses = () => {
             <Card>
               <Statistic
                 title="This Month"
-                value={0}
+                value={stats.thisMonthExpenses || 0}
                 prefix="₵"
                 valueStyle={{ color: '#52c41a' }}
                 suffix={<CalendarOutlined />}

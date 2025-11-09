@@ -388,6 +388,100 @@ exports.recordPayment = async (req, res, next) => {
   }
 };
 
+// @desc    Mark invoice as fully paid without recording partial payment details
+// @route   POST /api/invoices/:id/mark-paid
+// @access  Private
+exports.markInvoicePaid = async (req, res, next) => {
+  try {
+    const invoice = await Invoice.findByPk(req.params.id);
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found'
+      });
+    }
+
+    if (invoice.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot mark a cancelled invoice as paid'
+      });
+    }
+
+    if (invoice.status === 'paid') {
+      const hydratedInvoice = await Invoice.findByPk(invoice.id, {
+        include: [
+          {
+            model: Customer,
+            as: 'customer'
+          },
+          {
+            model: Job,
+            as: 'job'
+          }
+        ]
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Invoice is already marked as paid',
+        data: hydratedInvoice
+      });
+    }
+
+    const totalAmount = parseFloat(invoice.totalAmount || 0);
+    const currentPaid = parseFloat(invoice.amountPaid || 0);
+    const outstanding = Math.max(totalAmount - currentPaid, 0);
+    const now = new Date();
+
+    await invoice.update({
+      amountPaid: totalAmount,
+      balance: 0,
+      status: 'paid',
+      paidDate: now
+    });
+
+    if (outstanding > 0) {
+      const Payment = require('../models/Payment');
+      const paymentNumber = `PAY-${Date.now()}`;
+
+      await Payment.create({
+        paymentNumber,
+        type: 'income',
+        customerId: invoice.customerId,
+        jobId: invoice.jobId,
+        amount: outstanding,
+        paymentMethod: 'other',
+        paymentDate: now,
+        status: 'completed',
+        notes: `Invoice ${invoice.invoiceNumber} manually marked as paid`
+      });
+    }
+
+    const updatedInvoice = await Invoice.findByPk(invoice.id, {
+      include: [
+        {
+          model: Customer,
+          as: 'customer'
+        },
+        {
+          model: Job,
+          as: 'job'
+        }
+      ]
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Invoice marked as paid successfully',
+      data: updatedInvoice
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Send invoice to customer
 // @route   POST /api/invoices/:id/send
 // @access  Private

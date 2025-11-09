@@ -42,6 +42,11 @@ const invoiceService = {
     return await api.post(`/invoices/${id}/cancel`);
   },
 
+  // Mark invoice as fully paid
+  markAsPaid: async (id) => {
+    return await api.post(`/invoices/${id}/mark-paid`);
+  },
+
   // Get invoice statistics
   getStats: async () => {
     return await api.get('/invoices/stats/summary');

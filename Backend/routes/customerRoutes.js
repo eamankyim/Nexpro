@@ -18,8 +18,8 @@ router.route('/')
 
 router.route('/:id')
   .get(getCustomer)
-  .put(authorize('admin', 'manager'), updateCustomer)
-  .delete(authorize('admin'), deleteCustomer);
+  .put(authorize('admin', 'manager', 'staff'), updateCustomer)
+  .delete(authorize('admin', 'manager', 'staff'), deleteCustomer);
 
 module.exports = router;
 

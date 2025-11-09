@@ -17,12 +17,12 @@ router.get('/stats/overview', getPaymentStats);
 
 router.route('/')
   .get(getPayments)
-  .post(authorize('admin', 'manager'), createPayment);
+  .post(authorize('admin', 'manager', 'staff'), createPayment);
 
 router.route('/:id')
   .get(getPayment)
-  .put(authorize('admin', 'manager'), updatePayment)
-  .delete(authorize('admin'), deletePayment);
+  .put(authorize('admin', 'manager', 'staff'), updatePayment)
+  .delete(authorize('admin', 'manager', 'staff'), deletePayment);
 
 module.exports = router;
 

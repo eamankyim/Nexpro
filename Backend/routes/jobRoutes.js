@@ -17,12 +17,12 @@ router.get('/stats/overview', getJobStats);
 
 router.route('/')
   .get(getJobs)
-  .post(authorize('admin', 'manager'), createJob);
+  .post(authorize('admin', 'manager', 'staff'), createJob);
 
 router.route('/:id')
   .get(getJob)
   .put(authorize('admin', 'manager', 'staff'), updateJob)
-  .delete(authorize('admin'), deleteJob);
+  .delete(authorize('admin', 'manager', 'staff'), deleteJob);
 
 module.exports = router;
 

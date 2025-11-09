@@ -13,11 +13,11 @@ router.use(protect);
 
 router.route('/')
   .get(getVendorPriceList)
-  .post(authorize('manager', 'admin'), createPriceListItem);
+  .post(authorize('admin', 'manager', 'staff'), createPriceListItem);
 
 router.route('/:id')
-  .put(authorize('manager', 'admin'), updatePriceListItem)
-  .delete(authorize('manager', 'admin'), deletePriceListItem);
+  .put(authorize('admin', 'manager', 'staff'), updatePriceListItem)
+  .delete(authorize('admin', 'manager', 'staff'), deletePriceListItem);
 
 module.exports = router;
 

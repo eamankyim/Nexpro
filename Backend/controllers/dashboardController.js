@@ -1,6 +1,13 @@
 const { sequelize } = require('../config/database');
 const { Job, Payment, Expense, Customer, Vendor } = require('../models');
 const { Op } = require('sequelize');
+const config = require('../config/config');
+
+const logDashboardDebug = (...args) => {
+  if (config.nodeEnv === 'development') {
+    console.log('[DashboardController]', ...args);
+  }
+};
 
 // @desc    Get dashboard overview
 // @route   GET /api/dashboard/overview
@@ -8,21 +15,31 @@ const { Op } = require('sequelize');
 exports.getDashboardOverview = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
+    logDashboardDebug('Received overview request', { startDate, endDate });
     const today = new Date();
     const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    firstDayOfMonth.setHours(0, 0, 0, 0);
     const lastDayOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+    lastDayOfMonth.setHours(23, 59, 59, 999);
 
     // Set date range for filtering
-    let dateFilter = {};
-    let filteredPeriodData = null;
+    let dateFilter = null;
+    let filterStart = null;
+    let filterEnd = null;
+    const hasDateFilter = Boolean(startDate && endDate);
     
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999); // Include the entire end date
+    if (hasDateFilter) {
+      filterStart = new Date(startDate);
+      filterStart.setHours(0, 0, 0, 0);
+      filterEnd = new Date(endDate);
+      filterEnd.setHours(23, 59, 59, 999); // Include the entire end date
       dateFilter = {
-        [Op.between]: [start, end]
+        [Op.between]: [filterStart, filterEnd]
       };
+      logDashboardDebug('Applied date filter', {
+        start: filterStart.toISOString(),
+        end: filterEnd.toISOString()
+      });
     }
 
     // Total customers and vendors
@@ -41,7 +58,7 @@ exports.getDashboardOverview = async (req, res, next) => {
     let filteredInProgressJobs = null;
     let filteredCompletedJobs = null;
     
-    if (Object.keys(dateFilter).length > 0) {
+    if (hasDateFilter) {
       filteredJobs = await Job.count({ where: { createdAt: dateFilter } });
       filteredPendingJobs = await Job.count({ 
         where: { 
@@ -60,6 +77,12 @@ exports.getDashboardOverview = async (req, res, next) => {
           status: 'completed',
           createdAt: dateFilter 
         } 
+      });
+      logDashboardDebug('Filtered job counts', {
+        filteredJobs,
+        filteredPendingJobs,
+        filteredInProgressJobs,
+        filteredCompletedJobs
       });
     }
 
@@ -92,7 +115,7 @@ exports.getDashboardOverview = async (req, res, next) => {
 
     // Filtered revenue (if date filter is applied)
     let filteredRevenue = null;
-    if (Object.keys(dateFilter).length > 0) {
+    if (hasDateFilter) {
       filteredRevenue = await Payment.sum('amount', {
         where: {
           type: 'income',
@@ -100,6 +123,7 @@ exports.getDashboardOverview = async (req, res, next) => {
           paymentDate: dateFilter
         }
       }) || 0;
+      logDashboardDebug('Filtered revenue total', { filteredRevenue });
     }
 
     // Expense statistics
@@ -115,12 +139,13 @@ exports.getDashboardOverview = async (req, res, next) => {
 
     // Filtered expenses (if date filter is applied)
     let filteredExpenses = null;
-    if (Object.keys(dateFilter).length > 0) {
+    if (hasDateFilter) {
       filteredExpenses = await Expense.sum('amount', {
         where: {
           expenseDate: dateFilter
         }
       }) || 0;
+      logDashboardDebug('Filtered expense total', { filteredExpenses });
     }
 
     // Pending payments
@@ -129,17 +154,38 @@ exports.getDashboardOverview = async (req, res, next) => {
     });
 
     // Recent jobs (filtered if date range is provided)
-    const recentJobsWhere = Object.keys(dateFilter).length > 0 ? { createdAt: dateFilter } : {};
+    const recentJobsWhere = hasDateFilter ? { createdAt: dateFilter } : {};
     const recentJobs = await Job.findAll({
-      where: recentJobsWhere,
+      where: {
+        ...recentJobsWhere,
+        status: 'in_progress'
+      },
       limit: 5,
       order: [['createdAt', 'DESC']],
       include: [
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'company'] }
       ]
     });
+    logDashboardDebug('Recent jobs fetched', { count: recentJobs.length });
 
     // Prepare response data
+    const currentMonthSummary = {
+      jobs: thisMonthJobs,
+      revenue: Number(parseFloat(thisMonthRevenue).toFixed(2)),
+      expenses: Number(parseFloat(thisMonthExpenses).toFixed(2)),
+      profit: Number(parseFloat(thisMonthRevenue - thisMonthExpenses).toFixed(2)),
+      range: {
+        start: firstDayOfMonth.toISOString(),
+        end: lastDayOfMonth.toISOString()
+      }
+    };
+
+    const allTimeSummary = {
+      revenue: Number(parseFloat(totalRevenue).toFixed(2)),
+      expenses: Number(parseFloat(totalExpenses).toFixed(2)),
+      profit: Number(parseFloat(totalRevenue - totalExpenses).toFixed(2))
+    };
+
     const responseData = {
       summary: {
         totalCustomers,
@@ -149,40 +195,37 @@ exports.getDashboardOverview = async (req, res, next) => {
         inProgressJobs,
         completedJobs
       },
-      thisMonth: {
-        jobs: thisMonthJobs,
-        revenue: parseFloat(thisMonthRevenue).toFixed(2),
-        expenses: parseFloat(thisMonthExpenses).toFixed(2),
-        profit: parseFloat(thisMonthRevenue - thisMonthExpenses).toFixed(2)
-      },
-      allTime: {
-        revenue: parseFloat(totalRevenue).toFixed(2),
-        expenses: parseFloat(totalExpenses).toFixed(2),
-        profit: parseFloat(totalRevenue - totalExpenses).toFixed(2)
-      },
+      currentMonth: currentMonthSummary,
+      thisMonth: currentMonthSummary,
+      allTime: allTimeSummary,
       pendingPayments,
       recentJobs
     };
 
     // Add filtered period data if date filter is applied
-    if (Object.keys(dateFilter).length > 0) {
+    if (hasDateFilter) {
+      const filteredRevenueValue = Number(parseFloat(filteredRevenue || 0).toFixed(2));
+      const filteredExpensesValue = Number(parseFloat(filteredExpenses || 0).toFixed(2));
+      const filteredProfitValue = Number(parseFloat(filteredRevenueValue - filteredExpensesValue).toFixed(2));
+
       responseData.filteredPeriod = {
-        jobs: filteredJobs,
-        revenue: parseFloat(filteredRevenue).toFixed(2),
-        expenses: parseFloat(filteredExpenses).toFixed(2),
-        profit: parseFloat(filteredRevenue - filteredExpenses).toFixed(2)
+        jobs: filteredJobs ?? 0,
+        revenue: filteredRevenueValue,
+        expenses: filteredExpensesValue,
+        profit: filteredProfitValue,
+        range: {
+          start: filterStart.toISOString(),
+          end: filterEnd.toISOString()
+        }
       };
-      
-      // Update summary with filtered data
-      responseData.summary = {
-        totalCustomers,
-        totalVendors,
-        totalJobs: filteredJobs,
-        pendingJobs: filteredPendingJobs,
-        inProgressJobs: filteredInProgressJobs,
-        completedJobs: filteredCompletedJobs
-      };
+      responseData.thisMonth = responseData.filteredPeriod;
+      logDashboardDebug('Response with filtered period', responseData.filteredPeriod);
     }
+
+    logDashboardDebug('Returning overview response', {
+      thisMonth: responseData.thisMonth,
+      allTime: responseData.allTime
+    });
 
     res.status(200).json({
       success: true,
