@@ -7,6 +7,8 @@ const vendorService = {
     return await api.get(`/vendors?${queryString}`);
   },
 
+  getVendors: async (params = {}) => vendorService.getAll(params),
+
   // Get single vendor
   getById: async (id) => {
     return await api.get(`/vendors/${id}`);

@@ -15,6 +15,7 @@ import Payments from './pages/Payments';
 import Expenses from './pages/Expenses';
 import Pricing from './pages/Pricing';
 import Reports from './pages/Reports';
+import Inventory from './pages/Inventory';
 import Users from './pages/Users';
 import Profile from './pages/Profile';
 
@@ -43,6 +44,7 @@ function AppContent() {
           <Route path="expenses" element={<Expenses />} />
           <Route path="pricing" element={<Pricing />} />
           <Route path="reports" element={<Reports />} />
+          <Route path="inventory" element={<Inventory />} />
           <Route path="users" element={<Users />} />
           <Route path="profile" element={<Profile />} />
         </Route>

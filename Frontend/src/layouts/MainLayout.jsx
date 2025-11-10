@@ -15,6 +15,7 @@ import {
   TeamOutlined,
   LogoutOutlined,
   SettingOutlined,
+  ContainerOutlined
 } from '@ant-design/icons';
 import { useAuth } from '../context/AuthContext';
 
@@ -75,6 +76,11 @@ const MainLayout = () => {
       key: '/pricing',
       icon: <TagOutlined />,
       label: 'Pricing',
+    },
+    {
+      key: '/inventory',
+      icon: <ContainerOutlined />,
+      label: 'Inventory',
     },
     {
       key: '/reports',
