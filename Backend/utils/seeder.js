@@ -146,7 +146,7 @@ const seedData = async () => {
       customerId: customer2.id,
       title: 'Marketing Flyers',
       description: '500 promotional flyers',
-      status: 'pending',
+      status: 'new',
       priority: 'medium',
       jobType: 'flyers',
       quantity: 500,
@@ -180,7 +180,7 @@ const seedData = async () => {
       category: 'Materials',
       description: 'Color ink cartridges',
       amount: 120.00,
-      status: 'pending',
+      status: 'new',
       paymentMethod: 'credit_card'
     });
 

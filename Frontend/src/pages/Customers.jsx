@@ -409,11 +409,11 @@ const Customers = () => {
                         key={job.id}
                         actions={[
                           <Tag color={{
-                            'pending': 'orange',
+                            'new': 'gold',
                             'in_progress': 'blue',
-                            'completed': 'green',
+                            'on_hold': 'orange',
                             'cancelled': 'red',
-                            'on_hold': 'gray'
+                            'completed': 'green'
                           }[job.status]}>
                             {job.status?.replace('_', ' ').toUpperCase()}
                           </Tag>

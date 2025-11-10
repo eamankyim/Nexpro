@@ -28,8 +28,16 @@ const Job = sequelize.define('Job', {
     type: DataTypes.TEXT
   },
   status: {
-    type: DataTypes.ENUM('pending', 'in_progress', 'completed', 'cancelled', 'on_hold'),
-    defaultValue: 'pending'
+    type: DataTypes.ENUM('new', 'in_progress', 'on_hold', 'cancelled', 'completed'),
+    defaultValue: 'new'
+  },
+  createdBy: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
   },
   priority: {
     type: DataTypes.ENUM('low', 'medium', 'high', 'urgent'),
@@ -37,6 +45,14 @@ const Job = sequelize.define('Job', {
   },
   jobType: {
     type: DataTypes.STRING
+  },
+  quoteId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'quotes',
+      key: 'id'
+    }
   },
   quantity: {
     type: DataTypes.INTEGER,

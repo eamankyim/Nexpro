@@ -48,21 +48,25 @@ exports.getDashboardOverview = async (req, res, next) => {
 
     // Jobs statistics
     const totalJobs = await Job.count();
-    const pendingJobs = await Job.count({ where: { status: 'pending' } });
+    const newJobs = await Job.count({ where: { status: 'new' } });
     const inProgressJobs = await Job.count({ where: { status: 'in_progress' } });
+    const onHoldJobs = await Job.count({ where: { status: 'on_hold' } });
+    const cancelledJobs = await Job.count({ where: { status: 'cancelled' } });
     const completedJobs = await Job.count({ where: { status: 'completed' } });
 
     // Filtered jobs statistics (if date filter is applied)
     let filteredJobs = null;
-    let filteredPendingJobs = null;
+    let filteredNewJobs = null;
     let filteredInProgressJobs = null;
+    let filteredOnHoldJobs = null;
+    let filteredCancelledJobs = null;
     let filteredCompletedJobs = null;
     
     if (hasDateFilter) {
       filteredJobs = await Job.count({ where: { createdAt: dateFilter } });
-      filteredPendingJobs = await Job.count({ 
+      filteredNewJobs = await Job.count({ 
         where: { 
-          status: 'pending',
+          status: 'new',
           createdAt: dateFilter 
         } 
       });
@@ -78,10 +82,24 @@ exports.getDashboardOverview = async (req, res, next) => {
           createdAt: dateFilter 
         } 
       });
+      filteredOnHoldJobs = await Job.count({
+        where: {
+          status: 'on_hold',
+          createdAt: dateFilter
+        }
+      });
+      filteredCancelledJobs = await Job.count({
+        where: {
+          status: 'cancelled',
+          createdAt: dateFilter
+        }
+      });
       logDashboardDebug('Filtered job counts', {
         filteredJobs,
-        filteredPendingJobs,
+        filteredNewJobs,
         filteredInProgressJobs,
+        filteredOnHoldJobs,
+        filteredCancelledJobs,
         filteredCompletedJobs
       });
     }
@@ -191,8 +209,11 @@ exports.getDashboardOverview = async (req, res, next) => {
         totalCustomers,
         totalVendors,
         totalJobs,
-        pendingJobs,
+        newJobs,
+        pendingJobs: newJobs,
         inProgressJobs,
+        onHoldJobs,
+        cancelledJobs,
         completedJobs
       },
       currentMonth: currentMonthSummary,

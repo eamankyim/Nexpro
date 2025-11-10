@@ -1,52 +1,20 @@
 import React from 'react';
 import dayjs from 'dayjs';
-import { PrinterOutlined, EnvironmentOutlined, PhoneOutlined, GlobalOutlined, MailOutlined, ShareAltOutlined } from '@ant-design/icons';
+import { EnvironmentOutlined, PhoneOutlined, GlobalOutlined, MailOutlined } from '@ant-design/icons';
 import logoImage from '../assets/nexus logo for dark bg.png';
 
-const PrintableInvoice = ({ invoice, onClose, onPrint, onShare }) => {
+const PrintableInvoice = ({
+  invoice,
+  documentTitle = 'INVOICE',
+  documentSubtitle
+}) => {
   if (!invoice) return null;
 
-  const handlePrint = () => {
-    window.print();
-    if (onPrint) onPrint();
-  };
-
-  const handleShare = () => {
-    try {
-      // Create WhatsApp message with invoice details
-      const invoiceDate = dayjs(invoice.invoiceDate).format('MMMM DD, YYYY');
-      const dueDate = dayjs(invoice.dueDate).format('MMMM DD, YYYY');
-      
-      const shareText = `*Invoice ${invoice.invoiceNumber}*\n\n` +
-        `*Customer:* ${invoice.customer?.name || 'N/A'}\n` +
-        `${invoice.customer?.company ? `*Company:* ${invoice.customer.company}\n` : ''}` +
-        `*Invoice Date:* ${invoiceDate}\n` +
-        `*Due Date:* ${dueDate}\n` +
-        `*Total Amount:* ₵${parseFloat(invoice.totalAmount || 0).toFixed(2)}\n` +
-        `*Amount Paid:* ₵${parseFloat(invoice.amountPaid || 0).toFixed(2)}\n` +
-        `*Balance Due:* ₵${parseFloat(invoice.balance || 0).toFixed(2)}\n` +
-        `*Status:* ${invoice.status?.toUpperCase() || 'N/A'}\n\n` +
-        `_From ${companyInfo.name}_`;
-      
-      // Encode the message for URL
-      const encodedMessage = encodeURIComponent(shareText);
-      
-      // Create WhatsApp link
-      const whatsappUrl = `https://wa.me/${companyInfo.whatsapp}?text=${encodedMessage}`;
-      
-      // Open WhatsApp in a new window/tab
-      window.open(whatsappUrl, '_blank');
-      if (onShare) onShare();
-    } catch (error) {
-      console.error('Error sharing via WhatsApp:', error);
-      alert('Failed to open WhatsApp. Please try again.');
-    }
-  };
+  const titleText = documentTitle || 'INVOICE';
 
   const companyInfo = {
     name: 'Nexus Creative Studio',
     phone: '0591403367',
-    whatsapp: '233591403367', // WhatsApp number with country code (no + or 0 at start)
     website: 'www.nexuscreativestudio.com',
     email: 'info@nexuscreativestudios.com',
     location: 'Oyarifa School Junction, Adenta Municipal'
@@ -143,8 +111,16 @@ const PrintableInvoice = ({ invoice, onClose, onPrint, onShare }) => {
         .invoice-title {
           font-size: 32px;
           font-weight: bold;
-          margin-bottom: 10px;
+          margin-bottom: 6px;
           color: #000;
+          letter-spacing: 2px;
+        }
+        .invoice-subtitle {
+          font-size: 14px;
+          color: #555;
+          margin-bottom: 12px;
+          text-transform: uppercase;
+          letter-spacing: 1px;
         }
         .invoice-number {
           font-size: 14px;
@@ -274,7 +250,10 @@ const PrintableInvoice = ({ invoice, onClose, onPrint, onShare }) => {
             </div>
           </div>
           <div className="invoice-info">
-            <div className="invoice-title">INVOICE</div>
+            <div className="invoice-title">{titleText}</div>
+            {documentSubtitle && (
+              <div className="invoice-subtitle">{documentSubtitle}</div>
+            )}
             <div className="invoice-number">
               <strong>Invoice #:</strong> {invoice.invoiceNumber}
             </div>

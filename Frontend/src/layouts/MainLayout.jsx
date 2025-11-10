@@ -6,6 +6,7 @@ import {
   UserOutlined,
   ShopOutlined,
   FileTextOutlined,
+  FileAddOutlined,
   FileDoneOutlined,
   DollarOutlined,
   ShoppingOutlined,
@@ -49,6 +50,11 @@ const MainLayout = () => {
       key: '/jobs',
       icon: <FileTextOutlined />,
       label: 'Jobs',
+    },
+    {
+      key: '/quotes',
+      icon: <FileAddOutlined />,
+      label: 'Quotes',
     },
     {
       key: '/invoices',

@@ -1,37 +1,24 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
-const JobItem = sequelize.define('JobItem', {
+const QuoteItem = sequelize.define('QuoteItem', {
   id: {
     type: DataTypes.UUID,
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
-  jobId: {
+  quoteId: {
     type: DataTypes.UUID,
     allowNull: false,
     references: {
-      model: 'jobs',
+      model: 'quotes',
       key: 'id'
-    }
-  },
-  quoteItemId: {
-    type: DataTypes.UUID,
-    allowNull: true,
-    references: {
-      model: 'quote_items',
-      key: 'id'
-    }
-  },
-  category: {
-    type: DataTypes.STRING,
-    allowNull: false
+    },
+    onDelete: 'CASCADE'
   },
   description: {
-    type: DataTypes.TEXT
-  },
-  paperSize: {
-    type: DataTypes.STRING
+    type: DataTypes.TEXT,
+    allowNull: false
   },
   quantity: {
     type: DataTypes.INTEGER,
@@ -40,28 +27,29 @@ const JobItem = sequelize.define('JobItem', {
   },
   unitPrice: {
     type: DataTypes.DECIMAL(10, 2),
-    allowNull: false
+    allowNull: false,
+    defaultValue: 0
   },
-  totalPrice: {
+  discountAmount: {
     type: DataTypes.DECIMAL(10, 2),
-    allowNull: false
+    allowNull: false,
+    defaultValue: 0
   },
-  specifications: {
+  total: {
+    type: DataTypes.DECIMAL(10, 2),
+    allowNull: false,
+    defaultValue: 0
+  },
+  metadata: {
     type: DataTypes.JSONB,
     defaultValue: {}
   }
 }, {
   timestamps: true,
-  tableName: 'job_items'
+  tableName: 'quote_items'
 });
 
-module.exports = JobItem;
-
-
-
-
-
-
+module.exports = QuoteItem;
 
 
 

@@ -10,6 +10,7 @@ import Customers from './pages/Customers';
 import Vendors from './pages/Vendors';
 import Jobs from './pages/Jobs';
 import Invoices from './pages/Invoices';
+import Quotes from './pages/Quotes';
 import Payments from './pages/Payments';
 import Expenses from './pages/Expenses';
 import Pricing from './pages/Pricing';
@@ -36,6 +37,7 @@ function AppContent() {
           <Route path="customers" element={<Customers />} />
           <Route path="vendors" element={<Vendors />} />
           <Route path="jobs" element={<Jobs />} />
+          <Route path="quotes" element={<Quotes />} />
           <Route path="invoices" element={<Invoices />} />
           <Route path="payments" element={<Payments />} />
           <Route path="expenses" element={<Expenses />} />

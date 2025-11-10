@@ -131,11 +131,11 @@ const Dashboard = () => {
   };
 
   const statusColors = {
-    pending: 'orange',
+    new: 'gold',
     in_progress: 'blue',
-    completed: 'green',
+    on_hold: 'orange',
     cancelled: 'red',
-    on_hold: 'gray',
+    completed: 'green',
   };
 
   const getDueDateStatus = (dueDate) => {
@@ -262,6 +262,38 @@ const Dashboard = () => {
   const revenueTitle = isFiltered ? 'Selected Revenue' : "This Month's Revenue";
   const expenseTitle = isFiltered ? 'Selected Expenses' : "This Month's Expenses";
   const thisMonthRange = thisMonthSummary.range;
+  const jobStatusMetrics = [
+    {
+      title: 'New',
+      value: displayData?.summary?.newJobs ?? displayData?.summary?.pendingJobs ?? 0,
+      color: '#d4af37',
+      description: 'Jobs waiting to start'
+    },
+    {
+      title: 'In Progress',
+      value: displayData?.summary?.inProgressJobs ?? 0,
+      color: '#1890ff',
+      description: 'Currently being worked on'
+    },
+    {
+      title: 'On Hold',
+      value: displayData?.summary?.onHoldJobs ?? 0,
+      color: '#faad14',
+      description: 'Paused or awaiting info'
+    },
+    {
+      title: 'Cancelled',
+      value: displayData?.summary?.cancelledJobs ?? 0,
+      color: '#ff4d4f',
+      description: 'Stopped by request or issue'
+    },
+    {
+      title: 'Completed',
+      value: displayData?.summary?.completedJobs ?? 0,
+      color: '#52c41a',
+      description: 'Ready for delivery or delivered'
+    }
+  ];
 
   return (
     <div>
@@ -474,35 +506,39 @@ const Dashboard = () => {
         </Col>
       </Row>
 
-      <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
-        <Col span={24}>
-          <Card title="Job Status Overview">
-            <Row gutter={16}>
-              <Col xs={24} sm={8}>
-                <Statistic
-                  title="Pending"
-                  value={displayData?.summary?.pendingJobs || 0}
-                  valueStyle={{ color: '#faad14' }}
-                />
-              </Col>
-              <Col xs={24} sm={8}>
-                <Statistic
-                  title="In Progress"
-                  value={displayData?.summary?.inProgressJobs || 0}
-                  valueStyle={{ color: '#1890ff' }}
-                />
-              </Col>
-              <Col xs={24} sm={8}>
-                <Statistic
-                  title="Completed"
-                  value={displayData?.summary?.completedJobs || 0}
-                  valueStyle={{ color: '#52c41a' }}
-                />
-              </Col>
-            </Row>
-          </Card>
-        </Col>
-      </Row>
+      <Card
+        title="Job Status Overview"
+        style={{ marginTop: 16 }}
+        bodyStyle={{ padding: 0 }}
+      >
+        <Row gutter={[16, 16]} style={{ padding: 16 }} wrap>
+          {jobStatusMetrics.map(({ title, value, color, description }) => (
+            <Col key={title} flex="1">
+              <Card
+                size="small"
+                bordered={false}
+                style={{
+                  background: 'transparent',
+                  border: '0.5px solid rgba(0, 0, 0, 0.1)',
+                  borderRadius: 12,
+                  height: '100%',
+                  boxShadow: 'none'
+                }}
+              >
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14 }}>{title}</div>
+                  <div style={{ fontSize: 28, fontWeight: 'bold', color }}>
+                    {value}
+                  </div>
+                  <div style={{ color: '#888', fontSize: 12 }}>
+                    {description}
+                  </div>
+                </div>
+              </Card>
+            </Col>
+          ))}
+        </Row>
+      </Card>
 
       <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
         <Col span={24}>

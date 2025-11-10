@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Table, Button, Tag, Space, Input, Select, message, Modal, Form, InputNumber, DatePicker, Row, Col, Divider, Card, Alert, Descriptions, Timeline } from 'antd';
-import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, UserOutlined, EditOutlined } from '@ant-design/icons';
+import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, UserOutlined, EditOutlined, PauseCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import jobService from '../services/jobService';
 import customerService from '../services/customerService';
 import invoiceService from '../services/invoiceService';
 import pricingService from '../services/pricingService';
+import userService from '../services/userService';
 import dayjs from 'dayjs';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -32,6 +33,13 @@ const Jobs = () => {
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedTemplates, setSelectedTemplates] = useState({});
   const [customJobType, setCustomJobType] = useState('');
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [assignModalVisible, setAssignModalVisible] = useState(false);
+  const [jobBeingAssigned, setJobBeingAssigned] = useState(null);
+  const [assignmentForm] = Form.useForm();
+  const [statusModalVisible, setStatusModalVisible] = useState(false);
+  const [jobBeingUpdated, setJobBeingUpdated] = useState(null);
+  const [statusForm] = Form.useForm();
 
   // Job type configurations
   const jobTypeConfig = {
@@ -46,7 +54,7 @@ const Jobs = () => {
     'Standard Printing': {
       types: ['Business Cards', 'Flyers', 'Brochures', 'Posters', 'Banners', 'Booklets'],
       hideFields: [],
-      defaultValues: { priority: 'medium', status: 'pending' },
+      defaultValues: { priority: 'medium', status: 'new' },
       titleFormat: (type, customer) => `${type} - ${customer?.name || 'Customer'}`,
       descriptionFormat: (type, customer) => `${type} printing for ${customer?.company || customer?.name || 'customer'}`,
       isInstant: false
@@ -54,7 +62,7 @@ const Jobs = () => {
     'Large Format': {
       types: ['Large Format Printing', 'Banners', 'Posters'],
       hideFields: [],
-      defaultValues: { priority: 'medium', status: 'pending' },
+      defaultValues: { priority: 'medium', status: 'new' },
       titleFormat: (type, customer) => `${type} - ${customer?.name || 'Customer'}`,
       descriptionFormat: (type) => `Large format ${type.toLowerCase()} project`,
       isInstant: false
@@ -62,7 +70,7 @@ const Jobs = () => {
     'Design & Custom': {
       types: ['Design & Print', 'Design Services', 'Custom Work', 'Other'],
       hideFields: [],
-      defaultValues: { priority: 'high', status: 'pending' },
+      defaultValues: { priority: 'high', status: 'new' },
       titleFormat: (type, customer) => `${type} for ${customer?.name || 'Customer'}`,
       descriptionFormat: (type, customer) => `Custom ${type.toLowerCase()} project for ${customer?.company || customer?.name || 'customer'}`,
       isInstant: false
@@ -82,6 +90,10 @@ const Jobs = () => {
     fetchJobs();
   }, [pagination.current, pagination.pageSize, filters]);
 
+  useEffect(() => {
+    fetchTeamMembers();
+  }, []);
+
   const fetchJobs = async () => {
     setLoading(true);
     try {
@@ -100,9 +112,32 @@ const Jobs = () => {
     }
   };
 
-  const handleView = (job) => {
-    setViewingJob(job);
-    setDrawerVisible(true);
+  const fetchTeamMembers = async () => {
+    try {
+      const response = await userService.getAll({ limit: 100, isActive: 'true' });
+      setTeamMembers(response.data || []);
+    } catch (error) {
+      console.error('Failed to load team members:', error);
+    }
+  };
+
+  const refreshJobDetails = async (jobId) => {
+    const response = await jobService.getById(jobId);
+    const jobDetails = unwrapResponse(response);
+    await checkJobInvoice(jobId);
+    setViewingJob(jobDetails);
+    return jobDetails;
+  };
+
+  const handleView = async (job) => {
+    try {
+      await refreshJobDetails(job.id);
+    } catch (error) {
+      message.error('Failed to load job details');
+      setViewingJob(job);
+    } finally {
+      setDrawerVisible(true);
+    }
   };
 
   const handleCloseDrawer = () => {
@@ -121,6 +156,91 @@ const Jobs = () => {
     } catch (error) {
       console.error('Failed to check job invoice:', error);
       return null;
+    }
+  };
+
+  const openAssignModal = (job) => {
+    if (!teamMembers.length) {
+      fetchTeamMembers();
+    }
+    setJobBeingAssigned(job);
+    assignmentForm.setFieldsValue({
+      assignedTo: job.assignedTo || null
+    });
+    setAssignModalVisible(true);
+  };
+
+  const closeAssignModal = () => {
+    setAssignModalVisible(false);
+    setJobBeingAssigned(null);
+    assignmentForm.resetFields();
+  };
+
+  const handleAssignmentSubmit = async ({ assignedTo }) => {
+    if (!jobBeingAssigned) {
+      return;
+    }
+
+    const jobId = jobBeingAssigned.id;
+
+    try {
+      await jobService.update(jobId, { assignedTo: assignedTo || null });
+      message.success(assignedTo ? 'Job assigned successfully' : 'Job assignment cleared');
+      closeAssignModal();
+      fetchJobs();
+
+      if (drawerVisible && viewingJob?.id === jobId) {
+        try {
+          await refreshJobDetails(jobId);
+        } catch (error) {
+          console.error('Failed to refresh job details:', error);
+        }
+      }
+    } catch (error) {
+      message.error(error.error || 'Failed to update job assignment');
+    }
+  };
+
+  const openStatusModal = (job) => {
+    setJobBeingUpdated(job);
+    statusForm.setFieldsValue({
+      status: job.status,
+      statusComment: ''
+    });
+    setStatusModalVisible(true);
+  };
+
+  const closeStatusModal = () => {
+    setStatusModalVisible(false);
+    setJobBeingUpdated(null);
+    statusForm.resetFields();
+  };
+
+  const handleStatusSubmit = async ({ status, statusComment }) => {
+    if (!jobBeingUpdated) {
+      return;
+    }
+
+    const jobId = jobBeingUpdated.id;
+
+    try {
+      await jobService.update(jobId, {
+        status,
+        statusComment: statusComment || undefined
+      });
+      message.success('Job status updated successfully');
+      closeStatusModal();
+      fetchJobs();
+
+      if (drawerVisible && viewingJob?.id === jobId) {
+        try {
+          await refreshJobDetails(jobId);
+        } catch (error) {
+          console.error('Failed to refresh job details:', error);
+        }
+      }
+    } catch (error) {
+      message.error(error.error || 'Failed to update job status');
     }
   };
 
@@ -168,6 +288,7 @@ const Jobs = () => {
     setSelectedCustomer(null);
     setSelectedTemplates({});
     setCustomJobType('');
+    await fetchTeamMembers();
     setModalVisible(true);
     
     // Fetch customers and pricing templates
@@ -478,12 +599,20 @@ const Jobs = () => {
   };
 
   const statusColors = {
-    pending: 'orange',
+    new: 'gold',
     in_progress: 'blue',
-    completed: 'green',
+    on_hold: 'orange',
     cancelled: 'red',
-    on_hold: 'gray',
+    completed: 'green',
   };
+
+  const statusOptions = [
+    { value: 'new', label: 'New' },
+    { value: 'in_progress', label: 'In Progress' },
+    { value: 'on_hold', label: 'On Hold' },
+    { value: 'cancelled', label: 'Cancelled' },
+    { value: 'completed', label: 'Completed' }
+  ];
 
   const priorityColors = {
     low: 'default',
@@ -491,6 +620,8 @@ const Jobs = () => {
     high: 'orange',
     urgent: 'red',
   };
+
+  const unwrapResponse = (response) => (response && Object.prototype.hasOwnProperty.call(response, 'data') ? response.data : response);
 
   const columns = [
     { title: 'Job Number', dataIndex: 'jobNumber', key: 'jobNumber', width: 150 },
@@ -500,6 +631,16 @@ const Jobs = () => {
       dataIndex: ['customer', 'name'], 
       key: 'customer',
       render: (name, record) => record.customer?.name || 'N/A'
+    },
+    {
+      title: 'Assigned To',
+      dataIndex: ['assignedUser', 'name'],
+      key: 'assignedUser',
+      render: (_, record) => (
+        record.assignedUser
+          ? record.assignedUser.name
+          : <Tag color="default">Unassigned</Tag>
+      )
     },
     {
       title: 'Status',
@@ -538,12 +679,19 @@ const Jobs = () => {
       key: 'actions',
       render: (_, record) => (
         <ActionColumn 
-          onView={async (job) => {
-            await checkJobInvoice(job.id);
-            handleView(job);
-          }} 
+          onView={handleView} 
           record={record}
           extraActions={[
+            {
+              label: record.assignedUser ? 'Reassign Job' : 'Assign Job',
+              onClick: () => openAssignModal(record),
+              icon: <UserOutlined />
+            },
+            {
+              label: 'Update Status',
+              onClick: () => openStatusModal(record),
+              icon: <ClockCircleOutlined />
+            },
             !jobInvoices[record.id] && {
               label: 'Generate Invoice',
               onClick: () => handleGenerateInvoice(record),
@@ -573,7 +721,7 @@ const Jobs = () => {
             style={{ width: 150 }}
             onChange={(value) => setFilters({ ...filters, status: value || '' })}
           >
-            <Option value="pending">Pending</Option>
+            <Option value="new">New</Option>
             <Option value="in_progress">In Progress</Option>
             <Option value="completed">Completed</Option>
             <Option value="on_hold">On Hold</Option>
@@ -622,14 +770,48 @@ const Jobs = () => {
                   {viewingJob.description}
                 </Descriptions.Item>
                 <Descriptions.Item label="Status">
-                  <Tag color={statusColors[viewingJob.status]}>
-                    {viewingJob.status?.replace('_', ' ').toUpperCase()}
-              </Tag>
+                  <Space size="small">
+                    <Tag color={statusColors[viewingJob.status]}>
+                      {viewingJob.status?.replace('_', ' ').toUpperCase()}
+                    </Tag>
+                    <Button size="small" type="link" onClick={() => openStatusModal(viewingJob)}>
+                      Update
+                    </Button>
+                  </Space>
                 </Descriptions.Item>
                 <Descriptions.Item label="Priority">
                   <Tag color={priorityColors[viewingJob.priority]}>
                     {viewingJob.priority?.toUpperCase()}
               </Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="Created By">
+                  <Space size="small">
+                    {viewingJob.creator ? (
+                      <>
+                        <Tag icon={<UserOutlined />} color="geekblue">{viewingJob.creator.name}</Tag>
+                        <span style={{ color: '#888' }}>{viewingJob.creator.email}</span>
+                      </>
+                    ) : (
+                      <Tag color="default">System</Tag>
+                    )}
+                  </Space>
+                </Descriptions.Item>
+                <Descriptions.Item label="Assigned To">
+                  <Space>
+                    {viewingJob.assignedUser ? (
+                      <>
+                        <Tag icon={<UserOutlined />} color="blue">
+                          {viewingJob.assignedUser.name}
+                        </Tag>
+                        <span style={{ color: '#888' }}>{viewingJob.assignedUser.email}</span>
+                      </>
+                    ) : (
+                      <Tag color="default">Unassigned</Tag>
+                    )}
+                    <Button size="small" type="link" onClick={() => openAssignModal(viewingJob)}>
+                      Manage
+                    </Button>
+                  </Space>
                 </Descriptions.Item>
                 <Descriptions.Item label="Final Price">
                   <strong style={{ fontSize: 16, color: '#1890ff' }}>
@@ -763,93 +945,58 @@ const Jobs = () => {
             label: 'Activities',
             content: (
               <div style={{ padding: '16px 0' }}>
-                <Timeline
-                  items={[
-                    {
-                      color: 'green',
-                      dot: <CheckCircleOutlined style={{ fontSize: '16px' }} />,
+                {(() => {
+                  const historyEntries = (viewingJob?.statusHistory || [])
+                    .slice()
+                    .sort((a, b) => dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf());
+
+                  const timelineItems = historyEntries.length ? historyEntries.map((entry) => {
+                    const color = statusColors[entry.status] || 'blue';
+                    let icon = <ClockCircleOutlined style={{ fontSize: '16px' }} />;
+                    if (entry.status === 'completed') {
+                      icon = <CheckCircleOutlined style={{ fontSize: '16px' }} />;
+                    } else if (entry.status === 'on_hold') {
+                      icon = <PauseCircleOutlined style={{ fontSize: '16px' }} />;
+                    } else if (entry.status === 'cancelled') {
+                      icon = <CloseCircleOutlined style={{ fontSize: '16px' }} />;
+                    }
+
+                    return {
+                      color,
+                      dot: icon,
                       children: (
                         <div>
                           <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
-                            Job Created
+                            Status changed to{' '}
+                            <Tag color={color} style={{ marginLeft: 4 }}>
+                              {entry.status.replace('_', ' ').toUpperCase()}
+                            </Tag>
                           </div>
                           <div style={{ color: '#666', fontSize: 12, marginBottom: 4 }}>
-                            {viewingJob.createdAt ? new Date(viewingJob.createdAt).toLocaleString() : '-'}
+                            {dayjs(entry.createdAt).format('MMM DD, YYYY [at] h:mm A')}
                           </div>
-                          <div style={{ color: '#888', fontSize: 12 }}>
-                            <UserOutlined /> Created by: {viewingJob.assignedUser?.name || 'System'}
+                          <div style={{ color: '#888', fontSize: 12, marginBottom: entry.comment ? 8 : 0 }}>
+                            Updated by: {entry.changedByUser?.name || 'System'}
+                            {entry.changedByUser?.email ? ` (${entry.changedByUser.email})` : ''}
                           </div>
+                          {entry.comment && (
+                            <Alert
+                              type="info"
+                              showIcon
+                              message="Comment"
+                              description={entry.comment}
+                            />
+                          )}
                         </div>
                       )
-                    },
-                    ...(viewingJob.assignedUser ? [{
-                      color: 'blue',
-                      dot: <UserOutlined style={{ fontSize: '16px' }} />,
-                      children: (
-                        <div>
-                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
-                            Assigned To
-                          </div>
-                          <div style={{ color: '#666', fontSize: 12 }}>
-                            {viewingJob.assignedUser.name}
-                          </div>
-                          <div style={{ color: '#888', fontSize: 12 }}>
-                            {viewingJob.assignedUser.email}
-                          </div>
-                        </div>
-                      )
-                    }] : []),
-                    {
-                      color: statusColors[viewingJob.status] || 'blue',
-                      dot: <ClockCircleOutlined style={{ fontSize: '16px' }} />,
-                      children: (
-                        <div>
-                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
-                            Current Status
-                          </div>
-                          <div style={{ marginBottom: 4 }}>
-                            <Tag color={statusColors[viewingJob.status]}>
-                              {viewingJob.status?.replace('_', ' ').toUpperCase()}
-                            </Tag>
-                          </div>
-                          <div style={{ color: '#888', fontSize: 12 }}>
-                            Priority: <Tag color={priorityColors[viewingJob.priority]} size="small">
-                              {viewingJob.priority?.toUpperCase()}
-                            </Tag>
-                          </div>
-                        </div>
-                      )
-                    },
-                    ...(viewingJob.completionDate ? [{
-                      color: 'green',
-                      dot: <CheckCircleOutlined style={{ fontSize: '16px' }} />,
-                      children: (
-                        <div>
-                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
-                            Job Completed
-                          </div>
-                          <div style={{ color: '#666', fontSize: 12 }}>
-                            {dayjs(viewingJob.completionDate).format('MMM DD, YYYY [at] h:mm A')}
-                          </div>
-                        </div>
-                      )
-                    }] : []),
-                    ...(viewingJob.updatedAt && viewingJob.updatedAt !== viewingJob.createdAt ? [{
-                      color: 'gray',
-                      dot: <EditOutlined style={{ fontSize: '16px' }} />,
-                      children: (
-                        <div>
-                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
-                            Last Updated
-                          </div>
-                          <div style={{ color: '#666', fontSize: 12 }}>
-                            {new Date(viewingJob.updatedAt).toLocaleString()}
-                          </div>
-                        </div>
-                      )
-                    }] : [])
-                  ]}
-                />
+                    };
+                  }) : [{
+                    color: 'gray',
+                    children: <div style={{ color: '#888' }}>No activity recorded yet.</div>
+                  }];
+
+                  return <Timeline items={timelineItems} />;
+                })()}
               </div>
             )
           }
@@ -875,7 +1022,7 @@ const Jobs = () => {
           onFinish={handleSubmit}
           style={{ marginTop: 24 }}
           initialValues={{
-            status: 'pending',
+            status: 'new',
             priority: 'medium'
           }}
         >
@@ -993,7 +1140,7 @@ const Jobs = () => {
                 rules={[{ required: true, message: 'Please select status' }]}
               >
                 <Select placeholder="Select status" size="large">
-                  <Option value="pending">Pending</Option>
+                  <Option value="new">New</Option>
                   <Option value="in_progress">In Progress</Option>
                   <Option value="completed">Completed</Option>
                   <Option value="on_hold">On Hold</Option>
@@ -1047,6 +1194,31 @@ const Jobs = () => {
               </Col>
             </Row>
           )}
+
+          <Row gutter={16}>
+            <Col span={24}>
+              <Form.Item
+                name="assignedTo"
+                label="Assign To"
+              >
+                <Select
+                  placeholder="Select team member (optional)"
+                  allowClear
+                  size="large"
+                  showSearch
+                  filterOption={(input, option) =>
+                    (option?.children?.toString() || '').toLowerCase().includes(input.toLowerCase())
+                  }
+                >
+                  {teamMembers.map(member => (
+                    <Option key={member.id} value={member.id}>
+                      {member.name} {member.role ? `(${member.role})` : ''}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Divider>Job Items / Services</Divider>
 
@@ -1520,6 +1692,68 @@ const Jobs = () => {
               </Form.Item>
             </Col>
           </Row>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={jobBeingAssigned ? `Assign ${jobBeingAssigned.jobNumber}` : 'Assign Job'}
+        open={assignModalVisible}
+        onCancel={closeAssignModal}
+        onOk={() => assignmentForm.submit()}
+        okText="Save"
+        destroyOnClose
+      >
+        <Form form={assignmentForm} layout="vertical" onFinish={handleAssignmentSubmit}>
+          <Form.Item
+            name="assignedTo"
+            label="Team Member"
+          >
+            <Select
+              placeholder="Select team member"
+              allowClear
+              showSearch
+              filterOption={(input, option) =>
+                (option?.children?.toString() || '').toLowerCase().includes(input.toLowerCase())
+              }
+            >
+              {teamMembers.map(member => (
+                <Option key={member.id} value={member.id}>
+                  {member.name} {member.role ? `(${member.role})` : ''}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title={jobBeingUpdated ? `Update Status - ${jobBeingUpdated.jobNumber}` : 'Update Status'}
+        open={statusModalVisible}
+        onCancel={closeStatusModal}
+        onOk={() => statusForm.submit()}
+        okText="Update Status"
+        destroyOnClose
+      >
+        <Form form={statusForm} layout="vertical" onFinish={handleStatusSubmit}>
+          <Form.Item
+            name="status"
+            label="Status"
+            rules={[{ required: true, message: 'Please select a status' }]}
+          >
+            <Select placeholder="Select status">
+              {statusOptions.map(option => (
+                <Option key={option.value} value={option.value}>
+                  {option.label}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item
+            name="statusComment"
+            label="Comment"
+          >
+            <TextArea rows={3} placeholder="Add an optional comment for this status update" />
+          </Form.Item>
         </Form>
       </Modal>
 
