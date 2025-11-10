@@ -18,6 +18,7 @@ import {
   ContainerOutlined
 } from '@ant-design/icons';
 import { useAuth } from '../context/AuthContext';
+import NotificationBell from '../components/NotificationBell';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -97,14 +98,19 @@ const MainLayout = () => {
       icon: <TeamOutlined />,
       label: 'Users',
     }] : []),
+    {
+      key: '/settings',
+      icon: <SettingOutlined />,
+      label: 'Settings',
+    },
   ];
 
   const userMenuItems = [
     {
-      key: 'profile',
+      key: 'settings',
       icon: <SettingOutlined />,
-      label: 'Profile',
-      onClick: () => navigate('/profile'),
+      label: 'Settings',
+      onClick: () => navigate('/settings'),
     },
     {
       type: 'divider',
@@ -190,16 +196,18 @@ const MainLayout = () => {
             background: colorBgContainer,
             display: 'flex',
             justifyContent: 'flex-end',
-            alignItems: 'center',
-            boxShadow: '0 1px 4px rgba(0,21,41,.08)',
+            alignItems: 'center'
           }}
         >
-          <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
-            <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Text>{user?.name}</Text>
-              <Avatar icon={<UserOutlined />} />
-            </div>
-          </Dropdown>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <NotificationBell />
+            <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
+              <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Text>{user?.name}</Text>
+                <Avatar src={user?.profilePicture} icon={<UserOutlined />} />
+              </div>
+            </Dropdown>
+          </div>
         </Header>
         <Content style={{ margin: '24px 16px', overflow: 'initial' }}>
           <div style={{ padding: 24, background: colorBgContainer, minHeight: 360, borderRadius: 8 }}>

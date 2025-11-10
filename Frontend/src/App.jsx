@@ -19,6 +19,7 @@ import Inventory from './pages/Inventory';
 import Leads from './pages/Leads';
 import Users from './pages/Users';
 import Profile from './pages/Profile';
+import Settings from './pages/Settings';
 
 function AppContent() {
   // ForcePasswordChange disabled - invited users set their own password during signup
@@ -49,6 +50,7 @@ function AppContent() {
           <Route path="inventory" element={<Inventory />} />
           <Route path="users" element={<Users />} />
           <Route path="profile" element={<Profile />} />
+          <Route path="settings" element={<Settings />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

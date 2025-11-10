@@ -7,7 +7,8 @@ const {
   deleteLead,
   addLeadActivity,
   getLeadActivities,
-  getLeadSummary
+  getLeadSummary,
+  convertLead
 } = require('../controllers/leadController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -28,12 +29,15 @@ router
   .put(authorize('admin', 'manager', 'staff'), updateLead)
   .delete(authorize('admin', 'manager'), deleteLead);
 
+router.post('/:id/convert', authorize('admin', 'manager', 'staff'), convertLead);
+
 router
   .route('/:id/activities')
   .get(getLeadActivities)
   .post(authorize('admin', 'manager', 'staff'), addLeadActivity);
 
 module.exports = router;
+
 
 
 

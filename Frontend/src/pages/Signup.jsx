@@ -103,7 +103,7 @@ const Signup = () => {
         minHeight: '100vh',
         background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
       }}>
-        <Card style={{ width: 500, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+        <Card style={{ width: 500 }}>
           <Alert
             message="Invalid Invite"
             description={error}
@@ -131,7 +131,7 @@ const Signup = () => {
       minHeight: '100vh',
       background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
     }}>
-      <Card style={{ width: 450, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+      <Card style={{ width: 450 }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           <Title level={2} style={{ marginBottom: 8 }}>Create Account</Title>
           <Text type="secondary">

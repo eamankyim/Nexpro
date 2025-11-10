@@ -6,7 +6,9 @@ const {
   Customer,
   Job
 } = require('../models');
+const { sequelize } = require('../config/database');
 const config = require('../config/config');
+const notificationService = require('../services/notificationService');
 
 const logLeadDebug = (...args) => {
   if (config.nodeEnv === 'development') {
@@ -153,6 +155,8 @@ exports.updateLead = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
 
+    const previousStatus = lead.status;
+
     const fields = [
       'name', 'company', 'email', 'phone', 'source', 'status', 'priority',
       'assignedTo', 'nextFollowUp', 'lastContactedAt', 'notes', 'tags',
@@ -168,6 +172,15 @@ exports.updateLead = async (req, res, next) => {
 
     await lead.update(updates);
     const updatedLead = await Lead.findByPk(lead.id, { include: buildLeadInclude() });
+
+    if (updates.status && updates.status !== previousStatus) {
+      await notificationService.notifyLeadStatusChanged({
+        lead: updatedLead,
+        oldStatus: previousStatus,
+        newStatus: updates.status,
+        triggeredBy: req.user?.id || null
+      });
+    }
 
     res.status(200).json({ success: true, data: updatedLead });
   } catch (error) {
@@ -216,6 +229,12 @@ exports.addLeadActivity = async (req, res, next) => {
 
     const populatedActivity = await LeadActivity.findByPk(activity.id, {
       include: [{ model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] }]
+    });
+
+    await notificationService.notifyLeadActivityLogged({
+      lead,
+      activity: populatedActivity,
+      triggeredBy: req.user?.id || null
     });
 
     res.status(201).json({ success: true, data: populatedActivity });
@@ -276,6 +295,87 @@ exports.getLeadSummary = async (req, res, next) => {
       }
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+exports.convertLead = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const lead = await Lead.findByPk(req.params.id, {
+      include: buildLeadInclude(),
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+
+    if (!lead) {
+      await transaction.rollback();
+      return res.status(404).json({ success: false, message: 'Lead not found' });
+    }
+
+    const previousStatus = lead.status;
+
+    if (lead.convertedCustomerId) {
+      await transaction.commit();
+      return res.status(200).json({
+        success: true,
+        data: lead,
+        message: 'Lead already converted'
+      });
+    }
+
+    const customerPayload = {
+      name: lead.name || lead.company || 'New Customer',
+      company: lead.company || null,
+      email: lead.email || null,
+      phone: lead.phone || null,
+      notes: lead.notes || null
+    };
+
+    const customer = await Customer.create(customerPayload, { transaction });
+
+    await lead.update(
+      {
+        status: 'converted',
+        convertedCustomerId: customer.id,
+        isActive: false
+      },
+      { transaction }
+    );
+
+    await LeadActivity.create(
+      {
+        leadId: lead.id,
+        type: 'note',
+        subject: 'Lead Converted',
+        notes: `Lead converted to customer ${customer.name}`,
+        createdBy: req.user?.id || null,
+        metadata: {
+          customerId: customer.id
+        }
+      },
+      { transaction }
+    );
+
+    await transaction.commit();
+
+    const updatedLead = await Lead.findByPk(lead.id, { include: buildLeadInclude() });
+
+    await notificationService.notifyLeadStatusChanged({
+      lead: updatedLead,
+      oldStatus: previousStatus,
+      newStatus: 'converted',
+      triggeredBy: req.user?.id || null
+    });
+
+    res.status(200).json({
+      success: true,
+      data: updatedLead,
+      customer
+    });
+  } catch (error) {
+    await transaction.rollback();
     next(error);
   }
 };

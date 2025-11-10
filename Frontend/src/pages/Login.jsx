@@ -50,7 +50,7 @@ const Login = () => {
       minHeight: '100vh',
       background: 'linear-gradient(60deg,rgb(15, 30, 100) 0%,rgb(0, 59, 131) 100%)',
     }}>
-      <Card style={{ width: 400, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+      <Card style={{ width: 400 }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
           {logoUrl && !logoError ? (
             <div style={{

@@ -5,6 +5,7 @@ const { Job, Customer, User, Payment, Expense, JobItem, Invoice, Quote, JobStatu
 const { Op } = require('sequelize');
 const config = require('../config/config');
 const { baseUploadDir } = require('../middleware/upload');
+const notificationService = require('../services/notificationService');
 
 // Generate unique job number
 const generateJobNumber = async () => {
@@ -301,6 +302,13 @@ exports.createJob = async (req, res, next) => {
       jobWithDetails.attachments = [];
     }
 
+    if (jobWithDetails.assignedTo) {
+      await notificationService.notifyJobAssigned({
+        job: jobWithDetails,
+        triggeredBy: req.user?.id || null
+      });
+    }
+
     const response = {
       success: true,
       data: jobWithDetails
@@ -338,6 +346,7 @@ exports.updateJob = async (req, res, next) => {
     const { statusComment, ...updatePayload } = req.body;
     const oldStatus = job.status;
     const newStatus = updatePayload.status;
+    const oldAssignedTo = job.assignedTo;
 
     // If status is changing to completed, set completion date
     if (newStatus === 'completed' && oldStatus !== 'completed') {
@@ -381,6 +390,22 @@ exports.updateJob = async (req, res, next) => {
 
     if (!Array.isArray(updatedJob.attachments)) {
       updatedJob.attachments = [];
+    }
+
+    if (updatePayload.assignedTo && updatePayload.assignedTo !== oldAssignedTo) {
+      await notificationService.notifyJobAssigned({
+        job: updatedJob,
+        triggeredBy: req.user?.id || null
+      });
+    }
+
+    if (statusChanged) {
+      await notificationService.notifyJobStatusChanged({
+        job: updatedJob,
+        oldStatus,
+        newStatus,
+        triggeredBy: req.user?.id || null
+      });
     }
 
     const response = {

@@ -18,7 +18,8 @@ import {
   Divider,
   Timeline,
   Alert,
-  Badge
+  Badge,
+  Descriptions
 } from 'antd';
 import {
   PlusOutlined,
@@ -27,7 +28,8 @@ import {
   MailOutlined,
   TeamOutlined,
   UserSwitchOutlined,
-  MessageOutlined
+  MessageOutlined,
+  UserAddOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -57,6 +59,8 @@ const leadSourceOptions = [
   { value: 'referral', label: 'Referral' },
   { value: 'cold_call', label: 'Cold Call' },
   { value: 'event', label: 'Event' },
+  { value: 'sign_board', label: 'Sign Board' },
+  { value: 'outreach', label: 'Outreach' },
   { value: 'other', label: 'Other' }
 ];
 
@@ -80,6 +84,7 @@ const Leads = () => {
   const [viewingLead, setViewingLead] = useState(null);
   const [editingLead, setEditingLead] = useState(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
+  const [convertingLead, setConvertingLead] = useState(false);
   const [leadForm] = Form.useForm();
   const [activityForm] = Form.useForm();
 
@@ -207,11 +212,50 @@ const Leads = () => {
     try {
       const response = await leadService.getById(record.id);
       const data = response?.data || response;
-      setViewingLead(data);
+      setViewingLead(data || record);
+      setDrawerVisible(true);
     } catch (error) {
       console.error('Failed to fetch lead', error);
       message.error('Failed to load lead details');
+      setViewingLead(record);
+      setDrawerVisible(true);
     }
+  };
+
+  const handleConvertLead = (leadRecord = null) => {
+    const targetLead = leadRecord || viewingLead;
+    if (!targetLead) {
+      return;
+    }
+
+    Modal.confirm({
+      title: `Convert ${targetLead.name || 'Lead'} to customer`,
+      content: 'This will create a customer record using the lead details. You can adjust the customer later if needed.',
+      okText: 'Convert',
+      cancelText: 'Cancel',
+      okButtonProps: { type: 'primary' },
+      async onOk() {
+        try {
+          setConvertingLead(true);
+          const response = await leadService.convert(targetLead.id);
+          const data = response?.data || response;
+          if (data) {
+            setViewingLead(data);
+          }
+          setDrawerVisible(true);
+          message.success('Lead converted to customer');
+          fetchLeads();
+          fetchSummary();
+        } catch (error) {
+          console.error('Failed to convert lead', error);
+          const errMsg = error?.response?.data?.message || 'Failed to convert lead';
+          message.error(errMsg);
+          throw error;
+        } finally {
+          setConvertingLead(false);
+        }
+      }
+    });
   };
 
   useEffect(() => {
@@ -339,6 +383,11 @@ const Leads = () => {
           record={record}
           onView={handleViewLead}
           extraActions={[
+            record.status !== 'converted' && !record.convertedCustomerId && {
+              label: 'Convert to Customer',
+              onClick: () => handleConvertLead(record),
+              icon: <UserAddOutlined />
+            },
             {
               label: 'Edit',
               onClick: () => openLeadModal(record),
@@ -350,11 +399,11 @@ const Leads = () => {
               icon: <TeamOutlined />,
               danger: true
             }
-          ]}
+          ].filter(Boolean)}
         />
       )
     }
-  ], [handleArchiveLead]);
+  ], [handleArchiveLead, handleConvertLead, convertingLead]);
 
   const summaryCards = [
     {
@@ -428,6 +477,19 @@ const Leads = () => {
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
             <Divider orientation="left">Lead Details</Divider>
 
+            {viewingLead.status === 'converted' && (
+              <Alert
+                type="success"
+                message="Lead converted"
+                description={
+                  viewingLead.convertedCustomer
+                    ? `Customer profile created for ${viewingLead.convertedCustomer.name}.`
+                    : 'This lead has been converted.'
+                }
+                showIcon
+              />
+            )}
+
             <Row gutter={16}>
               <Col span={12}>
                 <Card bordered={false}>
@@ -462,6 +524,22 @@ const Leads = () => {
               <Descriptions.Item label="Last Contacted">
                 {viewingLead.lastContactedAt ? dayjs(viewingLead.lastContactedAt).format('MMM DD, YYYY hh:mm A') : '—'}
               </Descriptions.Item>
+              {viewingLead.convertedCustomer && (
+                <Descriptions.Item label="Converted Customer">
+                  <Space size="small">
+                    <Tag color="cyan">{viewingLead.convertedCustomer.name}</Tag>
+                    {viewingLead.convertedCustomer.company && (
+                      <span style={{ color: '#888' }}>{viewingLead.convertedCustomer.company}</span>
+                    )}
+                  </Space>
+                </Descriptions.Item>
+              )}
+              {viewingLead.convertedJob && (
+                <Descriptions.Item label="Linked Job">
+                  <Tag color="green">{viewingLead.convertedJob.jobNumber}</Tag>
+                  <span style={{ marginLeft: 8 }}>{viewingLead.convertedJob.title}</span>
+                </Descriptions.Item>
+              )}
               <Descriptions.Item label="Tags">
                 {(viewingLead.tags || []).length
                   ? viewingLead.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)
@@ -641,13 +719,19 @@ const Leads = () => {
         extraActions={
           viewingLead
             ? [
+                !viewingLead.convertedCustomerId && {
+                  key: 'convert',
+                  label: convertingLead ? 'Converting...' : 'Convert to Customer',
+                  icon: <UserAddOutlined />,
+                  onClick: () => handleConvertLead(viewingLead),
+                },
                 {
                   key: 'log-activity',
                   label: 'Log Activity',
                   icon: <MessageOutlined />,
                   onClick: openActivityModal
                 }
-              ]
+              ].filter(Boolean)
             : []
         }
         tabs={drawerTabs}

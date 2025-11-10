@@ -12,11 +12,13 @@ const QuoteItem = require('./QuoteItem');
 const JobStatusHistory = require('./JobStatusHistory');
 const Invoice = require('./Invoice');
 const InviteToken = require('./InviteToken');
+const Notification = require('./Notification');
 const InventoryCategory = require('./InventoryCategory');
 const InventoryItem = require('./InventoryItem');
 const InventoryMovement = require('./InventoryMovement');
 const Lead = require('./Lead');
 const LeadActivity = require('./LeadActivity');
+const Setting = require('./Setting');
 
 // Define relationships
 Customer.hasMany(Job, { foreignKey: 'customerId', as: 'jobs' });
@@ -81,6 +83,10 @@ InviteToken.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
 User.hasOne(InviteToken, { foreignKey: 'usedBy', as: 'inviteUsed' });
 InviteToken.belongsTo(User, { foreignKey: 'usedBy', as: 'user' });
 
+User.hasMany(Notification, { foreignKey: 'userId', as: 'notifications' });
+Notification.belongsTo(User, { foreignKey: 'userId', as: 'recipient' });
+Notification.belongsTo(User, { foreignKey: 'triggeredBy', as: 'actor' });
+
 InventoryCategory.hasMany(InventoryItem, { foreignKey: 'categoryId', as: 'items' });
 InventoryItem.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' });
 
@@ -123,11 +129,13 @@ module.exports = {
   JobStatusHistory,
   Invoice,
   InviteToken,
+  Notification,
   InventoryCategory,
   InventoryItem,
   InventoryMovement,
   Lead,
-  LeadActivity
+  LeadActivity,
+  Setting
 };
 
 

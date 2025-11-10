@@ -28,6 +28,8 @@ const inviteRoutes = require('./routes/inviteRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const inventoryRoutes = require('./routes/inventoryRoutes');
 const leadRoutes = require('./routes/leadRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const settingsRoutes = require('./routes/settingsRoutes');
 
 const app = express();
 
@@ -59,6 +61,8 @@ app.use('/api/invites', inviteRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/leads', leadRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/settings', settingsRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -89,7 +93,8 @@ app.get('/', (req, res) => {
       invites: '/api/invites',
       reports: '/api/reports',
       inventory: '/api/inventory',
-      leads: '/api/leads'
+      leads: '/api/leads',
+      notifications: '/api/notifications'
     }
   });
 });

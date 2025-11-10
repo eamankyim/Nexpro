@@ -23,10 +23,13 @@ const leadService = {
 
   addActivity: async (id, payload) => api.post(`/leads/${id}/activities`, payload),
 
-  getActivities: async (id) => api.get(`/leads/${id}/activities`)
+  getActivities: async (id) => api.get(`/leads/${id}/activities`),
+
+  convert: async (id, payload = {}) => api.post(`/leads/${id}/convert`, payload)
 };
 
 export default leadService;
+
 
 
 

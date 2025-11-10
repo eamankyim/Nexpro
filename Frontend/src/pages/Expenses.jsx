@@ -184,33 +184,34 @@ const Expenses = () => {
       title: 'Expense #',
       dataIndex: 'expenseNumber',
       key: 'expenseNumber',
-      width: 120
+      width: 150
     },
     {
       title: 'Date',
       dataIndex: 'expenseDate',
       key: 'expenseDate',
-      width: 100,
+      width: 140,
       render: (date) => dayjs(date).format('MMM DD, YYYY')
     },
     {
       title: 'Category',
       dataIndex: 'category',
       key: 'category',
-      width: 120,
+      width: 150,
       render: (category) => <Tag color="blue">{category}</Tag>
     },
     {
       title: 'Description',
       dataIndex: 'description',
       key: 'description',
+      width: 240,
       ellipsis: true
     },
     {
       title: 'Amount',
       dataIndex: 'amount',
       key: 'amount',
-      width: 100,
+      width: 140,
       render: (amount) => `₵${parseFloat(amount).toFixed(2)}`,
       sorter: (a, b) => parseFloat(a.amount) - parseFloat(b.amount)
     },
@@ -218,7 +219,7 @@ const Expenses = () => {
       title: 'Job',
       dataIndex: ['job', 'jobNumber'],
       key: 'job',
-      width: 120,
+      width: 150,
       render: (jobNumber, record) => (
         jobNumber ? (
           <Tag color="green">{jobNumber}</Tag>
@@ -231,14 +232,14 @@ const Expenses = () => {
       title: 'Vendor',
       dataIndex: ['vendor', 'name'],
       key: 'vendor',
-      width: 120,
+      width: 170,
       ellipsis: true
     },
     {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
+      width: 120,
       render: (status) => {
         const colors = {
           pending: 'orange',
@@ -251,7 +252,7 @@ const Expenses = () => {
     {
       title: 'Actions',
       key: 'actions',
-      width: 120,
+      width: 140,
       render: (_, record) => (
         <Space>
           <Tooltip title="Edit">

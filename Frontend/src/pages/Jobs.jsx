@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Table, Button, Tag, Space, Input, Select, message, Modal, Form, InputNumber, DatePicker, Row, Col, Divider, Card, Alert, Descriptions, Timeline, Upload, List, Tooltip, Popconfirm } from 'antd';
 import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, UserOutlined, EditOutlined, PauseCircleOutlined, CloseCircleOutlined, UploadOutlined, PaperClipOutlined, DownloadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import jobService from '../services/jobService';
 import customerService from '../services/customerService';
 import invoiceService from '../services/invoiceService';
@@ -13,11 +14,11 @@ import DetailsDrawer from '../components/DetailsDrawer';
 
 const { Option } = Select;
 const { TextArea } = Input;
+const uploadMaxSizeMb = Number.parseFloat(import.meta.env.VITE_UPLOAD_MAX_SIZE_MB ?? '') || 20;
 
 const Jobs = () => {
   const navigate = useNavigate();
-  const [jobs, setJobs] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({ search: '', status: '' });
   const [drawerVisible, setDrawerVisible] = useState(false);
@@ -95,31 +96,73 @@ const Jobs = () => {
     return jobTypeConfig['Standard Printing']; // default
   };
 
+  const {
+    data: jobsQueryResult,
+    isLoading: isJobsLoading,
+    isFetching: isJobsFetching,
+    error: jobsError,
+  } = useQuery({
+    queryKey: ['jobs', pagination.current, pagination.pageSize, filters.search || '', filters.status || ''],
+    queryFn: () =>
+      jobService.getAll({
+        page: pagination.current,
+        limit: pagination.pageSize,
+        search: filters.search,
+        status: filters.status,
+      }),
+    keepPreviousData: true,
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+
+  const jobs = jobsQueryResult?.data || [];
+  const jobsCount = jobsQueryResult?.count || 0;
+
   useEffect(() => {
-    fetchJobs();
-  }, [pagination.current, pagination.pageSize, filters]);
+    setPagination((prev) => (prev.total === jobsCount ? prev : { ...prev, total: jobsCount }));
+  }, [jobsCount]);
+
+  useEffect(() => {
+    if (jobsError) {
+      console.error('Failed to load jobs:', jobsError);
+      message.error('Failed to load jobs');
+    }
+  }, [jobsError]);
 
   useEffect(() => {
     fetchTeamMembers();
   }, []);
 
-  const fetchJobs = async () => {
-    setLoading(true);
-    try {
-      const response = await jobService.getAll({
-        page: pagination.current,
-        limit: pagination.pageSize,
-        search: filters.search,
-        status: filters.status,
-      });
-      setJobs(response.data);
-      setPagination({ ...pagination, total: response.count });
-    } catch (error) {
-      message.error('Failed to load jobs');
-    } finally {
-      setLoading(false);
-    }
-  };
+useEffect(() => {
+  if (assignModalVisible && jobBeingAssigned) {
+    assignmentForm.setFieldsValue({
+      assignedTo: jobBeingAssigned.assignedTo || null
+    });
+  }
+}, [assignModalVisible, jobBeingAssigned, assignmentForm]);
+
+useEffect(() => {
+  if (statusModalVisible && jobBeingUpdated) {
+    statusForm.setFieldsValue({
+      status: jobBeingUpdated.status,
+      statusComment: ''
+    });
+  }
+}, [statusModalVisible, jobBeingUpdated, statusForm]);
+
+useEffect(() => {
+  if (invoiceModalVisible && viewingJob) {
+    invoiceForm.resetFields();
+    const dueDate = dayjs().add(30, 'days');
+    invoiceForm.setFieldsValue({
+      dueDate,
+      paymentTerms: 'Net 30',
+      taxRate: 0,
+      discountType: 'fixed',
+      discountValue: 0
+    });
+  }
+}, [invoiceModalVisible, viewingJob, invoiceForm]);
 
   const fetchTeamMembers = async () => {
     try {
@@ -174,9 +217,6 @@ const Jobs = () => {
       fetchTeamMembers();
     }
     setJobBeingAssigned(job);
-    assignmentForm.setFieldsValue({
-      assignedTo: job.assignedTo || null
-    });
     setAssignModalVisible(true);
   };
 
@@ -197,7 +237,7 @@ const Jobs = () => {
       await jobService.update(jobId, { assignedTo: assignedTo || null });
       message.success(assignedTo ? 'Job assigned successfully' : 'Job assignment cleared');
       closeAssignModal();
-      fetchJobs();
+      invalidateJobs();
 
       if (drawerVisible && viewingJob?.id === jobId) {
         try {
@@ -250,10 +290,6 @@ const Jobs = () => {
 
   const openStatusModal = (job) => {
     setJobBeingUpdated(job);
-    statusForm.setFieldsValue({
-      status: job.status,
-      statusComment: ''
-    });
     setStatusModalVisible(true);
   };
 
@@ -277,7 +313,7 @@ const Jobs = () => {
       });
       message.success('Job status updated successfully');
       closeStatusModal();
-      fetchJobs();
+      invalidateJobs();
 
       if (drawerVisible && viewingJob?.id === jobId) {
         try {
@@ -293,15 +329,6 @@ const Jobs = () => {
 
   const handleGenerateInvoice = (job) => {
     setViewingJob(job);
-    invoiceForm.resetFields();
-    const dueDate = dayjs().add(30, 'days');
-    invoiceForm.setFieldsValue({
-      dueDate,
-      paymentTerms: 'Net 30',
-      taxRate: 0,
-      discountType: 'fixed',
-      discountValue: 0
-    });
     setInvoiceModalVisible(true);
   };
 
@@ -639,7 +666,7 @@ const Jobs = () => {
       setSelectedCustomer(null);
       setSelectedTemplates({});
       setCustomJobType('');
-      fetchJobs();
+      invalidateJobs();
     } catch (error) {
       message.error(error.error || 'Failed to create job');
     }
@@ -666,6 +693,10 @@ const Jobs = () => {
     medium: 'blue',
     high: 'orange',
     urgent: 'red',
+  };
+
+  const invalidateJobs = () => {
+    queryClient.invalidateQueries({ queryKey: ['jobs'] });
   };
 
   const unwrapResponse = (response) => (response && Object.prototype.hasOwnProperty.call(response, 'data') ? response.data : response);
@@ -750,6 +781,8 @@ const Jobs = () => {
     },
   ];
 
+  const tablePagination = { ...pagination, total: jobsCount };
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
@@ -758,7 +791,10 @@ const Jobs = () => {
           <Input.Search
             placeholder="Search jobs..."
             allowClear
-            onSearch={(value) => setFilters({ ...filters, search: value })}
+            onSearch={(value) => {
+              setPagination((prev) => ({ ...prev, current: 1 }));
+              setFilters((prev) => ({ ...prev, search: value }));
+            }}
             style={{ width: 200 }}
             prefix={<SearchOutlined />}
           />
@@ -766,7 +802,10 @@ const Jobs = () => {
             placeholder="Filter by status"
             allowClear
             style={{ width: 150 }}
-            onChange={(value) => setFilters({ ...filters, status: value || '' })}
+            onChange={(value) => {
+              setPagination((prev) => ({ ...prev, current: 1 }));
+              setFilters((prev) => ({ ...prev, status: value || '' }));
+            }}
           >
             <Option value="new">New</Option>
             <Option value="in_progress">In Progress</Option>
@@ -784,9 +823,15 @@ const Jobs = () => {
         columns={columns}
         dataSource={jobs}
         rowKey="id"
-        loading={loading}
-        pagination={pagination}
-        onChange={(newPagination) => setPagination(newPagination)}
+        loading={isJobsLoading || isJobsFetching}
+        pagination={tablePagination}
+        onChange={(newPagination) =>
+          setPagination((prev) => ({
+            ...prev,
+            current: newPagination.current ?? prev.current,
+            pageSize: newPagination.pageSize ?? prev.pageSize,
+          }))
+        }
       />
 
       <DetailsDrawer
@@ -1006,7 +1051,7 @@ const Jobs = () => {
                       </Button>
                     </Upload>
                     <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>
-                      Supported types: images, PDF, Office documents, ZIP (max {process.env.REACT_APP_UPLOAD_MAX_SIZE_MB || 20} MB).
+                      Supported types: images, PDF, Office documents, ZIP (max {uploadMaxSizeMb} MB).
                     </div>
                   </div>
 
