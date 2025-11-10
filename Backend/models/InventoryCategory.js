@@ -31,3 +31,4 @@ const InventoryCategory = sequelize.define('InventoryCategory', {
 module.exports = InventoryCategory;
 
 
+

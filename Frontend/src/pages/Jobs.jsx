@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Tag, Space, Input, Select, message, Modal, Form, InputNumber, DatePicker, Row, Col, Divider, Card, Alert, Descriptions, Timeline } from 'antd';
-import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, UserOutlined, EditOutlined, PauseCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { Table, Button, Tag, Space, Input, Select, message, Modal, Form, InputNumber, DatePicker, Row, Col, Divider, Card, Alert, Descriptions, Timeline, Upload, List, Tooltip, Popconfirm } from 'antd';
+import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, UserOutlined, EditOutlined, PauseCircleOutlined, CloseCircleOutlined, UploadOutlined, PaperClipOutlined, DownloadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import jobService from '../services/jobService';
 import customerService from '../services/customerService';
@@ -34,6 +34,7 @@ const Jobs = () => {
   const [selectedTemplates, setSelectedTemplates] = useState({});
   const [customJobType, setCustomJobType] = useState('');
   const [teamMembers, setTeamMembers] = useState([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [jobBeingAssigned, setJobBeingAssigned] = useState(null);
   const [assignmentForm] = Form.useForm();
@@ -75,6 +76,14 @@ const Jobs = () => {
       descriptionFormat: (type, customer) => `Custom ${type.toLowerCase()} project for ${customer?.company || customer?.name || 'customer'}`,
       isInstant: false
     }
+  };
+
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 B';
+    if (!bytes) return '';
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1)} ${sizes[i]}`;
   };
 
   const getJobTypeCategory = (jobType) => {
@@ -124,6 +133,7 @@ const Jobs = () => {
   const refreshJobDetails = async (jobId) => {
     const response = await jobService.getById(jobId);
     const jobDetails = unwrapResponse(response);
+    jobDetails.attachments = Array.isArray(jobDetails.attachments) ? jobDetails.attachments : [];
     await checkJobInvoice(jobId);
     setViewingJob(jobDetails);
     return jobDetails;
@@ -200,6 +210,43 @@ const Jobs = () => {
       message.error(error.error || 'Failed to update job assignment');
     }
   };
+
+  const handleAttachmentUpload = async ({ file, onSuccess, onError }) => {
+    if (!viewingJob) {
+      onError && onError(new Error('No job selected'));
+      return;
+    }
+
+    try {
+      setUploadingAttachment(true);
+      await jobService.uploadAttachment(viewingJob.id, file);
+      await refreshJobDetails(viewingJob.id);
+      message.success(`${file.name} uploaded successfully`);
+      if (onSuccess) onSuccess('ok', file);
+    } catch (error) {
+      console.error('Failed to upload attachment:', error);
+      const errMsg = error?.response?.data?.message || 'Failed to upload attachment';
+      message.error(errMsg);
+      if (onError) onError(error);
+    } finally {
+      setUploadingAttachment(false);
+    }
+  };
+
+  const handleAttachmentRemove = async (attachment) => {
+    if (!viewingJob) return;
+    try {
+      await jobService.deleteAttachment(viewingJob.id, attachment.id);
+      await refreshJobDetails(viewingJob.id);
+      message.success('Attachment removed');
+    } catch (error) {
+      console.error('Failed to remove attachment:', error);
+      const errMsg = error?.response?.data?.message || 'Failed to remove attachment';
+      message.error(errMsg);
+    }
+  };
+
+  const attachmentList = Array.isArray(viewingJob?.attachments) ? viewingJob.attachments : [];
 
   const openStatusModal = (job) => {
     setJobBeingUpdated(job);
@@ -937,6 +984,79 @@ const Jobs = () => {
                     </div>
                   </div>
                 )}
+              </div>
+            )
+          },
+          {
+            key: 'attachments',
+            label: 'Attachments',
+            content: (
+              <div style={{ padding: '16px 0' }}>
+                <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                  <div>
+                    <Upload
+                      accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.txt"
+                      customRequest={handleAttachmentUpload}
+                      multiple={false}
+                      showUploadList={false}
+                      disabled={uploadingAttachment}
+                    >
+                      <Button icon={<UploadOutlined />} loading={uploadingAttachment}>
+                        {uploadingAttachment ? 'Uploading...' : 'Upload File'}
+                      </Button>
+                    </Upload>
+                    <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>
+                      Supported types: images, PDF, Office documents, ZIP (max {process.env.REACT_APP_UPLOAD_MAX_SIZE_MB || 20} MB).
+                    </div>
+                  </div>
+
+                  <List
+                    dataSource={attachmentList}
+                    locale={{ emptyText: 'No attachments uploaded yet.' }}
+                    renderItem={(item) => (
+                      <List.Item
+                        actions={[
+                          <Tooltip title="Open file" key="open">
+                            <Button
+                              size="small"
+                              icon={<DownloadOutlined />}
+                              onClick={() => window.open(item.url, '_blank', 'noopener')}
+                            />
+                          </Tooltip>,
+                          <Popconfirm
+                            key="delete"
+                            title="Remove attachment?"
+                            okText="Remove"
+                            okButtonProps={{ danger: true }}
+                            onConfirm={() => handleAttachmentRemove(item)}
+                          >
+                            <Button size="small" icon={<DeleteOutlined />} danger />
+                          </Popconfirm>
+                        ]}
+                      >
+                        <List.Item.Meta
+                          avatar={<PaperClipOutlined style={{ fontSize: 18 }} />}
+                          title={
+                            <a href={item.url} target="_blank" rel="noopener noreferrer">
+                              {item.originalName || item.filename}
+                            </a>
+                          }
+                          description={
+                            <Space size="middle">
+                              <span>
+                                {item.uploadedAt ? dayjs(item.uploadedAt).format('MMM DD, YYYY HH:mm') : ''}
+                              </span>
+                              <span>{formatFileSize(item.size)}</span>
+                              {item.uploadedBy?.name && (
+                                <span style={{ color: '#888' }}>by {item.uploadedBy.name}</span>
+                              )}
+                            </Space>
+                          }
+                        />
+                      </List.Item>
+                    )}
+                  />
+                </Space>
               </div>
             )
           },

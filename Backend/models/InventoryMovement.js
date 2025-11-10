@@ -67,3 +67,4 @@ const InventoryMovement = sequelize.define('InventoryMovement', {
 module.exports = InventoryMovement;
 
 
+

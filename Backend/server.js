@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const path = require('path');
 require('dotenv').config();
 
 const { sequelize, testConnection } = require('./config/database');
@@ -26,6 +27,7 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 const inviteRoutes = require('./routes/inviteRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const inventoryRoutes = require('./routes/inventoryRoutes');
+const leadRoutes = require('./routes/leadRoutes');
 
 const app = express();
 
@@ -34,6 +36,7 @@ app.use(helmet());
 app.use(cors(config.cors));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Logging
 if (config.nodeEnv === 'development') {
@@ -55,6 +58,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/invites', inviteRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/inventory', inventoryRoutes);
+app.use('/api/leads', leadRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -84,7 +88,8 @@ app.get('/', (req, res) => {
       dashboard: '/api/dashboard',
       invites: '/api/invites',
       reports: '/api/reports',
-      inventory: '/api/inventory'
+      inventory: '/api/inventory',
+      leads: '/api/leads'
     }
   });
 });

@@ -111,7 +111,8 @@ const Job = sequelize.define('Job', {
     type: DataTypes.TEXT
   },
   attachments: {
-    type: DataTypes.JSON
+    type: DataTypes.JSONB,
+    defaultValue: []
   }
 }, {
   timestamps: true,

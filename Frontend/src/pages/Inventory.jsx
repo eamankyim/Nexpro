@@ -699,9 +699,25 @@ const Inventory = () => {
         title={viewingItem ? `${viewingItem.name} (${viewingItem.sku || 'No SKU'})` : 'Item details'}
         width={720}
         onEdit={viewingItem ? () => openItemModal(viewingItem) : null}
-        onRestock={viewingItem ? () => handleRestock(viewingItem) : null}
-        onAdjust={viewingItem ? () => handleAdjust(viewingItem) : null}
         onPrint={null}
+        extraActions={
+          viewingItem
+            ? [
+                {
+                  key: 'restock',
+                  label: 'Restock',
+                  icon: <PlusCircleOutlined />,
+                  onClick: () => handleRestock(viewingItem)
+                },
+                {
+                  key: 'adjust',
+                  label: 'Adjust',
+                  icon: <EditOutlined />,
+                  onClick: () => handleAdjust(viewingItem)
+                }
+              ]
+            : []
+        }
         showActions
         tabs={drawerTabs}
       />

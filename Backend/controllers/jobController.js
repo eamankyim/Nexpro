@@ -1,6 +1,10 @@
+const path = require('path');
+const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');
 const { Job, Customer, User, Payment, Expense, JobItem, Invoice, Quote, JobStatusHistory } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
+const { baseUploadDir } = require('../middleware/upload');
 
 // Generate unique job number
 const generateJobNumber = async () => {
@@ -219,6 +223,10 @@ exports.getJob = async (req, res, next) => {
       });
     }
 
+    if (!Array.isArray(job.attachments)) {
+      job.attachments = [];
+    }
+
     res.status(200).json({
       success: true,
       data: job
@@ -288,6 +296,10 @@ exports.createJob = async (req, res, next) => {
       ],
       order: [[{ model: JobStatusHistory, as: 'statusHistory' }, 'createdAt', 'ASC']]
     });
+
+    if (!Array.isArray(jobWithDetails.attachments)) {
+      jobWithDetails.attachments = [];
+    }
 
     const response = {
       success: true,
@@ -367,6 +379,10 @@ exports.updateJob = async (req, res, next) => {
       order: [[{ model: JobStatusHistory, as: 'statusHistory' }, 'createdAt', 'ASC']]
     });
 
+    if (!Array.isArray(updatedJob.attachments)) {
+      updatedJob.attachments = [];
+    }
+
     const response = {
       success: true,
       data: updatedJob
@@ -431,6 +447,99 @@ exports.getJobStats = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: stats
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const buildAttachmentResponse = (req, attachment) => {
+  if (!attachment) return attachment;
+  const normalized = { ...attachment };
+  if (normalized.storagePath && !normalized.url) {
+    normalized.url = `${req.protocol}://${req.get('host')}/uploads/${normalized.storagePath.replace(/\\/g, '/')}`;
+  }
+  return normalized;
+};
+
+exports.uploadJobAttachment = async (req, res, next) => {
+  try {
+    const job = await Job.findByPk(req.params.id);
+    if (!job) {
+      return res.status(404).json({ success: false, message: 'Job not found' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    const storagePath = path
+      .relative(baseUploadDir, req.file.path)
+      .replace(/\\/g, '/');
+
+    const attachment = {
+      id: uuidv4(),
+      filename: req.file.filename,
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      storagePath,
+      url: `${req.protocol}://${req.get('host')}/uploads/${storagePath}`,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: req.user
+        ? {
+            id: req.user.id,
+            name: req.user.name,
+            email: req.user.email
+          }
+        : null
+    };
+
+    const attachments = Array.isArray(job.attachments) ? [...job.attachments] : [];
+    attachments.push(attachment);
+    job.attachments = attachments;
+    await job.save();
+
+    res.status(201).json({
+      success: true,
+      data: buildAttachmentResponse(req, attachment),
+      attachments: attachments.map((item) => buildAttachmentResponse(req, item))
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.deleteJobAttachment = async (req, res, next) => {
+  try {
+    const job = await Job.findByPk(req.params.id);
+    if (!job) {
+      return res.status(404).json({ success: false, message: 'Job not found' });
+    }
+
+    const attachments = Array.isArray(job.attachments) ? [...job.attachments] : [];
+    const index = attachments.findIndex((attachment) => attachment.id === req.params.attachmentId);
+
+    if (index === -1) {
+      return res.status(404).json({ success: false, message: 'Attachment not found' });
+    }
+
+    const [removed] = attachments.splice(index, 1);
+    job.attachments = attachments;
+    await job.save();
+
+    if (removed?.storagePath) {
+      const filePath = path.join(baseUploadDir, removed.storagePath);
+      fs.promises
+        .access(filePath, fs.constants.F_OK)
+        .then(() => fs.promises.unlink(filePath))
+        .catch(() => null);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Attachment removed',
+      attachments: attachments.map((item) => buildAttachmentResponse(req, item))
     });
   } catch (error) {
     next(error);

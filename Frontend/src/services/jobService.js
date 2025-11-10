@@ -27,6 +27,18 @@ const jobService = {
     return await api.delete(`/jobs/${id}`);
   },
 
+  uploadAttachment: async (id, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    return await api.post(`/jobs/${id}/attachments`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+  },
+
+  deleteAttachment: async (id, attachmentId) => {
+    return await api.delete(`/jobs/${id}/attachments/${attachmentId}`);
+  },
+
   // Get job statistics
   getStats: async () => {
     return await api.get('/jobs/stats/overview');

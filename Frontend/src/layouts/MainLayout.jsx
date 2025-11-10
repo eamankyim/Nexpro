@@ -38,6 +38,11 @@ const MainLayout = () => {
       label: 'Dashboard',
     },
     {
+      key: '/leads',
+      icon: <FileAddOutlined />,
+      label: 'Leads',
+    },
+    {
       key: '/customers',
       icon: <UserOutlined />,
       label: 'Customers',

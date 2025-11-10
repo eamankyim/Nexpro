@@ -15,6 +15,8 @@ const InviteToken = require('./InviteToken');
 const InventoryCategory = require('./InventoryCategory');
 const InventoryItem = require('./InventoryItem');
 const InventoryMovement = require('./InventoryMovement');
+const Lead = require('./Lead');
+const LeadActivity = require('./LeadActivity');
 
 // Define relationships
 Customer.hasMany(Job, { foreignKey: 'customerId', as: 'jobs' });
@@ -94,6 +96,18 @@ InventoryMovement.belongsTo(Job, { foreignKey: 'jobId', as: 'job' });
 User.hasMany(InventoryMovement, { foreignKey: 'createdBy', as: 'inventoryMovementsCreated' });
 InventoryMovement.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
 
+User.hasMany(Lead, { foreignKey: 'assignedTo', as: 'assignedLeads' });
+Lead.belongsTo(User, { foreignKey: 'assignedTo', as: 'assignee' });
+
+Lead.hasMany(LeadActivity, { foreignKey: 'leadId', as: 'activities' });
+LeadActivity.belongsTo(Lead, { foreignKey: 'leadId', as: 'lead' });
+LeadActivity.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
+
+Customer.hasMany(Lead, { foreignKey: 'convertedCustomerId', as: 'relatedLeads' });
+Lead.belongsTo(Customer, { foreignKey: 'convertedCustomerId', as: 'convertedCustomer' });
+Job.hasMany(Lead, { foreignKey: 'convertedJobId', as: 'linkedLeads' });
+Lead.belongsTo(Job, { foreignKey: 'convertedJobId', as: 'convertedJob' });
+
 module.exports = {
   User,
   Customer,
@@ -111,7 +125,9 @@ module.exports = {
   InviteToken,
   InventoryCategory,
   InventoryItem,
-  InventoryMovement
+  InventoryMovement,
+  Lead,
+  LeadActivity
 };
 
 
