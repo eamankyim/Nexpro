@@ -19,6 +19,15 @@ const InventoryMovement = require('./InventoryMovement');
 const Lead = require('./Lead');
 const LeadActivity = require('./LeadActivity');
 const Setting = require('./Setting');
+const Employee = require('./Employee');
+const EmployeeDocument = require('./EmployeeDocument');
+const EmploymentHistory = require('./EmploymentHistory');
+const PayrollRun = require('./PayrollRun');
+const PayrollEntry = require('./PayrollEntry');
+const Account = require('./Account');
+const JournalEntry = require('./JournalEntry');
+const JournalEntryLine = require('./JournalEntryLine');
+const AccountBalance = require('./AccountBalance');
 
 // Define relationships
 Customer.hasMany(Job, { foreignKey: 'customerId', as: 'jobs' });
@@ -114,6 +123,36 @@ Lead.belongsTo(Customer, { foreignKey: 'convertedCustomerId', as: 'convertedCust
 Job.hasMany(Lead, { foreignKey: 'convertedJobId', as: 'linkedLeads' });
 Lead.belongsTo(Job, { foreignKey: 'convertedJobId', as: 'convertedJob' });
 
+User.hasMany(Employee, { foreignKey: 'userId', as: 'linkedEmployee' });
+Employee.belongsTo(User, { foreignKey: 'userId', as: 'userAccount' });
+
+Employee.hasMany(EmployeeDocument, { foreignKey: 'employeeId', as: 'documents' });
+EmployeeDocument.belongsTo(Employee, { foreignKey: 'employeeId', as: 'employee' });
+EmployeeDocument.belongsTo(User, { foreignKey: 'uploadedBy', as: 'uploader' });
+
+Employee.hasMany(EmploymentHistory, { foreignKey: 'employeeId', as: 'history' });
+EmploymentHistory.belongsTo(Employee, { foreignKey: 'employeeId', as: 'employee' });
+
+PayrollRun.hasMany(PayrollEntry, { foreignKey: 'payrollRunId', as: 'entries' });
+PayrollEntry.belongsTo(PayrollRun, { foreignKey: 'payrollRunId', as: 'run' });
+PayrollEntry.belongsTo(Employee, { foreignKey: 'employeeId', as: 'employee' });
+Employee.hasMany(PayrollEntry, { foreignKey: 'employeeId', as: 'payrollEntries' });
+
+JournalEntry.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+JournalEntry.belongsTo(User, { foreignKey: 'approvedBy', as: 'approver' });
+
+JournalEntry.hasMany(JournalEntryLine, { foreignKey: 'journalEntryId', as: 'lines' });
+JournalEntryLine.belongsTo(JournalEntry, { foreignKey: 'journalEntryId', as: 'journalEntry' });
+
+Account.hasMany(JournalEntryLine, { foreignKey: 'accountId', as: 'journalLines' });
+JournalEntryLine.belongsTo(Account, { foreignKey: 'accountId', as: 'account' });
+
+Account.hasMany(AccountBalance, { foreignKey: 'accountId', as: 'balances' });
+AccountBalance.belongsTo(Account, { foreignKey: 'accountId', as: 'account' });
+
+Account.hasMany(Account, { foreignKey: 'parentId', as: 'children' });
+Account.belongsTo(Account, { foreignKey: 'parentId', as: 'parent' });
+
 module.exports = {
   User,
   Customer,
@@ -135,7 +174,16 @@ module.exports = {
   InventoryMovement,
   Lead,
   LeadActivity,
-  Setting
+  Setting,
+  Employee,
+  EmployeeDocument,
+  EmploymentHistory,
+  PayrollRun,
+  PayrollEntry,
+  Account,
+  JournalEntry,
+  JournalEntryLine,
+  AccountBalance
 };
 
 

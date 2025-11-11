@@ -62,6 +62,14 @@ const createSettingsTable = async () => {
             'Default organization profile',
             NOW(),
             NOW()
+          ),
+          (
+            gen_random_uuid(),
+            'payroll',
+            '{"incomeTaxRate":0.15,"ssnitEmployeeRate":0.055,"ssnitEmployerRate":0.13,"bonusTaxRate":0.05,"overtimeRate":1.5}'::jsonb,
+            'Default payroll configuration',
+            NOW(),
+            NOW()
           )
         ON CONFLICT (key) DO NOTHING;
       `,

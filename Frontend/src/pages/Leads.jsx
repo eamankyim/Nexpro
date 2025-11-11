@@ -319,20 +319,40 @@ const Leads = () => {
       key: 'name',
       render: (_, record) => (
         <div>
-          <div style={{ fontWeight: 600 }}>{record.name}</div>
+          <div style={{ fontWeight: 600 }}>{record.name || '—'}</div>
           <div style={{ color: '#888', fontSize: 12 }}>
             {record.company || '—'}
           </div>
-          <Space size={6} style={{ marginTop: 4 }}>
-            {record.email && (
-              <Tag icon={<MailOutlined />} color="blue">{record.email}</Tag>
-            )}
-            {record.phone && (
-              <Tag icon={<PhoneOutlined />} color="green">{record.phone}</Tag>
-            )}
-          </Space>
         </div>
       )
+    },
+    {
+      title: 'Email',
+      dataIndex: 'email',
+      key: 'email',
+      render: (email) =>
+        email ? (
+          <Space size={4}>
+            <MailOutlined style={{ color: '#1677ff' }} />
+            <a href={`mailto:${email}`}>{email}</a>
+          </Space>
+        ) : (
+          '—'
+        )
+    },
+    {
+      title: 'Phone',
+      dataIndex: 'phone',
+      key: 'phone',
+      render: (phone) =>
+        phone ? (
+          <Space size={4}>
+            <PhoneOutlined style={{ color: '#52c41a' }} />
+            <span>{phone}</span>
+          </Space>
+        ) : (
+          '—'
+        )
     },
     {
       title: 'Status',

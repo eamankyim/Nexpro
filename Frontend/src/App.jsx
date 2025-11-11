@@ -20,6 +20,9 @@ import Leads from './pages/Leads';
 import Users from './pages/Users';
 import Profile from './pages/Profile';
 import Settings from './pages/Settings';
+import Employees from './pages/Employees';
+import Payroll from './pages/Payroll';
+import Accounting from './pages/Accounting';
 
 function AppContent() {
   // ForcePasswordChange disabled - invited users set their own password during signup
@@ -48,6 +51,9 @@ function AppContent() {
           <Route path="leads" element={<Leads />} />
           <Route path="reports" element={<Reports />} />
           <Route path="inventory" element={<Inventory />} />
+          <Route path="employees" element={<Employees />} />
+          <Route path="payroll" element={<Payroll />} />
+          <Route path="accounting" element={<Accounting />} />
           <Route path="users" element={<Users />} />
           <Route path="profile" element={<Profile />} />
           <Route path="settings" element={<Settings />} />

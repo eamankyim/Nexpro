@@ -1,5 +1,7 @@
 const { Notification } = require('../models');
 
+const logPrefix = '[Notifications]';
+
 const createNotification = async ({
   userId,
   title,
@@ -14,33 +16,57 @@ const createNotification = async ({
   transaction = null
 }) => {
   if (!userId || !title) {
+    console.warn(`${logPrefix} Skipping notification creation: missing userId or title`, {
+      userId,
+      title
+    });
     return null;
   }
 
-  return Notification.create(
-    {
+  try {
+    const notification = await Notification.create(
+      {
+        userId,
+        title,
+        message,
+        type,
+        priority,
+        metadata,
+        channels,
+        icon,
+        link,
+        triggeredBy
+      },
+      { transaction }
+    );
+
+    console.log(`${logPrefix} Created notification`, {
+      id: notification.id,
       userId,
       title,
-      message,
-      type,
-      priority,
-      metadata,
-      channels,
-      icon,
-      link,
-      triggeredBy
-    },
-    { transaction }
-  );
+      type
+    });
+
+    return notification;
+  } catch (error) {
+    console.error(`${logPrefix} Failed to create notification`, {
+      userId,
+      title,
+      error: error.message
+    });
+    throw error;
+  }
 };
 
 const notifyUsers = async (userIds, payload = {}) => {
   if (!userIds || userIds.length === 0) {
+    console.warn(`${logPrefix} notifyUsers called with empty userIds`);
     return [];
   }
 
   const uniqueUserIds = [...new Set(userIds.filter(Boolean))];
   if (uniqueUserIds.length === 0) {
+    console.warn(`${logPrefix} notifyUsers filtered userIds to zero`, { userIds });
     return [];
   }
 
@@ -53,7 +79,22 @@ const notifyUsers = async (userIds, payload = {}) => {
     channels: payload.channels || ['in_app']
   }));
 
-  return Notification.bulkCreate(notifications);
+  try {
+    const created = await Notification.bulkCreate(notifications);
+    console.log(`${logPrefix} bulkCreate`, {
+      count: created.length,
+      userIds: uniqueUserIds,
+      title: payload.title
+    });
+    return created;
+  } catch (error) {
+    console.error(`${logPrefix} Failed bulkCreate`, {
+      userIds: uniqueUserIds,
+      title: payload.title,
+      error: error.message
+    });
+    throw error;
+  }
 };
 
 const formatJobTitle = (job) => {
@@ -63,13 +104,17 @@ const formatJobTitle = (job) => {
 
 const notifyJobAssigned = async ({ job, triggeredBy = null }) => {
   if (!job || !job.assignedTo) {
+    console.warn(`${logPrefix} notifyJobAssigned skipped`, {
+      jobId: job?.id,
+      hasAssignedTo: Boolean(job?.assignedTo)
+    });
     return null;
   }
 
   const jobTitle = formatJobTitle(job);
   const link = `/jobs/${job.id}`;
 
-  return createNotification({
+  const payload = {
     userId: job.assignedTo,
     title: 'New Job Assigned',
     message: `You have been assigned to ${jobTitle}.`,
@@ -83,11 +128,24 @@ const notifyJobAssigned = async ({ job, triggeredBy = null }) => {
     icon: 'team',
     link,
     triggeredBy
+  };
+
+  console.log(`${logPrefix} notifyJobAssigned`, {
+    jobId: job.id,
+    assignedTo: job.assignedTo,
+    triggeredBy
   });
+
+  return createNotification(payload);
 };
 
 const notifyJobStatusChanged = async ({ job, oldStatus, newStatus, triggeredBy = null }) => {
   if (!job || !newStatus || oldStatus === newStatus) {
+    console.warn(`${logPrefix} notifyJobStatusChanged skipped`, {
+      jobId: job?.id,
+      oldStatus,
+      newStatus
+    });
     return [];
   }
 
@@ -98,13 +156,18 @@ const notifyJobStatusChanged = async ({ job, oldStatus, newStatus, triggeredBy =
 
   const recipients = Array.from(recipientSet).filter(Boolean);
   if (recipients.length === 0) {
+    console.warn(`${logPrefix} notifyJobStatusChanged no recipients`, {
+      jobId: job.id,
+      oldStatus,
+      newStatus
+    });
     return [];
   }
 
   const jobTitle = formatJobTitle(job);
   const link = `/jobs/${job.id}`;
 
-  return notifyUsers(recipients, {
+  const payload = {
     title: 'Job Status Updated',
     message: `${jobTitle} moved from ${oldStatus?.replace('_', ' ')} to ${newStatus.replace('_', ' ')}.`,
     type: 'job',
@@ -118,11 +181,66 @@ const notifyJobStatusChanged = async ({ job, oldStatus, newStatus, triggeredBy =
     icon: 'swap',
     link,
     triggeredBy
+  };
+
+  console.log(`${logPrefix} notifyJobStatusChanged`, {
+    jobId: job.id,
+    recipients,
+    oldStatus,
+    newStatus,
+    triggeredBy
   });
+
+  return notifyUsers(recipients, payload);
+};
+
+const notifyLeadCreated = async ({ lead, triggeredBy = null }) => {
+  if (!lead) {
+    console.warn(`${logPrefix} notifyLeadCreated skipped`, {
+      leadId: lead?.id
+    });
+    return null;
+  }
+
+  if (!lead.assignedTo) {
+    console.warn(`${logPrefix} notifyLeadCreated no assignee`, {
+      leadId: lead.id
+    });
+    return null;
+  }
+
+  const payload = {
+    userId: lead.assignedTo,
+    title: 'New Lead Assigned',
+    message: `${lead.name || lead.company || 'A new lead'} has been assigned to you.`,
+    type: 'lead',
+    priority: 'high',
+    metadata: {
+      leadId: lead.id,
+      status: lead.status,
+      priority: lead.priority
+    },
+    icon: 'user-add',
+    link: `/leads/${lead.id}`,
+    triggeredBy
+  };
+
+  console.log(`${logPrefix} notifyLeadCreated`, {
+    leadId: lead.id,
+    assignedTo: lead.assignedTo,
+    triggeredBy
+  });
+
+  return createNotification(payload);
 };
 
 const notifyLeadStatusChanged = async ({ lead, oldStatus, newStatus, triggeredBy = null }) => {
   if (!lead || !newStatus || oldStatus === newStatus) {
+    console.warn(`${logPrefix} notifyLeadStatusChanged skipped`, {
+      leadId: lead?.id,
+      oldStatus,
+      newStatus
+    });
     return [];
   }
 
@@ -132,12 +250,17 @@ const notifyLeadStatusChanged = async ({ lead, oldStatus, newStatus, triggeredBy
 
   const recipients = Array.from(recipientSet).filter(Boolean);
   if (recipients.length === 0) {
+    console.warn(`${logPrefix} notifyLeadStatusChanged no recipients`, {
+      leadId: lead.id,
+      oldStatus,
+      newStatus
+    });
     return [];
   }
 
   const link = `/leads/${lead.id}`;
 
-  return notifyUsers(recipients, {
+  const payload = {
     title: 'Lead Status Updated',
     message: `${lead.name || lead.company || 'Lead'} moved from ${oldStatus?.replace('_', ' ')} to ${newStatus.replace('_', ' ')}.`,
     type: 'lead',
@@ -150,11 +273,25 @@ const notifyLeadStatusChanged = async ({ lead, oldStatus, newStatus, triggeredBy
     icon: 'flag',
     link,
     triggeredBy
+  };
+
+  console.log(`${logPrefix} notifyLeadStatusChanged`, {
+    leadId: lead.id,
+    recipients,
+    oldStatus,
+    newStatus,
+    triggeredBy
   });
+
+  return notifyUsers(recipients, payload);
 };
 
 const notifyLeadActivityLogged = async ({ lead, activity, triggeredBy = null }) => {
   if (!lead || !activity) {
+    console.warn(`${logPrefix} notifyLeadActivityLogged skipped`, {
+      leadId: lead?.id,
+      hasActivity: Boolean(activity)
+    });
     return [];
   }
 
@@ -164,12 +301,16 @@ const notifyLeadActivityLogged = async ({ lead, activity, triggeredBy = null }) 
 
   const recipients = Array.from(recipientSet).filter(Boolean);
   if (recipients.length === 0) {
+    console.warn(`${logPrefix} notifyLeadActivityLogged no recipients`, {
+      leadId: lead.id,
+      activityId: activity.id
+    });
     return [];
   }
 
   const link = `/leads/${lead.id}`;
 
-  return notifyUsers(recipients, {
+  const payload = {
     title: 'New Lead Activity',
     message: `${lead.name || lead.company || 'Lead'} has a new ${activity.type || 'activity'} logged.`,
     type: 'lead',
@@ -182,7 +323,16 @@ const notifyLeadActivityLogged = async ({ lead, activity, triggeredBy = null }) 
     icon: 'message',
     link,
     triggeredBy
+  };
+
+  console.log(`${logPrefix} notifyLeadActivityLogged`, {
+    leadId: lead.id,
+    activityId: activity.id,
+    recipients,
+    triggeredBy
   });
+
+  return notifyUsers(recipients, payload);
 };
 
 module.exports = {
@@ -190,6 +340,7 @@ module.exports = {
   notifyUsers,
   notifyJobAssigned,
   notifyJobStatusChanged,
+  notifyLeadCreated,
   notifyLeadStatusChanged,
   notifyLeadActivityLogged
 };

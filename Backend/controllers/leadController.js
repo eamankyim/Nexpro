@@ -142,6 +142,17 @@ exports.createLead = async (req, res, next) => {
 
     const createdLead = await Lead.findByPk(lead.id, { include: buildLeadInclude() });
 
+    if (createdLead && createdLead.assignedTo) {
+      try {
+        await notificationService.notifyLeadCreated({
+          lead: createdLead,
+          triggeredBy: req.user?.id || null
+        });
+      } catch (notificationError) {
+        console.error('[LeadController] Failed to send lead created notification', notificationError);
+      }
+    }
+
     res.status(201).json({ success: true, data: createdLead });
   } catch (error) {
     next(error);

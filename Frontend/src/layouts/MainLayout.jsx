@@ -15,7 +15,8 @@ import {
   TeamOutlined,
   LogoutOutlined,
   SettingOutlined,
-  ContainerOutlined
+  ContainerOutlined,
+  UserSwitchOutlined
 } from '@ant-design/icons';
 import { useAuth } from '../context/AuthContext';
 import NotificationBell from '../components/NotificationBell';
@@ -87,6 +88,21 @@ const MainLayout = () => {
       key: '/inventory',
       icon: <ContainerOutlined />,
       label: 'Inventory',
+    },
+    {
+      key: '/employees',
+      icon: <UserSwitchOutlined />,
+      label: 'Employees',
+    },
+    {
+      key: '/payroll',
+      icon: <DollarOutlined />,
+      label: 'Payroll',
+    },
+    {
+      key: '/accounting',
+      icon: <DollarOutlined />,
+      label: 'Accounting',
     },
     {
       key: '/reports',

@@ -35,6 +35,16 @@ exports.getNotifications = async (req, res, next) => {
       ]
     });
 
+    console.log('[Notifications] getNotifications', {
+      userId: req.user.id,
+      page,
+      limit,
+      unreadOnly,
+      type,
+      returned: rows.length,
+      total: count
+    });
+
     res.status(200).json({
       success: true,
       count,
@@ -68,6 +78,11 @@ exports.markNotificationRead = async (req, res, next) => {
         isRead: true,
         readAt: new Date()
       });
+
+      console.log('[Notifications] markNotificationRead', {
+        notificationId: notification.id,
+        userId: req.user.id
+      });
     }
 
     res.status(200).json({ success: true, data: notification });
@@ -87,6 +102,11 @@ exports.markAllNotificationsRead = async (req, res, next) => {
         }
       }
     );
+
+    console.log('[Notifications] markAllNotificationsRead', {
+      userId: req.user.id,
+      updated
+    });
 
     res.status(200).json({
       success: true,
@@ -122,6 +142,13 @@ exports.getNotificationSummary = async (req, res, next) => {
     });
 
     const summary = totals[0]?.toJSON() || { total: 0, unread: 0 };
+
+    console.log('[Notifications] getNotificationSummary', {
+      userId: req.user.id,
+      total: summary.total,
+      unread: summary.unread,
+      recent
+    });
 
     res.status(200).json({
       success: true,

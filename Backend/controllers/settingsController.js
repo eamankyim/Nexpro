@@ -201,3 +201,27 @@ exports.updateSubscriptionSettings = async (req, res, next) => {
   }
 };
 
+exports.getPayrollSettings = async (req, res, next) => {
+  try {
+    const payroll = await getSettingValue('payroll', {
+      incomeTaxRate: 0.15,
+      ssnitEmployeeRate: 0.055,
+      ssnitEmployerRate: 0.13,
+      bonusTaxRate: 0.05,
+      overtimeRate: 1.5
+    });
+    res.status(200).json({ success: true, data: payroll });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.updatePayrollSettings = async (req, res, next) => {
+  try {
+    const updated = await upsertSettingValue('payroll', req.body || {});
+    res.status(200).json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+};
+

@@ -7,6 +7,8 @@ const {
   updateOrganizationSettings,
   getSubscriptionSettings,
   updateSubscriptionSettings,
+  getPayrollSettings,
+  updatePayrollSettings,
   uploadProfilePicture,
   uploadOrganizationLogo
 } = require('../controllers/settingsController');
@@ -43,6 +45,11 @@ router
   .route('/subscription')
   .get(getSubscriptionSettings)
   .put(authorize('admin', 'manager'), updateSubscriptionSettings);
+
+router
+  .route('/payroll')
+  .get(getPayrollSettings)
+  .put(authorize('admin', 'manager'), updatePayrollSettings);
 
 module.exports = router;
 

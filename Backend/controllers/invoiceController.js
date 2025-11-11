@@ -1,6 +1,7 @@
 const { Invoice, Job, Customer, JobItem } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
+const { createInvoicePaymentJournal } = require('../services/invoiceAccountingService');
 
 // Helper function to generate invoice number
 const generateInvoiceNumber = async () => {
@@ -335,9 +336,11 @@ exports.recordPayment = async (req, res, next) => {
     }
 
     const paymentAmount = parseFloat(amount);
-    const newAmountPaid = parseFloat(invoice.amountPaid) + paymentAmount;
+    const totalAmount = parseFloat(invoice.totalAmount || 0);
+    const newAmountPaid = parseFloat(invoice.amountPaid || 0) + paymentAmount;
+    const newBalance = Math.max(totalAmount - newAmountPaid, 0);
 
-    if (newAmountPaid > parseFloat(invoice.totalAmount)) {
+    if (newAmountPaid > totalAmount) {
       return res.status(400).json({
         success: false,
         message: 'Payment amount exceeds invoice total'
@@ -345,22 +348,32 @@ exports.recordPayment = async (req, res, next) => {
     }
 
     // Update invoice
-    await invoice.update({
-      amountPaid: newAmountPaid
-    });
+    const effectivePaymentDate = paymentDate ? new Date(paymentDate) : new Date();
+    const updatePayload = {
+      amountPaid: newAmountPaid,
+      balance: newBalance
+    };
+
+    if (newBalance <= 0) {
+      updatePayload.status = 'paid';
+      updatePayload.paidDate = effectivePaymentDate;
+    } else if (invoice.status === 'draft') {
+      updatePayload.status = 'sent';
+    }
+
+    await invoice.update(updatePayload);
 
     // Create payment record
     const Payment = require('../models/Payment');
     const paymentNumber = `PAY-${Date.now()}`;
-    
-    await Payment.create({
+    const payment = await Payment.create({
       paymentNumber,
       type: 'income',
       customerId: invoice.customerId,
       jobId: invoice.jobId,
       amount: paymentAmount,
       paymentMethod: paymentMethod || 'cash',
-      paymentDate: paymentDate || new Date(),
+      paymentDate: effectivePaymentDate,
       referenceNumber,
       status: 'completed',
       notes: `Payment for invoice ${invoice.invoiceNumber}`
@@ -378,6 +391,21 @@ exports.recordPayment = async (req, res, next) => {
         }
       ]
     });
+
+    try {
+      await createInvoicePaymentJournal({
+        invoice: updatedInvoice,
+        amount: paymentAmount,
+        paymentDate: effectivePaymentDate,
+        paymentMethod: paymentMethod || 'cash',
+        referenceNumber,
+        paymentRecordNumber: payment.paymentNumber,
+        metadata: { paymentId: payment.id },
+        userId: req.user?.id || null
+      });
+    } catch (journalError) {
+      console.error('Failed to create accounting entry for invoice payment', journalError);
+    }
 
     res.status(200).json({
       success: true,
@@ -434,7 +462,6 @@ exports.markInvoicePaid = async (req, res, next) => {
     const currentPaid = parseFloat(invoice.amountPaid || 0);
     const outstanding = Math.max(totalAmount - currentPaid, 0);
     const now = new Date();
-
     await invoice.update({
       amountPaid: totalAmount,
       balance: 0,
@@ -442,11 +469,12 @@ exports.markInvoicePaid = async (req, res, next) => {
       paidDate: now
     });
 
+    let manualPayment = null;
     if (outstanding > 0) {
       const Payment = require('../models/Payment');
       const paymentNumber = `PAY-${Date.now()}`;
 
-      await Payment.create({
+      manualPayment = await Payment.create({
         paymentNumber,
         type: 'income',
         customerId: invoice.customerId,
@@ -471,6 +499,22 @@ exports.markInvoicePaid = async (req, res, next) => {
         }
       ]
     });
+
+    if (outstanding > 0 && manualPayment) {
+      try {
+        await createInvoicePaymentJournal({
+          invoice: updatedInvoice,
+          amount: outstanding,
+          paymentDate: now,
+          paymentMethod: 'other',
+          paymentRecordNumber: manualPayment.paymentNumber,
+          metadata: { paymentId: manualPayment.id, markedPaid: true },
+          userId: req.user?.id || null
+        });
+      } catch (journalError) {
+        console.error('Failed to create accounting entry for invoice mark-paid', journalError);
+      }
+    }
 
     res.status(200).json({
       success: true,

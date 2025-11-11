@@ -30,6 +30,9 @@ const inventoryRoutes = require('./routes/inventoryRoutes');
 const leadRoutes = require('./routes/leadRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
+const employeeRoutes = require('./routes/employeeRoutes');
+const accountingRoutes = require('./routes/accountingRoutes');
+const payrollRoutes = require('./routes/payrollRoutes');
 
 const app = express();
 
@@ -63,6 +66,9 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/settings', settingsRoutes);
+app.use('/api/employees', employeeRoutes);
+app.use('/api/accounting', accountingRoutes);
+app.use('/api/payroll', payrollRoutes);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -116,13 +122,7 @@ const PORT = config.port;
 const startServer = async () => {
   try {
     await testConnection();
-    
-    // Sync database (in production, use migrations instead)
-    if (config.nodeEnv === 'development') {
-      await sequelize.sync({ alter: true });
-      console.log('📊 Database synchronized');
-    }
-    
+
     app.listen(PORT, () => {
       console.log(`🚀 Server running in ${config.nodeEnv} mode on port ${PORT}`);
     });

@@ -1,10 +1,27 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const deriveApiBaseUrl = () => {
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl) {
+    return envUrl.replace(/\/$/, '');
+  }
+
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location;
+    const fallbackPort = import.meta.env.VITE_API_PORT ?? '5000';
+    const portSegment = fallbackPort ? `:${fallbackPort}` : '';
+
+    return `${protocol}//${hostname}${portSegment}`;
+  }
+
+  return 'http://localhost:5000';
+};
+
+export const API_BASE_URL = deriveApiBaseUrl();
 
 // Create axios instance
 const api = axios.create({
-  baseURL: `${API_URL}/api`,
+  baseURL: `${API_BASE_URL}/api`,
   headers: {
     'Content-Type': 'application/json',
   },
