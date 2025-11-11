@@ -54,3 +54,4 @@ const Account = sequelize.define(
 module.exports = Account;
 
 
+

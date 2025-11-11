@@ -51,3 +51,4 @@ const AccountBalance = sequelize.define(
 module.exports = AccountBalance;
 
 
+

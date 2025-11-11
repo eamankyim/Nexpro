@@ -32,3 +32,4 @@ const Setting = sequelize.define(
 module.exports = Setting;
 
 
+

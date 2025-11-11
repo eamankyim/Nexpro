@@ -50,3 +50,4 @@ const EmploymentHistory = sequelize.define(
 module.exports = EmploymentHistory;
 
 
+

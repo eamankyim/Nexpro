@@ -50,3 +50,4 @@ const JournalEntryLine = sequelize.define(
 module.exports = JournalEntryLine;
 
 
+

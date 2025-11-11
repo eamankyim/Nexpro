@@ -65,3 +65,4 @@ const PayrollEntry = sequelize.define(
 module.exports = PayrollEntry;
 
 
+

@@ -57,3 +57,4 @@ const JournalEntry = sequelize.define(
 module.exports = JournalEntry;
 
 
+
