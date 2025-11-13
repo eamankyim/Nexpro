@@ -57,9 +57,7 @@ const Pricing = () => {
     form.resetFields();
     form.setFieldsValue({
       isActive: true,
-      minimumQuantity: 1,
-      setupFee: 0,
-      colorType: 'black_white'
+      pricingMethod: 'unit'
     });
     setModalVisible(true);
   };
@@ -96,6 +94,12 @@ const Pricing = () => {
 
   const handleSubmit = async (values) => {
     try {
+      // Set deprecated fields for backwards compatibility
+      values.basePrice = 0;
+      values.setupFee = 0;
+      values.minimumQuantity = 1;
+      values.maximumQuantity = null;
+      
       // Clean up custom dimension fields (these are only used in job creation, not template)
       values.customHeight = undefined;
       values.customWidth = undefined;
@@ -105,12 +109,7 @@ const Pricing = () => {
       if (values.category === 'Design Services') {
         values.pricingMethod = 'unit';
         values.materialSize = 'N/A';
-        values.basePrice = values.basePrice || 0;
-        values.setupFee = values.setupFee || 0;
-        values.pricePerUnit = values.pricePerUnit || 0;
         values.pricePerSquareFoot = 0;
-        values.minimumQuantity = 1;
-        values.maximumQuantity = undefined;
         if (!values.colorType) {
           values.colorType = 'color';
         }
@@ -122,11 +121,7 @@ const Pricing = () => {
       
       if (isSquareFootPricing && values.category !== 'Design Services') {
         values.pricingMethod = 'square_foot';
-        values.basePrice = values.basePrice || 0;
-        values.setupFee = values.setupFee || 0;
         values.pricePerUnit = 0;
-        values.minimumQuantity = 1;
-        values.maximumQuantity = undefined;
         if (!values.colorType) {
           values.colorType = 'color';
         }
@@ -207,19 +202,19 @@ const Pricing = () => {
       title: 'Base Price',
       dataIndex: 'basePrice',
       key: 'basePrice',
-      render: (price) => `₵${parseFloat(price || 0).toFixed(2)}`,
+      render: (price) => `GHS ${parseFloat(price || 0).toFixed(2)}`,
     },
     {
       title: 'Price/Unit',
       dataIndex: 'pricePerUnit',
       key: 'pricePerUnit',
-      render: (price) => price ? `₵${parseFloat(price).toFixed(2)}` : '-',
+      render: (price) => price ? `GHS ${parseFloat(price).toFixed(2)}` : '-',
     },
     {
       title: 'Setup Fee',
       dataIndex: 'setupFee',
       key: 'setupFee',
-      render: (fee) => `₵${parseFloat(fee || 0).toFixed(2)}`,
+      render: (fee) => `GHS ${parseFloat(fee || 0).toFixed(2)}`,
     },
     {
       title: 'Color Type',
@@ -334,7 +329,7 @@ const Pricing = () => {
                 label="Category"
                 rules={[{ required: true, message: 'Please select category' }]}
               >
-                <Select placeholder="Select category" size="large">
+                <Select placeholder="Select category" size="large" showSearch>
                   {categories.map(cat => (
                     <Option key={cat.value} value={cat.value}>{cat.label}</Option>
                   ))}
@@ -350,83 +345,33 @@ const Pricing = () => {
               const isDesignService = category === 'Design Services';
               
               if (isDesignService) {
-                // For Design Services: Show design type and standard/premium
+                // For Design Services: Show service type only
                 return (
                   <Row gutter={16}>
-                    <Col span={12}>
-                      <Form.Item 
-                        name="jobType" 
-                        label="Design Type"
-                        rules={[{ required: true, message: 'Please select design type' }]}
-                      >
-                        <Select placeholder="Select design type" size="large" allowClear showSearch>
-                          <Option value="Logo Design">Logo Design</Option>
-                          <Option value="Label Design">Label Design</Option>
-                          <Option value="Flyer Design">Flyer Design</Option>
-                          <Option value="Brochure Design">Brochure Design</Option>
-                          <Option value="Business Card Design">Business Card Design</Option>
-                          <Option value="Poster Design">Poster Design</Option>
-                          <Option value="Banner Design">Banner Design</Option>
-                          <Option value="Package Design">Package Design</Option>
-                          <Option value="Brand Identity Design">Brand Identity Design</Option>
-                          <Option value="Social Media Design">Social Media Design</Option>
-                          <Option value="Website Design">Website Design</Option>
-                          <Option value="Other Design">Other Design</Option>
-                        </Select>
-                      </Form.Item>
-                    </Col>
                     <Col span={12}>
                       <Form.Item 
                         name="materialType" 
                         label="Service Type"
                         rules={[{ required: true, message: 'Please select service type' }]}
                       >
-                        <Select placeholder="Select service type" size="large" allowClear>
+                        <Select placeholder="Select service type" size="large" allowClear showSearch>
                           <Option value="Standard">Standard</Option>
                           <Option value="Premium">Premium</Option>
                         </Select>
                       </Form.Item>
                     </Col>
-                    {/* Hidden fields for design services */}
-                    <Form.Item name="materialSize" hidden initialValue="N/A">
-                      <Input value="N/A" />
-                    </Form.Item>
-                    <Form.Item name="pricingMethod" hidden initialValue="unit">
-                      <Input value="unit" />
-                    </Form.Item>
-                    <Form.Item name="colorType" hidden initialValue="color">
-                      <Select value="color" />
-                    </Form.Item>
-                    <Form.Item name="basePrice" hidden initialValue={0}>
-                      <InputNumber value={0} />
-                    </Form.Item>
-                    <Form.Item name="setupFee" hidden initialValue={0}>
-                      <InputNumber value={0} />
-                    </Form.Item>
-                    <Form.Item name="pricePerUnit" hidden>
-                      <InputNumber />
-                    </Form.Item>
-                    <Form.Item name="pricePerSquareFoot" hidden>
-                      <InputNumber />
-                    </Form.Item>
-                    <Form.Item name="minimumQuantity" hidden initialValue={1}>
-                      <InputNumber value={1} />
-                    </Form.Item>
-                    <Form.Item name="maximumQuantity" hidden>
-                      <InputNumber />
-                    </Form.Item>
+                    <Col span={12}>
+                      <Form.Item name="materialSize" label="Material Size" hidden initialValue="N/A">
+                        <Input value="N/A" />
+                      </Form.Item>
+                    </Col>
                   </Row>
                 );
               } else {
-                // For other categories: Show standard fields
+                // For other categories: Show material type and size
                 return (
                   <Row gutter={16}>
-                    <Col span={8}>
-                      <Form.Item name="jobType" label="Job Type">
-                        <Input placeholder="e.g., Brochure, Flyer" size="large" />
-                      </Form.Item>
-                    </Col>
-                    <Col span={8}>
+                    <Col span={12}>
                       <Form.Item 
                         name="materialType" 
                         label="Material Type"
@@ -455,12 +400,13 @@ const Pricing = () => {
                         </Select>
                       </Form.Item>
                     </Col>
-                    <Col span={8}>
+                    <Col span={12}>
                       <Form.Item name="materialSize" label="Material Size">
                         <Select 
                           placeholder="Select material size" 
                           size="large" 
                           allowClear
+                          showSearch
                         >
                           {materialSizes.map(size => (
                             <Option key={size} value={size}>{size}</Option>
@@ -486,42 +432,42 @@ const Pricing = () => {
               const materialType = getFieldValue('materialType');
               const category = getFieldValue('category');
               
-              // Skip pricing fields for Design Services (they only need basePrice/pricePerUnit)
+              // Pricing fields for Design Services
               if (category === 'Design Services') {
                 return (
                   <Row gutter={16}>
-                    <Col span={6}>
+                    <Col span={8}>
                       <Form.Item
-                        name="basePrice"
-                        label="Price"
+                        name="pricePerUnit"
+                        label="Price Per Unit"
                         rules={[{ required: true, message: 'Required' }]}
                       >
                         <InputNumber
                           style={{ width: '100%' }}
                           placeholder="0.00"
-                          prefix="₵"
+                          prefix="GHS "
                           min={0}
                           precision={2}
                           size="large"
                         />
                       </Form.Item>
                     </Col>
-                    {/* Hidden fields for design services */}
-                    <Form.Item name="pricingMethod" hidden initialValue="unit">
-                      <Input value="unit" />
-                    </Form.Item>
-                    <Form.Item name="setupFee" hidden initialValue={0}>
-                      <InputNumber value={0} />
-                    </Form.Item>
-                    <Form.Item name="pricePerUnit" hidden>
-                      <InputNumber value={0} />
-                    </Form.Item>
-                    <Form.Item name="pricePerSquareFoot" hidden>
-                      <InputNumber value={0} />
-                    </Form.Item>
-                    <Form.Item name="colorType" hidden initialValue="color">
-                      <Select value="color" />
-                    </Form.Item>
+                    <Col span={8}>
+                      <Form.Item
+                        name="pricingMethod"
+                        label="Pricing Method"
+                        initialValue="unit"
+                      >
+                        <Select placeholder="Select pricing method" size="large" showSearch>
+                          <Option value="unit">By Unit (Quantity × Price)</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item name="isActive" label="Status" valuePropName="checked">
+                        <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
+                      </Form.Item>
+                    </Col>
                   </Row>
                 );
               }
@@ -531,10 +477,16 @@ const Pricing = () => {
                                         ['SAV (Self-Adhesive Vinyl)', 'Banner', 'One Way Vision'].includes(materialType);
               
               if (isSquareFootPricing) {
-                // For square-foot pricing: Only show Price Per Square Foot (no other pricing fields)
+                // For square-foot pricing: Show Price Per Square Foot
+                // Check if Printing/Photocopy category for Color Type
+                const isPrintingOrPhotocopy = category && (
+                  category.toLowerCase().includes('printing') ||  
+                  category.toLowerCase().includes('photocopy')
+                );
+
                 return (
                   <Row gutter={16}>
-                    <Col span={6}>
+                    <Col span={8}>
                       <Form.Item 
                         name="pricePerSquareFoot" 
                         label="Price Per Square Foot"
@@ -543,173 +495,38 @@ const Pricing = () => {
                         <InputNumber
                           style={{ width: '100%' }}
                           placeholder="0.00"
-                          prefix="₵"
+                          prefix="GHS "
                           min={0}
                           precision={2}
                           size="large"
                         />
                       </Form.Item>
                     </Col>
-                    {/* Hidden fields for square-foot pricing */}
-                    <Form.Item name="pricingMethod" hidden initialValue="square_foot">
-                      <Input value="square_foot" />
-                    </Form.Item>
-                    <Form.Item name="basePrice" hidden initialValue={0}>
-                      <InputNumber value={0} />
-                    </Form.Item>
-                    <Form.Item name="setupFee" hidden initialValue={0}>
-                      <InputNumber value={0} />
-                    </Form.Item>
-                    <Form.Item name="pricePerUnit" hidden>
-                      <InputNumber value={0} />
-                    </Form.Item>
-                    <Form.Item name="colorType" hidden>
-                      <Select value="color" />
-                    </Form.Item>
-                    <Form.Item name="minimumQuantity" hidden initialValue={1}>
-                      <InputNumber value={1} />
-                    </Form.Item>
-                    <Form.Item name="maximumQuantity" hidden>
-                      <InputNumber />
-                    </Form.Item>
-                  </Row>
-                );
-              } else {
-                // For unit-based pricing: Show all standard fields
-                return (
-                  <>
-                    <Row gutter={16}>
-                      <Col span={6}>
-                        <Form.Item
-                          name="pricingMethod"
-                          label="Pricing Method"
-                          initialValue="unit"
-                        >
-                          <Select placeholder="Select pricing method" size="large">
-                            <Option value="unit">By Unit (Quantity × Price)</Option>
-                            <Option value="square_foot">By Square Foot (Size × Price/Sqft)</Option>
-                          </Select>
-                        </Form.Item>
-                      </Col>
-                      <Col span={6}>
+                    <Col span={8}>
+                      <Form.Item
+                        name="pricingMethod"
+                        label="Pricing Method"
+                        initialValue="square_foot"
+                      >
+                        <Select placeholder="Select pricing method" size="large" showSearch>
+                          <Option value="square_foot">By Square Foot (Size × Price/Sqft)</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    {isPrintingOrPhotocopy && (
+                      <Col span={8}>
                         <Form.Item
                           name="colorType"
                           label="Color Type"
                         >
-                          <Select placeholder="Select color type" size="large">
+                          <Select placeholder="Select color type" size="large" showSearch>
                             <Option value="black_white">Black & White</Option>
                             <Option value="color">Color</Option>
                             <Option value="spot_color">Spot Color</Option>
                           </Select>
                         </Form.Item>
                       </Col>
-                      <Col span={6}>
-                        <Form.Item
-                          name="basePrice"
-                          label="Base Price"
-                          rules={[{ required: true, message: 'Required' }]}
-                        >
-                          <InputNumber
-                            style={{ width: '100%' }}
-                            placeholder="0.00"
-                            prefix="₵"
-                            min={0}
-                            precision={2}
-                            size="large"
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col span={6}>
-                        <Form.Item name="setupFee" label="Setup Fee">
-                          <InputNumber
-                            style={{ width: '100%' }}
-                            placeholder="0.00"
-                            prefix="₵"
-                            min={0}
-                            precision={2}
-                            size="large"
-                          />
-                        </Form.Item>
-                      </Col>
-                    </Row>
-                    <Row gutter={16}>
-                      <Col span={6}>
-                        <Form.Item name="pricePerUnit" label="Price Per Unit">
-                          <InputNumber
-                            style={{ width: '100%' }}
-                            placeholder="0.00"
-                            prefix="₵"
-                            min={0}
-                            precision={2}
-                            size="large"
-                          />
-                        </Form.Item>
-                      </Col>
-                    </Row>
-                  </>
-                );
-              }
-            }}
-          </Form.Item>
-
-          {/* Show quantity fields based on category and pricing method */}
-          <Form.Item shouldUpdate={(prevValues, currentValues) => 
-            prevValues.pricingMethod !== currentValues.pricingMethod ||
-            prevValues.materialType !== currentValues.materialType ||
-            prevValues.category !== currentValues.category
-          }>
-            {({ getFieldValue }) => {
-              const pricingMethod = getFieldValue('pricingMethod');
-              const materialType = getFieldValue('materialType');
-              const category = getFieldValue('category');
-              
-              // Skip quantity fields for Design Services
-              if (category === 'Design Services') {
-                return (
-                  <Row gutter={16}>
-                    <Col span={8}>
-                      <Form.Item name="isActive" label="Status" valuePropName="checked">
-                        <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
-                      </Form.Item>
-                    </Col>
-                    {/* Hidden quantity fields */}
-                    <Form.Item name="minimumQuantity" hidden initialValue={1}>
-                      <InputNumber value={1} />
-                    </Form.Item>
-                    <Form.Item name="maximumQuantity" hidden>
-                      <InputNumber />
-                    </Form.Item>
-                  </Row>
-                );
-              }
-              
-              const isSquareFootPricing = pricingMethod === 'square_foot' || 
-                                        ['SAV (Self-Adhesive Vinyl)', 'Banner', 'One Way Vision'].includes(materialType);
-              
-              if (!isSquareFootPricing) {
-                // Show quantity fields for unit-based pricing
-                return (
-                  <Row gutter={16}>
-                    <Col span={8}>
-                      <Form.Item name="minimumQuantity" label="Min Quantity">
-                        <InputNumber
-                          style={{ width: '100%' }}
-                          placeholder="1"
-                          min={1}
-                          size="large"
-                        />
-                      </Form.Item>
-                    </Col>
-                    <Col span={8}>
-                      <Form.Item name="maximumQuantity" label="Max Quantity">
-                        <InputNumber
-                          style={{ width: '100%' }}
-                          placeholder="Optional"
-                          min={1}
-                          size="large"
-                        />
-                      </Form.Item>
-                    </Col>
+                    )}
                     <Col span={8}>
                       <Form.Item name="isActive" label="Status" valuePropName="checked">
                         <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
@@ -718,9 +535,56 @@ const Pricing = () => {
                   </Row>
                 );
               } else {
-                // For square-foot pricing: Only show status
+                // For unit-based pricing: Show Price Per Unit and conditional Color Type
+                const isPrintingOrPhotocopy = category && (
+                  category.toLowerCase().includes('printing') ||  
+                  category.toLowerCase().includes('photocopy')
+                );
+
                 return (
                   <Row gutter={16}>
+                    <Col span={8}>
+                      <Form.Item
+                        name="pricePerUnit"
+                        label="Price Per Unit"
+                        rules={[{ required: true, message: 'Required' }]}
+                      >
+                        <InputNumber
+                          style={{ width: '100%' }}
+                          placeholder="0.00"
+                          prefix="GHS "
+                          min={0}
+                          precision={2}
+                          size="large"
+                        />
+                      </Form.Item>
+                    </Col>
+                    <Col span={8}>
+                      <Form.Item
+                        name="pricingMethod"
+                        label="Pricing Method"
+                        initialValue="unit"
+                      >
+                        <Select placeholder="Select pricing method" size="large" showSearch>
+                          <Option value="unit">By Unit (Quantity × Price)</Option>
+                          <Option value="square_foot">By Square Foot (Size × Price/Sqft)</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
+                    {isPrintingOrPhotocopy && (
+                      <Col span={8}>
+                        <Form.Item
+                          name="colorType"
+                          label="Color Type"
+                        >
+                          <Select placeholder="Select color type" size="large" showSearch>
+                            <Option value="black_white">Black & White</Option>
+                            <Option value="color">Color</Option>
+                            <Option value="spot_color">Spot Color</Option>
+                          </Select>
+                        </Form.Item>
+                      </Col>
+                    )}
                     <Col span={8}>
                       <Form.Item name="isActive" label="Status" valuePropName="checked">
                         <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
@@ -735,7 +599,7 @@ const Pricing = () => {
           <Row gutter={16}>
             <Col span={24}>
               <Form.Item name="description" label="Description">
-                <TextArea rows={3} placeholder="Enter template description" size="large" />
+                <TextArea rows={3} placeholder="Enter internal notes about this template" size="large" />
               </Form.Item>
             </Col>
           </Row>
@@ -801,6 +665,7 @@ const Pricing = () => {
                       onClick={() => remove(name)}
                       icon={<MinusCircleOutlined />}
                       block
+                      style={{ marginTop: '8px' }}
                     >
                       Remove Tier
                     </Button>
@@ -849,7 +714,7 @@ const Pricing = () => {
                           <InputNumber
                             style={{ width: '100%' }}
                             placeholder="0.00"
-                            prefix="₵"
+                            prefix="GHS "
                             min={0}
                             precision={2}
                             size="large"
@@ -863,6 +728,7 @@ const Pricing = () => {
                       onClick={() => remove(name)}
                       icon={<MinusCircleOutlined />}
                       block
+                      style={{ marginTop: '8px' }}
                     >
                       Remove Option
                     </Button>
@@ -912,7 +778,7 @@ const Pricing = () => {
           ...(viewingTemplate.materialSize === 'Custom' || (viewingTemplate.materialSize === undefined && viewingTemplate.paperSize === 'Custom') ? [
             { label: 'Custom Height', value: viewingTemplate.customHeight ? `${viewingTemplate.customHeight} ${viewingTemplate.customUnit || ''}` : '-' },
             { label: 'Custom Width', value: viewingTemplate.customWidth ? `${viewingTemplate.customWidth} ${viewingTemplate.customUnit || ''}` : '-' },
-            { label: 'Price per Square Foot', value: viewingTemplate.pricePerSquareFoot ? `₵${parseFloat(viewingTemplate.pricePerSquareFoot).toFixed(2)}` : '-' },
+            { label: 'Price per Square Foot', value: viewingTemplate.pricePerSquareFoot ? `GHS ${parseFloat(viewingTemplate.pricePerSquareFoot).toFixed(2)}` : '-' },
           ] : []),
           { 
             label: 'Color Type', 
@@ -929,17 +795,17 @@ const Pricing = () => {
           { 
             label: 'Base Price', 
             value: viewingTemplate.basePrice,
-            render: (price) => `₵${parseFloat(price || 0).toFixed(2)}`
+            render: (price) => `GHS ${parseFloat(price || 0).toFixed(2)}`
           },
           { 
             label: 'Price Per Unit', 
             value: viewingTemplate.pricePerUnit,
-            render: (price) => price ? `₵${parseFloat(price).toFixed(2)}` : '-'
+            render: (price) => price ? `GHS ${parseFloat(price).toFixed(2)}` : '-'
           },
           { 
             label: 'Setup Fee', 
             value: viewingTemplate.setupFee,
-            render: (fee) => `₵${parseFloat(fee || 0).toFixed(2)}`
+            render: (fee) => `GHS ${parseFloat(fee || 0).toFixed(2)}`
           },
           { label: 'Min Quantity', value: viewingTemplate.minimumQuantity || 1 },
           { label: 'Max Quantity', value: viewingTemplate.maximumQuantity || 'Unlimited' },
@@ -980,7 +846,7 @@ const Pricing = () => {
                     <List.Item>
                       <Space>
                         <Tag color="blue">{option.name}</Tag>
-                        <span>₵{parseFloat(option.price || 0).toFixed(2)}</span>
+                        <span>GHS {parseFloat(option.price || 0).toFixed(2)}</span>
                       </Space>
                     </List.Item>
                   )}

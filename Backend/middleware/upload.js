@@ -1,6 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const { validateStorageLimit } = require('../utils/storageLimitHelper');
 
 const baseUploadDir = process.env.UPLOAD_DIR
   ? path.resolve(process.env.UPLOAD_DIR)
@@ -40,12 +41,61 @@ const createUploader = (subDirResolver) => {
 
 const upload = createUploader((req) => path.join('jobs', req.params.id || 'general'));
 
+/**
+ * Middleware to check storage limits before upload
+ * Use this BEFORE multer middleware
+ */
+const checkStorageLimit = async (req, res, next) => {
+  try {
+    const tenantId = req.tenantId || req.headers['x-tenant-id'];
+
+    // Skip for platform admins
+    if (req.user?.isPlatformAdmin) {
+      return next();
+    }
+
+    if (!tenantId) {
+      return next(); // Let it proceed, will fail at tenant check
+    }
+
+    // Get file size from headers (if available)
+    const contentLength = parseInt(req.headers['content-length'], 10);
+    
+    if (!contentLength || isNaN(contentLength)) {
+      // Can't check without file size, proceed and check after upload
+      return next();
+    }
+
+    // Validate storage limit
+    const validation = await validateStorageLimit(tenantId, contentLength, false);
+    
+    if (!validation.valid) {
+      return res.status(413).json({
+        success: false,
+        message: validation.error.message,
+        code: 'STORAGE_LIMIT_EXCEEDED',
+        details: validation.error.details,
+        upgradeRequired: true
+      });
+    }
+
+    // Attach storage info to request
+    req.storageUsage = validation.usage;
+    next();
+  } catch (error) {
+    console.error('Storage limit check failed:', error);
+    next(error);
+  }
+};
+
 module.exports = {
   upload,
   baseUploadDir,
   ensureDirExists,
-  createUploader
+  createUploader,
+  checkStorageLimit
 };
+
 
 
 

@@ -9,6 +9,7 @@ const {
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const notificationService = require('../services/notificationService');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 const logLeadDebug = (...args) => {
   if (config.nodeEnv === 'development') {
@@ -47,7 +48,7 @@ exports.getLeads = async (req, res, next) => {
     const source = req.query.source;
     const isActive = req.query.isActive;
 
-    const where = {};
+    const where = applyTenantFilter(req.tenantId, {});
 
     if (search) {
       where[Op.or] = [
@@ -98,7 +99,8 @@ exports.getLeads = async (req, res, next) => {
 
 exports.getLead = async (req, res, next) => {
   try {
-    const lead = await Lead.findByPk(req.params.id, {
+    const lead = await Lead.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         ...buildLeadInclude(),
         {
@@ -122,25 +124,39 @@ exports.getLead = async (req, res, next) => {
 
 exports.createLead = async (req, res, next) => {
   try {
+    const payload = sanitizePayload(req.body);
+
+    if (payload.convertedCustomerId) {
+      const customer = await Customer.findOne({
+        where: applyTenantFilter(req.tenantId, { id: payload.convertedCustomerId })
+      });
+      if (!customer) {
+        return res.status(400).json({ success: false, message: 'Customer not found for this tenant' });
+      }
+    }
+
+    if (payload.convertedJobId) {
+      const job = await Job.findOne({
+        where: applyTenantFilter(req.tenantId, { id: payload.convertedJobId })
+      });
+      if (!job) {
+        return res.status(400).json({ success: false, message: 'Job not found for this tenant' });
+      }
+    }
+
     const lead = await Lead.create({
-      name: req.body.name,
-      company: req.body.company || null,
-      email: req.body.email || null,
-      phone: req.body.phone || null,
-      source: req.body.source || 'unknown',
-      status: req.body.status || 'new',
-      priority: req.body.priority || 'medium',
-      assignedTo: req.body.assignedTo || null,
-      nextFollowUp: req.body.nextFollowUp || null,
-      lastContactedAt: req.body.lastContactedAt || null,
-      notes: req.body.notes || null,
-      tags: req.body.tags || [],
-      metadata: req.body.metadata || {},
-      convertedCustomerId: req.body.convertedCustomerId || null,
-      convertedJobId: req.body.convertedJobId || null
+      ...payload,
+      tenantId: req.tenantId,
+      source: payload.source || 'unknown',
+      status: payload.status || 'new',
+      priority: payload.priority || 'medium',
+      tags: payload.tags || []
     });
 
-    const createdLead = await Lead.findByPk(lead.id, { include: buildLeadInclude() });
+    const createdLead = await Lead.findOne({
+      where: applyTenantFilter(req.tenantId, { id: lead.id }),
+      include: buildLeadInclude()
+    });
 
     if (createdLead && createdLead.assignedTo) {
       try {
@@ -161,7 +177,9 @@ exports.createLead = async (req, res, next) => {
 
 exports.updateLead = async (req, res, next) => {
   try {
-    const lead = await Lead.findByPk(req.params.id);
+    const lead = await Lead.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
@@ -181,14 +199,37 @@ exports.updateLead = async (req, res, next) => {
       }
     });
 
-    await lead.update(updates);
-    const updatedLead = await Lead.findByPk(lead.id, { include: buildLeadInclude() });
+    const sanitized = sanitizePayload(updates);
 
-    if (updates.status && updates.status !== previousStatus) {
+    if (sanitized.convertedCustomerId) {
+      const customer = await Customer.findOne({
+        where: applyTenantFilter(req.tenantId, { id: sanitized.convertedCustomerId })
+      });
+      if (!customer) {
+        return res.status(400).json({ success: false, message: 'Customer not found for this tenant' });
+      }
+    }
+
+    if (sanitized.convertedJobId) {
+      const job = await Job.findOne({
+        where: applyTenantFilter(req.tenantId, { id: sanitized.convertedJobId })
+      });
+      if (!job) {
+        return res.status(400).json({ success: false, message: 'Job not found for this tenant' });
+      }
+    }
+
+    await lead.update(sanitized);
+    const updatedLead = await Lead.findOne({
+      where: applyTenantFilter(req.tenantId, { id: lead.id }),
+      include: buildLeadInclude()
+    });
+
+    if (sanitized.status && sanitized.status !== previousStatus) {
       await notificationService.notifyLeadStatusChanged({
         lead: updatedLead,
         oldStatus: previousStatus,
-        newStatus: updates.status,
+        newStatus: sanitized.status,
         triggeredBy: req.user?.id || null
       });
     }
@@ -201,7 +242,9 @@ exports.updateLead = async (req, res, next) => {
 
 exports.deleteLead = async (req, res, next) => {
   try {
-    const lead = await Lead.findByPk(req.params.id);
+    const lead = await Lead.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
@@ -215,30 +258,36 @@ exports.deleteLead = async (req, res, next) => {
 
 exports.addLeadActivity = async (req, res, next) => {
   try {
-    const lead = await Lead.findByPk(req.params.id);
+    const lead = await Lead.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
 
+    const payload = sanitizePayload(req.body);
+
     const activity = await LeadActivity.create({
       leadId: lead.id,
-      type: req.body.type || 'note',
-      subject: req.body.subject || null,
-      notes: req.body.notes || null,
+      tenantId: req.tenantId,
+      type: payload.type || 'note',
+      subject: payload.subject || null,
+      notes: payload.notes || null,
       createdBy: req.user?.id || null,
-      nextStep: req.body.nextStep || null,
-      followUpDate: req.body.followUpDate || null,
-      metadata: req.body.metadata || {}
+      nextStep: payload.nextStep || null,
+      followUpDate: payload.followUpDate || null,
+      metadata: payload.metadata || {}
     });
 
-    if (req.body.followUpDate) {
-      await lead.update({ nextFollowUp: req.body.followUpDate });
+    if (payload.followUpDate) {
+      await lead.update({ nextFollowUp: payload.followUpDate });
     }
-    if (req.body.updateStatus) {
-      await lead.update({ status: req.body.updateStatus });
+    if (payload.updateStatus) {
+      await lead.update({ status: payload.updateStatus });
     }
 
-    const populatedActivity = await LeadActivity.findByPk(activity.id, {
+    const populatedActivity = await LeadActivity.findOne({
+      where: applyTenantFilter(req.tenantId, { id: activity.id }),
       include: [{ model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] }]
     });
 
@@ -256,13 +305,15 @@ exports.addLeadActivity = async (req, res, next) => {
 
 exports.getLeadActivities = async (req, res, next) => {
   try {
-    const lead = await Lead.findByPk(req.params.id);
+    const lead = await Lead.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
 
     const activities = await LeadActivity.findAll({
-      where: { leadId: lead.id },
+      where: applyTenantFilter(req.tenantId, { leadId: lead.id }),
       order: [['createdAt', 'DESC']],
       include: [{ model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] }]
     });
@@ -282,17 +333,18 @@ exports.getLeadSummary = async (req, res, next) => {
         [Sequelize.fn('SUM', Sequelize.literal(`CASE WHEN status = 'qualified' THEN 1 ELSE 0 END`)), 'qualifiedLeads'],
         [Sequelize.fn('SUM', Sequelize.literal(`CASE WHEN status = 'converted' THEN 1 ELSE 0 END`)), 'convertedLeads'],
         [Sequelize.fn('SUM', Sequelize.literal(`CASE WHEN status = 'lost' THEN 1 ELSE 0 END`)), 'lostLeads']
-      ]
+      ],
+      where: applyTenantFilter(req.tenantId, {})
     });
 
     const upcomingFollowUps = await Lead.findAll({
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         nextFollowUp: {
           [Op.ne]: null,
           [Op.lte]: Sequelize.literal("NOW() + interval '7 days'")
         },
         isActive: true
-      },
+      }),
       order: [['nextFollowUp', 'ASC']],
       limit: 5,
       include: buildLeadInclude()
@@ -314,7 +366,8 @@ exports.convertLead = async (req, res, next) => {
   const transaction = await sequelize.transaction();
 
   try {
-    const lead = await Lead.findByPk(req.params.id, {
+    const lead = await Lead.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: buildLeadInclude(),
       transaction,
       lock: transaction.LOCK.UPDATE
@@ -344,7 +397,10 @@ exports.convertLead = async (req, res, next) => {
       notes: lead.notes || null
     };
 
-    const customer = await Customer.create(customerPayload, { transaction });
+    const customer = await Customer.create(
+      { ...customerPayload, tenantId: req.tenantId },
+      { transaction }
+    );
 
     await lead.update(
       {
@@ -358,6 +414,7 @@ exports.convertLead = async (req, res, next) => {
     await LeadActivity.create(
       {
         leadId: lead.id,
+        tenantId: req.tenantId,
         type: 'note',
         subject: 'Lead Converted',
         notes: `Lead converted to customer ${customer.name}`,
@@ -371,7 +428,10 @@ exports.convertLead = async (req, res, next) => {
 
     await transaction.commit();
 
-    const updatedLead = await Lead.findByPk(lead.id, { include: buildLeadInclude() });
+    const updatedLead = await Lead.findOne({
+      where: applyTenantFilter(req.tenantId, { id: lead.id }),
+      include: buildLeadInclude()
+    });
 
     await notificationService.notifyLeadStatusChanged({
       lead: updatedLead,

@@ -42,6 +42,8 @@ const Jobs = () => {
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [jobBeingUpdated, setJobBeingUpdated] = useState(null);
   const [statusForm] = Form.useForm();
+  const [customerModalVisible, setCustomerModalVisible] = useState(false);
+  const [customerForm] = Form.useForm();
 
   // Job type configurations
   const jobTypeConfig = {
@@ -366,6 +368,10 @@ useEffect(() => {
     setModalVisible(true);
     
     // Fetch customers and pricing templates
+    await fetchCustomersAndTemplates();
+  };
+
+  const fetchCustomersAndTemplates = async () => {
     try {
       const [customersResponse, templatesResponse] = await Promise.all([
         customerService.getAll({ limit: 100 }),
@@ -375,6 +381,31 @@ useEffect(() => {
       setPricingTemplates(templatesResponse.data || []);
     } catch (error) {
       message.error('Failed to load data');
+    }
+  };
+
+  const handleAddNewCustomer = () => {
+    customerForm.resetFields();
+    setCustomerModalVisible(true);
+  };
+
+  const handleCustomerSubmit = async (values) => {
+    try {
+      const response = await customerService.create(values);
+      message.success('Customer created successfully');
+      setCustomerModalVisible(false);
+      customerForm.resetFields();
+      
+      // Refresh customers list
+      await fetchCustomersAndTemplates();
+      
+      // Auto-select the newly created customer
+      if (response?.data?.id) {
+        form.setFieldsValue({ customerId: response.data.id });
+        handleCustomerChange(response.data.id);
+      }
+    } catch (error) {
+      message.error(error.error || 'Failed to create customer');
     }
   };
 
@@ -744,7 +775,7 @@ useEffect(() => {
       title: 'Price',
       dataIndex: 'finalPrice',
       key: 'finalPrice',
-      render: (price) => `₵${parseFloat(price || 0).toFixed(2)}`,
+      render: (price) => `GHS ${parseFloat(price || 0).toFixed(2)}`,
     },
     {
       title: 'Due Date',
@@ -907,7 +938,7 @@ useEffect(() => {
                 </Descriptions.Item>
                 <Descriptions.Item label="Final Price">
                   <strong style={{ fontSize: 16, color: '#1890ff' }}>
-                    ₵{parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
+                    GHS {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
                   </strong>
                 </Descriptions.Item>
                 <Descriptions.Item label="Start Date">
@@ -1002,12 +1033,12 @@ useEffect(() => {
                           </Col>
                           <Col span={4} style={{ textAlign: 'right' }}>
                             <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Unit Price</div>
-                            <div style={{ fontSize: 14 }}>₵{parseFloat(item.unitPrice || 0).toFixed(2)}</div>
+                            <div style={{ fontSize: 14 }}>GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
                           </Col>
                           <Col span={4} style={{ textAlign: 'right' }}>
                             <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Total</div>
                             <div style={{ fontWeight: 'bold', color: '#1890ff', fontSize: 14 }}>
-                              ₵{(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
+                              GHS {(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
                             </div>
                           </Col>
                         </Row>
@@ -1024,7 +1055,7 @@ useEffect(() => {
                     }}>
                       <strong style={{ fontSize: 16 }}>Total:</strong>
                       <strong style={{ fontSize: 18, color: '#1890ff' }}>
-                        ₵{parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
+                        GHS {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
                       </strong>
                     </div>
                   </div>
@@ -1206,6 +1237,20 @@ useEffect(() => {
                     option.children.toLowerCase().includes(input.toLowerCase())
                   }
                   onChange={handleCustomerChange}
+                  dropdownRender={(menu) => (
+                    <>
+                      {menu}
+                      <Divider style={{ margin: '8px 0' }} />
+                      <Button
+                        type="link"
+                        icon={<PlusOutlined />}
+                        onClick={handleAddNewCustomer}
+                        style={{ width: '100%', textAlign: 'left' }}
+                      >
+                        Add New Customer
+                      </Button>
+                    </>
+                  )}
                 >
                   {customers.map(customer => (
                     <Option key={customer.id} value={customer.id}>
@@ -1415,9 +1460,9 @@ useEffect(() => {
                                 const hasSquareFootPricing = Number.isFinite(parseFloat(template.pricePerSquareFoot)) && parseFloat(template.pricePerSquareFoot) > 0;
                                 const priceLabel = (() => {
                                   if (resolvedPrice <= 0) return '';
-                                  if (hasUnitPricing) return ` (₵${resolvedPrice.toFixed(2)}/unit)`;
-                                  if (hasSquareFootPricing) return ` (₵${resolvedPrice.toFixed(2)}/sq ft)`;
-                                  return ` (₵${resolvedPrice.toFixed(2)})`;
+                                  if (hasUnitPricing) return ` (GHS ${resolvedPrice.toFixed(2)}/unit)`;
+                                  if (hasSquareFootPricing) return ` (GHS ${resolvedPrice.toFixed(2)}/sq ft)`;
+                                  return ` (GHS ${resolvedPrice.toFixed(2)})`;
                                 })();
                                 return (
                                   <Option key={template.id} value={template.id}>
@@ -1635,16 +1680,16 @@ useEffect(() => {
                                       display: 'flex',
                                       alignItems: 'center'
                                     }}>
-                                      ₵{calculatedPrice.toFixed(2)}
+                                      GHS {calculatedPrice.toFixed(2)}
                                     </div>
                                   </Form.Item>
                                 </Col>
                               </Row>
                               {pricePerSqft > 0 && (
                                 <div style={{ marginTop: 8, fontSize: 12, color: '#666' }}>
-                                  Price per sqft: ₵{pricePerSqft.toFixed(2)} | 
+                                  Price per sqft: GHS {pricePerSqft.toFixed(2)} | 
                                   {height && width && unit && (
-                                    <span> {height}{unit === 'feet' ? 'ft' : 'in'} × {width}{unit === 'feet' ? 'ft' : 'in'}{unit === 'inches' ? ' ÷ 144' : ''} = ₵{calculatedPrice.toFixed(2)}</span>
+                                    <span> {height}{unit === 'feet' ? 'ft' : 'in'} × {width}{unit === 'feet' ? 'ft' : 'in'}{unit === 'inches' ? ' ÷ 144' : ''} = GHS {calculatedPrice.toFixed(2)}</span>
                                   )}
                                 </div>
                               )}
@@ -1694,7 +1739,7 @@ useEffect(() => {
                                   <InputNumber
                                     style={{ width: '100%' }}
                                     placeholder="0.00"
-                                    prefix="₵"
+                                    prefix="GHS "
                                     min={0}
                                     precision={2}
                                     size="large"
@@ -1726,7 +1771,7 @@ useEffect(() => {
                                           display: 'flex',
                                           alignItems: 'center'
                                         }}>
-                                          ₵{total.toFixed(2)}
+                                          GHS {total.toFixed(2)}
                                         </div>
                                       </Form.Item>
                                     );
@@ -1762,16 +1807,16 @@ useEffect(() => {
                             }}>
                               <Row justify="space-between" style={{ marginBottom: 2 }}>
                                 <Col style={{ color: '#666', fontSize: 13 }}>Subtotal:</Col>
-                                <Col style={{ fontWeight: 500, fontSize: 13 }}>₵{subtotal.toFixed(2)}</Col>
+                                <Col style={{ fontWeight: 500, fontSize: 13 }}>GHS {subtotal.toFixed(2)}</Col>
                               </Row>
                               <Row justify="space-between" style={{ marginBottom: 2 }}>
                                 <Col style={{ color: '#666', fontSize: 13 }}>Discount ({discountPercent}%):</Col>
-                                <Col style={{ fontWeight: 500, fontSize: 13 }}>-₵{discountAmount.toFixed(2)}</Col>
+                                <Col style={{ fontWeight: 500, fontSize: 13 }}>-GHS {discountAmount.toFixed(2)}</Col>
                               </Row>
                               <Divider style={{ margin: '4px 0', borderColor: '#d9d9d9' }} />
                               <Row justify="space-between">
                                 <Col style={{ fontSize: 14, fontWeight: 600 }}>Total:</Col>
-                                <Col style={{ fontSize: 14, fontWeight: 600, color: '#000' }}>₵{total.toFixed(2)}</Col>
+                                <Col style={{ fontSize: 14, fontWeight: 600, color: '#000' }}>GHS {total.toFixed(2)}</Col>
                               </Row>
                             </div>
                           );
@@ -1832,18 +1877,18 @@ useEffect(() => {
                 }}>
                   <Row justify="space-between" style={{ marginBottom: 4 }}>
                     <Col style={{ fontSize: 14, color: '#666' }}>Subtotal:</Col>
-                    <Col style={{ fontSize: 14, fontWeight: 500 }}>₵{subtotal.toFixed(2)}</Col>
+                    <Col style={{ fontSize: 14, fontWeight: 500 }}>GHS {subtotal.toFixed(2)}</Col>
                   </Row>
                   {totalDiscount > 0 && (
                     <Row justify="space-between" style={{ marginBottom: 4 }}>
                       <Col style={{ fontSize: 14, color: '#666' }}>Total Discount:</Col>
-                      <Col style={{ fontSize: 14, fontWeight: 500 }}>-₵{totalDiscount.toFixed(2)}</Col>
+                      <Col style={{ fontSize: 14, fontWeight: 500 }}>-GHS {totalDiscount.toFixed(2)}</Col>
                     </Row>
                   )}
                   <Divider style={{ margin: '6px 0', borderColor: '#d9d9d9' }} />
                   <Row justify="space-between">
                     <Col style={{ fontSize: 16, fontWeight: 'bold' }}>Grand Total:</Col>
-                    <Col style={{ fontSize: 18, fontWeight: 'bold', color: '#000' }}>₵{total.toFixed(2)}</Col>
+                    <Col style={{ fontSize: 18, fontWeight: 'bold', color: '#000' }}>GHS {total.toFixed(2)}</Col>
                   </Row>
                 </div>
               );
@@ -2031,6 +2076,82 @@ useEffect(() => {
             </Form>
           </>
         )}
+      </Modal>
+
+      {/* Add New Customer Modal */}
+      <Modal
+        title="Add New Customer"
+        open={customerModalVisible}
+        onCancel={() => setCustomerModalVisible(false)}
+        onOk={() => customerForm.submit()}
+        width={800}
+        okText="Create Customer"
+      >
+        <Form
+          form={customerForm}
+          layout="vertical"
+          onFinish={handleCustomerSubmit}
+        >
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="name"
+                label="Customer Name"
+                rules={[{ required: true, message: 'Please enter customer name' }]}
+              >
+                <Input placeholder="Enter name" size="large" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="company" label="Company">
+                <Input placeholder="Enter company name" size="large" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="email"
+                label="Email"
+                rules={[{ type: 'email', message: 'Please enter a valid email' }]}
+              >
+                <Input placeholder="Enter email" size="large" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="phone" label="Phone">
+                <Input placeholder="Enter phone number" size="large" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={24}>
+              <Form.Item name="address" label="Address">
+                <Input placeholder="Enter address" size="large" />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item name="city" label="City">
+                <Input placeholder="Enter city" size="large" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="state" label="State">
+                <Input placeholder="Enter state" size="large" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="zipCode" label="Zip Code">
+                <Input placeholder="Enter zip code" size="large" />
+              </Form.Item>
+            </Col>
+          </Row>
+        </Form>
       </Modal>
     </div>
   );

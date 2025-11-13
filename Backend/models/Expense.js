@@ -7,6 +7,14 @@ const Expense = sequelize.define('Expense', {
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
+  tenantId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'tenants',
+      key: 'id'
+    }
+  },
   expenseNumber: {
     type: DataTypes.STRING,
     unique: true,

@@ -9,6 +9,14 @@ const PayrollRun = sequelize.define(
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true
     },
+    tenantId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: 'tenants',
+        key: 'id'
+      }
+    },
     periodStart: {
       type: DataTypes.DATEONLY,
       allowNull: false

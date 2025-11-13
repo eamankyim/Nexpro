@@ -91,13 +91,13 @@ const Payroll = () => {
       title: 'Gross',
       dataIndex: 'totalGross',
       key: 'totalGross',
-      render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`
+      render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`
     },
     {
       title: 'Net',
       dataIndex: 'totalNet',
       key: 'totalNet',
-      render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`
+      render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`
     },
     {
       title: 'Status',
@@ -261,9 +261,9 @@ const Payroll = () => {
                 <Tag color={viewingRun.status === 'posted' ? 'green' : 'blue'}>{viewingRun.status.toUpperCase()}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="Employees">{viewingRun.totalEmployees}</Descriptions.Item>
-              <Descriptions.Item label="Total Gross">₵{parseFloat(viewingRun.totalGross || 0).toFixed(2)}</Descriptions.Item>
-              <Descriptions.Item label="Total Net">₵{parseFloat(viewingRun.totalNet || 0).toFixed(2)}</Descriptions.Item>
-              <Descriptions.Item label="Total Tax">₵{parseFloat(viewingRun.totalTax || 0).toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="Total Gross">GHS {parseFloat(viewingRun.totalGross || 0).toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="Total Net">GHS {parseFloat(viewingRun.totalNet || 0).toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="Total Tax">GHS {parseFloat(viewingRun.totalTax || 0).toFixed(2)}</Descriptions.Item>
             </Descriptions>
             <Divider />
             <Table
@@ -280,25 +280,25 @@ const Payroll = () => {
                   title: 'Gross',
                   dataIndex: 'grossPay',
                   key: 'gross',
-                  render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`
+                  render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`
                 },
                 {
                   title: 'Net Pay',
                   dataIndex: 'netPay',
                   key: 'net',
-                  render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`
+                  render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`
                 },
                 {
                   title: 'PAYE',
                   key: 'paye',
                   render: (_, entry) =>
-                    `₵${parseFloat(entry.taxes.find((t) => t.type === 'income_tax')?.amount || 0).toFixed(2)}`
+                    `GHS ${parseFloat(entry.taxes.find((t) => t.type === 'income_tax')?.amount || 0).toFixed(2)}`
                 },
                 {
                   title: 'SSNIT (Emp.)',
                   key: 'ssnit',
                   render: (_, entry) =>
-                    `₵${parseFloat(entry.taxes.find((t) => t.type === 'ssnit_employee')?.amount || 0).toFixed(2)}`
+                    `GHS ${parseFloat(entry.taxes.find((t) => t.type === 'ssnit_employee')?.amount || 0).toFixed(2)}`
                 }
               ]}
             />
@@ -322,6 +322,8 @@ const Payroll = () => {
 };
 
 export default Payroll;
+
+
 
 
 

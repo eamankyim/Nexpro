@@ -34,6 +34,12 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    const tenantId = localStorage.getItem('activeTenantId');
+    if (tenantId) {
+      config.headers['x-tenant-id'] = tenantId;
+    } else {
+      delete config.headers['x-tenant-id'];
+    }
     return config;
   },
   (error) => {

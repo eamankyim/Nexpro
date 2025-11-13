@@ -422,13 +422,13 @@ const Dashboard = () => {
             <Statistic
               title={revenueTitle}
               value={revenueValue}
-              prefix="₵"
+              prefix="GHS "
               valueStyle={{ color: '#3f8600' }}
               precision={2}
               suffix={<RiseOutlined />}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
-              All-time: ₵{Number(displayData?.allTime?.revenue ?? 0).toFixed(2)}
+              All-time: GHS {Number(displayData?.allTime?.revenue ?? 0).toFixed(2)}
               {thisMonthRange && (
                 <div>
                   <Tooltip
@@ -452,13 +452,13 @@ const Dashboard = () => {
             <Statistic
               title={expenseTitle}
               value={expenseValue}
-              prefix="₵"
+              prefix="GHS "
               valueStyle={{ color: '#cf1322' }}
               precision={2}
               suffix={<FallOutlined />}
             />
             <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
-              All-time: ₵{Number(displayData?.allTime?.expenses ?? 0).toFixed(2)}
+              All-time: GHS {Number(displayData?.allTime?.expenses ?? 0).toFixed(2)}
               {thisMonthRange && (
                 <div>
                   <Tooltip

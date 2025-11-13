@@ -30,6 +30,12 @@ const pricingService = {
   // Calculate price
   calculatePrice: async (jobDetails) => {
     return await api.post('/pricing/calculate', jobDetails);
+  },
+
+  getPublicPlans: async (channel = '') => {
+    const params = channel ? { channel } : undefined;
+    const response = await api.get('/public/pricing', { params });
+    return response.data;
   }
 };
 

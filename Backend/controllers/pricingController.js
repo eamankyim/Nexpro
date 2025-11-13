@@ -13,7 +13,7 @@ exports.getPricingTemplates = async (req, res, next) => {
     const category = req.query.category;
     const isActive = req.query.isActive;
 
-    const where = {};
+    const where = { tenantId: req.tenantId };
     if (category && category !== '') where.category = category;
     if (isActive !== undefined && isActive !== '') where.isActive = isActive === 'true';
 
@@ -44,7 +44,12 @@ exports.getPricingTemplates = async (req, res, next) => {
 // @access  Private
 exports.getPricingTemplate = async (req, res, next) => {
   try {
-    const pricingTemplate = await PricingTemplate.findByPk(req.params.id);
+    const pricingTemplate = await PricingTemplate.findOne({
+      where: {
+        id: req.params.id,
+        tenantId: req.tenantId
+      }
+    });
 
     if (!pricingTemplate) {
       return res.status(404).json({
@@ -67,7 +72,10 @@ exports.getPricingTemplate = async (req, res, next) => {
 // @access  Private
 exports.createPricingTemplate = async (req, res, next) => {
   try {
-    const pricingTemplate = await PricingTemplate.create(req.body);
+    const pricingTemplate = await PricingTemplate.create({
+      ...req.body,
+      tenantId: req.tenantId
+    });
 
     res.status(201).json({
       success: true,
@@ -83,7 +91,12 @@ exports.createPricingTemplate = async (req, res, next) => {
 // @access  Private
 exports.updatePricingTemplate = async (req, res, next) => {
   try {
-    const pricingTemplate = await PricingTemplate.findByPk(req.params.id);
+    const pricingTemplate = await PricingTemplate.findOne({
+      where: {
+        id: req.params.id,
+        tenantId: req.tenantId
+      }
+    });
 
     if (!pricingTemplate) {
       return res.status(404).json({
@@ -108,7 +121,12 @@ exports.updatePricingTemplate = async (req, res, next) => {
 // @access  Private
 exports.deletePricingTemplate = async (req, res, next) => {
   try {
-    const pricingTemplate = await PricingTemplate.findByPk(req.params.id);
+    const pricingTemplate = await PricingTemplate.findOne({
+      where: {
+        id: req.params.id,
+        tenantId: req.tenantId
+      }
+    });
 
     if (!pricingTemplate) {
       return res.status(404).json({
@@ -165,24 +183,39 @@ exports.calculatePrice = async (req, res, next) => {
       calculatedPrice += parseFloat(template.setupFee);
     }
 
+    // Track discount details
+    let appliedDiscount = null;
+    let discountAmount = 0;
+    let priceBeforeDiscount = calculatedPrice;
+
     // Apply discount tiers
     if (template.discountTiers && quantity) {
       const tiers = template.discountTiers;
       for (const tier of tiers) {
         if (quantity >= tier.minQuantity && quantity <= (tier.maxQuantity || Infinity)) {
-          const discount = (calculatedPrice * tier.discountPercent) / 100;
-          calculatedPrice -= discount;
+          discountAmount = (calculatedPrice * tier.discountPercent) / 100;
+          calculatedPrice -= discountAmount;
+          appliedDiscount = {
+            type: 'quantity',
+            tier: tier,
+            percentage: tier.discountPercent,
+            amount: discountAmount.toFixed(2),
+            reason: `Volume discount (${tier.minQuantity}+ units = ${tier.discountPercent}% off)`
+          };
           break;
         }
       }
     }
 
     // Add additional options pricing
+    let additionalOptionsCost = 0;
     if (template.additionalOptions && additionalOptions) {
       for (const option of additionalOptions) {
         const templateOption = template.additionalOptions.find(o => o.name === option);
         if (templateOption) {
-          calculatedPrice += parseFloat(templateOption.price);
+          const optionPrice = parseFloat(templateOption.price);
+          calculatedPrice += optionPrice;
+          additionalOptionsCost += optionPrice;
         }
       }
     }
@@ -194,11 +227,19 @@ exports.calculatePrice = async (req, res, next) => {
         calculatedPrice: calculatedPrice.toFixed(2),
         quantity,
         breakdown: {
-          basePrice: template.basePrice,
-          unitPrice: template.pricePerUnit ? (parseFloat(template.pricePerUnit) * quantity).toFixed(2) : 0,
-          setupFee: template.setupFee,
+          basePrice: parseFloat(template.basePrice).toFixed(2),
+          unitPrice: template.pricePerUnit ? (parseFloat(template.pricePerUnit) * quantity).toFixed(2) : '0.00',
+          setupFee: parseFloat(template.setupFee || 0).toFixed(2),
+          additionalOptions: additionalOptionsCost.toFixed(2),
+          subtotal: priceBeforeDiscount.toFixed(2),
+          discount: appliedDiscount ? {
+            amount: appliedDiscount.amount,
+            percentage: appliedDiscount.percentage,
+            reason: appliedDiscount.reason
+          } : null,
           finalPrice: calculatedPrice.toFixed(2)
-        }
+        },
+        appliedDiscount
       }
     });
   } catch (error) {

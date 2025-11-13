@@ -7,9 +7,12 @@ const {
   Setting
 } = require('../models');
 const accountingService = require('../services/accountingService');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
-const getPayrollSettings = async () => {
-  const payrollSetting = await Setting.findOne({ where: { key: 'payroll' } });
+const getPayrollSettings = async (tenantId) => {
+  const payrollSetting = await Setting.findOne({
+    where: applyTenantFilter(tenantId, { key: 'payroll' })
+  });
   return payrollSetting?.value || {
     incomeTaxRate: 0.15,
     ssnitEmployeeRate: 0.055,
@@ -45,7 +48,7 @@ exports.getPayrollRuns = async (req, res, next) => {
     const limit = parseInt(req.query.limit, 10) || 20;
     const offset = (page - 1) * limit;
 
-    const where = {};
+    const where = applyTenantFilter(req.tenantId, {});
     if (req.query.status && req.query.status !== 'all') {
       where.status = req.query.status;
     }
@@ -58,7 +61,9 @@ exports.getPayrollRuns = async (req, res, next) => {
       include: [
         {
           model: PayrollEntry,
-          as: 'entries'
+          as: 'entries',
+          where: applyTenantFilter(req.tenantId, {}),
+          required: false
         }
       ]
     });
@@ -80,15 +85,20 @@ exports.getPayrollRuns = async (req, res, next) => {
 
 exports.getPayrollRun = async (req, res, next) => {
   try {
-    const run = await PayrollRun.findByPk(req.params.id, {
+    const run = await PayrollRun.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         {
           model: PayrollEntry,
           as: 'entries',
+          where: applyTenantFilter(req.tenantId, {}),
+          required: false,
           include: [
             {
               model: Employee,
-              as: 'employee'
+              as: 'employee',
+              where: applyTenantFilter(req.tenantId, {}),
+              required: false
             }
           ],
           order: [['createdAt', 'DESC']]
@@ -108,16 +118,22 @@ exports.getPayrollRun = async (req, res, next) => {
 
 exports.createPayrollRun = async (req, res, next) => {
   try {
-    const { periodStart, periodEnd, payDate, employeeIds = [] } = req.body;
+    const {
+      periodStart,
+      periodEnd,
+      payDate,
+      employeeIds = [],
+      notes = null
+    } = sanitizePayload(req.body || {});
 
     if (!periodStart || !periodEnd || !payDate) {
       return res.status(400).json({ success: false, message: 'periodStart, periodEnd and payDate are required' });
     }
 
-    const employeeWhere = {
+    const employeeWhere = applyTenantFilter(req.tenantId, {
       status: { [Op.ne]: 'terminated' },
       isActive: true
-    };
+    });
     if (employeeIds.length) {
       employeeWhere.id = { [Op.in]: employeeIds };
     }
@@ -127,7 +143,7 @@ exports.createPayrollRun = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'No employees found for this run' });
     }
 
-    const settings = await getPayrollSettings();
+    const settings = await getPayrollSettings(req.tenantId);
 
     let totalGross = 0;
     let totalNet = 0;
@@ -173,19 +189,30 @@ exports.createPayrollRun = async (req, res, next) => {
       totalNet,
       totalTax,
       totalEmployees: employees.length,
-      notes: req.body.notes || null,
-      metadata: { settingsUsed: settings }
+      notes: notes || null,
+      metadata: { settingsUsed: settings },
+      tenantId: req.tenantId
     });
 
     const entries = entriesPayload.map((entry) => ({
       ...entry,
-      payrollRunId: run.id
+      payrollRunId: run.id,
+      tenantId: req.tenantId
     }));
 
     await PayrollEntry.bulkCreate(entries);
 
-    const createdRun = await PayrollRun.findByPk(run.id, {
-      include: [{ model: PayrollEntry, as: 'entries', include: [{ model: Employee, as: 'employee' }] }]
+    const createdRun = await PayrollRun.findOne({
+      where: applyTenantFilter(req.tenantId, { id: run.id }),
+      include: [
+        {
+          model: PayrollEntry,
+          as: 'entries',
+          where: applyTenantFilter(req.tenantId, {}),
+          required: false,
+          include: [{ model: Employee, as: 'employee', where: applyTenantFilter(req.tenantId, {}), required: false }]
+        }
+      ]
     });
 
     res.status(201).json({ success: true, data: createdRun });
@@ -196,7 +223,8 @@ exports.createPayrollRun = async (req, res, next) => {
 
 exports.postPayrollRun = async (req, res, next) => {
   try {
-    const run = await PayrollRun.findByPk(req.params.id, {
+    const run = await PayrollRun.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         {
           model: PayrollEntry,
@@ -241,17 +269,18 @@ exports.postPayrollRun = async (req, res, next) => {
       0
     );
 
-    const salaryAccount = await accountingService.getAccountByCode('5000');
-    const employerExpenseAccount = await accountingService.getAccountByCode('5100');
-    const payrollPayableAccount = await accountingService.getAccountByCode('2000');
-    const taxPayableAccount = await accountingService.getAccountByCode('2100');
-    const employerContributionPayableAccount = await accountingService.getAccountByCode('2200');
+    const salaryAccount = await accountingService.getAccountByCode(req.tenantId, '5000');
+    const employerExpenseAccount = await accountingService.getAccountByCode(req.tenantId, '5100');
+    const payrollPayableAccount = await accountingService.getAccountByCode(req.tenantId, '2000');
+    const taxPayableAccount = await accountingService.getAccountByCode(req.tenantId, '2100');
+    const employerContributionPayableAccount = await accountingService.getAccountByCode(req.tenantId, '2200');
 
     if (!salaryAccount || !payrollPayableAccount || !taxPayableAccount || !employerExpenseAccount || !employerContributionPayableAccount) {
       return res.status(400).json({ success: false, message: 'Required accounts are missing. Ensure default chart of accounts is seeded.' });
     }
 
     const journal = await accountingService.createJournalEntry({
+      tenantId: req.tenantId,
       reference: `PR-${dayjs(run.payDate).format('YYYYMMDD')}-${run.id.slice(0, 6)}`,
       description: `Payroll for ${dayjs(run.periodStart).format('MMM DD')} - ${dayjs(run.periodEnd).format('MMM DD, YYYY')}`,
       entryDate: run.payDate,
@@ -298,12 +327,15 @@ exports.postPayrollRun = async (req, res, next) => {
       journalEntryId: journal.id
     });
 
-    const updatedRun = await PayrollRun.findByPk(run.id, {
+    const updatedRun = await PayrollRun.findOne({
+      where: applyTenantFilter(req.tenantId, { id: run.id }),
       include: [
         {
           model: PayrollEntry,
           as: 'entries',
-          include: [{ model: Employee, as: 'employee' }]
+          where: applyTenantFilter(req.tenantId, {}),
+          required: false,
+          include: [{ model: Employee, as: 'employee', where: applyTenantFilter(req.tenantId, {}), required: false }]
         }
       ]
     });

@@ -7,6 +7,14 @@ const InviteToken = sequelize.define('InviteToken', {
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
+  tenantId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'tenants',
+      key: 'id'
+    }
+  },
   token: {
     type: DataTypes.STRING,
     allowNull: false,

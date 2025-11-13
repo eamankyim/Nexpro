@@ -7,6 +7,7 @@ const {
   deleteVendor
 } = require('../controllers/vendorController');
 const { protect, authorize } = require('../middleware/auth');
+const { tenantContext } = require('../middleware/tenant');
 
 const router = express.Router();
 
@@ -14,6 +15,7 @@ const router = express.Router();
 const priceListRoutes = require('./vendorPriceListRoutes');
 
 router.use(protect);
+router.use(tenantContext);
 
 router.route('/')
   .get(getVendors)

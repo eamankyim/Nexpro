@@ -9,6 +9,14 @@ const EmploymentHistory = sequelize.define(
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true
     },
+    tenantId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: 'tenants',
+        key: 'id'
+      }
+    },
     employeeId: {
       type: DataTypes.UUID,
       allowNull: false,

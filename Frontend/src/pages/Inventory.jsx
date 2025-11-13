@@ -59,7 +59,7 @@ const stockStatus = (item) => {
 };
 
 const valueFormatter = (value) =>
-  `₵${parseFloat(value || 0).toLocaleString(undefined, {
+  `GHS ${parseFloat(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
@@ -819,7 +819,7 @@ const Inventory = () => {
                 label="Unit Cost"
                 rules={[{ required: true, message: 'Enter unit cost' }]}
               >
-                <InputNumber min={0} style={{ width: '100%' }} prefix="₵" step={0.01} />
+                <InputNumber min={0} style={{ width: '100%' }} prefix="GHS" step={0.01} />
               </Form.Item>
             </Col>
             <Col span={12}>
@@ -910,7 +910,7 @@ const Inventory = () => {
             <InputNumber min={0.01} step={0.01} style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item name="unitCost" label="Unit Cost">
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} prefix="₵" />
+            <InputNumber min={0} step={0.01} style={{ width: '100%' }} prefix="GHS" />
           </Form.Item>
           <Form.Item name="reference" label="Reference">
             <Input placeholder="Invoice number, supplier reference, etc." />

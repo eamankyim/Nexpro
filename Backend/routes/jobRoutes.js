@@ -10,11 +10,13 @@ const {
   deleteJobAttachment
 } = require('../controllers/jobController');
 const { protect, authorize } = require('../middleware/auth');
+const { tenantContext } = require('../middleware/tenant');
 const { upload } = require('../middleware/upload');
 
 const router = express.Router();
 
 router.use(protect);
+router.use(tenantContext);
 
 router.get('/stats/overview', getJobStats);
 

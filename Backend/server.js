@@ -22,9 +22,11 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const expenseRoutes = require('./routes/expenseRoutes');
 const quoteRoutes = require('./routes/quoteRoutes');
 const pricingRoutes = require('./routes/pricingRoutes');
+const publicRoutes = require('./routes/publicRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const inviteRoutes = require('./routes/inviteRoutes');
+const tenantRoutes = require('./routes/tenantRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const inventoryRoutes = require('./routes/inventoryRoutes');
 const leadRoutes = require('./routes/leadRoutes');
@@ -33,6 +35,11 @@ const settingsRoutes = require('./routes/settingsRoutes');
 const employeeRoutes = require('./routes/employeeRoutes');
 const accountingRoutes = require('./routes/accountingRoutes');
 const payrollRoutes = require('./routes/payrollRoutes');
+const adminRoutes = require('./routes/adminRoutes');
+const platformSettingsRoutes = require('./routes/platformSettingsRoutes');
+const platformAdminRoutes = require('./routes/platformAdminRoutes');
+const swaggerUi = require('swagger-ui-express');
+const openapiSpecification = require('./docs/openapi');
 
 const app = express();
 
@@ -58,6 +65,7 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/quotes', quoteRoutes);
 app.use('/api/pricing', pricingRoutes);
+app.use('/api/public', publicRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/invites', inviteRoutes);
@@ -69,6 +77,11 @@ app.use('/api/settings', settingsRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/accounting', accountingRoutes);
 app.use('/api/payroll', payrollRoutes);
+app.use('/api/tenants', tenantRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/platform-settings', platformSettingsRoutes);
+app.use('/api/platform-admins', platformAdminRoutes);
+app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpecification));
 
 // Health check
 app.get('/health', (req, res) => {
@@ -100,7 +113,12 @@ app.get('/', (req, res) => {
       reports: '/api/reports',
       inventory: '/api/inventory',
       leads: '/api/leads',
-      notifications: '/api/notifications'
+      notifications: '/api/notifications',
+      tenants: '/api/tenants',
+      admin: '/api/admin',
+      platformSettings: '/api/platform-settings',
+      platformAdmins: '/api/platform-admins',
+      docs: '/api/docs'
     }
   });
 });
@@ -124,7 +142,7 @@ const startServer = async () => {
     await testConnection();
 
     app.listen(PORT, () => {
-      console.log(`🚀 Server running in ${config.nodeEnv} mode on port ${PORT}`);
+      console.log(`[Server] Running in ${config.nodeEnv} mode on port ${PORT}`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);

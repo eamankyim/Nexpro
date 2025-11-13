@@ -7,6 +7,14 @@ const Payment = sequelize.define('Payment', {
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
+  tenantId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'tenants',
+      key: 'id'
+    }
+  },
   paymentNumber: {
     type: DataTypes.STRING,
     unique: true,

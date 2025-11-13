@@ -1,3 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root {
+  --page-max-width: 1100px;
+  --color-bg: #0b1020;
+  --color-surface: rgba(18, 23, 44, 0.75);
+  --color-surface-strong: rgba(31, 37, 63, 0.9);
+  --color-accent: #7f5af0;
+  --color-accent-soft: rgba(127, 90, 240, 0.16);
+  --color-accent-strong: #6245c4;
+  --color-muted: #b5bdd9;
+  --color-on-dark: #f2f4ff;
+  --shadow-soft: 0 24px 40px -30px rgba(127, 90, 240, 0.65);
+  --gradient-background: radial-gradient(circle at top center, rgba(127, 90, 240, 0.25), rgba(11, 16, 32, 0.15) 45%, transparent 70%);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -6,16 +22,16 @@
 
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-color: var(--color-bg);
+  color: var(--color-on-dark);
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
 
 #root {
@@ -29,16 +45,188 @@ code {
 }
 
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: rgba(255, 255, 255, 0.05);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #888;
+  background: rgba(127, 90, 240, 0.35);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: rgba(127, 90, 240, 0.55);
+}
+
+/* ============================================
+   MODAL SCROLLABLE STYLES
+   ============================================ */
+
+/* Make all modal bodies scrollable with max height */
+.ant-modal-body {
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+}
+
+/* Adjust for smaller screens */
+@media (max-height: 768px) {
+  .ant-modal-body {
+    max-height: calc(100vh - 240px);
+  }
+}
+
+@media (max-height: 600px) {
+  .ant-modal-body {
+    max-height: calc(100vh - 200px);
+  }
+}
+
+/* Ensure modal doesn't exceed viewport height */
+.ant-modal {
+  max-height: calc(100vh - 80px);
+  top: 40px !important;
+}
+
+.ant-modal-wrap {
+  overflow: auto;
+}
+
+/* Keep modal content centered but scrollable */
+.ant-modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 80px);
+}
+
+/* Make sure header stays fixed */
+.ant-modal-header {
+  flex-shrink: 0;
+  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 16px;
+}
+
+/* Make sure footer stays fixed */
+.ant-modal-footer {
+  flex-shrink: 0;
+  border-top: 1px solid #f0f0f0;
+  margin-top: 16px;
+}
+
+/* Smooth scrolling */
+.ant-modal-body {
+  scroll-behavior: smooth;
+}
+
+/* Custom scrollbar for modal body */
+.ant-modal-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.ant-modal-body::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 3px;
+}
+
+.ant-modal-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+.ant-modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================
+   DRAWER SCROLLABLE STYLES
+   ============================================ */
+
+/* Make all drawer bodies scrollable */
+.ant-drawer-body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 8px;
+}
+
+/* Custom scrollbar for drawer body */
+.ant-drawer-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.ant-drawer-body::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 3px;
+}
+
+.ant-drawer-body::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 3px;
+}
+
+.ant-drawer-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* Smooth scrolling for drawers */
+.ant-drawer-body {
+  scroll-behavior: smooth;
+}
+
+/* ============================================
+   RESPONSIVE MODAL WIDTHS
+   ============================================ */
+
+/* Ensure modals don't overflow on smaller screens */
+@media (max-width: 768px) {
+  .ant-modal {
+    max-width: calc(100vw - 32px) !important;
+    margin: 16px auto;
+  }
+  
+  .ant-modal-body {
+    max-height: calc(100vh - 180px);
+    padding: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  .ant-modal {
+    max-width: 100vw !important;
+    margin: 0;
+    top: 0 !important;
+  }
+  
+  .ant-modal-content {
+    border-radius: 0;
+  }
+  
+  .ant-modal-body {
+    max-height: calc(100vh - 140px);
+    padding: 12px;
+  }
+}
+
+/* ============================================
+   FORM SPACING IN MODALS
+   ============================================ */
+
+/* Reduce form item margins in modals for better scrolling */
+.ant-modal-body .ant-form-item {
+  margin-bottom: 16px;
+}
+
+.ant-modal-body .ant-form-item:last-child {
+  margin-bottom: 0;
+}
+
+/* Ensure form items don't cause horizontal overflow */
+.ant-modal-body .ant-form {
+  overflow-x: hidden;
+}
+
+.ant-modal-body .ant-row {
+  margin-left: 0 !important;
+  margin-right: 0 !important;
 }
 
 

@@ -3,6 +3,7 @@ const { Notification } = require('../models');
 const logPrefix = '[Notifications]';
 
 const createNotification = async ({
+  tenantId,
   userId,
   title,
   message,
@@ -15,8 +16,9 @@ const createNotification = async ({
   triggeredBy = null,
   transaction = null
 }) => {
-  if (!userId || !title) {
-    console.warn(`${logPrefix} Skipping notification creation: missing userId or title`, {
+  if (!tenantId || !userId || !title) {
+    console.warn(`${logPrefix} Skipping notification creation: missing tenantId, userId or title`, {
+      tenantId,
       userId,
       title
     });
@@ -26,6 +28,7 @@ const createNotification = async ({
   try {
     const notification = await Notification.create(
       {
+        tenantId,
         userId,
         title,
         message,
@@ -58,7 +61,12 @@ const createNotification = async ({
   }
 };
 
-const notifyUsers = async (userIds, payload = {}) => {
+const notifyUsers = async ({ tenantId, userIds, payload = {}, transaction = null }) => {
+  if (!tenantId) {
+    console.warn(`${logPrefix} notifyUsers missing tenantId`, { userIds });
+    return [];
+  }
+
   if (!userIds || userIds.length === 0) {
     console.warn(`${logPrefix} notifyUsers called with empty userIds`);
     return [];
@@ -72,6 +80,7 @@ const notifyUsers = async (userIds, payload = {}) => {
 
   const notifications = uniqueUserIds.map((userId) => ({
     ...payload,
+    tenantId,
     userId,
     title: payload.title || 'Notification',
     type: payload.type || 'info',
@@ -80,7 +89,7 @@ const notifyUsers = async (userIds, payload = {}) => {
   }));
 
   try {
-    const created = await Notification.bulkCreate(notifications);
+    const created = await Notification.bulkCreate(notifications, { transaction });
     console.log(`${logPrefix} bulkCreate`, {
       count: created.length,
       userIds: uniqueUserIds,
@@ -111,6 +120,14 @@ const notifyJobAssigned = async ({ job, triggeredBy = null }) => {
     return null;
   }
 
+  const tenantId = job.tenantId;
+  if (!tenantId) {
+    console.warn(`${logPrefix} notifyJobAssigned missing tenantId`, {
+      jobId: job.id
+    });
+    return null;
+  }
+
   const jobTitle = formatJobTitle(job);
   const link = `/jobs/${job.id}`;
 
@@ -136,7 +153,10 @@ const notifyJobAssigned = async ({ job, triggeredBy = null }) => {
     triggeredBy
   });
 
-  return createNotification(payload);
+  return createNotification({
+    tenantId,
+    ...payload
+  });
 };
 
 const notifyJobStatusChanged = async ({ job, oldStatus, newStatus, triggeredBy = null }) => {
@@ -160,6 +180,14 @@ const notifyJobStatusChanged = async ({ job, oldStatus, newStatus, triggeredBy =
       jobId: job.id,
       oldStatus,
       newStatus
+    });
+    return [];
+  }
+
+  const tenantId = job.tenantId;
+  if (!tenantId) {
+    console.warn(`${logPrefix} notifyJobStatusChanged missing tenantId`, {
+      jobId: job.id
     });
     return [];
   }
@@ -191,7 +219,11 @@ const notifyJobStatusChanged = async ({ job, oldStatus, newStatus, triggeredBy =
     triggeredBy
   });
 
-  return notifyUsers(recipients, payload);
+  return notifyUsers({
+    tenantId,
+    userIds: recipients,
+    payload
+  });
 };
 
 const notifyLeadCreated = async ({ lead, triggeredBy = null }) => {
@@ -204,6 +236,14 @@ const notifyLeadCreated = async ({ lead, triggeredBy = null }) => {
 
   if (!lead.assignedTo) {
     console.warn(`${logPrefix} notifyLeadCreated no assignee`, {
+      leadId: lead.id
+    });
+    return null;
+  }
+
+  const tenantId = lead.tenantId;
+  if (!tenantId) {
+    console.warn(`${logPrefix} notifyLeadCreated missing tenantId`, {
       leadId: lead.id
     });
     return null;
@@ -231,7 +271,10 @@ const notifyLeadCreated = async ({ lead, triggeredBy = null }) => {
     triggeredBy
   });
 
-  return createNotification(payload);
+  return createNotification({
+    tenantId,
+    ...payload
+  });
 };
 
 const notifyLeadStatusChanged = async ({ lead, oldStatus, newStatus, triggeredBy = null }) => {
@@ -254,6 +297,14 @@ const notifyLeadStatusChanged = async ({ lead, oldStatus, newStatus, triggeredBy
       leadId: lead.id,
       oldStatus,
       newStatus
+    });
+    return [];
+  }
+
+  const tenantId = lead.tenantId;
+  if (!tenantId) {
+    console.warn(`${logPrefix} notifyLeadStatusChanged missing tenantId`, {
+      leadId: lead.id
     });
     return [];
   }
@@ -283,7 +334,11 @@ const notifyLeadStatusChanged = async ({ lead, oldStatus, newStatus, triggeredBy
     triggeredBy
   });
 
-  return notifyUsers(recipients, payload);
+  return notifyUsers({
+    tenantId,
+    userIds: recipients,
+    payload
+  });
 };
 
 const notifyLeadActivityLogged = async ({ lead, activity, triggeredBy = null }) => {
@@ -304,6 +359,15 @@ const notifyLeadActivityLogged = async ({ lead, activity, triggeredBy = null }) 
     console.warn(`${logPrefix} notifyLeadActivityLogged no recipients`, {
       leadId: lead.id,
       activityId: activity.id
+    });
+    return [];
+  }
+
+  const tenantId = lead.tenantId;
+  if (!tenantId) {
+    console.warn(`${logPrefix} notifyLeadActivityLogged missing tenantId`, {
+      leadId: lead.id,
+      activityId: activity?.id
     });
     return [];
   }
@@ -332,7 +396,11 @@ const notifyLeadActivityLogged = async ({ lead, activity, triggeredBy = null }) 
     triggeredBy
   });
 
-  return notifyUsers(recipients, payload);
+  return notifyUsers({
+    tenantId,
+    userIds: recipients,
+    payload
+  });
 };
 
 module.exports = {

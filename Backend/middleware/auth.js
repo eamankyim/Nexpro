@@ -52,6 +52,16 @@ const authorize = (...roles) => {
   };
 };
 
-module.exports = { protect, authorize };
+const requirePlatformAdmin = (req, res, next) => {
+  if (!req.user?.isPlatformAdmin) {
+    return res.status(403).json({
+      success: false,
+      message: 'Platform administrator access required'
+    });
+  }
+  next();
+};
+
+module.exports = { protect, authorize, requirePlatformAdmin };
 
 

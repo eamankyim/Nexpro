@@ -1,0 +1,6 @@
+.auth-input::placeholder,
+.auth-input input::placeholder,
+.auth-input .ant-input::placeholder,
+.auth-input .ant-input-password-input::placeholder {
+  color: rgba(128, 80, 219, 0.85);
+}

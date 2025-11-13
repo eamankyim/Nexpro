@@ -385,7 +385,7 @@ const Quotes = () => {
       title: 'Total',
       dataIndex: 'totalAmount',
       key: 'totalAmount',
-      render: (amount) => `₵${parseFloat(amount || 0).toFixed(2)}`
+      render: (amount) => `GHS ${parseFloat(amount || 0).toFixed(2)}`
     },
     {
       title: 'Actions',
@@ -448,7 +448,7 @@ const Quotes = () => {
       label: 'Total Amount',
       value: (
         <strong style={{ fontSize: 16, color: '#1890ff' }}>
-          ₵{parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
+          GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
         </strong>
       )
     },
@@ -531,7 +531,7 @@ const Quotes = () => {
                     <div style={{ textAlign: 'right' }}>
                       <div style={{ fontSize: 14, color: '#888' }}>Total Amount</div>
                       <div style={{ fontSize: 22, fontWeight: 700, color: '#1890ff' }}>
-                        ₵{parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
+                        GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
                       </div>
                     </div>
                   </div>
@@ -572,12 +572,12 @@ const Quotes = () => {
                           </Col>
                           <Col span={4} style={{ textAlign: 'right' }}>
                             <div style={{ color: '#888' }}>Unit Price</div>
-                            <div>₵{parseFloat(item.unitPrice || 0).toFixed(2)}</div>
+                            <div>GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
                           </Col>
                           <Col span={4} style={{ textAlign: 'right' }}>
                             <div style={{ color: '#888' }}>Total</div>
                             <div style={{ fontWeight: 600 }}>
-                              ₵{parseFloat(item.total || 0).toFixed(2)}
+                              GHS {parseFloat(item.total || 0).toFixed(2)}
                             </div>
                           </Col>
                         </Row>
@@ -591,10 +591,10 @@ const Quotes = () => {
                           <Text strong>Grand Total</Text>
                         </Col>
                         <Col span={12} style={{ textAlign: 'right' }}>
-                          <Text>₵{parseFloat(viewingQuote.subtotal || 0).toFixed(2)}</Text><br />
-                          <Text>-₵{parseFloat(viewingQuote.discountTotal || 0).toFixed(2)}</Text><br />
+                          <Text>GHS {parseFloat(viewingQuote.subtotal || 0).toFixed(2)}</Text><br />
+                          <Text>-GHS {parseFloat(viewingQuote.discountTotal || 0).toFixed(2)}</Text><br />
                           <Text style={{ fontSize: 16, fontWeight: 700 }}>
-                            ₵{parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
+                            GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
                           </Text>
                         </Col>
                       </Row>
@@ -752,7 +752,7 @@ const Quotes = () => {
                         >
                           <InputNumber
                             min={0}
-                            prefix="₵"
+                            prefix="GHS "
                             style={{ width: '100%' }}
                             formatter={(value) => value ? `${value}` : ''}
                           />
@@ -767,7 +767,7 @@ const Quotes = () => {
                         >
                           <InputNumber
                             min={0}
-                            prefix="₵"
+                            prefix="GHS "
                             style={{ width: '100%' }}
                             formatter={(value) => value ? `${value}` : ''}
                           />

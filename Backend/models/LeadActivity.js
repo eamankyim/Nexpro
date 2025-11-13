@@ -7,6 +7,14 @@ const LeadActivity = sequelize.define('LeadActivity', {
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
+  tenantId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'tenants',
+      key: 'id'
+    }
+  },
   leadId: {
     type: DataTypes.UUID,
     allowNull: false,

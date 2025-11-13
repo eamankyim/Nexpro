@@ -24,6 +24,16 @@ const inviteService = {
   // Use invite (mark as used)
   useInvite: async (token, userId) => {
     return await api.put(`/invites/${token}/use`, { userId });
+  },
+
+  // Get seat usage
+  getSeatUsage: async () => {
+    return await api.get('/invites/seat-usage');
+  },
+
+  // Get storage usage
+  getStorageUsage: async () => {
+    return await api.get('/invites/storage-usage');
   }
 };
 

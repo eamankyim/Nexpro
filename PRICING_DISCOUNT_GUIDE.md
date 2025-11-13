@@ -66,20 +66,20 @@ This means:
 ### Without Discount Fix (Old Behavior)
 ```
 Quantity: 1000
-Unit Price: ₵2.00 (from template)
-Total: ₵2000.00 (no discount applied ❌)
+Unit Price: GHS 2.00 (from template)
+Total: GHS 2000.00 (no discount applied ❌)
 ```
 
 ### With Discount Fix (New Behavior)
 ```
 Quantity: 1000
-Template Unit Price: ₵2.00
+Template Unit Price: GHS 2.00
 Discount: 15% for 1000+ units
-Discounted Unit Price: ₵1.70
-Total: ₵1700.00 ✅
+Discounted Unit Price: GHS 1.70
+Total: GHS 1700.00 ✅
 ```
 
-**Savings: ₵300.00**
+**Savings: GHS 300.00**
 
 ---
 
@@ -93,7 +93,7 @@ Total: ₵1700.00 ✅
 
 2. **Template Labels**
    - Templates with discounts show: "🏷️ Auto-Discounts"
-   - Example: "Business Cards - Business Cards (₵2.00/unit) 🏷️ Auto-Discounts"
+   - Example: "Business Cards - Business Cards (GHS 2.00/unit) 🏷️ Auto-Discounts"
 
 3. **Discount Notification**
    - When discount is applied, you see: "15% discount applied for quantity 1000!"
@@ -108,10 +108,10 @@ Total: ₵1700.00 ✅
 
 ```javascript
 // 1. Get template unit price
-unitPrice = template.pricePerUnit // e.g., ₵2.00
+unitPrice = template.pricePerUnit // e.g., GHS 2.00
 
 // 2. Calculate total before discount
-totalPrice = unitPrice * quantity // e.g., ₵2.00 * 1000 = ₵2000
+totalPrice = unitPrice * quantity // e.g., GHS 2.00 * 1000 = GHS 2000
 
 // 3. Find applicable discount tier
 if (quantity >= 1000) {
@@ -119,11 +119,11 @@ if (quantity >= 1000) {
 }
 
 // 4. Apply discount
-discount = (totalPrice * discountPercent) / 100 // ₵2000 * 0.15 = ₵300
-totalPrice = totalPrice - discount // ₵2000 - ₵300 = ₵1700
+discount = (totalPrice * discountPercent) / 100 // GHS 2000 * 0.15 = GHS 300
+totalPrice = totalPrice - discount // GHS 2000 - GHS 300 = GHS 1700
 
 // 5. Calculate new unit price
-unitPrice = totalPrice / quantity // ₵1700 / 1000 = ₵1.70
+unitPrice = totalPrice / quantity // GHS 1700 / 1000 = GHS 1.70
 ```
 
 ### Files Modified

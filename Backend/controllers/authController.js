@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const { User, InviteToken } = require('../models');
+const { User, InviteToken, UserTenant, Tenant } = require('../models');
 const config = require('../config/config');
 const { Op } = require('sequelize');
 
@@ -34,7 +34,15 @@ exports.register = async (req, res, next) => {
     }
 
     // Validate and find invite token
-    const invite = await InviteToken.findOne({ where: { token: inviteToken } });
+    const invite = await InviteToken.findOne({
+      where: { token: inviteToken },
+      include: [
+        {
+          model: Tenant,
+          as: 'tenant'
+        }
+      ]
+    });
 
     if (!invite) {
       return res.status(400).json({
@@ -73,6 +81,21 @@ exports.register = async (req, res, next) => {
       role: invite.role
     });
 
+    const existingMembershipCount = await UserTenant.count({
+      where: { userId: user.id }
+    });
+
+    await UserTenant.create({
+      userId: user.id,
+      tenantId: invite.tenantId,
+      role: invite.role,
+      status: 'active',
+      isDefault: existingMembershipCount === 0,
+      invitedBy: invite.createdBy,
+      invitedAt: invite.createdAt,
+      joinedAt: new Date()
+    });
+
     // Mark invite as used
     await invite.update({
       used: true,
@@ -82,11 +105,27 @@ exports.register = async (req, res, next) => {
 
     const token = generateToken(user.id);
 
+    const memberships = await UserTenant.findAll({
+      where: { userId: user.id },
+      include: [
+        {
+          model: Tenant,
+          as: 'tenant'
+        }
+      ],
+      order: [
+        ['isDefault', 'DESC'],
+        ['createdAt', 'ASC']
+      ]
+    });
+
     res.status(201).json({
       success: true,
       data: {
         user,
-        token
+        token,
+        memberships,
+        defaultTenantId: memberships[0]?.tenantId || null
       }
     });
   } catch (error) {
@@ -138,11 +177,27 @@ exports.login = async (req, res, next) => {
 
     const token = generateToken(user.id);
 
+    const memberships = await UserTenant.findAll({
+      where: { userId: user.id, status: 'active' },
+      include: [
+        {
+          model: Tenant,
+          as: 'tenant'
+        }
+      ],
+      order: [
+        ['isDefault', 'DESC'],
+        ['createdAt', 'ASC']
+      ]
+    });
+
     res.status(200).json({
       success: true,
       data: {
         user,
-        token
+        token,
+        memberships,
+        defaultTenantId: memberships[0]?.tenantId || null
       }
     });
   } catch (error) {
@@ -155,7 +210,15 @@ exports.login = async (req, res, next) => {
 // @access  Private
 exports.getMe = async (req, res, next) => {
   try {
-    const user = req.user;
+    const user = await User.findByPk(req.user.id, {
+      include: [
+        {
+          model: UserTenant,
+          as: 'tenantMemberships',
+          include: [{ model: Tenant, as: 'tenant' }]
+        }
+      ]
+    });
 
     res.status(200).json({
       success: true,

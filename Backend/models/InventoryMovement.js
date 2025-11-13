@@ -7,6 +7,14 @@ const InventoryMovement = sequelize.define('InventoryMovement', {
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
+  tenantId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'tenants',
+      key: 'id'
+    }
+  },
   itemId: {
     type: DataTypes.UUID,
     allowNull: false,

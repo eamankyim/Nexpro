@@ -880,7 +880,7 @@ const Settings = () => {
                       {entry.date ? dayjs(entry.date).format('MMM DD, YYYY HH:mm') : '—'}
                     </Text>
                     {entry.amount && (
-                      <Text>Amount: ₵{parseFloat(entry.amount).toFixed(2)}</Text>
+                      <Text>Amount: GHS {parseFloat(entry.amount).toFixed(2)}</Text>
                     )}
                     {entry.metadata && (
                       <Text type="secondary">Details: {JSON.stringify(entry.metadata)}</Text>

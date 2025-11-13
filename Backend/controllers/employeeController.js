@@ -11,6 +11,7 @@ const { createUploader } = require('../middleware/upload');
 const path = require('path');
 const { baseUploadDir, ensureDirExists } = require('../middleware/upload');
 const fs = require('fs');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 const buildFilter = (query) => {
   const where = {};
@@ -46,7 +47,7 @@ exports.getEmployees = async (req, res, next) => {
     const limit = parseInt(req.query.limit, 10) || 20;
     const offset = (page - 1) * limit;
 
-    const where = buildFilter(req.query);
+    const where = applyTenantFilter(req.tenantId, buildFilter(req.query));
 
     const { count, rows } = await Employee.findAndCountAll({
       where,
@@ -72,7 +73,8 @@ exports.getEmployees = async (req, res, next) => {
 
 exports.getEmployee = async (req, res, next) => {
   try {
-    const employee = await Employee.findByPk(req.params.id, {
+    const employee = await Employee.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         {
           model: EmployeeDocument,
@@ -117,12 +119,17 @@ exports.getEmployee = async (req, res, next) => {
 
 exports.createEmployee = async (req, res, next) => {
   try {
-    const employee = await Employee.create(req.body);
+    const payload = sanitizePayload(req.body);
+    const employee = await Employee.create({
+      ...payload,
+      tenantId: req.tenantId
+    });
 
     await EmploymentHistory.create({
       employeeId: employee.id,
+      tenantId: req.tenantId,
       changeType: 'hire',
-      effectiveDate: req.body.hireDate || new Date(),
+      effectiveDate: payload.hireDate || new Date(),
       toValue: {
         jobTitle: employee.jobTitle,
         department: employee.department,
@@ -139,13 +146,16 @@ exports.createEmployee = async (req, res, next) => {
 
 exports.updateEmployee = async (req, res, next) => {
   try {
-    const employee = await Employee.findByPk(req.params.id);
+    const employee = await Employee.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!employee) {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
 
     const previousData = employee.toJSON();
-    await employee.update(req.body);
+    const updatePayload = sanitizePayload(req.body);
+    await employee.update(updatePayload);
 
     const changes = {};
     ['jobTitle', 'department', 'status', 'salaryAmount', 'employmentType', 'payFrequency'].forEach((field) => {
@@ -160,6 +170,7 @@ exports.updateEmployee = async (req, res, next) => {
     if (Object.keys(changes).length > 0) {
       await EmploymentHistory.create({
         employeeId: employee.id,
+        tenantId: req.tenantId,
         changeType: 'update',
         effectiveDate: new Date(),
         fromValue: Object.fromEntries(Object.entries(changes).map(([key, value]) => [key, value.from])),
@@ -176,7 +187,9 @@ exports.updateEmployee = async (req, res, next) => {
 
 exports.archiveEmployee = async (req, res, next) => {
   try {
-    const employee = await Employee.findByPk(req.params.id);
+    const employee = await Employee.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!employee) {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
@@ -189,6 +202,7 @@ exports.archiveEmployee = async (req, res, next) => {
 
     await EmploymentHistory.create({
       employeeId: employee.id,
+      tenantId: req.tenantId,
       changeType: 'termination',
       effectiveDate: employee.endDate || new Date(),
       fromValue: { status: 'active' },
@@ -208,7 +222,9 @@ exports.uploadMiddleware = employeeUploader.single('file');
 
 exports.uploadEmployeeDocument = async (req, res, next) => {
   try {
-    const employee = await Employee.findByPk(req.params.id);
+    const employee = await Employee.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!employee) {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
@@ -220,16 +236,20 @@ exports.uploadEmployeeDocument = async (req, res, next) => {
     const storagePath = path.relative(baseUploadDir, req.file.path);
     const fileUrl = `/uploads/${storagePath.replace(/\\\\/g, '/')}`;
 
+    const docPayload = sanitizePayload(req.body || {});
+
     const document = await EmployeeDocument.create({
       employeeId: employee.id,
-      type: req.body.type || null,
-      title: req.body.title || req.file.originalname,
+      tenantId: req.tenantId,
+      type: docPayload.type || null,
+      title: docPayload.title || req.file.originalname,
       fileUrl,
       uploadedBy: req.user?.id || null,
-      metadata: req.body.metadata || {}
+      metadata: docPayload.metadata || {}
     });
 
-    const populated = await EmployeeDocument.findByPk(document.id, {
+    const populated = await EmployeeDocument.findOne({
+      where: applyTenantFilter(req.tenantId, { id: document.id }),
       include: [{ model: User, as: 'uploader', attributes: ['id', 'name', 'email'] }]
     });
 
@@ -242,10 +262,10 @@ exports.uploadEmployeeDocument = async (req, res, next) => {
 exports.deleteEmployeeDocument = async (req, res, next) => {
   try {
     const document = await EmployeeDocument.findOne({
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         id: req.params.documentId,
         employeeId: req.params.id
-      }
+      })
     });
 
     if (!document) {
@@ -268,19 +288,24 @@ exports.deleteEmployeeDocument = async (req, res, next) => {
 
 exports.addEmploymentHistory = async (req, res, next) => {
   try {
-    const employee = await Employee.findByPk(req.params.id);
+    const employee = await Employee.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!employee) {
       return res.status(404).json({ success: false, message: 'Employee not found' });
     }
 
+    const payload = sanitizePayload(req.body);
+
     const history = await EmploymentHistory.create({
       employeeId: employee.id,
-      changeType: req.body.changeType || 'note',
-      effectiveDate: req.body.effectiveDate || new Date(),
-      fromValue: req.body.fromValue || {},
-      toValue: req.body.toValue || {},
-      notes: req.body.notes || null,
-      metadata: req.body.metadata || {}
+      tenantId: req.tenantId,
+      changeType: payload.changeType || 'note',
+      effectiveDate: payload.effectiveDate || new Date(),
+      fromValue: payload.fromValue || {},
+      toValue: payload.toValue || {},
+      notes: payload.notes || null,
+      metadata: payload.metadata || {}
     });
 
     res.status(201).json({ success: true, data: history });

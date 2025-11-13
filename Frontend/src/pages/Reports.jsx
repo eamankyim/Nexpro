@@ -165,7 +165,7 @@ const Reports = () => {
               <Statistic
                 title="Total Revenue"
                 value={totalRevenue}
-                prefix="₵"
+                prefix="GHS "
                 precision={2}
                 valueStyle={{ color: '#3f8600' }}
               />
@@ -186,7 +186,7 @@ const Reports = () => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                   <Legend />
                   <Line type="monotone" dataKey="revenue" stroke="#8884d8" strokeWidth={2} name="Revenue" />
                 </LineChart>
@@ -203,7 +203,7 @@ const Reports = () => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                   <Bar dataKey="revenue" fill="#8884d8" />
                 </BarChart>
               </ResponsiveContainer>
@@ -227,7 +227,7 @@ const Reports = () => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                 </PieChart>
               </ResponsiveContainer>
             </Card>
@@ -256,7 +256,7 @@ const Reports = () => {
                     title: 'Total Revenue',
                     dataIndex: 'totalRevenue',
                     key: 'revenue',
-                    render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`,
+                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
                     sorter: (a, b) => parseFloat(a.totalRevenue || 0) - parseFloat(b.totalRevenue || 0),
                   },
                   {
@@ -301,7 +301,7 @@ const Reports = () => {
               <Statistic
                 title="Total Expenses"
                 value={totalExpenses}
-                prefix="₵"
+                prefix="GHS "
                 precision={2}
                 valueStyle={{ color: '#cf1322' }}
               />
@@ -328,7 +328,7 @@ const Reports = () => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                 </PieChart>
               </ResponsiveContainer>
             </Card>
@@ -340,7 +340,7 @@ const Reports = () => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                   <Bar dataKey="amount" fill="#ff4d4f" />
                 </BarChart>
               </ResponsiveContainer>
@@ -356,7 +356,7 @@ const Reports = () => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                   <Legend />
                   <Line type="monotone" dataKey="amount" stroke="#ff4d4f" strokeWidth={2} name="Expenses" />
                 </LineChart>
@@ -378,7 +378,7 @@ const Reports = () => {
                     title: 'Amount',
                     dataIndex: 'totalAmount',
                     key: 'amount',
-                    render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`,
+                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
                   },
                   { title: 'Count', dataIndex: 'count', key: 'count' },
                 ]}
@@ -401,7 +401,7 @@ const Reports = () => {
                     title: 'Amount',
                     dataIndex: 'totalAmount',
                     key: 'amount',
-                    render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`,
+                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
                   },
                   { title: 'Count', dataIndex: 'count', key: 'count' },
                 ]}
@@ -438,7 +438,7 @@ const Reports = () => {
               <Statistic
                 title="Total Outstanding"
                 value={totalOutstanding}
-                prefix="₵"
+                prefix="GHS "
                 precision={2}
                 valueStyle={{ color: '#cf1322' }}
               />
@@ -454,7 +454,7 @@ const Reports = () => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                   <Bar dataKey="amount" fill="#ff4d4f" />
                 </BarChart>
               </ResponsiveContainer>
@@ -478,7 +478,7 @@ const Reports = () => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                 </PieChart>
               </ResponsiveContainer>
             </Card>
@@ -513,7 +513,7 @@ const Reports = () => {
                     title: 'Balance',
                     dataIndex: 'balance',
                     key: 'balance',
-                    render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`,
+                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
                   },
                   {
                     title: 'Status',
@@ -565,7 +565,7 @@ const Reports = () => {
               <Statistic
                 title="Total Sales"
                 value={totalSales}
-                prefix="₵"
+                prefix="GHS "
                 precision={2}
                 valueStyle={{ color: '#3f8600' }}
               />
@@ -592,7 +592,7 @@ const Reports = () => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                 </PieChart>
               </ResponsiveContainer>
             </Card>
@@ -604,7 +604,7 @@ const Reports = () => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                   <Bar dataKey="sales" fill="#8884d8" />
                 </BarChart>
               </ResponsiveContainer>
@@ -620,7 +620,7 @@ const Reports = () => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                   <Legend />
                   <Line type="monotone" dataKey="sales" stroke="#8884d8" strokeWidth={2} name="Sales" />
                 </LineChart>
@@ -642,14 +642,14 @@ const Reports = () => {
                     title: 'Total Sales',
                     dataIndex: 'totalSales',
                     key: 'sales',
-                    render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`,
+                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
                   },
                   { title: 'Jobs', dataIndex: 'jobCount', key: 'count' },
                   {
                     title: 'Avg Price',
                     dataIndex: 'averagePrice',
                     key: 'avg',
-                    render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`,
+                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
                   },
                 ]}
               />
@@ -676,7 +676,7 @@ const Reports = () => {
                     title: 'Total Sales',
                     dataIndex: 'totalSales',
                     key: 'sales',
-                    render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`,
+                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
                   },
                   { title: 'Jobs', dataIndex: 'jobCount', key: 'count' },
                 ]}
@@ -707,7 +707,7 @@ const Reports = () => {
               <Statistic
                 title="Revenue"
                 value={revenue}
-                prefix="₵"
+                prefix="GHS "
                 precision={2}
                 valueStyle={{ color: '#3f8600' }}
               />
@@ -718,7 +718,7 @@ const Reports = () => {
               <Statistic
                 title="Expenses"
                 value={expenses}
-                prefix="₵"
+                prefix="GHS "
                 precision={2}
                 valueStyle={{ color: '#cf1322' }}
               />
@@ -729,7 +729,7 @@ const Reports = () => {
               <Statistic
                 title="Gross Profit"
                 value={grossProfit}
-                prefix="₵"
+                prefix="GHS "
                 precision={2}
                 valueStyle={{ color: grossProfit >= 0 ? '#3f8600' : '#cf1322' }}
               />
@@ -759,7 +759,7 @@ const Reports = () => {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip formatter={(value) => `₵${parseFloat(value).toFixed(2)}`} />
+                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                   <Bar dataKey="value" fill="#8884d8">
                     {profitData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />

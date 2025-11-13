@@ -1,14 +1,16 @@
 const { Quote, QuoteItem, Customer, User, Job, JobItem, JobStatusHistory } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
-const generateQuoteNumber = async () => {
+const generateQuoteNumber = async (tenantId) => {
   const date = new Date();
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
 
   const lastQuote = await Quote.findOne({
     where: {
+      tenantId,
       quoteNumber: {
         [Op.like]: `QTE-${year}${month}%`
       }
@@ -77,7 +79,7 @@ exports.getQuotes = async (req, res, next) => {
     const customerId = req.query.customerId;
     const search = req.query.search || '';
 
-    const where = {};
+    const where = applyTenantFilter(req.tenantId, {});
     if (status && status !== 'all') {
       where.status = status;
     }
@@ -96,7 +98,11 @@ exports.getQuotes = async (req, res, next) => {
       limit,
       offset,
       include: [
-        { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email'] },
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['id', 'name', 'company', 'email']
+        },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
         { model: QuoteItem, as: 'items' }
       ],
@@ -121,7 +127,8 @@ exports.getQuotes = async (req, res, next) => {
 
 exports.getQuote = async (req, res, next) => {
   try {
-    const quote = await Quote.findByPk(req.params.id, {
+    const quote = await Quote.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
@@ -148,13 +155,14 @@ exports.getQuote = async (req, res, next) => {
 
 exports.createQuote = async (req, res, next) => {
   try {
-    const { items = [], ...quoteData } = req.body;
+    const { items = [], ...quoteData } = sanitizePayload(req.body);
 
-    const quoteNumber = await generateQuoteNumber();
+    const quoteNumber = await generateQuoteNumber(req.tenantId);
     const totals = calculateTotals(items);
 
     const quote = await Quote.create({
       ...quoteData,
+      tenantId: req.tenantId,
       quoteNumber,
       subtotal: totals.subtotal,
       discountTotal: totals.discountTotal,
@@ -165,17 +173,21 @@ exports.createQuote = async (req, res, next) => {
     if (items.length) {
       const quoteItems = items.map((item) => ({
         quoteId: quote.id,
+        tenantId: req.tenantId,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         discountAmount: item.discountAmount || 0,
+        discountPercent: item.discountPercent || 0,
+        discountReason: item.discountReason || null,
         total: item.total || ((parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)) - parseFloat(item.discountAmount || 0)),
         metadata: item.metadata || {}
       }));
       await QuoteItem.bulkCreate(quoteItems);
     }
 
-    const fullQuote = await Quote.findByPk(quote.id, {
+    const fullQuote = await Quote.findOne({
+      where: applyTenantFilter(req.tenantId, { id: quote.id }),
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
@@ -195,9 +207,10 @@ exports.createQuote = async (req, res, next) => {
 
 exports.updateQuote = async (req, res, next) => {
   try {
-    const { items = [], ...quoteData } = req.body;
+    const { items = [], ...quoteData } = sanitizePayload(req.body);
 
-    const quote = await Quote.findByPk(req.params.id, {
+    const quote = await Quote.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [{ model: QuoteItem, as: 'items' }]
     });
 
@@ -225,21 +238,25 @@ exports.updateQuote = async (req, res, next) => {
     });
 
     // Replace items
-    await QuoteItem.destroy({ where: { quoteId: quote.id } });
+    await QuoteItem.destroy({ where: applyTenantFilter(req.tenantId, { quoteId: quote.id }) });
     if (items.length) {
       const quoteItems = items.map((item) => ({
         quoteId: quote.id,
+        tenantId: req.tenantId,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
         discountAmount: item.discountAmount || 0,
+        discountPercent: item.discountPercent || 0,
+        discountReason: item.discountReason || null,
         total: item.total || ((parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)) - parseFloat(item.discountAmount || 0)),
         metadata: item.metadata || {}
       }));
       await QuoteItem.bulkCreate(quoteItems);
     }
 
-    const fullQuote = await Quote.findByPk(quote.id, {
+    const fullQuote = await Quote.findOne({
+      where: applyTenantFilter(req.tenantId, { id: quote.id }),
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
@@ -259,7 +276,9 @@ exports.updateQuote = async (req, res, next) => {
 
 exports.deleteQuote = async (req, res, next) => {
   try {
-    const quote = await Quote.findByPk(req.params.id);
+    const quote = await Quote.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!quote) {
       return res.status(404).json({
@@ -289,7 +308,8 @@ exports.deleteQuote = async (req, res, next) => {
 
 exports.convertQuoteToJob = async (req, res, next) => {
   try {
-    const quote = await Quote.findByPk(req.params.id, {
+    const quote = await Quote.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         { model: Customer, as: 'customer' },
         { model: QuoteItem, as: 'items' }
@@ -316,6 +336,7 @@ exports.convertQuoteToJob = async (req, res, next) => {
 
     const lastJob = await Job.findOne({
       where: {
+        tenantId: req.tenantId,
         jobNumber: {
           [Op.like]: `JOB-${year}${month}%`
         }
@@ -341,6 +362,7 @@ exports.convertQuoteToJob = async (req, res, next) => {
       priority: 'medium',
       finalPrice: quote.totalAmount,
       notes: quote.notes,
+      tenantId: req.tenantId,
       createdBy: req.user?.id || null
     });
 
@@ -348,6 +370,7 @@ exports.convertQuoteToJob = async (req, res, next) => {
       const jobItems = quote.items.map(item => ({
         jobId: job.id,
         quoteItemId: item.id,
+        tenantId: req.tenantId,
         category: item.description,
         description: item.description,
         quantity: item.quantity,
@@ -370,7 +393,8 @@ exports.convertQuoteToJob = async (req, res, next) => {
       acceptedAt: new Date()
     });
 
-    const jobWithDetails = await Job.findByPk(job.id, {
+    const jobWithDetails = await Job.findOne({
+      where: applyTenantFilter(req.tenantId, { id: job.id }),
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'assignedUser', attributes: ['id', 'name', 'email'] },
@@ -390,7 +414,8 @@ exports.convertQuoteToJob = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: {
-        quote: formatQuoteResponse(await Quote.findByPk(quote.id, {
+        quote: formatQuoteResponse(await Quote.findOne({
+          where: applyTenantFilter(req.tenantId, { id: quote.id }),
           include: [
             { model: Customer, as: 'customer' },
             { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },

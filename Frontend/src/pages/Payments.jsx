@@ -240,7 +240,7 @@ const Payments = () => {
       dataIndex: 'amount',
       key: 'amount',
       width: 120,
-      render: (amount) => `₵${parseFloat(amount).toFixed(2)}`,
+      render: (amount) => `GHS ${parseFloat(amount).toFixed(2)}`,
       sorter: (a, b) => parseFloat(a.amount) - parseFloat(b.amount)
     },
     {
@@ -366,7 +366,7 @@ const Payments = () => {
               <Statistic
                 title="Total Income"
                 value={stats.find(s => s.type === 'income')?.totalAmount || 0}
-                prefix="₵"
+                prefix="GHS "
                 valueStyle={{ color: '#3f8600' }}
                 suffix={<CheckCircleOutlined />}
               />
@@ -377,7 +377,7 @@ const Payments = () => {
               <Statistic
                 title="Total Expenses"
                 value={stats.find(s => s.type === 'expense')?.totalAmount || 0}
-                prefix="₵"
+                prefix="GHS "
                 valueStyle={{ color: '#cf1322' }}
                 suffix={<ClockCircleOutlined />}
               />
@@ -594,7 +594,7 @@ const Payments = () => {
                   min={0}
                   step={0.01}
                   precision={2}
-                  prefix="₵"
+                  prefix="GHS "
                 />
               </Form.Item>
             </Col>
@@ -747,7 +747,7 @@ const Payments = () => {
           { 
             label: 'Amount', 
             value: viewingPayment.amount,
-            render: (amount) => <strong style={{ fontSize: 16, color: '#1890ff' }}>₵{parseFloat(amount).toFixed(2)}</strong>
+            render: (amount) => <strong style={{ fontSize: 16, color: '#1890ff' }}>GHS {parseFloat(amount).toFixed(2)}</strong>
           },
           { 
             label: 'Payment Method', 

@@ -1,15 +1,17 @@
 const { Expense, Vendor, Job } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 // Generate unique expense number
-const generateExpenseNumber = async () => {
+const generateExpenseNumber = async (tenantId) => {
   const date = new Date();
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   
   const lastExpense = await Expense.findOne({
     where: {
+      tenantId,
       expenseNumber: {
         [Op.like]: `EXP-${year}${month}%`
       }
@@ -38,7 +40,7 @@ exports.getExpenses = async (req, res, next) => {
     const status = req.query.status;
     const jobId = req.query.jobId;
 
-    const where = {};
+    const where = applyTenantFilter(req.tenantId, {});
     if (category && category !== 'null') where.category = category;
     if (status && status !== 'null') where.status = status;
     if (jobId && jobId !== 'null') where.jobId = jobId;
@@ -74,7 +76,8 @@ exports.getExpenses = async (req, res, next) => {
 // @access  Private
 exports.getExpense = async (req, res, next) => {
   try {
-    const expense = await Expense.findByPk(req.params.id, {
+    const expense = await Expense.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job' }
@@ -102,13 +105,40 @@ exports.getExpense = async (req, res, next) => {
 // @access  Private
 exports.createExpense = async (req, res, next) => {
   try {
-    const expenseNumber = await generateExpenseNumber();
+    const payload = sanitizePayload(req.body);
+    const expenseNumber = await generateExpenseNumber(req.tenantId);
+
+    if (payload.vendorId) {
+      const vendor = await Vendor.findOne({
+        where: applyTenantFilter(req.tenantId, { id: payload.vendorId })
+      });
+      if (!vendor) {
+        return res.status(400).json({
+          success: false,
+          message: 'Vendor not found for this tenant'
+        });
+      }
+    }
+
+    if (payload.jobId) {
+      const job = await Job.findOne({
+        where: applyTenantFilter(req.tenantId, { id: payload.jobId })
+      });
+      if (!job) {
+        return res.status(400).json({
+          success: false,
+          message: 'Job not found for this tenant'
+        });
+      }
+    }
     const expense = await Expense.create({
-      ...req.body,
+      ...payload,
+      tenantId: req.tenantId,
       expenseNumber
     });
 
-    const expenseWithDetails = await Expense.findByPk(expense.id, {
+    const expenseWithDetails = await Expense.findOne({
+      where: applyTenantFilter(req.tenantId, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job' }
@@ -129,7 +159,9 @@ exports.createExpense = async (req, res, next) => {
 // @access  Private
 exports.updateExpense = async (req, res, next) => {
   try {
-    const expense = await Expense.findByPk(req.params.id);
+    const expense = await Expense.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!expense) {
       return res.status(404).json({
@@ -138,9 +170,36 @@ exports.updateExpense = async (req, res, next) => {
       });
     }
 
-    await expense.update(req.body);
+    const updatePayload = sanitizePayload(req.body);
 
-    const updatedExpense = await Expense.findByPk(expense.id, {
+    if (updatePayload.vendorId) {
+      const vendor = await Vendor.findOne({
+        where: applyTenantFilter(req.tenantId, { id: updatePayload.vendorId })
+      });
+      if (!vendor) {
+        return res.status(400).json({
+          success: false,
+          message: 'Vendor not found for this tenant'
+        });
+      }
+    }
+
+    if (updatePayload.jobId) {
+      const job = await Job.findOne({
+        where: applyTenantFilter(req.tenantId, { id: updatePayload.jobId })
+      });
+      if (!job) {
+        return res.status(400).json({
+          success: false,
+          message: 'Job not found for this tenant'
+        });
+      }
+    }
+
+    await expense.update(updatePayload);
+
+    const updatedExpense = await Expense.findOne({
+      where: applyTenantFilter(req.tenantId, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job' }
@@ -161,7 +220,9 @@ exports.updateExpense = async (req, res, next) => {
 // @access  Private
 exports.deleteExpense = async (req, res, next) => {
   try {
-    const expense = await Expense.findByPk(req.params.id);
+    const expense = await Expense.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!expense) {
       return res.status(404).json({
@@ -189,7 +250,7 @@ exports.getExpenseStats = async (req, res, next) => {
     const { sequelize } = require('../config/database');
     const { jobId, startDate, endDate } = req.query;
 
-    const baseFilters = {};
+    const baseFilters = applyTenantFilter(req.tenantId, {});
 
     if (jobId) {
       baseFilters.jobId = jobId;
@@ -242,7 +303,7 @@ exports.getExpenseStats = async (req, res, next) => {
     let jobExpenses = null;
     if (jobId) {
       jobExpenses = await Expense.findAll({
-        where: { jobId },
+        where: applyTenantFilter(req.tenantId, { jobId }),
         include: [
           { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] }
         ],
@@ -256,7 +317,7 @@ exports.getExpenseStats = async (req, res, next) => {
         categoryStats: stats,
         totalExpenses,
         thisMonthExpenses,
-        jobExpenses: jobExpenses
+        jobExpenses
       }
     });
   } catch (error) {
@@ -274,8 +335,19 @@ exports.getExpensesByJob = async (req, res, next) => {
     const limit = parseInt(req.query.limit) || 10;
     const offset = (page - 1) * limit;
 
+    const job = await Job.findOne({
+      where: applyTenantFilter(req.tenantId, { id: jobId })
+    });
+
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        message: 'Job not found for this tenant'
+      });
+    }
+
     const { count, rows } = await Expense.findAndCountAll({
-      where: { jobId },
+      where: applyTenantFilter(req.tenantId, { jobId }),
       limit,
       offset,
       include: [
@@ -286,7 +358,8 @@ exports.getExpensesByJob = async (req, res, next) => {
     });
 
     // Get total amount for this job
-    const totalAmount = await Expense.sum('amount', { where: { jobId } }) || 0;
+    const totalAmount =
+      (await Expense.sum('amount', { where: applyTenantFilter(req.tenantId, { jobId }) })) || 0;
 
     res.status(200).json({
       success: true,

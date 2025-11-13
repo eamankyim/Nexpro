@@ -1,10 +1,13 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { ConfigProvider, App as AntdApp } from 'antd';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
+import PlatformRoute from './components/PlatformRoute';
 import MainLayout from './layouts/MainLayout';
+import AdminLayout from './layouts/AdminLayout';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import TenantOnboarding from './pages/TenantOnboarding';
 import Dashboard from './pages/Dashboard';
 import Customers from './pages/Customers';
 import Vendors from './pages/Vendors';
@@ -23,6 +26,22 @@ import Settings from './pages/Settings';
 import Employees from './pages/Employees';
 import Payroll from './pages/Payroll';
 import Accounting from './pages/Accounting';
+import AdminOverview from './pages/admin/AdminOverview';
+import AdminTenants from './pages/admin/AdminTenants';
+import AdminBilling from './pages/admin/AdminBilling';
+import AdminReports from './pages/admin/AdminReports';
+import AdminHealth from './pages/admin/AdminHealth';
+import AdminSettings from './pages/admin/AdminSettings';
+
+const WorkspaceRoot = () => {
+  const { user } = useAuth();
+
+  if (user?.isPlatformAdmin) {
+    return <Navigate to="/admin" replace />;
+  }
+
+  return <MainLayout />;
+};
 
 function AppContent() {
   // ForcePasswordChange disabled - invited users set their own password during signup
@@ -36,8 +55,16 @@ function AppContent() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/onboarding" element={<TenantOnboarding />} />
         
-        <Route path="/" element={<PrivateRoute><MainLayout /></PrivateRoute>}>
+        <Route
+          path="/"
+          element={
+            <PrivateRoute>
+              <WorkspaceRoot />
+            </PrivateRoute>
+          }
+        >
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="customers" element={<Customers />} />
@@ -57,6 +84,24 @@ function AppContent() {
           <Route path="users" element={<Users />} />
           <Route path="profile" element={<Profile />} />
           <Route path="settings" element={<Settings />} />
+        </Route>
+
+        <Route
+          path="/admin"
+          element={
+            <PrivateRoute>
+              <PlatformRoute>
+                <AdminLayout />
+              </PlatformRoute>
+            </PrivateRoute>
+          }
+        >
+          <Route index element={<AdminOverview />} />
+          <Route path="tenants" element={<AdminTenants />} />
+          <Route path="billing" element={<AdminBilling />} />
+          <Route path="reports" element={<AdminReports />} />
+          <Route path="health" element={<AdminHealth />} />
+          <Route path="settings" element={<AdminSettings />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

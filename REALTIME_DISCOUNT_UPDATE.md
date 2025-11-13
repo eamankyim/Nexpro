@@ -39,13 +39,13 @@ Discounts now automatically update as you change the quantity - no need to resel
 
 ### Example:
 
-**Template Selected:** Business Cards (₵2.00/unit) 🏷️ Auto-Discounts
+**Template Selected:** Business Cards (GHS 2.00/unit) 🏷️ Auto-Discounts
 
 | Quantity | Discount | Unit Price | Total | Action |
 |----------|----------|------------|-------|--------|
-| 100 | 0% | ₵2.00 | ₵200.00 | Type 500... |
-| 500 | 10% | ₵1.80 | ₵900.00 | Type 1000... |
-| 1000 | 15% | ₵1.70 | ₵1,700.00 | ✅ Done! |
+| 100 | 0% | GHS 2.00 | GHS 200.00 | Type 500... |
+| 500 | 10% | GHS 1.80 | GHS 900.00 | Type 1000... |
+| 1000 | 15% | GHS 1.70 | GHS 1,700.00 | ✅ Done! |
 
 **All changes happen automatically as you type!** ⚡
 
@@ -105,26 +105,26 @@ const handleQuantityChange = (itemIndex, newQuantity) => {
 ### Example 1: Creating a New Job Item
 
 1. Click "Add Job Item"
-2. Select template: "Business Cards - Standard (₵2.00/unit) 🏷️ Auto-Discounts"
+2. Select template: "Business Cards - Standard (GHS 2.00/unit) 🏷️ Auto-Discounts"
 3. Type quantity: `500`
    - 💬 "10% discount applied for quantity 500!"
-   - Unit Price: ₵1.80
-   - Total: ₵900.00
+   - Unit Price: GHS 1.80
+   - Total: GHS 900.00
 4. Change to: `1000`
    - 💬 "15% discount applied for quantity 1000!"
-   - Unit Price: ₵1.70
-   - Total: ₵1,700.00
+   - Unit Price: GHS 1.70
+   - Total: GHS 1,700.00
 
 **No template reselection needed!** ✨
 
 ### Example 2: Adjusting Quantity After Template Selection
 
-1. Template already selected: "Flyers (₵0.50/unit) 🏷️ Auto-Discounts"
-2. Current quantity: 250 @ ₵0.50 = ₵125.00
+1. Template already selected: "Flyers (GHS 0.50/unit) 🏷️ Auto-Discounts"
+2. Current quantity: 250 @ GHS 0.50 = GHS 125.00
 3. Update to: 1000
    - Discount automatically recalculates
-   - New price: ₵0.42/unit (assuming 15% discount)
-   - New total: ₵420.00
+   - New price: GHS 0.42/unit (assuming 15% discount)
+   - New total: GHS 420.00
 
 **Instant feedback!** ⚡
 
@@ -142,9 +142,9 @@ const handleQuantityChange = (itemIndex, newQuantity) => {
 
 ### Template Dropdown Options
 ```
-Business Cards - Standard (₵2.00/unit) 🏷️ Auto-Discounts
-Flyers - Color (₵0.50/unit) 🏷️ Auto-Discounts
-Brochures - Premium (₵1.25/unit) 🏷️ Auto-Discounts
+Business Cards - Standard (GHS 2.00/unit) 🏷️ Auto-Discounts
+Flyers - Color (GHS 0.50/unit) 🏷️ Auto-Discounts
+Brochures - Premium (GHS 1.25/unit) 🏷️ Auto-Discounts
 ```
 
 ### Real-Time Notifications

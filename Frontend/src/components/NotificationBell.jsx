@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import notificationService from '../services/notificationService';
+import { useAuth } from '../context/AuthContext';
 
 dayjs.extend(relativeTime);
 
@@ -19,6 +20,7 @@ const NotificationBell = () => {
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const { activeTenantId } = useAuth();
 
   const navigate = useNavigate();
 
@@ -30,6 +32,11 @@ const NotificationBell = () => {
   }, [pagination]);
 
   const fetchSummary = useCallback(async () => {
+    if (!activeTenantId) {
+      setSummary({ total: 0, unread: 0, recent: 0 });
+      return;
+    }
+
     setLoadingSummary(true);
     try {
       const response = await notificationService.getSummary();
@@ -37,18 +44,27 @@ const NotificationBell = () => {
         setSummary({
           total: response.data.total ?? 0,
           unread: response.data.unread ?? 0,
-          recent: response.data.recent ?? 0
+          recent: response.data.recent ?? 0,
         });
+      } else {
+        setSummary({ total: 0, unread: 0, recent: 0 });
       }
     } catch (error) {
       console.error('Failed to load notification summary', error);
+      setSummary({ total: 0, unread: 0, recent: 0 });
     } finally {
       setLoadingSummary(false);
     }
-  }, []);
+  }, [activeTenantId]);
 
   const fetchNotifications = useCallback(
     async (pageToLoad = 1, append = false) => {
+      if (!activeTenantId) {
+        setNotifications([]);
+        setPagination({ page: 1, totalPages: 1 });
+        return;
+      }
+
       if (append) {
         setLoadingMore(true);
       } else {
@@ -61,11 +77,18 @@ const NotificationBell = () => {
           setNotifications((prev) => (append ? [...prev, ...items] : items));
           setPagination({
             page: response.pagination?.page ?? pageToLoad,
-            totalPages: response.pagination?.totalPages ?? 1
+            totalPages: response.pagination?.totalPages ?? 1,
           });
+        } else if (!append) {
+          setNotifications([]);
+          setPagination({ page: 1, totalPages: 1 });
         }
       } catch (error) {
         console.error('Failed to load notifications', error);
+        if (!append) {
+          setNotifications([]);
+          setPagination({ page: 1, totalPages: 1 });
+        }
       } finally {
         if (append) {
           setLoadingMore(false);
@@ -74,7 +97,7 @@ const NotificationBell = () => {
         }
       }
     },
-    []
+    [activeTenantId]
   );
 
   const markNotificationRead = useCallback(
@@ -153,9 +176,21 @@ const NotificationBell = () => {
 
   useEffect(() => {
     fetchSummary();
-    const interval = setInterval(fetchSummary, 60000);
-    return () => clearInterval(interval);
-  }, [fetchSummary]);
+    const interval = activeTenantId ? setInterval(fetchSummary, 60000) : null;
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [fetchSummary, activeTenantId]);
+
+  useEffect(() => {
+    setNotifications([]);
+    setPagination({ page: 1, totalPages: 1 });
+    if (open && activeTenantId) {
+      fetchNotifications(1, false);
+    }
+  }, [activeTenantId, fetchNotifications, open]);
 
   const popoverContent = (
     <div style={{ width: 360, maxHeight: 400, display: 'flex', flexDirection: 'column' }}>

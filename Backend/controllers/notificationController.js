@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const { Notification, User } = require('../models');
 const config = require('../config/config');
+const { applyTenantFilter } = require('../utils/tenantUtils');
 
 exports.getNotifications = async (req, res, next) => {
   try {
@@ -10,9 +11,9 @@ exports.getNotifications = async (req, res, next) => {
     const type = req.query.type;
     const unreadOnly = req.query.unread === 'true';
 
-    const where = {
+    const where = applyTenantFilter(req.tenantId, {
       userId: req.user.id
-    };
+    });
 
     if (type) {
       where.type = type;
@@ -63,10 +64,10 @@ exports.getNotifications = async (req, res, next) => {
 exports.markNotificationRead = async (req, res, next) => {
   try {
     const notification = await Notification.findOne({
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         id: req.params.id,
         userId: req.user.id
-      }
+      })
     });
 
     if (!notification) {
@@ -96,10 +97,10 @@ exports.markAllNotificationsRead = async (req, res, next) => {
     const [updated] = await Notification.update(
       { isRead: true, readAt: new Date() },
       {
-        where: {
+        where: applyTenantFilter(req.tenantId, {
           userId: req.user.id,
           isRead: false
-        }
+        })
       }
     );
 
@@ -120,7 +121,7 @@ exports.markAllNotificationsRead = async (req, res, next) => {
 exports.getNotificationSummary = async (req, res, next) => {
   try {
     const totals = await Notification.findAll({
-      where: { userId: req.user.id },
+      where: applyTenantFilter(req.tenantId, { userId: req.user.id }),
       attributes: [
         [Notification.sequelize.fn('COUNT', Notification.sequelize.col('id')), 'total'],
         [
@@ -133,12 +134,12 @@ exports.getNotificationSummary = async (req, res, next) => {
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
     const recent = await Notification.count({
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         userId: req.user.id,
         createdAt: {
           [Op.gte]: fortyEightHoursAgo
         }
-      }
+      })
     });
 
     const summary = totals[0]?.toJSON() || { total: 0, unread: 0 };

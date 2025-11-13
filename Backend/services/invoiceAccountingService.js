@@ -49,8 +49,9 @@ const createInvoicePaymentJournal = async ({
     return null;
   }
 
-  const accountsReceivableAccount = await getAccountByCode(DEFAULT_ACCOUNT_CODES.accountsReceivable);
-  const depositAccount = await getAccountByCode(resolveDepositAccountCode(paymentMethod));
+  const tenantId = invoice.tenantId;
+  const accountsReceivableAccount = await getAccountByCode(tenantId, DEFAULT_ACCOUNT_CODES.accountsReceivable);
+  const depositAccount = await getAccountByCode(tenantId, resolveDepositAccountCode(paymentMethod));
 
   if (!accountsReceivableAccount || !depositAccount) {
     const missing = [];
@@ -62,6 +63,7 @@ const createInvoicePaymentJournal = async ({
   const description = `Payment received for invoice ${invoice.invoiceNumber || invoice.id}`;
 
   return accountingService.createJournalEntry({
+    tenantId,
     reference: invoice.invoiceNumber || invoice.id,
     description,
     entryDate: paymentDate,

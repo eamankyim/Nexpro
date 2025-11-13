@@ -9,6 +9,7 @@ const {
 } = require('../models');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 const logInventoryDebug = (...args) => {
   if (config.nodeEnv === 'development') {
@@ -37,6 +38,7 @@ const buildItemInclude = () => ([
 exports.getInventoryCategories = async (req, res, next) => {
   try {
     const categories = await InventoryCategory.findAll({
+      where: applyTenantFilter(req.tenantId, {}),
       order: [['name', 'ASC']]
     });
     res.status(200).json({ success: true, data: categories });
@@ -47,14 +49,15 @@ exports.getInventoryCategories = async (req, res, next) => {
 
 exports.createInventoryCategory = async (req, res, next) => {
   try {
-    const { name, description, metadata } = req.body;
+    const { name, description, metadata } = sanitizePayload(req.body || {});
     if (!name) {
       return res.status(400).json({ success: false, message: 'Category name is required' });
     }
     const category = await InventoryCategory.create({
       name,
       description: description || null,
-      metadata: metadata || {}
+      metadata: metadata || {},
+      tenantId: req.tenantId
     });
     res.status(201).json({ success: true, data: category });
   } catch (error) {
@@ -64,12 +67,14 @@ exports.createInventoryCategory = async (req, res, next) => {
 
 exports.updateInventoryCategory = async (req, res, next) => {
   try {
-    const category = await InventoryCategory.findByPk(req.params.id);
+    const category = await InventoryCategory.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!category) {
       return res.status(404).json({ success: false, message: 'Category not found' });
     }
 
-    const { name, description, isActive, metadata } = req.body;
+    const { name, description, isActive, metadata } = sanitizePayload(req.body || {});
     if (name !== undefined) category.name = name;
     if (description !== undefined) category.description = description;
     if (isActive !== undefined) category.isActive = Boolean(isActive);
@@ -92,7 +97,7 @@ exports.getInventoryItems = async (req, res, next) => {
     const status = req.query.status;
     const includeLowStock = req.query.lowStock === 'true';
 
-    const where = {};
+    const where = applyTenantFilter(req.tenantId, {});
 
     if (search) {
       where[Op.or] = [
@@ -143,7 +148,8 @@ exports.getInventoryItems = async (req, res, next) => {
 
 exports.getInventoryItem = async (req, res, next) => {
   try {
-    const item = await InventoryItem.findByPk(req.params.id, {
+    const item = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         ...buildItemInclude(),
         {
@@ -183,28 +189,50 @@ exports.createInventoryItem = async (req, res, next) => {
       location,
       metadata,
       isActive
-    } = req.body;
+    } = sanitizePayload(req.body || {});
 
     if (!name) {
       return res.status(400).json({ success: false, message: 'Item name is required' });
+    }
+
+    let validatedCategoryId = categoryId || null;
+    if (validatedCategoryId) {
+      const category = await InventoryCategory.findOne({
+        where: applyTenantFilter(req.tenantId, { id: validatedCategoryId })
+      });
+      if (!category) {
+        return res.status(400).json({ success: false, message: 'Category not found for this tenant' });
+      }
+    }
+
+    let validatedVendorId = preferredVendorId || null;
+    if (validatedVendorId) {
+      const vendor = await Vendor.findOne({
+        where: applyTenantFilter(req.tenantId, { id: validatedVendorId })
+      });
+      if (!vendor) {
+        return res.status(400).json({ success: false, message: 'Vendor not found for this tenant' });
+      }
     }
 
     const item = await InventoryItem.create({
       name,
       sku: sku || null,
       description: description || null,
-      categoryId: categoryId || null,
+      categoryId: validatedCategoryId,
       unit: unit || 'pcs',
       quantityOnHand: parseDecimal(quantityOnHand, 0),
       reorderLevel: parseDecimal(reorderLevel, 0),
-      preferredVendorId: preferredVendorId || null,
+      preferredVendorId: validatedVendorId,
       unitCost: parseDecimal(unitCost, 0),
       location: location || null,
       metadata: metadata || {},
-      isActive: isActive !== undefined ? Boolean(isActive) : true
+      isActive: isActive !== undefined ? Boolean(isActive) : true,
+      tenantId: req.tenantId
     });
 
-    const createdItem = await InventoryItem.findByPk(item.id, {
+    const createdItem = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: item.id }),
       include: buildItemInclude()
     });
 
@@ -216,41 +244,50 @@ exports.createInventoryItem = async (req, res, next) => {
 
 exports.updateInventoryItem = async (req, res, next) => {
   try {
-    const item = await InventoryItem.findByPk(req.params.id);
+    const item = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Inventory item not found' });
     }
 
-    const {
-      name,
-      sku,
-      description,
-      categoryId,
-      unit,
-      reorderLevel,
-      preferredVendorId,
-      unitCost,
-      location,
-      metadata,
-      isActive
-    } = req.body;
+    const payload = sanitizePayload(req.body || {});
+
+    if (payload.categoryId !== undefined && payload.categoryId !== null) {
+      const category = await InventoryCategory.findOne({
+        where: applyTenantFilter(req.tenantId, { id: payload.categoryId })
+      });
+      if (!category) {
+        return res.status(400).json({ success: false, message: 'Category not found for this tenant' });
+      }
+    }
+
+    if (payload.preferredVendorId !== undefined && payload.preferredVendorId !== null) {
+      const vendor = await Vendor.findOne({
+        where: applyTenantFilter(req.tenantId, { id: payload.preferredVendorId })
+      });
+      if (!vendor) {
+        return res.status(400).json({ success: false, message: 'Vendor not found for this tenant' });
+      }
+    }
 
     const updates = {};
-    if (name !== undefined) updates.name = name;
-    if (sku !== undefined) updates.sku = sku || null;
-    if (description !== undefined) updates.description = description || null;
-    if (categoryId !== undefined) updates.categoryId = categoryId || null;
-    if (unit !== undefined) updates.unit = unit;
-    if (reorderLevel !== undefined) updates.reorderLevel = parseDecimal(reorderLevel, item.reorderLevel);
-    if (preferredVendorId !== undefined) updates.preferredVendorId = preferredVendorId || null;
-    if (unitCost !== undefined) updates.unitCost = parseDecimal(unitCost, item.unitCost);
-    if (location !== undefined) updates.location = location || null;
-    if (metadata !== undefined) updates.metadata = metadata;
-    if (isActive !== undefined) updates.isActive = Boolean(isActive);
+    if (payload.name !== undefined) updates.name = payload.name;
+    if (payload.sku !== undefined) updates.sku = payload.sku || null;
+    if (payload.description !== undefined) updates.description = payload.description || null;
+    if (payload.categoryId !== undefined) updates.categoryId = payload.categoryId || null;
+    if (payload.unit !== undefined) updates.unit = payload.unit;
+    if (payload.reorderLevel !== undefined) updates.reorderLevel = parseDecimal(payload.reorderLevel, item.reorderLevel);
+    if (payload.preferredVendorId !== undefined) updates.preferredVendorId = payload.preferredVendorId || null;
+    if (payload.unitCost !== undefined) updates.unitCost = parseDecimal(payload.unitCost, item.unitCost);
+    if (payload.location !== undefined) updates.location = payload.location || null;
+    if (payload.metadata !== undefined) updates.metadata = payload.metadata;
+    if (payload.isActive !== undefined) updates.isActive = Boolean(payload.isActive);
 
     await item.update(updates);
 
-    const updatedItem = await InventoryItem.findByPk(item.id, {
+    const updatedItem = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: item.id }),
       include: buildItemInclude()
     });
 
@@ -277,7 +314,8 @@ exports.getInventorySummary = async (req, res, next) => {
           Sequelize.fn('SUM', Sequelize.literal(`CASE WHEN "InventoryItem"."quantityOnHand" <= "InventoryItem"."reorderLevel" THEN 1 ELSE 0 END`)),
           'lowStockCount'
         ]
-      ]
+      ],
+      where: applyTenantFilter(req.tenantId, {})
     });
 
     const categories = await InventoryCategory.findAll({
@@ -290,11 +328,14 @@ exports.getInventorySummary = async (req, res, next) => {
         {
           model: InventoryItem,
           as: 'items',
-          attributes: []
+          attributes: [],
+          where: applyTenantFilter(req.tenantId, {}),
+          required: false
         }
       ],
       group: ['InventoryCategory.id'],
-      order: [['name', 'ASC']]
+      order: [['name', 'ASC']],
+      where: applyTenantFilter(req.tenantId, {})
     });
 
     res.status(200).json({
@@ -316,8 +357,14 @@ exports.getInventoryMovements = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const itemId = req.query.itemId;
 
-    const where = {};
+    const where = applyTenantFilter(req.tenantId, {});
     if (itemId) {
+      const item = await InventoryItem.findOne({
+        where: applyTenantFilter(req.tenantId, { id: itemId })
+      });
+      if (!item) {
+        return res.status(404).json({ success: false, message: 'Inventory item not found' });
+      }
       where.itemId = itemId;
     }
 
@@ -327,9 +374,21 @@ exports.getInventoryMovements = async (req, res, next) => {
       offset,
       order: [['occurredAt', 'DESC']],
       include: [
-        { model: InventoryItem, as: 'item', attributes: ['id', 'name', 'sku', 'unit'] },
+        {
+          model: InventoryItem,
+          as: 'item',
+          attributes: ['id', 'name', 'sku', 'unit'],
+          where: applyTenantFilter(req.tenantId, {}),
+          required: false
+        },
         { model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] },
-        { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] }
+        {
+          model: Job,
+          as: 'job',
+          attributes: ['id', 'jobNumber', 'title'],
+          where: applyTenantFilter(req.tenantId, {}),
+          required: false
+        }
       ]
     });
 
@@ -349,6 +408,7 @@ exports.getInventoryMovements = async (req, res, next) => {
 };
 
 const createMovementAndUpdateItem = async ({
+  tenantId,
   item,
   quantityDelta,
   type,
@@ -360,7 +420,8 @@ const createMovementAndUpdateItem = async ({
 }) => {
   const transaction = await sequelize.transaction();
   try {
-    const itemForUpdate = await InventoryItem.findByPk(item.id, {
+    const itemForUpdate = await InventoryItem.findOne({
+      where: applyTenantFilter(tenantId, { id: item.id }),
       transaction,
       lock: transaction.LOCK.UPDATE
     });
@@ -382,6 +443,7 @@ const createMovementAndUpdateItem = async ({
 
     const movement = await InventoryMovement.create({
       itemId: itemForUpdate.id,
+      tenantId,
       type,
       quantityDelta: delta,
       previousQuantity,
@@ -405,12 +467,14 @@ const createMovementAndUpdateItem = async ({
 
 exports.restockInventoryItem = async (req, res, next) => {
   try {
-    const item = await InventoryItem.findByPk(req.params.id);
+    const item = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Inventory item not found' });
     }
 
-    const { quantity, unitCost, reference, notes } = req.body;
+    const { quantity, unitCost, reference, notes } = sanitizePayload(req.body || {});
     const delta = parseDecimal(quantity);
 
     if (!Number.isFinite(delta) || delta <= 0) {
@@ -418,6 +482,7 @@ exports.restockInventoryItem = async (req, res, next) => {
     }
 
     const { item: updatedItem, movement } = await createMovementAndUpdateItem({
+      tenantId: req.tenantId,
       item,
       quantityDelta: delta,
       type: 'purchase',
@@ -427,7 +492,8 @@ exports.restockInventoryItem = async (req, res, next) => {
       userId: req.user?.id
     });
 
-    const refreshedItem = await InventoryItem.findByPk(updatedItem.id, {
+    const refreshedItem = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: updatedItem.id }),
       include: buildItemInclude()
     });
 
@@ -446,12 +512,14 @@ exports.restockInventoryItem = async (req, res, next) => {
 
 exports.adjustInventoryItem = async (req, res, next) => {
   try {
-    const item = await InventoryItem.findByPk(req.params.id);
+    const item = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Inventory item not found' });
     }
 
-    const { quantityDelta, newQuantity, reason, notes } = req.body;
+    const { quantityDelta, newQuantity, reason, notes } = sanitizePayload(req.body || {});
 
     let delta = null;
     if (quantityDelta !== undefined) {
@@ -466,6 +534,7 @@ exports.adjustInventoryItem = async (req, res, next) => {
     }
 
     const { item: updatedItem, movement } = await createMovementAndUpdateItem({
+      tenantId: req.tenantId,
       item,
       quantityDelta: delta,
       type: 'adjustment',
@@ -474,7 +543,8 @@ exports.adjustInventoryItem = async (req, res, next) => {
       userId: req.user?.id
     });
 
-    const refreshedItem = await InventoryItem.findByPk(updatedItem.id, {
+    const refreshedItem = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: updatedItem.id }),
       include: buildItemInclude()
     });
 
@@ -493,24 +563,31 @@ exports.adjustInventoryItem = async (req, res, next) => {
 
 exports.recordUsageForJob = async (req, res, next) => {
   try {
-    const item = await InventoryItem.findByPk(req.params.id);
+    const item = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Inventory item not found' });
     }
 
-    const { quantity, jobId, reference, notes } = req.body;
+    const { quantity, jobId, reference, notes } = sanitizePayload(req.body || {});
     const delta = parseDecimal(quantity);
 
     if (!Number.isFinite(delta) || delta <= 0) {
       return res.status(400).json({ success: false, message: 'Quantity must be a positive number' });
     }
 
-    const job = jobId ? await Job.findByPk(jobId) : null;
+    const job = jobId
+      ? await Job.findOne({
+          where: applyTenantFilter(req.tenantId, { id: jobId })
+        })
+      : null;
     if (jobId && !job) {
       return res.status(404).json({ success: false, message: 'Associated job not found' });
     }
 
     const { item: updatedItem, movement } = await createMovementAndUpdateItem({
+      tenantId: req.tenantId,
       item,
       quantityDelta: delta * -1,
       type: 'usage',
@@ -520,7 +597,8 @@ exports.recordUsageForJob = async (req, res, next) => {
       userId: req.user?.id
     });
 
-    const refreshedItem = await InventoryItem.findByPk(updatedItem.id, {
+    const refreshedItem = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: updatedItem.id }),
       include: buildItemInclude()
     });
 
@@ -539,7 +617,9 @@ exports.recordUsageForJob = async (req, res, next) => {
 
 exports.deleteInventoryItem = async (req, res, next) => {
   try {
-    const item = await InventoryItem.findByPk(req.params.id);
+    const item = await InventoryItem.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Inventory item not found' });
     }

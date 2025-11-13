@@ -142,7 +142,16 @@ const Signup = () => {
         {inviteData && (
           <Alert
             message={`Invite for ${inviteData.email}`}
-            description={`Please complete your registration below. You'll be given the role of ${inviteData.role}.`}
+            description={
+              <>
+                <div>Please complete your registration below. You'll be given the role of <strong>{inviteData.role}</strong>.</div>
+                {inviteData.tenant?.name && (
+                  <div style={{ marginTop: 4 }}>
+                    Joining organisation: <strong>{inviteData.tenant.name}</strong>
+                  </div>
+                )}
+              </>
+            }
             type="info"
             showIcon
             style={{ marginBottom: 24 }}

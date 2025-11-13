@@ -181,7 +181,7 @@ const Customers = () => {
       title: 'Balance',
       dataIndex: 'balance',
       key: 'balance',
-      render: (balance) => `₵${parseFloat(balance).toFixed(2)}`,
+      render: (balance) => `GHS ${parseFloat(balance).toFixed(2)}`,
     },
     {
       title: 'Status',
@@ -375,7 +375,7 @@ const Customers = () => {
                   </Descriptions.Item>
                 )}
                 <Descriptions.Item label="Balance">
-                  ₵{parseFloat(viewingCustomer.balance || 0).toFixed(2)}
+                  GHS {parseFloat(viewingCustomer.balance || 0).toFixed(2)}
                 </Descriptions.Item>
                 <Descriptions.Item label="Status">
                   <Tag color={viewingCustomer.isActive ? 'green' : 'red'}>
@@ -431,7 +431,7 @@ const Customers = () => {
                           }
                         />
                         <div style={{ fontWeight: 'bold' }}>
-                          ₵{parseFloat(job.finalPrice || 0).toFixed(2)}
+                          GHS {parseFloat(job.finalPrice || 0).toFixed(2)}
                         </div>
                       </List.Item>
                     )}
@@ -480,17 +480,17 @@ const Customers = () => {
                                 Due: {invoice.dueDate ? dayjs(invoice.dueDate).format('MMM DD, YYYY') : 'N/A'}
                               </span>
                               <span style={{ fontSize: 12, color: '#999' }}>
-                                Balance: ₵{parseFloat(invoice.balance || 0).toFixed(2)}
+                                Balance: GHS {parseFloat(invoice.balance || 0).toFixed(2)}
                               </span>
                             </Space>
                           }
                         />
                         <div style={{ textAlign: 'right' }}>
                           <div style={{ fontWeight: 'bold', fontSize: 16 }}>
-                            ₵{parseFloat(invoice.totalAmount || 0).toFixed(2)}
+                            GHS {parseFloat(invoice.totalAmount || 0).toFixed(2)}
                           </div>
                           <div style={{ fontSize: 12, color: '#52c41a' }}>
-                            Paid: ₵{parseFloat(invoice.amountPaid || 0).toFixed(2)}
+                            Paid: GHS {parseFloat(invoice.amountPaid || 0).toFixed(2)}
                           </div>
                         </div>
                       </List.Item>

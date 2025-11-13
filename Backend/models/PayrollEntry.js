@@ -9,6 +9,14 @@ const PayrollEntry = sequelize.define(
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true
     },
+    tenantId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: 'tenants',
+        key: 'id'
+      }
+    },
     payrollRunId: {
       type: DataTypes.UUID,
       allowNull: false,

@@ -13,11 +13,13 @@ const {
   uploadOrganizationLogo
 } = require('../controllers/settingsController');
 const { protect, authorize } = require('../middleware/auth');
+const { tenantContext } = require('../middleware/tenant');
 const { createUploader } = require('../middleware/upload');
 
 const router = express.Router();
 
 router.use(protect);
+router.use(tenantContext);
 
 const profileUploader = createUploader((req) => path.join('users', req.user.id));
 const organizationUploader = createUploader(() => path.join('settings', 'organization'));

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useState } from 'react';
 import {
   Row,
   Col,
@@ -210,8 +210,8 @@ const EmployeeForm = ({ currentStep }) => (
           <InputNumber
             style={{ width: '100%' }}
             min={0}
-            formatter={(value) => `₵ ${value}`}
-            parser={(value) => value.replace(/[₵\s,]/g, '')}
+            formatter={(value) => `GHS ${value}`}
+            parser={(value) => value.replace(/[GHS \s,]/g, '')}
           />
         </Form.Item>
       </Col>
@@ -908,7 +908,7 @@ const Employees = () => {
                         {viewingEmployee.salaryType?.toUpperCase()}
                       </Descriptions.Item>
                       <Descriptions.Item label="Base Amount">
-                        ₵{Number(viewingEmployee.salaryAmount || 0).toFixed(2)}
+                        GHS {Number(viewingEmployee.salaryAmount || 0).toFixed(2)}
                       </Descriptions.Item>
                       <Descriptions.Item label="Pay Frequency">
                         {viewingEmployee.payFrequency?.toUpperCase()}
@@ -1089,8 +1089,8 @@ const Employees = () => {
                           </Tag>
                         </Text>
                         <Text>
-                          Gross: ₵{parseFloat(entry.grossPay || 0).toFixed(2)} • Net:{' '}
-                          <Text strong>₵{parseFloat(entry.netPay || 0).toFixed(2)}</Text>
+                          Gross: GHS {parseFloat(entry.grossPay || 0).toFixed(2)} • Net:{' '}
+                          <Text strong>GHS {parseFloat(entry.netPay || 0).toFixed(2)}</Text>
                         </Text>
                       </Space>
                     </Card>
@@ -1138,4 +1138,5 @@ const Employees = () => {
 };
 
 export default Employees;
+
 

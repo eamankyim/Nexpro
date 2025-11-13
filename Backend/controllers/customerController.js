@@ -1,6 +1,7 @@
 const { Customer, Job } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 // @desc    Get all customers
 // @route   GET /api/customers
@@ -12,7 +13,7 @@ exports.getCustomers = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const search = req.query.search || '';
 
-    const where = {};
+    const where = applyTenantFilter(req.tenantId, {});
     if (search) {
       where[Op.or] = [
         { name: { [Op.iLike]: `%${search}%` } },
@@ -48,12 +49,15 @@ exports.getCustomers = async (req, res, next) => {
 // @access  Private
 exports.getCustomer = async (req, res, next) => {
   try {
-    const customer = await Customer.findByPk(req.params.id, {
+    const customer = await Customer.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [{
         model: Job,
         as: 'jobs',
         limit: 10,
-        order: [['createdAt', 'DESC']]
+        order: [['createdAt', 'DESC']],
+        where: applyTenantFilter(req.tenantId, {}),
+        required: false
       }]
     });
 
@@ -78,7 +82,11 @@ exports.getCustomer = async (req, res, next) => {
 // @access  Private
 exports.createCustomer = async (req, res, next) => {
   try {
-    const customer = await Customer.create(req.body);
+    const payload = sanitizePayload(req.body);
+    const customer = await Customer.create({
+      ...payload,
+      tenantId: req.tenantId
+    });
 
     res.status(201).json({
       success: true,
@@ -94,7 +102,9 @@ exports.createCustomer = async (req, res, next) => {
 // @access  Private
 exports.updateCustomer = async (req, res, next) => {
   try {
-    const customer = await Customer.findByPk(req.params.id);
+    const customer = await Customer.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!customer) {
       return res.status(404).json({
@@ -103,7 +113,8 @@ exports.updateCustomer = async (req, res, next) => {
       });
     }
 
-    await customer.update(req.body);
+    const payload = sanitizePayload(req.body);
+    await customer.update(payload);
 
     res.status(200).json({
       success: true,
@@ -119,7 +130,9 @@ exports.updateCustomer = async (req, res, next) => {
 // @access  Private
 exports.deleteCustomer = async (req, res, next) => {
   try {
-    const customer = await Customer.findByPk(req.params.id);
+    const customer = await Customer.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!customer) {
       return res.status(404).json({

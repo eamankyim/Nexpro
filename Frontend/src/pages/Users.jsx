@@ -50,6 +50,8 @@ import inviteService from '../services/inviteService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import SeatUsageCard from '../components/SeatUsageCard';
+import StorageUsageCard from '../components/StorageUsageCard';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -459,10 +461,20 @@ const Users = () => {
         )}
       </div>
 
+      {/* Usage Cards */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} lg={12}>
+          <SeatUsageCard />
+        </Col>
+        <Col xs={24} lg={12}>
+          <StorageUsageCard />
+        </Col>
+      </Row>
+
       {/* Statistics Cards */}
       {stats && (
         <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-          <Col xs={24} sm={12} lg={6}>
+          <Col xs={24} sm={12} lg={8}>
             <Card>
               <Statistic
                 title="Total Users"
@@ -472,17 +484,7 @@ const Users = () => {
               />
             </Card>
           </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card>
-              <Statistic
-                title="Active Users"
-                value={stats.activeUsers || 0}
-                prefix={<UserOutlined />}
-                valueStyle={{ color: '#52c41a' }}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
+          <Col xs={24} sm={12} lg={8}>
             <Card>
               <Statistic
                 title="Admins"
@@ -492,7 +494,7 @@ const Users = () => {
               />
             </Card>
           </Col>
-          <Col xs={24} sm={12} lg={6}>
+          <Col xs={24} sm={12} lg={8}>
             <Card>
               <Statistic
                 title="Managers"

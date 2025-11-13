@@ -9,13 +9,23 @@ const AccountBalance = sequelize.define(
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true
     },
+    tenantId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: 'tenants',
+        key: 'id'
+      },
+      unique: 'tenant_account_period_unique'
+    },
     accountId: {
       type: DataTypes.UUID,
       allowNull: false,
       references: {
         model: 'accounts',
         key: 'id'
-      }
+      },
+      unique: 'tenant_account_period_unique'
     },
     fiscalYear: {
       type: DataTypes.INTEGER,
@@ -44,7 +54,13 @@ const AccountBalance = sequelize.define(
   },
   {
     tableName: 'account_balances',
-    timestamps: true
+    timestamps: true,
+    indexes: [
+      {
+        unique: true,
+        fields: ['tenantId', 'accountId', 'fiscalYear', 'period']
+      }
+    ]
   }
 );
 

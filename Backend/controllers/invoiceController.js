@@ -1,16 +1,18 @@
-const { Invoice, Job, Customer, JobItem } = require('../models');
+const { Invoice, Job, Customer, JobItem, Payment } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
 const { createInvoicePaymentJournal } = require('../services/invoiceAccountingService');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 // Helper function to generate invoice number
-const generateInvoiceNumber = async () => {
+const generateInvoiceNumber = async (tenantId) => {
   const date = new Date();
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   
   const lastInvoice = await Invoice.findOne({
     where: {
+      tenantId,
       invoiceNumber: {
         [Op.like]: `INV-${year}${month}%`
       }
@@ -40,7 +42,7 @@ exports.getInvoices = async (req, res, next) => {
     const customerId = req.query.customerId;
     const jobId = req.query.jobId;
 
-    const where = {};
+    const where = applyTenantFilter(req.tenantId, {});
     
     if (search) {
       where[Op.or] = [
@@ -91,7 +93,8 @@ exports.getInvoices = async (req, res, next) => {
 // @access  Private
 exports.getInvoice = async (req, res, next) => {
   try {
-    const invoice = await Invoice.findByPk(req.params.id, {
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         {
           model: Customer,
@@ -133,10 +136,20 @@ exports.getInvoice = async (req, res, next) => {
 // @access  Private
 exports.createInvoice = async (req, res, next) => {
   try {
-    const { jobId, dueDate, paymentTerms, taxRate, discountType, discountValue, notes, termsAndConditions } = req.body;
+    const {
+      jobId,
+      dueDate,
+      paymentTerms,
+      taxRate,
+      discountType,
+      discountValue,
+      notes,
+      termsAndConditions
+    } = sanitizePayload(req.body);
 
     // Fetch job with items
-    const job = await Job.findByPk(jobId, {
+    const job = await Job.findOne({
+      where: applyTenantFilter(req.tenantId, { id: jobId }),
       include: [
         {
           model: JobItem,
@@ -157,7 +170,7 @@ exports.createInvoice = async (req, res, next) => {
     }
 
     // Check if invoice already exists for this job
-    const existingInvoice = await Invoice.findOne({ where: { jobId } });
+    const existingInvoice = await Invoice.findOne({ where: applyTenantFilter(req.tenantId, { jobId }) });
     if (existingInvoice) {
       return res.status(400).json({
         success: false,
@@ -166,7 +179,7 @@ exports.createInvoice = async (req, res, next) => {
     }
 
     // Generate invoice number
-    const invoiceNumber = await generateInvoiceNumber();
+    const invoiceNumber = await generateInvoiceNumber(req.tenantId);
 
     // Calculate subtotal from job items or finalPrice
     let subtotal = 0;
@@ -198,6 +211,7 @@ exports.createInvoice = async (req, res, next) => {
       invoiceNumber,
       jobId,
       customerId: job.customerId,
+      tenantId: req.tenantId,
       invoiceDate: new Date(),
       dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days
       subtotal,
@@ -211,7 +225,8 @@ exports.createInvoice = async (req, res, next) => {
     });
 
     // Fetch the created invoice with relationships
-    const createdInvoice = await Invoice.findByPk(invoice.id, {
+    const createdInvoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoice.id }),
       include: [
         {
           model: Customer,
@@ -238,7 +253,9 @@ exports.createInvoice = async (req, res, next) => {
 // @access  Private
 exports.updateInvoice = async (req, res, next) => {
   try {
-    const invoice = await Invoice.findByPk(req.params.id);
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!invoice) {
       return res.status(404).json({
@@ -255,9 +272,10 @@ exports.updateInvoice = async (req, res, next) => {
       });
     }
 
-    await invoice.update(req.body);
+    await invoice.update(sanitizePayload(req.body));
 
-    const updatedInvoice = await Invoice.findByPk(invoice.id, {
+    const updatedInvoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoice.id }),
       include: [
         {
           model: Customer,
@@ -284,7 +302,9 @@ exports.updateInvoice = async (req, res, next) => {
 // @access  Private (Admin only)
 exports.deleteInvoice = async (req, res, next) => {
   try {
-    const invoice = await Invoice.findByPk(req.params.id);
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!invoice) {
       return res.status(404).json({
@@ -317,9 +337,11 @@ exports.deleteInvoice = async (req, res, next) => {
 // @access  Private
 exports.recordPayment = async (req, res, next) => {
   try {
-    const { amount, paymentMethod, referenceNumber, paymentDate } = req.body;
+    const { amount, paymentMethod, referenceNumber, paymentDate } = sanitizePayload(req.body);
 
-    const invoice = await Invoice.findByPk(req.params.id);
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!invoice) {
       return res.status(404).json({
@@ -364,13 +386,13 @@ exports.recordPayment = async (req, res, next) => {
     await invoice.update(updatePayload);
 
     // Create payment record
-    const Payment = require('../models/Payment');
     const paymentNumber = `PAY-${Date.now()}`;
     const payment = await Payment.create({
       paymentNumber,
       type: 'income',
       customerId: invoice.customerId,
       jobId: invoice.jobId,
+      tenantId: req.tenantId,
       amount: paymentAmount,
       paymentMethod: paymentMethod || 'cash',
       paymentDate: effectivePaymentDate,
@@ -379,7 +401,8 @@ exports.recordPayment = async (req, res, next) => {
       notes: `Payment for invoice ${invoice.invoiceNumber}`
     });
 
-    const updatedInvoice = await Invoice.findByPk(invoice.id, {
+    const updatedInvoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoice.id }),
       include: [
         {
           model: Customer,
@@ -421,7 +444,9 @@ exports.recordPayment = async (req, res, next) => {
 // @access  Private
 exports.markInvoicePaid = async (req, res, next) => {
   try {
-    const invoice = await Invoice.findByPk(req.params.id);
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!invoice) {
       return res.status(404).json({
@@ -438,7 +463,8 @@ exports.markInvoicePaid = async (req, res, next) => {
     }
 
     if (invoice.status === 'paid') {
-      const hydratedInvoice = await Invoice.findByPk(invoice.id, {
+      const hydratedInvoice = await Invoice.findOne({
+        where: applyTenantFilter(req.tenantId, { id: invoice.id }),
         include: [
           {
             model: Customer,
@@ -471,7 +497,6 @@ exports.markInvoicePaid = async (req, res, next) => {
 
     let manualPayment = null;
     if (outstanding > 0) {
-      const Payment = require('../models/Payment');
       const paymentNumber = `PAY-${Date.now()}`;
 
       manualPayment = await Payment.create({
@@ -479,6 +504,7 @@ exports.markInvoicePaid = async (req, res, next) => {
         type: 'income',
         customerId: invoice.customerId,
         jobId: invoice.jobId,
+        tenantId: req.tenantId,
         amount: outstanding,
         paymentMethod: 'other',
         paymentDate: now,
@@ -487,7 +513,8 @@ exports.markInvoicePaid = async (req, res, next) => {
       });
     }
 
-    const updatedInvoice = await Invoice.findByPk(invoice.id, {
+    const updatedInvoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoice.id }),
       include: [
         {
           model: Customer,
@@ -531,7 +558,9 @@ exports.markInvoicePaid = async (req, res, next) => {
 // @access  Private
 exports.sendInvoice = async (req, res, next) => {
   try {
-    const invoice = await Invoice.findByPk(req.params.id);
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!invoice) {
       return res.status(404).json({
@@ -545,7 +574,8 @@ exports.sendInvoice = async (req, res, next) => {
       sentDate: new Date()
     });
 
-    const updatedInvoice = await Invoice.findByPk(invoice.id, {
+    const updatedInvoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoice.id }),
       include: [
         {
           model: Customer,
@@ -575,7 +605,9 @@ exports.sendInvoice = async (req, res, next) => {
 // @access  Private
 exports.cancelInvoice = async (req, res, next) => {
   try {
-    const invoice = await Invoice.findByPk(req.params.id);
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!invoice) {
       return res.status(404).json({
@@ -595,7 +627,8 @@ exports.cancelInvoice = async (req, res, next) => {
       status: 'cancelled'
     });
 
-    const updatedInvoice = await Invoice.findByPk(invoice.id, {
+    const updatedInvoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: invoice.id }),
       include: [
         {
           model: Customer,
@@ -622,13 +655,23 @@ exports.cancelInvoice = async (req, res, next) => {
 // @access  Private
 exports.getInvoiceStats = async (req, res, next) => {
   try {
-    const totalInvoices = await Invoice.count();
-    const paidInvoices = await Invoice.count({ where: { status: 'paid' } });
-    const unpaidInvoices = await Invoice.count({ where: { status: { [Op.in]: ['sent', 'draft'] } } });
-    const overdueInvoices = await Invoice.count({ where: { status: 'overdue' } });
+    const baseWhere = applyTenantFilter(req.tenantId, {});
+
+    const totalInvoices = await Invoice.count({ where: baseWhere });
+    const paidInvoices = await Invoice.count({ where: { ...baseWhere, status: 'paid' } });
+    const unpaidInvoices = await Invoice.count({
+      where: { ...baseWhere, status: { [Op.in]: ['sent', 'draft'] } }
+    });
+    const overdueInvoices = await Invoice.count({
+      where: { ...baseWhere, status: 'overdue' }
+    });
     
-    const totalRevenue = await Invoice.sum('totalAmount', { where: { status: 'paid' } }) || 0;
-    const outstandingAmount = await Invoice.sum('balance', { where: { status: { [Op.ne]: 'paid' } } }) || 0;
+    const totalRevenue =
+      (await Invoice.sum('totalAmount', { where: { ...baseWhere, status: 'paid' } })) || 0;
+    const outstandingAmount =
+      (await Invoice.sum('balance', {
+        where: { ...baseWhere, status: { [Op.ne]: 'paid' } }
+      })) || 0;
 
     res.status(200).json({
       success: true,

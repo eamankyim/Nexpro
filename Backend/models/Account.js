@@ -9,10 +9,19 @@ const Account = sequelize.define(
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true
     },
+    tenantId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: 'tenants',
+        key: 'id'
+      },
+      unique: 'tenant_account_code_unique'
+    },
     code: {
       type: DataTypes.STRING(20),
       allowNull: false,
-      unique: true
+      unique: 'tenant_account_code_unique'
     },
     name: {
       type: DataTypes.STRING(200),
@@ -47,7 +56,13 @@ const Account = sequelize.define(
   },
   {
     tableName: 'accounts',
-    timestamps: true
+    timestamps: true,
+    indexes: [
+      {
+        unique: true,
+        fields: ['tenantId', 'code']
+      }
+    ]
   }
 );
 

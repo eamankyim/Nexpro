@@ -9,10 +9,19 @@ const Setting = sequelize.define(
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true
     },
+    tenantId: {
+      type: DataTypes.UUID,
+      allowNull: false,
+      references: {
+        model: 'tenants',
+        key: 'id'
+      },
+      unique: 'tenant_key_unique'
+    },
     key: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true
+      unique: 'tenant_key_unique'
     },
     value: {
       type: DataTypes.JSONB,
@@ -25,7 +34,13 @@ const Setting = sequelize.define(
   },
   {
     tableName: 'settings',
-    timestamps: true
+    timestamps: true,
+    indexes: [
+      {
+        unique: true,
+        fields: ['tenantId', 'key']
+      }
+    ]
   }
 );
 

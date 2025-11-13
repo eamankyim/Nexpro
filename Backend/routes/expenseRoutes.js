@@ -9,10 +9,12 @@ const {
   getExpensesByJob
 } = require('../controllers/expenseController');
 const { protect, authorize } = require('../middleware/auth');
+const { tenantContext } = require('../middleware/tenant');
 
 const router = express.Router();
 
 router.use(protect);
+router.use(tenantContext);
 
 router.get('/stats/overview', getExpenseStats);
 router.get('/by-job/:jobId', getExpensesByJob);

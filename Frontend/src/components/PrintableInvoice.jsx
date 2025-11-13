@@ -335,9 +335,9 @@ const PrintableInvoice = ({
                     )}
                   </td>
                   <td className="text-center">{item.quantity || 1}</td>
-                  <td className="text-right">₵{parseFloat(item.unitPrice || 0).toFixed(2)}</td>
+                  <td className="text-right">GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</td>
                   <td className="text-right">
-                    <strong>₵{parseFloat(item.total || item.unitPrice * (item.quantity || 1) || 0).toFixed(2)}</strong>
+                    <strong>GHS {parseFloat(item.total || item.unitPrice * (item.quantity || 1) || 0).toFixed(2)}</strong>
                   </td>
                 </tr>
               ))
@@ -353,35 +353,40 @@ const PrintableInvoice = ({
         <div className="totals-section">
           <div className="total-row">
             <span>Subtotal:</span>
-            <span>₵{parseFloat(invoice.subtotal || 0).toFixed(2)}</span>
+            <span>GHS {parseFloat(invoice.subtotal || 0).toFixed(2)}</span>
           </div>
           {invoice.taxAmount > 0 && (
             <div className="total-row">
               <span>Tax ({invoice.taxRate || 0}%):</span>
-              <span>₵{parseFloat(invoice.taxAmount || 0).toFixed(2)}</span>
+              <span>GHS {parseFloat(invoice.taxAmount || 0).toFixed(2)}</span>
             </div>
           )}
           {invoice.discountAmount > 0 && (
-            <div className="total-row">
+            <div className="total-row" style={{ color: '#52c41a', fontWeight: '500' }}>
               <span>
-                Discount {invoice.discountType === 'percentage' ? `(${invoice.discountValue}%)` : ''}:
+                Discount {invoice.discountType === 'percentage' ? `(${invoice.discountValue}%)` : ''}
+                {invoice.discountReason && (
+                  <div style={{ fontSize: '10px', color: '#666', fontWeight: 'normal', marginTop: '2px' }}>
+                    {invoice.discountReason}
+                  </div>
+                )}
               </span>
-              <span>-₵{parseFloat(invoice.discountAmount || 0).toFixed(2)}</span>
+              <span>-GHS {parseFloat(invoice.discountAmount || 0).toFixed(2)}</span>
             </div>
           )}
           <div className="total-row bold">
             <span>Total Amount:</span>
-            <span>₵{parseFloat(invoice.totalAmount || 0).toFixed(2)}</span>
+            <span>GHS {parseFloat(invoice.totalAmount || 0).toFixed(2)}</span>
           </div>
           {invoice.amountPaid > 0 && (
             <div className="total-row">
               <span>Amount Paid:</span>
-              <span style={{ color: '#52c41a' }}>₵{parseFloat(invoice.amountPaid || 0).toFixed(2)}</span>
+              <span style={{ color: '#52c41a' }}>GHS {parseFloat(invoice.amountPaid || 0).toFixed(2)}</span>
             </div>
           )}
           <div className="total-row balance">
             <span>Balance Due:</span>
-            <span>₵{parseFloat(invoice.balance || 0).toFixed(2)}</span>
+            <span>GHS {parseFloat(invoice.balance || 0).toFixed(2)}</span>
           </div>
         </div>
 

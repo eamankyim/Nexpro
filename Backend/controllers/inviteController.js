@@ -1,6 +1,9 @@
 const crypto = require('crypto');
-const { InviteToken, User } = require('../models');
+const { InviteToken, User, Tenant } = require('../models');
 const { Op } = require('sequelize');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { validateSeatLimit, getSeatUsageSummary } = require('../utils/seatLimitHelper');
+const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
 
 // Generate a random 32-character token
 const generateToken = () => {
@@ -13,11 +16,11 @@ const generateToken = () => {
 exports.generateInvite = async (req, res, next) => {
   try {
     const { email, role, name, expiresInDays } = req.body;
-    console.log('📧 Generating invite for:', { email, role, name, expiresInDays });
+    console.log('[Invite] Generating invite for:', { email, role, name, expiresInDays });
 
     // Validate required fields
     if (!email || !role) {
-      console.log('❌ Missing required fields:', { email, role });
+      console.log('[Invite] Missing required fields:', { email, role });
       return res.status(400).json({
         success: false,
         message: 'Email and role are required'
@@ -25,9 +28,11 @@ exports.generateInvite = async (req, res, next) => {
     }
 
     // Check if user already exists
-    const existingUser = await User.findOne({ where: { email } });
+    const existingUser = await User.findOne({
+      where: { email }
+    });
     if (existingUser) {
-      console.log('❌ User already exists:', email);
+      console.log('[Invite] User already exists:', email);
       return res.status(400).json({
         success: false,
         message: 'User with this email already exists'
@@ -36,17 +41,17 @@ exports.generateInvite = async (req, res, next) => {
 
     // Check for existing unused invite
     const existingInvite = await InviteToken.findOne({
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         email,
         used: false,
         expiresAt: {
           [Op.gt]: new Date()
         }
-      }
+      })
     });
 
     if (existingInvite) {
-      console.log('❌ Active invite already exists:', email);
+      console.log('[Invite] Active invite already exists:', email);
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
       const existingInviteUrl = `${frontendUrl}/signup?token=${existingInvite.token}`;
       return res.status(400).json({
@@ -59,7 +64,23 @@ exports.generateInvite = async (req, res, next) => {
       });
     }
 
-    console.log('✅ No existing invite found, creating new one...');
+    console.log('[Invite] No existing invite found, creating new one...');
+
+    // Check seat limit before creating invite
+    try {
+      await validateSeatLimit(req.tenantId);
+    } catch (error) {
+      if (error.code === 'SEAT_LIMIT_EXCEEDED') {
+        console.log('[Invite] Seat limit exceeded:', error.message);
+        return res.status(403).json({
+          success: false,
+          message: error.message,
+          code: 'SEAT_LIMIT_EXCEEDED',
+          details: error.details
+        });
+      }
+      throw error;
+    }
 
     // Generate token
     const token = generateToken();
@@ -69,13 +90,18 @@ exports.generateInvite = async (req, res, next) => {
     expiresAt.setDate(expiresAt.getDate() + (expiresInDays || 7));
 
     // Create invite
-    const invite = await InviteToken.create({
+    const invitePayload = sanitizePayload({
       token,
       email,
       role,
       name,
       createdBy: req.user.id,
       expiresAt
+    });
+
+    const invite = await InviteToken.create({
+      ...invitePayload,
+      tenantId: req.tenantId
     });
 
     // Generate invite URL
@@ -90,7 +116,7 @@ exports.generateInvite = async (req, res, next) => {
       }
     });
   } catch (error) {
-    console.error('💥 Error generating invite:', error.message);
+    console.error('[Invite] Error generating invite:', error.message);
     console.error('Full error:', error);
     next(error);
   }
@@ -110,6 +136,10 @@ exports.validateInvite = async (req, res, next) => {
           model: User,
           as: 'creator',
           attributes: ['id', 'name', 'email']
+        },
+        {
+          model: Tenant,
+          as: 'tenant'
         }
       ]
     });
@@ -140,8 +170,40 @@ exports.validateInvite = async (req, res, next) => {
       data: invite
     });
   } catch (error) {
-    console.error('💥 Error generating invite:', error.message);
+    console.error('[Invite] Error generating invite:', error.message);
     console.error('Full error:', error);
+    next(error);
+  }
+};
+
+// @desc    Get seat usage for current tenant
+// @route   GET /api/invites/seat-usage
+// @access  Private
+exports.getSeatUsage = async (req, res, next) => {
+  try {
+    const seatUsage = await getSeatUsageSummary(req.tenantId);
+
+    res.status(200).json({
+      success: true,
+      data: seatUsage
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get storage usage for current tenant
+// @route   GET /api/invites/storage-usage
+// @access  Private
+exports.getStorageUsage = async (req, res, next) => {
+  try {
+    const storageUsage = await getStorageUsageSummary(req.tenantId);
+
+    res.status(200).json({
+      success: true,
+      data: storageUsage
+    });
+  } catch (error) {
     next(error);
   }
 };
@@ -152,6 +214,9 @@ exports.validateInvite = async (req, res, next) => {
 exports.getInvites = async (req, res, next) => {
   try {
     const { used, search } = req.query;
+    
+    // Get seat usage to include in response
+    const seatUsage = await getSeatUsageSummary(req.tenantId).catch(() => null);
 
     const where = {};
     if (used === 'true') {
@@ -168,7 +233,7 @@ exports.getInvites = async (req, res, next) => {
     }
 
     const invites = await InviteToken.findAll({
-      where,
+      where: applyTenantFilter(req.tenantId, where),
       include: [
         {
           model: User,
@@ -179,6 +244,10 @@ exports.getInvites = async (req, res, next) => {
           model: User,
           as: 'user',
           attributes: ['id', 'name', 'email']
+        },
+        {
+          model: Tenant,
+          as: 'tenant'
         }
       ],
       order: [['createdAt', 'DESC']]
@@ -187,10 +256,11 @@ exports.getInvites = async (req, res, next) => {
     res.status(200).json({
       success: true,
       count: invites.length,
-      data: invites
+      data: invites,
+      seatUsage // Include seat usage info for UI display
     });
   } catch (error) {
-    console.error('💥 Error generating invite:', error.message);
+    console.error('[Invite] Error generating invite:', error.message);
     console.error('Full error:', error);
     next(error);
   }
@@ -203,12 +273,21 @@ exports.revokeInvite = async (req, res, next) => {
   try {
     const { id } = req.params;
 
-    const invite = await InviteToken.findByPk(id);
+    const invite = await InviteToken.findOne({
+      where: applyTenantFilter(req.tenantId, { id })
+    });
 
     if (!invite) {
       return res.status(404).json({
         success: false,
         message: 'Invite not found'
+      });
+    }
+
+    if (invite.tenantId !== req.tenantId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to revoke this invite'
       });
     }
 
@@ -227,7 +306,7 @@ exports.revokeInvite = async (req, res, next) => {
       data: {}
     });
   } catch (error) {
-    console.error('💥 Error generating invite:', error.message);
+    console.error('[Invite] Error generating invite:', error.message);
     console.error('Full error:', error);
     next(error);
   }
@@ -241,12 +320,21 @@ exports.useInvite = async (req, res, next) => {
     const { token } = req.params;
     const { userId } = req.body;
 
-    const invite = await InviteToken.findOne({ where: { token } });
+    const invite = await InviteToken.findOne({
+      where: applyTenantFilter(req.tenantId, { token })
+    });
 
     if (!invite) {
       return res.status(404).json({
         success: false,
         message: 'Invalid invite token'
+      });
+    }
+
+    if (invite.tenantId !== req.tenantId) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to use this invite'
       });
     }
 
@@ -268,7 +356,7 @@ exports.useInvite = async (req, res, next) => {
       message: 'Invite marked as used'
     });
   } catch (error) {
-    console.error('💥 Error generating invite:', error.message);
+    console.error('[Invite] Error generating invite:', error.message);
     console.error('Full error:', error);
     next(error);
   }

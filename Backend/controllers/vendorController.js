@@ -1,6 +1,7 @@
 const { Vendor, Expense } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 // @desc    Get all vendors
 // @route   GET /api/vendors
@@ -12,7 +13,7 @@ exports.getVendors = async (req, res, next) => {
     const offset = (page - 1) * limit;
     const search = req.query.search || '';
 
-    const where = {};
+    const where = applyTenantFilter(req.tenantId, {});
     if (search) {
       where[Op.or] = [
         { name: { [Op.iLike]: `%${search}%` } },
@@ -48,12 +49,15 @@ exports.getVendors = async (req, res, next) => {
 // @access  Private
 exports.getVendor = async (req, res, next) => {
   try {
-    const vendor = await Vendor.findByPk(req.params.id, {
+    const vendor = await Vendor.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [{
         model: Expense,
         as: 'expenses',
         limit: 10,
-        order: [['createdAt', 'DESC']]
+        order: [['createdAt', 'DESC']],
+        where: applyTenantFilter(req.tenantId, {}),
+        required: false
       }]
     });
 
@@ -78,7 +82,11 @@ exports.getVendor = async (req, res, next) => {
 // @access  Private
 exports.createVendor = async (req, res, next) => {
   try {
-    const vendor = await Vendor.create(req.body);
+    const payload = sanitizePayload(req.body);
+    const vendor = await Vendor.create({
+      ...payload,
+      tenantId: req.tenantId
+    });
 
     res.status(201).json({
       success: true,
@@ -94,7 +102,9 @@ exports.createVendor = async (req, res, next) => {
 // @access  Private
 exports.updateVendor = async (req, res, next) => {
   try {
-    const vendor = await Vendor.findByPk(req.params.id);
+    const vendor = await Vendor.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!vendor) {
       return res.status(404).json({
@@ -103,7 +113,8 @@ exports.updateVendor = async (req, res, next) => {
       });
     }
 
-    await vendor.update(req.body);
+    const payload = sanitizePayload(req.body);
+    await vendor.update(payload);
 
     res.status(200).json({
       success: true,
@@ -119,7 +130,9 @@ exports.updateVendor = async (req, res, next) => {
 // @access  Private
 exports.deleteVendor = async (req, res, next) => {
   try {
-    const vendor = await Vendor.findByPk(req.params.id);
+    const vendor = await Vendor.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
 
     if (!vendor) {
       return res.status(404).json({

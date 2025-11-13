@@ -3,15 +3,18 @@ const fs = require('fs');
 const { Setting, User } = require('../models');
 const { baseUploadDir } = require('../middleware/upload');
 
-const getSettingValue = async (key, fallback = {}) => {
-  const setting = await Setting.findOne({ where: { key } });
+const { sanitizePayload } = require('../utils/tenantUtils');
+
+const getSettingValue = async (tenantId, key, fallback = {}) => {
+  const setting = await Setting.findOne({ where: { tenantId, key } });
   return setting ? setting.value : fallback;
 };
 
-const upsertSettingValue = async (key, value, description = null) => {
+const upsertSettingValue = async (tenantId, key, value, description = null) => {
   const [setting, created] = await Setting.findOrCreate({
-    where: { key },
+    where: { tenantId, key },
     defaults: {
+      tenantId,
       key,
       value,
       description
@@ -130,7 +133,7 @@ exports.uploadProfilePicture = async (req, res, next) => {
 
 exports.getOrganizationSettings = async (req, res, next) => {
   try {
-    const organization = await getSettingValue('organization', {});
+    const organization = await getSettingValue(req.tenantId, 'organization', {});
     res.status(200).json({ success: true, data: organization });
   } catch (error) {
     next(error);
@@ -139,14 +142,14 @@ exports.getOrganizationSettings = async (req, res, next) => {
 
 exports.updateOrganizationSettings = async (req, res, next) => {
   try {
-    const existing = await getSettingValue('organization', {});
-    const incoming = req.body || {};
+    const existing = await getSettingValue(req.tenantId, 'organization', {});
+    const incoming = sanitizePayload(req.body || {});
 
     if (!incoming.logoUrl && existing.logoUrl && existing.logoUrl !== incoming.logoUrl) {
       await deleteFileIfExists(existing.logoUrl);
     }
 
-    const updated = await upsertSettingValue('organization', incoming);
+    const updated = await upsertSettingValue(req.tenantId, 'organization', incoming);
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
     next(error);
@@ -159,7 +162,7 @@ exports.uploadOrganizationLogo = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
 
-    const organization = await getSettingValue('organization', {});
+    const organization = await getSettingValue(req.tenantId, 'organization', {});
     const storagePath = path.relative(baseUploadDir, req.file.path);
     const publicUrl = buildPublicUrl(storagePath);
 
@@ -168,7 +171,7 @@ exports.uploadOrganizationLogo = async (req, res, next) => {
     }
 
     organization.logoUrl = publicUrl;
-    const updated = await upsertSettingValue('organization', organization);
+    const updated = await upsertSettingValue(req.tenantId, 'organization', organization);
 
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
@@ -178,7 +181,7 @@ exports.uploadOrganizationLogo = async (req, res, next) => {
 
 exports.getSubscriptionSettings = async (req, res, next) => {
   try {
-    const subscription = await getSettingValue('subscription', {
+    const subscription = await getSettingValue(req.tenantId, 'subscription', {
       plan: 'free',
       seats: 5,
       status: 'active',
@@ -194,7 +197,11 @@ exports.getSubscriptionSettings = async (req, res, next) => {
 
 exports.updateSubscriptionSettings = async (req, res, next) => {
   try {
-    const updated = await upsertSettingValue('subscription', req.body || {});
+    const updated = await upsertSettingValue(
+      req.tenantId,
+      'subscription',
+      sanitizePayload(req.body || {})
+    );
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
     next(error);
@@ -203,7 +210,7 @@ exports.updateSubscriptionSettings = async (req, res, next) => {
 
 exports.getPayrollSettings = async (req, res, next) => {
   try {
-    const payroll = await getSettingValue('payroll', {
+    const payroll = await getSettingValue(req.tenantId, 'payroll', {
       incomeTaxRate: 0.15,
       ssnitEmployeeRate: 0.055,
       ssnitEmployerRate: 0.13,
@@ -218,7 +225,11 @@ exports.getPayrollSettings = async (req, res, next) => {
 
 exports.updatePayrollSettings = async (req, res, next) => {
   try {
-    const updated = await upsertSettingValue('payroll', req.body || {});
+    const updated = await upsertSettingValue(
+      req.tenantId,
+      'payroll',
+      sanitizePayload(req.body || {})
+    );
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
     next(error);

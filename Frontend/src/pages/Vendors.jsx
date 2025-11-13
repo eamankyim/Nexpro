@@ -412,7 +412,7 @@ const Vendors = () => {
                               </div>
                               <Space size={16}>
                                 <span style={{ fontSize: 18, fontWeight: 'bold', color: '#1890ff' }}>
-                                  ₵{parseFloat(item.price || 0).toFixed(2)}
+                                  GHS {parseFloat(item.price || 0).toFixed(2)}
                                 </span>
                                 <span style={{ color: '#999', fontSize: 13 }}>
                                   per {item.unit || 'unit'}
@@ -478,7 +478,7 @@ const Vendors = () => {
             <InputNumber
               style={{ width: '100%' }}
               placeholder="0.00"
-              prefix="₵"
+              prefix="GHS "
               min={0}
               precision={2}
               size="large"

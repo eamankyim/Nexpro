@@ -212,7 +212,7 @@ const Expenses = () => {
       dataIndex: 'amount',
       key: 'amount',
       width: 140,
-      render: (amount) => `₵${parseFloat(amount).toFixed(2)}`,
+      render: (amount) => `GHS ${parseFloat(amount).toFixed(2)}`,
       sorter: (a, b) => parseFloat(a.amount) - parseFloat(b.amount)
     },
     {
@@ -328,7 +328,7 @@ const Expenses = () => {
               <Statistic
                 title="Total Expenses"
                 value={stats.totalExpenses || 0}
-                prefix="₵"
+                prefix="GHS "
                 valueStyle={{ color: '#cf1322' }}
                 suffix={<ShoppingCartOutlined />}
               />
@@ -349,7 +349,7 @@ const Expenses = () => {
               <Statistic
                 title="This Month"
                 value={stats.thisMonthExpenses || 0}
-                prefix="₵"
+                prefix="GHS "
                 valueStyle={{ color: '#52c41a' }}
                 suffix={<CalendarOutlined />}
               />

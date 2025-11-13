@@ -7,10 +7,19 @@ const InventoryCategory = sequelize.define('InventoryCategory', {
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
+  tenantId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'tenants',
+      key: 'id'
+    },
+    unique: 'tenant_inventory_category_name'
+  },
   name: {
     type: DataTypes.STRING,
     allowNull: false,
-    unique: true
+    unique: 'tenant_inventory_category_name'
   },
   description: {
     type: DataTypes.TEXT
@@ -25,7 +34,13 @@ const InventoryCategory = sequelize.define('InventoryCategory', {
   }
 }, {
   tableName: 'inventory_categories',
-  timestamps: true
+  timestamps: true,
+  indexes: [
+    {
+      unique: true,
+      fields: ['tenantId', 'name']
+    }
+  ]
 });
 
 module.exports = InventoryCategory;

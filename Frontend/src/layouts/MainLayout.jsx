@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Typography, theme } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Typography, theme, Space, Button } from 'antd';
 import {
   DashboardOutlined,
   UserOutlined,
@@ -16,7 +16,8 @@ import {
   LogoutOutlined,
   SettingOutlined,
   ContainerOutlined,
-  UserSwitchOutlined
+  UserSwitchOutlined,
+  DownOutlined
 } from '@ant-design/icons';
 import { useAuth } from '../context/AuthContext';
 import NotificationBell from '../components/NotificationBell';
@@ -28,10 +29,28 @@ const MainLayout = () => {
   const [collapsed, setCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, tenantMemberships = [], activeTenantId, setActiveTenant, activeTenant } = useAuth();
   const {
     token: { colorBgContainer },
   } = theme.useToken();
+
+  const tenantMenuItems = tenantMemberships.map((membership) => ({
+    key: membership.tenantId,
+    label: (
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <Text strong>{membership.tenant?.name || 'Tenant'}</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {(membership.role || 'member').replace(/_/g, ' ')}
+        </Text>
+      </div>
+    ),
+  }));
+
+  const handleTenantSelect = ({ key }) => {
+    if (key && key !== activeTenantId) {
+      setActiveTenant(key);
+    }
+  };
 
   const menuItems = [
     {
@@ -215,7 +234,36 @@ const MainLayout = () => {
             alignItems: 'center'
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          <Space align="center" size={16}>
+            {tenantMemberships.length > 0 && (
+              <Dropdown
+                menu={{
+                  items: tenantMenuItems,
+                  onClick: handleTenantSelect,
+                }}
+                placement="bottomRight"
+                trigger={['click']}
+                disabled={tenantMemberships.length <= 1}
+              >
+                <Button
+                  type="text"
+                  disabled={tenantMemberships.length <= 1}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 8px' }}
+                >
+                  <div style={{ textAlign: 'left' }}>
+                    <Text strong style={{ display: 'block', lineHeight: 1.1 }}>
+                      {activeTenant?.name || 'Select Tenant'}
+                    </Text>
+                    {activeTenant?.plan && (
+                      <Text type="secondary" style={{ fontSize: 11 }}>
+                        {activeTenant.plan}
+                      </Text>
+                    )}
+                  </div>
+                  <DownOutlined style={{ fontSize: 12 }} />
+                </Button>
+              </Dropdown>
+            )}
             <NotificationBell />
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
               <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -223,7 +271,7 @@ const MainLayout = () => {
                 <Avatar src={user?.profilePicture} icon={<UserOutlined />} />
               </div>
             </Dropdown>
-          </div>
+          </Space>
         </Header>
         <Content style={{ margin: '24px 16px', overflow: 'initial' }}>
           <div style={{ padding: 24, background: colorBgContainer, minHeight: 360, borderRadius: 8 }}>

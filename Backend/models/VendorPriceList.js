@@ -7,6 +7,14 @@ const VendorPriceList = sequelize.define('VendorPriceList', {
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
+  tenantId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'tenants',
+      key: 'id'
+    }
+  },
   vendorId: {
     type: DataTypes.UUID,
     allowNull: false,

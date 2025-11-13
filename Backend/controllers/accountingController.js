@@ -7,6 +7,7 @@ const {
   User
 } = require('../models');
 const accountingService = require('../services/accountingService');
+const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense', 'cogs', 'other'];
 
@@ -37,7 +38,7 @@ const buildAccountWhere = (query) => {
 
 exports.getAccounts = async (req, res, next) => {
   try {
-    const where = buildAccountWhere(req.query);
+    const where = applyTenantFilter(req.tenantId, buildAccountWhere(req.query));
     const accounts = await Account.findAll({
       where,
       order: [['code', 'ASC']]
@@ -51,7 +52,8 @@ exports.getAccounts = async (req, res, next) => {
 
 exports.createAccount = async (req, res, next) => {
   try {
-    const { code, name, type } = req.body;
+    const payload = sanitizePayload(req.body || {});
+    const { code, name, type, parentId } = payload;
 
     if (!code || !name || !type) {
       return res.status(400).json({ success: false, message: 'code, name and type are required' });
@@ -61,7 +63,20 @@ exports.createAccount = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Invalid account type' });
     }
 
-    const account = await Account.create(req.body);
+    if (parentId) {
+      const parent = await Account.findOne({
+        where: applyTenantFilter(req.tenantId, { id: parentId })
+      });
+
+      if (!parent) {
+        return res.status(400).json({ success: false, message: 'Parent account not found' });
+      }
+    }
+
+    const account = await Account.create({
+      ...payload,
+      tenantId: req.tenantId
+    });
     res.status(201).json({ success: true, data: account });
   } catch (error) {
     next(error);
@@ -70,16 +85,29 @@ exports.createAccount = async (req, res, next) => {
 
 exports.updateAccount = async (req, res, next) => {
   try {
-    const account = await Account.findByPk(req.params.id);
+    const account = await Account.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
     if (!account) {
       return res.status(404).json({ success: false, message: 'Account not found' });
     }
 
-    if (req.body.type && !ACCOUNT_TYPES.includes(req.body.type)) {
+    const payload = sanitizePayload(req.body || {});
+
+    if (payload.type && !ACCOUNT_TYPES.includes(payload.type)) {
       return res.status(400).json({ success: false, message: 'Invalid account type' });
     }
 
-    await account.update(req.body);
+    if (payload.parentId) {
+      const parent = await Account.findOne({
+        where: applyTenantFilter(req.tenantId, { id: payload.parentId })
+      });
+      if (!parent) {
+        return res.status(400).json({ success: false, message: 'Parent account not found' });
+      }
+    }
+
+    await account.update(payload);
     res.status(200).json({ success: true, data: account });
   } catch (error) {
     next(error);
@@ -92,7 +120,7 @@ exports.getJournalEntries = async (req, res, next) => {
     const limit = parseInt(req.query.limit, 10) || 20;
     const offset = (page - 1) * limit;
 
-    const where = {};
+    const where = applyTenantFilter(req.tenantId, {});
 
     if (req.query.status && req.query.status !== 'all') {
       where.status = req.query.status;
@@ -116,7 +144,17 @@ exports.getJournalEntries = async (req, res, next) => {
         {
           model: JournalEntryLine,
           as: 'lines',
-          include: [{ model: Account, as: 'account', attributes: ['id', 'code', 'name', 'type'] }]
+          where: applyTenantFilter(req.tenantId, {}),
+          required: false,
+          include: [
+            {
+              model: Account,
+              as: 'account',
+              attributes: ['id', 'code', 'name', 'type'],
+              where: applyTenantFilter(req.tenantId, {}),
+              required: false
+            }
+          ]
         }
       ]
     });
@@ -138,17 +176,23 @@ exports.getJournalEntries = async (req, res, next) => {
 
 exports.createJournalEntry = async (req, res, next) => {
   try {
+    const payload = sanitizePayload(req.body || {});
+    const lines = Array.isArray(payload.lines)
+      ? payload.lines.map((line) => sanitizePayload(line))
+      : [];
+
     const journal = await accountingService.createJournalEntry({
-      reference: req.body.reference,
-      description: req.body.description,
-      entryDate: req.body.entryDate,
-      status: req.body.status || 'draft',
-      lines: req.body.lines,
-      source: req.body.source,
-      sourceId: req.body.sourceId,
-      metadata: req.body.metadata,
+      tenantId: req.tenantId,
+      reference: payload.reference,
+      description: payload.description,
+      entryDate: payload.entryDate,
+      status: payload.status || 'draft',
+      lines,
+      source: payload.source,
+      sourceId: payload.sourceId,
+      metadata: payload.metadata,
       userId: req.user?.id || null,
-      approvedBy: req.body.approvedBy || null
+      approvedBy: payload.approvedBy || null
     });
 
     res.status(201).json({ success: true, data: journal });
@@ -157,6 +201,9 @@ exports.createJournalEntry = async (req, res, next) => {
       return res.status(400).json({ success: false, message: error.message });
     }
     if (error.message && error.message.includes('At least two lines')) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error.message && error.message.includes('tenant')) {
       return res.status(400).json({ success: false, message: error.message });
     }
     next(error);
@@ -168,14 +215,21 @@ exports.getTrialBalance = async (req, res, next) => {
     const fiscalYear = parseInt(req.query.year, 10) || new Date().getFullYear();
     const period = req.query.period ? parseInt(req.query.period, 10) : null;
 
-    const where = { fiscalYear };
+    const where = applyTenantFilter(req.tenantId, { fiscalYear });
     if (period) {
       where.period = period;
     }
 
     const balances = await AccountBalance.findAll({
       where,
-      include: [{ model: Account, as: 'account' }]
+      include: [
+        {
+          model: Account,
+          as: 'account',
+          where: applyTenantFilter(req.tenantId, {}),
+          required: false
+        }
+      ]
     });
 
     const summary = balances.reduce(
@@ -201,7 +255,8 @@ exports.getAccountSummary = async (req, res, next) => {
   try {
     const totals = await Account.findAll({
       attributes: ['type', [Sequelize.fn('COUNT', Sequelize.col('id')), 'count']],
-      group: ['type']
+      group: ['type'],
+      where: applyTenantFilter(req.tenantId, {})
     });
 
     res.status(200).json({ success: true, data: totals });

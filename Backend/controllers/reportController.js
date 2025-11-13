@@ -1,6 +1,7 @@
 const { sequelize } = require('../config/database');
 const { Job, Payment, Expense, Customer, Vendor, Invoice } = require('../models');
 const { Op } = require('sequelize');
+const { applyTenantFilter } = require('../utils/tenantUtils');
 
 // @desc    Get revenue report
 // @route   GET /api/reports/revenue
@@ -28,11 +29,11 @@ exports.getRevenueReport = async (req, res, next) => {
           [sequelize.fn('SUM', sequelize.col('amount')), 'totalRevenue'],
           [sequelize.fn('COUNT', sequelize.col('id')), 'count']
         ],
-        where: {
+        where: applyTenantFilter(req.tenantId, {
           type: 'income',
           status: 'completed',
           ...(Object.keys(dateFilter).length > 0 && { paymentDate: dateFilter })
-        },
+        }),
         group: [sequelize.literal(`CAST("paymentDate" AS DATE)`)],
         order: [[sequelize.literal(`CAST("paymentDate" AS DATE)`), 'ASC']],
         raw: true
@@ -45,11 +46,11 @@ exports.getRevenueReport = async (req, res, next) => {
           [sequelize.fn('SUM', sequelize.col('amount')), 'totalRevenue'],
           [sequelize.fn('COUNT', sequelize.col('id')), 'count']
         ],
-        where: {
+        where: applyTenantFilter(req.tenantId, {
           type: 'income',
           status: 'completed',
           ...(Object.keys(dateFilter).length > 0 && { paymentDate: dateFilter })
-        },
+        }),
         group: [
           sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paymentDate"')),
           sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paymentDate"'))
@@ -68,11 +69,11 @@ exports.getRevenueReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('amount')), 'totalRevenue'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'paymentCount']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         type: 'income',
         status: 'completed',
         ...(Object.keys(dateFilter).length > 0 && { paymentDate: dateFilter })
-      },
+      }),
       include: [{
         model: Customer,
         as: 'customer',
@@ -90,22 +91,22 @@ exports.getRevenueReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('amount')), 'totalRevenue'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'count']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         type: 'income',
         status: 'completed',
         ...(Object.keys(dateFilter).length > 0 && { paymentDate: dateFilter })
-      },
+      }),
       group: ['paymentMethod'],
       order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
     });
 
     // Total revenue
     const totalRevenue = await Payment.sum('amount', {
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         type: 'income',
         status: 'completed',
         ...(Object.keys(dateFilter).length > 0 && { paymentDate: dateFilter })
-      }
+      })
     }) || 0;
 
     res.status(200).json({
@@ -147,9 +148,9 @@ exports.getExpenseReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'count']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
-      },
+      }),
       group: ['category'],
       order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
     });
@@ -161,9 +162,9 @@ exports.getExpenseReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'count']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
-      },
+      }),
       include: [{
         model: Vendor,
         as: 'vendor',
@@ -181,9 +182,9 @@ exports.getExpenseReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'count']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
-      },
+      }),
       group: ['paymentMethod'],
       order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
     });
@@ -195,9 +196,9 @@ exports.getExpenseReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'count']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
-      },
+      }),
       group: [sequelize.literal(`CAST("expenseDate" AS DATE)`)],
       order: [[sequelize.literal(`CAST("expenseDate" AS DATE)`), 'ASC']],
       raw: true
@@ -205,9 +206,9 @@ exports.getExpenseReport = async (req, res, next) => {
 
     // Total expenses
     const totalExpenses = await Expense.sum('amount', {
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
-      }
+      })
     }) || 0;
 
     res.status(200).json({
@@ -245,11 +246,11 @@ exports.getOutstandingPaymentsReport = async (req, res, next) => {
 
     // Outstanding invoices
     const outstandingInvoices = await Invoice.findAll({
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
         ...(Object.keys(dateFilter).length > 0 && { invoiceDate: dateFilter })
-      },
+      }),
       include: [
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email', 'phone'] },
         { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] }
@@ -264,11 +265,11 @@ exports.getOutstandingPaymentsReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('balance')), 'totalOutstanding'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'invoiceCount']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
         ...(Object.keys(dateFilter).length > 0 && { invoiceDate: dateFilter })
-      },
+      }),
       include: [{
         model: Customer,
         as: 'customer',
@@ -289,38 +290,38 @@ exports.getOutstandingPaymentsReport = async (req, res, next) => {
 
     const agingAnalysis = {
       current: await Invoice.sum('balance', {
-        where: {
+        where: applyTenantFilter(req.tenantId, {
           status: { [Op.in]: ['sent', 'partial', 'overdue'] },
           dueDate: { [Op.gte]: today }
-        }
+        })
       }) || 0,
       thirtyDays: await Invoice.sum('balance', {
-        where: {
+        where: applyTenantFilter(req.tenantId, {
           status: { [Op.in]: ['sent', 'partial', 'overdue'] },
           dueDate: { [Op.between]: [thirtyDaysAgo, today] }
-        }
+        })
       }) || 0,
       sixtyDays: await Invoice.sum('balance', {
-        where: {
+        where: applyTenantFilter(req.tenantId, {
           status: { [Op.in]: ['sent', 'partial', 'overdue'] },
           dueDate: { [Op.between]: [sixtyDaysAgo, thirtyDaysAgo] }
-        }
+        })
       }) || 0,
       ninetyPlusDays: await Invoice.sum('balance', {
-        where: {
+        where: applyTenantFilter(req.tenantId, {
           status: { [Op.in]: ['sent', 'partial', 'overdue'] },
           dueDate: { [Op.lt]: sixtyDaysAgo }
-        }
+        })
       }) || 0
     };
 
     // Total outstanding
     const totalOutstanding = await Invoice.sum('balance', {
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
         ...(Object.keys(dateFilter).length > 0 && { invoiceDate: dateFilter })
-      }
+      })
     }) || 0;
 
     res.status(200).json({
@@ -368,9 +369,9 @@ exports.getSalesReport = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.col('id')), 'jobCount'],
         [sequelize.fn('AVG', sequelize.col('finalPrice')), 'averagePrice']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
-      },
+      }),
       group: ['jobType'],
       order: [[sequelize.fn('SUM', sequelize.col('finalPrice')), 'DESC']]
     });
@@ -382,9 +383,9 @@ exports.getSalesReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('finalPrice')), 'totalSales'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'jobCount']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
-      },
+      }),
       include: [{
         model: Customer,
         as: 'customer',
@@ -402,9 +403,9 @@ exports.getSalesReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('finalPrice')), 'totalSales'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'jobCount']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
-      },
+      }),
       group: [sequelize.literal(`CAST("createdAt" AS DATE)`)],
       order: [[sequelize.literal(`CAST("createdAt" AS DATE)`), 'ASC']],
       raw: true
@@ -417,18 +418,18 @@ exports.getSalesReport = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('finalPrice')), 'totalSales'],
         [sequelize.fn('COUNT', sequelize.col('id')), 'jobCount']
       ],
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
-      },
+      }),
       group: ['status'],
       order: [[sequelize.fn('SUM', sequelize.col('finalPrice')), 'DESC']]
     });
 
     // Total sales
     const totalSales = await Job.sum('finalPrice', {
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
-      }
+      })
     }) || 0;
 
     res.status(200).json({
@@ -466,18 +467,18 @@ exports.getProfitLossReport = async (req, res, next) => {
 
     // Revenue
     const revenue = await Payment.sum('amount', {
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         type: 'income',
         status: 'completed',
         ...(Object.keys(dateFilter).length > 0 && { paymentDate: dateFilter })
-      }
+      })
     }) || 0;
 
     // Expenses
     const expenses = await Expense.sum('amount', {
-      where: {
+      where: applyTenantFilter(req.tenantId, {
         ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
-      }
+      })
     }) || 0;
 
     // Gross profit
@@ -493,6 +494,147 @@ exports.getProfitLossReport = async (req, res, next) => {
         expenses: parseFloat(expenses),
         grossProfit: parseFloat(grossProfit),
         profitMargin: parseFloat(profitMargin.toFixed(2))
+      }
+    });
+  } catch (error) {
+    console.error('Error in getRevenueReport:', error);
+    next(error);
+  }
+};
+
+exports.getKpiSummary = async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = {
+        [Op.between]: [start, end]
+      };
+    }
+
+    const totalRevenue = await Payment.sum('amount', {
+      where: applyTenantFilter(req.tenantId, {
+        type: 'income',
+        status: 'completed',
+        ...(Object.keys(dateFilter).length > 0 && { paymentDate: dateFilter })
+      })
+    }) || 0;
+
+    const totalExpenses = await Expense.sum('amount', {
+      where: applyTenantFilter(req.tenantId, {
+        ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
+      })
+    }) || 0;
+
+    const activeCustomers = await Customer.count({
+      where: applyTenantFilter(req.tenantId, {
+        isActive: true
+      })
+    });
+
+    const pendingInvoices = await Invoice.sum('balance', {
+      where: applyTenantFilter(req.tenantId, {
+        status: { [Op.in]: ['sent', 'partial', 'overdue'] },
+        balance: { [Op.gt]: 0 },
+        ...(Object.keys(dateFilter).length > 0 && { invoiceDate: dateFilter })
+      })
+    }) || 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalRevenue: parseFloat(totalRevenue),
+        totalExpenses: parseFloat(totalExpenses),
+        grossProfit: parseFloat(totalRevenue - totalExpenses),
+        activeCustomers,
+        pendingInvoices: parseFloat(pendingInvoices)
+      }
+    });
+  } catch (error) {
+    console.error('Error in getRevenueReport:', error);
+    next(error);
+  }
+};
+
+exports.getTopCustomers = async (req, res, next) => {
+  try {
+    const { startDate, endDate, limit = 5 } = req.query;
+
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = {
+        [Op.between]: [start, end]
+      };
+    }
+
+    const customers = await Payment.findAll({
+      attributes: [
+        'customerId',
+        [sequelize.fn('SUM', sequelize.col('amount')), 'totalRevenue'],
+        [sequelize.fn('COUNT', sequelize.col('id')), 'paymentCount']
+      ],
+      where: applyTenantFilter(req.tenantId, {
+        type: 'income',
+        status: 'completed',
+        ...(Object.keys(dateFilter).length > 0 && { paymentDate: dateFilter })
+      }),
+      include: [
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['id', 'name', 'company', 'email']
+        }
+      ],
+      group: ['customerId', 'customer.id'],
+      order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']],
+      limit: Number(limit)
+    });
+
+    res.status(200).json({
+      success: true,
+      data: customers
+    });
+  } catch (error) {
+    console.error('Error in getRevenueReport:', error);
+    next(error);
+  }
+};
+
+exports.getPipelineSummary = async (req, res, next) => {
+  try {
+    const activeJobs = await Job.count({
+      where: applyTenantFilter(req.tenantId, {
+        status: { [Op.notIn]: ['completed', 'cancelled'] },
+      })
+    });
+
+    const openLeads = await Lead.count({
+      where: applyTenantFilter(req.tenantId, {
+        status: { [Op.notIn]: ['closed_won', 'closed_lost'] },
+        isActive: true
+      })
+    });
+
+    const pendingInvoices = await Invoice.count({
+      where: applyTenantFilter(req.tenantId, {
+        status: { [Op.in]: ['sent', 'partial'] },
+        balance: { [Op.gt]: 0 }
+      })
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        activeJobs,
+        openLeads,
+        pendingInvoices
       }
     });
   } catch (error) {

@@ -239,7 +239,7 @@ const Invoices = () => {
       title: 'Total',
       dataIndex: 'totalAmount',
       key: 'totalAmount',
-      render: (amount) => `₵${parseFloat(amount || 0).toFixed(2)}`,
+      render: (amount) => `GHS ${parseFloat(amount || 0).toFixed(2)}`,
     },
     {
       title: 'Balance',
@@ -247,7 +247,7 @@ const Invoices = () => {
       key: 'balance',
       render: (balance) => (
         <span style={{ fontWeight: 'bold', color: balance > 0 ? '#ff4d4f' : '#52c41a' }}>
-          ₵{parseFloat(balance || 0).toFixed(2)}
+          GHS {parseFloat(balance || 0).toFixed(2)}
         </span>
       ),
     },
@@ -302,7 +302,7 @@ const Invoices = () => {
               <Statistic
                 title="Total Revenue"
                 value={stats.totalRevenue || 0}
-                prefix="₵"
+                prefix="GHS "
                 valueStyle={{ color: '#3f8600' }}
                 suffix={<CheckCircleOutlined />}
               />
@@ -313,7 +313,7 @@ const Invoices = () => {
               <Statistic
                 title="Outstanding"
                 value={stats.outstandingAmount || 0}
-                prefix="₵"
+                prefix="GHS "
                 valueStyle={{ color: '#ff4d4f' }}
                 suffix={<ClockCircleOutlined />}
               />
@@ -442,10 +442,10 @@ const Invoices = () => {
                           Qty: {item.quantity}
                         </Col>
                         <Col span={4} style={{ textAlign: 'right' }}>
-                          ₵{parseFloat(item.unitPrice || 0).toFixed(2)}
+                          GHS {parseFloat(item.unitPrice || 0).toFixed(2)}
                         </Col>
                         <Col span={4} style={{ textAlign: 'right' }}>
-                          <strong>₵{parseFloat(item.total || 0).toFixed(2)}</strong>
+                          <strong>GHS {parseFloat(item.total || 0).toFixed(2)}</strong>
                         </Col>
                       </Row>
                     </Card>
@@ -457,35 +457,35 @@ const Invoices = () => {
           { 
             label: 'Subtotal', 
             value: viewingInvoice.subtotal,
-            render: (val) => `₵${parseFloat(val || 0).toFixed(2)}`
+            render: (val) => `GHS ${parseFloat(val || 0).toFixed(2)}`
           },
           { 
             label: 'Tax', 
             value: viewingInvoice.taxAmount,
-            render: (val) => `₵${parseFloat(val || 0).toFixed(2)} (${viewingInvoice.taxRate || 0}%)`
+            render: (val) => `GHS ${parseFloat(val || 0).toFixed(2)} (${viewingInvoice.taxRate || 0}%)`
           },
           { 
             label: 'Discount', 
             value: viewingInvoice.discountAmount,
             render: (val) => {
               if (!val || val == 0) return '-';
-              return `₵${parseFloat(val || 0).toFixed(2)} ${viewingInvoice.discountType === 'percentage' ? `(${viewingInvoice.discountValue}%)` : ''}`;
+              return `GHS ${parseFloat(val || 0).toFixed(2)} ${viewingInvoice.discountType === 'percentage' ? `(${viewingInvoice.discountValue}%)` : ''}`;
             }
           },
           { 
             label: 'Total Amount', 
             value: viewingInvoice.totalAmount,
-            render: (val) => <strong style={{ fontSize: 16, color: '#1890ff' }}>₵{parseFloat(val || 0).toFixed(2)}</strong>
+            render: (val) => <strong style={{ fontSize: 16, color: '#1890ff' }}>GHS {parseFloat(val || 0).toFixed(2)}</strong>
           },
           { 
             label: 'Amount Paid', 
             value: viewingInvoice.amountPaid,
-            render: (val) => <span style={{ color: '#52c41a' }}>₵{parseFloat(val || 0).toFixed(2)}</span>
+            render: (val) => <span style={{ color: '#52c41a' }}>GHS {parseFloat(val || 0).toFixed(2)}</span>
           },
           { 
             label: 'Balance Due', 
             value: viewingInvoice.balance,
-            render: (val) => <strong style={{ fontSize: 16, color: val > 0 ? '#ff4d4f' : '#52c41a' }}>₵{parseFloat(val || 0).toFixed(2)}</strong>
+            render: (val) => <strong style={{ fontSize: 16, color: val > 0 ? '#ff4d4f' : '#52c41a' }}>GHS {parseFloat(val || 0).toFixed(2)}</strong>
           },
           { label: 'Notes', value: viewingInvoice.notes || '-' },
           { label: 'Terms & Conditions', value: viewingInvoice.termsAndConditions || '-' },
@@ -520,11 +520,11 @@ const Invoices = () => {
             <Descriptions column={2} bordered style={{ marginBottom: 24 }}>
               <Descriptions.Item label="Invoice">{viewingInvoice.invoiceNumber}</Descriptions.Item>
               <Descriptions.Item label="Customer">{viewingInvoice.customer?.name}</Descriptions.Item>
-              <Descriptions.Item label="Total Amount">₵{parseFloat(viewingInvoice.totalAmount).toFixed(2)}</Descriptions.Item>
-              <Descriptions.Item label="Amount Paid">₵{parseFloat(viewingInvoice.amountPaid || 0).toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="Total Amount">GHS {parseFloat(viewingInvoice.totalAmount).toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="Amount Paid">GHS {parseFloat(viewingInvoice.amountPaid || 0).toFixed(2)}</Descriptions.Item>
               <Descriptions.Item label="Balance Due" span={2}>
                 <strong style={{ fontSize: 16, color: '#ff4d4f' }}>
-                  ₵{parseFloat(viewingInvoice.balance).toFixed(2)}
+                  GHS {parseFloat(viewingInvoice.balance).toFixed(2)}
                 </strong>
               </Descriptions.Item>
             </Descriptions>
@@ -554,7 +554,7 @@ const Invoices = () => {
                     <InputNumber
                       style={{ width: '100%' }}
                       placeholder="0.00"
-                      prefix="₵"
+                      prefix="GHS "
                       min={0}
                       max={parseFloat(viewingInvoice.balance)}
                       precision={2}

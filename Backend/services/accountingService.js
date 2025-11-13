@@ -6,6 +6,7 @@ const {
   AccountBalance,
   User
 } = require('../models');
+const { applyTenantFilter } = require('../utils/tenantUtils');
 
 const sumLines = (lines = []) =>
   lines.reduce(
@@ -17,10 +18,17 @@ const sumLines = (lines = []) =>
     { debit: 0, credit: 0 }
   );
 
-const updateAccountBalances = async (journalEntryId, transaction) => {
+const updateAccountBalances = async (tenantId, journalEntryId, transaction) => {
   const lines = await JournalEntryLine.findAll({
-    where: { journalEntryId },
-    include: [{ model: JournalEntry, as: 'journalEntry', attributes: ['entryDate'] }],
+    where: applyTenantFilter(tenantId, { journalEntryId }),
+    include: [
+      {
+        model: JournalEntry,
+        as: 'journalEntry',
+        attributes: ['entryDate'],
+        where: applyTenantFilter(tenantId, {})
+      }
+    ],
     transaction
   });
 
@@ -31,11 +39,14 @@ const updateAccountBalances = async (journalEntryId, transaction) => {
 
     const [balance] = await AccountBalance.findOrCreate({
       where: {
-        accountId: line.accountId,
-        fiscalYear,
-        period
+        ...applyTenantFilter(tenantId, {
+          accountId: line.accountId,
+          fiscalYear,
+          period
+        })
       },
       defaults: {
+        tenantId,
         accountId: line.accountId,
         fiscalYear,
         period,
@@ -55,6 +66,7 @@ const updateAccountBalances = async (journalEntryId, transaction) => {
 };
 
 const createJournalEntry = async ({
+  tenantId,
   reference,
   description,
   entryDate,
@@ -66,6 +78,10 @@ const createJournalEntry = async ({
   userId = null,
   approvedBy = null
 }) => {
+  if (!tenantId) {
+    throw new Error('Tenant context is required to create a journal entry');
+  }
+
   const transaction = await JournalEntry.sequelize.transaction();
 
   try {
@@ -78,8 +94,22 @@ const createJournalEntry = async ({
       throw new Error('Debits must equal credits');
     }
 
+    // Ensure every account belongs to current tenant
+    const accountIds = [...new Set(lines.map((line) => line.accountId))];
+    const accounts = await Account.findAll({
+      where: applyTenantFilter(tenantId, { id: accountIds })
+    });
+    const validAccountIds = new Set(accounts.map((account) => account.id));
+
+    for (const line of lines) {
+      if (!validAccountIds.has(line.accountId)) {
+        throw new Error('One or more accounts are invalid for this tenant');
+      }
+    }
+
     const journal = await JournalEntry.create(
       {
+        tenantId,
         reference,
         description,
         entryDate: entryDate || new Date(),
@@ -95,6 +125,7 @@ const createJournalEntry = async ({
 
     const linesPayload = lines.map((line) => ({
       journalEntryId: journal.id,
+      tenantId,
       accountId: line.accountId,
       description: line.description || null,
       debit: parseFloat(line.debit || 0),
@@ -105,17 +136,28 @@ const createJournalEntry = async ({
     await JournalEntryLine.bulkCreate(linesPayload, { transaction });
 
     if (status === 'posted') {
-      await updateAccountBalances(journal.id, transaction);
+      await updateAccountBalances(tenantId, journal.id, transaction);
     }
 
     await transaction.commit();
 
-    return JournalEntry.findByPk(journal.id, {
+    return JournalEntry.findOne({
+      where: applyTenantFilter(tenantId, { id: journal.id }),
       include: [
         {
           model: JournalEntryLine,
           as: 'lines',
-          include: [{ model: Account, as: 'account', attributes: ['id', 'code', 'name', 'type'] }]
+          where: applyTenantFilter(tenantId, {}),
+          required: false,
+          include: [
+            {
+              model: Account,
+              as: 'account',
+              attributes: ['id', 'code', 'name', 'type'],
+              where: applyTenantFilter(tenantId, {}),
+              required: false
+            }
+          ]
         },
         { model: User, as: 'creator', attributes: ['id', 'name'] },
         { model: User, as: 'approver', attributes: ['id', 'name'] }
@@ -127,11 +169,11 @@ const createJournalEntry = async ({
   }
 };
 
-const getAccountByCode = async (code) => {
+const getAccountByCode = async (tenantId, code) => {
   if (!code) {
     return null;
   }
-  return Account.findOne({ where: { code } });
+  return Account.findOne({ where: applyTenantFilter(tenantId, { code }) });
 };
 
 module.exports = {

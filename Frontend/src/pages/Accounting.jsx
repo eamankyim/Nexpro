@@ -110,7 +110,7 @@ const JournalLineForm = ({ field, remove, accountOptions }) => (
           style={{ width: '100%' }}
           min={0}
           parser={(value) => value.replace(/[^0-9.]/g, '')}
-          prefix="₵"
+          prefix="GHS "
         />
       </Form.Item>
     </Col>
@@ -120,7 +120,7 @@ const JournalLineForm = ({ field, remove, accountOptions }) => (
           style={{ width: '100%' }}
           min={0}
           parser={(value) => value.replace(/[^0-9.]/g, '')}
-          prefix="₵"
+          prefix="GHS "
         />
       </Form.Item>
     </Col>
@@ -256,7 +256,7 @@ const Accounting = () => {
             <div key={line.id}>
               <Text strong>{line.account?.code}</Text> — {line.account?.name}{' '}
               <Text type="secondary">
-                {line.debit > 0 ? `Debit ₵${parseFloat(line.debit).toFixed(2)}` : `Credit ₵${parseFloat(line.credit).toFixed(2)}`}
+                {line.debit > 0 ? `Debit GHS ${parseFloat(line.debit).toFixed(2)}` : `Credit GHS ${parseFloat(line.credit).toFixed(2)}`}
               </Text>
             </div>
           ))}
@@ -280,21 +280,21 @@ const Accounting = () => {
       dataIndex: 'debit',
       key: 'debit',
       align: 'right',
-      render: (value) => (value ? `₵${parseFloat(value).toFixed(2)}` : '—')
+      render: (value) => (value ? `GHS ${parseFloat(value).toFixed(2)}` : '—')
     },
     {
       title: 'Credit',
       dataIndex: 'credit',
       key: 'credit',
       align: 'right',
-      render: (value) => (value ? `₵${parseFloat(value).toFixed(2)}` : '—')
+      render: (value) => (value ? `GHS ${parseFloat(value).toFixed(2)}` : '—')
     },
     {
       title: 'Balance',
       dataIndex: 'balance',
       key: 'balance',
       align: 'right',
-      render: (value) => `₵${parseFloat(value || 0).toFixed(2)}`
+      render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`
     }
   ], []);
 
@@ -392,10 +392,10 @@ const Accounting = () => {
                     <Table.Summary.Row>
                       <Table.Summary.Cell index={0}><Text strong>Total</Text></Table.Summary.Cell>
                       <Table.Summary.Cell index={1} align="right">
-                        <Text strong>₵{parseFloat(totals.debit || 0).toFixed(2)}</Text>
+                        <Text strong>GHS {parseFloat(totals.debit || 0).toFixed(2)}</Text>
                       </Table.Summary.Cell>
                       <Table.Summary.Cell index={2} align="right">
-                        <Text strong>₵{parseFloat(totals.credit || 0).toFixed(2)}</Text>
+                        <Text strong>GHS {parseFloat(totals.credit || 0).toFixed(2)}</Text>
                       </Table.Summary.Cell>
                       <Table.Summary.Cell index={3} />
                     </Table.Summary.Row>
@@ -403,8 +403,8 @@ const Accounting = () => {
                 />
                 <Divider />
                 <Descriptions bordered size="small" column={2}>
-                  <Descriptions.Item label="Total Debit">₵{parseFloat(totals.debit || 0).toFixed(2)}</Descriptions.Item>
-                  <Descriptions.Item label="Total Credit">₵{parseFloat(totals.credit || 0).toFixed(2)}</Descriptions.Item>
+                  <Descriptions.Item label="Total Debit">GHS {parseFloat(totals.debit || 0).toFixed(2)}</Descriptions.Item>
+                  <Descriptions.Item label="Total Credit">GHS {parseFloat(totals.credit || 0).toFixed(2)}</Descriptions.Item>
                   <Descriptions.Item label="Balanced?">
                     <Tag color={Math.abs((totals.debit || 0) - (totals.credit || 0)) < 0.01 ? 'green' : 'red'}>
                       {Math.abs((totals.debit || 0) - (totals.credit || 0)) < 0.01 ? 'Yes' : 'No'}

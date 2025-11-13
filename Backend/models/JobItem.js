@@ -7,6 +7,14 @@ const JobItem = sequelize.define('JobItem', {
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
+  tenantId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'tenants',
+      key: 'id'
+    }
+  },
   jobId: {
     type: DataTypes.UUID,
     allowNull: false,

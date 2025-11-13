@@ -7,6 +7,14 @@ const Invoice = sequelize.define('Invoice', {
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
+  tenantId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'tenants',
+      key: 'id'
+    }
+  },
   invoiceNumber: {
     type: DataTypes.STRING,
     unique: true,
@@ -62,6 +70,11 @@ const Invoice = sequelize.define('Invoice', {
   discountAmount: {
     type: DataTypes.DECIMAL(10, 2),
     defaultValue: 0
+  },
+  discountReason: {
+    type: DataTypes.STRING(255),
+    allowNull: true,
+    comment: 'Reason or description for the discount'
   },
   totalAmount: {
     type: DataTypes.DECIMAL(10, 2),

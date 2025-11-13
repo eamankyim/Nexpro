@@ -7,6 +7,14 @@ const PricingTemplate = sequelize.define('PricingTemplate', {
     defaultValue: DataTypes.UUIDV4,
     primaryKey: true
   },
+  tenantId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: 'tenants',
+      key: 'id'
+    }
+  },
   name: {
     type: DataTypes.STRING,
     allowNull: false
@@ -52,7 +60,8 @@ const PricingTemplate = sequelize.define('PricingTemplate', {
   },
   basePrice: {
     type: DataTypes.DECIMAL(10, 2),
-    allowNull: false
+    allowNull: true,
+    defaultValue: 0
   },
   pricePerUnit: {
     type: DataTypes.DECIMAL(10, 2)

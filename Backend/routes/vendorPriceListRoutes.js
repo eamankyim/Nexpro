@@ -7,9 +7,11 @@ const {
   deletePriceListItem
 } = require('../controllers/vendorPriceListController');
 const { protect, authorize } = require('../middleware/auth');
+const { tenantContext } = require('../middleware/tenant');
 
 // All routes require authentication
 router.use(protect);
+router.use(tenantContext);
 
 router.route('/')
   .get(getVendorPriceList)
