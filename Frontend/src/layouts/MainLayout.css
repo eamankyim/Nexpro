@@ -1,0 +1,41 @@
+/* Prevent background color changes on submenu titles (parent items like "Financial", "Resources", etc.) */
+.ant-menu-dark .ant-menu-submenu > .ant-menu-submenu-title:hover {
+  background-color: transparent !important;
+}
+
+.ant-menu-dark .ant-menu-submenu > .ant-menu-submenu-title {
+  background-color: transparent !important;
+}
+
+.ant-menu-dark .ant-menu-submenu-selected > .ant-menu-submenu-title {
+  background-color: transparent !important;
+}
+
+.ant-menu-dark .ant-menu-submenu-open > .ant-menu-submenu-title {
+  background-color: transparent !important;
+}
+
+/* Make submenu background match main menu background */
+.ant-menu-dark .ant-menu-submenu .ant-menu {
+  background-color: transparent !important;
+  background: transparent !important;
+}
+
+.ant-menu-dark .ant-menu-submenu-inline .ant-menu {
+  background-color: transparent !important;
+  background: transparent !important;
+}
+
+/* Allow normal behavior for child menu items inside submenus */
+.ant-menu-dark .ant-menu-submenu .ant-menu-item {
+  background-color: transparent;
+}
+
+.ant-menu-dark .ant-menu-submenu .ant-menu-item:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.ant-menu-dark .ant-menu-submenu .ant-menu-item-selected {
+  background-color: rgba(24, 144, 255, 0.2);
+}
+

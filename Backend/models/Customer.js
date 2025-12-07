@@ -56,9 +56,8 @@ const Customer = sequelize.define('Customer', {
   },
   howDidYouHear: {
     type: DataTypes.STRING,
-    validate: {
-      isIn: [['Signboard', 'Referral', 'Social Media', 'Market Outreach']]
-    }
+    // Removed strict validation to allow custom values from CustomDropdownOption
+    // Default/common values: 'Signboard', 'Referral', 'Social Media', 'Market Outreach'
   },
   referralName: {
     type: DataTypes.STRING

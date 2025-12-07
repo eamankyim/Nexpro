@@ -56,6 +56,17 @@ const reportService = {
     const queryString = params.toString();
     const url = queryString ? `/reports/profit-loss?${queryString}` : '/reports/profit-loss';
     return await api.get(url);
+  },
+
+  // Get service analytics report
+  getServiceAnalyticsReport: async (startDate = null, endDate = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    
+    const queryString = params.toString();
+    const url = queryString ? `/reports/service-analytics?${queryString}` : '/reports/service-analytics';
+    return await api.get(url);
   }
 };
 

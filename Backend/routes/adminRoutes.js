@@ -187,7 +187,7 @@ router.patch('/tenants/:id/status', updateTenantStatus);
  *   get:
  *     summary: Billing overview
  *     tags: [ControlCenter]
-     security:
+ *     security:
  *       - BearerAuth: []
  *     responses:
  *       200:

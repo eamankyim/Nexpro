@@ -302,8 +302,8 @@ const PrintableQuote = ({ quote }) => {
                   </div>
                 )}
               </span>
-              <span>-GHS {parseFloat(quote.discountTotal || 0).toFixed(2)}</span>
-            </div>
+            <span>-GHS {parseFloat(quote.discountTotal || 0).toFixed(2)}</span>
+          </div>
           )}
           <div className="totals-row total">
             <span>Total</span>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Tabs,
   Card,
@@ -10,7 +11,6 @@ import {
   Space,
   Typography,
   Divider,
-  message,
   DatePicker,
   InputNumber,
   Alert,
@@ -23,6 +23,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import settingsService from '../services/settingsService';
 import { CameraOutlined, UserOutlined, MailOutlined, UserSwitchOutlined } from '@ant-design/icons';
 import { useAuth } from '../context/AuthContext';
+import { showSuccess, showError } from '../utils/toast';
+import StorageUsageCard from '../components/StorageUsageCard';
+import SeatUsageCard from '../components/SeatUsageCard';
 
 const { Title, Text } = Typography;
 
@@ -31,7 +34,15 @@ const Settings = () => {
   const [organizationForm] = Form.useForm();
   const [subscriptionForm] = Form.useForm();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState('profile');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab') || 'profile';
+  const [activeTab, setActiveTab] = useState(tabFromUrl);
+  
+  // Update tab when URL parameter changes
+  useEffect(() => {
+    const tab = searchParams.get('tab') || 'profile';
+    setActiveTab(tab);
+  }, [searchParams]);
   const [profilePreview, setProfilePreview] = useState('');
   const [profileEditing, setProfileEditing] = useState(false);
   const [organizationLogoPreview, setOrganizationLogoPreview] = useState('');
@@ -128,7 +139,7 @@ const Settings = () => {
   const updateProfileMutation = useMutation({
     mutationFn: settingsService.updateProfile,
     onSuccess: (response) => {
-      message.success('Profile updated');
+      showSuccess('Profile updated successfully');
       queryClient.invalidateQueries({ queryKey: ['settings', 'profile'] });
       queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
       if (response?.data) {
@@ -144,14 +155,14 @@ const Settings = () => {
     },
     onError: (error) => {
       const errMsg = error?.response?.data?.message || 'Failed to update profile';
-      message.error(errMsg);
+      showError(error, 'Failed to update profile. Please try again.');
     }
   });
 
   const updateOrganizationMutation = useMutation({
     mutationFn: settingsService.updateOrganization,
     onSuccess: (response) => {
-      message.success('Organization settings saved');
+      showSuccess('Organization settings saved successfully');
       queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
       if (response?.data) {
         organizationForm.setFieldsValue(response.data);
@@ -160,20 +171,19 @@ const Settings = () => {
       setOrganizationEditing(false);
     },
     onError: (error) => {
-      const errMsg = error?.response?.data?.message || 'Failed to update organization settings';
-      message.error(errMsg);
+      showError(error, 'Failed to update organization settings. Please try again.');
     }
   });
 
   const updateSubscriptionMutation = useMutation({
     mutationFn: settingsService.updateSubscription,
     onSuccess: () => {
-      message.success('Subscription settings saved');
+      showSuccess('Subscription settings saved successfully');
       queryClient.invalidateQueries({ queryKey: ['settings', 'subscription'] });
     },
     onError: (error) => {
       const errMsg = error?.response?.data?.message || 'Failed to update subscription settings';
-      message.error(errMsg);
+      showError(error, 'Failed to update profile. Please try again.');
     }
   });
 
@@ -198,7 +208,9 @@ const Settings = () => {
       email: values.email || '',
       phone: values.phone || '',
       website: values.website || '',
-      logoUrl: values.logoUrl || '',
+      // logoUrl is excluded - it should be uploaded separately via handleOrganizationLogoUpload
+      // Only include logoUrl if it's a URL (not base64) to avoid "request too large" errors
+      ...(values.logoUrl && !values.logoUrl.startsWith('data:') ? { logoUrl: values.logoUrl } : {}),
       invoiceFooter: values.invoiceFooter || '',
       address: {
         line1: values.address?.line1 || '',
@@ -240,11 +252,11 @@ const Settings = () => {
       setProfilePreview(imageUrl);
       updateUser(updatedUser);
       queryClient.invalidateQueries({ queryKey: ['settings', 'profile'] });
-      message.success('Profile picture updated');
+      showSuccess('Profile picture updated successfully');
       if (onSuccess) onSuccess('ok');
     } catch (error) {
       const errMsg = error?.response?.data?.message || 'Failed to upload profile picture';
-      message.error(errMsg);
+      showError(error, 'Failed to update profile. Please try again.');
       if (onError) onError(error);
     }
   };
@@ -257,11 +269,10 @@ const Settings = () => {
       organizationForm.setFieldsValue({ logoUrl: organization.logoUrl || '' });
       setOrganizationLogoPreview(organization.logoUrl || '');
       queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
-      message.success('Organization logo updated');
+      showSuccess('Organization logo updated successfully');
       if (onSuccess) onSuccess('ok');
     } catch (error) {
-      const errMsg = error?.response?.data?.message || 'Failed to upload organization logo';
-      message.error(errMsg);
+      showError(error, 'Failed to upload organization logo. Please try again.');
       if (onError) onError(error);
     }
   };
@@ -783,6 +794,20 @@ const Settings = () => {
   const subscriptionTab = (
     <div>
       {subscriptionSummary}
+      
+      {/* Usage Cards */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24}>
+          <SeatUsageCard />
+        </Col>
+      </Row>
+      
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24}>
+          <StorageUsageCard />
+        </Col>
+      </Row>
+
       <Card title="Subscription & Billing" loading={loadingSubscription} style={{ boxShadow: 'none' }}>
         <Form
           form={subscriptionForm}
@@ -955,7 +980,10 @@ const Settings = () => {
 
       <Tabs
         activeKey={activeTab}
-        onChange={setActiveTab}
+        onChange={(key) => {
+          setActiveTab(key);
+          setSearchParams({ tab: key });
+        }}
         items={tabItems}
       />
     </div>

@@ -3,6 +3,8 @@ const { Op } = require('sequelize');
 const config = require('../config/config');
 const { createInvoicePaymentJournal } = require('../services/invoiceAccountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const activityLogger = require('../services/activityLogger');
+const { updateCustomerBalance } = require('../services/customerBalanceService');
 
 // Helper function to generate invoice number
 const generateInvoiceNumber = async (tenantId) => {
@@ -239,6 +241,13 @@ exports.createInvoice = async (req, res, next) => {
       ]
     });
 
+    // Update customer balance
+    try {
+      await updateCustomerBalance(invoice.customerId);
+    } catch (error) {
+      console.error('Failed to update customer balance:', error);
+    }
+
     res.status(201).json({
       success: true,
       data: createdInvoice
@@ -272,6 +281,7 @@ exports.updateInvoice = async (req, res, next) => {
       });
     }
 
+    const oldStatus = invoice.status;
     await invoice.update(sanitizePayload(req.body));
 
     const updatedInvoice = await Invoice.findOne({
@@ -287,6 +297,15 @@ exports.updateInvoice = async (req, res, next) => {
         }
       ]
     });
+
+    // Log activity if status changed to 'sent'
+    if (oldStatus !== 'sent' && updatedInvoice.status === 'sent') {
+      try {
+        await activityLogger.logInvoiceSent(updatedInvoice, req.user?.id || null);
+      } catch (error) {
+        console.error('Failed to log invoice sent activity:', error);
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -321,7 +340,15 @@ exports.deleteInvoice = async (req, res, next) => {
       });
     }
 
+    const customerId = invoice.customerId;
     await invoice.destroy();
+
+    // Update customer balance after deleting invoice
+    try {
+      await updateCustomerBalance(customerId);
+    } catch (error) {
+      console.error('Failed to update customer balance:', error);
+    }
 
     res.status(200).json({
       success: true,
@@ -428,6 +455,22 @@ exports.recordPayment = async (req, res, next) => {
       });
     } catch (journalError) {
       console.error('Failed to create accounting entry for invoice payment', journalError);
+    }
+
+    // Log activity if invoice is now fully paid
+    if (updatedInvoice.status === 'paid' && invoice.status !== 'paid') {
+      try {
+        await activityLogger.logInvoicePaid(updatedInvoice, req.user?.id || null);
+      } catch (error) {
+        console.error('Failed to log payment activity:', error);
+      }
+    }
+
+    // Update customer balance
+    try {
+      await updateCustomerBalance(invoice.customerId);
+    } catch (error) {
+      console.error('Failed to update customer balance:', error);
     }
 
     res.status(200).json({
@@ -543,6 +586,20 @@ exports.markInvoicePaid = async (req, res, next) => {
       }
     }
 
+    // Log activity
+    try {
+      await activityLogger.logInvoicePaid(updatedInvoice, req.user?.id || null);
+    } catch (error) {
+      console.error('Failed to log payment activity:', error);
+    }
+
+    // Update customer balance
+    try {
+      await updateCustomerBalance(invoice.customerId);
+    } catch (error) {
+      console.error('Failed to update customer balance:', error);
+    }
+
     res.status(200).json({
       success: true,
       message: 'Invoice marked as paid successfully',
@@ -587,6 +644,13 @@ exports.sendInvoice = async (req, res, next) => {
         }
       ]
     });
+
+    // Log activity
+    try {
+      await activityLogger.logInvoiceSent(updatedInvoice, req.user?.id || null);
+    } catch (error) {
+      console.error('Failed to log invoice sent activity:', error);
+    }
 
     // TODO: Implement email sending functionality here
 

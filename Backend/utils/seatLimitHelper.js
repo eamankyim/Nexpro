@@ -8,7 +8,7 @@ async function getTenantSeatUsage(tenantId) {
   const activeUsers = await UserTenant.count({
     where: {
       tenantId,
-      isActive: true
+      status: 'active'
     }
   });
 

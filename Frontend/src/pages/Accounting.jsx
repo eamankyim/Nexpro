@@ -10,16 +10,16 @@ import {
   Form,
   Input,
   Select,
-  message,
   DatePicker,
   InputNumber,
   Tabs,
   Descriptions,
   Typography,
   Divider,
-  Drawer
+  Drawer,
+  App
 } from 'antd';
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
+import { PlusOutlined, ReloadOutlined, EyeOutlined } from '@ant-design/icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import accountingService from '../services/accountingService';
@@ -138,6 +138,7 @@ const JournalLineForm = ({ field, remove, accountOptions }) => (
 );
 
 const Accounting = () => {
+  const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [accountModalVisible, setAccountModalVisible] = useState(false);
   const [journalModalVisible, setJournalModalVisible] = useState(false);
@@ -145,6 +146,8 @@ const Accounting = () => {
   const [journalForm] = Form.useForm();
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [accountDrawerVisible, setAccountDrawerVisible] = useState(false);
+  const [selectedJournalEntry, setSelectedJournalEntry] = useState(null);
+  const [journalDrawerVisible, setJournalDrawerVisible] = useState(false);
 
   const accountsQuery = useQuery({
     queryKey: ['accounts'],
@@ -191,6 +194,11 @@ const Accounting = () => {
   const trialBalance = trialBalanceQuery.data?.data || [];
   const totals = trialBalanceQuery.data?.summary || { debit: 0, credit: 0 };
 
+  const handleViewAccount = (account) => {
+    setSelectedAccount(account);
+    setAccountDrawerVisible(true);
+  };
+
   const accountColumns = useMemo(() => [
     {
       title: 'Code',
@@ -220,8 +228,35 @@ const Accounting = () => {
       dataIndex: 'isActive',
       key: 'isActive',
       render: (value) => <Tag color={value ? 'green' : 'red'}>{value ? 'Active' : 'Inactive'}</Tag>
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      width: 100,
+      render: (_, record) => (
+        <Button
+          type="link"
+          icon={<EyeOutlined />}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleViewAccount(record);
+          }}
+        >
+          View
+        </Button>
+      )
     }
   ], []);
+
+  const handleViewJournalEntry = async (id) => {
+    try {
+      const response = await accountingService.getJournalEntry(id);
+      setSelectedJournalEntry(response.data || response);
+      setJournalDrawerVisible(true);
+    } catch (error) {
+      message.error('Failed to load journal entry');
+    }
+  };
 
   const journalColumns = useMemo(() => [
     {
@@ -238,7 +273,8 @@ const Accounting = () => {
     {
       title: 'Description',
       dataIndex: 'description',
-      key: 'description'
+      key: 'description',
+      ellipsis: true
     },
     {
       title: 'Status',
@@ -252,15 +288,43 @@ const Accounting = () => {
       key: 'lines',
       render: (lines) => (
         <div>
-          {lines.map((line) => (
-            <div key={line.id}>
-              <Text strong>{line.account?.code}</Text> — {line.account?.name}{' '}
-              <Text type="secondary">
-                {line.debit > 0 ? `Debit GHS ${parseFloat(line.debit).toFixed(2)}` : `Credit GHS ${parseFloat(line.credit).toFixed(2)}`}
-              </Text>
-            </div>
-          ))}
+          {lines && lines.length > 0 ? (
+            <>
+              {lines.slice(0, 2).map((line) => (
+                <div key={line.id}>
+                  <Text strong>{line.account?.code}</Text> — {line.account?.name}{' '}
+                  <Text type="secondary">
+                    {line.debit > 0 ? `Debit GHS ${parseFloat(line.debit).toFixed(2)}` : `Credit GHS ${parseFloat(line.credit).toFixed(2)}`}
+                  </Text>
+                </div>
+              ))}
+              {lines.length > 2 && (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  +{lines.length - 2} more line{lines.length - 2 > 1 ? 's' : ''}
+                </Text>
+              )}
+            </>
+          ) : (
+            <Text type="secondary">No lines</Text>
+          )}
         </div>
+      )
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      width: 100,
+      render: (_, record) => (
+        <Button
+          type="link"
+          icon={<EyeOutlined />}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleViewJournalEntry(record.id);
+          }}
+        >
+          View
+        </Button>
       )
     }
   ], []);
@@ -356,12 +420,6 @@ const Accounting = () => {
                 columns={accountColumns}
                 dataSource={accounts}
                 loading={accountsQuery.isLoading}
-                onRow={(record) => ({
-                  onClick: () => {
-                    setSelectedAccount(record);
-                    setAccountDrawerVisible(true);
-                  }
-                })}
               />
             )
           },
@@ -429,7 +487,7 @@ const Accounting = () => {
           setSelectedAccount(null);
         }}
         width={520}
-        destroyOnHidden
+        destroyOnClose
       >
         {selectedAccount ? (
           <Descriptions
@@ -460,6 +518,141 @@ const Accounting = () => {
           </Descriptions>
         ) : (
           <Text type="secondary">Select an account to view details.</Text>
+        )}
+      </Drawer>
+
+      <Drawer
+        title="Journal Entry Details"
+        open={journalDrawerVisible}
+        onClose={() => {
+          setJournalDrawerVisible(false);
+          setSelectedJournalEntry(null);
+        }}
+        width={1000}
+        destroyOnClose
+      >
+        {selectedJournalEntry ? (
+          <>
+            <Descriptions bordered column={2} size="small" style={{ marginBottom: 24 }}>
+              <Descriptions.Item label="Reference" span={2}>
+                <Text strong>{selectedJournalEntry.reference || '—'}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Date">
+                {dayjs(selectedJournalEntry.entryDate).format('MMM DD, YYYY')}
+              </Descriptions.Item>
+              <Descriptions.Item label="Status">
+                <Tag color={selectedJournalEntry.status === 'posted' ? 'green' : 'default'}>
+                  {selectedJournalEntry.status?.toUpperCase() || 'DRAFT'}
+                </Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="Source">
+                {selectedJournalEntry.source || '—'}
+              </Descriptions.Item>
+              <Descriptions.Item label="Description" span={2}>
+                {selectedJournalEntry.description || '—'}
+              </Descriptions.Item>
+              {selectedJournalEntry.creator && (
+                <Descriptions.Item label="Created By">
+                  {selectedJournalEntry.creator?.name || '—'}
+                </Descriptions.Item>
+              )}
+              {selectedJournalEntry.approver && (
+                <Descriptions.Item label="Approved By">
+                  {selectedJournalEntry.approver?.name || '—'}
+                </Descriptions.Item>
+              )}
+            </Descriptions>
+
+            <Divider orientation="left">
+              <Title level={4} style={{ margin: 0 }}>Journal Entry Lines</Title>
+            </Divider>
+
+            <Table
+              rowKey="id"
+              dataSource={selectedJournalEntry.lines || []}
+              pagination={false}
+              columns={[
+                {
+                  title: 'Account',
+                  key: 'account',
+                  width: 300,
+                  render: (_, line) => (
+                    <div>
+                      <Text strong>{line.account?.code || '—'}</Text>
+                      <br />
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {line.account?.name || '—'}
+                      </Text>
+                    </div>
+                  )
+                },
+                {
+                  title: 'Description',
+                  dataIndex: 'description',
+                  key: 'description',
+                  ellipsis: true
+                },
+                {
+                  title: 'Debit',
+                  dataIndex: 'debit',
+                  key: 'debit',
+                  align: 'right',
+                  width: 150,
+                  render: (value) => (
+                    value > 0 ? (
+                      <Text strong style={{ color: '#52c41a' }}>
+                        GHS {parseFloat(value || 0).toFixed(2)}
+                      </Text>
+                    ) : (
+                      <Text type="secondary">GHS 0.00</Text>
+                    )
+                  )
+                },
+                {
+                  title: 'Credit',
+                  dataIndex: 'credit',
+                  key: 'credit',
+                  align: 'right',
+                  width: 150,
+                  render: (value) => (
+                    value > 0 ? (
+                      <Text strong style={{ color: '#ff4d4f' }}>
+                        GHS {parseFloat(value || 0).toFixed(2)}
+                      </Text>
+                    ) : (
+                      <Text type="secondary">GHS 0.00</Text>
+                    )
+                  )
+                }
+              ]}
+              summary={(pageData) => {
+                const totalDebit = pageData.reduce((sum, line) => sum + parseFloat(line.debit || 0), 0);
+                const totalCredit = pageData.reduce((sum, line) => sum + parseFloat(line.credit || 0), 0);
+                
+                return (
+                  <Table.Summary fixed>
+                    <Table.Summary.Row>
+                      <Table.Summary.Cell index={0} colSpan={2}>
+                        <Text strong>Total</Text>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={2} align="right">
+                        <Text strong style={{ color: '#52c41a' }}>
+                          GHS {totalDebit.toFixed(2)}
+                        </Text>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={3} align="right">
+                        <Text strong style={{ color: '#ff4d4f' }}>
+                          GHS {totalCredit.toFixed(2)}
+                        </Text>
+                      </Table.Summary.Cell>
+                    </Table.Summary.Row>
+                  </Table.Summary>
+                );
+              }}
+            />
+          </>
+        ) : (
+          <Text type="secondary">Select a journal entry to view details.</Text>
         )}
       </Drawer>
 

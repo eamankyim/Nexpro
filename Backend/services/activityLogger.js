@@ -1,0 +1,844 @@
+const { Notification, UserTenant } = require('../models');
+const { Op } = require('sequelize');
+
+const logPrefix = '[ActivityLogger]';
+
+// ============================================
+// ACTIVITY TYPE DEFINITIONS
+// ============================================
+
+const ACTIVITY_TYPES = {
+  // JOB ACTIVITIES
+  JOB_CREATED: 'job_created',
+  JOB_UPDATED: 'job_updated',
+  JOB_DELETED: 'job_deleted',
+  JOB_ASSIGNED: 'job_assigned',
+  JOB_STATUS_CHANGED: 'job_status_changed',
+  JOB_COMPLETED: 'job_completed',
+  
+  // INVOICE ACTIVITIES
+  INVOICE_CREATED: 'invoice_created',
+  INVOICE_UPDATED: 'invoice_updated',
+  INVOICE_DELETED: 'invoice_deleted',
+  INVOICE_SENT: 'invoice_sent',
+  INVOICE_PAID: 'invoice_paid',
+  INVOICE_OVERDUE: 'invoice_overdue',
+  INVOICE_CANCELLED: 'invoice_cancelled',
+  
+  // PAYMENT ACTIVITIES
+  PAYMENT_RECEIVED: 'payment_received',
+  PAYMENT_REFUNDED: 'payment_refunded',
+  
+  // QUOTE ACTIVITIES
+  QUOTE_CREATED: 'quote_created',
+  QUOTE_UPDATED: 'quote_updated',
+  QUOTE_SENT: 'quote_sent',
+  QUOTE_ACCEPTED: 'quote_accepted',
+  QUOTE_DECLINED: 'quote_declined',
+  QUOTE_EXPIRED: 'quote_expired',
+  
+  // LEAD ACTIVITIES
+  LEAD_CREATED: 'lead_created',
+  LEAD_UPDATED: 'lead_updated',
+  LEAD_ASSIGNED: 'lead_assigned',
+  LEAD_STATUS_CHANGED: 'lead_status_changed',
+  LEAD_CONVERTED: 'lead_converted',
+  LEAD_ACTIVITY_LOGGED: 'lead_activity_logged',
+  
+  // CUSTOMER ACTIVITIES
+  CUSTOMER_CREATED: 'customer_created',
+  CUSTOMER_UPDATED: 'customer_updated',
+  CUSTOMER_DELETED: 'customer_deleted',
+  
+  // VENDOR ACTIVITIES
+  VENDOR_CREATED: 'vendor_created',
+  VENDOR_UPDATED: 'vendor_updated',
+  VENDOR_DELETED: 'vendor_deleted',
+  
+  // EXPENSE ACTIVITIES
+  EXPENSE_CREATED: 'expense_created',
+  EXPENSE_UPDATED: 'expense_updated',
+  EXPENSE_SUBMITTED: 'expense_submitted',
+  EXPENSE_APPROVED: 'expense_approved',
+  EXPENSE_REJECTED: 'expense_rejected',
+  
+  // USER ACTIVITIES
+  USER_INVITED: 'user_invited',
+  USER_JOINED: 'user_joined',
+  USER_ROLE_CHANGED: 'user_role_changed',
+  
+  // INVENTORY ACTIVITIES
+  INVENTORY_LOW_STOCK: 'inventory_low_stock',
+  INVENTORY_OUT_OF_STOCK: 'inventory_out_of_stock',
+  
+  // SYSTEM ACTIVITIES
+  SYSTEM_BACKUP_COMPLETED: 'system_backup_completed',
+  SYSTEM_ERROR: 'system_error'
+};
+
+// ============================================
+// NOTIFICATION CHANNEL TYPES
+// ============================================
+
+const CHANNELS = {
+  IN_APP: 'in_app',
+  EMAIL: 'email',
+  SMS: 'sms',
+  PUSH: 'push'
+};
+
+// ============================================
+// RECIPIENT STRATEGIES
+// ============================================
+
+const RECIPIENT_STRATEGY = {
+  ASSIGNED_USER: 'assigned_user',           // Only assigned user
+  JOB_TEAM: 'job_team',                     // Job creator + assigned user
+  LEAD_TEAM: 'lead_team',                   // Lead assignee
+  ALL_MANAGERS: 'all_managers',             // All managers in tenant
+  ALL_ADMINS: 'all_admins',                 // All admins in tenant
+  MANAGERS_AND_ADMINS: 'managers_and_admins', // All managers and admins
+  EVERYONE: 'everyone',                     // All users in tenant
+  CUSTOM: 'custom'                          // Custom user list
+};
+
+// ============================================
+// ACTIVITY CONFIGURATION
+// ============================================
+
+const ACTIVITY_CONFIG = {
+  // JOB ACTIVITIES
+  [ACTIVITY_TYPES.JOB_CREATED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP],
+    priority: 'normal',
+    type: 'job',
+    icon: 'file-text'
+  },
+  [ACTIVITY_TYPES.JOB_ASSIGNED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'high',
+    type: 'job',
+    icon: 'team'
+  },
+  [ACTIVITY_TYPES.JOB_STATUS_CHANGED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP],
+    priority: 'normal',
+    type: 'job',
+    icon: 'swap'
+  },
+  [ACTIVITY_TYPES.JOB_COMPLETED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'high',
+    type: 'job',
+    icon: 'check-circle'
+  },
+  
+  // INVOICE ACTIVITIES
+  [ACTIVITY_TYPES.INVOICE_CREATED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP],
+    priority: 'normal',
+    type: 'invoice',
+    icon: 'file-add'
+  },
+  [ACTIVITY_TYPES.INVOICE_SENT]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'normal',
+    type: 'invoice',
+    icon: 'mail'
+  },
+  [ACTIVITY_TYPES.INVOICE_PAID]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL, CHANNELS.SMS],
+    priority: 'high',
+    type: 'payment',
+    icon: 'dollar'
+  },
+  [ACTIVITY_TYPES.INVOICE_OVERDUE]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'high',
+    type: 'alert',
+    icon: 'warning'
+  },
+  
+  // PAYMENT ACTIVITIES
+  [ACTIVITY_TYPES.PAYMENT_RECEIVED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'high',
+    type: 'payment',
+    icon: 'dollar'
+  },
+  
+  // QUOTE ACTIVITIES
+  [ACTIVITY_TYPES.QUOTE_CREATED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP],
+    priority: 'normal',
+    type: 'quote',
+    icon: 'file-text'
+  },
+  [ACTIVITY_TYPES.QUOTE_ACCEPTED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'high',
+    type: 'quote',
+    icon: 'check-circle'
+  },
+  
+  // LEAD ACTIVITIES
+  [ACTIVITY_TYPES.LEAD_CREATED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP],
+    priority: 'normal',
+    type: 'lead',
+    icon: 'user-add'
+  },
+  [ACTIVITY_TYPES.LEAD_ASSIGNED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'high',
+    type: 'lead',
+    icon: 'user'
+  },
+  [ACTIVITY_TYPES.LEAD_CONVERTED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'high',
+    type: 'lead',
+    icon: 'check-circle'
+  },
+  [ACTIVITY_TYPES.LEAD_ACTIVITY_LOGGED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP],
+    priority: 'normal',
+    type: 'lead',
+    icon: 'message'
+  },
+  
+  // EXPENSE ACTIVITIES
+  [ACTIVITY_TYPES.EXPENSE_SUBMITTED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'normal',
+    type: 'expense',
+    icon: 'file-text'
+  },
+  [ACTIVITY_TYPES.EXPENSE_APPROVED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'normal',
+    type: 'expense',
+    icon: 'check-circle'
+  },
+  [ACTIVITY_TYPES.EXPENSE_REJECTED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'normal',
+    type: 'expense',
+    icon: 'close-circle'
+  },
+  
+  // USER ACTIVITIES
+  [ACTIVITY_TYPES.USER_INVITED]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.EMAIL],
+    priority: 'high',
+    type: 'user',
+    icon: 'user-add'
+  },
+  
+  // INVENTORY ACTIVITIES
+  [ACTIVITY_TYPES.INVENTORY_LOW_STOCK]: {
+    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
+    priority: 'high',
+    type: 'alert',
+    icon: 'warning'
+  }
+};
+
+// ============================================
+// RECIPIENT RESOLVERS
+// ============================================
+
+const resolveRecipients = async (strategy, context, tenantId) => {
+  const recipientSet = new Set();
+  
+  try {
+    switch (strategy) {
+      case RECIPIENT_STRATEGY.ASSIGNED_USER:
+        if (context.assignedTo) recipientSet.add(context.assignedTo);
+        break;
+        
+      case RECIPIENT_STRATEGY.JOB_TEAM:
+        if (context.createdBy) recipientSet.add(context.createdBy);
+        if (context.assignedTo) recipientSet.add(context.assignedTo);
+        break;
+        
+      case RECIPIENT_STRATEGY.LEAD_TEAM:
+        if (context.assignedTo) recipientSet.add(context.assignedTo);
+        if (context.createdBy) recipientSet.add(context.createdBy);
+        break;
+        
+      case RECIPIENT_STRATEGY.ALL_MANAGERS:
+        const managers = await UserTenant.findAll({
+          where: { tenantId, role: { [Op.in]: ['owner', 'manager'] } },
+          attributes: ['userId']
+        });
+        managers.forEach(ut => recipientSet.add(ut.userId));
+        break;
+        
+      case RECIPIENT_STRATEGY.ALL_ADMINS:
+        const admins = await UserTenant.findAll({
+          where: { tenantId, role: { [Op.in]: ['owner', 'admin'] } },
+          attributes: ['userId']
+        });
+        admins.forEach(ut => recipientSet.add(ut.userId));
+        break;
+        
+      case RECIPIENT_STRATEGY.MANAGERS_AND_ADMINS:
+        const managersAndAdmins = await UserTenant.findAll({
+          where: {
+            tenantId,
+            role: { [Op.in]: ['owner', 'admin', 'manager'] }
+          },
+          attributes: ['userId']
+        });
+        managersAndAdmins.forEach(ut => recipientSet.add(ut.userId));
+        
+        // Also add job/lead team if available
+        if (context.createdBy) recipientSet.add(context.createdBy);
+        if (context.assignedTo) recipientSet.add(context.assignedTo);
+        break;
+        
+      case RECIPIENT_STRATEGY.EVERYONE:
+        const allUsers = await UserTenant.findAll({
+          where: { tenantId },
+          attributes: ['userId']
+        });
+        allUsers.forEach(ut => recipientSet.add(ut.userId));
+        break;
+        
+      case RECIPIENT_STRATEGY.CUSTOM:
+        if (context.recipients && Array.isArray(context.recipients)) {
+          context.recipients.forEach(userId => recipientSet.add(userId));
+        }
+        break;
+        
+      default:
+        console.warn(`${logPrefix} Unknown recipient strategy: ${strategy}`);
+    }
+  } catch (error) {
+    console.error(`${logPrefix} Error resolving recipients:`, error.message);
+  }
+  
+  return Array.from(recipientSet).filter(Boolean);
+};
+
+// ============================================
+// MAIN ACTIVITY LOGGER
+// ============================================
+
+const logActivity = async ({
+  activityType,
+  tenantId,
+  title,
+  message,
+  context = {},
+  triggeredBy = null,
+  customRecipients = null,
+  customChannels = null,
+  customPriority = null,
+  link = null
+}) => {
+  try {
+    console.log(`${logPrefix} Activity logged: ${activityType}`, {
+      tenantId,
+      title,
+      triggeredBy,
+      contextKeys: Object.keys(context)
+    });
+
+    if (!tenantId) {
+      console.warn(`${logPrefix} Missing tenantId for activity ${activityType}`);
+      return { success: false, notifications: [] };
+    }
+
+    // Get configuration for this activity type
+    const config = ACTIVITY_CONFIG[activityType];
+    if (!config) {
+      console.warn(`${logPrefix} No configuration found for activity type: ${activityType}`);
+      return { success: false, notifications: [] };
+    }
+
+    // Determine recipients
+    let recipients = [];
+    if (customRecipients && Array.isArray(customRecipients)) {
+      recipients = customRecipients;
+      console.log(`${logPrefix} Using custom recipients`, { count: recipients.length });
+    } else {
+      recipients = await resolveRecipients(config.recipientStrategy, context, tenantId);
+      console.log(`${logPrefix} Resolved recipients using strategy: ${config.recipientStrategy}`, {
+        count: recipients.length,
+        recipients: recipients
+      });
+    }
+
+    if (recipients.length === 0) {
+      console.warn(`${logPrefix} No recipients for activity ${activityType}`, {
+        strategy: config.recipientStrategy,
+        context: context
+      });
+      return { success: false, notifications: [] };
+    }
+
+    // Determine channels (use custom or config default)
+    const channels = customChannels || config.channels;
+    
+    // Determine priority (use custom or config default)
+    const priority = customPriority || config.priority;
+
+    // Create notifications for in-app channel
+    const notifications = [];
+    if (channels.includes(CHANNELS.IN_APP)) {
+      const inAppNotifications = recipients.map(userId => ({
+        tenantId,
+        userId,
+        title,
+        message,
+        type: config.type,
+        priority,
+        metadata: context,
+        channels: ['in_app'],
+        icon: config.icon,
+        link: link || context.link || null,
+        triggeredBy
+      }));
+
+      const created = await Notification.bulkCreate(inAppNotifications);
+      notifications.push(...created);
+      
+      console.log(`${logPrefix} Created ${created.length} in-app notifications for ${activityType}`);
+    }
+
+    // TODO: Implement EMAIL channel
+    if (channels.includes(CHANNELS.EMAIL)) {
+      console.log(`${logPrefix} EMAIL notification for ${activityType} (not yet implemented)`, {
+        recipients: recipients.length,
+        subject: title
+      });
+      // await sendEmail({ recipients, subject: title, body: message, context });
+    }
+
+    // TODO: Implement SMS channel
+    if (channels.includes(CHANNELS.SMS)) {
+      console.log(`${logPrefix} SMS notification for ${activityType} (not yet implemented)`, {
+        recipients: recipients.length,
+        message: message.substring(0, 160)
+      });
+      // await sendSMS({ recipients, message, context });
+    }
+
+    // TODO: Implement PUSH channel
+    if (channels.includes(CHANNELS.PUSH)) {
+      console.log(`${logPrefix} PUSH notification for ${activityType} (not yet implemented)`, {
+        recipients: recipients.length,
+        title
+      });
+      // await sendPushNotification({ recipients, title, message, context });
+    }
+
+    console.log(`${logPrefix} Activity ${activityType} processed successfully`, {
+      recipientCount: recipients.length,
+      notificationCount: notifications.length,
+      channels: channels
+    });
+
+    return {
+      success: true,
+      notifications,
+      recipients,
+      channels
+    };
+
+  } catch (error) {
+    console.error(`${logPrefix} Error logging activity ${activityType}:`, error);
+    return { success: false, error: error.message, notifications: [] };
+  }
+};
+
+// ============================================
+// CONVENIENCE METHODS FOR SPECIFIC ACTIVITIES
+// ============================================
+
+// JOB ACTIVITIES
+const logJobCreated = async (job, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.JOB_CREATED,
+    tenantId: job.tenantId,
+    title: 'New Job Created',
+    message: `Job ${job.jobNumber} has been created${job.title ? ` - ${job.title}` : ''}.`,
+    context: {
+      jobId: job.id,
+      jobNumber: job.jobNumber,
+      status: job.status,
+      assignedTo: job.assignedTo,
+      createdBy: job.createdBy
+    },
+    triggeredBy,
+    link: `/jobs/${job.id}`
+  });
+};
+
+const logJobAssigned = async (job, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.JOB_ASSIGNED,
+    tenantId: job.tenantId,
+    title: 'New Job Assigned',
+    message: `You have been assigned to ${job.jobNumber}${job.title ? ` • ${job.title}` : ''}.`,
+    context: {
+      jobId: job.id,
+      jobNumber: job.jobNumber,
+      status: job.status,
+      assignedTo: job.assignedTo,
+      createdBy: job.createdBy
+    },
+    triggeredBy,
+    link: `/jobs/${job.id}`
+  });
+};
+
+const logJobStatusChanged = async (job, oldStatus, newStatus, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.JOB_STATUS_CHANGED,
+    tenantId: job.tenantId,
+    title: 'Job Status Updated',
+    message: `${job.jobNumber}${job.title ? ` • ${job.title}` : ''} moved from ${oldStatus?.replace('_', ' ')} to ${newStatus.replace('_', ' ')}.`,
+    context: {
+      jobId: job.id,
+      jobNumber: job.jobNumber,
+      oldStatus,
+      newStatus,
+      createdBy: job.createdBy,
+      assignedTo: job.assignedTo
+    },
+    triggeredBy,
+    link: `/jobs/${job.id}`
+  });
+};
+
+// INVOICE ACTIVITIES
+const logInvoiceSent = async (invoice, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.INVOICE_SENT,
+    tenantId: invoice.tenantId,
+    title: 'Invoice Sent',
+    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been sent (GHS ${parseFloat(invoice.totalAmount).toLocaleString()}).`,
+    context: {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      customerId: invoice.customerId,
+      jobId: invoice.jobId,
+      totalAmount: invoice.totalAmount,
+      createdBy: invoice.job?.createdBy,
+      assignedTo: invoice.job?.assignedTo
+    },
+    triggeredBy,
+    link: `/invoices`
+  });
+};
+
+const logInvoicePaid = async (invoice, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.INVOICE_PAID,
+    tenantId: invoice.tenantId,
+    title: 'Payment Received',
+    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been paid (GHS ${parseFloat(invoice.amountPaid).toLocaleString()}).`,
+    context: {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      customerId: invoice.customerId,
+      jobId: invoice.jobId,
+      amountPaid: invoice.amountPaid,
+      totalAmount: invoice.totalAmount,
+      createdBy: invoice.job?.createdBy,
+      assignedTo: invoice.job?.assignedTo
+    },
+    triggeredBy,
+    link: `/invoices`
+  });
+};
+
+const logPaymentReceived = async (invoice, amount, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.PAYMENT_RECEIVED,
+    tenantId: invoice.tenantId,
+    title: 'Payment Received',
+    message: `Payment of GHS ${parseFloat(amount).toLocaleString()} received for Invoice ${invoice.invoiceNumber}.`,
+    context: {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      customerId: invoice.customerId,
+      amount: amount,
+      createdBy: invoice.job?.createdBy,
+      assignedTo: invoice.job?.assignedTo
+    },
+    triggeredBy,
+    link: `/invoices`
+  });
+};
+
+// QUOTE ACTIVITIES
+const logQuoteAccepted = async (quote, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.QUOTE_ACCEPTED,
+    tenantId: quote.tenantId,
+    title: 'Quote Accepted',
+    message: `Quote ${quote.quoteNumber} for ${quote.customer?.company || quote.customer?.name || 'customer'} has been accepted!`,
+    context: {
+      quoteId: quote.id,
+      quoteNumber: quote.quoteNumber,
+      customerId: quote.customerId,
+      totalAmount: quote.totalAmount,
+      createdBy: quote.createdBy
+    },
+    triggeredBy,
+    link: `/quotes`
+  });
+};
+
+// LEAD ACTIVITIES
+const logLeadCreated = async (lead, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.LEAD_CREATED,
+    tenantId: lead.tenantId,
+    title: 'New Lead',
+    message: `New lead from ${lead.name}${lead.company ? ` (${lead.company})` : ''} has been created.`,
+    context: {
+      leadId: lead.id,
+      leadName: lead.name,
+      company: lead.company,
+      source: lead.source,
+      assignedTo: lead.assignedTo
+    },
+    triggeredBy,
+    link: `/leads`
+  });
+};
+
+const logLeadAssigned = async (lead, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.LEAD_ASSIGNED,
+    tenantId: lead.tenantId,
+    title: 'New Lead Assigned',
+    message: `You have been assigned lead: ${lead.name}${lead.company ? ` from ${lead.company}` : ''}.`,
+    context: {
+      leadId: lead.id,
+      leadName: lead.name,
+      company: lead.company,
+      source: lead.source,
+      assignedTo: lead.assignedTo
+    },
+    triggeredBy,
+    link: `/leads`
+  });
+};
+
+const logLeadStatusChanged = async (lead, oldStatus, newStatus, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.LEAD_STATUS_CHANGED,
+    tenantId: lead.tenantId,
+    title: 'Lead Status Updated',
+    message: `Lead ${lead.name} moved from ${oldStatus} to ${newStatus}.`,
+    context: {
+      leadId: lead.id,
+      leadName: lead.name,
+      oldStatus,
+      newStatus,
+      assignedTo: lead.assignedTo
+    },
+    triggeredBy,
+    link: `/leads`
+  });
+};
+
+const logLeadActivityLogged = async (lead, activity, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.LEAD_ACTIVITY_LOGGED,
+    tenantId: lead.tenantId,
+    title: 'Lead Activity',
+    message: `New ${activity.type} logged for lead ${lead.name}: "${activity.notes?.substring(0, 100)}..."`,
+    context: {
+      leadId: lead.id,
+      leadName: lead.name,
+      activityId: activity.id,
+      activityType: activity.type,
+      assignedTo: lead.assignedTo
+    },
+    triggeredBy,
+    link: `/leads`
+  });
+};
+
+const logLeadConverted = async (lead, customer, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.LEAD_CONVERTED,
+    tenantId: lead.tenantId,
+    title: 'Lead Converted',
+    message: `Lead ${lead.name} has been converted to customer!`,
+    context: {
+      leadId: lead.id,
+      leadName: lead.name,
+      customerId: customer?.id,
+      assignedTo: lead.assignedTo
+    },
+    triggeredBy,
+    link: `/customers/${customer?.id || ''}`
+  });
+};
+
+// EXPENSE ACTIVITIES
+const logExpenseSubmitted = async (expense, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.EXPENSE_SUBMITTED,
+    tenantId: expense.tenantId,
+    title: 'Expense Approval Needed',
+    message: `Expense request ${expense.expenseNumber} for GHS ${parseFloat(expense.amount).toLocaleString()} needs approval.`,
+    context: {
+      expenseId: expense.id,
+      expenseNumber: expense.expenseNumber,
+      amount: expense.amount,
+      category: expense.category,
+      submittedBy: expense.submittedBy
+    },
+    triggeredBy,
+    link: `/expenses`
+  });
+};
+
+const logExpenseApproved = async (expense, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.EXPENSE_APPROVED,
+    tenantId: expense.tenantId,
+    title: 'Expense Approved',
+    message: `Your expense request ${expense.expenseNumber} for GHS ${parseFloat(expense.amount).toLocaleString()} has been approved.`,
+    context: {
+      expenseId: expense.id,
+      expenseNumber: expense.expenseNumber,
+      amount: expense.amount,
+      category: expense.category,
+      recipients: [expense.submittedBy]
+    },
+    triggeredBy,
+    link: `/expenses`
+  });
+};
+
+const logExpenseRejected = async (expense, reason, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.EXPENSE_REJECTED,
+    tenantId: expense.tenantId,
+    title: 'Expense Rejected',
+    message: `Your expense request ${expense.expenseNumber} has been rejected. Reason: ${reason}`,
+    context: {
+      expenseId: expense.id,
+      expenseNumber: expense.expenseNumber,
+      amount: expense.amount,
+      category: expense.category,
+      rejectionReason: reason,
+      recipients: [expense.submittedBy]
+    },
+    triggeredBy,
+    link: `/expenses`
+  });
+};
+
+// CUSTOMER ACTIVITIES
+const logCustomerCreated = async (customer, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.CUSTOMER_CREATED,
+    tenantId: customer.tenantId,
+    title: 'New Customer Added',
+    message: `Customer ${customer.name}${customer.company ? ` (${customer.company})` : ''} has been added.`,
+    context: {
+      customerId: customer.id,
+      customerName: customer.name,
+      company: customer.company
+    },
+    triggeredBy,
+    link: `/customers`,
+    customChannels: [CHANNELS.IN_APP] // Only in-app for customer creation
+  });
+};
+
+// INVENTORY ACTIVITIES
+const logLowStock = async (item, tenantId, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.INVENTORY_LOW_STOCK,
+    tenantId,
+    title: 'Low Stock Alert',
+    message: `${item.name} is running low on stock (${item.currentStock} remaining).`,
+    context: {
+      itemId: item.id,
+      itemName: item.name,
+      currentStock: item.currentStock,
+      reorderLevel: item.reorderLevel
+    },
+    triggeredBy,
+    link: `/inventory`
+  });
+};
+
+// ============================================
+// EXPORTS
+// ============================================
+
+module.exports = {
+  // Main function
+  logActivity,
+  
+  // Constants
+  ACTIVITY_TYPES,
+  CHANNELS,
+  RECIPIENT_STRATEGY,
+  
+  // Convenience methods for specific activities
+  // Jobs
+  logJobCreated,
+  logJobAssigned,
+  logJobStatusChanged,
+  
+  // Invoices & Payments
+  logInvoiceSent,
+  logInvoicePaid,
+  logPaymentReceived,
+  
+  // Quotes
+  logQuoteAccepted,
+  
+  // Leads
+  logLeadCreated,
+  logLeadAssigned,
+  logLeadStatusChanged,
+  logLeadActivityLogged,
+  logLeadConverted,
+  
+  // Expenses
+  logExpenseSubmitted,
+  logExpenseApproved,
+  logExpenseRejected,
+  
+  // Customers
+  logCustomerCreated,
+  
+  // Inventory
+  logLowStock
+};
+

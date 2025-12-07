@@ -51,12 +51,38 @@ const Expense = sequelize.define('Expense', {
     defaultValue: DataTypes.NOW
   },
   paymentMethod: {
-    type: DataTypes.ENUM('cash', 'check', 'credit_card', 'bank_transfer', 'other'),
+    type: DataTypes.ENUM('cash', 'mobile_money', 'check', 'credit_card', 'bank_transfer', 'other'),
     defaultValue: 'cash'
   },
   status: {
     type: DataTypes.ENUM('pending', 'paid', 'overdue'),
     defaultValue: 'pending'
+  },
+  approvalStatus: {
+    type: DataTypes.ENUM('draft', 'pending_approval', 'approved', 'rejected'),
+    defaultValue: 'draft',
+    allowNull: false,
+    comment: 'Approval status for expense request'
+  },
+  submittedBy: {
+    type: DataTypes.UUID,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
+  },
+  approvedBy: {
+    type: DataTypes.UUID,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
+  },
+  approvedAt: {
+    type: DataTypes.DATE
+  },
+  rejectionReason: {
+    type: DataTypes.TEXT
   },
   receiptUrl: {
     type: DataTypes.STRING

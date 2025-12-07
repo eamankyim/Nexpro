@@ -223,16 +223,38 @@ const addTenantColumns = async () => {
 
     if (!defaultTenantId) {
       console.log('ℹ️ Default tenant missing. Creating one...');
+      const trialEndDate = new Date();
+      trialEndDate.setMonth(trialEndDate.getMonth() + 1);
       const [created] = await sequelize.query(
         `
-          INSERT INTO tenants (name, slug, plan, status, metadata)
-          VALUES ('Default Tenant', 'default', 'trial', 'active', '{}'::jsonb)
+          INSERT INTO tenants (name, slug, plan, status, metadata, "trialEndsAt")
+          VALUES ('Default Tenant', 'default', 'trial', 'active', '{}'::jsonb, :trialEndDate)
           RETURNING id;
         `,
-        { transaction }
+        { 
+          transaction,
+          replacements: { trialEndDate }
+        }
       );
       defaultTenantId = created?.[0]?.id;
       console.log('✅ Default tenant created:', defaultTenantId);
+    } else {
+      // Fix existing default tenant if it's on trial but has no trialEndsAt
+      await sequelize.query(
+        `
+          UPDATE tenants
+          SET "trialEndsAt" = CASE
+            WHEN "trialEndsAt" IS NULL AND plan = 'trial' 
+            THEN COALESCE("createdAt", NOW()) + INTERVAL '1 month'
+            ELSE "trialEndsAt"
+          END
+          WHERE id = :tenantId AND plan = 'trial' AND "trialEndsAt" IS NULL;
+        `,
+        {
+          transaction,
+          replacements: { tenantId: defaultTenantId }
+        }
+      );
     }
 
     for (const table of TABLES) {

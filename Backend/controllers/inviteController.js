@@ -18,6 +18,15 @@ exports.generateInvite = async (req, res, next) => {
     const { email, role, name, expiresInDays } = req.body;
     console.log('[Invite] Generating invite for:', { email, role, name, expiresInDays });
 
+    // Validate tenant context is available
+    if (!req.tenantId) {
+      console.log('[Invite] Missing tenant context');
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required to generate invites'
+      });
+    }
+
     // Validate required fields
     if (!email || !role) {
       console.log('[Invite] Missing required fields:', { email, role });

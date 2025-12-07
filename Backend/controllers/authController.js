@@ -73,6 +73,14 @@ exports.register = async (req, res, next) => {
       });
     }
 
+    // Ensure invite has a tenantId
+    if (!invite.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid invite: missing tenant information'
+      });
+    }
+
     // Create user with role from invite
     const user = await User.create({
       name,
@@ -85,6 +93,7 @@ exports.register = async (req, res, next) => {
       where: { userId: user.id }
     });
 
+    // Create UserTenant relationship - this makes the user a member of the tenant's organization
     await UserTenant.create({
       userId: user.id,
       tenantId: invite.tenantId,
@@ -154,7 +163,7 @@ exports.login = async (req, res, next) => {
     if (!user) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid credentials'
+        message: 'Invalid email or password'
       });
     }
 
@@ -164,7 +173,7 @@ exports.login = async (req, res, next) => {
     if (!isMatch) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid credentials'
+        message: 'Invalid email or password'
       });
     }
 

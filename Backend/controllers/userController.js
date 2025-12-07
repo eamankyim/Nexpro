@@ -1,8 +1,8 @@
-const { User } = require('../models');
+const { User, UserTenant } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
 
-// @desc    Get all users
+// @desc    Get all users for the current tenant
 // @route   GET /api/users
 // @access  Private/Admin
 exports.getUsers = async (req, res, next) => {
@@ -14,25 +14,47 @@ exports.getUsers = async (req, res, next) => {
     const role = req.query.role;
     const isActive = req.query.isActive;
 
-    const where = {};
+    // Ensure tenantId is available (set by tenantContext middleware)
+    if (!req.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required'
+      });
+    }
+
+    // Build where clause for user search
+    const userWhere = {};
     if (search) {
-      where[Op.or] = [
+      userWhere[Op.or] = [
         { name: { [Op.iLike]: `%${search}%` } },
         { email: { [Op.iLike]: `%${search}%` } }
       ];
     }
     if (role && role !== 'null') {
-      where.role = role;
+      userWhere.role = role;
     }
     if (isActive && isActive !== 'null') {
-      where.isActive = isActive === 'true';
+      userWhere.isActive = isActive === 'true';
     }
 
+    // Get users that belong to the current tenant through UserTenant relationship
     const { count, rows } = await User.findAndCountAll({
-      where,
+      where: userWhere,
+      include: [
+        {
+          model: UserTenant,
+          as: 'tenantMemberships',
+          where: {
+            tenantId: req.tenantId
+          },
+          required: true, // Inner join - only users with membership in this tenant
+          attributes: ['role', 'status', 'isDefault', 'joinedAt']
+        }
+      ],
       limit,
       offset,
-      order: [['createdAt', 'DESC']]
+      order: [['createdAt', 'DESC']],
+      distinct: true // Important for count with includes
     });
 
     res.status(200).json({
@@ -55,6 +77,28 @@ exports.getUsers = async (req, res, next) => {
 // @access  Private/Admin
 exports.getUser = async (req, res, next) => {
   try {
+    if (!req.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required'
+      });
+    }
+
+    // Verify user belongs to the current tenant
+    const membership = await UserTenant.findOne({
+      where: {
+        userId: req.params.id,
+        tenantId: req.tenantId
+      }
+    });
+
+    if (!membership) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found in this tenant'
+      });
+    }
+
     const user = await User.findByPk(req.params.id);
 
     if (!user) {
@@ -73,12 +117,35 @@ exports.getUser = async (req, res, next) => {
   }
 };
 
-// @desc    Create user
+// @desc    Create user and add to tenant
 // @route   POST /api/users
 // @access  Private/Admin
 exports.createUser = async (req, res, next) => {
   try {
-    const user = await User.create(req.body);
+    if (!req.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required'
+      });
+    }
+
+    const { password, ...userData } = req.body;
+    
+    // Create user
+    const user = await User.create({
+      ...userData,
+      password: password // Will be hashed by User model hook
+    });
+
+    // Add user to current tenant
+    await UserTenant.create({
+      userId: user.id,
+      tenantId: req.tenantId,
+      role: userData.role || 'staff',
+      status: 'active',
+      isDefault: true,
+      joinedAt: new Date()
+    });
 
     res.status(201).json({
       success: true,
@@ -94,6 +161,28 @@ exports.createUser = async (req, res, next) => {
 // @access  Private/Admin
 exports.updateUser = async (req, res, next) => {
   try {
+    if (!req.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required'
+      });
+    }
+
+    // Verify user belongs to the current tenant
+    const membership = await UserTenant.findOne({
+      where: {
+        userId: req.params.id,
+        tenantId: req.tenantId
+      }
+    });
+
+    if (!membership) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found in this tenant'
+      });
+    }
+
     const user = await User.findByPk(req.params.id);
 
     if (!user) {
@@ -117,24 +206,39 @@ exports.updateUser = async (req, res, next) => {
   }
 };
 
-// @desc    Delete user
+// @desc    Delete user (remove from tenant, not delete user account)
 // @route   DELETE /api/users/:id
 // @access  Private/Admin
 exports.deleteUser = async (req, res, next) => {
   try {
-    const user = await User.findByPk(req.params.id);
-
-    if (!user) {
-      return res.status(404).json({
+    if (!req.tenantId) {
+      return res.status(400).json({
         success: false,
-        message: 'User not found'
+        message: 'Tenant context is required'
       });
     }
 
-    await user.destroy();
+    // Verify user belongs to the current tenant
+    const membership = await UserTenant.findOne({
+      where: {
+        userId: req.params.id,
+        tenantId: req.tenantId
+      }
+    });
+
+    if (!membership) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found in this tenant'
+      });
+    }
+
+    // Remove user from tenant (don't delete the user account)
+    await membership.destroy();
 
     res.status(200).json({
       success: true,
+      message: 'User removed from tenant successfully',
       data: {}
     });
   } catch (error) {
@@ -147,6 +251,28 @@ exports.deleteUser = async (req, res, next) => {
 // @access  Private/Admin
 exports.toggleUserStatus = async (req, res, next) => {
   try {
+    if (!req.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required'
+      });
+    }
+
+    // Verify user belongs to the current tenant
+    const membership = await UserTenant.findOne({
+      where: {
+        userId: req.params.id,
+        tenantId: req.tenantId
+      }
+    });
+
+    if (!membership) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found in this tenant'
+      });
+    }
+
     const user = await User.findByPk(req.params.id);
 
     if (!user) {

@@ -1,17 +1,21 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, message, Space, Tag, Row, Col, Select, Descriptions, List, Spin, Empty } from 'antd';
+import { Table, Button, Modal, Form, Input, Space, Tag, Row, Col, Select, Descriptions, List, Spin, Empty } from 'antd';
 import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import customerService from '../services/customerService';
 import jobService from '../services/jobService';
 import invoiceService from '../services/invoiceService';
+import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import { showSuccess, showError, showWarning, handleApiError } from '../utils/toast';
 import dayjs from 'dayjs';
 
 const Customers = () => {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [submittingCustomer, setSubmittingCustomer] = useState(false);
+  const [deletingCustomer, setDeletingCustomer] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
@@ -25,10 +29,33 @@ const Customers = () => {
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [customerInvoices, setCustomerInvoices] = useState([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+  const [customCustomerSources, setCustomCustomerSources] = useState([]);
+  const [showCustomerSourceOtherInput, setShowCustomerSourceOtherInput] = useState(false);
+  const [customerSourceOtherValue, setCustomerSourceOtherValue] = useState('');
+  const [customRegions, setCustomRegions] = useState([]);
+  const [showRegionOtherInput, setShowRegionOtherInput] = useState(false);
+  const [regionOtherValue, setRegionOtherValue] = useState('');
 
   useEffect(() => {
     fetchCustomers();
   }, [pagination.current, pagination.pageSize, searchText]);
+
+  // Load custom customer sources and regions on mount
+  useEffect(() => {
+    const loadCustomOptions = async () => {
+      try {
+        const [sources, regions] = await Promise.all([
+          customDropdownService.getCustomOptions('customer_source'),
+          customDropdownService.getCustomOptions('region')
+        ]);
+        setCustomCustomerSources(sources || []);
+        setCustomRegions(regions || []);
+      } catch (error) {
+        console.error('Failed to load custom options:', error);
+      }
+    };
+    loadCustomOptions();
+  }, []);
 
   const fetchCustomers = async () => {
     setLoading(true);
@@ -41,7 +68,7 @@ const Customers = () => {
       setCustomers(response.data);
       setPagination({ ...pagination, total: response.count });
     } catch (error) {
-      message.error('Failed to load customers');
+      handleApiError(error, { context: 'load customers' });
     } finally {
       setLoading(false);
     }
@@ -51,6 +78,10 @@ const Customers = () => {
     setEditingCustomer(null);
     form.resetFields();
     setShowReferralName(false);
+    setShowCustomerSourceOtherInput(false);
+    setCustomerSourceOtherValue('');
+    setShowRegionOtherInput(false);
+    setRegionOtherValue('');
     setModalVisible(true);
   };
 
@@ -62,10 +93,108 @@ const Customers = () => {
   };
 
   const handleHowDidYouHearChange = (value) => {
-    setShowReferralName(value === 'Referral');
-    if (value !== 'Referral') {
+    if (value === '__OTHER__') {
+      setShowCustomerSourceOtherInput(true);
+      setShowReferralName(false);
       form.setFieldsValue({ referralName: undefined });
+    } else {
+      setShowCustomerSourceOtherInput(false);
+      setShowReferralName(value === 'Referral');
+      if (value !== 'Referral') {
+        form.setFieldsValue({ referralName: undefined });
+      }
     }
+  };
+
+  // Save custom customer source
+  const handleSaveCustomCustomerSource = async () => {
+    if (!customerSourceOtherValue || !customerSourceOtherValue.trim()) {
+      showWarning('Please enter a source name');
+      return;
+    }
+
+    try {
+      const saved = await customDropdownService.saveCustomOption('customer_source', customerSourceOtherValue.trim());
+      if (saved && saved.value) {
+        // Add to custom sources
+        setCustomCustomerSources(prev => {
+          if (prev.find(s => s.value === saved.value)) {
+            return prev;
+          }
+          return [...prev, saved];
+        });
+        
+        // Set the value in the form
+        form.setFieldValue('howDidYouHear', saved.value);
+        
+        // Clear the "Other" input
+        setShowCustomerSourceOtherInput(false);
+        setCustomerSourceOtherValue('');
+        
+        showSuccess(`"${saved.label || saved.value}" added to sources`);
+      } else {
+        showWarning('Saved option but received invalid response. Please try again.');
+      }
+    } catch (error) {
+      handleApiError(error, { context: 'save custom source' });
+    }
+  };
+
+  // Handle region change (including "Other")
+  const handleRegionChange = (value) => {
+    if (value === '__OTHER__') {
+      setShowRegionOtherInput(true);
+    } else {
+      setShowRegionOtherInput(false);
+    }
+  };
+
+  // Save custom region
+  const handleSaveCustomRegion = async () => {
+    if (!regionOtherValue || !regionOtherValue.trim()) {
+      showWarning('Please enter a region name');
+      return;
+    }
+
+    try {
+      const saved = await customDropdownService.saveCustomOption('region', regionOtherValue.trim());
+      if (saved) {
+        // Add to custom regions
+        setCustomRegions(prev => {
+          if (prev.find(r => r.value === saved.value)) {
+            return prev;
+          }
+          return [...prev, saved];
+        });
+        
+        // Set the value in the form
+        form.setFieldValue('state', saved.value);
+        
+        // Clear the "Other" input
+        setShowRegionOtherInput(false);
+        setRegionOtherValue('');
+        
+        showSuccess(`"${saved.label}" added to regions`);
+      }
+    } catch (error) {
+      handleApiError(error, { context: 'save custom region' });
+    }
+  };
+
+  // Get merged region options
+  const getMergedRegionOptions = () => {
+    const defaultRegions = [
+      'Greater Accra', 'Ashanti', 'Western', 'Western North', 'Central', 'Eastern',
+      'Volta', 'Oti', 'Bono', 'Bono East', 'Ahafo', 'Northern', 'Savannah',
+      'North East', 'Upper East', 'Upper West'
+    ];
+    const merged = [...defaultRegions];
+    customRegions.forEach(region => {
+      if (!merged.includes(region.value)) {
+        merged.push(region.value);
+      }
+    });
+    return merged;
   };
 
   const handleView = async (customer) => {
@@ -112,27 +241,74 @@ const Customers = () => {
 
   const handleDelete = async (id) => {
     try {
+      setDeletingCustomer(true);
       await customerService.delete(id);
-      message.success('Customer deleted successfully');
+      showSuccess('Customer deleted successfully');
       fetchCustomers();
     } catch (error) {
-      message.error('Failed to delete customer');
+      handleApiError(error, { context: 'delete customer' });
+    } finally {
+      setDeletingCustomer(false);
     }
   };
 
   const handleSubmit = async (values) => {
     try {
+      setSubmittingCustomer(true);
+      
+      // If "Other" is selected for howDidYouHear, save the custom value first
+      if (values.howDidYouHear === '__OTHER__') {
+        if (!customerSourceOtherValue || !customerSourceOtherValue.trim()) {
+          showError('Please enter and save a custom source before submitting');
+          setSubmittingCustomer(false);
+          return;
+        }
+        // Save the custom source and update the form value
+        const saved = await customDropdownService.saveCustomOption('customer_source', customerSourceOtherValue.trim());
+        if (saved) {
+          values.howDidYouHear = saved.value;
+          setCustomCustomerSources(prev => {
+            if (prev.find(s => s.value === saved.value)) {
+              return prev;
+            }
+            return [...prev, saved];
+          });
+        }
+      }
+      
+      // If "Other" is selected for region, save the custom value first
+      if (values.state === '__OTHER__') {
+        if (!regionOtherValue || !regionOtherValue.trim()) {
+          showError('Please enter and save a custom region before submitting');
+          setSubmittingCustomer(false);
+          return;
+        }
+        // Save the custom region and update the form value
+        const saved = await customDropdownService.saveCustomOption('region', regionOtherValue.trim());
+        if (saved) {
+          values.state = saved.value;
+          setCustomRegions(prev => {
+            if (prev.find(r => r.value === saved.value)) {
+              return prev;
+            }
+            return [...prev, saved];
+          });
+        }
+      }
+      
       if (editingCustomer) {
         await customerService.update(editingCustomer.id, values);
-        message.success('Customer updated successfully');
+        showSuccess('Customer updated successfully');
       } else {
         await customerService.create(values);
-        message.success('Customer created successfully');
+        showSuccess('Customer created successfully');
       }
       setModalVisible(false);
       fetchCustomers();
     } catch (error) {
-      message.error(error.error || 'Operation failed');
+      handleApiError(error, { context: editingCustomer ? 'update customer' : 'create customer' });
+    } finally {
+      setSubmittingCustomer(false);
     }
   };
 
@@ -232,7 +408,14 @@ const Customers = () => {
       <Modal
         title={editingCustomer ? 'Edit Customer' : 'Add Customer'}
         open={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        confirmLoading={submittingCustomer}
+        onCancel={() => {
+          setModalVisible(false);
+          setShowCustomerSourceOtherInput(false);
+          setCustomerSourceOtherValue('');
+          setShowRegionOtherInput(false);
+          setRegionOtherValue('');
+        }}
         onOk={() => form.submit()}
         width={800}
         okText={editingCustomer ? 'Update' : 'Create'}
@@ -291,11 +474,52 @@ const Customers = () => {
 
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="city" label="City">
-                <Input placeholder="Enter city" size="large" />
+              <Form.Item name="city" label="Town">
+                <Input placeholder="e.g., Accra, Kumasi, Takoradi" size="large" />
               </Form.Item>
             </Col>
             <Col span={12}>
+              <Form.Item name="state" label="Region">
+                <Select 
+                  placeholder="Select region" 
+                  size="large" 
+                  showSearch
+                  onChange={handleRegionChange}
+                >
+                  {getMergedRegionOptions().map((region) => (
+                    <Select.Option key={region} value={region}>{region}</Select.Option>
+                  ))}
+                  <Select.Option value="__OTHER__">Other (specify)</Select.Option>
+                </Select>
+              </Form.Item>
+              {showRegionOtherInput && (
+                <Form.Item
+                  label="Enter Region Name"
+                  style={{ marginTop: 8 }}
+                >
+                  <Input.Group compact>
+                    <Input
+                      style={{ width: 'calc(100% - 80px)' }}
+                      placeholder="e.g., New Region, District"
+                      value={regionOtherValue}
+                      onChange={(e) => setRegionOtherValue(e.target.value)}
+                      onPressEnter={handleSaveCustomRegion}
+                    />
+                    <Button
+                      type="primary"
+                      style={{ width: 80 }}
+                      onClick={handleSaveCustomRegion}
+                    >
+                      Save
+                    </Button>
+                  </Input.Group>
+                </Form.Item>
+              )}
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={24}>
               <Form.Item 
                 name="howDidYouHear" 
                 label="How did you hear about us?"
@@ -304,14 +528,73 @@ const Customers = () => {
                 <Select 
                   placeholder="Select an option" 
                   size="large"
+                  showSearch
                   onChange={handleHowDidYouHearChange}
                 >
-                  <Select.Option value="Signboard">Signboard</Select.Option>
-                  <Select.Option value="Referral">Referral</Select.Option>
-                  <Select.Option value="Social Media">Social Media</Select.Option>
-                  <Select.Option value="Market Outreach">Market Outreach</Select.Option>
+                  <Select.OptGroup label="Social Media">
+                    <Select.Option value="Facebook">Facebook</Select.Option>
+                    <Select.Option value="Instagram">Instagram</Select.Option>
+                    <Select.Option value="Twitter">Twitter</Select.Option>
+                    <Select.Option value="LinkedIn">LinkedIn</Select.Option>
+                    <Select.Option value="TikTok">TikTok</Select.Option>
+                    <Select.Option value="WhatsApp">WhatsApp</Select.Option>
+                  </Select.OptGroup>
+                  <Select.OptGroup label="Online">
+                    <Select.Option value="Google Search">Google Search</Select.Option>
+                    <Select.Option value="Website">Website</Select.Option>
+                    <Select.Option value="Online Ad">Online Ad</Select.Option>
+                  </Select.OptGroup>
+                  <Select.OptGroup label="Physical">
+                    <Select.Option value="Signboard">Signboard</Select.Option>
+                    <Select.Option value="Walk-in">Walk-in</Select.Option>
+                    <Select.Option value="Market Outreach">Market Outreach</Select.Option>
+                    <Select.Option value="Flyer/Brochure">Flyer/Brochure</Select.Option>
+                  </Select.OptGroup>
+                  <Select.OptGroup label="Personal">
+                    <Select.Option value="Referral">Referral (Word of Mouth)</Select.Option>
+                    <Select.Option value="Existing Customer">Existing Customer</Select.Option>
+                  </Select.OptGroup>
+                  <Select.OptGroup label="Other">
+                    <Select.Option value="Radio">Radio</Select.Option>
+                    <Select.Option value="TV">TV</Select.Option>
+                    <Select.Option value="Newspaper">Newspaper</Select.Option>
+                    <Select.Option value="Event/Trade Show">Event/Trade Show</Select.Option>
+                  </Select.OptGroup>
+                  {customCustomerSources.length > 0 && (
+                    <Select.OptGroup label="Custom Sources">
+                      {customCustomerSources.map(source => (
+                        <Select.Option key={source.value} value={source.value}>{source.label}</Select.Option>
+                      ))}
+                    </Select.OptGroup>
+                  )}
+                  <Select.OptGroup label="Other">
+                    <Select.Option value="__OTHER__">Other (specify)</Select.Option>
+                  </Select.OptGroup>
                 </Select>
               </Form.Item>
+              {showCustomerSourceOtherInput && (
+                <Form.Item
+                  label="Enter Source Name"
+                  style={{ marginTop: 8 }}
+                >
+                  <Input.Group compact>
+                    <Input
+                      style={{ width: 'calc(100% - 80px)' }}
+                      placeholder="e.g., Billboard, Magazine Ad"
+                      value={customerSourceOtherValue}
+                      onChange={(e) => setCustomerSourceOtherValue(e.target.value)}
+                      onPressEnter={handleSaveCustomCustomerSource}
+                    />
+                    <Button
+                      type="primary"
+                      style={{ width: 80 }}
+                      onClick={handleSaveCustomCustomerSource}
+                    >
+                      Save
+                    </Button>
+                  </Input.Group>
+                </Form.Item>
+              )}
             </Col>
           </Row>
 

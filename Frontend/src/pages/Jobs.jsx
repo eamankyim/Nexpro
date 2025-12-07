@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Table, Button, Tag, Space, Input, Select, message, Modal, Form, InputNumber, DatePicker, Row, Col, Divider, Card, Alert, Descriptions, Timeline, Upload, List, Tooltip, Popconfirm } from 'antd';
-import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, UserOutlined, EditOutlined, PauseCircleOutlined, CloseCircleOutlined, UploadOutlined, PaperClipOutlined, DownloadOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, UserOutlined, EditOutlined, PauseCircleOutlined, CloseCircleOutlined, UploadOutlined, PaperClipOutlined, DownloadOutlined, DollarOutlined } from '@ant-design/icons';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import jobService from '../services/jobService';
 import customerService from '../services/customerService';
 import invoiceService from '../services/invoiceService';
 import pricingService from '../services/pricingService';
 import userService from '../services/userService';
+import customDropdownService from '../services/customDropdownService';
 import dayjs from 'dayjs';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -18,6 +19,7 @@ const uploadMaxSizeMb = Number.parseFloat(import.meta.env.VITE_UPLOAD_MAX_SIZE_M
 
 const Jobs = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({ search: '', status: '' });
@@ -26,8 +28,6 @@ const Jobs = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [form] = Form.useForm();
-  const [invoiceModalVisible, setInvoiceModalVisible] = useState(false);
-  const [invoiceForm] = Form.useForm();
   const [jobInvoices, setJobInvoices] = useState({});
   const [pricingTemplates, setPricingTemplates] = useState([]);
   const [selectedJobType, setSelectedJobType] = useState(null);
@@ -44,6 +44,22 @@ const Jobs = () => {
   const [statusForm] = Form.useForm();
   const [customerModalVisible, setCustomerModalVisible] = useState(false);
   const [customerForm] = Form.useForm();
+  const [submittingJob, setSubmittingJob] = useState(false);
+  const [submittingCustomer, setSubmittingCustomer] = useState(false);
+  const [updatingAssignment, setUpdatingAssignment] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [markingAsPaid, setMarkingAsPaid] = useState(false);
+  const [fetchingCustomers, setFetchingCustomers] = useState(false);
+  const [showReferralName, setShowReferralName] = useState(false);
+  const [customCategories, setCustomCategories] = useState([]);
+  const [categoryOtherInputs, setCategoryOtherInputs] = useState({}); // Track "Other" inputs per item index
+  const [customCustomerSources, setCustomCustomerSources] = useState([]);
+  const [showCustomerSourceOtherInput, setShowCustomerSourceOtherInput] = useState(false);
+  const [customerSourceOtherValue, setCustomerSourceOtherValue] = useState('');
+  const [customRegions, setCustomRegions] = useState([]);
+  const [showRegionOtherInput, setShowRegionOtherInput] = useState(false);
+  const [regionOtherValue, setRegionOtherValue] = useState('');
+  const [editingJobId, setEditingJobId] = useState(null);
 
   // Job type configurations
   const jobTypeConfig = {
@@ -152,19 +168,6 @@ useEffect(() => {
   }
 }, [statusModalVisible, jobBeingUpdated, statusForm]);
 
-useEffect(() => {
-  if (invoiceModalVisible && viewingJob) {
-    invoiceForm.resetFields();
-    const dueDate = dayjs().add(30, 'days');
-    invoiceForm.setFieldsValue({
-      dueDate,
-      paymentTerms: 'Net 30',
-      taxRate: 0,
-      discountType: 'fixed',
-      discountValue: 0
-    });
-  }
-}, [invoiceModalVisible, viewingJob, invoiceForm]);
 
   const fetchTeamMembers = async () => {
     try {
@@ -195,9 +198,56 @@ useEffect(() => {
     }
   };
 
+  // Check if coming from dashboard with openModal flag
+  useEffect(() => {
+    if (location.state?.openModal) {
+      // Clear the state to prevent reopening on refresh
+      navigate(location.pathname, { replace: true, state: {} });
+      // Open the job modal after a short delay
+      setTimeout(() => {
+        handleAddJob();
+      }, 100);
+    }
+  }, [location.state]);
+
   const handleCloseDrawer = () => {
     setDrawerVisible(false);
     setViewingJob(null);
+  };
+
+  const handleMarkAsPaid = async (job) => {
+    try {
+      setMarkingAsPaid(true);
+      // Find the invoice for this job
+      const invoice = jobInvoices[job.id];
+      
+      if (!invoice) {
+        message.error('No invoice found for this job. Please generate an invoice first.');
+        return;
+      }
+
+      // Update invoice to paid status
+      await invoiceService.update(invoice.id, {
+        status: 'paid',
+        amountPaid: invoice.totalAmount,
+        paidDate: new Date().toISOString()
+      });
+
+      message.success(`Invoice ${invoice.invoiceNumber} marked as paid!`);
+      
+      // Refresh job invoices
+      await checkJobInvoice(job.id);
+      invalidateJobs();
+      
+      // Refresh drawer if viewing this job
+      if (drawerVisible && viewingJob?.id === job.id) {
+        await refreshJobDetails(job.id);
+      }
+    } catch (error) {
+      message.error(error.error || 'Failed to mark invoice as paid');
+    } finally {
+      setMarkingAsPaid(false);
+    }
   };
 
   const checkJobInvoice = async (jobId) => {
@@ -236,6 +286,7 @@ useEffect(() => {
     const jobId = jobBeingAssigned.id;
 
     try {
+      setUpdatingAssignment(true);
       await jobService.update(jobId, { assignedTo: assignedTo || null });
       message.success(assignedTo ? 'Job assigned successfully' : 'Job assignment cleared');
       closeAssignModal();
@@ -250,6 +301,8 @@ useEffect(() => {
       }
     } catch (error) {
       message.error(error.error || 'Failed to update job assignment');
+    } finally {
+      setUpdatingAssignment(false);
     }
   };
 
@@ -309,6 +362,7 @@ useEffect(() => {
     const jobId = jobBeingUpdated.id;
 
     try {
+      setUpdatingStatus(true);
       await jobService.update(jobId, {
         status,
         statusComment: statusComment || undefined
@@ -326,44 +380,21 @@ useEffect(() => {
       }
     } catch (error) {
       message.error(error.error || 'Failed to update job status');
+    } finally {
+      setUpdatingStatus(false);
     }
   };
 
-  const handleGenerateInvoice = (job) => {
-    setViewingJob(job);
-    setInvoiceModalVisible(true);
-  };
 
-  const handleInvoiceSubmit = async (values) => {
-    try {
-      const invoiceData = {
-        jobId: viewingJob.id,
-        dueDate: values.dueDate.format('YYYY-MM-DD'),
-        paymentTerms: values.paymentTerms,
-        taxRate: values.taxRate || 0,
-        discountType: values.discountType || 'fixed',
-        discountValue: values.discountValue || 0,
-        notes: values.notes,
-        termsAndConditions: values.termsAndConditions
-      };
-
-      await invoiceService.create(invoiceData);
-      message.success('Invoice generated successfully');
-      setInvoiceModalVisible(false);
-      
-      // Navigate to invoices page
-      navigate('/invoices');
-    } catch (error) {
-      message.error(error.error || 'Failed to generate invoice');
-    }
-  };
 
   const handleAddJob = async () => {
+    setEditingJobId(null);
     form.resetFields();
     setSelectedJobType(null);
     setSelectedCustomer(null);
     setSelectedTemplates({});
     setCustomJobType('');
+    setCategoryOtherInputs({}); // Clear category "Other" inputs
     await fetchTeamMembers();
     setModalVisible(true);
     
@@ -371,26 +402,320 @@ useEffect(() => {
     await fetchCustomersAndTemplates();
   };
 
-  const fetchCustomersAndTemplates = async () => {
+  const handleEdit = async (job) => {
     try {
-      const [customersResponse, templatesResponse] = await Promise.all([
+      setEditingJobId(job.id);
+      
+      // Fetch full job details with items
+      const jobDetails = await jobService.getById(job.id);
+      const jobData = jobDetails.data || jobDetails;
+      
+      // Fetch customers and templates first and get the data directly
+      const { customersData, templatesData } = await fetchCustomersAndTemplates();
+      await fetchTeamMembers();
+      
+      // Set customer
+      if (jobData.customerId) {
+        const customer = customersData.find(c => c.id === jobData.customerId) || 
+                        (jobDetails.data?.customer || jobData.customer);
+        if (customer) {
+          setSelectedCustomer(customer);
+          handleCustomerChange(jobData.customerId);
+        }
+      }
+      
+      // Set job type
+      if (jobData.jobType) {
+        setSelectedJobType(jobData.jobType);
+      }
+      
+      // Format dates for form
+      const formData = {
+        ...jobData,
+        customerId: jobData.customerId,
+        startDate: jobData.startDate ? dayjs(jobData.startDate) : null,
+        dueDate: jobData.dueDate ? dayjs(jobData.dueDate) : null,
+        assignedTo: jobData.assignedTo || null,
+        items: jobData.items || []
+      };
+      
+      // Set form values
+      form.setFieldsValue(formData);
+      
+      // Set selected templates for items
+      if (jobData.items && jobData.items.length > 0) {
+        const templates = {};
+        jobData.items.forEach((item, index) => {
+          // Try to find matching template
+          const matchingTemplate = templatesData.find(t => 
+            t.category === item.category && 
+            t.materialType === item.materialType
+          );
+          if (matchingTemplate) {
+            templates[index] = matchingTemplate;
+          }
+        });
+        setSelectedTemplates(templates);
+      }
+      
+      setModalVisible(true);
+    } catch (error) {
+      message.error('Failed to load job details');
+      console.error('Error loading job:', error);
+      setEditingJobId(null);
+    }
+  };
+
+  const fetchCustomersAndTemplates = async () => {
+    setFetchingCustomers(true);
+    try {
+      const [customersResponse, templatesResponse, customCategoriesResponse] = await Promise.all([
         customerService.getAll({ limit: 100 }),
-        pricingService.getAll({ limit: 100, isActive: 'true' })
+        pricingService.getAll({ limit: 100, isActive: 'true' }),
+        customDropdownService.getCustomOptions('job_category')
       ]);
-      setCustomers(customersResponse.data || []);
-      setPricingTemplates(templatesResponse.data || []);
+      const customersData = customersResponse.data || [];
+      const templatesData = templatesResponse.data || [];
+      setCustomers(customersData);
+      setPricingTemplates(templatesData);
+      setCustomCategories(customCategoriesResponse || []);
+      return { customersData, templatesData };
     } catch (error) {
       message.error('Failed to load data');
+      return { customersData: [], templatesData: [] };
+    } finally {
+      setFetchingCustomers(false);
+    }
+  };
+
+  // Load custom categories, customer sources, and regions on mount
+  useEffect(() => {
+    const loadCustomOptions = async () => {
+      try {
+        const [categories, sources, regions] = await Promise.all([
+          customDropdownService.getCustomOptions('job_category'),
+          customDropdownService.getCustomOptions('customer_source'),
+          customDropdownService.getCustomOptions('region')
+        ]);
+        setCustomCategories(categories || []);
+        setCustomCustomerSources(sources || []);
+        setCustomRegions(regions || []);
+      } catch (error) {
+        console.error('Failed to load custom options:', error);
+      }
+    };
+    loadCustomOptions();
+  }, []);
+
+  // Handle category change (including "Other")
+  const handleCategoryChange = async (value, itemIndex) => {
+    if (value === '__OTHER__') {
+      // Show input for custom category
+      setCategoryOtherInputs(prev => ({ ...prev, [itemIndex]: '' }));
+    } else {
+      // Hide input if not "Other"
+      setCategoryOtherInputs(prev => {
+        const newState = { ...prev };
+        delete newState[itemIndex];
+        return newState;
+      });
+    }
+  };
+
+  // Save custom category
+  const handleSaveCustomCategory = async (customValue, itemIndex) => {
+    if (!customValue || !customValue.trim()) {
+      message.warning('Please enter a category name');
+      return;
+    }
+
+    try {
+      const saved = await customDropdownService.saveCustomOption('job_category', customValue.trim());
+      if (saved) {
+        // Add to custom categories
+        setCustomCategories(prev => {
+          if (prev.find(c => c.value === saved.value)) {
+            return prev;
+          }
+          return [...prev, saved];
+        });
+        
+        // Set the category value in the form
+        const items = form.getFieldValue('items') || [];
+        items[itemIndex] = { ...items[itemIndex], category: saved.value };
+        form.setFieldValue('items', items);
+        
+        // Clear the "Other" input
+        setCategoryOtherInputs(prev => {
+          const newState = { ...prev };
+          delete newState[itemIndex];
+          return newState;
+        });
+        
+        message.success(`"${saved.label}" added to categories`);
+      }
+    } catch (error) {
+      message.error(error.response?.data?.error || 'Failed to save custom category');
     }
   };
 
   const handleAddNewCustomer = () => {
     customerForm.resetFields();
+    setShowReferralName(false);
+    setShowCustomerSourceOtherInput(false);
+    setCustomerSourceOtherValue('');
+    setShowRegionOtherInput(false);
+    setRegionOtherValue('');
     setCustomerModalVisible(true);
+  };
+
+  const handleHowDidYouHearChange = (value) => {
+    if (value === '__OTHER__') {
+      setShowCustomerSourceOtherInput(true);
+      setShowReferralName(false);
+      customerForm.setFieldsValue({ referralName: undefined });
+    } else {
+      setShowCustomerSourceOtherInput(false);
+      setShowReferralName(value === 'Referral');
+      if (value !== 'Referral') {
+        customerForm.setFieldsValue({ referralName: undefined });
+      }
+    }
+  };
+
+  // Save custom customer source
+  const handleSaveCustomCustomerSource = async () => {
+    if (!customerSourceOtherValue || !customerSourceOtherValue.trim()) {
+      message.warning('Please enter a source name');
+      return;
+    }
+
+    try {
+      const saved = await customDropdownService.saveCustomOption('customer_source', customerSourceOtherValue.trim());
+      if (saved) {
+        // Add to custom sources
+        setCustomCustomerSources(prev => {
+          if (prev.find(s => s.value === saved.value)) {
+            return prev;
+          }
+          return [...prev, saved];
+        });
+        
+        // Set the value in the form
+        customerForm.setFieldValue('howDidYouHear', saved.value);
+        
+        // Clear the "Other" input
+        setShowCustomerSourceOtherInput(false);
+        setCustomerSourceOtherValue('');
+        
+        message.success(`"${saved.label}" added to sources`);
+      }
+    } catch (error) {
+      message.error(error.response?.data?.error || 'Failed to save custom source');
+    }
+  };
+
+  // Handle region change (including "Other")
+  const handleRegionChange = (value) => {
+    if (value === '__OTHER__') {
+      setShowRegionOtherInput(true);
+    } else {
+      setShowRegionOtherInput(false);
+    }
+  };
+
+  // Save custom region
+  const handleSaveCustomRegion = async () => {
+    if (!regionOtherValue || !regionOtherValue.trim()) {
+      message.warning('Please enter a region name');
+      return;
+    }
+
+    try {
+      const saved = await customDropdownService.saveCustomOption('region', regionOtherValue.trim());
+      if (saved) {
+        // Add to custom regions
+        setCustomRegions(prev => {
+          if (prev.find(r => r.value === saved.value)) {
+            return prev;
+          }
+          return [...prev, saved];
+        });
+        
+        // Set the value in the form
+        customerForm.setFieldValue('state', saved.value);
+        
+        // Clear the "Other" input
+        setShowRegionOtherInput(false);
+        setRegionOtherValue('');
+        
+        message.success(`"${saved.label}" added to regions`);
+      }
+    } catch (error) {
+      message.error(error.response?.data?.error || 'Failed to save custom region');
+    }
+  };
+
+  // Get merged region options
+  const getMergedRegionOptions = () => {
+    const defaultRegions = [
+      'Greater Accra', 'Ashanti', 'Western', 'Western North', 'Central', 'Eastern',
+      'Volta', 'Oti', 'Bono', 'Bono East', 'Ahafo', 'Northern', 'Savannah',
+      'North East', 'Upper East', 'Upper West'
+    ];
+    const merged = [...defaultRegions];
+    customRegions.forEach(region => {
+      if (!merged.includes(region.value)) {
+        merged.push(region.value);
+      }
+    });
+    return merged;
   };
 
   const handleCustomerSubmit = async (values) => {
     try {
+      setSubmittingCustomer(true);
+      
+      // If "Other" is selected for howDidYouHear, save the custom value first
+      if (values.howDidYouHear === '__OTHER__') {
+        if (!customerSourceOtherValue || !customerSourceOtherValue.trim()) {
+          message.error('Please enter and save a custom source before submitting');
+          setSubmittingCustomer(false);
+          return;
+        }
+        // Save the custom source and update the form value
+        const saved = await customDropdownService.saveCustomOption('customer_source', customerSourceOtherValue.trim());
+        if (saved) {
+          values.howDidYouHear = saved.value;
+          setCustomCustomerSources(prev => {
+            if (prev.find(s => s.value === saved.value)) {
+              return prev;
+            }
+            return [...prev, saved];
+          });
+        }
+      }
+      
+      // If "Other" is selected for region, save the custom value first
+      if (values.state === '__OTHER__') {
+        if (!regionOtherValue || !regionOtherValue.trim()) {
+          message.error('Please enter and save a custom region before submitting');
+          setSubmittingCustomer(false);
+          return;
+        }
+        // Save the custom region and update the form value
+        const saved = await customDropdownService.saveCustomOption('region', regionOtherValue.trim());
+        if (saved) {
+          values.state = saved.value;
+          setCustomRegions(prev => {
+            if (prev.find(r => r.value === saved.value)) {
+              return prev;
+            }
+            return [...prev, saved];
+          });
+        }
+      }
+      
       const response = await customerService.create(values);
       message.success('Customer created successfully');
       setCustomerModalVisible(false);
@@ -406,6 +731,8 @@ useEffect(() => {
       }
     } catch (error) {
       message.error(error.error || 'Failed to create customer');
+    } finally {
+      setSubmittingCustomer(false);
     }
   };
 
@@ -626,6 +953,7 @@ useEffect(() => {
 
   const handleSubmit = async (values) => {
     try {
+      setSubmittingJob(true);
       // Calculate total from items (with discounts)
       let calculatedTotal = 0;
       if (values.items && values.items.length > 0) {
@@ -655,24 +983,24 @@ useEffect(() => {
           const discount = parseFloat(item.discountAmount || 0);
           return sum + (subtotal - discount);
         }, 0);
-        
-        // Copy job description to each item if item description is empty
-        values.items = values.items.map(item => ({
-          ...item,
-          description: item.description || values.description || item.category
-        }));
       }
 
-      const finalJobType = values.jobType === 'Other' && values.customJobType
-        ? values.customJobType.trim()
-        : values.jobType;
+      // Auto-generate job title from items if not provided
+      if (!values.title && values.items && values.items.length > 0) {
+        const customer = customers.find(c => c.id === values.customerId);
+        const customerName = customer?.name || customer?.company || 'Customer';
+        const categories = values.items.map(item => item.category).filter(Boolean);
+        const uniqueCategories = [...new Set(categories)];
+        values.title = uniqueCategories.length > 0 
+          ? `${uniqueCategories.join(', ')} for ${customerName}`
+          : `Job for ${customerName}`;
+      }
 
-      values.jobType = finalJobType;
-      delete values.customJobType;
-
-      if (!values.jobType) {
-        message.error('Please specify the job type');
-        return;
+      // Set jobType to first item's category for compatibility
+      if (values.items && values.items.length > 0) {
+        values.jobType = values.items[0].category || 'Other';
+      } else {
+        values.jobType = 'Other';
       }
 
       // Format dates
@@ -683,16 +1011,29 @@ useEffect(() => {
         finalPrice: calculatedTotal || values.finalPrice || 0,
       };
 
-      const response = await jobService.create(jobData);
-      
-      // Check if invoice was auto-generated
-      if (response.invoice) {
-        message.success(`Job created successfully! Invoice ${response.invoice.invoiceNumber} was automatically generated.`, 5);
+      let response;
+      if (editingJobId) {
+        // Update existing job
+        response = await jobService.update(editingJobId, jobData);
+        message.success('Job updated successfully');
       } else {
-      message.success('Job created successfully');
+        // Create new job
+        response = await jobService.create(jobData);
+        
+        // Check if invoice was auto-generated
+        if (response.invoice) {
+          message.success({
+            content: `Job created successfully! Invoice ${response.invoice.invoiceNumber} automatically generated.`,
+            duration: 5,
+            onClick: () => navigate('/invoices', { state: { openInvoiceId: response.invoice.id } })
+          });
+        } else {
+          message.success('Job created successfully');
+        }
       }
       
       setModalVisible(false);
+      setEditingJobId(null);
       setSelectedJobType(null);
       setSelectedCustomer(null);
       setSelectedTemplates({});
@@ -700,6 +1041,8 @@ useEffect(() => {
       invalidateJobs();
     } catch (error) {
       message.error(error.error || 'Failed to create job');
+    } finally {
+      setSubmittingJob(false);
     }
   };
 
@@ -792,6 +1135,11 @@ useEffect(() => {
           record={record}
           extraActions={[
             {
+              label: 'Edit Job',
+              onClick: () => handleEdit(record),
+              icon: <EditOutlined />
+            },
+            {
               label: record.assignedUser ? 'Reassign Job' : 'Assign Job',
               onClick: () => openAssignModal(record),
               icon: <UserOutlined />
@@ -801,10 +1149,15 @@ useEffect(() => {
               onClick: () => openStatusModal(record),
               icon: <ClockCircleOutlined />
             },
-            !jobInvoices[record.id] && {
-              label: 'Generate Invoice',
-              onClick: () => handleGenerateInvoice(record),
+            jobInvoices[record.id] && {
+              label: 'View Invoice',
+              onClick: () => navigate('/invoices', { state: { openInvoiceId: jobInvoices[record.id].id } }),
               icon: <FileTextOutlined />
+            },
+            jobInvoices[record.id] && jobInvoices[record.id].status !== 'paid' && {
+              label: 'Mark as Paid',
+              onClick: () => handleMarkAsPaid(record),
+              icon: <DollarOutlined />
             }
           ].filter(Boolean)}
         />
@@ -871,6 +1224,40 @@ useEffect(() => {
         title="Job Details"
         width={700}
         showActions={false}
+        extra={viewingJob && (
+          <Space wrap>
+            <Button 
+              icon={<UserOutlined />}
+              onClick={() => openAssignModal(viewingJob)}
+            >
+              {viewingJob.assignedUser ? 'Reassign' : 'Assign'}
+            </Button>
+            <Button 
+              icon={<ClockCircleOutlined />}
+              onClick={() => openStatusModal(viewingJob)}
+            >
+              Update Status
+            </Button>
+            {jobInvoices[viewingJob.id] && (
+              <Button 
+                icon={<FileTextOutlined />}
+                onClick={() => navigate('/invoices', { state: { openInvoiceId: jobInvoices[viewingJob.id].id } })}
+              >
+                View Invoice
+              </Button>
+            )}
+            {jobInvoices[viewingJob.id] && jobInvoices[viewingJob.id].status !== 'paid' && (
+              <Button 
+                type="primary"
+                icon={<DollarOutlined />}
+                onClick={() => handleMarkAsPaid(viewingJob)}
+                loading={markingAsPaid}
+              >
+                Mark as Paid
+              </Button>
+            )}
+          </Space>
+        )}
         tabs={viewingJob ? [
           {
             key: 'details',
@@ -962,14 +1349,12 @@ useEffect(() => {
                           <Button 
                             type="primary" 
                             icon={<FileTextOutlined />}
-                            onClick={() => handleGenerateInvoice(viewingJob)}
+                            onClick={() => navigate('/invoices')}
                           >
-                            Generate Invoice
+                            View Invoice
                           </Button>
                           <div style={{ fontSize: 12, color: '#999' }}>
-                            {viewingJob.status === 'completed' 
-                              ? 'Create invoice for completed job' 
-                              : 'Create proforma/advance invoice'}
+                            Invoice automatically generated
                           </div>
                         </Space>
                       );
@@ -982,7 +1367,7 @@ useEffect(() => {
                         <Button 
                           size="small"
                           onClick={() => {
-                            navigate('/invoices');
+                            navigate('/invoices', { state: { openInvoiceId: invoice.id } });
                             handleCloseDrawer();
                           }}
                         >
@@ -1200,12 +1585,17 @@ useEffect(() => {
       />
 
       <Modal
-        title="Add New Job"
+        title={editingJobId ? "Edit Job" : "Add New Job"}
         open={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={() => {
+          setModalVisible(false);
+          setEditingJobId(null);
+          setCategoryOtherInputs({}); // Clear category "Other" inputs
+        }}
         onOk={() => form.submit()}
         width={1000}
-        okText="Create Job"
+        okText={editingJobId ? "Update Job" : "Create Job"}
+        confirmLoading={submittingJob}
         style={{ top: 20 }}
         bodyStyle={{
           maxHeight: '70vh',
@@ -1262,88 +1652,16 @@ useEffect(() => {
             </Col>
             <Col span={12}>
               <Form.Item
-                name="jobType"
-                label="Job Type"
-                rules={[{ required: true, message: 'Please select job type' }]}
-              >
-                <Select 
-                  placeholder="Select job type" 
-                  size="large"
-                  onChange={handleJobTypeChange}
-                  disabled={!selectedCustomer}
-                >
-                  <Select.OptGroup label="Instant Service (No dates needed)">
-                    <Option value="Photocopying">Photocopying</Option>
-                    <Option value="Scanning">Scanning</Option>
-                    <Option value="Printing">Printing</Option>
-                    <Option value="Lamination">Lamination</Option>
-                    <Option value="Binding">Binding</Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Standard Printing">
-                    <Option value="Business Cards">Business Cards</Option>
-                    <Option value="Flyers">Flyers</Option>
-                    <Option value="Brochures">Brochures</Option>
-                    <Option value="Posters">Posters</Option>
-                    <Option value="Booklets">Booklets</Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Large Format">
-                    <Option value="Large Format Printing">Large Format Printing</Option>
-                    <Option value="Banners">Banners</Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Design & Custom">
-                    <Option value="Design & Print">Design & Print</Option>
-                    <Option value="Design Services">Design Services</Option>
-                    <Option value="Custom Work">Custom Work</Option>
-                    <Option value="Other">Other</Option>
-                  </Select.OptGroup>
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-
-          {selectedJobType === 'Other' && (
-            <Row gutter={16}>
-              <Col span={24}>
-                <Form.Item
-                  name="customJobType"
-                  label="Describe Job Type"
-                  rules={[{ required: true, message: 'Please describe the job type' }]}
-                >
-                  <Input
-                    placeholder="e.g., Vehicle Wrap Design"
-                    size="large"
-                    onChange={handleCustomJobTypeChange}
-                  />
-                </Form.Item>
-              </Col>
-            </Row>
-          )}
-
-          <Row gutter={16}>
-            <Col span={24}>
-              <Form.Item
                 name="title"
-                label="Job Title (Auto-generated, editable)"
-                rules={[{ required: true, message: 'Please enter job title' }]}
+                label="Job Title (Auto-generated from items, editable)"
               >
-                <Input placeholder="Will be auto-filled when you select job type" size="large" />
+                <Input placeholder="Will auto-generate based on items added" size="large" />
               </Form.Item>
             </Col>
           </Row>
 
           <Row gutter={16}>
-            <Col span={24}>
-              <Form.Item
-                name="description"
-                label="Job Description (Auto-generated, editable)"
-              >
-                <TextArea rows={3} placeholder="Will be auto-filled when you select job type" size="large" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col span={selectedJobType && getJobTypeCategory(selectedJobType).hideFields.includes('priority') ? 24 : 12}>
+            <Col span={12}>
               <Form.Item
                 name="status"
                 label="Status"
@@ -1358,52 +1676,48 @@ useEffect(() => {
                 </Select>
               </Form.Item>
             </Col>
-            {(!selectedJobType || !getJobTypeCategory(selectedJobType).hideFields.includes('priority')) && (
-              <Col span={12}>
-                <Form.Item
-                  name="priority"
-                  label="Priority"
-                  rules={[{ required: true, message: 'Please select priority' }]}
-                >
-                  <Select placeholder="Select priority" size="large">
-                    <Option value="low">Low</Option>
-                    <Option value="medium">Medium</Option>
-                    <Option value="high">High</Option>
-                    <Option value="urgent">Urgent</Option>
-                  </Select>
-                </Form.Item>
-              </Col>
-            )}
+            <Col span={12}>
+              <Form.Item
+                name="priority"
+                label="Priority"
+                rules={[{ required: true, message: 'Please select priority' }]}
+              >
+                <Select placeholder="Select priority" size="large">
+                  <Option value="low">Low</Option>
+                  <Option value="medium">Medium</Option>
+                  <Option value="high">High</Option>
+                  <Option value="urgent">Urgent</Option>
+                </Select>
+              </Form.Item>
+            </Col>
           </Row>
 
-          {(!selectedJobType || !getJobTypeCategory(selectedJobType).isInstant) && (
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item
-                  name="startDate"
-                  label="Start Date"
-                >
-                  <DatePicker 
-                    style={{ width: '100%' }} 
-                    size="large"
-                    format="YYYY-MM-DD"
-                  />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item
-                  name="dueDate"
-                  label="Due Date"
-                >
-                  <DatePicker 
-                    style={{ width: '100%' }} 
-                    size="large"
-                    format="YYYY-MM-DD"
-                  />
-                </Form.Item>
-              </Col>
-            </Row>
-          )}
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="startDate"
+                label="Start Date"
+              >
+                <DatePicker 
+                  style={{ width: '100%' }} 
+                  size="large"
+                  format="YYYY-MM-DD"
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="dueDate"
+                label="Due Date"
+              >
+                <DatePicker 
+                  style={{ width: '100%' }} 
+                  size="large"
+                  format="YYYY-MM-DD"
+                />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Row gutter={16}>
             <Col span={24}>
@@ -1444,9 +1758,9 @@ useEffect(() => {
                     {pricingTemplates.length > 0 && (
                       <Row gutter={16} style={{ marginBottom: 16 }}>
                         <Col span={24}>
-                          <Form.Item label="Apply Pricing Template">
+                          <Form.Item label="Select Pricing Template (Optional)">
                             <Select
-                              placeholder="Select a pricing template to auto-fill prices"
+                              placeholder="Select a pricing template to auto-fill"
                               style={{ width: '100%' }}
                               size="large"
                               allowClear
@@ -1477,352 +1791,228 @@ useEffect(() => {
                       </Row>
                     )}
 
-                    <Row gutter={16}>
-                      <Col span={12}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'category']}
-                          label="Category"
-                          rules={[{ required: true, message: 'Please select category' }]}
-                        >
-                          <Select placeholder="Select category" size="large">
-                            <Option value="Black & White Printing">Black & White Printing</Option>
-                            <Option value="Color Printing">Color Printing</Option>
-                            <Option value="Large Format Printing">Large Format Printing</Option>
-                            <Option value="Business Cards">Business Cards</Option>
-                            <Option value="Brochures">Brochures</Option>
-                            <Option value="Flyers">Flyers</Option>
-                            <Option value="Posters">Posters</Option>
-                            <Option value="Banners">Banners</Option>
-                            <Option value="Booklets">Booklets</Option>
-                            <Option value="Binding">Binding</Option>
-                            <Option value="Lamination">Lamination</Option>
-                            <Option value="Photocopying">Photocopying</Option>
-                            <Option value="Scanning">Scanning</Option>
-                            <Option value="Printing">Printing</Option>
-                            <Option value="Design Services">Design Services</Option>
-                          <Option value="Design & Print">Design & Print</Option>
-                            <Option value="Other">Other</Option>
-                          </Select>
-                        </Form.Item>
-                      </Col>
-                      <Col span={12}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'paperSize']}
-                          label="Paper Size"
-                        >
-                          <Select placeholder="Select paper size" size="large">
-                            <Option value="A4">A4 (210 x 297mm)</Option>
-                            <Option value="A3">A3 (297 x 420mm)</Option>
-                            <Option value="A5">A5 (148 x 210mm)</Option>
-                            <Option value="Letter">Letter (8.5 x 11 in)</Option>
-                            <Option value="Legal">Legal (8.5 x 14 in)</Option>
-                            <Option value="Tabloid">Tabloid (11 x 17 in)</Option>
-                            <Option value="Custom">Custom Size</Option>
-                            <Option value="N/A">N/A</Option>
-                          </Select>
-                        </Form.Item>
-                      </Col>
-                    </Row>
-
-                    {/* Show different fields based on pricing method */}
-                    <Form.Item shouldUpdate={(prevValues, currentValues) => {
-                      const prevItems = prevValues.items || [];
-                      const currentItems = currentValues.items || [];
-                      const prevItem = prevItems[name];
-                      const currentItem = currentItems[name];
-                      return prevItem?.pricingMethod !== currentItem?.pricingMethod ||
-                             prevItem?.itemHeight !== currentItem?.itemHeight ||
-                             prevItem?.itemWidth !== currentItem?.itemWidth ||
-                             prevItem?.itemUnit !== currentItem?.itemUnit ||
-                             prevItem?.pricePerSquareFoot !== currentItem?.pricePerSquareFoot;
-                    }}>
+                    <Form.Item shouldUpdate noStyle>
                       {({ getFieldValue }) => {
                         const items = getFieldValue('items') || [];
                         const currentItem = items[name] || {};
-                        const template = selectedTemplates[name];
-                        const isSquareFootPricing = currentItem.pricingMethod === 'square_foot' || 
-                                                   (template && (template.pricingMethod === 'square_foot' || 
-                                                   ['SAV (Self-Adhesive Vinyl)', 'Banner', 'One Way Vision'].includes(template.materialType)));
+                        const hasTemplate = selectedTemplates[name];
                         
-                        if (isSquareFootPricing) {
-                          // Square foot pricing - show height, width, unit inputs
-                          const height = parseFloat(currentItem.itemHeight || 0);
-                          const width = parseFloat(currentItem.itemWidth || 0);
-                          const unit = currentItem.itemUnit || 'feet';
-                          const pricePerSqft = parseFloat(currentItem.pricePerSquareFoot || template?.pricePerSquareFoot || 0);
-                          
-                          let calculatedPrice = 0;
-                          if (height && width && pricePerSqft) {
-                            if (unit === 'feet') {
-                              calculatedPrice = height * width * pricePerSqft;
-                            } else if (unit === 'inches') {
-                              calculatedPrice = (height * width * pricePerSqft) / 144;
-                            }
-                          }
-                          
-                          return (
-                            <>
-                              <Row gutter={16}>
-                                <Col span={6}>
-                                  <Form.Item
-                                    {...restField}
-                                    name={[name, 'itemHeight']}
-                                    label="Height"
-                                    rules={[{ required: true, message: 'Required' }]}
-                                  >
-                                    <InputNumber
-                                      style={{ width: '100%' }}
-                                      placeholder="Enter height"
-                                      min={0}
-                                      precision={2}
-                                      size="large"
-                                      onChange={() => {
-                                        // Recalculate price when dimensions change
-                                        const items = form.getFieldValue('items') || [];
-                                        const item = items[name] || {};
-                                        const h = parseFloat(item.itemHeight || 0);
-                                        const w = parseFloat(item.itemWidth || 0);
-                                        const u = item.itemUnit || 'feet';
-                                        const psf = parseFloat(item.pricePerSquareFoot || template?.pricePerSquareFoot || 0);
-                                        
-                                        let price = 0;
-                                        if (h && w && psf) {
-                                          price = u === 'feet' ? h * w * psf : (h * w * psf) / 144;
-                                        }
-                                        
-                                        const updatedItems = [...items];
-                                        updatedItems[name] = { ...item, unitPrice: price };
-                                        form.setFieldsValue({ items: updatedItems });
-                                      }}
-                                    />
-                                  </Form.Item>
-                                </Col>
-                                <Col span={6}>
-                                  <Form.Item
-                                    {...restField}
-                                    name={[name, 'itemWidth']}
-                                    label="Width/Length"
-                                    rules={[{ required: true, message: 'Required' }]}
-                                  >
-                                    <InputNumber
-                                      style={{ width: '100%' }}
-                                      placeholder="Enter width"
-                                      min={0}
-                                      precision={2}
-                                      size="large"
-                                      onChange={() => {
-                                        const items = form.getFieldValue('items') || [];
-                                        const item = items[name] || {};
-                                        const h = parseFloat(item.itemHeight || 0);
-                                        const w = parseFloat(item.itemWidth || 0);
-                                        const u = item.itemUnit || 'feet';
-                                        const psf = parseFloat(item.pricePerSquareFoot || template?.pricePerSquareFoot || 0);
-                                        
-                                        let price = 0;
-                                        if (h && w && psf) {
-                                          price = u === 'feet' ? h * w * psf : (h * w * psf) / 144;
-                                        }
-                                        
-                                        const updatedItems = [...items];
-                                        updatedItems[name] = { ...item, unitPrice: price };
-                                        form.setFieldsValue({ items: updatedItems });
-                                      }}
-                                    />
-                                  </Form.Item>
-                                </Col>
-                                <Col span={6}>
-                                  <Form.Item
-                                    {...restField}
-                                    name={[name, 'itemUnit']}
-                                    label="Unit"
-                                    rules={[{ required: true, message: 'Required' }]}
-                                    initialValue="feet"
-                                  >
-                                    <Select 
-                                      placeholder="Select unit" 
-                                      size="large"
-                                      onChange={() => {
-                                        const items = form.getFieldValue('items') || [];
-                                        const item = items[name] || {};
-                                        const h = parseFloat(item.itemHeight || 0);
-                                        const w = parseFloat(item.itemWidth || 0);
-                                        const u = item.itemUnit || 'feet';
-                                        const psf = parseFloat(item.pricePerSquareFoot || template?.pricePerSquareFoot || 0);
-                                        
-                                        let price = 0;
-                                        if (h && w && psf) {
-                                          price = u === 'feet' ? h * w * psf : (h * w * psf) / 144;
-                                        }
-                                        
-                                        const updatedItems = [...items];
-                                        updatedItems[name] = { ...item, unitPrice: price };
-                                        form.setFieldsValue({ items: updatedItems });
-                                      }}
-                                    >
-                                      <Option value="feet">Feet</Option>
-                                      <Option value="inches">Inches</Option>
-                                    </Select>
-                                  </Form.Item>
-                                </Col>
-                                <Col span={6}>
-                                  <Form.Item label="Calculated Price">
-                                    <div style={{ 
-                                      padding: '8px 11px', 
-                                      background: '#f0f9ff', 
-                                      border: '1px solid #91d5ff',
-                                      borderRadius: 4,
-                                      fontSize: 14,
-                                      fontWeight: 600,
-                                      color: '#1890ff',
-                                      height: 40,
-                                      display: 'flex',
-                                      alignItems: 'center'
-                                    }}>
-                                      GHS {calculatedPrice.toFixed(2)}
-                                    </div>
-                                  </Form.Item>
-                                </Col>
-                              </Row>
-                              {pricePerSqft > 0 && (
-                                <div style={{ marginTop: 8, fontSize: 12, color: '#666' }}>
-                                  Price per sqft: GHS {pricePerSqft.toFixed(2)} | 
-                                  {height && width && unit && (
-                                    <span> {height}{unit === 'feet' ? 'ft' : 'in'} × {width}{unit === 'feet' ? 'ft' : 'in'}{unit === 'inches' ? ' ÷ 144' : ''} = GHS {calculatedPrice.toFixed(2)}</span>
-                                  )}
-                                </div>
-                              )}
-                              {/* Hidden field to store calculated unitPrice */}
-                              <Form.Item {...restField} name={[name, 'unitPrice']} hidden>
-                                <InputNumber value={calculatedPrice} />
-                              </Form.Item>
-                              <Form.Item {...restField} name={[name, 'quantity']} hidden initialValue={1}>
-                                <InputNumber value={1} />
-                              </Form.Item>
-                              <Form.Item {...restField} name={[name, 'pricingMethod']} hidden initialValue="square_foot">
-                                <Input value="square_foot" />
-                              </Form.Item>
-                              <Form.Item {...restField} name={[name, 'pricePerSquareFoot']} hidden>
-                                <InputNumber value={pricePerSqft} />
-                              </Form.Item>
-                            </>
-                          );
-                        } else {
-                          // Standard unit-based pricing
+                        // Only show category dropdown if no template selected
+                        if (!hasTemplate && !currentItem.category) {
                           return (
                             <Row gutter={16}>
-                              <Col span={8}>
+                              <Col span={24}>
                                 <Form.Item
                                   {...restField}
-                                  name={[name, 'quantity']}
-                                  label="Quantity"
-                                  rules={[{ required: true, message: 'Required' }]}
-                                  initialValue={1}
+                                  name={[name, 'category']}
+                                  label="Category"
+                                  rules={[{ required: true, message: 'Please select category or use a pricing template' }]}
                                 >
-                                  <InputNumber
-                                    style={{ width: '100%' }}
-                                    placeholder="1"
-                                    min={1}
-                                    size="large"
-                                    onChange={(value) => handleQuantityChange(name, value)}
-                                  />
+                                  <Select 
+                                    placeholder="Select category" 
+                                    size="large" 
+                                    showSearch
+                                    onChange={(value) => handleCategoryChange(value, name)}
+                                  >
+                                    <Select.OptGroup label="Printing Services">
+                                      <Option value="Black & White Printing">Black & White Printing</Option>
+                                      <Option value="Color Printing">Color Printing</Option>
+                                      <Option value="Large Format Printing">Large Format Printing</Option>
+                                      <Option value="Photocopying">Photocopying</Option>
+                                    </Select.OptGroup>
+                                    <Select.OptGroup label="Print Products">
+                                      <Option value="Business Cards">Business Cards</Option>
+                                      <Option value="Brochures">Brochures</Option>
+                                      <Option value="Flyers">Flyers</Option>
+                                      <Option value="Posters">Posters</Option>
+                                      <Option value="Banners">Banners</Option>
+                                      <Option value="Booklets">Booklets</Option>
+                                    </Select.OptGroup>
+                                    <Select.OptGroup label="Finishing Services">
+                                      <Option value="Binding">Binding</Option>
+                                      <Option value="Lamination">Lamination</Option>
+                                      <Option value="Scanning">Scanning</Option>
+                                    </Select.OptGroup>
+                                    <Select.OptGroup label="Professional Services">
+                                      <Option value="Design Services">Design Services</Option>
+                                    </Select.OptGroup>
+                                    {customCategories.length > 0 && (
+                                      <Select.OptGroup label="Custom Categories">
+                                        {customCategories.map(cat => (
+                                          <Option key={cat.value} value={cat.value}>{cat.label}</Option>
+                                        ))}
+                                      </Select.OptGroup>
+                                    )}
+                                    <Select.OptGroup label="Other">
+                                      <Option value="__OTHER__">Other (specify)</Option>
+                                    </Select.OptGroup>
+                                  </Select>
                                 </Form.Item>
-                              </Col>
-                              <Col span={8}>
-                                <Form.Item
-                                  {...restField}
-                                  name={[name, 'unitPrice']}
-                                  label="Unit Price"
-                                  rules={[{ required: true, message: 'Required' }]}
-                                >
-                                  <InputNumber
-                                    style={{ width: '100%' }}
-                                    placeholder="0.00"
-                                    prefix="GHS "
-                                    min={0}
-                                    precision={2}
-                                    size="large"
-                                  />
-                                </Form.Item>
-                              </Col>
-                              <Col span={8}>
-                                <Form.Item shouldUpdate noStyle>
-                                  {() => {
-                                    const items = form.getFieldValue('items') || [];
-                                    const currentItem = items[name] || {};
-                                    const qty = parseFloat(currentItem.quantity || 1);
-                                    const price = parseFloat(currentItem.unitPrice || 0);
-                                    const discountAmount = parseFloat(currentItem.discountAmount || 0);
-                                    const subtotal = qty * price;
-                                    const total = subtotal - discountAmount;
-                                    
-                                    return (
-                                      <Form.Item label="Total">
-                                        <div style={{ 
-                                          padding: '8px 11px', 
-                                          background: '#fff', 
-                                          border: '1px solid #d9d9d9',
-                                          borderRadius: 4,
-                                          fontSize: 14,
-                                          fontWeight: 600,
-                                          color: '#000',
-                                          height: 40,
-                                          display: 'flex',
-                                          alignItems: 'center'
-                                        }}>
-                                          GHS {total.toFixed(2)}
-                                        </div>
-                                      </Form.Item>
-                                    );
-                                  }}
-                                </Form.Item>
+                                {categoryOtherInputs[name] !== undefined && (
+                                  <Form.Item
+                                    label="Enter Category Name"
+                                    style={{ marginTop: 8 }}
+                                  >
+                                    <Input.Group compact>
+                                      <Input
+                                        style={{ width: 'calc(100% - 80px)' }}
+                                        placeholder="e.g., T-shirt Printing"
+                                        value={categoryOtherInputs[name] || ''}
+                                        onChange={(e) => setCategoryOtherInputs(prev => ({ ...prev, [name]: e.target.value }))}
+                                        onPressEnter={() => handleSaveCustomCategory(categoryOtherInputs[name], name)}
+                                      />
+                                      <Button
+                                        type="primary"
+                                        style={{ width: 80 }}
+                                        onClick={() => handleSaveCustomCategory(categoryOtherInputs[name], name)}
+                                      >
+                                        Save
+                                      </Button>
+                                    </Input.Group>
+                                  </Form.Item>
+                                )}
                               </Col>
                             </Row>
+                          );
+                        } else {
+                          // Category is hidden when template is selected
+                          return (
+                            <Form.Item {...restField} name={[name, 'category']} hidden>
+                              <Input />
+                            </Form.Item>
                           );
                         }
                       }}
                     </Form.Item>
 
-                    {/* Discount and Total Breakdown */}
-                    <Form.Item shouldUpdate noStyle>
-                      {() => {
-                        const items = form.getFieldValue('items') || [];
-                        const currentItem = items[name] || {};
-                        const qty = parseFloat(currentItem.quantity || 1);
-                        const price = parseFloat(currentItem.unitPrice || 0);
-                        const discountPercent = parseFloat(currentItem.discountPercent || 0);
-                        const discountAmount = parseFloat(currentItem.discountAmount || 0);
-                        const subtotal = qty * price;
-                        const total = subtotal - discountAmount;
+                    <Row gutter={16}>
+                      <Col span={24}>
+                        <Form.Item
+                          {...restField}
+                          name={[name, 'description']}
+                          label="Item Description"
+                          rules={[{ required: true, message: 'Please enter item description' }]}
+                        >
+                          <Input 
+                            placeholder="e.g., Full color, double-sided, glossy finish" 
+                            size="large"
+                          />
+                        </Form.Item>
+                      </Col>
+                    </Row>
 
-                        if (discountAmount > 0) {
-                          return (
-                            <div style={{ 
-                              padding: '8px 10px', 
-                              background: '#f5f5f5', 
-                              borderRadius: 4,
-                              marginTop: 8,
-                              marginBottom: 8
-                            }}>
-                              <Row justify="space-between" style={{ marginBottom: 2 }}>
-                                <Col style={{ color: '#666', fontSize: 13 }}>Subtotal:</Col>
-                                <Col style={{ fontWeight: 500, fontSize: 13 }}>GHS {subtotal.toFixed(2)}</Col>
-                              </Row>
-                              <Row justify="space-between" style={{ marginBottom: 2 }}>
-                                <Col style={{ color: '#666', fontSize: 13 }}>Discount ({discountPercent}%):</Col>
-                                <Col style={{ fontWeight: 500, fontSize: 13 }}>-GHS {discountAmount.toFixed(2)}</Col>
-                              </Row>
-                              <Divider style={{ margin: '4px 0', borderColor: '#d9d9d9' }} />
-                              <Row justify="space-between">
-                                <Col style={{ fontSize: 14, fontWeight: 600 }}>Total:</Col>
-                                <Col style={{ fontSize: 14, fontWeight: 600, color: '#000' }}>GHS {total.toFixed(2)}</Col>
-                              </Row>
-                            </div>
-                          );
-                        }
-                        return null;
-                      }}
+                    {/* Hidden fields - populated by template */}
+                    <Form.Item {...restField} name={[name, 'paperSize']} hidden>
+                      <Input />
+                    </Form.Item>
+                    <Form.Item {...restField} name={[name, 'pricingMethod']} hidden>
+                      <Input />
+                    </Form.Item>
+                    <Form.Item {...restField} name={[name, 'itemHeight']} hidden>
+                      <InputNumber />
+                    </Form.Item>
+                    <Form.Item {...restField} name={[name, 'itemWidth']} hidden>
+                      <InputNumber />
+                    </Form.Item>
+                    <Form.Item {...restField} name={[name, 'itemUnit']} hidden>
+                      <Input />
+                    </Form.Item>
+                    <Form.Item {...restField} name={[name, 'pricePerSquareFoot']} hidden>
+                      <InputNumber />
+                    </Form.Item>
+
+                    {/* Only show the 4 essential fields + discount */}
+                    <Row gutter={16}>
+                      <Col span={6}>
+                        <Form.Item
+                          {...restField}
+                          name={[name, 'quantity']}
+                          label="Quantity"
+                          rules={[{ required: true, message: 'Required' }]}
+                          initialValue={1}
+                        >
+                          <InputNumber
+                            style={{ width: '100%' }}
+                            placeholder="1"
+                            min={1}
+                            size="large"
+                            onChange={(value) => handleQuantityChange(name, value)}
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        <Form.Item
+                          {...restField}
+                          name={[name, 'unitPrice']}
+                          label="Unit Price"
+                          rules={[{ required: true, message: 'Required' }]}
+                        >
+                          <InputNumber
+                            style={{ width: '100%' }}
+                            placeholder="0.00"
+                            prefix="GHS "
+                            min={0}
+                            precision={2}
+                            size="large"
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        <Form.Item
+                          {...restField}
+                          name={[name, 'discountAmount']}
+                          label="Discount"
+                        >
+                          <InputNumber
+                            style={{ width: '100%' }}
+                            placeholder="0.00"
+                            prefix="GHS "
+                            min={0}
+                            precision={2}
+                            size="large"
+                          />
+                        </Form.Item>
+                      </Col>
+                      <Col span={6}>
+                        <Form.Item shouldUpdate noStyle>
+                          {() => {
+                            const items = form.getFieldValue('items') || [];
+                            const currentItem = items[name] || {};
+                            const qty = parseFloat(currentItem.quantity || 1);
+                            const price = parseFloat(currentItem.unitPrice || 0);
+                            const discountAmount = parseFloat(currentItem.discountAmount || 0);
+                            const subtotal = qty * price;
+                            const total = subtotal - discountAmount;
+                            
+                            return (
+                              <Form.Item label="Total">
+                                <div style={{ 
+                                  padding: '8px 11px', 
+                                  background: '#fff', 
+                                  border: '1px solid #d9d9d9',
+                                  borderRadius: 4,
+                                  fontSize: 14,
+                                  fontWeight: 600,
+                                  color: '#000',
+                                  height: 40,
+                                  display: 'flex',
+                                  alignItems: 'center'
+                                }}>
+                                  GHS {total.toFixed(2)}
+                                </div>
+                              </Form.Item>
+                            );
+                          }}
+                        </Form.Item>
+                      </Col>
+                    </Row>
+
+                    {/* Hidden discount metadata fields - populated by template */}
+                    <Form.Item {...restField} name={[name, 'discountPercent']} hidden>
+                      <InputNumber />
+                    </Form.Item>
+                    <Form.Item {...restField} name={[name, 'discountReason']} hidden>
+                      <Input />
                     </Form.Item>
 
                     <Button 
@@ -1831,6 +2021,7 @@ useEffect(() => {
                       onClick={() => remove(name)} 
                       icon={<MinusCircleOutlined />}
                       block
+                      style={{ marginTop: '8px' }}
                     >
                       Remove Item
                     </Button>
@@ -1897,8 +2088,12 @@ useEffect(() => {
 
           <Row gutter={16}>
             <Col span={24}>
-              <Form.Item name="notes" label="Notes">
-                <TextArea rows={3} placeholder="Enter any additional notes" size="large" />
+              <Form.Item name="description" label="Special Instructions (Optional)">
+                <TextArea 
+                  rows={3} 
+                  placeholder="Add any special instructions for this job (e.g., Rush order, call before delivery, customer will pick up)" 
+                  size="large"
+                />
               </Form.Item>
             </Col>
           </Row>
@@ -1911,6 +2106,7 @@ useEffect(() => {
         onCancel={closeAssignModal}
         onOk={() => assignmentForm.submit()}
         okText="Save"
+        confirmLoading={updatingAssignment}
         destroyOnClose
       >
         <Form form={assignmentForm} layout="vertical" onFinish={handleAssignmentSubmit}>
@@ -1942,6 +2138,7 @@ useEffect(() => {
         onCancel={closeStatusModal}
         onOk={() => statusForm.submit()}
         okText="Update Status"
+        confirmLoading={updatingStatus}
         destroyOnClose
       >
         <Form form={statusForm} layout="vertical" onFinish={handleStatusSubmit}>
@@ -1967,125 +2164,21 @@ useEffect(() => {
         </Form>
       </Modal>
 
-      {/* Generate Invoice Modal */}
-      <Modal
-        title={viewingJob?.status === 'completed' ? 'Generate Invoice' : 'Generate Proforma/Advance Invoice'}
-        open={invoiceModalVisible}
-        onCancel={() => setInvoiceModalVisible(false)}
-        onOk={() => invoiceForm.submit()}
-        width={700}
-        okText="Generate Invoice"
-      >
-        {viewingJob && (
-          <>
-            <Alert
-              message={`Generating ${viewingJob.status === 'completed' ? 'invoice' : 'proforma/advance invoice'} for Job: ${viewingJob.jobNumber} - ${viewingJob.title}`}
-              description={viewingJob.status !== 'completed' ? 'This invoice can be used for customer approval or advance payment before job completion.' : null}
-              type={viewingJob.status === 'completed' ? 'info' : 'warning'}
-              style={{ marginBottom: 16 }}
-            />
-            <Form
-              form={invoiceForm}
-              layout="vertical"
-              onFinish={handleInvoiceSubmit}
-            >
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Form.Item
-                    name="dueDate"
-                    label="Due Date"
-                    rules={[{ required: true, message: 'Please select due date' }]}
-                  >
-                    <DatePicker 
-                      style={{ width: '100%' }}
-                      size="large"
-                      format="YYYY-MM-DD"
-                    />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item
-                    name="paymentTerms"
-                    label="Payment Terms"
-                    rules={[{ required: true, message: 'Please enter payment terms' }]}
-                  >
-                    <Select size="large">
-                      <Option value="Due on Receipt">Due on Receipt</Option>
-                      <Option value="Net 15">Net 15</Option>
-                      <Option value="Net 30">Net 30</Option>
-                      <Option value="Net 60">Net 60</Option>
-                      <Option value="Net 90">Net 90</Option>
-                    </Select>
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Row gutter={16}>
-                <Col span={8}>
-                  <Form.Item name="taxRate" label="Tax Rate (%)">
-                    <InputNumber
-                      style={{ width: '100%' }}
-                      placeholder="0"
-                      min={0}
-                      max={100}
-                      precision={2}
-                      size="large"
-                    />
-                  </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item name="discountType" label="Discount Type">
-                    <Select size="large">
-                      <Option value="fixed">Fixed Amount</Option>
-                      <Option value="percentage">Percentage</Option>
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item name="discountValue" label="Discount Value">
-                    <InputNumber
-                      style={{ width: '100%' }}
-                      placeholder="0"
-                      min={0}
-                      precision={2}
-                      size="large"
-                    />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Row gutter={16}>
-                <Col span={24}>
-                  <Form.Item name="notes" label="Invoice Notes">
-                    <TextArea rows={3} placeholder="Enter invoice notes" size="large" />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Row gutter={16}>
-                <Col span={24}>
-                  <Form.Item name="termsAndConditions" label="Terms & Conditions">
-                    <TextArea 
-                      rows={3} 
-                      placeholder="Enter terms and conditions" 
-                      size="large"
-                    />
-                  </Form.Item>
-                </Col>
-              </Row>
-            </Form>
-          </>
-        )}
-      </Modal>
-
       {/* Add New Customer Modal */}
       <Modal
         title="Add New Customer"
         open={customerModalVisible}
-        onCancel={() => setCustomerModalVisible(false)}
+        onCancel={() => {
+          setCustomerModalVisible(false);
+          setShowCustomerSourceOtherInput(false);
+          setCustomerSourceOtherValue('');
+          setShowRegionOtherInput(false);
+          setRegionOtherValue('');
+        }}
         onOk={() => customerForm.submit()}
         width={800}
         okText="Create Customer"
+        confirmLoading={submittingCustomer}
       >
         <Form
           form={customerForm}
@@ -2135,22 +2228,144 @@ useEffect(() => {
           </Row>
 
           <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item name="city" label="City">
-                <Input placeholder="Enter city" size="large" />
+            <Col span={12}>
+              <Form.Item name="city" label="Town">
+                <Input placeholder="e.g., Accra, Kumasi, Takoradi" size="large" />
               </Form.Item>
             </Col>
-            <Col span={8}>
-              <Form.Item name="state" label="State">
-                <Input placeholder="Enter state" size="large" />
+            <Col span={12}>
+              <Form.Item name="state" label="Region">
+                <Select 
+                  placeholder="Select region" 
+                  size="large" 
+                  showSearch
+                  onChange={handleRegionChange}
+                >
+                  {getMergedRegionOptions().map((region) => (
+                    <Select.Option key={region} value={region}>{region}</Select.Option>
+                  ))}
+                  <Select.Option value="__OTHER__">Other (specify)</Select.Option>
+                </Select>
               </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="zipCode" label="Zip Code">
-                <Input placeholder="Enter zip code" size="large" />
-              </Form.Item>
+              {showRegionOtherInput && (
+                <Form.Item
+                  label="Enter Region Name"
+                  style={{ marginTop: 8 }}
+                >
+                  <Input.Group compact>
+                    <Input
+                      style={{ width: 'calc(100% - 80px)' }}
+                      placeholder="e.g., New Region, District"
+                      value={regionOtherValue}
+                      onChange={(e) => setRegionOtherValue(e.target.value)}
+                      onPressEnter={handleSaveCustomRegion}
+                    />
+                    <Button
+                      type="primary"
+                      style={{ width: 80 }}
+                      onClick={handleSaveCustomRegion}
+                    >
+                      Save
+                    </Button>
+                  </Input.Group>
+                </Form.Item>
+              )}
             </Col>
           </Row>
+
+          <Row gutter={16}>
+            <Col span={24}>
+              <Form.Item 
+                name="howDidYouHear" 
+                label="How did you hear about us?"
+                rules={[{ required: true, message: 'Please select an option' }]}
+              >
+                <Select 
+                  placeholder="Select an option" 
+                  size="large"
+                  showSearch
+                  onChange={handleHowDidYouHearChange}
+                >
+                  <Select.OptGroup label="Social Media">
+                    <Select.Option value="Facebook">Facebook</Select.Option>
+                    <Select.Option value="Instagram">Instagram</Select.Option>
+                    <Select.Option value="Twitter">Twitter</Select.Option>
+                    <Select.Option value="LinkedIn">LinkedIn</Select.Option>
+                    <Select.Option value="TikTok">TikTok</Select.Option>
+                    <Select.Option value="WhatsApp">WhatsApp</Select.Option>
+                  </Select.OptGroup>
+                  <Select.OptGroup label="Online">
+                    <Select.Option value="Google Search">Google Search</Select.Option>
+                    <Select.Option value="Website">Website</Select.Option>
+                    <Select.Option value="Online Ad">Online Ad</Select.Option>
+                  </Select.OptGroup>
+                  <Select.OptGroup label="Physical">
+                    <Select.Option value="Signboard">Signboard</Select.Option>
+                    <Select.Option value="Walk-in">Walk-in</Select.Option>
+                    <Select.Option value="Market Outreach">Market Outreach</Select.Option>
+                    <Select.Option value="Flyer/Brochure">Flyer/Brochure</Select.Option>
+                  </Select.OptGroup>
+                  <Select.OptGroup label="Personal">
+                    <Select.Option value="Referral">Referral (Word of Mouth)</Select.Option>
+                    <Select.Option value="Existing Customer">Existing Customer</Select.Option>
+                  </Select.OptGroup>
+                  <Select.OptGroup label="Other">
+                    <Select.Option value="Radio">Radio</Select.Option>
+                    <Select.Option value="TV">TV</Select.Option>
+                    <Select.Option value="Newspaper">Newspaper</Select.Option>
+                    <Select.Option value="Event/Trade Show">Event/Trade Show</Select.Option>
+                  </Select.OptGroup>
+                  {customCustomerSources.length > 0 && (
+                    <Select.OptGroup label="Custom Sources">
+                      {customCustomerSources.map(source => (
+                        <Select.Option key={source.value} value={source.value}>{source.label}</Select.Option>
+                      ))}
+                    </Select.OptGroup>
+                  )}
+                  <Select.OptGroup label="Other">
+                    <Select.Option value="__OTHER__">Other (specify)</Select.Option>
+                  </Select.OptGroup>
+                </Select>
+              </Form.Item>
+              {showCustomerSourceOtherInput && (
+                <Form.Item
+                  label="Enter Source Name"
+                  style={{ marginTop: 8 }}
+                >
+                  <Input.Group compact>
+                    <Input
+                      style={{ width: 'calc(100% - 80px)' }}
+                      placeholder="e.g., Billboard, Magazine Ad"
+                      value={customerSourceOtherValue}
+                      onChange={(e) => setCustomerSourceOtherValue(e.target.value)}
+                      onPressEnter={handleSaveCustomCustomerSource}
+                    />
+                    <Button
+                      type="primary"
+                      style={{ width: 80 }}
+                      onClick={handleSaveCustomCustomerSource}
+                    >
+                      Save
+                    </Button>
+                  </Input.Group>
+                </Form.Item>
+              )}
+            </Col>
+          </Row>
+
+          {showReferralName && (
+            <Row gutter={16}>
+              <Col span={24}>
+                <Form.Item 
+                  name="referralName" 
+                  label="Referral Name"
+                  rules={[{ required: true, message: 'Please enter referral name' }]}
+                >
+                  <Input placeholder="Enter referral name" size="large" />
+                </Form.Item>
+              </Col>
+            </Row>
+          )}
         </Form>
       </Modal>
     </div>

@@ -31,6 +31,7 @@ const JournalEntry = require('./JournalEntry');
 const JournalEntryLine = require('./JournalEntryLine');
 const AccountBalance = require('./AccountBalance');
 const SubscriptionPlan = require('./SubscriptionPlan');
+const CustomDropdownOption = require('./CustomDropdownOption');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -105,6 +106,9 @@ PricingTemplate.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 Tenant.hasMany(VendorPriceList, { foreignKey: 'tenantId', as: 'vendorPriceLists' });
 VendorPriceList.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
+Tenant.hasMany(CustomDropdownOption, { foreignKey: 'tenantId', as: 'customDropdownOptions' });
+CustomDropdownOption.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
 Tenant.hasMany(InventoryCategory, { foreignKey: 'tenantId', as: 'inventoryCategories' });
 InventoryCategory.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
@@ -149,6 +153,12 @@ Expense.belongsTo(Vendor, { foreignKey: 'vendorId', as: 'vendor' });
 
 Job.hasMany(Expense, { foreignKey: 'jobId', as: 'expenses' });
 Expense.belongsTo(Job, { foreignKey: 'jobId', as: 'job' });
+
+User.hasMany(Expense, { foreignKey: 'submittedBy', as: 'submittedExpenses' });
+Expense.belongsTo(User, { foreignKey: 'submittedBy', as: 'submitter' });
+
+User.hasMany(Expense, { foreignKey: 'approvedBy', as: 'approvedExpenses' });
+Expense.belongsTo(User, { foreignKey: 'approvedBy', as: 'approver' });
 
 Vendor.hasMany(VendorPriceList, { foreignKey: 'vendorId', as: 'priceList' });
 VendorPriceList.belongsTo(Vendor, { foreignKey: 'vendorId', as: 'vendor' });
@@ -293,7 +303,8 @@ module.exports = {
   AccountBalance,
   Tenant,
   UserTenant,
-  SubscriptionPlan
+  SubscriptionPlan,
+  CustomDropdownOption
 };
 
 

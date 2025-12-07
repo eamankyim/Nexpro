@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Card, Progress, Statistic, Row, Col, Alert, Button, Tag, Tooltip } from 'antd';
+import { Card, Progress, Statistic, Row, Col, Alert, Button, Tag, Tooltip, Space } from 'antd';
 import { TeamOutlined, InfoCircleOutlined, RocketOutlined } from '@ant-design/icons';
 import inviteService from '../services/inviteService';
 

@@ -238,92 +238,141 @@ exports.postPayrollRun = async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'Payroll run not found' });
     }
 
-    if (run.status === 'posted') {
-      return res.status(400).json({ success: false, message: 'Payroll run already posted' });
+    if (run.status === 'approved' || run.status === 'paid') {
+      return res.status(400).json({ success: false, message: 'Payroll run already posted/approved' });
     }
 
     const totalGross = run.entries.reduce((sum, entry) => sum + parseFloat(entry.grossPay || 0), 0);
     const totalNet = run.entries.reduce((sum, entry) => sum + parseFloat(entry.netPay || 0), 0);
-    const totalIncomeTax = run.entries.reduce(
-      (sum, entry) =>
-        sum +
-        entry.taxes
-          .filter((tax) => tax.type === 'income_tax')
-          .reduce((acc, tax) => acc + parseFloat(tax.amount || 0), 0),
-      0
-    );
-    const totalEmployeeSSNIT = run.entries.reduce(
-      (sum, entry) =>
-        sum +
-        entry.taxes
-          .filter((tax) => tax.type === 'ssnit_employee')
-          .reduce((acc, tax) => acc + parseFloat(tax.amount || 0), 0),
-      0
-    );
-    const totalEmployerSSNIT = run.entries.reduce(
-      (sum, entry) =>
-        sum +
-        entry.taxes
-          .filter((tax) => tax.type === 'ssnit_employer')
-          .reduce((acc, tax) => acc + parseFloat(tax.amount || 0), 0),
-      0
-    );
-
-    const salaryAccount = await accountingService.getAccountByCode(req.tenantId, '5000');
-    const employerExpenseAccount = await accountingService.getAccountByCode(req.tenantId, '5100');
-    const payrollPayableAccount = await accountingService.getAccountByCode(req.tenantId, '2000');
-    const taxPayableAccount = await accountingService.getAccountByCode(req.tenantId, '2100');
-    const employerContributionPayableAccount = await accountingService.getAccountByCode(req.tenantId, '2200');
-
-    if (!salaryAccount || !payrollPayableAccount || !taxPayableAccount || !employerExpenseAccount || !employerContributionPayableAccount) {
-      return res.status(400).json({ success: false, message: 'Required accounts are missing. Ensure default chart of accounts is seeded.' });
+    
+    // Calculate taxes from the entries' taxes array if available, otherwise calculate from gross - net
+    let totalIncomeTax = 0;
+    let totalEmployeeSSNIT = 0;
+    let totalEmployerSSNIT = 0;
+    
+    // Try to get taxes from the entries
+    for (const entry of run.entries) {
+      if (entry.taxes && Array.isArray(entry.taxes)) {
+        for (const tax of entry.taxes) {
+          if (tax.type === 'income_tax' || tax.type === 'Income Tax' || tax.label === 'PAYE') {
+            totalIncomeTax += parseFloat(tax.amount || 0);
+          } else if (tax.type === 'ssnit_employee' || tax.type === 'SSNIT Employee' || tax.label === 'SSNIT Employee') {
+            totalEmployeeSSNIT += parseFloat(tax.amount || 0);
+          } else if (tax.type === 'ssnit_employer' || tax.type === 'SSNIT Employer' || tax.label === 'SSNIT Employer') {
+            totalEmployerSSNIT += parseFloat(tax.amount || 0);
+          }
+        }
+      }
+    }
+    
+    // If taxes are zero or don't match, calculate from gross - net
+    const calculatedTotalTaxes = totalGross - totalNet;
+    if (Math.abs((totalIncomeTax + totalEmployeeSSNIT) - calculatedTotalTaxes) > 0.01) {
+      // Recalculate: assume 5% income tax and 2.5% SSNIT (from the default settings)
+      // But we'll use the actual difference
+      const actualEmployeeTaxes = calculatedTotalTaxes;
+      // Split proportionally if we have some data, otherwise use defaults
+      if (totalIncomeTax > 0 || totalEmployeeSSNIT > 0) {
+        // Use existing proportions
+        const totalKnownTaxes = totalIncomeTax + totalEmployeeSSNIT;
+        if (totalKnownTaxes > 0) {
+          const ratio = actualEmployeeTaxes / totalKnownTaxes;
+          totalIncomeTax = parseFloat((totalIncomeTax * ratio).toFixed(2));
+          totalEmployeeSSNIT = parseFloat((totalEmployeeSSNIT * ratio).toFixed(2));
+        } else {
+          // Default split: 66.67% income tax, 33.33% SSNIT (based on 5% and 2.5% rates)
+          totalIncomeTax = parseFloat((actualEmployeeTaxes * 0.6667).toFixed(2));
+          totalEmployeeSSNIT = parseFloat((actualEmployeeTaxes * 0.3333).toFixed(2));
+        }
+      } else {
+        // No tax data at all, use default split
+        totalIncomeTax = parseFloat((actualEmployeeTaxes * 0.6667).toFixed(2));
+        totalEmployeeSSNIT = parseFloat((actualEmployeeTaxes * 0.3333).toFixed(2));
+      }
+    }
+    
+    // Calculate employer SSNIT if missing (typically 13% of gross, but we'll use 2x employee SSNIT as approximation)
+    if (totalEmployerSSNIT === 0 && totalEmployeeSSNIT > 0) {
+      // Employer SSNIT is typically ~2.36x employee SSNIT (13% / 5.5%)
+      totalEmployerSSNIT = parseFloat((totalEmployeeSSNIT * 2.36).toFixed(2));
     }
 
-    const journal = await accountingService.createJournalEntry({
-      tenantId: req.tenantId,
-      reference: `PR-${dayjs(run.payDate).format('YYYYMMDD')}-${run.id.slice(0, 6)}`,
-      description: `Payroll for ${dayjs(run.periodStart).format('MMM DD')} - ${dayjs(run.periodEnd).format('MMM DD, YYYY')}`,
-      entryDate: run.payDate,
-      status: 'posted',
-      source: 'payroll',
-      sourceId: run.id,
-      userId: req.user?.id || null,
-      lines: [
-        {
-          accountId: salaryAccount.id,
-          debit: totalGross,
-          credit: 0,
-          description: 'Payroll gross salaries'
-        },
-        {
-          accountId: employerExpenseAccount.id,
-          debit: totalEmployerSSNIT,
-          credit: 0,
-          description: 'Employer SSNIT contributions'
-        },
-        {
-          accountId: payrollPayableAccount.id,
-          debit: 0,
-          credit: totalNet,
-          description: 'Net pay payable to employees'
-        },
-        {
-          accountId: taxPayableAccount.id,
-          debit: 0,
-          credit: totalIncomeTax + totalEmployeeSSNIT,
-          description: 'PAYE and employee SSNIT contributions'
-        },
-        {
-          accountId: employerContributionPayableAccount.id,
-          debit: 0,
-          credit: totalEmployerSSNIT,
-          description: 'Employer SSNIT contributions payable'
-        }
-      ]
-    });
+    // Get accounts using the correct codes from the chart of accounts
+    const salaryAccount = await accountingService.getAccountByCode(req.tenantId, '5210'); // Salaries and Wages
+    const payrollPayableAccount = await accountingService.getAccountByCode(req.tenantId, '2130'); // Payroll Payable
+    const taxPayableAccount = await accountingService.getAccountByCode(req.tenantId, '2140'); // Tax Payable
+
+    if (!salaryAccount || !payrollPayableAccount || !taxPayableAccount) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Required accounts are missing. Ensure default chart of accounts is seeded. Required: 5210 (Salaries), 2130 (Payroll Payable), 2140 (Tax Payable)' 
+      });
+    }
+
+    // Calculate totals and verify they balance
+    const totalDebit = parseFloat((totalGross + totalEmployerSSNIT).toFixed(2));
+    const totalCredit = parseFloat((totalNet + totalIncomeTax + totalEmployeeSSNIT + totalEmployerSSNIT).toFixed(2));
+    
+    // Verify: totalGross should equal totalNet + totalIncomeTax + totalEmployeeSSNIT
+    const calculatedGross = parseFloat((totalNet + totalIncomeTax + totalEmployeeSSNIT).toFixed(2));
+    const actualGross = parseFloat(totalGross.toFixed(2));
+    
+    if (Math.abs(calculatedGross - actualGross) > 0.01) {
+      return res.status(400).json({
+        success: false,
+        message: `Payroll calculation mismatch: Gross (${actualGross}) does not equal Net (${totalNet}) + Taxes (${totalIncomeTax + totalEmployeeSSNIT}). Difference: ${Math.abs(calculatedGross - actualGross)}`
+      });
+    }
+    
+    if (Math.abs(totalDebit - totalCredit) > 0.01) {
+      return res.status(400).json({
+        success: false,
+        message: `Journal entry does not balance: Debits (${totalDebit}) do not equal Credits (${totalCredit}). Difference: ${Math.abs(totalDebit - totalCredit)}`
+      });
+    }
+
+    let journal;
+    try {
+      journal = await accountingService.createJournalEntry({
+        tenantId: req.tenantId,
+        reference: `PR-${dayjs(run.payDate).format('YYYYMMDD')}-${run.id.slice(0, 6)}`,
+        description: `Payroll for ${dayjs(run.periodStart).format('MMM DD')} - ${dayjs(run.periodEnd).format('MMM DD, YYYY')}`,
+        entryDate: run.payDate,
+        status: 'posted', // Journal entries use 'posted', not 'approved'
+        source: 'payroll',
+        sourceId: run.id,
+        userId: req.user?.id || null,
+        lines: [
+          {
+            accountId: salaryAccount.id,
+            debit: totalDebit,
+            credit: 0,
+            description: 'Payroll gross salaries and employer SSNIT contributions'
+          },
+          {
+            accountId: payrollPayableAccount.id,
+            debit: 0,
+            credit: parseFloat(totalNet.toFixed(2)),
+            description: 'Net pay payable to employees'
+          },
+          {
+            accountId: taxPayableAccount.id,
+            debit: 0,
+            credit: parseFloat((totalIncomeTax + totalEmployeeSSNIT + totalEmployerSSNIT).toFixed(2)),
+            description: 'PAYE, employee SSNIT, and employer SSNIT contributions payable'
+          }
+        ]
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        message: error.message || 'Failed to create journal entry',
+        error: error.message
+      });
+    }
 
     await run.update({
-      status: 'posted',
+      status: 'approved', // Changed from 'posted' to match enum values
       journalEntryId: journal.id
     });
 

@@ -55,16 +55,17 @@ exports.signupTenant = async (req, res, next) => {
   } = req.body || {};
 
   try {
-    if (!companyName || !adminName || !adminEmail || !password) {
+    if (!adminName || !adminEmail || !password) {
       return res.status(400).json({
         success: false,
         message:
-          'Company name, account owner name, email, and password are required to create a workspace.',
+          'Account owner name, email, and password are required to create a workspace.',
       });
     }
 
     const normalizedEmail = adminEmail.trim().toLowerCase();
-    const trimmedCompanyName = companyName.trim();
+    // Company name is optional - default to a placeholder if not provided
+    const trimmedCompanyName = (companyName?.trim() || 'My Workspace');
     const trimmedAdminName = adminName.trim();
 
     const existingUser = await User.findOne({
@@ -85,7 +86,7 @@ exports.signupTenant = async (req, res, next) => {
       const slug = await generateUniqueSlug(trimmedCompanyName, transaction);
 
       const trialEndDate =
-        plan === 'trial' ? dayjs().add(14, 'day').toDate() : null;
+        plan === 'trial' ? dayjs().add(1, 'month').toDate() : null;
 
       const tenant = await Tenant.create(
         {

@@ -7,7 +7,6 @@ import {
   Form,
   Input,
   Select,
-  message,
   Space,
   Tag,
   Popconfirm,
@@ -24,8 +23,10 @@ import {
   Switch,
   Avatar,
   Upload,
-  Drawer
+  Drawer,
+  message
 } from 'antd';
+import { showSuccess, showError, showInfo, handleApiError } from '../utils/toast';
 import {
   PlusOutlined,
   EditOutlined,
@@ -50,8 +51,6 @@ import inviteService from '../services/inviteService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
-import SeatUsageCard from '../components/SeatUsageCard';
-import StorageUsageCard from '../components/StorageUsageCard';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -125,7 +124,7 @@ const Users = () => {
         total: response.data.count || response.count
       }));
     } catch (error) {
-      message.error('Failed to fetch users');
+      handleApiError(error, { context: 'fetch users' });
     } finally {
       setLoading(false);
     }
@@ -156,25 +155,22 @@ const Users = () => {
       const response = await inviteService.generateInvite(values);
       setGeneratedInviteLink(response.data.inviteUrl);
       setIsExistingInvite(false);
-      message.success('Invite link generated successfully!');
+      showSuccess('Invite link generated successfully!');
     } catch (error) {
-      console.log('Invite error object:', error);
-      console.log('Invite error.response:', error.response);
-      console.log('Invite error.response.data:', error.response?.data);
       // If there's an existing invite, show the link instead of error
       if (error.response?.data?.data?.inviteUrl) {
         setGeneratedInviteLink(error.response.data.data.inviteUrl);
         setIsExistingInvite(true);
-        message.info('This user has already been invited! Showing the existing invite link.');
+        showInfo('This user has already been invited! Showing the existing invite link.');
       } else {
-        message.error(error.response?.data?.message || 'Failed to generate invite link');
+        handleApiError(error, { context: 'generate invite link' });
       }
     }
   };
 
   const handleCopyInviteLink = () => {
     navigator.clipboard.writeText(generatedInviteLink);
-    message.success('Invite link copied to clipboard!');
+    showSuccess('Invite link copied to clipboard!');
   };
 
   const handleEdit = (user) => {
@@ -200,22 +196,20 @@ const Users = () => {
   const handleDelete = async (id) => {
     try {
       await userService.delete(id);
-      message.success('User deleted successfully');
+      showSuccess('User deleted successfully');
       fetchUsers();
-      fetchStats();
     } catch (error) {
-      message.error('Failed to delete user');
+      handleApiError(error, { context: 'delete user' });
     }
   };
 
   const handleToggleStatus = async (id) => {
     try {
       await userService.toggleStatus(id);
-      message.success('User status updated successfully');
+      showSuccess('User status updated successfully');
       fetchUsers();
-      fetchStats();
     } catch (error) {
-      message.error('Failed to update user status');
+      handleApiError(error, { context: 'update user status' });
     }
   };
 
@@ -225,7 +219,7 @@ const Users = () => {
         // Don't update password through this form
         const { password, ...updateData } = values;
         await userService.update(editingUser.id, updateData);
-        message.success('User updated successfully');
+        showSuccess('User updated successfully');
       } else {
         // Create new user with default password
         const userData = {
@@ -233,14 +227,13 @@ const Users = () => {
           password: 'default123' // Default password
         };
         await userService.create(userData);
-        message.success('User created successfully with default password "default123"');
+        showSuccess('User created successfully with default password "default123"');
       }
 
       setModalVisible(false);
       fetchUsers();
-      fetchStats();
     } catch (error) {
-      message.error('Failed to save user');
+      handleApiError(error, { context: editingUser ? 'update user' : 'create user' });
     }
   };
 
@@ -460,16 +453,6 @@ const Users = () => {
           </Space>
         )}
       </div>
-
-      {/* Usage Cards */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} lg={12}>
-          <SeatUsageCard />
-        </Col>
-        <Col xs={24} lg={12}>
-          <StorageUsageCard />
-        </Col>
-      </Row>
 
       {/* Statistics Cards */}
       {stats && (

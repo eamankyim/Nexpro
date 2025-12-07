@@ -1,5 +1,5 @@
 const { sequelize } = require('../config/database');
-const { Job, Payment, Expense, Customer, Vendor } = require('../models');
+const { Job, Expense, Customer, Vendor, Invoice } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
 
@@ -94,6 +94,7 @@ exports.getDashboardOverview = async (req, res, next) => {
           createdAt: dateFilter
         }
       });
+      
       logDashboardDebug('Filtered job counts', {
         filteredJobs,
         filteredNewJobs,
@@ -113,19 +114,17 @@ exports.getDashboardOverview = async (req, res, next) => {
       }
     });
 
-    // Revenue statistics
-    const totalRevenue = await Payment.sum('amount', {
+    // Revenue statistics (from paid invoices)
+    const totalRevenue = await Invoice.sum('amountPaid', {
       where: {
-        type: 'income',
-        status: 'completed'
+        status: 'paid'
       }
     }) || 0;
 
-    const thisMonthRevenue = await Payment.sum('amount', {
+    const thisMonthRevenue = await Invoice.sum('amountPaid', {
       where: {
-        type: 'income',
-        status: 'completed',
-        paymentDate: {
+        status: 'paid',
+        paidDate: {
           [Op.between]: [firstDayOfMonth, lastDayOfMonth]
         }
       }
@@ -134,11 +133,10 @@ exports.getDashboardOverview = async (req, res, next) => {
     // Filtered revenue (if date filter is applied)
     let filteredRevenue = null;
     if (hasDateFilter) {
-      filteredRevenue = await Payment.sum('amount', {
+      filteredRevenue = await Invoice.sum('amountPaid', {
         where: {
-          type: 'income',
-          status: 'completed',
-          paymentDate: dateFilter
+          status: 'paid',
+          paidDate: dateFilter
         }
       }) || 0;
       logDashboardDebug('Filtered revenue total', { filteredRevenue });
@@ -166,25 +164,24 @@ exports.getDashboardOverview = async (req, res, next) => {
       logDashboardDebug('Filtered expense total', { filteredExpenses });
     }
 
-    // Pending payments
-    const pendingPayments = await Payment.count({
-      where: { status: 'pending' }
-    });
+    // Outstanding invoices balance
+    const outstandingBalance = await Invoice.sum('balance', {
+      where: {
+        status: { [Op.ne]: 'paid' }
+      }
+    }) || 0;
 
-    // Recent jobs (filtered if date range is provided)
-    const recentJobsWhere = hasDateFilter ? { createdAt: dateFilter } : {};
+    // In-progress jobs - ALWAYS show all in-progress jobs (ignore date filter)
     const recentJobs = await Job.findAll({
       where: {
-        ...recentJobsWhere,
         status: 'in_progress'
       },
-      limit: 5,
-      order: [['createdAt', 'DESC']],
+      order: [['dueDate', 'ASC'], ['createdAt', 'DESC']],
       include: [
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'company'] }
       ]
     });
-    logDashboardDebug('Recent jobs fetched', { count: recentJobs.length });
+    logDashboardDebug('In-progress jobs fetched', { count: recentJobs.length });
 
     // Prepare response data
     const currentMonthSummary = {
@@ -214,12 +211,12 @@ exports.getDashboardOverview = async (req, res, next) => {
         inProgressJobs,
         onHoldJobs,
         cancelledJobs,
-        completedJobs
+        completedJobs,
+        outstandingBalance: Number(parseFloat(outstandingBalance).toFixed(2))
       },
       currentMonth: currentMonthSummary,
       thisMonth: currentMonthSummary,
       allTime: allTimeSummary,
-      pendingPayments,
       recentJobs
     };
 
@@ -240,6 +237,19 @@ exports.getDashboardOverview = async (req, res, next) => {
         }
       };
       responseData.thisMonth = responseData.filteredPeriod;
+      
+      // Override summary with filtered job status counts
+      responseData.summary = {
+        ...responseData.summary,
+        totalJobs: filteredJobs ?? 0,
+        newJobs: filteredNewJobs ?? 0,
+        pendingJobs: filteredNewJobs ?? 0,
+        inProgressJobs: filteredInProgressJobs ?? 0,
+        onHoldJobs: filteredOnHoldJobs ?? 0,
+        cancelledJobs: filteredCancelledJobs ?? 0,
+        completedJobs: filteredCompletedJobs ?? 0
+      };
+      
       logDashboardDebug('Response with filtered period', responseData.filteredPeriod);
     }
 
@@ -264,23 +274,22 @@ exports.getRevenueByMonth = async (req, res, next) => {
   try {
     const year = req.query.year || new Date().getFullYear();
 
-    const revenueByMonth = await Payment.findAll({
+    const revenueByMonth = await Invoice.findAll({
       attributes: [
-        [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paymentDate"')), 'month'],
-        [sequelize.fn('SUM', sequelize.col('amount')), 'totalRevenue']
+        [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"')), 'month'],
+        [sequelize.fn('SUM', sequelize.col('amountPaid')), 'totalRevenue']
       ],
       where: {
-        type: 'income',
-        status: 'completed',
-        paymentDate: {
+        status: 'paid',
+        paidDate: {
           [Op.between]: [
             new Date(`${year}-01-01`),
             new Date(`${year}-12-31`)
           ]
         }
       },
-      group: [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paymentDate"'))],
-      order: [[sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paymentDate"')), 'ASC']]
+      group: [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"'))],
+      order: [[sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"')), 'ASC']]
     });
 
     res.status(200).json({
@@ -323,15 +332,14 @@ exports.getTopCustomers = async (req, res, next) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
 
-    const topCustomers = await Payment.findAll({
+    const topCustomers = await Invoice.findAll({
       attributes: [
         'customerId',
-        [sequelize.fn('SUM', sequelize.col('amount')), 'totalPaid'],
-        [sequelize.fn('COUNT', sequelize.col('Payment.id')), 'paymentCount']
+        [sequelize.fn('SUM', sequelize.col('amountPaid')), 'totalPaid'],
+        [sequelize.fn('COUNT', sequelize.col('Invoice.id')), 'invoiceCount']
       ],
       where: {
-        type: 'income',
-        status: 'completed'
+        status: 'paid'
       },
       include: [{
         model: Customer,

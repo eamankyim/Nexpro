@@ -17,6 +17,11 @@ const expenseService = {
     return await api.post('/expenses', expenseData);
   },
 
+  // Create multiple expenses (bulk)
+  createBulk: async (expenses, commonFields) => {
+    return await api.post('/expenses/bulk', { expenses, commonFields });
+  },
+
   // Update expense
   update: async (id, expenseData) => {
     return await api.put(`/expenses/${id}`, expenseData);
@@ -37,6 +42,21 @@ const expenseService = {
   getByJob: async (jobId, params = {}) => {
     const queryString = new URLSearchParams(params).toString();
     return await api.get(`/expenses/by-job/${jobId}?${queryString}`);
+  },
+
+  // Submit expense for approval
+  submit: async (id) => {
+    return await api.post(`/expenses/${id}/submit`);
+  },
+
+  // Approve expense
+  approve: async (id) => {
+    return await api.post(`/expenses/${id}/approve`);
+  },
+
+  // Reject expense
+  reject: async (id, rejectionReason) => {
+    return await api.post(`/expenses/${id}/reject`, { rejectionReason });
   }
 };
 

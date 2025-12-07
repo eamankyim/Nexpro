@@ -8,13 +8,14 @@ import {
   Tag,
   Space,
   Modal,
+  Drawer,
   Form,
   DatePicker,
   Select,
-  message,
   Descriptions,
   Typography,
-  Divider
+  Divider,
+  App
 } from 'antd';
 import { PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -26,6 +27,7 @@ const { Title, Text } = Typography;
 const { Option } = Select;
 
 const Payroll = () => {
+  const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [runModalVisible, setRunModalVisible] = useState(false);
   const [viewingRun, setViewingRun] = useState(null);
@@ -104,7 +106,7 @@ const Payroll = () => {
       dataIndex: 'status',
       key: 'status',
       render: (status) => (
-        <Tag color={status === 'posted' ? 'green' : 'blue'}>
+        <Tag color={status === 'approved' || status === 'paid' ? 'green' : status === 'processing' ? 'orange' : 'blue'}>
           {status.toUpperCase()}
         </Tag>
       )
@@ -117,7 +119,7 @@ const Payroll = () => {
           <Button type="link" onClick={() => handleViewRun(record.id)}>
             View
           </Button>
-          {record.status !== 'posted' && (
+          {record.status !== 'approved' && record.status !== 'paid' && (
             <Button type="link" onClick={() => handlePostRun(record.id)} loading={postRunMutation.isLoading}>
               Post
             </Button>
@@ -243,80 +245,185 @@ const Payroll = () => {
         </Form>
       </Modal>
 
-      <Modal
-        title="Payroll Run"
+      <Drawer
+        title="Payroll Run Details"
         open={viewModalVisible}
-        onCancel={() => setViewModalVisible(false)}
-        width={800}
-        footer={null}
+        onClose={() => setViewModalVisible(false)}
+        width={1200}
+        extra={
+          viewingRun && viewingRun.status !== 'approved' && viewingRun.status !== 'paid' ? (
+            <Button
+              type="primary"
+              loading={postRunMutation.isLoading}
+              onClick={() => handlePostRun(viewingRun.id)}
+            >
+              Post Payroll Run
+            </Button>
+          ) : null
+        }
       >
         {viewingRun ? (
           <>
-            <Descriptions bordered column={2} size="small">
-              <Descriptions.Item label="Period">
-                {dayjs(viewingRun.periodStart).format('MMM DD')} - {dayjs(viewingRun.periodEnd).format('MMM DD, YYYY')}
+            <Descriptions bordered column={2} size="small" style={{ marginBottom: 24 }}>
+              <Descriptions.Item label="Period" span={2}>
+                {dayjs(viewingRun.periodStart).format('MMM DD, YYYY')} - {dayjs(viewingRun.periodEnd).format('MMM DD, YYYY')}
               </Descriptions.Item>
               <Descriptions.Item label="Pay Date">{dayjs(viewingRun.payDate).format('MMM DD, YYYY')}</Descriptions.Item>
               <Descriptions.Item label="Status">
-                <Tag color={viewingRun.status === 'posted' ? 'green' : 'blue'}>{viewingRun.status.toUpperCase()}</Tag>
+                <Tag color={viewingRun.status === 'approved' || viewingRun.status === 'paid' ? 'green' : viewingRun.status === 'processing' ? 'orange' : 'blue'}>
+                  {viewingRun.status.toUpperCase()}
+                </Tag>
               </Descriptions.Item>
-              <Descriptions.Item label="Employees">{viewingRun.totalEmployees}</Descriptions.Item>
-              <Descriptions.Item label="Total Gross">GHS {parseFloat(viewingRun.totalGross || 0).toFixed(2)}</Descriptions.Item>
-              <Descriptions.Item label="Total Net">GHS {parseFloat(viewingRun.totalNet || 0).toFixed(2)}</Descriptions.Item>
-              <Descriptions.Item label="Total Tax">GHS {parseFloat(viewingRun.totalTax || 0).toFixed(2)}</Descriptions.Item>
+              <Descriptions.Item label="Total Employees">{viewingRun.totalEmployees}</Descriptions.Item>
+              <Descriptions.Item label="Total Gross">
+                <Text strong style={{ fontSize: 16 }}>GHS {parseFloat(viewingRun.totalGross || 0).toFixed(2)}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Total Tax">
+                <Text>GHS {parseFloat(viewingRun.totalTax || 0).toFixed(2)}</Text>
+              </Descriptions.Item>
+              <Descriptions.Item label="Total Net">
+                <Text strong style={{ fontSize: 16, color: '#52c41a' }}>GHS {parseFloat(viewingRun.totalNet || 0).toFixed(2)}</Text>
+              </Descriptions.Item>
+              {viewingRun.notes && (
+                <Descriptions.Item label="Notes" span={2}>
+                  {viewingRun.notes}
+                </Descriptions.Item>
+              )}
             </Descriptions>
-            <Divider />
+            
+            <Divider orientation="left">
+              <Title level={4} style={{ margin: 0 }}>Employee Payroll Entries</Title>
+            </Divider>
+            
             <Table
               rowKey="id"
               dataSource={viewingRun.entries || []}
-              pagination={false}
+              pagination={{
+                pageSize: 20,
+                showSizeChanger: true,
+                showTotal: (total) => `Total ${total} employees`
+              }}
+              scroll={{ x: 'max-content' }}
               columns={[
                 {
                   title: 'Employee',
                   key: 'employee',
-                  render: (_, entry) => `${entry.employee?.firstName} ${entry.employee?.lastName}`
+                  fixed: 'left',
+                  width: 200,
+                  render: (_, entry) => (
+                    <div>
+                      <Text strong>{entry.employee?.firstName} {entry.employee?.lastName}</Text>
+                      <br />
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {entry.employee?.jobTitle || '—'} • {entry.employee?.department || '—'}
+                      </Text>
+                    </div>
+                  )
                 },
                 {
-                  title: 'Gross',
+                  title: 'Gross Pay',
                   dataIndex: 'grossPay',
                   key: 'gross',
-                  render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`
+                  align: 'right',
+                  width: 120,
+                  render: (value) => <Text strong>GHS {parseFloat(value || 0).toFixed(2)}</Text>
+                },
+                {
+                  title: 'Allowances',
+                  key: 'allowances',
+                  align: 'right',
+                  width: 150,
+                  render: (_, entry) => {
+                    const totalAllowances = (entry.allowances || []).reduce((sum, a) => sum + parseFloat(a.amount || 0), 0);
+                    return totalAllowances > 0 ? (
+                      <Text type="success">+ GHS {totalAllowances.toFixed(2)}</Text>
+                    ) : (
+                      <Text type="secondary">GHS 0.00</Text>
+                    );
+                  }
+                },
+                {
+                  title: 'Deductions',
+                  key: 'deductions',
+                  align: 'right',
+                  width: 150,
+                  render: (_, entry) => {
+                    const totalDeductions = (entry.deductions || []).reduce((sum, d) => sum + parseFloat(d.amount || 0), 0);
+                    return totalDeductions > 0 ? (
+                      <Text type="danger">- GHS {totalDeductions.toFixed(2)}</Text>
+                    ) : (
+                      <Text type="secondary">GHS 0.00</Text>
+                    );
+                  }
+                },
+                {
+                  title: 'Taxes',
+                  key: 'taxes',
+                  align: 'right',
+                  width: 150,
+                  render: (_, entry) => {
+                    const totalTaxes = (entry.taxes || []).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+                    return totalTaxes > 0 ? (
+                      <Text type="warning">GHS {totalTaxes.toFixed(2)}</Text>
+                    ) : (
+                      <Text type="secondary">GHS 0.00</Text>
+                    );
+                  }
                 },
                 {
                   title: 'Net Pay',
                   dataIndex: 'netPay',
                   key: 'net',
-                  render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`
-                },
-                {
-                  title: 'PAYE',
-                  key: 'paye',
-                  render: (_, entry) =>
-                    `GHS ${parseFloat(entry.taxes.find((t) => t.type === 'income_tax')?.amount || 0).toFixed(2)}`
-                },
-                {
-                  title: 'SSNIT (Emp.)',
-                  key: 'ssnit',
-                  render: (_, entry) =>
-                    `GHS ${parseFloat(entry.taxes.find((t) => t.type === 'ssnit_employee')?.amount || 0).toFixed(2)}`
+                  align: 'right',
+                  width: 120,
+                  fixed: 'right',
+                  render: (value) => (
+                    <Text strong style={{ fontSize: 14, color: '#52c41a' }}>
+                      GHS {parseFloat(value || 0).toFixed(2)}
+                    </Text>
+                  )
                 }
               ]}
+              summary={(pageData) => {
+                const totalGross = pageData.reduce((sum, entry) => sum + parseFloat(entry.grossPay || 0), 0);
+                const totalNet = pageData.reduce((sum, entry) => sum + parseFloat(entry.netPay || 0), 0);
+                const totalTaxes = pageData.reduce((sum, entry) => {
+                  return sum + (entry.taxes || []).reduce((taxSum, t) => taxSum + parseFloat(t.amount || 0), 0);
+                }, 0);
+                
+                return (
+                  <Table.Summary fixed>
+                    <Table.Summary.Row>
+                      <Table.Summary.Cell index={0} colSpan={1}>
+                        <Text strong>Total ({pageData.length} employees)</Text>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={1} align="right">
+                        <Text strong>GHS {totalGross.toFixed(2)}</Text>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={2} align="right">
+                        <Text type="secondary">—</Text>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={3} align="right">
+                        <Text type="secondary">—</Text>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={4} align="right">
+                        <Text strong type="warning">GHS {totalTaxes.toFixed(2)}</Text>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={5} align="right">
+                        <Text strong style={{ fontSize: 16, color: '#52c41a' }}>
+                          GHS {totalNet.toFixed(2)}
+                        </Text>
+                      </Table.Summary.Cell>
+                    </Table.Summary.Row>
+                  </Table.Summary>
+                );
+              }}
             />
-            {viewingRun.status !== 'posted' && (
-              <Button
-                type="primary"
-                style={{ marginTop: 16 }}
-                loading={postRunMutation.isLoading}
-                onClick={() => handlePostRun(viewingRun.id)}
-              >
-                Post Payroll Run
-              </Button>
-            )}
           </>
         ) : (
           <Text type="secondary">Select a payroll run to view details.</Text>
         )}
-      </Modal>
+      </Drawer>
     </div>
   );
 };

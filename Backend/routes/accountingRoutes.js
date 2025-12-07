@@ -4,6 +4,7 @@ const {
   createAccount,
   updateAccount,
   getJournalEntries,
+  getJournalEntry,
   createJournalEntry,
   getTrialBalance,
   getAccountSummary
@@ -29,6 +30,10 @@ router
   .route('/journal')
   .get(getJournalEntries)
   .post(authorize('admin', 'manager'), createJournalEntry);
+
+router
+  .route('/journal/:id')
+  .get(getJournalEntry);
 
 router.get('/trial-balance', getTrialBalance);
 router.get('/accounts/summary', getAccountSummary);

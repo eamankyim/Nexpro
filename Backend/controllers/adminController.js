@@ -376,6 +376,8 @@ exports.getPlatformAlerts = async (req, res, next) => {
 
 exports.getTenantById = async (req, res, next) => {
   try {
+    const { Setting } = require('../models');
+    
     const tenant = await Tenant.findByPk(req.params.id, {
       include: [
         {
@@ -399,9 +401,25 @@ exports.getTenantById = async (req, res, next) => {
       });
     }
 
+    // Get organization settings (includes logo) for branding display
+    // This shows the logo that tenants manage themselves in Settings
+    let organizationSettings = {};
+    try {
+      const organizationSetting = await Setting.findOne({
+        where: { tenantId: tenant.id, key: 'organization' }
+      });
+      organizationSettings = organizationSetting ? organizationSetting.value : {};
+    } catch (error) {
+      // If organization settings don't exist, use empty object
+      console.warn('Could not fetch organization settings for tenant:', tenant.id);
+    }
+
+    const tenantData = tenant.toJSON();
+    tenantData.organizationSettings = organizationSettings;
+
     res.status(200).json({
       success: true,
-      data: tenant
+      data: tenantData
     });
   } catch (error) {
     next(error);
@@ -574,6 +592,9 @@ exports.updateTenantBranding = async (req, res, next) => {
       metadata: updatedMetadata,
       updatedAt: new Date()
     });
+
+    // Reload tenant to get fresh data
+    await tenant.reload();
 
     res.status(200).json({
       success: true,

@@ -83,6 +83,10 @@ const Employee = sequelize.define(
     bankName: {
       type: DataTypes.STRING
     },
+    customBankName: {
+      type: DataTypes.STRING,
+      comment: 'Custom bank name when "Other" is selected'
+    },
     bankAccountName: {
       type: DataTypes.STRING
     },

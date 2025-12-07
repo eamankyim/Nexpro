@@ -9,19 +9,18 @@ import {
   Spin,
   Space,
   Button,
-  message,
   Row,
   Col,
   Select,
   Input,
   List,
   Empty,
-  Upload,
+  Alert,
 } from 'antd';
-import { UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import adminService from '../../services/adminService';
+import { showSuccess, showError, handleApiError } from '../../utils/toast';
 
 const { Title, Text } = Typography;
 
@@ -70,8 +69,6 @@ const AdminTenants = () => {
   const [selectedTenant, setSelectedTenant] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [statusUpdating, setStatusUpdating] = useState(false);
-  const [logoUpdating, setLogoUpdating] = useState(false);
-  const [logoPreview, setLogoPreview] = useState('');
 
   const fetchTenants = async (page = 1, pageSize = 20, overrideFilters = {}) => {
     setLoading(true);
@@ -92,8 +89,7 @@ const AdminTenants = () => {
         });
       }
     } catch (error) {
-      console.error('Failed to load tenant directory', error);
-      message.error('Failed to load tenants');
+      handleApiError(error, { context: 'load tenants' });
     } finally {
       setLoading(false);
     }
@@ -103,12 +99,11 @@ const AdminTenants = () => {
     setStatusUpdating(true);
     try {
       await adminService.updateTenantStatus(tenantId, action);
-      message.success(`Tenant ${action}d successfully`);
+      showSuccess(`Tenant ${action}d successfully`);
       await fetchTenantDetail(tenantId);
       await fetchTenants(pagination.current, pagination.pageSize);
     } catch (error) {
-      console.error('Failed to update tenant status', error);
-      message.error('Failed to update tenant status');
+      handleApiError(error, { context: 'update tenant status' });
     } finally {
       setStatusUpdating(false);
     }
@@ -121,11 +116,9 @@ const AdminTenants = () => {
       if (response?.success) {
         setSelectedTenant(response.data);
         setDrawerVisible(true);
-        setLogoPreview(response.data?.metadata?.logoUrl || '');
       }
     } catch (error) {
-      console.error('Failed to load tenant detail', error);
-      message.error('Failed to fetch tenant detail');
+      handleApiError(error, { context: 'fetch tenant detail' });
     } finally {
       setDetailLoading(false);
     }
@@ -316,10 +309,10 @@ const AdminTenants = () => {
 
             <Card size="small" title="Branding">
               <Space direction="vertical">
-                {logoPreview ? (
+                {selectedTenant.organizationSettings?.logoUrl ? (
                   <img
-                    src={logoPreview}
-                    alt="Tenant logo"
+                    src={selectedTenant.organizationSettings.logoUrl}
+                    alt="Organization logo"
                     style={{
                       width: 140,
                       height: 140,
@@ -333,67 +326,16 @@ const AdminTenants = () => {
                 ) : (
                   <Text type="secondary">No logo uploaded</Text>
                 )}
-                <Text type="secondary">
+                <Text type="secondary" style={{ fontSize: 12 }}>
                   Appears on tenant-facing documents like invoices.
                 </Text>
-                <Space>
-                  <Upload
-                    accept="image/png,image/jpeg,image/svg+xml"
-                    showUploadList={false}
-                    beforeUpload={async (file) => {
-                      const toBase64 = (f) =>
-                        new Promise((resolve, reject) => {
-                          const reader = new FileReader();
-                          reader.onload = () => resolve(reader.result);
-                          reader.onerror = (error) => reject(error);
-                          reader.readAsDataURL(f);
-                        });
-                      try {
-                        setLogoUpdating(true);
-                        const base64 = await toBase64(file);
-                        await adminService.updateTenantBranding(selectedTenant.id, {
-                          logoUrl: base64,
-                        });
-                        message.success('Tenant logo updated');
-                        setLogoPreview(base64);
-                        await fetchTenantDetail(selectedTenant.id);
-                      } catch (error) {
-                        console.error('Failed to upload logo', error);
-                        message.error('Failed to upload logo');
-                      } finally {
-                        setLogoUpdating(false);
-                      }
-                      return false;
-                    }}
-                  >
-                    <Button icon={<UploadOutlined />} loading={logoUpdating}>
-                      Upload logo
-                    </Button>
-                  </Upload>
-                  {logoPreview && (
-                    <Button
-                      onClick={async () => {
-                        try {
-                          setLogoUpdating(true);
-                          await adminService.updateTenantBranding(selectedTenant.id, {
-                            logoUrl: '',
-                          });
-                          message.success('Tenant logo removed');
-                          setLogoPreview('');
-                          await fetchTenantDetail(selectedTenant.id);
-                        } catch (error) {
-                          console.error('Failed to remove logo', error);
-                          message.error('Failed to remove logo');
-                        } finally {
-                          setLogoUpdating(false);
-                        }
-                      }}
-                      loading={logoUpdating}
-                    >
-                      Remove
-                    </Button>
-                  )}
-                </Space>
+                <Alert
+                  message="Branding Management"
+                  description="Tenants manage their own branding through Settings → Organization. This is a read-only view of their current logo."
+                  type="info"
+                  showIcon
+                  style={{ marginTop: 8 }}
+                />
               </Space>
             </Card>
 

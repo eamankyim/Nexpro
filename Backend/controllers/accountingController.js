@@ -114,6 +114,41 @@ exports.updateAccount = async (req, res, next) => {
   }
 };
 
+exports.getJournalEntry = async (req, res, next) => {
+  try {
+    const entry = await JournalEntry.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      include: [
+        {
+          model: JournalEntryLine,
+          as: 'lines',
+          where: applyTenantFilter(req.tenantId, {}),
+          required: false,
+          include: [
+            {
+              model: Account,
+              as: 'account',
+              attributes: ['id', 'code', 'name', 'type'],
+              where: applyTenantFilter(req.tenantId, {}),
+              required: false
+            }
+          ]
+        },
+        { model: User, as: 'creator', attributes: ['id', 'name'] },
+        { model: User, as: 'approver', attributes: ['id', 'name'] }
+      ]
+    });
+
+    if (!entry) {
+      return res.status(404).json({ success: false, message: 'Journal entry not found' });
+    }
+
+    res.status(200).json({ success: true, data: entry });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.getJournalEntries = async (req, res, next) => {
   try {
     const page = parseInt(req.query.page, 10) || 1;

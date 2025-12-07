@@ -8,7 +8,7 @@ const {
 } = require('../models');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
-const notificationService = require('../services/notificationService');
+const activityLogger = require('../services/activityLogger');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 const logLeadDebug = (...args) => {
@@ -160,12 +160,9 @@ exports.createLead = async (req, res, next) => {
 
     if (createdLead && createdLead.assignedTo) {
       try {
-        await notificationService.notifyLeadCreated({
-          lead: createdLead,
-          triggeredBy: req.user?.id || null
-        });
-      } catch (notificationError) {
-        console.error('[LeadController] Failed to send lead created notification', notificationError);
+        await activityLogger.logLeadAssigned(createdLead, req.user?.id || null);
+      } catch (error) {
+        console.error('[LeadController] Failed to log lead activity:', error);
       }
     }
 
@@ -226,12 +223,7 @@ exports.updateLead = async (req, res, next) => {
     });
 
     if (sanitized.status && sanitized.status !== previousStatus) {
-      await notificationService.notifyLeadStatusChanged({
-        lead: updatedLead,
-        oldStatus: previousStatus,
-        newStatus: sanitized.status,
-        triggeredBy: req.user?.id || null
-      });
+      await activityLogger.logLeadStatusChanged(updatedLead, previousStatus, sanitized.status, req.user?.id || null);
     }
 
     res.status(200).json({ success: true, data: updatedLead });
@@ -291,11 +283,7 @@ exports.addLeadActivity = async (req, res, next) => {
       include: [{ model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] }]
     });
 
-    await notificationService.notifyLeadActivityLogged({
-      lead,
-      activity: populatedActivity,
-      triggeredBy: req.user?.id || null
-    });
+    await activityLogger.logLeadActivityLogged(lead, populatedActivity, req.user?.id || null);
 
     res.status(201).json({ success: true, data: populatedActivity });
   } catch (error) {
@@ -366,9 +354,9 @@ exports.convertLead = async (req, res, next) => {
   const transaction = await sequelize.transaction();
 
   try {
+    // First, fetch lead without includes to avoid FOR UPDATE with JOIN issue
     const lead = await Lead.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
-      include: buildLeadInclude(),
       transaction,
       lock: transaction.LOCK.UPDATE
     });
@@ -381,7 +369,7 @@ exports.convertLead = async (req, res, next) => {
     const previousStatus = lead.status;
 
     if (lead.convertedCustomerId) {
-      await transaction.commit();
+      await transaction.rollback();
       return res.status(200).json({
         success: true,
         data: lead,
@@ -433,12 +421,7 @@ exports.convertLead = async (req, res, next) => {
       include: buildLeadInclude()
     });
 
-    await notificationService.notifyLeadStatusChanged({
-      lead: updatedLead,
-      oldStatus: previousStatus,
-      newStatus: 'converted',
-      triggeredBy: req.user?.id || null
-    });
+    await activityLogger.logLeadConverted(updatedLead, customer, req.user?.id || null);
 
     res.status(200).json({
       success: true,

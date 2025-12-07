@@ -1,3 +1,7 @@
+// Explicitly require pg before Sequelize to ensure it's available
+require('pg');
+require('pg-hstore');
+
 const { Sequelize } = require('sequelize');
 require('dotenv').config();
 

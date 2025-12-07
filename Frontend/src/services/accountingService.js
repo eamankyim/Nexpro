@@ -26,6 +26,8 @@ const getJournalEntries = async (params = {}) => {
   return api.get(queryString ? `/accounting/journal?${queryString}` : '/accounting/journal');
 };
 
+const getJournalEntry = async (id) => api.get(`/accounting/journal/${id}`);
+
 const createJournalEntry = async (payload) => api.post('/accounting/journal', payload);
 
 const getTrialBalance = async (params = {}) => {
@@ -41,6 +43,7 @@ export default {
   createAccount,
   updateAccount,
   getJournalEntries,
+  getJournalEntry,
   createJournalEntry,
   getTrialBalance,
   getAccountSummary

@@ -228,7 +228,7 @@ const NotificationBell = () => {
                 onClick={() => handleNotificationClick(item)}
                 style={{
                   cursor: 'pointer',
-                  backgroundColor: item.isRead ? 'transparent' : 'rgba(89, 0, 255, 0.08)',
+                  backgroundColor: item.isRead ? 'transparent' : 'rgba(24, 144, 255, 0.08)',
                   borderRadius: 8,
                   margin: '4px 8px',
                   padding: '12px 16px'
@@ -237,7 +237,7 @@ const NotificationBell = () => {
                 <Space direction="vertical" size={4} style={{ width: '100%' }}>
                   <Space style={{ width: '100%', justifyContent: 'space-between' }}>
                     <Space>
-                      <ThunderboltOutlined style={{ color: '#5900ff' }} />
+                      <ThunderboltOutlined style={{ color: '#1890ff' }} />
                       <Text strong>{item.title}</Text>
                     </Space>
                     <Text type="secondary" style={{ fontSize: 12 }}>
@@ -250,7 +250,7 @@ const NotificationBell = () => {
                     </Text>
                   )}
                   <Space size={8} wrap>
-                    {item.type && <Tag color="purple">{item.type}</Tag>}
+                    {item.type && <Tag color="blue">{item.type}</Tag>}
                     {item.priority && item.priority !== 'normal' && (
                       <Tag color={item.priority === 'high' ? 'red' : 'blue'}>{item.priority}</Tag>
                     )}

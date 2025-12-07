@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Table, Button, Modal, Form, Input, message, Space, Tag, Select, InputNumber, DatePicker, Row, Col, Descriptions, Statistic, Card, Divider } from 'antd';
 import { PlusOutlined, DollarCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, PrinterOutlined, DownloadOutlined } from '@ant-design/icons';
+import { useLocation, useNavigate } from 'react-router-dom';
 import invoiceService from '../services/invoiceService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
@@ -12,6 +13,8 @@ const { Option } = Select;
 const { TextArea } = Input;
 
 const Invoices = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
@@ -24,6 +27,8 @@ const Invoices = () => {
   const [stats, setStats] = useState(null);
   const { isManager } = useAuth();
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [markingAsPaid, setMarkingAsPaid] = useState(false);
+  const [sendingInvoice, setSendingInvoice] = useState(false);
 
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
@@ -59,6 +64,34 @@ const Invoices = () => {
     fetchInvoices();
     fetchStats();
   }, [fetchInvoices, fetchStats, refreshTrigger]);
+
+  // Auto-open invoice if coming from Jobs page
+  useEffect(() => {
+    if (location.state?.openInvoiceId && invoices.length > 0) {
+      const invoiceToOpen = invoices.find(inv => inv.id === location.state.openInvoiceId);
+      if (invoiceToOpen) {
+        // Clear the state
+        navigate(location.pathname, { replace: true, state: {} });
+        // Open the invoice
+        handleView(invoiceToOpen);
+      } else {
+        // Invoice not in current page, try to fetch it
+        const fetchSpecificInvoice = async () => {
+          try {
+            const response = await invoiceService.getById(location.state.openInvoiceId);
+            if (response.data) {
+              navigate(location.pathname, { replace: true, state: {} });
+              handleView(response.data);
+            }
+          } catch (error) {
+            console.error('Failed to load specific invoice:', error);
+            navigate(location.pathname, { replace: true, state: {} });
+          }
+        };
+        fetchSpecificInvoice();
+      }
+    }
+  }, [location.state, invoices]);
 
   const handleView = (invoice) => {
     setViewingInvoice(invoice);
@@ -133,6 +166,7 @@ const Invoices = () => {
 
   const handleMarkAsPaid = async (invoice) => {
     try {
+      setMarkingAsPaid(true);
       const response = await invoiceService.markAsPaid(invoice.id);
       const updatedInvoice = response?.data;
 
@@ -149,6 +183,8 @@ const Invoices = () => {
         error?.message ||
         'Failed to mark invoice as paid';
       message.error(errorMessage);
+    } finally {
+      setMarkingAsPaid(false);
     }
   };
 
@@ -168,11 +204,14 @@ const Invoices = () => {
 
   const handleSendInvoice = async (id) => {
     try {
+      setSendingInvoice(true);
       await invoiceService.send(id);
       message.success('Invoice marked as sent');
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       message.error('Failed to send invoice');
+    } finally {
+      setSendingInvoice(false);
     }
   };
 
@@ -246,7 +285,7 @@ const Invoices = () => {
       dataIndex: 'balance',
       key: 'balance',
       render: (balance) => (
-        <span style={{ fontWeight: 'bold', color: balance > 0 ? '#ff4d4f' : '#52c41a' }}>
+        <span style={{ fontWeight: 'bold', color: balance > 0 ? '#fa8c16' : '#52c41a' }}>
           GHS {parseFloat(balance || 0).toFixed(2)}
         </span>
       ),
@@ -314,7 +353,7 @@ const Invoices = () => {
                 title="Outstanding"
                 value={stats.outstandingAmount || 0}
                 prefix="GHS "
-                valueStyle={{ color: '#ff4d4f' }}
+                valueStyle={{ color: '#fa8c16' }}
                 suffix={<ClockCircleOutlined />}
               />
             </Card>
@@ -485,7 +524,7 @@ const Invoices = () => {
           { 
             label: 'Balance Due', 
             value: viewingInvoice.balance,
-            render: (val) => <strong style={{ fontSize: 16, color: val > 0 ? '#ff4d4f' : '#52c41a' }}>GHS {parseFloat(val || 0).toFixed(2)}</strong>
+            render: (val) => <strong style={{ fontSize: 16, color: val > 0 ? '#fa8c16' : '#52c41a' }}>GHS {parseFloat(val || 0).toFixed(2)}</strong>
           },
           { label: 'Notes', value: viewingInvoice.notes || '-' },
           { label: 'Terms & Conditions', value: viewingInvoice.termsAndConditions || '-' },
@@ -523,7 +562,7 @@ const Invoices = () => {
               <Descriptions.Item label="Total Amount">GHS {parseFloat(viewingInvoice.totalAmount).toFixed(2)}</Descriptions.Item>
               <Descriptions.Item label="Amount Paid">GHS {parseFloat(viewingInvoice.amountPaid || 0).toFixed(2)}</Descriptions.Item>
               <Descriptions.Item label="Balance Due" span={2}>
-                <strong style={{ fontSize: 16, color: '#ff4d4f' }}>
+                <strong style={{ fontSize: 16, color: '#fa8c16' }}>
                   GHS {parseFloat(viewingInvoice.balance).toFixed(2)}
                 </strong>
               </Descriptions.Item>

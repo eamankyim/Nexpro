@@ -14,7 +14,6 @@ import Vendors from './pages/Vendors';
 import Jobs from './pages/Jobs';
 import Invoices from './pages/Invoices';
 import Quotes from './pages/Quotes';
-import Payments from './pages/Payments';
 import Expenses from './pages/Expenses';
 import Pricing from './pages/Pricing';
 import Reports from './pages/Reports';
@@ -26,6 +25,7 @@ import Settings from './pages/Settings';
 import Employees from './pages/Employees';
 import Payroll from './pages/Payroll';
 import Accounting from './pages/Accounting';
+import Checkout from './pages/Checkout';
 import AdminOverview from './pages/admin/AdminOverview';
 import AdminTenants from './pages/admin/AdminTenants';
 import AdminBilling from './pages/admin/AdminBilling';
@@ -72,7 +72,6 @@ function AppContent() {
           <Route path="jobs" element={<Jobs />} />
           <Route path="quotes" element={<Quotes />} />
           <Route path="invoices" element={<Invoices />} />
-          <Route path="payments" element={<Payments />} />
           <Route path="expenses" element={<Expenses />} />
           <Route path="pricing" element={<Pricing />} />
           <Route path="leads" element={<Leads />} />
@@ -84,6 +83,7 @@ function AppContent() {
           <Route path="users" element={<Users />} />
           <Route path="profile" element={<Profile />} />
           <Route path="settings" element={<Settings />} />
+          <Route path="checkout" element={<Checkout />} />
         </Route>
 
         <Route

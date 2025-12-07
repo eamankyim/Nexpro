@@ -18,7 +18,7 @@ const userRoutes = require('./routes/userRoutes');
 const customerRoutes = require('./routes/customerRoutes');
 const vendorRoutes = require('./routes/vendorRoutes');
 const jobRoutes = require('./routes/jobRoutes');
-const paymentRoutes = require('./routes/paymentRoutes');
+// const paymentRoutes = require('./routes/paymentRoutes'); // REMOVED: Payments module removed (redundant with Invoices)
 const expenseRoutes = require('./routes/expenseRoutes');
 const quoteRoutes = require('./routes/quoteRoutes');
 const pricingRoutes = require('./routes/pricingRoutes');
@@ -38,6 +38,7 @@ const payrollRoutes = require('./routes/payrollRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const platformSettingsRoutes = require('./routes/platformSettingsRoutes');
 const platformAdminRoutes = require('./routes/platformAdminRoutes');
+const customDropdownRoutes = require('./routes/customDropdownRoutes');
 const swaggerUi = require('swagger-ui-express');
 const openapiSpecification = require('./docs/openapi');
 
@@ -46,8 +47,8 @@ const app = express();
 // Middleware
 app.use(helmet());
 app.use(cors(config.cors));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' })); // Increased limit for base64 images
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Logging
@@ -61,7 +62,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/customers', customerRoutes);
 app.use('/api/vendors', vendorRoutes);
 app.use('/api/jobs', jobRoutes);
-app.use('/api/payments', paymentRoutes);
+// app.use('/api/payments', paymentRoutes); // REMOVED: Payments module removed (redundant with Invoices)
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/quotes', quoteRoutes);
 app.use('/api/pricing', pricingRoutes);
@@ -81,6 +82,7 @@ app.use('/api/tenants', tenantRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/platform-settings', platformSettingsRoutes);
 app.use('/api/platform-admins', platformAdminRoutes);
+app.use('/api/custom-dropdowns', customDropdownRoutes);
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpecification));
 
 // Health check
@@ -104,7 +106,6 @@ app.get('/', (req, res) => {
       customers: '/api/customers',
       vendors: '/api/vendors',
       jobs: '/api/jobs',
-      payments: '/api/payments',
       expenses: '/api/expenses',
       pricing: '/api/pricing',
       invoices: '/api/invoices',
@@ -135,22 +136,33 @@ app.use((req, res) => {
 });
 
 // Database connection and server start
-const PORT = config.port;
+// Only start server if not running on Vercel (serverless)
+const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
 
-const startServer = async () => {
-  try {
-    await testConnection();
+if (!isVercel) {
+  const PORT = config.port;
 
-    app.listen(PORT, () => {
-      console.log(`[Server] Running in ${config.nodeEnv} mode on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error('Failed to start server:', error);
-    process.exit(1);
-  }
-};
+  const startServer = async () => {
+    try {
+      await testConnection();
 
-startServer();
+      app.listen(PORT, () => {
+        console.log(`[Server] Running in ${config.nodeEnv} mode on port ${PORT}`);
+      });
+    } catch (error) {
+      console.error('Failed to start server:', error);
+      process.exit(1);
+    }
+  };
+
+  startServer();
+} else {
+  // On Vercel, just test connection but don't start server
+  // The connection will be established on first request
+  testConnection().catch(err => {
+    console.error('Database connection test failed:', err);
+  });
+}
 
 module.exports = app;
 

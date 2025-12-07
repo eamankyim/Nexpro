@@ -7,7 +7,8 @@ const {
   getProfitLossReport,
   getKpiSummary,
   getTopCustomers,
-  getPipelineSummary
+  getPipelineSummary,
+  getServiceAnalyticsReport
 } = require('../controllers/reportController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
@@ -26,6 +27,7 @@ router.get('/profit-loss', getProfitLossReport);
 router.get('/kpi-summary', getKpiSummary);
 router.get('/top-customers', getTopCustomers);
 router.get('/pipeline-summary', getPipelineSummary);
+router.get('/service-analytics', getServiceAnalyticsReport);
 
 module.exports = router;
 

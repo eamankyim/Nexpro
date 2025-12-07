@@ -36,6 +36,7 @@ import DetailsDrawer from '../components/DetailsDrawer';
 import ActionColumn from '../components/ActionColumn';
 import leadService from '../services/leadService';
 import userService from '../services/userService';
+import customDropdownService from '../services/customDropdownService';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -55,13 +56,16 @@ const priorityColors = {
 };
 
 const leadSourceOptions = [
-  { value: 'website', label: 'Website' },
-  { value: 'referral', label: 'Referral' },
-  { value: 'cold_call', label: 'Cold Call' },
-  { value: 'event', label: 'Event' },
-  { value: 'sign_board', label: 'Sign Board' },
-  { value: 'outreach', label: 'Outreach' },
-  { value: 'other', label: 'Other' }
+  { value: 'Social Media - Facebook', label: 'Social Media - Facebook' },
+  { value: 'Social Media - Instagram', label: 'Social Media - Instagram' },
+  { value: 'Online - Google', label: 'Online - Google' },
+  { value: 'Online - Website', label: 'Online - Website' },
+  { value: 'Referral', label: 'Referral' },
+  { value: 'Walk-in', label: 'Walk-in' },
+  { value: 'Phone Call', label: 'Phone Call' },
+  { value: 'Email', label: 'Email' },
+  { value: 'Event/Exhibition', label: 'Event/Exhibition' },
+  { value: 'Cold Call', label: 'Cold Call' }
 ];
 
 const Leads = () => {
@@ -70,6 +74,9 @@ const Leads = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [submittingLead, setSubmittingLead] = useState(false);
+  const [submittingActivity, setSubmittingActivity] = useState(false);
+  const [archivingLead, setArchivingLead] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({
     search: '',
@@ -87,10 +94,26 @@ const Leads = () => {
   const [convertingLead, setConvertingLead] = useState(false);
   const [leadForm] = Form.useForm();
   const [activityForm] = Form.useForm();
+  const [customLeadSources, setCustomLeadSources] = useState([]);
+  const [showLeadSourceOtherInput, setShowLeadSourceOtherInput] = useState(false);
+  const [leadSourceOtherValue, setLeadSourceOtherValue] = useState('');
 
   useEffect(() => {
     fetchSummary();
     fetchUsers();
+  }, []);
+
+  // Load custom lead sources on mount
+  useEffect(() => {
+    const loadCustomSources = async () => {
+      try {
+        const options = await customDropdownService.getCustomOptions('lead_source');
+        setCustomLeadSources(options || []);
+      } catch (error) {
+        console.error('Failed to load custom lead sources:', error);
+      }
+    };
+    loadCustomSources();
   }, []);
 
   useEffect(() => {
@@ -160,6 +183,8 @@ const Leads = () => {
 
   const openLeadModal = (lead = null) => {
     setEditingLead(lead);
+    setShowLeadSourceOtherInput(false);
+    setLeadSourceOtherValue('');
     if (lead) {
       leadForm.setFieldsValue({
         name: lead.name,
@@ -185,12 +210,65 @@ const Leads = () => {
     setLeadModalVisible(true);
   };
 
+  // Handle lead source change (including "Other")
+  const handleLeadSourceChange = (value) => {
+    if (value === '__OTHER__') {
+      setShowLeadSourceOtherInput(true);
+    } else {
+      setShowLeadSourceOtherInput(false);
+    }
+  };
+
+  // Save custom lead source
+  const handleSaveCustomLeadSource = async () => {
+    if (!leadSourceOtherValue || !leadSourceOtherValue.trim()) {
+      message.warning('Please enter a source name');
+      return;
+    }
+
+    try {
+      const saved = await customDropdownService.saveCustomOption('lead_source', leadSourceOtherValue.trim());
+      if (saved) {
+        // Add to custom sources
+        setCustomLeadSources(prev => {
+          if (prev.find(s => s.value === saved.value)) {
+            return prev;
+          }
+          return [...prev, saved];
+        });
+        
+        // Set the value in the form
+        leadForm.setFieldValue('source', saved.value);
+        
+        // Clear the "Other" input
+        setShowLeadSourceOtherInput(false);
+        setLeadSourceOtherValue('');
+        
+        message.success(`"${saved.label}" added to sources`);
+      }
+    } catch (error) {
+      message.error(error.response?.data?.error || 'Failed to save custom source');
+    }
+  };
+
+  // Get merged lead source options
+  const getMergedLeadSourceOptions = () => {
+    const merged = [...leadSourceOptions];
+    customLeadSources.forEach(source => {
+      if (!merged.find(s => s.value === source.value)) {
+        merged.push({ value: source.value, label: source.label });
+      }
+    });
+    return merged;
+  };
+
   const handleLeadSubmit = async (values) => {
     const payload = {
       ...values,
       nextFollowUp: values.nextFollowUp ? values.nextFollowUp.toISOString() : null
     };
     try {
+      setSubmittingLead(true);
       if (editingLead) {
         await leadService.update(editingLead.id, payload);
         message.success('Lead updated successfully');
@@ -205,6 +283,8 @@ const Leads = () => {
       console.error('Failed to save lead', error);
       const err = error?.response?.data?.message || 'Failed to save lead';
       message.error(err);
+    } finally {
+      setSubmittingLead(false);
     }
   };
 
@@ -275,6 +355,7 @@ const Leads = () => {
   const handleActivitySubmit = async (values) => {
     if (!viewingLead) return;
     try {
+      setSubmittingActivity(true);
       await leadService.addActivity(viewingLead.id, {
         ...values,
         followUpDate: values.followUpDate ? values.followUpDate.toISOString() : null
@@ -288,6 +369,8 @@ const Leads = () => {
       console.error('Failed to add activity', error);
       const err = error?.response?.data?.message || 'Failed to add activity';
       message.error(err);
+    } finally {
+      setSubmittingActivity(false);
     }
   };
 
@@ -299,6 +382,7 @@ const Leads = () => {
       okButtonProps: { danger: true },
       onOk: async () => {
         try {
+          setArchivingLead(true);
           await leadService.archive(record.id);
           message.success('Lead archived');
           fetchLeads();
@@ -307,6 +391,8 @@ const Leads = () => {
           console.error('Failed to archive lead', error);
           const err = error?.response?.data?.message || 'Failed to archive lead';
           message.error(err);
+        } finally {
+          setArchivingLead(false);
         }
       }
     });
@@ -760,9 +846,14 @@ const Leads = () => {
       <Modal
         title={editingLead ? `Edit Lead (${editingLead.name})` : 'New Lead'}
         open={leadModalVisible}
-        onCancel={() => setLeadModalVisible(false)}
+        onCancel={() => {
+          setLeadModalVisible(false);
+          setShowLeadSourceOtherInput(false);
+          setLeadSourceOtherValue('');
+        }}
         onOk={() => leadForm.submit()}
         okText={editingLead ? 'Update Lead' : 'Create Lead'}
+        confirmLoading={submittingLead}
         width={720}
       >
         <Form layout="vertical" form={leadForm} onFinish={handleLeadSubmit}>
@@ -799,14 +890,41 @@ const Leads = () => {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="source" label="Lead Source">
-              <Select placeholder="Select lead source">
-                {leadSourceOptions.map((option) => (
+              <Select 
+                placeholder="Select lead source"
+                onChange={handleLeadSourceChange}
+              >
+                {getMergedLeadSourceOptions().map((option) => (
                   <Option key={option.value} value={option.value}>
                     {option.label}
                   </Option>
                 ))}
+                <Option value="__OTHER__">Other (specify)</Option>
               </Select>
               </Form.Item>
+              {showLeadSourceOtherInput && (
+                <Form.Item
+                  label="Enter Source Name"
+                  style={{ marginTop: 8 }}
+                >
+                  <Input.Group compact>
+                    <Input
+                      style={{ width: 'calc(100% - 80px)' }}
+                      placeholder="e.g., Trade Show, Partner Referral"
+                      value={leadSourceOtherValue}
+                      onChange={(e) => setLeadSourceOtherValue(e.target.value)}
+                      onPressEnter={handleSaveCustomLeadSource}
+                    />
+                    <Button
+                      type="primary"
+                      style={{ width: 80 }}
+                      onClick={handleSaveCustomLeadSource}
+                    >
+                      Save
+                    </Button>
+                  </Input.Group>
+                </Form.Item>
+              )}
             </Col>
             <Col span={12}>
               <Form.Item name="assignedTo" label="Assigned To">
@@ -876,6 +994,7 @@ const Leads = () => {
         onCancel={() => setActivityModalVisible(false)}
         onOk={() => activityForm.submit()}
         okText="Save Activity"
+        confirmLoading={submittingActivity}
       >
         <Form layout="vertical" form={activityForm} onFinish={handleActivitySubmit}>
           <Form.Item name="type" label="Activity Type">

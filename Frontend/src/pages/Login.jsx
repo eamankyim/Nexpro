@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Form, Input, Button, Typography, message } from 'antd';
+import { Form, Input, Button, Typography } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useAuth } from '../context/AuthContext';
+import { showSuccess, showError } from '../utils/toast';
 import './Login.css';
 
 const gradientLayerStyles = {
@@ -54,7 +55,7 @@ const Login = () => {
     try {
       const response = await login(values);
       const payload = response?.data || response || {};
-      message.success('Login successful!');
+      showSuccess('Login successful!');
       const user = payload?.user;
       if (user?.isPlatformAdmin) {
         navigate('/admin');
@@ -62,7 +63,8 @@ const Login = () => {
         navigate('/dashboard');
       }
     } catch (error) {
-      message.error(error.error || 'Login failed. Please check your credentials.');
+      // Show clear error message for login failures
+      showError(error, 'Invalid email or password. Please check your credentials and try again.');
     } finally {
       setLoading(false);
     }
@@ -197,7 +199,7 @@ const Login = () => {
             <Text style={{ color: 'rgba(238,242,255,0.6)', fontSize: 12 }}>
               Don't have an account yet?{' '}
               <a href="/onboarding" style={{ color: '#A5B4FC' }}>
-                Start a workspace
+                Sign up here
               </a>
             </Text>
           </div>

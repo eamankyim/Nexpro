@@ -6,7 +6,6 @@ import {
   Button, 
   Card, 
   Typography, 
-  message, 
   Alert, 
   Spin,
   Select
@@ -14,6 +13,7 @@ import {
 import { UserOutlined, LockOutlined, MailOutlined } from '@ant-design/icons';
 import authService from '../services/authService';
 import inviteService from '../services/inviteService';
+import { showSuccess, showError } from '../utils/toast';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -68,13 +68,13 @@ const Signup = () => {
 
       const response = await authService.register(registerData);
 
-      message.success('Account created successfully! Redirecting to dashboard...');
+      showSuccess('Account created successfully! Redirecting to dashboard...');
       
       setTimeout(() => {
         navigate('/dashboard');
       }, 1500);
     } catch (error) {
-      message.error(error.response?.data?.message || 'Failed to create account');
+      showError(error, 'Failed to create account. Please check your information and try again.');
     } finally {
       setLoading(false);
     }

@@ -8,8 +8,8 @@ const plans = [
       amount: 0,
       currency: 'GHS',
       display: 'GHS 0',
-      billingPeriodLabel: '14 days',
-      billingDescription: '14-day full access'
+      billingPeriodLabel: '1 month',
+      billingDescription: '1-month full access'
     },
     highlights: ['All modules unlocked', 'Up to 5 team members', 'In-app support'],
     marketing: {
@@ -18,7 +18,7 @@ const plans = [
       featureFlags: {},
       popular: false,
       priceDisplay: 'GHS 0',
-      billing: '14-day full access',
+      billing: '1-month full access',
       cta: {
         type: 'link',
         target: 'signup',
@@ -27,7 +27,7 @@ const plans = [
     },
     onboarding: {
       enabled: true,
-      subtitle: '14 days',
+      subtitle: '1 month',
       ctaLabel: 'Start Trial',
       badge: null,
       isDefault: true

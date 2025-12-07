@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Table, Button, Modal, Form, Input, message, Space, Tag, Select, InputNumber, Switch, Card, Row, Col, Divider, List } from 'antd';
 import { PlusOutlined, MinusCircleOutlined } from '@ant-design/icons';
 import pricingService from '../services/pricingService';
+import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -21,6 +22,9 @@ const Pricing = () => {
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingTemplate, setViewingTemplate] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [customCategories, setCustomCategories] = useState([]);
+  const [showCategoryOtherInput, setShowCategoryOtherInput] = useState(false);
+  const [categoryOtherValue, setCategoryOtherValue] = useState('');
 
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
@@ -52,6 +56,19 @@ const Pricing = () => {
     fetchTemplates();
   }, [fetchTemplates, refreshTrigger]);
 
+  // Load custom categories on mount
+  useEffect(() => {
+    const loadCustomCategories = async () => {
+      try {
+        const options = await customDropdownService.getCustomOptions('job_category');
+        setCustomCategories(options || []);
+      } catch (error) {
+        console.error('Failed to load custom categories:', error);
+      }
+    };
+    loadCustomCategories();
+  }, []);
+
   const handleAdd = () => {
     setEditingTemplate(null);
     form.resetFields();
@@ -59,6 +76,8 @@ const Pricing = () => {
       isActive: true,
       pricingMethod: 'unit'
     });
+    setShowCategoryOtherInput(false);
+    setCategoryOtherValue('');
     setModalVisible(true);
   };
 
@@ -142,7 +161,7 @@ const Pricing = () => {
     }
   };
 
-  const categories = [
+  const defaultCategories = [
     { value: 'Black & White Printing', label: 'Black & White Printing' },
     { value: 'Color Printing', label: 'Color Printing' },
     { value: 'Large Format Printing', label: 'Large Format Printing' },
@@ -157,9 +176,60 @@ const Pricing = () => {
     { value: 'Photocopying', label: 'Photocopying' },
     { value: 'Scanning', label: 'Scanning' },
     { value: 'Printing', label: 'Printing' },
-    { value: 'Design Services', label: 'Design Services' },
-    { value: 'Other', label: 'Other' }
+    { value: 'Design Services', label: 'Design Services' }
   ];
+
+  // Get merged category options
+  const getMergedCategoryOptions = () => {
+    const merged = [...defaultCategories];
+    customCategories.forEach(cat => {
+      if (!merged.find(c => c.value === cat.value)) {
+        merged.push({ value: cat.value, label: cat.label });
+      }
+    });
+    return merged;
+  };
+
+  // Handle category change (including "Other")
+  const handleCategoryChange = (value) => {
+    if (value === '__OTHER__') {
+      setShowCategoryOtherInput(true);
+    } else {
+      setShowCategoryOtherInput(false);
+    }
+  };
+
+  // Save custom category
+  const handleSaveCustomCategory = async () => {
+    if (!categoryOtherValue || !categoryOtherValue.trim()) {
+      message.warning('Please enter a category name');
+      return;
+    }
+
+    try {
+      const saved = await customDropdownService.saveCustomOption('job_category', categoryOtherValue.trim());
+      if (saved) {
+        // Add to custom categories
+        setCustomCategories(prev => {
+          if (prev.find(c => c.value === saved.value)) {
+            return prev;
+          }
+          return [...prev, saved];
+        });
+        
+        // Set the value in the form
+        form.setFieldValue('category', saved.value);
+        
+        // Clear the "Other" input
+        setShowCategoryOtherInput(false);
+        setCategoryOtherValue('');
+        
+        message.success(`"${saved.label}" added to categories`);
+      }
+    } catch (error) {
+      message.error(error.response?.data?.error || 'Failed to save custom category');
+    }
+  };
 
   const materialTypes = [
     'Plain Paper',
@@ -262,7 +332,7 @@ const Pricing = () => {
             style={{ width: 200 }}
             onChange={(value) => setFilters({ ...filters, category: value || '' })}
           >
-            {categories.map(cat => (
+            {getMergedCategoryOptions().map(cat => (
               <Option key={cat.value} value={cat.value}>{cat.label}</Option>
             ))}
           </Select>
@@ -296,7 +366,11 @@ const Pricing = () => {
       <Modal
         title={editingTemplate ? 'Edit Pricing Template' : 'Add Pricing Template'}
         open={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={() => {
+          setModalVisible(false);
+          setShowCategoryOtherInput(false);
+          setCategoryOtherValue('');
+        }}
         onOk={() => form.submit()}
         width={1000}
         okText={editingTemplate ? 'Update' : 'Create'}
@@ -329,12 +403,41 @@ const Pricing = () => {
                 label="Category"
                 rules={[{ required: true, message: 'Please select category' }]}
               >
-                <Select placeholder="Select category" size="large" showSearch>
-                  {categories.map(cat => (
+                <Select 
+                  placeholder="Select category" 
+                  size="large" 
+                  showSearch
+                  onChange={handleCategoryChange}
+                >
+                  {getMergedCategoryOptions().map(cat => (
                     <Option key={cat.value} value={cat.value}>{cat.label}</Option>
                   ))}
+                  <Option value="__OTHER__">Other (specify)</Option>
                 </Select>
               </Form.Item>
+              {showCategoryOtherInput && (
+                <Form.Item
+                  label="Enter Category Name"
+                  style={{ marginTop: 8 }}
+                >
+                  <Input.Group compact>
+                    <Input
+                      style={{ width: 'calc(100% - 80px)' }}
+                      placeholder="e.g., T-shirt Printing, Custom Design"
+                      value={categoryOtherValue}
+                      onChange={(e) => setCategoryOtherValue(e.target.value)}
+                      onPressEnter={handleSaveCustomCategory}
+                    />
+                    <Button
+                      type="primary"
+                      style={{ width: 80 }}
+                      onClick={handleSaveCustomCategory}
+                    >
+                      Save
+                    </Button>
+                  </Input.Group>
+                </Form.Item>
+              )}
             </Col>
           </Row>
 

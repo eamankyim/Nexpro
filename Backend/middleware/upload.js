@@ -14,6 +14,21 @@ const ensureDirExists = (dirPath) => {
 };
 
 const createUploader = (subDirResolver) => {
+  // Check if we're in a serverless environment (Vercel, etc.)
+  const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
+  
+  // In serverless environments, use memory storage
+  // Files will need to be uploaded to cloud storage (S3, Cloudinary, etc.)
+  if (isServerless) {
+    return multer({
+      storage: multer.memoryStorage(),
+      limits: {
+        fileSize: parseInt(process.env.UPLOAD_MAX_SIZE_MB || '20', 10) * 1024 * 1024
+      }
+    });
+  }
+
+  // In regular Node.js environments, use disk storage
   const storage = multer.diskStorage({
     destination: (req, file, cb) => {
       const subPath =

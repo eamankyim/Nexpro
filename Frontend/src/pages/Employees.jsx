@@ -42,6 +42,7 @@ import {
 import dayjs from 'dayjs';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import employeeService from '../services/employeeService';
+import customDropdownService from '../services/customDropdownService';
 import { API_BASE_URL } from '../services/api';
 import ActionColumn from '../components/ActionColumn';
 
@@ -98,11 +99,173 @@ const ghanaBanks = [
   'Societe Generale Ghana',
   'United Bank for Africa (UBA)',
   'Zenith Bank Ghana',
-  'Mobile Money'
+  'Mobile Money',
+  'Other'
 ];
 
-const EmployeeForm = ({ currentStep }) => (
-  <>
+const relationshipOptions = [
+  'Spouse',
+  'Parent',
+  'Father',
+  'Mother',
+  'Son',
+  'Daughter',
+  'Brother',
+  'Sister',
+  'Sibling',
+  'Child',
+  'Grandparent',
+  'Uncle',
+  'Aunt',
+  'Cousin',
+  'Friend',
+  'Partner',
+  'Guardian',
+  'Other'
+];
+
+const EmployeeForm = ({ currentStep, form }) => {
+  const [customRelationships, setCustomRelationships] = useState([]);
+  const [showRelationshipOtherInputs, setShowRelationshipOtherInputs] = useState({});
+  const [relationshipOtherValues, setRelationshipOtherValues] = useState({});
+  const [customBanks, setCustomBanks] = useState([]);
+  const [showBankOtherInput, setShowBankOtherInput] = useState(false);
+
+  // Load custom relationships and banks on mount
+  useEffect(() => {
+    const loadCustomOptions = async () => {
+      try {
+        const [relationships, banks] = await Promise.all([
+          customDropdownService.getCustomOptions('employee_relationship'),
+          customDropdownService.getCustomOptions('employee_bank')
+        ]);
+        setCustomRelationships(relationships || []);
+        setCustomBanks(banks || []);
+      } catch (error) {
+        console.error('Failed to load custom options:', error);
+      }
+    };
+    loadCustomOptions();
+  }, []);
+
+  // Handle relationship change (including "Other")
+  const handleRelationshipChange = (value, fieldPath) => {
+    if (value === '__OTHER__') {
+      setShowRelationshipOtherInputs(prev => ({ ...prev, [fieldPath]: true }));
+    } else {
+      setShowRelationshipOtherInputs(prev => {
+        const newState = { ...prev };
+        delete newState[fieldPath];
+        return newState;
+      });
+    }
+  };
+
+  // Save custom relationship
+  const handleSaveCustomRelationship = async (customValue, fieldPath) => {
+    if (!customValue || !customValue.trim()) {
+      message.warning('Please enter a relationship name');
+      return;
+    }
+
+    try {
+      const saved = await customDropdownService.saveCustomOption('employee_relationship', customValue.trim());
+      if (saved) {
+        // Add to custom relationships
+        setCustomRelationships(prev => {
+          if (prev.find(r => r.value === saved.value)) {
+            return prev;
+          }
+          return [...prev, saved];
+        });
+        
+        // Set the value in the form
+        form.setFieldValue(fieldPath, saved.value);
+        
+        // Clear the "Other" input
+        setShowRelationshipOtherInputs(prev => {
+          const newState = { ...prev };
+          delete newState[fieldPath];
+          return newState;
+        });
+        setRelationshipOtherValues(prev => {
+          const newState = { ...prev };
+          delete newState[fieldPath];
+          return newState;
+        });
+        
+        message.success(`"${saved.label}" added to relationships`);
+      }
+    } catch (error) {
+      message.error(error.response?.data?.error || 'Failed to save custom relationship');
+    }
+  };
+
+  // Get merged relationship options
+  const getMergedRelationshipOptions = () => {
+    const merged = [...relationshipOptions];
+    customRelationships.forEach(rel => {
+      if (!merged.includes(rel.value)) {
+        merged.push(rel.value);
+      }
+    });
+    return merged;
+  };
+
+  // Get merged bank options
+  const getMergedBankOptions = () => {
+    const merged = [...ghanaBanks.filter(b => b !== 'Other')];
+    customBanks.forEach(bank => {
+      if (!merged.includes(bank.value)) {
+        merged.push(bank.value);
+      }
+    });
+    return merged;
+  };
+
+  // Handle bank change (including "Other")
+  const handleBankChange = (value) => {
+    if (value === '__OTHER__') {
+      setShowBankOtherInput(true);
+    } else {
+      setShowBankOtherInput(false);
+    }
+  };
+
+  // Save custom bank
+  const handleSaveCustomBank = async (customValue) => {
+    if (!customValue || !customValue.trim()) {
+      message.warning('Please enter a bank name');
+      return;
+    }
+
+    try {
+      const saved = await customDropdownService.saveCustomOption('employee_bank', customValue.trim());
+      if (saved) {
+        // Add to custom banks
+        setCustomBanks(prev => {
+          if (prev.find(b => b.value === saved.value)) {
+            return prev;
+          }
+          return [...prev, saved];
+        });
+        
+        // Set the value in the form
+        form.setFieldValue('bankName', saved.value);
+        
+        // Clear the "Other" input
+        setShowBankOtherInput(false);
+        form.setFieldValue('customBankName', undefined);
+        
+        message.success(`"${saved.label}" added to banks`);
+      }
+    } catch (error) {
+      message.error(error.response?.data?.error || 'Failed to save custom bank');
+    }
+  };
+
+  return (
+    <>
     {currentStep === 0 && (
       <>
         <Row gutter={16}>
@@ -229,20 +392,52 @@ const EmployeeForm = ({ currentStep }) => (
       </Col>
       <Col span={12}>
         <Form.Item name="bankName" label="Bank / Wallet" >
-          <Select placeholder="Select bank or mobile money">
-            {ghanaBanks.map((bank) => (
+          <Select 
+            placeholder="Select bank or mobile money" 
+            showSearch
+            onChange={handleBankChange}
+          >
+            {getMergedBankOptions().map((bank) => (
               <Option key={bank} value={bank}>{bank}</Option>
             ))}
+            <Option value="__OTHER__">Other (specify)</Option>
           </Select>
         </Form.Item>
       </Col>
     </Row>
     <Row gutter={16}>
       <Col span={12}>
+        {showBankOtherInput && (
+          <Form.Item
+            label="Enter Bank Name"
+            style={{ marginTop: 8 }}
+          >
+            <Input.Group compact>
+              <Input
+                style={{ width: 'calc(100% - 80px)' }}
+                placeholder="e.g., New Bank, Credit Union"
+                value={form.getFieldValue('customBankName') || ''}
+                onChange={(e) => form.setFieldValue('customBankName', e.target.value)}
+                onPressEnter={() => handleSaveCustomBank(form.getFieldValue('customBankName'))}
+              />
+              <Button
+                type="primary"
+                style={{ width: 80 }}
+                onClick={() => handleSaveCustomBank(form.getFieldValue('customBankName'))}
+              >
+                Save
+              </Button>
+            </Input.Group>
+          </Form.Item>
+        )}
+      </Col>
+      <Col span={12}>
         <Form.Item name="bankAccountName" label="Account Name">
           <Input placeholder="Account Name" />
         </Form.Item>
       </Col>
+    </Row>
+    <Row gutter={16}>
       <Col span={12}>
         <Form.Item name="bankAccountNumber" label="Account / Momo Number">
           <Input placeholder="Account or Mobile Money Number" />
@@ -263,8 +458,40 @@ const EmployeeForm = ({ currentStep }) => (
       </Col>
       <Col span={12}>
         <Form.Item name={['emergencyContact', 'relationship']} label="Relationship">
-          <Input placeholder="e.g. Spouse" />
+          <Select 
+            placeholder="Select relationship" 
+            showSearch
+            onChange={(value) => handleRelationshipChange(value, 'emergencyContact.relationship')}
+          >
+            {getMergedRelationshipOptions().map((rel) => (
+              <Option key={rel} value={rel}>{rel}</Option>
+            ))}
+            <Option value="__OTHER__">Other (specify)</Option>
+          </Select>
         </Form.Item>
+        {showRelationshipOtherInputs['emergencyContact.relationship'] && (
+          <Form.Item
+            label="Enter Relationship"
+            style={{ marginTop: 8 }}
+          >
+            <Input.Group compact>
+              <Input
+                style={{ width: 'calc(100% - 80px)' }}
+                placeholder="e.g., Step-sister, In-law"
+                value={relationshipOtherValues['emergencyContact.relationship'] || ''}
+                onChange={(e) => setRelationshipOtherValues(prev => ({ ...prev, 'emergencyContact.relationship': e.target.value }))}
+                onPressEnter={() => handleSaveCustomRelationship(relationshipOtherValues['emergencyContact.relationship'], 'emergencyContact.relationship')}
+              />
+              <Button
+                type="primary"
+                style={{ width: 80 }}
+                onClick={() => handleSaveCustomRelationship(relationshipOtherValues['emergencyContact.relationship'], 'emergencyContact.relationship')}
+              >
+                Save
+              </Button>
+            </Input.Group>
+          </Form.Item>
+        )}
       </Col>
     </Row>
     <Row gutter={16}>
@@ -289,8 +516,40 @@ const EmployeeForm = ({ currentStep }) => (
       </Col>
       <Col span={12}>
         <Form.Item name={['nextOfKin', 'relationship']} label="Relationship">
-          <Input placeholder="Relationship" />
+          <Select 
+            placeholder="Select relationship" 
+            showSearch
+            onChange={(value) => handleRelationshipChange(value, 'nextOfKin.relationship')}
+          >
+            {getMergedRelationshipOptions().map((rel) => (
+              <Option key={rel} value={rel}>{rel}</Option>
+            ))}
+            <Option value="__OTHER__">Other (specify)</Option>
+          </Select>
         </Form.Item>
+        {showRelationshipOtherInputs['nextOfKin.relationship'] && (
+          <Form.Item
+            label="Enter Relationship"
+            style={{ marginTop: 8 }}
+          >
+            <Input.Group compact>
+              <Input
+                style={{ width: 'calc(100% - 80px)' }}
+                placeholder="e.g., Step-sister, In-law"
+                value={relationshipOtherValues['nextOfKin.relationship'] || ''}
+                onChange={(e) => setRelationshipOtherValues(prev => ({ ...prev, 'nextOfKin.relationship': e.target.value }))}
+                onPressEnter={() => handleSaveCustomRelationship(relationshipOtherValues['nextOfKin.relationship'], 'nextOfKin.relationship')}
+              />
+              <Button
+                type="primary"
+                style={{ width: 80 }}
+                onClick={() => handleSaveCustomRelationship(relationshipOtherValues['nextOfKin.relationship'], 'nextOfKin.relationship')}
+              >
+                Save
+              </Button>
+            </Input.Group>
+          </Form.Item>
+        )}
       </Col>
     </Row>
     <Row gutter={16}>
@@ -311,7 +570,8 @@ const EmployeeForm = ({ currentStep }) => (
       </>
     )}
   </>
-);
+  );
+};
 
 const Employees = () => {
   const queryClient = useQueryClient();
@@ -816,7 +1076,7 @@ const Employees = () => {
           form={form}
           onFinish={handleSubmit}
         >
-          <EmployeeForm currentStep={formStep} />
+          <EmployeeForm currentStep={formStep} form={form} />
         </Form>
       </Modal>
 

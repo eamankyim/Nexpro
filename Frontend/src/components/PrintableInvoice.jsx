@@ -303,10 +303,6 @@ const PrintableInvoice = ({
               <div className="section-title">Job Details:</div>
               <div className="billing-info">
                 <div><strong>Job #:</strong> {invoice.job.jobNumber}</div>
-                <div><strong>Title:</strong> {invoice.job.title || 'N/A'}</div>
-                {invoice.job.description && (
-                  <div><strong>Description:</strong> {invoice.job.description}</div>
-                )}
               </div>
             </div>
           )}
@@ -390,21 +386,11 @@ const PrintableInvoice = ({
           </div>
         </div>
 
-        {/* Notes */}
-        {(invoice.notes || invoice.termsAndConditions) && (
+        {/* Terms & Conditions */}
+        {invoice.termsAndConditions && (
           <div className="notes-section">
-            {invoice.notes && (
-              <div style={{ marginBottom: 15 }}>
-                <div className="notes-title">Notes:</div>
-                <div className="notes-content">{invoice.notes}</div>
-              </div>
-            )}
-            {invoice.termsAndConditions && (
-              <div>
                 <div className="notes-title">Terms & Conditions:</div>
                 <div className="notes-content">{invoice.termsAndConditions}</div>
-              </div>
-            )}
           </div>
         )}
 

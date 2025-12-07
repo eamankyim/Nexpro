@@ -403,6 +403,233 @@ const notifyLeadActivityLogged = async ({ lead, activity, triggeredBy = null }) 
   });
 };
 
+const notifyInvoiceSent = async ({ invoice, triggeredBy = null }) => {
+  console.log(`${logPrefix} notifyInvoiceSent called`, {
+    invoiceId: invoice?.id,
+    invoiceNumber: invoice?.invoiceNumber,
+    hasInvoice: !!invoice,
+    hasJob: !!invoice?.job,
+    jobId: invoice?.job?.id,
+    jobCreatedBy: invoice?.job?.createdBy,
+    jobAssignedTo: invoice?.job?.assignedTo
+  });
+
+  if (!invoice) {
+    console.warn(`${logPrefix} notifyInvoiceSent skipped - no invoice`, {
+      invoiceId: invoice?.id
+    });
+    return [];
+  }
+
+  const tenantId = invoice.tenantId;
+  if (!tenantId) {
+    console.warn(`${logPrefix} notifyInvoiceSent missing tenantId`, {
+      invoiceId: invoice.id
+    });
+    return [];
+  }
+
+  // For financial notifications, notify ALL managers and admins in the tenant
+  const { User, UserTenant } = require('../models');
+  
+  const recipientSet = new Set();
+  
+  // Add job team members
+  if (invoice.job) {
+    console.log(`${logPrefix} notifyInvoiceSent - processing job`, {
+      jobId: invoice.job.id,
+      createdBy: invoice.job.createdBy,
+      assignedTo: invoice.job.assignedTo
+    });
+    if (invoice.job.createdBy) recipientSet.add(invoice.job.createdBy);
+    if (invoice.job.assignedTo) recipientSet.add(invoice.job.assignedTo);
+  }
+  
+  // Add ALL managers and admins in the tenant for financial visibility
+  try {
+    const managerUsers = await UserTenant.findAll({
+      where: {
+        tenantId,
+        role: { [require('sequelize').Op.in]: ['admin', 'manager'] }
+      },
+      attributes: ['userId']
+    });
+    
+    console.log(`${logPrefix} notifyInvoiceSent - found managers/admins`, {
+      count: managerUsers.length,
+      userIds: managerUsers.map(u => u.userId)
+    });
+    
+    managerUsers.forEach(ut => {
+      if (ut.userId) recipientSet.add(ut.userId);
+    });
+  } catch (error) {
+    console.error(`${logPrefix} notifyInvoiceSent - failed to fetch managers`, error.message);
+  }
+
+  const recipients = Array.from(recipientSet).filter(Boolean);
+  console.log(`${logPrefix} notifyInvoiceSent recipients determined`, {
+    invoiceId: invoice.id,
+    recipientCount: recipients.length,
+    recipients: recipients
+  });
+
+  if (recipients.length === 0) {
+    console.warn(`${logPrefix} notifyInvoiceSent no recipients - NOTIFICATION WILL NOT BE SENT!`, {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      hasJob: !!invoice.job,
+      jobId: invoice.jobId
+    });
+    return [];
+  }
+
+  const link = `/invoices`;
+
+  const payload = {
+    title: 'Invoice Sent',
+    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been sent (GHS ${parseFloat(invoice.totalAmount).toLocaleString()}).`,
+    type: 'invoice',
+    priority: 'normal',
+    metadata: {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      customerId: invoice.customerId,
+      totalAmount: invoice.totalAmount
+    },
+    icon: 'mail',
+    link,
+    triggeredBy
+  };
+
+  console.log(`${logPrefix} notifyInvoiceSent`, {
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    recipients,
+    triggeredBy
+  });
+
+  return notifyUsers({
+    tenantId,
+    userIds: recipients,
+    payload
+  });
+};
+
+const notifyInvoicePaid = async ({ invoice, triggeredBy = null }) => {
+  console.log(`${logPrefix} notifyInvoicePaid called`, {
+    invoiceId: invoice?.id,
+    invoiceNumber: invoice?.invoiceNumber,
+    hasInvoice: !!invoice,
+    hasJob: !!invoice?.job,
+    jobId: invoice?.job?.id,
+    jobCreatedBy: invoice?.job?.createdBy,
+    jobAssignedTo: invoice?.job?.assignedTo
+  });
+
+  if (!invoice) {
+    console.warn(`${logPrefix} notifyInvoicePaid skipped - no invoice`, {
+      invoiceId: invoice?.id
+    });
+    return [];
+  }
+
+  const tenantId = invoice.tenantId;
+  if (!tenantId) {
+    console.warn(`${logPrefix} notifyInvoicePaid missing tenantId`, {
+      invoiceId: invoice.id
+    });
+    return [];
+  }
+
+  // For financial notifications, notify ALL managers and admins in the tenant
+  const { User, UserTenant } = require('../models');
+  
+  const recipientSet = new Set();
+  
+  // Add job team members
+  if (invoice.job) {
+    console.log(`${logPrefix} notifyInvoicePaid - processing job`, {
+      jobId: invoice.job.id,
+      createdBy: invoice.job.createdBy,
+      assignedTo: invoice.job.assignedTo
+    });
+    if (invoice.job.createdBy) recipientSet.add(invoice.job.createdBy);
+    if (invoice.job.assignedTo) recipientSet.add(invoice.job.assignedTo);
+  }
+  
+  // Add ALL managers and admins in the tenant for financial visibility
+  try {
+    const managerUsers = await UserTenant.findAll({
+      where: {
+        tenantId,
+        role: { [require('sequelize').Op.in]: ['admin', 'manager'] }
+      },
+      attributes: ['userId']
+    });
+    
+    console.log(`${logPrefix} notifyInvoicePaid - found managers/admins`, {
+      count: managerUsers.length,
+      userIds: managerUsers.map(u => u.userId)
+    });
+    
+    managerUsers.forEach(ut => {
+      if (ut.userId) recipientSet.add(ut.userId);
+    });
+  } catch (error) {
+    console.error(`${logPrefix} notifyInvoicePaid - failed to fetch managers`, error.message);
+  }
+
+  const recipients = Array.from(recipientSet).filter(Boolean);
+  console.log(`${logPrefix} notifyInvoicePaid recipients determined`, {
+    invoiceId: invoice.id,
+    recipientCount: recipients.length,
+    recipients: recipients
+  });
+
+  if (recipients.length === 0) {
+    console.warn(`${logPrefix} notifyInvoicePaid no recipients - NOTIFICATION WILL NOT BE SENT!`, {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      hasJob: !!invoice.job,
+      jobId: invoice.jobId
+    });
+    return [];
+  }
+
+  const link = `/invoices`;
+
+  const payload = {
+    title: 'Payment Received',
+    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been paid (GHS ${parseFloat(invoice.amountPaid).toLocaleString()}).`,
+    type: 'payment',
+    priority: 'high',
+    metadata: {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      customerId: invoice.customerId,
+      amountPaid: invoice.amountPaid,
+      totalAmount: invoice.totalAmount
+    },
+    icon: 'dollar',
+    link,
+    triggeredBy
+  };
+
+  console.log(`${logPrefix} notifyInvoicePaid`, {
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    recipients,
+    triggeredBy
+  });
+
+  return notifyUsers({
+    tenantId,
+    userIds: recipients,
+    payload
+  });
+};
+
 module.exports = {
   createNotification,
   notifyUsers,
@@ -410,7 +637,9 @@ module.exports = {
   notifyJobStatusChanged,
   notifyLeadCreated,
   notifyLeadStatusChanged,
-  notifyLeadActivityLogged
+  notifyLeadActivityLogged,
+  notifyInvoiceSent,
+  notifyInvoicePaid
 };
 
 
