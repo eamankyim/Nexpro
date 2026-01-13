@@ -26,6 +26,7 @@ import { useAuth } from '../context/AuthContext';
 import { showSuccess, showError } from '../utils/toast';
 import StorageUsageCard from '../components/StorageUsageCard';
 import SeatUsageCard from '../components/SeatUsageCard';
+import PhoneNumberInput from '../components/PhoneNumberInput';
 
 const { Title, Text } = Typography;
 
@@ -579,7 +580,7 @@ const Settings = () => {
               name="phone"
               label="Phone"
             >
-              <Input size="large" placeholder="+233 000 000 000" />
+              <PhoneNumberInput size="large" placeholder="Enter phone number" />
             </Form.Item>
           </Col>
         </Row>

@@ -5,6 +5,7 @@ const { createInvoicePaymentJournal } = require('../services/invoiceAccountingSe
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const activityLogger = require('../services/activityLogger');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
+const sabitoWebhookService = require('../services/sabitoWebhookService');
 
 // Helper function to generate invoice number
 const generateInvoiceNumber = async (tenantId) => {
@@ -248,6 +249,48 @@ exports.createInvoice = async (req, res, next) => {
       console.error('Failed to update customer balance:', error);
     }
 
+    // Send webhook to Sabito (async, don't block response)
+    try {
+      const customer = await Customer.findByPk(createdInvoice.customerId, {
+        attributes: [
+          'id', 
+          'sabitoCustomerId', 
+          'sabitoBusinessId', 
+          'email', 
+          'name', 
+          'phone'
+        ]
+      });
+
+      if (customer) {
+        sabitoWebhookService.sendInvoiceWebhook(createdInvoice, customer, req.tenantId)
+          .then(async (result) => {
+            if (result.success) {
+              // Update invoice with Sabito project ID
+              await createdInvoice.update({
+                sabitoProjectId: result.projectId,
+                sabitoSyncedAt: new Date(),
+                sabitoSyncStatus: 'synced'
+              });
+            } else if (result.skipped) {
+              await createdInvoice.update({
+                sabitoSyncStatus: 'skipped'
+              });
+            }
+          })
+          .catch(async (error) => {
+            console.error('Failed to send Sabito webhook:', error);
+            await createdInvoice.update({
+              sabitoSyncStatus: 'failed',
+              sabitoSyncError: error.message
+            });
+          });
+      }
+    } catch (error) {
+      // Don't fail invoice creation if webhook fails
+      console.error('Error sending Sabito webhook:', error);
+    }
+
     res.status(201).json({
       success: true,
       data: createdInvoice
@@ -463,6 +506,36 @@ exports.recordPayment = async (req, res, next) => {
         await activityLogger.logInvoicePaid(updatedInvoice, req.user?.id || null);
       } catch (error) {
         console.error('Failed to log payment activity:', error);
+      }
+
+      // Send paid webhook to Sabito (async)
+      try {
+        const customer = await Customer.findByPk(updatedInvoice.customerId, {
+          attributes: [
+            'id', 
+            'sabitoCustomerId', 
+            'sabitoBusinessId', 
+            'email', 
+            'name', 
+            'phone'
+          ]
+        });
+
+        if (customer) {
+          sabitoWebhookService.sendInvoicePaidWebhook(updatedInvoice, customer, req.tenantId)
+            .then(async (result) => {
+              if (result.success) {
+                await updatedInvoice.update({
+                  sabitoSyncedAt: new Date()
+                });
+              }
+            })
+            .catch((error) => {
+              console.error('Failed to send Sabito paid webhook:', error);
+            });
+        }
+      } catch (error) {
+        console.error('Error sending Sabito paid webhook:', error);
       }
     }
 

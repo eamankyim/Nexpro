@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Menu, Avatar, Dropdown, Typography, theme, Space, Button, Modal, Card, Row, Col, Tag, Switch } from 'antd';
+import { Layout, Menu, Avatar, Dropdown, Typography, theme, Space, Button, Modal, Card, Row, Col, Tag, Switch, Drawer } from 'antd';
 import {
   DashboardOutlined,
   UserOutlined,
@@ -23,7 +23,9 @@ import {
   DatabaseOutlined,
   FundOutlined,
   CrownOutlined,
-  CheckCircleOutlined
+  CheckCircleOutlined,
+  LinkOutlined,
+  MenuOutlined
 } from '@ant-design/icons';
 import { useAuth } from '../context/AuthContext';
 import NotificationBell from '../components/NotificationBell';
@@ -34,6 +36,8 @@ const { Text } = Typography;
 
 const MainLayout = () => {
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileDrawerVisible, setMobileDrawerVisible] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [pricingModalVisible, setPricingModalVisible] = useState(false);
   const [billingPeriod, setBillingPeriod] = useState('monthly'); // 'monthly' or 'yearly'
   const navigate = useNavigate();
@@ -42,6 +46,20 @@ const MainLayout = () => {
   const {
     token: { colorBgContainer },
   } = theme.useToken();
+
+  // Handle window resize
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) {
+        setMobileDrawerVisible(false);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   const tenantMenuItems = tenantMemberships.map((membership) => ({
     key: membership.tenantId,
@@ -89,7 +107,7 @@ const MainLayout = () => {
       children: [
         {
           key: '/vendors',
-          icon: <ShopOutlined />,
+          icon: <span>-</span>,
           label: 'Vendors',
         },
       ],
@@ -101,32 +119,32 @@ const MainLayout = () => {
       children: [
         {
           key: '/quotes',
-          icon: <FileAddOutlined />,
+          icon: <span>-</span>,
           label: 'Quotes',
         },
         {
           key: '/invoices',
-          icon: <FileDoneOutlined />,
+          icon: <span>-</span>,
           label: 'Invoices',
         },
         {
           key: '/expenses',
-          icon: <ShoppingOutlined />,
+          icon: <span>-</span>,
           label: 'Expenses',
         },
         {
           key: '/pricing',
-          icon: <TagOutlined />,
+          icon: <span>-</span>,
           label: 'Pricing',
         },
         {
           key: '/payroll',
-          icon: <DollarOutlined />,
+          icon: <span>-</span>,
           label: 'Payroll',
         },
         {
           key: '/accounting',
-          icon: <DollarOutlined />,
+          icon: <span>-</span>,
           label: 'Accounting',
         },
       ],
@@ -138,12 +156,12 @@ const MainLayout = () => {
       children: [
         {
           key: '/inventory',
-          icon: <ContainerOutlined />,
+          icon: <span>-</span>,
           label: 'Inventory',
         },
         {
           key: '/employees',
-          icon: <UserSwitchOutlined />,
+          icon: <span>-</span>,
           label: 'Employees',
         },
       ],
@@ -163,7 +181,36 @@ const MainLayout = () => {
       icon: <SettingOutlined />,
       label: 'Settings',
     },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'my-apps',
+      icon: <AppstoreOutlined />,
+      label: 'My Apps',
+      children: [
+        {
+          key: 'sabito',
+          icon: <span>-</span>,
+          label: 'Sabito',
+        },
+      ],
+    },
   ];
+
+  const handleNavigateToSabito = () => {
+    // Get NEXPro token for SSO (if Sabito supports it)
+    const token = localStorage.getItem('token');
+    const sabitoUrl = import.meta.env.VITE_SABITO_URL || 'http://localhost:5175';
+    
+    // If token exists, pass it to Sabito for SSO
+    const url = token 
+      ? `${sabitoUrl}?nexproToken=${token}`
+      : sabitoUrl;
+    
+    // Navigate to Sabito in the same window
+    window.location.href = url;
+  };
 
   const userMenuItems = [
     {
@@ -171,6 +218,15 @@ const MainLayout = () => {
       icon: <SettingOutlined />,
       label: 'Settings',
       onClick: () => navigate('/settings'),
+    },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'sabito',
+      icon: <LinkOutlined />,
+      label: 'Open Sabito',
+      onClick: handleNavigateToSabito,
     },
     {
       type: 'divider',
@@ -186,118 +242,181 @@ const MainLayout = () => {
     },
   ];
 
+  const handleMenuClick = ({ key }) => {
+    // Handle Sabito navigation
+    if (key === 'sabito') {
+      handleNavigateToSabito();
+      return;
+    }
+    // Only navigate if it's a route, not a submenu key
+    if (key && typeof key === 'string' && key.startsWith('/')) {
+      navigate(key);
+      // Close mobile drawer after navigation
+      if (isMobile) {
+        setMobileDrawerVisible(false);
+      }
+    }
+  };
+
+  const menuContent = (
+    <>
+      <div style={{ 
+        height: 64, 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        padding: '0 16px',
+        overflow: 'hidden'
+      }}>
+        <div style={{
+          fontSize: isMobile ? 24 : (collapsed ? 24 : 32),
+          fontWeight: 'bold',
+          textAlign: 'center',
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}>
+          {isMobile || collapsed ? (
+            <span style={{ color: '#ffffff' }}>NP</span>
+          ) : (
+            <>
+              <span style={{ color: '#ffffff' }}>Nex</span>
+              <span style={{
+                background: 'linear-gradient(135deg, #ffffff 0%, rgb(89, 0, 255) 30%, rgb(217, 0, 255) 100%)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                backgroundClip: 'text',
+                display: 'inline-block'
+              }}>PRO</span>
+            </>
+          )}
+        </div>
+      </div>
+      <div style={{ 
+        paddingLeft: '16px', 
+        paddingRight: '16px' 
+      }}>
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={[location.pathname]}
+          defaultOpenKeys={[
+            'financial', 
+            'resources'
+          ]}
+          items={menuItems}
+          onClick={handleMenuClick}
+        />
+      </div>
+    </>
+  );
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider
-        collapsible
-        collapsed={collapsed}
-        onCollapse={(value) => setCollapsed(value)}
-        style={{
-          overflow: 'auto',
-          height: '100vh',
-          position: 'fixed',
-          left: 0,
-          top: 0,
-          bottom: 0,
-        }}
-      >
-        <div style={{ 
-          height: 64, 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center',
-          padding: '0 16px',
-          overflow: 'hidden'
-        }}>
-          <div style={{
-            fontSize: collapsed ? 24 : 32,
-            fontWeight: 'bold',
-            textAlign: 'center',
-            width: '100%',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center'
-          }}>
-            {collapsed ? (
-              <span style={{ color: '#ffffff' }}>NP</span>
-            ) : (
-              <>
-                <span style={{ color: '#ffffff' }}>Nex</span>
-                <span style={{
-                  background: 'linear-gradient(135deg, #ffffff 0%, rgb(89, 0, 255) 30%, rgb(217, 0, 255) 100%)',
-                  WebkitBackgroundClip: 'text',
-                  WebkitTextFillColor: 'transparent',
-                  backgroundClip: 'text',
-                  display: 'inline-block'
-                }}>PRO</span>
-              </>
-            )}
-          </div>
-        </div>
-        <div style={{ 
-          paddingLeft: '16px', 
-          paddingRight: '16px' 
-        }}>
-          <Menu
-            theme="dark"
-            mode="inline"
-            selectedKeys={[location.pathname]}
-            defaultOpenKeys={[
-              'financial', 
-              'resources'
-            ]}
-            items={menuItems}
-            onClick={({ key }) => {
-              // Only navigate if it's a route, not a submenu key
-              if (key && typeof key === 'string' && key.startsWith('/')) {
-                navigate(key);
-              }
-            }}
-          />
-        </div>
-      </Sider>
-      <Layout style={{ marginLeft: collapsed ? 80 : 200 }}>
-        <Header
+      {/* Desktop Sidebar */}
+      {!isMobile && (
+        <Sider
+          collapsible
+          collapsed={collapsed}
+          onCollapse={(value) => setCollapsed(value)}
           style={{
-            padding: '0 24px',
-            background: colorBgContainer,
-            display: 'flex',
-            justifyContent: 'flex-end',
-            alignItems: 'center'
+            overflow: 'auto',
+            height: '100vh',
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            bottom: 0,
+            zIndex: 100,
           }}
         >
-          <Space align="center" size={16}>
+          {menuContent}
+        </Sider>
+      )}
+
+      {/* Mobile Drawer */}
+      {isMobile && (
+        <Drawer
+          title={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ color: '#ffffff', fontSize: 20, fontWeight: 'bold' }}>Nex</span>
+              <span style={{
+                background: 'linear-gradient(135deg, #ffffff 0%, rgb(89, 0, 255) 30%, rgb(217, 0, 255) 100%)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+                backgroundClip: 'text',
+                display: 'inline-block',
+                fontSize: 20,
+                fontWeight: 'bold'
+              }}>PRO</span>
+            </div>
+          }
+          placement="left"
+          onClose={() => setMobileDrawerVisible(false)}
+          open={mobileDrawerVisible}
+          bodyStyle={{ padding: 0, background: '#001529' }}
+          width={280}
+        >
+          {menuContent}
+        </Drawer>
+      )}
+
+      <Layout style={{ marginLeft: isMobile ? 0 : (collapsed ? 80 : 200) }}>
+        <Header
+          style={{
+            padding: isMobile ? '0 16px' : '0 24px',
+            background: colorBgContainer,
+            display: 'flex',
+            justifyContent: isMobile ? 'space-between' : 'flex-end',
+            alignItems: 'center',
+            position: 'sticky',
+            top: 0,
+            zIndex: 99,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+          }}
+        >
+          {isMobile && (
+            <Button
+              type="text"
+              icon={<MenuOutlined />}
+              onClick={() => setMobileDrawerVisible(true)}
+              style={{ color: '#fff', fontSize: 18 }}
+            />
+          )}
+          <Space align="center" size={isMobile ? 8 : 16} wrap>
             {/* Upgrade to Pro Button - Only show for trial/free plans */}
             {activeTenant && (activeTenant.plan === 'trial' || activeTenant.plan === 'free') && (
               <Button
                 type="primary"
-                size="small"
+                size={isMobile ? 'small' : 'small'}
                 icon={<CrownOutlined />}
                 onClick={() => setPricingModalVisible(true)}
                 style={{
                   background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                   border: 'none',
                   fontWeight: 500,
-                  boxShadow: '0 2px 8px rgba(102, 126, 234, 0.3)'
+                  boxShadow: '0 2px 8px rgba(102, 126, 234, 0.3)',
+                  fontSize: isMobile ? '12px' : '14px',
+                  padding: isMobile ? '4px 8px' : undefined
                 }}
               >
-                Upgrade to Pro
+                {isMobile ? 'Upgrade' : 'Upgrade to Pro'}
               </Button>
             )}
             <NotificationBell />
             <Dropdown menu={{ items: userMenuItems }} placement="bottomRight">
               <div style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Text>{user?.name}</Text>
-                <Avatar src={user?.profilePicture} icon={<UserOutlined />} />
+                {!isMobile && <Text>{user?.name}</Text>}
+                <Avatar src={user?.profilePicture} icon={<UserOutlined />} size={isMobile ? 'small' : 'default'} />
               </div>
             </Dropdown>
           </Space>
         </Header>
-        <Content style={{ margin: '24px 16px', overflow: 'initial' }}>
+        <Content style={{ margin: isMobile ? '16px 8px' : '24px 16px', overflow: 'initial' }}>
           <div style={{ 
             maxWidth: '2000px', 
             margin: '0 auto',
-            padding: 24, 
+            padding: isMobile ? 16 : 24, 
             background: colorBgContainer, 
             minHeight: 360, 
             borderRadius: 8 
@@ -313,20 +432,20 @@ const MainLayout = () => {
         open={pricingModalVisible}
         onCancel={() => setPricingModalVisible(false)}
         footer={null}
-        width={1200}
-        style={{ top: 20, paddingBottom: 0 }}
-        bodyStyle={{ padding: '32px 24px', marginBottom: 0 }}
+        width={isMobile ? '100%' : 1200}
+        style={{ top: isMobile ? 0 : 20, paddingBottom: 0 }}
+        bodyStyle={{ padding: isMobile ? '24px 16px' : '32px 24px', marginBottom: 0 }}
         maskStyle={{ backgroundColor: 'rgba(0, 0, 0, 0.6)' }}
       >
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          <h1 style={{ fontSize: 32, fontWeight: 700, margin: 0, marginBottom: 8, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
+        <div style={{ textAlign: 'center', marginBottom: isMobile ? 24 : 32 }}>
+          <h1 style={{ fontSize: isMobile ? 24 : 32, fontWeight: 700, margin: 0, marginBottom: 8, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
             Choose Your NexPRO Plan
           </h1>
-          <p style={{ fontSize: 16, color: '#8c8c8c', margin: 0 }}>Select the perfect plan for your business needs</p>
+          <p style={{ fontSize: isMobile ? 14 : 16, color: '#8c8c8c', margin: 0 }}>Select the perfect plan for your business needs</p>
         </div>
 
         {/* Billing Period Toggle */}
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 32, gap: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: isMobile ? 24 : 32, gap: 16, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 14, color: billingPeriod === 'monthly' ? '#667eea' : '#8c8c8c', fontWeight: billingPeriod === 'monthly' ? 600 : 400 }}>Monthly</span>
           <Button
             type={billingPeriod === 'yearly' ? 'primary' : 'default'}

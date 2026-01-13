@@ -5,7 +5,8 @@ import {
   SettingOutlined,
   DollarOutlined,
   AlertOutlined,
-  FileSearchOutlined
+  FileSearchOutlined,
+  LinkOutlined
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -51,9 +52,22 @@ const AdminLayout = () => {
   const location = useLocation();
   const { user, logout } = useAuth();
 
+  const handleNavigateToSabito = () => {
+    const token = localStorage.getItem('token');
+    const sabitoUrl = import.meta.env.VITE_SABITO_URL || 'http://localhost:5175';
+    const url = token 
+      ? `${sabitoUrl}?nexproToken=${token}`
+      : sabitoUrl;
+    // Navigate to Sabito in the same window
+    window.location.href = url;
+  };
+
   const handleMenuClick = ({ key }) => {
     if (key === 'profile') {
       navigate('/profile');
+    }
+    if (key === 'sabito') {
+      handleNavigateToSabito();
     }
     if (key === 'logout') {
       logout();
@@ -65,6 +79,15 @@ const AdminLayout = () => {
     {
       key: 'profile',
       label: 'Profile',
+    },
+    {
+      type: 'divider',
+    },
+    {
+      key: 'sabito',
+      label: 'Open Sabito',
+      icon: <LinkOutlined />,
+      onClick: handleNavigateToSabito,
     },
     {
       type: 'divider',

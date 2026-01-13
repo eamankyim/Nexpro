@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Tag, Space, Input, Select, message, Modal, Form, InputNumber, DatePicker, Row, Col, Divider, Card, Alert, Descriptions, Timeline, Upload, List, Tooltip, Popconfirm } from 'antd';
+import { Table, Button, Tag, Space, Input, Select, message, Modal, Form, InputNumber, DatePicker, Row, Col, Divider, Card, Alert, Descriptions, Timeline, Upload, List, Tooltip, Popconfirm, Spin } from 'antd';
 import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, UserOutlined, EditOutlined, PauseCircleOutlined, CloseCircleOutlined, UploadOutlined, PaperClipOutlined, DownloadOutlined, DollarOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,6 +12,7 @@ import customDropdownService from '../services/customDropdownService';
 import dayjs from 'dayjs';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import PhoneNumberInput from '../components/PhoneNumberInput';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -25,6 +26,7 @@ const Jobs = () => {
   const [filters, setFilters] = useState({ search: '', status: '' });
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingJob, setViewingJob] = useState(null);
+  const [jobDetailsLoading, setJobDetailsLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [customers, setCustomers] = useState([]);
   const [form] = Form.useForm();
@@ -188,13 +190,19 @@ useEffect(() => {
   };
 
   const handleView = async (job) => {
+    // Set viewing job immediately with data from table row
+    setViewingJob(job);
+    // Open drawer immediately
+    setDrawerVisible(true);
+    // Load full details asynchronously
+    setJobDetailsLoading(true);
     try {
       await refreshJobDetails(job.id);
     } catch (error) {
       message.error('Failed to load job details');
-      setViewingJob(job);
+      // Keep the job data from table row if loading fails
     } finally {
-      setDrawerVisible(true);
+      setJobDetailsLoading(false);
     }
   };
 
@@ -213,6 +221,7 @@ useEffect(() => {
   const handleCloseDrawer = () => {
     setDrawerVisible(false);
     setViewingJob(null);
+    setJobDetailsLoading(false);
   };
 
   const handleMarkAsPaid = async (job) => {
@@ -1169,9 +1178,9 @@ useEffect(() => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h1>Jobs</h1>
-        <Space>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <h1 style={{ margin: 0, fontSize: window.innerWidth < 768 ? '20px' : '24px' }}>Jobs</h1>
+        <Space wrap style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
           <Input.Search
             placeholder="Search jobs..."
             allowClear
@@ -1179,13 +1188,13 @@ useEffect(() => {
               setPagination((prev) => ({ ...prev, current: 1 }));
               setFilters((prev) => ({ ...prev, search: value }));
             }}
-            style={{ width: 200 }}
+            style={{ width: window.innerWidth < 768 ? '100%' : 200 }}
             prefix={<SearchOutlined />}
           />
           <Select
             placeholder="Filter by status"
             allowClear
-            style={{ width: 150 }}
+            style={{ width: window.innerWidth < 768 ? '100%' : 150 }}
             onChange={(value) => {
               setPagination((prev) => ({ ...prev, current: 1 }));
               setFilters((prev) => ({ ...prev, status: value || '' }));
@@ -1197,7 +1206,7 @@ useEffect(() => {
             <Option value="on_hold">On Hold</Option>
             <Option value="cancelled">Cancelled</Option>
           </Select>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddJob}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddJob} style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
             Add Job
           </Button>
         </Space>
@@ -1216,13 +1225,14 @@ useEffect(() => {
             pageSize: newPagination.pageSize ?? prev.pageSize,
           }))
         }
+        scroll={{ x: 'max-content' }}
       />
 
       <DetailsDrawer
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Job Details"
-        width={700}
+        width={window.innerWidth < 768 ? '100%' : 700}
         showActions={false}
         extra={viewingJob && (
           <Space wrap>
@@ -1263,7 +1273,8 @@ useEffect(() => {
             key: 'details',
             label: 'Details',
             content: (
-              <Descriptions column={1} bordered>
+              <Spin spinning={jobDetailsLoading} tip="Loading job details...">
+                <Descriptions column={1} bordered>
                 <Descriptions.Item label="Job Number">
                   {viewingJob.jobNumber}
                 </Descriptions.Item>
@@ -1381,14 +1392,16 @@ useEffect(() => {
                   {viewingJob.createdAt ? new Date(viewingJob.createdAt).toLocaleString() : '-'}
                 </Descriptions.Item>
               </Descriptions>
+              </Spin>
             )
           },
           {
             key: 'services',
             label: 'Services',
             content: (
-              <div>
-                {(!viewingJob.items || viewingJob.items.length === 0) ? (
+              <Spin spinning={jobDetailsLoading} tip="Loading job details...">
+                <div>
+                  {(!viewingJob.items || viewingJob.items.length === 0) ? (
                   <div style={{ padding: '24px', textAlign: 'center', color: '#999' }}>
                     No services/items added to this job
                   </div>
@@ -1446,6 +1459,7 @@ useEffect(() => {
                   </div>
                 )}
               </div>
+              </Spin>
             )
           },
           {
@@ -2214,7 +2228,7 @@ useEffect(() => {
             </Col>
             <Col span={12}>
               <Form.Item name="phone" label="Phone">
-                <Input placeholder="Enter phone number" size="large" />
+                <PhoneNumberInput placeholder="Enter phone number" size="large" />
               </Form.Item>
             </Col>
           </Row>

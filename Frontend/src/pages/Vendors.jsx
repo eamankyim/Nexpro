@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, message, Space, Tag, Descriptions, List, Spin, Empty, InputNumber, Select, Image, Popconfirm } from 'antd';
-import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Form, Input, message, Space, Tag, Descriptions, List, Spin, Empty, InputNumber, Select, Image, Popconfirm, Upload } from 'antd';
+import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined, EyeOutlined, UploadOutlined } from '@ant-design/icons';
 import vendorService from '../services/vendorService';
 import vendorPriceListService from '../services/vendorPriceListService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import PhoneNumberInput from '../components/PhoneNumberInput';
 
 const Vendors = () => {
   const [vendors, setVendors] = useState([]);
@@ -23,6 +24,8 @@ const Vendors = () => {
   const [priceListModalVisible, setPriceListModalVisible] = useState(false);
   const [editingPriceItem, setEditingPriceItem] = useState(null);
   const [priceListForm] = Form.useForm();
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const [imagePreview, setImagePreview] = useState(null);
 
   useEffect(() => {
     fetchVendors();
@@ -94,16 +97,152 @@ const Vendors = () => {
     setPriceList([]);
   };
 
+  // Printing services/products list for dropdown
+  const printingItems = [
+    // Printing Services
+    'Black & White Printing',
+    'Color Printing',
+    'Large Format Printing',
+    'Photocopying',
+    'Digital Printing',
+    'Offset Printing',
+    'Screen Printing',
+    '3D Printing',
+    'DTF',
+    // Print Products
+    'Business Cards',
+    'Brochures',
+    'Flyers',
+    'Posters',
+    'Banners',
+    'Booklets',
+    'Letterhead',
+    'Envelopes',
+    'Invitations',
+    'Calendars',
+    'Labels',
+    'Stickers',
+    'Signage',
+    'Vehicle Wraps',
+    'Window Graphics',
+    'Floor Graphics',
+    'One Way Vision Sticker',
+    // Finishing Services
+    'Binding',
+    'Lamination',
+    'Scanning',
+    'Cutting',
+    'Folding',
+    'Stapling',
+    'Perforation',
+    'Die Cutting',
+    'Embossing',
+    'Foil Stamping',
+    'UV Coating',
+    'Varnishing',
+    // Professional Services
+    'Design Services',
+    'Pre-Press Services',
+    'Color Correction',
+    'Image Editing',
+    'Layout Design',
+    'Proofing',
+  ];
+
+  // Check if vendor is in printing-related category
+  const isPrintingVendor = viewingVendor && (
+    viewingVendor.category === 'Printing Services' ||
+    viewingVendor.category === 'Printing Equipment' ||
+    viewingVendor.category === 'Pre-Press Services' ||
+    viewingVendor.category === 'Binding & Finishing' ||
+    viewingVendor.category === 'Design Services'
+  );
+
   const handleAddPriceItem = () => {
     setEditingPriceItem(null);
     priceListForm.resetFields();
+    setImagePreview(null);
     setPriceListModalVisible(true);
   };
 
   const handleEditPriceItem = (item) => {
     setEditingPriceItem(item);
     priceListForm.setFieldsValue(item);
+    setImagePreview(item.imageUrl || null);
     setPriceListModalVisible(true);
+  };
+
+  const handleImageUpload = async ({ file, onSuccess, onError }) => {
+    try {
+      console.log('[Vendors Component] Image upload started');
+      console.log('[Vendors Component] File:', {
+        name: file.name,
+        type: file.type,
+        size: file.size
+      });
+      console.log('[Vendors Component] Editing item:', editingPriceItem);
+      console.log('[Vendors Component] Viewing vendor:', viewingVendor?.id);
+      
+      setUploadingImage(true);
+      
+      // If editing, upload to existing item
+      if (editingPriceItem && editingPriceItem.id) {
+        console.log('[Vendors Component] Uploading to existing item:', editingPriceItem.id);
+        const response = await vendorPriceListService.uploadImage(
+          viewingVendor.id,
+          editingPriceItem.id,
+          file
+        );
+        
+        console.log('[Vendors Component] Upload response:', response);
+        
+        if (response.data?.imageUrl) {
+          console.log('[Vendors Component] ✅ Image URL received, length:', response.data.imageUrl.length);
+          setImagePreview(response.data.imageUrl);
+          priceListForm.setFieldsValue({ imageUrl: response.data.imageUrl });
+          message.success('Image uploaded successfully');
+          onSuccess();
+        } else {
+          console.error('[Vendors Component] ❌ No imageUrl in response:', response);
+          throw new Error('Upload failed - no image URL in response');
+        }
+      } else {
+        console.log('[Vendors Component] New item - creating preview');
+        // For new items, we'll upload after creation
+        // For now, create a preview URL
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          console.log('[Vendors Component] Preview created, length:', e.target.result.length);
+          setImagePreview(e.target.result);
+          priceListForm.setFieldsValue({ imageUrl: e.target.result });
+        };
+        reader.onerror = (error) => {
+          console.error('[Vendors Component] ❌ FileReader error:', error);
+          message.error('Failed to read image file');
+          onError(error);
+        };
+        reader.readAsDataURL(file);
+        onSuccess();
+      }
+    } catch (error) {
+      console.error('[Vendors Component] ❌ Upload error:', error);
+      console.error('[Vendors Component] Error details:', {
+        message: error.message,
+        response: error.response,
+        status: error.response?.status,
+        data: error.response?.data
+      });
+      message.error(error?.response?.data?.message || error?.message || 'Failed to upload image');
+      onError(error);
+    } finally {
+      setUploadingImage(false);
+      console.log('[Vendors Component] Upload process completed');
+    }
+  };
+
+  const handleImageRemove = () => {
+    setImagePreview(null);
+    priceListForm.setFieldsValue({ imageUrl: null });
   };
 
   const handleDeletePriceItem = async (itemId) => {
@@ -120,6 +259,8 @@ const Vendors = () => {
 
   const handlePriceListSubmit = async (values) => {
     try {
+      // imageUrl can be base64 (for new items) or URL (for existing items)
+      // Backend will store base64 directly in DB
       if (editingPriceItem) {
         await vendorPriceListService.update(viewingVendor.id, editingPriceItem.id, values);
         message.success('Price item updated successfully');
@@ -128,6 +269,7 @@ const Vendors = () => {
         message.success('Price item added successfully');
       }
       setPriceListModalVisible(false);
+      setImagePreview(null);
       // Refresh price list
       const response = await vendorPriceListService.getAll(viewingVendor.id);
       setPriceList(response.data || []);
@@ -222,7 +364,7 @@ const Vendors = () => {
             <Input placeholder="vendor@example.com" size="large" />
           </Form.Item>
           <Form.Item name="phone" label="Phone">
-            <Input placeholder="(123) 456-7890" size="large" />
+            <PhoneNumberInput placeholder="Enter phone number" size="large" />
           </Form.Item>
           <Form.Item name="website" label="Website (Optional)">
             <Input placeholder="https://www.example.com" size="large" />
@@ -461,9 +603,28 @@ const Vendors = () => {
           <Form.Item
             name="name"
             label="Name"
-            rules={[{ required: true, message: 'Please enter name' }]}
+            rules={[{ required: true, message: 'Please enter or select name' }]}
           >
-            <Input placeholder="Enter item name" size="large" />
+            {isPrintingVendor ? (
+              <Select 
+                placeholder="Select printing item" 
+                size="large"
+                showSearch
+                optionFilterProp="children"
+                filterOption={(input, option) =>
+                  option.children.toLowerCase().includes(input.toLowerCase())
+                }
+                notFoundContent="No printing items found"
+              >
+                {printingItems.map(item => (
+                  <Select.Option key={item} value={item}>
+                    {item}
+                  </Select.Option>
+                ))}
+              </Select>
+            ) : (
+              <Input placeholder="Enter item name" size="large" />
+            )}
           </Form.Item>
 
           <Form.Item name="description" label="Description">
@@ -489,8 +650,48 @@ const Vendors = () => {
             <Input placeholder="e.g., unit, hour, piece" size="large" />
           </Form.Item>
 
-          <Form.Item name="imageUrl" label="Image URL (Optional)">
-            <Input placeholder="Enter image URL" size="large" />
+          <Form.Item name="imageUrl" label="Image (Optional)" style={{ display: 'none' }}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="Image (Optional)">
+            <Upload
+              accept="image/*"
+              showUploadList={false}
+              customRequest={handleImageUpload}
+              beforeUpload={(file) => {
+                const isImage = file.type.startsWith('image/');
+                if (!isImage) {
+                  message.error('You can only upload image files!');
+                }
+                const isLt10M = file.size / 1024 / 1024 < 10;
+                if (!isLt10M) {
+                  message.error('Image must be smaller than 10MB!');
+                }
+                return isImage && isLt10M;
+              }}
+            >
+              <Button icon={<UploadOutlined />} loading={uploadingImage} size="large" style={{ width: '100%' }}>
+                {uploadingImage ? 'Uploading...' : 'Upload Image'}
+              </Button>
+            </Upload>
+            {imagePreview && (
+              <div style={{ marginTop: 16 }}>
+                <Image
+                  src={imagePreview}
+                  alt="Preview"
+                  style={{ maxWidth: '100%', maxHeight: 200, objectFit: 'contain' }}
+                  preview
+                />
+                <Button
+                  type="link"
+                  danger
+                  onClick={handleImageRemove}
+                  style={{ marginTop: 8 }}
+                >
+                  Remove Image
+                </Button>
+              </div>
+            )}
           </Form.Item>
         </Form>
       </Modal>

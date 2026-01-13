@@ -21,8 +21,35 @@ const router = express.Router();
 router.use(protect);
 router.use(tenantContext);
 
-const profileUploader = createUploader((req) => path.join('users', req.user.id));
-const organizationUploader = createUploader(() => path.join('settings', 'organization'));
+// Use memory storage for images since we store base64 in database
+const multer = require('multer');
+const profileUploader = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: parseInt(process.env.UPLOAD_MAX_SIZE_MB || '10', 10) * 1024 * 1024 // 10MB for images
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'), false);
+    }
+  }
+});
+
+const organizationUploader = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: parseInt(process.env.UPLOAD_MAX_SIZE_MB || '10', 10) * 1024 * 1024 // 10MB for images
+  },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files are allowed'), false);
+    }
+  }
+});
 
 router
   .route('/profile')

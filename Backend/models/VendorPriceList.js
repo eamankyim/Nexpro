@@ -44,7 +44,7 @@ const VendorPriceList = sequelize.define('VendorPriceList', {
     defaultValue: 'unit'
   },
   imageUrl: {
-    type: DataTypes.STRING
+    type: DataTypes.TEXT // TEXT for base64 image data
   },
   isActive: {
     type: DataTypes.BOOLEAN,

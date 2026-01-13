@@ -116,7 +116,7 @@ const autoCreateInvoice = async (jobId, tenantId) => {
       
       // If there are item-level discounts, set invoice-level discount
       if (totalItemDiscount > 0) {
-        return await Invoice.create({
+        const invoice = await Invoice.create({
           invoiceNumber,
           jobId,
           customerId: job.customerId,
@@ -134,6 +134,40 @@ const autoCreateInvoice = async (jobId, tenantId) => {
           notes: null,
           termsAndConditions: 'Payment is due within the specified payment terms. Late payments may incur additional charges.'
         });
+
+        // Send webhook to Sabito (async, don't block)
+        try {
+          const sabitoWebhookService = require('../services/sabitoWebhookService');
+          const customer = job.customer;
+          
+          if (customer && customer.sabitoCustomerId) {
+            sabitoWebhookService.sendInvoiceWebhook(invoice, customer, tenantId)
+              .then(async (result) => {
+                if (result.success) {
+                  await invoice.update({
+                    sabitoProjectId: result.projectId,
+                    sabitoSyncedAt: new Date(),
+                    sabitoSyncStatus: 'synced'
+                  });
+                } else if (result.skipped) {
+                  await invoice.update({
+                    sabitoSyncStatus: 'skipped'
+                  });
+                }
+              })
+              .catch(async (error) => {
+                console.error('Failed to send Sabito webhook for auto-generated invoice:', error);
+                await invoice.update({
+                  sabitoSyncStatus: 'failed',
+                  sabitoSyncError: error.message
+                });
+              });
+          }
+        } catch (error) {
+          console.error('Error sending Sabito webhook for auto-generated invoice:', error);
+        }
+
+        return invoice;
       }
     } else {
       // If no items, use finalPrice from job
@@ -164,6 +198,38 @@ const autoCreateInvoice = async (jobId, tenantId) => {
       notes: null,
       termsAndConditions: 'Payment is due within the specified payment terms. Late payments may incur additional charges.'
     });
+
+    // Send webhook to Sabito (async, don't block)
+    try {
+      const sabitoWebhookService = require('../services/sabitoWebhookService');
+      const customer = job.customer;
+      
+      if (customer && customer.sabitoCustomerId) {
+        sabitoWebhookService.sendInvoiceWebhook(invoice, customer, tenantId)
+          .then(async (result) => {
+            if (result.success) {
+              await invoice.update({
+                sabitoProjectId: result.projectId,
+                sabitoSyncedAt: new Date(),
+                sabitoSyncStatus: 'synced'
+              });
+            } else if (result.skipped) {
+              await invoice.update({
+                sabitoSyncStatus: 'skipped'
+              });
+            }
+          })
+          .catch(async (error) => {
+            console.error('Failed to send Sabito webhook for auto-generated invoice:', error);
+            await invoice.update({
+              sabitoSyncStatus: 'failed',
+              sabitoSyncError: error.message
+            });
+          });
+      }
+    } catch (error) {
+      console.error('Error sending Sabito webhook for auto-generated invoice:', error);
+    }
 
     return invoice;
   } catch (error) {
@@ -520,14 +586,26 @@ exports.getJobStats = async (req, res, next) => {
 const buildAttachmentResponse = (req, attachment) => {
   if (!attachment) return attachment;
   const normalized = { ...attachment };
-  if (normalized.storagePath && !normalized.url) {
+  
+  // If fileData exists (base64), use it as url
+  if (normalized.fileData) {
+    normalized.url = normalized.fileData;
+  } else if (normalized.storagePath && !normalized.url) {
+    // Legacy support for file paths
     normalized.url = `${req.protocol}://${req.get('host')}/uploads/${normalized.storagePath.replace(/\\/g, '/')}`;
   }
+  
+  // Don't expose full fileData in response, just url
+  if (normalized.fileData && normalized.url) {
+    delete normalized.fileData;
+  }
+  
   return normalized;
 };
 
 exports.uploadJobAttachment = async (req, res, next) => {
   try {
+    console.log('[Job Attachment Upload] Starting upload...');
     const job = await Job.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id })
     });
@@ -536,21 +614,63 @@ exports.uploadJobAttachment = async (req, res, next) => {
     }
 
     if (!req.file) {
+      console.log('[Job Attachment Upload] ❌ No file uploaded');
       return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
 
-    const storagePath = path
-      .relative(baseUploadDir, req.file.path)
-      .replace(/\\/g, '/');
+    console.log('[Job Attachment Upload] File info:', {
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      hasBuffer: !!req.file.buffer,
+      hasPath: !!req.file.path
+    });
+
+    // Convert file to base64 and store in database
+    let fileData;
+    const mimeType = req.file.mimetype || 'application/octet-stream';
+    
+    try {
+      if (req.file.buffer) {
+        console.log('[Job Attachment Upload] File is in memory, converting to base64...');
+        const base64String = req.file.buffer.toString('base64');
+        fileData = `data:${mimeType};base64,${base64String}`;
+        console.log('[Job Attachment Upload] ✅ Base64 conversion complete. Length:', fileData.length);
+      } else if (req.file.path) {
+        console.log('[Job Attachment Upload] File is on disk, reading from path:', req.file.path);
+        
+        if (!fs.existsSync(req.file.path)) {
+          console.log('[Job Attachment Upload] ❌ File path does not exist');
+          return res.status(400).json({ success: false, message: 'Uploaded file not found on server' });
+        }
+        
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const base64String = fileBuffer.toString('base64');
+        fileData = `data:${mimeType};base64,${base64String}`;
+        console.log('[Job Attachment Upload] ✅ Base64 conversion complete. Length:', fileData.length);
+        
+        // Delete the temporary file since we're storing in DB
+        try {
+          fs.unlinkSync(req.file.path);
+          console.log('[Job Attachment Upload] ✅ Temporary file deleted');
+        } catch (unlinkError) {
+          console.log('[Job Attachment Upload] ⚠️  Warning: Could not delete temporary file:', unlinkError.message);
+        }
+      } else {
+        console.log('[Job Attachment Upload] ❌ File has neither buffer nor path');
+        return res.status(400).json({ success: false, message: 'Unable to process uploaded file' });
+      }
+    } catch (processingError) {
+      console.error('[Job Attachment Upload] ❌ Error processing file:', processingError);
+      return res.status(500).json({ success: false, message: 'Error processing uploaded file', error: processingError.message });
+    }
 
     const attachment = {
       id: uuidv4(),
-      filename: req.file.filename,
       originalName: req.file.originalname,
-      mimeType: req.file.mimetype,
+      mimeType: mimeType,
       size: req.file.size,
-      storagePath,
-      url: `${req.protocol}://${req.get('host')}/uploads/${storagePath}`,
+      fileData: fileData, // Store base64 data
       uploadedAt: new Date().toISOString(),
       uploadedBy: req.user
         ? {
@@ -566,12 +686,14 @@ exports.uploadJobAttachment = async (req, res, next) => {
     job.attachments = attachments;
     await job.save();
 
+    console.log('[Job Attachment Upload] ✅ Upload completed successfully');
     res.status(201).json({
       success: true,
       data: buildAttachmentResponse(req, attachment),
       attachments: attachments.map((item) => buildAttachmentResponse(req, item))
     });
   } catch (error) {
+    console.error('[Job Attachment Upload] ❌ Error:', error);
     next(error);
   }
 };
@@ -596,12 +718,21 @@ exports.deleteJobAttachment = async (req, res, next) => {
     job.attachments = attachments;
     await job.save();
 
-    if (removed?.storagePath) {
+    // Only delete file if it's a file path (legacy support), not base64
+    if (removed?.storagePath && !removed?.fileData) {
+      console.log('[Job Attachment Delete] Deleting file from disk...');
       const filePath = path.join(baseUploadDir, removed.storagePath);
       fs.promises
         .access(filePath, fs.constants.F_OK)
-        .then(() => fs.promises.unlink(filePath))
-        .catch(() => null);
+        .then(() => {
+          fs.promises.unlink(filePath);
+          console.log('[Job Attachment Delete] ✅ File deleted from disk');
+        })
+        .catch(() => {
+          console.log('[Job Attachment Delete] File not found on disk (may already be deleted)');
+        });
+    } else {
+      console.log('[Job Attachment Delete] Attachment stored as base64, no file to delete');
     }
 
     res.status(200).json({

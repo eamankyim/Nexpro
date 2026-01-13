@@ -39,6 +39,7 @@ const adminRoutes = require('./routes/adminRoutes');
 const platformSettingsRoutes = require('./routes/platformSettingsRoutes');
 const platformAdminRoutes = require('./routes/platformAdminRoutes');
 const customDropdownRoutes = require('./routes/customDropdownRoutes');
+const sabitoMappingRoutes = require('./routes/sabitoMappingRoutes');
 const swaggerUi = require('swagger-ui-express');
 const openapiSpecification = require('./docs/openapi');
 
@@ -55,6 +56,39 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 if (config.nodeEnv === 'development') {
   app.use(morgan('dev'));
 }
+
+// Request logging middleware - logs ALL requests (especially SSO)
+app.use((req, res, next) => {
+  // Always log SSO-related requests
+  if (req.path.includes('sso') || req.url.includes('sso') || req.query.token) {
+    console.log('='.repeat(100));
+    console.log('[MIDDLEWARE] 📥 INCOMING SSO REQUEST');
+    console.log('[MIDDLEWARE] Method:', req.method);
+    console.log('[MIDDLEWARE] Path:', req.path);
+    console.log('[MIDDLEWARE] URL:', req.url);
+    console.log('[MIDDLEWARE] Full URL:', req.protocol + '://' + req.get('host') + req.originalUrl);
+    console.log('[MIDDLEWARE] Query:', JSON.stringify(req.query, null, 2));
+    console.log('[MIDDLEWARE] Query Keys:', Object.keys(req.query));
+    console.log('[MIDDLEWARE] Has Token:', !!req.query.token);
+    console.log('[MIDDLEWARE] Body:', JSON.stringify(req.body, null, 2));
+    console.log('[MIDDLEWARE] Headers:', {
+      'x-tenant-id': req.headers['x-tenant-id'],
+      'authorization': req.headers['authorization'] ? 'Bearer ***' : 'none',
+      'user-agent': req.headers['user-agent']?.substring(0, 50),
+      'referer': req.headers['referer']
+    });
+    console.log('='.repeat(100));
+  }
+  next();
+});
+
+// Webhook routes (before auth middleware - uses API key authentication)
+app.use('/api/webhooks', require('./routes/webhookRoutes'));
+
+// SSO route at root level (before auth routes)
+const { sabitoSSOGet } = require('./controllers/authController');
+app.get('/sso', sabitoSSOGet);
+console.log('[SERVER] ✅ GET /sso route registered');
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -83,6 +117,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/platform-settings', platformSettingsRoutes);
 app.use('/api/platform-admins', platformAdminRoutes);
 app.use('/api/custom-dropdowns', customDropdownRoutes);
+app.use('/api/sabito', sabitoMappingRoutes);
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpecification));
 
 // Health check
@@ -148,6 +183,16 @@ if (!isVercel) {
 
       app.listen(PORT, () => {
         console.log(`[Server] Running in ${config.nodeEnv} mode on port ${PORT}`);
+        
+        // Start Sabito sync scheduler
+        if (process.env.SABITO_SYNC_ENABLED !== 'false') {
+          try {
+            const sabitoScheduler = require('./services/sabitoScheduler');
+            sabitoScheduler.start();
+          } catch (error) {
+            console.error('[Server] Failed to start Sabito scheduler:', error);
+          }
+        }
       });
     } catch (error) {
       console.error('Failed to start server:', error);

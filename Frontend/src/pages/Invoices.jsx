@@ -381,18 +381,19 @@ const Invoices = () => {
         </Row>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <Space>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <h1 style={{ margin: 0, fontSize: window.innerWidth < 768 ? '20px' : '24px' }}>Invoices</h1>
+        <Space wrap style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
           <Input.Search
             placeholder="Search invoices..."
             allowClear
-            style={{ width: 250 }}
+            style={{ width: window.innerWidth < 768 ? '100%' : 250 }}
             onSearch={(value) => setFilters({ ...filters, search: value })}
           />
           <Select
             placeholder="Filter by status"
             allowClear
-            style={{ width: 150 }}
+            style={{ width: window.innerWidth < 768 ? '100%' : 150 }}
             onChange={(value) => setFilters({ ...filters, status: value || '' })}
           >
             <Option value="draft">Draft</Option>
@@ -412,7 +413,7 @@ const Invoices = () => {
         loading={loading}
         pagination={pagination}
         onChange={(newPagination) => setPagination(newPagination)}
-        scroll={{ x: 1200 }}
+        scroll={{ x: 'max-content' }}
       />
 
       {/* Invoice Details Drawer */}
@@ -420,7 +421,7 @@ const Invoices = () => {
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Invoice Details"
-        width={900}
+        width={window.innerWidth < 768 ? '100%' : 900}
         onPrint={viewingInvoice ? () => handlePrint(viewingInvoice) : null}
         onMarkPaid={
           isManager &&
@@ -552,11 +553,11 @@ const Invoices = () => {
         open={paymentModalVisible}
         onCancel={() => setPaymentModalVisible(false)}
         onOk={() => paymentForm.submit()}
-        width={600}
+        width={window.innerWidth < 768 ? '100%' : 600}
       >
         {viewingInvoice && (
           <>
-            <Descriptions column={2} bordered style={{ marginBottom: 24 }}>
+            <Descriptions column={window.innerWidth < 768 ? 1 : 2} bordered style={{ marginBottom: 24 }}>
               <Descriptions.Item label="Invoice">{viewingInvoice.invoiceNumber}</Descriptions.Item>
               <Descriptions.Item label="Customer">{viewingInvoice.customer?.name}</Descriptions.Item>
               <Descriptions.Item label="Total Amount">GHS {parseFloat(viewingInvoice.totalAmount).toFixed(2)}</Descriptions.Item>

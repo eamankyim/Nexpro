@@ -102,6 +102,14 @@ const authService = {
     return { ...response, data };
   },
 
+  // Sabito SSO
+  sabitoSSO: async (sabitoToken) => {
+    const response = await api.post('/auth/sso/sabito', { sabitoToken });
+    const payload = response?.data || response || {};
+    persistAuthPayload(payload);
+    return { ...response, data: payload };
+  },
+
   persistAuthPayload,
   clearAuthStorage,
   setActiveTenantId,

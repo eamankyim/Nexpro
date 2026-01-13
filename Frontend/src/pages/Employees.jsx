@@ -27,6 +27,7 @@ import {
   Image,
   Spin
 } from 'antd';
+import PhoneNumberInput from '../components/PhoneNumberInput';
 import {
   PlusOutlined,
   TeamOutlined,
@@ -307,7 +308,7 @@ const EmployeeForm = ({ currentStep, form }) => {
     <Row gutter={16}>
       <Col span={12}>
         <Form.Item name="phone" label="Phone">
-          <Input placeholder="+233..." />
+          <PhoneNumberInput placeholder="Enter phone number" />
         </Form.Item>
       </Col>
       <Col span={12}>
@@ -497,7 +498,7 @@ const EmployeeForm = ({ currentStep, form }) => {
     <Row gutter={16}>
       <Col span={12}>
         <Form.Item name={['emergencyContact', 'phone']} label="Phone">
-          <Input placeholder="Contact Phone" />
+          <PhoneNumberInput placeholder="Enter contact phone" />
         </Form.Item>
       </Col>
       <Col span={12}>
@@ -555,7 +556,7 @@ const EmployeeForm = ({ currentStep, form }) => {
     <Row gutter={16}>
       <Col span={12}>
         <Form.Item name={['nextOfKin', 'phone']} label="Phone">
-          <Input placeholder="Phone Number" />
+          <PhoneNumberInput placeholder="Enter phone number" />
         </Form.Item>
       </Col>
       <Col span={12}>
@@ -716,8 +717,18 @@ const Employees = () => {
   };
 
   const handleView = async (record) => {
-    await fetchEmployeeDetails(record.id);
+    // Set viewing employee immediately with data from table row
+    setViewingEmployee(record);
+    // Open drawer immediately
     setDrawerVisible(true);
+    // Load full details asynchronously
+    setDrawerLoading(true);
+    try {
+      await fetchEmployeeDetails(record.id);
+    } catch (error) {
+      // Error handling is already in fetchEmployeeDetails
+    }
+    // Note: drawerLoading is set to false in fetchEmployeeDetails finally block
   };
 
   const handleModalCancel = () => {
@@ -1087,17 +1098,28 @@ const Employees = () => {
             : 'Employee'
         }
         open={drawerVisible}
-        onClose={() => setDrawerVisible(false)}
+        onClose={() => {
+          setDrawerVisible(false);
+          setViewingEmployee(null);
+          setDrawerLoading(false);
+        }}
         width={900}
         destroyOnHidden
         extra={null}
       >
-        {drawerLoading || !viewingEmployee ? (
-          <div style={{ textAlign: 'center', padding: 48 }}>
-            <Badge status="processing" text="Loading employee details..." />
-          </div>
-        ) : (
-          <Tabs
+        {(() => {
+          if (drawerLoading) {
+            return (
+              <div style={{ textAlign: 'center', padding: 48 }}>
+                <Spin size="large" tip="Loading employee details..." />
+              </div>
+            );
+          }
+          if (!viewingEmployee) {
+            return null;
+          }
+          return (
+            <Tabs
             defaultActiveKey="overview"
             items={[
               {
@@ -1361,7 +1383,8 @@ const Employees = () => {
               }
             ]}
           />
-        )}
+          );
+        })()}
       </Drawer>
 
       <Modal

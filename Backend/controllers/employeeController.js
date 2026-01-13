@@ -7,10 +7,10 @@ const {
   PayrollRun,
   User
 } = require('../models');
-const { createUploader } = require('../middleware/upload');
 const path = require('path');
-const { baseUploadDir, ensureDirExists } = require('../middleware/upload');
+const { baseUploadDir } = require('../middleware/upload');
 const fs = require('fs');
+const multer = require('multer');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 const buildFilter = (query) => {
@@ -216,12 +216,19 @@ exports.archiveEmployee = async (req, res, next) => {
   }
 };
 
-const employeeUploader = createUploader((req) => path.join('employees', req.params.id, 'documents'));
+// Use memory storage for documents since we store base64 in database
+const employeeDocumentUploader = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: parseInt(process.env.UPLOAD_MAX_SIZE_MB || '20', 10) * 1024 * 1024 // 20MB for documents
+  }
+});
 
-exports.uploadMiddleware = employeeUploader.single('file');
+exports.uploadMiddleware = employeeDocumentUploader.single('file');
 
 exports.uploadEmployeeDocument = async (req, res, next) => {
   try {
+    console.log('[Employee Document Upload] Starting upload...');
     const employee = await Employee.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id })
     });
@@ -230,11 +237,57 @@ exports.uploadEmployeeDocument = async (req, res, next) => {
     }
 
     if (!req.file) {
+      console.log('[Employee Document Upload] ❌ No file uploaded');
       return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
 
-    const storagePath = path.relative(baseUploadDir, req.file.path);
-    const fileUrl = `/uploads/${storagePath.replace(/\\\\/g, '/')}`;
+    console.log('[Employee Document Upload] File info:', {
+      originalname: req.file.originalname,
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      hasBuffer: !!req.file.buffer,
+      hasPath: !!req.file.path
+    });
+
+    // Convert file to base64 and store in database
+    let fileData;
+    const mimeType = req.file.mimetype || 'application/octet-stream';
+    
+    try {
+      if (req.file.buffer) {
+        console.log('[Employee Document Upload] File is in memory, converting to base64...');
+        const base64String = req.file.buffer.toString('base64');
+        fileData = `data:${mimeType};base64,${base64String}`;
+        console.log('[Employee Document Upload] ✅ Base64 conversion complete. Length:', fileData.length);
+      } else if (req.file.path) {
+        console.log('[Employee Document Upload] File is on disk, reading from path:', req.file.path);
+        const fs = require('fs');
+        
+        if (!fs.existsSync(req.file.path)) {
+          console.log('[Employee Document Upload] ❌ File path does not exist');
+          return res.status(400).json({ success: false, message: 'Uploaded file not found on server' });
+        }
+        
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const base64String = fileBuffer.toString('base64');
+        fileData = `data:${mimeType};base64,${base64String}`;
+        console.log('[Employee Document Upload] ✅ Base64 conversion complete. Length:', fileData.length);
+        
+        // Delete the temporary file since we're storing in DB
+        try {
+          fs.unlinkSync(req.file.path);
+          console.log('[Employee Document Upload] ✅ Temporary file deleted');
+        } catch (unlinkError) {
+          console.log('[Employee Document Upload] ⚠️  Warning: Could not delete temporary file:', unlinkError.message);
+        }
+      } else {
+        console.log('[Employee Document Upload] ❌ File has neither buffer nor path');
+        return res.status(400).json({ success: false, message: 'Unable to process uploaded file' });
+      }
+    } catch (processingError) {
+      console.error('[Employee Document Upload] ❌ Error processing file:', processingError);
+      return res.status(500).json({ success: false, message: 'Error processing uploaded file', error: processingError.message });
+    }
 
     const docPayload = sanitizePayload(req.body || {});
 
@@ -243,9 +296,14 @@ exports.uploadEmployeeDocument = async (req, res, next) => {
       tenantId: req.tenantId,
       type: docPayload.type || null,
       title: docPayload.title || req.file.originalname,
-      fileUrl,
+      fileUrl: fileData, // Store base64 data
       uploadedBy: req.user?.id || null,
-      metadata: docPayload.metadata || {}
+      metadata: {
+        ...(docPayload.metadata || {}),
+        originalName: req.file.originalname,
+        mimeType: mimeType,
+        size: req.file.size
+      }
     });
 
     const populated = await EmployeeDocument.findOne({
@@ -253,8 +311,10 @@ exports.uploadEmployeeDocument = async (req, res, next) => {
       include: [{ model: User, as: 'uploader', attributes: ['id', 'name', 'email'] }]
     });
 
+    console.log('[Employee Document Upload] ✅ Upload completed successfully');
     res.status(201).json({ success: true, data: populated });
   } catch (error) {
+    console.error('[Employee Document Upload] ❌ Error:', error);
     next(error);
   }
 };

@@ -116,6 +116,28 @@ const Invoice = sequelize.define('Invoice', {
   paidDate: {
     type: DataTypes.DATE,
     comment: 'Date when invoice was fully paid'
+  },
+  sabitoProjectId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    field: 'sabito_project_id'
+  },
+  sabitoSyncedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'sabito_synced_at'
+  },
+  sabitoSyncStatus: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    defaultValue: 'pending',
+    field: 'sabito_sync_status'
+    // Values: 'pending', 'synced', 'failed', 'skipped'
+  },
+  sabitoSyncError: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    field: 'sabito_sync_error'
   }
 }, {
   timestamps: true,

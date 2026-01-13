@@ -56,6 +56,36 @@ const createUploader = (subDirResolver) => {
 
 const upload = createUploader((req) => path.join('jobs', req.params.id || 'general'));
 
+// Uploader for vendor price list images - use memory storage since we store in DB
+const vendorPriceListUploader = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: parseInt(process.env.UPLOAD_MAX_SIZE_MB || '10', 10) * 1024 * 1024 // 10MB default for images
+  },
+  fileFilter: (req, file, cb) => {
+    console.log('[Upload Middleware] File filter check:', {
+      fieldname: file.fieldname,
+      originalname: file.originalname,
+      mimetype: file.mimetype,
+      size: file.size
+    });
+    
+    // Only accept image files
+    if (file.mimetype.startsWith('image/')) {
+      console.log('[Upload Middleware] ✅ File accepted:', file.originalname);
+      cb(null, true);
+    } else {
+      console.log('[Upload Middleware] ❌ File rejected - not an image:', file.mimetype);
+      cb(new Error('Only image files are allowed'), false);
+    }
+  },
+  onError: (err, next) => {
+    console.error('[Upload Middleware] ❌ Multer error:', err);
+    console.error('[Upload Middleware] Error message:', err.message);
+    next(err);
+  }
+});
+
 /**
  * Middleware to check storage limits before upload
  * Use this BEFORE multer middleware
@@ -105,6 +135,7 @@ const checkStorageLimit = async (req, res, next) => {
 
 module.exports = {
   upload,
+  vendorPriceListUploader,
   baseUploadDir,
   ensureDirExists,
   createUploader,

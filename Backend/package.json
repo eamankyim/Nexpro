@@ -12,7 +12,8 @@
     "seed-platform-admin": "node utils/seedPlatformAdmin.js",
     "seed-pricing": "node utils/seedPricing.js",
     "reset": "node utils/resetForProduction.js",
-    "generate-invoices": "node utils/generateMissingInvoices.js"
+    "generate-invoices": "node utils/generateMissingInvoices.js",
+    "test-reports": "node scripts/test-report-date-filters.js"
   },
   "keywords": [
     "printing",
@@ -35,6 +36,7 @@
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "multer": "^1.4.5-lts.1",
+    "node-cron": "^4.2.1",
     "pg": "^8.11.3",
     "pg-hstore": "^2.3.4",
     "qs": "^6.13.0",

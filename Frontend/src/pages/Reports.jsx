@@ -258,56 +258,237 @@ const Reports = () => {
       const grossProfit = totalRevenue - totalExpenses;
       const profitMargin = totalRevenue > 0 ? ((grossProfit / totalRevenue) * 100) : 0;
 
-      // Calculate previous month for month-over-month comparison
-      // Always compare the full current month with the full previous month
-      const currentViewDate = dayjs(dateRange[1]); // Use end date to determine the month being viewed
-      const currentMonthStart = currentViewDate.startOf('month');
-      const currentMonthEnd = currentViewDate.endOf('month');
-      const prevMonthStart = currentMonthStart.subtract(1, 'month').startOf('month');
-      const prevMonthEnd = currentMonthStart.subtract(1, 'month').endOf('month');
+      // Calculate revenue growth based on selected period type (M/M, D/D, Y/Y, W/W, Q/Q)
+      // Compare current period with previous period of the same length
+      console.log('[Revenue Growth] ===== STARTING REVENUE GROWTH CALCULATION =====');
+      console.log('[Revenue Growth] Input dateRange:', {
+        start: dateRange[0]?.format('YYYY-MM-DD'),
+        end: dateRange[1]?.format('YYYY-MM-DD'),
+        startType: typeof dateRange[0],
+        endType: typeof dateRange[1],
+        dateFilter
+      });
       
-      // Fetch both current month and previous month revenue for accurate M/M comparison
-      let currentMonthRevenue = 0;
-      let previousRevenue = 0;
+      const currentPeriodStart = dayjs(dateRange[0]);
+      const currentPeriodEnd = dayjs(dateRange[1]);
+      const periodLengthDays = currentPeriodEnd.diff(currentPeriodStart, 'day') + 1;
+      
+      console.log('[Revenue Growth] Period calculation:', {
+        currentPeriodStart: currentPeriodStart.format('YYYY-MM-DD'),
+        currentPeriodEnd: currentPeriodEnd.format('YYYY-MM-DD'),
+        periodLengthDays
+      });
+      
+      // Calculate previous period dates based on period type
+      let previousPeriodStart, previousPeriodEnd;
+      
+      if (dateFilter === 'thisMonth' || dateFilter === 'lastMonth') {
+        // For months, use proper month boundaries - go back one full month
+        const prevMonth = currentPeriodStart.subtract(1, 'month');
+        previousPeriodStart = prevMonth.startOf('month');
+        previousPeriodEnd = prevMonth.endOf('month');
+      } else if (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') {
+        // For weeks, subtract one week
+        previousPeriodEnd = currentPeriodStart.subtract(1, 'day');
+        previousPeriodStart = previousPeriodEnd.subtract(periodLengthDays - 1, 'day');
+      } else if (dateFilter === 'thisQuarter' || dateFilter === 'lastQuarter') {
+        // For quarters, use proper quarter boundaries - go back one full quarter
+        const prevQuarter = currentPeriodStart.subtract(1, 'quarter');
+        previousPeriodStart = prevQuarter.startOf('quarter');
+        previousPeriodEnd = prevQuarter.endOf('quarter');
+      } else if (dateFilter === 'thisYear' || dateFilter === 'lastYear') {
+        // For years, use proper year boundaries - go back one full year
+        const prevYear = currentPeriodStart.subtract(1, 'year');
+        previousPeriodStart = prevYear.startOf('year');
+        previousPeriodEnd = prevYear.endOf('year');
+      } else {
+        // For custom ranges or days, calculate by subtracting the period length
+        previousPeriodEnd = currentPeriodStart.subtract(1, 'day');
+        previousPeriodStart = previousPeriodEnd.subtract(periodLengthDays - 1, 'day');
+      }
+      
+      console.log('[Revenue Growth] Previous period calculation:', {
+        dateFilter,
+        previousPeriodStart: previousPeriodStart.format('YYYY-MM-DD'),
+        previousPeriodEnd: previousPeriodEnd.format('YYYY-MM-DD'),
+        calculation: `Based on ${dateFilter}, calculated previous period from ${previousPeriodStart.format('YYYY-MM-DD')} to ${previousPeriodEnd.format('YYYY-MM-DD')}`
+      });
+      
+      // Determine period type label for display
+      let periodTypeLabel = 'Period';
+      if (dateFilter === 'today' || dateFilter === 'yesterday') {
+        periodTypeLabel = 'D/D';
+      } else if (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') {
+        periodTypeLabel = 'W/W';
+      } else if (dateFilter === 'thisMonth' || dateFilter === 'lastMonth') {
+        periodTypeLabel = 'M/M';
+      } else if (dateFilter === 'thisQuarter' || dateFilter === 'lastQuarter') {
+        periodTypeLabel = 'Q/Q';
+      } else if (dateFilter === 'thisYear' || dateFilter === 'lastYear') {
+        periodTypeLabel = 'Y/Y';
+      } else {
+        // For custom ranges, determine based on length
+        if (periodLengthDays === 1) {
+          periodTypeLabel = 'D/D';
+        } else if (periodLengthDays <= 7) {
+          periodTypeLabel = 'W/W';
+        } else if (periodLengthDays <= 31) {
+          periodTypeLabel = 'M/M';
+        } else if (periodLengthDays <= 93) {
+          periodTypeLabel = 'Q/Q';
+        } else {
+          periodTypeLabel = 'Y/Y';
+        }
+      }
+      
+      console.log('[Revenue Growth] Period type determination:', {
+        dateFilter,
+        periodTypeLabel,
+        periodLengthDays
+      });
+      
+      // Fetch revenue for both current and previous periods
+      let currentPeriodRevenue = 0;
+      let previousPeriodRevenue = 0;
       let revenueGrowth = 0;
       
       try {
-        // Always fetch the full current month's revenue (not just the selected date range)
-        // and the full previous month's revenue for accurate month-over-month comparison
-        const [currentMonthRevenueData, prevRevenueData] = await Promise.all([
-          reportService.getRevenueReport(
-            currentMonthStart.format('YYYY-MM-DD'),
-            currentMonthEnd.format('YYYY-MM-DD'),
-            'week'
-          ).catch(() => ({ data: { totalRevenue: 0 } })),
-          reportService.getRevenueReport(
-            prevMonthStart.format('YYYY-MM-DD'),
-            prevMonthEnd.format('YYYY-MM-DD'),
-            'week'
-          ).catch(() => ({ data: { totalRevenue: 0 } }))
-        ]);
+        console.log('[Revenue Growth] Fetching current period revenue...', {
+          start: currentPeriodStart.format('YYYY-MM-DD'),
+          end: currentPeriodEnd.format('YYYY-MM-DD')
+        });
         
-        currentMonthRevenue = currentMonthRevenueData?.data?.totalRevenue || 0;
-        previousRevenue = prevRevenueData?.data?.totalRevenue || 0;
+        // Fetch revenue for current period (use the selected date range)
+        const currentPeriodRevenueData = await reportService.getRevenueReport(
+          currentPeriodStart.format('YYYY-MM-DD'),
+          currentPeriodEnd.format('YYYY-MM-DD'),
+          'day'
+        ).catch((err) => {
+          console.error('[Revenue Growth] ❌ Error fetching current period revenue:', err);
+          console.error('[Revenue Growth] Error details:', {
+            message: err?.message,
+            response: err?.response?.data,
+            stack: err?.stack
+          });
+          return { data: { totalRevenue: 0 } };
+        });
         
-        // Calculate month-over-month growth percentage
-        if (previousRevenue > 0) {
-          revenueGrowth = ((currentMonthRevenue - previousRevenue) / previousRevenue) * 100;
-        } else if (currentMonthRevenue > 0 && previousRevenue === 0) {
-          // If previous month had no revenue but current has revenue, it's infinite growth
+        console.log('[Revenue Growth] Current period revenue response:', {
+          fullResponse: currentPeriodRevenueData,
+          data: currentPeriodRevenueData?.data,
+          totalRevenue: currentPeriodRevenueData?.data?.totalRevenue,
+          totalRevenueType: typeof currentPeriodRevenueData?.data?.totalRevenue
+        });
+        
+        console.log('[Revenue Growth] Fetching previous period revenue...', {
+          start: previousPeriodStart.format('YYYY-MM-DD'),
+          end: previousPeriodEnd.format('YYYY-MM-DD')
+        });
+        
+        // Fetch revenue for previous period (same length, shifted back)
+        const previousPeriodRevenueData = await reportService.getRevenueReport(
+          previousPeriodStart.format('YYYY-MM-DD'),
+          previousPeriodEnd.format('YYYY-MM-DD'),
+          'day'
+        ).catch((err) => {
+          console.error('[Revenue Growth] ❌ Error fetching previous period revenue:', err);
+          console.error('[Revenue Growth] Error details:', {
+            message: err?.message,
+            response: err?.response?.data,
+            stack: err?.stack
+          });
+          return { data: { totalRevenue: 0 } };
+        });
+        
+        console.log('[Revenue Growth] Previous period revenue response:', {
+          fullResponse: previousPeriodRevenueData,
+          data: previousPeriodRevenueData?.data,
+          totalRevenue: previousPeriodRevenueData?.data?.totalRevenue,
+          totalRevenueType: typeof previousPeriodRevenueData?.data?.totalRevenue
+        });
+        
+        currentPeriodRevenue = parseFloat(currentPeriodRevenueData?.data?.totalRevenue || 0);
+        previousPeriodRevenue = parseFloat(previousPeriodRevenueData?.data?.totalRevenue || 0);
+        
+        console.log('[Revenue Growth] Parsed revenue values:', {
+          currentPeriodRevenue,
+          previousPeriodRevenue,
+          currentPeriodRevenueType: typeof currentPeriodRevenue,
+          previousPeriodRevenueType: typeof previousPeriodRevenue,
+          currentIsNaN: isNaN(currentPeriodRevenue),
+          previousIsNaN: isNaN(previousPeriodRevenue)
+        });
+        
+        // Calculate growth percentage
+        const currentRev = Number(currentPeriodRevenue) || 0;
+        const prevRev = Number(previousPeriodRevenue) || 0;
+        
+        console.log('[Revenue Growth] Final numeric values:', {
+          currentRev,
+          prevRev,
+          currentRevType: typeof currentRev,
+          prevRevType: typeof prevRev
+        });
+        
+        console.log('[Revenue Growth] Growth calculation conditions:', {
+          condition1_prevRevGreaterThan0: prevRev > 0,
+          condition2_currentRevGreaterThan0_prevRevLessOrEqual0: currentRev > 0 && prevRev <= 0,
+          condition3_currentRevLessOrEqual0_prevRevGreaterThan0: currentRev <= 0 && prevRev > 0,
+          condition4_bothZero: currentRev <= 0 && prevRev <= 0
+        });
+        
+        if (prevRev > 0) {
+          revenueGrowth = ((currentRev - prevRev) / prevRev) * 100;
+          console.log('[Revenue Growth] ✅ Normal growth calculation:', {
+            formula: `((${currentRev} - ${prevRev}) / ${prevRev}) * 100`,
+            calculation: `(${currentRev} - ${prevRev}) / ${prevRev} = ${(currentRev - prevRev) / prevRev}`,
+            result: revenueGrowth,
+            resultFormatted: revenueGrowth.toFixed(2) + '%'
+          });
+        } else if (currentRev > 0 && prevRev <= 0) {
+          // If previous period had no revenue but current has revenue, it's infinite growth
           // Show as 100% for display purposes
           revenueGrowth = 100;
+          console.log('[Revenue Growth] ✅ Previous period had 0 revenue, current has revenue - setting growth to 100%');
+          console.log('[Revenue Growth] Details:', {
+            currentRev,
+            prevRev,
+            reason: 'Infinite growth (previous = 0, current > 0)'
+          });
+        } else if (currentRev <= 0 && prevRev > 0) {
+          // If current period has no revenue but previous had revenue, it's -100% decline
+          revenueGrowth = -100;
+          console.log('[Revenue Growth] ✅ Current period has 0 revenue, previous had revenue - setting growth to -100%');
+        } else {
+          // If both are 0, growth remains 0
+          revenueGrowth = 0;
+          console.log('[Revenue Growth] ⚠️ Both periods have 0 revenue - growth is 0%');
+          console.log('[Revenue Growth] This is why growth is 0:', {
+            currentRev,
+            prevRev,
+            reason: 'Both periods have 0 revenue'
+          });
         }
-        // If both are 0, growth remains 0
+        
+        console.log('[Revenue Growth] ===== FINAL RESULT =====');
+        console.log('[Revenue Growth] Current Period Revenue:', currentRev);
+        console.log('[Revenue Growth] Previous Period Revenue:', prevRev);
+        console.log('[Revenue Growth] Calculated Growth:', revenueGrowth);
+        console.log('[Revenue Growth] Growth Percentage:', revenueGrowth.toFixed(2) + '%');
+        console.log('[Revenue Growth] Period Type Label:', periodTypeLabel);
+        console.log('[Revenue Growth] ===== END CALCULATION =====');
+        
       } catch (error) {
-        console.error('[Reports] Error fetching month-over-month revenue:', error);
+        console.error('[Reports] Error fetching period-over-period revenue:', error);
         // If we can't fetch, growth remains 0
       }
 
       console.log('[Reports] Calculated metrics:', { 
         totalRevenue, 
-        previousRevenue, 
+        currentPeriodRevenue,
+        previousPeriodRevenue, 
         revenueGrowth, 
+        periodTypeLabel,
         totalExpenses, 
         grossProfit, 
         profitMargin 
@@ -317,7 +498,7 @@ const Reports = () => {
         revenue: revenue?.data || { totalRevenue: 0, byPeriod: [], byCustomer: [] },
         expenses: expenses?.data || { totalExpenses: 0, byCategory: [] },
         outstanding: outstanding?.data || { totalOutstanding: 0 },
-        sales: sales?.data || { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [] },
+        sales: sales?.data || { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [], jobsTrendByDate: [] },
         serviceAnalytics: serviceAnalytics?.data || { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] },
         profitLoss: {
           revenue: totalRevenue,
@@ -1597,52 +1778,70 @@ const Reports = () => {
 
     const dailyRevenueTrend = buildRevenueTrend();
 
-    // Jobs trend (new vs completed) from real data - filter by date range
+    // Jobs trend (incoming vs completed) from backend data
+    // Incoming jobs use createdAt date, completed jobs use completionDate
     const jobsTrend = (() => {
-      if (!sales?.byDate?.length) return [];
+      // Check if jobsTrendByDate exists and has data
+      const jobsTrendData = sales?.jobsTrendByDate || [];
+      if (!jobsTrendData || jobsTrendData.length === 0) {
+        // If no jobsTrendByDate, try to use byDate as fallback (grouped by createdAt)
+        if (sales?.byDate && sales.byDate.length > 0) {
+          const startDate = dateRange[0].startOf('day');
+          const endDate = dateRange[1].endOf('day');
+          
+          const filteredByDate = sales.byDate.filter(item => {
+            if (!item.date) return false;
+            const itemDate = dayjs(item.date).startOf('day');
+            return (itemDate.isAfter(startDate) || itemDate.isSame(startDate)) && 
+                   (itemDate.isBefore(endDate) || itemDate.isSame(endDate));
+          });
+          
+          if (filteredByDate.length === 0) return [];
+          
+          const maxDays = (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') ? 7 : 
+                         (dateFilter === 'thisMonth' || dateFilter === 'lastMonth') ? 7 : 
+                         filteredByDate.length;
+          
+          return filteredByDate
+            .slice(-maxDays)
+            .map((item) => {
+              // Use jobCount as incoming, completed will be 0 (we don't have completionDate data here)
+              return {
+                day: dayjs(item.date).format('ddd'),
+                incoming: parseInt(item.jobCount) || 0,
+                completed: 0
+              };
+            });
+        }
+        return [];
+      }
       
-      // Filter byDate to only include dates within the selected date range
+      // Filter to only include dates within the selected date range
       const startDate = dateRange[0].startOf('day');
       const endDate = dateRange[1].endOf('day');
       
-      const filteredByDate = sales.byDate.filter(item => {
+      const filteredTrend = jobsTrendData.filter(item => {
         if (!item.date) return false;
+        // Handle both string and Date objects
         const itemDate = dayjs(item.date).startOf('day');
         return (itemDate.isAfter(startDate) || itemDate.isSame(startDate)) && 
                (itemDate.isBefore(endDate) || itemDate.isSame(endDate));
       });
       
-      if (filteredByDate.length === 0) return [];
-      
-      // Sort by date to ensure proper ordering
-      filteredByDate.sort((a, b) => {
-        const dateA = dayjs(a.date);
-        const dateB = dayjs(b.date);
-        return dateA.isBefore(dateB) ? -1 : dateA.isAfter(dateB) ? 1 : 0;
-      });
+      if (filteredTrend.length === 0) return [];
       
       // For weekly filters, show all days. For monthly, show last 7 days. For others, show all available.
       const maxDays = (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') ? 7 : 
                      (dateFilter === 'thisMonth' || dateFilter === 'lastMonth') ? 7 : 
-                     filteredByDate.length;
+                     filteredTrend.length;
       
-      return filteredByDate
+      return filteredTrend
         .slice(-maxDays)
         .map((item) => {
-          // Get status breakdown for this date if available
-          const dateStr = dayjs(item.date).format('YYYY-MM-DD');
-          const statusData = sales.byStatus || [];
-          const completedJobs = statusData.find(s => s.status === 'completed')?.jobCount || 0;
-          
-          // Get incoming jobs (new + in_progress) for this date
-          const newJobs = statusData.find(s => s.status === 'new')?.jobCount || 0;
-          const inProgressJobs = statusData.find(s => s.status === 'in_progress')?.jobCount || 0;
-          const incomingJobs = newJobs + inProgressJobs;
-          
           return {
             day: dayjs(item.date).format('ddd'),
-            incoming: incomingJobs || item.jobCount || 0,
-            completed: completedJobs || 0
+            incoming: parseInt(item.incoming) || 0,
+            completed: parseInt(item.completed) || 0
           };
         });
     })();
@@ -1697,7 +1896,7 @@ const Reports = () => {
             <Card style={cardStyle} bodyStyle={{ padding: '24px' }}>
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 <div>
-                  <Text style={{ fontSize: 13, color: '#8c8c8c', fontWeight: 400 }}>Revenue growth M/M</Text>
+                  <Text style={{ fontSize: 13, color: '#8c8c8c', fontWeight: 400 }}>Revenue growth {overviewStats?.periodTypeLabel || 'M/M'}</Text>
                   <Title level={2} style={{ margin: '8px 0 0 0', color: revenueGrowth >= 0 ? '#006d32' : '#cf1322', fontSize: 32, fontWeight: 700 }}>
                     {revenueGrowth >= 0 ? '+' : ''}{revenueGrowth.toFixed(1)}%
                   </Title>
@@ -1708,7 +1907,7 @@ const Reports = () => {
                     <div>
                       <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 4 }}>Revenue</Text>
                       <Text style={{ fontSize: 20, fontWeight: 600, color: '#262626' }}>
-                        GHS {(totalRevenue / 1000).toFixed(1)}K
+                        GHS {(totalRevenue / 1000).toFixed(3)}K
                       </Text>
                     </div>
                   </Col>
@@ -1716,7 +1915,7 @@ const Reports = () => {
                     <div>
                       <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 4 }}>Net income</Text>
                       <Text style={{ fontSize: 20, fontWeight: 600, color: '#262626' }}>
-                        GHS {(netIncome / 1000).toFixed(1)}K
+                        GHS {(netIncome / 1000).toFixed(3)}K
                       </Text>
                     </div>
                   </Col>
@@ -1774,7 +1973,7 @@ const Reports = () => {
                         <Text style={{ fontSize: 13, color: '#595959' }}>{item.name}</Text>
                       </Space>
                       <Text style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>
-                        {expenses.totalExpenses > 0 ? ((item.value / expenses.totalExpenses) * 100).toFixed(0) : 0}% · GHS {(item.value / 1000).toFixed(1)}K
+                        {expenses.totalExpenses > 0 ? ((item.value / expenses.totalExpenses) * 100).toFixed(0) : 0}% · GHS {(item.value / 1000).toFixed(3)}K
                       </Text>
                     </div>
                   ))
@@ -1799,7 +1998,7 @@ const Reports = () => {
                 <div>
                   <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 4 }}>Total Job Value</Text>
                   <Text style={{ fontSize: 20, fontWeight: 600, color: '#262626' }}>
-                    GHS {(totalRevenue / 1000).toFixed(1)}K
+                    GHS {(totalRevenue / 1000).toFixed(3)}K
                   </Text>
                 </div>
                 <div style={{ marginTop: 8 }}>
@@ -1839,7 +2038,7 @@ const Reports = () => {
               <div style={{ marginBottom: 20 }}>
                 <Text style={{ fontSize: 13, color: '#8c8c8c', display: 'block', marginBottom: 8 }}>Total revenue generated</Text>
                 <Title level={2} style={{ margin: 0, color: '#006d32', fontSize: 28, fontWeight: 700 }}>
-                  GHS {totalRevenue.toLocaleString()}
+                  GHS {totalRevenue.toFixed(3)}
                 </Title>
               </div>
               {dailyRevenueTrend.length > 0 ? (
@@ -1939,29 +2138,62 @@ const Reports = () => {
               bodyStyle={{ padding: '20px 24px' }}
             >
               {topServices.length > 0 ? (
-                <Space direction="vertical" size={0} style={{ width: '100%' }}>
-                  {topServices.map((item, idx) => (
-                    <div key={idx} style={{ 
-                      display: 'flex', 
-                      justifyContent: 'space-between', 
-                      alignItems: 'center', 
-                      padding: '14px 0', 
-                      borderBottom: idx < topServices.length - 1 ? '1px solid #f5f5f5' : 'none' 
-                    }}>
-                      <div>
-                        <Text style={{ fontSize: 14, fontWeight: 500, color: '#262626', display: 'block', marginBottom: 4 }}>
-                          {item.name}
-                        </Text>
-                        <Text style={{ fontSize: 12, color: '#8c8c8c' }}>
-                          {totalRevenue > 0 ? ((item.value / totalRevenue) * 100).toFixed(1) : 0}% of total revenue
+                <>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart
+                      data={topServices.map(item => ({
+                        name: item.name,
+                        value: item.value,
+                        percentage: totalRevenue > 0 ? ((item.value / totalRevenue) * 100) : 0
+                      }))}
+                      layout="vertical"
+                      margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
+                      <XAxis type="number" hide />
+                      <YAxis 
+                        type="category" 
+                        dataKey="name" 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#262626', fontSize: 12 }}
+                        width={75}
+                      />
+                      <Tooltip 
+                        formatter={(value) => `GHS ${(value / 1000).toFixed(2)}K`}
+                        contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
+                      />
+                      <Bar 
+                        dataKey="value" 
+                        fill="#006d32" 
+                        radius={[0, 4, 4, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <Space direction="vertical" size={0} style={{ width: '100%', marginTop: 16 }}>
+                    {topServices.map((item, idx) => (
+                      <div key={idx} style={{ 
+                        display: 'flex', 
+                        justifyContent: 'space-between', 
+                        alignItems: 'center', 
+                        padding: '10px 0', 
+                        borderBottom: idx < topServices.length - 1 ? '1px solid #f5f5f5' : 'none' 
+                      }}>
+                        <div style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 14, fontWeight: 500, color: '#262626', display: 'block', marginBottom: 4 }}>
+                            {item.name}
+                          </Text>
+                          <Text style={{ fontSize: 12, color: '#8c8c8c' }}>
+                            {totalRevenue > 0 ? ((item.value / totalRevenue) * 100).toFixed(1) : 0}% of total revenue
+                          </Text>
+                        </div>
+                        <Text style={{ color: '#006d32', fontSize: 16, fontWeight: 700, marginLeft: 16 }}>
+                          GHS {(item.value / 1000).toFixed(2)}K
                         </Text>
                       </div>
-                      <Text style={{ color: '#006d32', fontSize: 16, fontWeight: 700 }}>
-                        GHS {(item.value / 1000).toFixed(1)}K
-                      </Text>
-                    </div>
-                  ))}
-                </Space>
+                    ))}
+                  </Space>
+                </>
               ) : (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
                   <Text type="secondary">No revenue sources data available</Text>
@@ -1977,37 +2209,72 @@ const Reports = () => {
               style={cardStyle}
               bodyStyle={{ padding: '20px 24px' }}
             >
-              <Space direction="vertical" size={0} style={{ width: '100%' }}>
-                {revenueByChannel.length > 0 ? (
-                  revenueByChannel.map((item, idx) => {
-                    // Use totalSales for percentage calculation (service analytics or job sales total)
-                    const percentage = totalSales > 0 ? ((item.revenue / totalSales) * 100) : 0;
-                    return (
-                      <div key={idx} style={{ 
-                        display: 'flex', 
-                        justifyContent: 'space-between', 
-                        alignItems: 'center', 
-                        padding: '14px 0', 
-                        borderBottom: idx < revenueByChannel.length - 1 ? '1px solid #f5f5f5' : 'none' 
-                      }}>
-                        <div>
-                          <Text style={{ fontSize: 14, fontWeight: 500, color: '#262626', display: 'block', marginBottom: 4 }}>
-                            {item.channel}
-                          </Text>
-                          <Text style={{ fontSize: 12, color: '#8c8c8c' }}>
-                            {percentage.toFixed(1)}% of total
+              {revenueByChannel.length > 0 ? (
+                <>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart
+                      data={revenueByChannel.map(item => ({
+                        name: item.channel,
+                        value: item.revenue,
+                        percentage: totalSales > 0 ? ((item.revenue / totalSales) * 100) : 0
+                      }))}
+                      layout="vertical"
+                      margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
+                      <XAxis type="number" hide />
+                      <YAxis 
+                        type="category" 
+                        dataKey="name" 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#262626', fontSize: 12 }}
+                        width={75}
+                      />
+                      <Tooltip 
+                        formatter={(value) => `GHS ${(value / 1000).toFixed(2)}K`}
+                        contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
+                      />
+                      <Bar 
+                        dataKey="value" 
+                        fill="#1890ff" 
+                        radius={[0, 4, 4, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                  <Space direction="vertical" size={0} style={{ width: '100%', marginTop: 16 }}>
+                    {revenueByChannel.map((item, idx) => {
+                      // Use totalSales for percentage calculation (service analytics or job sales total)
+                      const percentage = totalSales > 0 ? ((item.revenue / totalSales) * 100) : 0;
+                      return (
+                        <div key={idx} style={{ 
+                          display: 'flex', 
+                          justifyContent: 'space-between', 
+                          alignItems: 'center', 
+                          padding: '10px 0', 
+                          borderBottom: idx < revenueByChannel.length - 1 ? '1px solid #f5f5f5' : 'none' 
+                        }}>
+                          <div style={{ flex: 1 }}>
+                            <Text style={{ fontSize: 14, fontWeight: 500, color: '#262626', display: 'block', marginBottom: 4 }}>
+                              {item.channel}
+                            </Text>
+                            <Text style={{ fontSize: 12, color: '#8c8c8c' }}>
+                              {percentage.toFixed(1)}% of total
+                            </Text>
+                          </div>
+                          <Text style={{ color: '#1890ff', fontSize: 16, fontWeight: 700, marginLeft: 16 }}>
+                            GHS {(item.revenue / 1000).toFixed(2)}K
                           </Text>
                         </div>
-                        <Text style={{ color: '#1890ff', fontSize: 16, fontWeight: 700 }}>
-                          GHS {(item.revenue / 1000).toFixed(1)}K
-                        </Text>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <Text type="secondary" style={{ padding: '14px 0' }}>No channel data available</Text>
-                )}
-              </Space>
+                      );
+                    })}
+                  </Space>
+                </>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
+                  <Text type="secondary">No channel data available</Text>
+                </div>
+              )}
             </Card>
           </Col>
         </Row>

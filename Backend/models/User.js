@@ -48,6 +48,12 @@ const User = sequelize.define('User', {
     type: DataTypes.BOOLEAN,
     allowNull: false,
     defaultValue: false
+  },
+  sabitoUserId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    unique: true,
+    field: 'sabito_user_id'
   }
 }, {
   timestamps: true,

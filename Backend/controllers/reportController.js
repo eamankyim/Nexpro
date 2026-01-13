@@ -3,6 +3,11 @@ const { Job, Expense, Customer, Vendor, Invoice, JobItem, Lead } = require('../m
 const { Op } = require('sequelize');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 
+// Helper function to check if dateFilter has content (Op.between is a Symbol, so Object.keys() won't include it)
+const hasDateFilter = (dateFilter) => {
+  return dateFilter && (Object.keys(dateFilter).length > 0 || dateFilter[Op.between] !== undefined);
+};
+
 // @desc    Get revenue report
 // @route   GET /api/reports/revenue
 // @access  Private
@@ -42,13 +47,13 @@ exports.getRevenueReport = async (req, res, next) => {
           FROM "invoices"
           WHERE "tenantId" = :tenantId
             AND "status" = 'paid'
-            ${Object.keys(dateFilter).length > 0 ? `AND "paidDate" BETWEEN :startDate AND :endDate` : ''}
+            ${hasDateFilter(dateFilter) ? `AND "paidDate" BETWEEN :startDate AND :endDate` : ''}
           GROUP BY FLOOR(EXTRACT(HOUR FROM "paidDate") / 2) * 2
           ORDER BY FLOOR(EXTRACT(HOUR FROM "paidDate") / 2) * 2 ASC
         `, {
           replacements: {
             tenantId: req.tenantId,
-            ...(Object.keys(dateFilter).length > 0 && {
+            ...(hasDateFilter(dateFilter) && {
               startDate: dateFilter[Op.between][0],
               endDate: dateFilter[Op.between][1]
             })
@@ -70,7 +75,7 @@ exports.getRevenueReport = async (req, res, next) => {
         ],
           where: applyTenantFilter(req.tenantId, {
             status: 'paid',
-            ...(Object.keys(dateFilter).length > 0 && { paidDate: dateFilter })
+            ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
           }),
           group: [sequelize.literal(`CAST("paidDate" AS DATE)`)],
           order: [[sequelize.literal(`CAST("paidDate" AS DATE)`), 'ASC']],
@@ -93,13 +98,13 @@ exports.getRevenueReport = async (req, res, next) => {
           FROM "invoices"
           WHERE "tenantId" = :tenantId
             AND "status" = 'paid'
-            ${Object.keys(dateFilter).length > 0 ? `AND "paidDate" BETWEEN :startDate AND :endDate` : ''}
+            ${hasDateFilter(dateFilter) ? `AND "paidDate" BETWEEN :startDate AND :endDate` : ''}
           GROUP BY EXTRACT(WEEK FROM "paidDate") - EXTRACT(WEEK FROM DATE_TRUNC('month', "paidDate")) + 1, DATE_TRUNC('month', "paidDate")
           ORDER BY DATE_TRUNC('month', "paidDate") ASC, "week" ASC
         `, {
           replacements: {
             tenantId: req.tenantId,
-            ...(Object.keys(dateFilter).length > 0 && {
+            ...(hasDateFilter(dateFilter) && {
               startDate: dateFilter[Op.between][0],
               endDate: dateFilter[Op.between][1]
             })
@@ -122,7 +127,7 @@ exports.getRevenueReport = async (req, res, next) => {
         ],
           where: applyTenantFilter(req.tenantId, {
             status: 'paid',
-            ...(Object.keys(dateFilter).length > 0 && { paidDate: dateFilter })
+            ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
           }),
           group: [
             sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paidDate"')),
@@ -153,7 +158,7 @@ exports.getRevenueReport = async (req, res, next) => {
         ],
         where: applyTenantFilter(req.tenantId, {
           status: 'paid',
-          ...(Object.keys(dateFilter).length > 0 && { paidDate: dateFilter })
+          ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
         }),
         include: [{
           model: Customer,
@@ -172,36 +177,67 @@ exports.getRevenueReport = async (req, res, next) => {
 
     // Revenue by payment method - using Invoice.paymentMethod if available, otherwise skip
     console.log('[Revenue Report] Fetching revenue by payment method');
+    // Revenue by payment method - Note: Invoice model doesn't have paymentMethod column
+    // This is disabled until the column is added to the Invoice model
     let revenueByMethod = [];
-    try {
-      revenueByMethod = await Invoice.findAll({
-        attributes: [
-          'paymentMethod',
-          [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'],
-          [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']
-        ],
-        where: applyTenantFilter(req.tenantId, {
-          status: 'paid',
-          ...(Object.keys(dateFilter).length > 0 && { paidDate: dateFilter })
-        }),
-        group: ['paymentMethod'],
-        order: [[sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'DESC']],
-        raw: true
-      });
-      console.log('[Revenue Report] Revenue by payment method fetched:', revenueByMethod.length, 'methods');
-    } catch (methodError) {
-      console.error('[Revenue Report] Error fetching revenue by payment method:', methodError);
-      // Don't throw - make it optional
-      revenueByMethod = [];
-    }
+    // Commented out because paymentMethod column doesn't exist in invoices table
+    // try {
+    //   revenueByMethod = await Invoice.findAll({
+    //     attributes: [
+    //       'paymentMethod',
+    //       [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'],
+    //       [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']
+    //     ],
+    //     where: applyTenantFilter(req.tenantId, {
+    //       status: 'paid',
+    //       ...(Object.keys(dateFilter).length > 0 && { paidDate: dateFilter })
+    //     }),
+    //     group: ['paymentMethod'],
+    //     order: [[sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'DESC']],
+    //     raw: true
+    //   });
+    //   console.log('[Revenue Report] Revenue by payment method fetched:', revenueByMethod.length, 'methods');
+    // } catch (methodError) {
+    //   console.error('[Revenue Report] Error fetching revenue by payment method:', methodError);
+    //   revenueByMethod = [];
+    // }
 
-    // Total revenue - using Invoice.sum('amountPaid') where status = 'paid' (same as Dashboard)
+    // Total revenue - using Invoice.sum('amountPaid') where status = 'paid' (same method as Dashboard)
     console.log('[Revenue Report] Calculating total revenue (same method as Dashboard)');
-    const totalRevenue = await Invoice.sum('amountPaid', {
+    
+    // Check if dateFilter has content - Op.between is a Symbol, so Object.keys() won't include it
+    const hasDateFilterValue = hasDateFilter(dateFilter);
+    console.log('[Revenue Report] Has date filter?', hasDateFilterValue);
+    console.log('[Revenue Report] Date filter object:', dateFilter);
+    console.log('[Revenue Report] Date filter keys:', Object.keys(dateFilter));
+    console.log('[Revenue Report] Date filter Op.between:', dateFilter[Op.between]);
+    
+    const whereClause = applyTenantFilter(req.tenantId, {
+      status: 'paid',
+      ...(hasDateFilterValue && { paidDate: dateFilter })
+    });
+    console.log('[Revenue Report] Where clause for total revenue (paidDate included?):', whereClause.paidDate ? 'YES' : 'NO');
+    
+    // Also check how many invoices match this filter
+    const invoiceCount = await Invoice.count({
+      where: whereClause
+    });
+    console.log('[Revenue Report] Number of invoices matching filter:', invoiceCount);
+    
+    // Check a sample of invoice dates to debug
+    const sampleInvoices = await Invoice.findAll({
+      attributes: ['id', 'amountPaid', 'paidDate', 'status'],
       where: applyTenantFilter(req.tenantId, {
-        status: 'paid',
-        ...(Object.keys(dateFilter).length > 0 && { paidDate: dateFilter })
-      })
+        status: 'paid'
+      }),
+      limit: 5,
+      order: [['paidDate', 'DESC']],
+      raw: true
+    });
+    console.log('[Revenue Report] Sample invoices (first 5 paid invoices):', sampleInvoices);
+    
+    const totalRevenue = await Invoice.sum('amountPaid', {
+      where: whereClause
     }) || 0;
     console.log('[Revenue Report] Total revenue:', totalRevenue, '(from Invoice.amountPaid where status = paid)');
 
@@ -255,7 +291,7 @@ exports.getExpenseReport = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.col('id')), 'count']
       ],
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
       }),
       group: ['category'],
       order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
@@ -269,7 +305,7 @@ exports.getExpenseReport = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.literal('"Expense"."id"')), 'count']
       ],
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
       }),
       include: [{
         model: Vendor,
@@ -289,7 +325,7 @@ exports.getExpenseReport = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.col('id')), 'count']
       ],
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
       }),
       group: ['paymentMethod'],
       order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
@@ -303,7 +339,7 @@ exports.getExpenseReport = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.col('id')), 'count']
       ],
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
       }),
       group: [sequelize.literal(`CAST("expenseDate" AS DATE)`)],
       order: [[sequelize.literal(`CAST("expenseDate" AS DATE)`), 'ASC']],
@@ -313,7 +349,7 @@ exports.getExpenseReport = async (req, res, next) => {
     // Total expenses
     const totalExpenses = await Expense.sum('amount', {
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
       })
     }) || 0;
 
@@ -355,7 +391,7 @@ exports.getOutstandingPaymentsReport = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
-        ...(Object.keys(dateFilter).length > 0 && { invoiceDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { invoiceDate: dateFilter })
       }),
       include: [
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email', 'phone'] },
@@ -374,7 +410,7 @@ exports.getOutstandingPaymentsReport = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
-        ...(Object.keys(dateFilter).length > 0 && { invoiceDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { invoiceDate: dateFilter })
       }),
       include: [{
         model: Customer,
@@ -426,7 +462,7 @@ exports.getOutstandingPaymentsReport = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
-        ...(Object.keys(dateFilter).length > 0 && { invoiceDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { invoiceDate: dateFilter })
       })
     }) || 0;
 
@@ -469,7 +505,7 @@ exports.getSalesReport = async (req, res, next) => {
 
     // Sales by category - using JobItem.category (more accurate than jobType)
     let salesByCategory;
-    if (Object.keys(dateFilter).length > 0) {
+    if (hasDateFilter(dateFilter)) {
       salesByCategory = await sequelize.query(`
         SELECT 
           "JobItem"."category",
@@ -530,7 +566,7 @@ exports.getSalesReport = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.literal('"Job"."id"')), 'jobCount']
       ],
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
+        ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
       }),
       include: [{
         model: Customer,
@@ -542,7 +578,7 @@ exports.getSalesReport = async (req, res, next) => {
       limit: 20
     });
 
-    // Sales by date
+    // Sales by date - using createdAt for date grouping
     const salesByDate = await Job.findAll({
       attributes: [
         [sequelize.literal(`CAST("createdAt" AS DATE)`), 'date'],
@@ -550,12 +586,173 @@ exports.getSalesReport = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.col('id')), 'jobCount']
       ],
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
+        ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
       }),
       group: [sequelize.literal(`CAST("createdAt" AS DATE)`)],
       order: [[sequelize.literal(`CAST("createdAt" AS DATE)`), 'ASC']],
       raw: true
     });
+
+    // Jobs trend by date - incoming (createdAt) and completed (completionDate)
+    let jobsTrendByDate = [];
+    if (hasDateFilter(dateFilter)) {
+      // Get incoming jobs grouped by createdAt date
+      const incomingJobsByDate = await Job.findAll({
+        attributes: [
+          [sequelize.literal(`CAST("createdAt" AS DATE)`), 'date'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'incoming']
+        ],
+        where: applyTenantFilter(req.tenantId, {
+          createdAt: dateFilter
+        }),
+        group: [sequelize.literal(`CAST("createdAt" AS DATE)`)],
+        order: [[sequelize.literal(`CAST("createdAt" AS DATE)`), 'ASC']],
+        raw: true
+      });
+
+      // Get completed jobs grouped by completionDate (only jobs with completionDate set)
+      const completedJobsByDate = await Job.findAll({
+        attributes: [
+          [sequelize.literal(`CAST("completionDate" AS DATE)`), 'date'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'completed']
+        ],
+        where: applyTenantFilter(req.tenantId, {
+          status: 'completed',
+          completionDate: {
+            [Op.and]: [
+              { [Op.not]: null },
+              dateFilter
+            ]
+          }
+        }),
+        group: [sequelize.literal(`CAST("completionDate" AS DATE)`)],
+        order: [[sequelize.literal(`CAST("completionDate" AS DATE)`), 'ASC']],
+        raw: true
+      });
+
+      // Merge the two datasets by date
+      const dateMap = new Map();
+      
+      // Helper function to convert date to ISO string
+      const getDateKey = (date) => {
+        if (!date) return null;
+        if (date instanceof Date) {
+          return date.toISOString().split('T')[0];
+        }
+        // Handle string dates from Sequelize raw queries
+        const dateObj = new Date(date);
+        return dateObj.toISOString().split('T')[0];
+      };
+      
+      // Add incoming jobs
+      incomingJobsByDate.forEach(item => {
+        const dateKey = getDateKey(item.date);
+        if (dateKey) {
+          dateMap.set(dateKey, {
+            date: dateKey,
+            incoming: parseInt(item.incoming) || 0,
+            completed: 0
+          });
+        }
+      });
+
+      // Add completed jobs
+      completedJobsByDate.forEach(item => {
+        const dateKey = getDateKey(item.date);
+        if (dateKey) {
+          if (dateMap.has(dateKey)) {
+            dateMap.get(dateKey).completed = parseInt(item.completed) || 0;
+          } else {
+            dateMap.set(dateKey, {
+              date: dateKey,
+              incoming: 0,
+              completed: parseInt(item.completed) || 0
+            });
+          }
+        }
+      });
+
+      // Convert map to array and sort by date
+      jobsTrendByDate = Array.from(dateMap.values()).sort((a, b) => {
+        return new Date(a.date) - new Date(b.date);
+      });
+    } else {
+      // Get all incoming jobs grouped by createdAt date
+      const incomingJobsByDate = await Job.findAll({
+        attributes: [
+          [sequelize.literal(`CAST("createdAt" AS DATE)`), 'date'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'incoming']
+        ],
+        where: applyTenantFilter(req.tenantId, {}),
+        group: [sequelize.literal(`CAST("createdAt" AS DATE)`)],
+        order: [[sequelize.literal(`CAST("createdAt" AS DATE)`), 'ASC']],
+        raw: true
+      });
+
+      // Get all completed jobs grouped by completionDate (only jobs with completionDate set)
+      const completedJobsByDate = await Job.findAll({
+        attributes: [
+          [sequelize.literal(`CAST("completionDate" AS DATE)`), 'date'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'completed']
+        ],
+        where: applyTenantFilter(req.tenantId, {
+          status: 'completed',
+          completionDate: {
+            [Op.not]: null
+          }
+        }),
+        group: [sequelize.literal(`CAST("completionDate" AS DATE)`)],
+        order: [[sequelize.literal(`CAST("completionDate" AS DATE)`), 'ASC']],
+        raw: true
+      });
+
+      // Merge the two datasets by date
+      const dateMap = new Map();
+      
+      // Helper function to convert date to ISO string
+      const getDateKey = (date) => {
+        if (!date) return null;
+        if (date instanceof Date) {
+          return date.toISOString().split('T')[0];
+        }
+        // Handle string dates from Sequelize raw queries
+        const dateObj = new Date(date);
+        return dateObj.toISOString().split('T')[0];
+      };
+      
+      // Add incoming jobs
+      incomingJobsByDate.forEach(item => {
+        const dateKey = getDateKey(item.date);
+        if (dateKey) {
+          dateMap.set(dateKey, {
+            date: dateKey,
+            incoming: parseInt(item.incoming) || 0,
+            completed: 0
+          });
+        }
+      });
+
+      // Add completed jobs
+      completedJobsByDate.forEach(item => {
+        const dateKey = getDateKey(item.date);
+        if (dateKey) {
+          if (dateMap.has(dateKey)) {
+            dateMap.get(dateKey).completed = parseInt(item.completed) || 0;
+          } else {
+            dateMap.set(dateKey, {
+              date: dateKey,
+              incoming: 0,
+              completed: parseInt(item.completed) || 0
+            });
+          }
+        }
+      });
+
+      // Convert map to array and sort by date
+      jobsTrendByDate = Array.from(dateMap.values()).sort((a, b) => {
+        return new Date(a.date) - new Date(b.date);
+      });
+    }
 
     // Sales by status
     const salesByStatus = await Job.findAll({
@@ -565,7 +762,7 @@ exports.getSalesReport = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.col('id')), 'jobCount']
       ],
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
+        ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
       }),
       group: ['status'],
       order: [[sequelize.fn('SUM', sequelize.col('finalPrice')), 'DESC']]
@@ -574,14 +771,14 @@ exports.getSalesReport = async (req, res, next) => {
     // Total sales
     const totalSales = await Job.sum('finalPrice', {
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
+        ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
       })
     }) || 0;
 
     // Total jobs count
     const totalJobs = await Job.count({
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { createdAt: dateFilter })
+        ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
       })
     }) || 0;
 
@@ -594,7 +791,8 @@ exports.getSalesReport = async (req, res, next) => {
         byCustomer: salesByCustomer,
         byDate: salesByDate,
         byStatus: salesByStatus,
-        byPeriod: salesByDate // Add byPeriod alias for frontend compatibility
+        byPeriod: salesByDate, // Add byPeriod alias for frontend compatibility
+        jobsTrendByDate: jobsTrendByDate // Jobs trend with incoming and completed by date
       }
     });
   } catch (error) {
@@ -624,14 +822,14 @@ exports.getProfitLossReport = async (req, res, next) => {
     const revenue = await Invoice.sum('amountPaid', {
       where: applyTenantFilter(req.tenantId, {
         status: 'paid',
-        ...(Object.keys(dateFilter).length > 0 && { paidDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
       })
     }) || 0;
 
     // Expenses
     const expenses = await Expense.sum('amount', {
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
       })
     }) || 0;
 
@@ -673,13 +871,13 @@ exports.getKpiSummary = async (req, res, next) => {
     const totalRevenue = await Invoice.sum('amountPaid', {
       where: applyTenantFilter(req.tenantId, {
         status: 'paid',
-        ...(Object.keys(dateFilter).length > 0 && { paidDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
       })
     }) || 0;
 
     const totalExpenses = await Expense.sum('amount', {
       where: applyTenantFilter(req.tenantId, {
-        ...(Object.keys(dateFilter).length > 0 && { expenseDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
       })
     }) || 0;
 
@@ -693,7 +891,7 @@ exports.getKpiSummary = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
-        ...(Object.keys(dateFilter).length > 0 && { invoiceDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { invoiceDate: dateFilter })
       })
     }) || 0;
 
@@ -735,7 +933,7 @@ exports.getTopCustomers = async (req, res, next) => {
       ],
       where: applyTenantFilter(req.tenantId, {
         status: 'paid',
-        ...(Object.keys(dateFilter).length > 0 && { paidDate: dateFilter })
+        ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
       }),
       include: [
         {
@@ -822,7 +1020,7 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
     console.log('[Service Analytics] Fetching service analytics by category');
     let serviceAnalytics = [];
     try {
-      if (Object.keys(dateFilter).length > 0) {
+      if (hasDateFilter(dateFilter)) {
         console.log('[Service Analytics] Using date filter for category query');
         serviceAnalytics = await sequelize.query(`
           SELECT 
@@ -880,7 +1078,7 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
     console.log('[Service Analytics] Fetching service analytics by date');
     let serviceByDate = [];
     try {
-      if (Object.keys(dateFilter).length > 0) {
+      if (hasDateFilter(dateFilter)) {
         serviceByDate = await sequelize.query(`
           SELECT 
             CAST("job"."createdAt" AS DATE) as "date",
@@ -931,7 +1129,7 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
     console.log('[Service Analytics] Fetching service analytics by customer');
     let serviceByCustomer = [];
     try {
-      if (Object.keys(dateFilter).length > 0) {
+      if (hasDateFilter(dateFilter)) {
         serviceByCustomer = await sequelize.query(`
           SELECT 
             "job"."customerId",
@@ -1010,7 +1208,7 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
     let totalRevenue = 0;
     let totalQuantity = 0;
     try {
-      if (Object.keys(dateFilter).length > 0) {
+      if (hasDateFilter(dateFilter)) {
         const totalResult = await sequelize.query(`
           SELECT 
             SUM("JobItem"."totalPrice") as "totalRevenue",

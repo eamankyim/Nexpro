@@ -232,14 +232,19 @@ const Inventory = () => {
   };
 
   const handleViewItem = async (record) => {
+    // Set viewing item immediately with data from table row
+    setViewingItem(record);
+    // Open drawer immediately
+    setDrawerVisible(true);
+    // Load full details asynchronously
     try {
       const response = await inventoryService.getById(record.id);
       const data = response?.data || response;
       setViewingItem(data);
-      setDrawerVisible(true);
     } catch (error) {
       console.error('Failed to fetch inventory item', error);
       message.error('Failed to load inventory details');
+      // Keep the record data from table row if loading fails
     }
   };
 

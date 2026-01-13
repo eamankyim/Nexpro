@@ -106,42 +106,76 @@ exports.updateProfile = async (req, res, next) => {
 
 exports.uploadProfilePicture = async (req, res, next) => {
   try {
+    console.log('[Profile Picture Upload] Starting upload...');
     const user = await User.findByPk(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
 
     if (!req.file) {
+      console.log('[Profile Picture Upload] ❌ No file uploaded');
       return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
 
-    const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
-    let publicUrl;
+    console.log('[Profile Picture Upload] File info:', {
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      hasBuffer: !!req.file.buffer,
+      hasPath: !!req.file.path
+    });
 
-    if (isServerless) {
-      // In serverless, file is in memory (req.file.buffer)
-      // Temporary solution: convert to base64 data URL
-      const base64 = req.file.buffer.toString('base64');
-      const mimeType = req.file.mimetype || 'image/png';
-      publicUrl = `data:${mimeType};base64,${base64}`;
-      
-      // TODO: Implement cloud storage upload (S3, Cloudinary, Vercel Blob, etc.)
-      console.warn('⚠️ File uploaded in serverless environment. Consider implementing cloud storage for production.');
-    } else {
-      // Regular file system storage
-      const storagePath = path.relative(baseUploadDir, req.file.path);
-      publicUrl = buildPublicUrl(storagePath);
-
-      if (user.profilePicture && user.profilePicture !== publicUrl) {
-        await deleteFileIfExists(user.profilePicture);
+    // Convert image to base64 and store in database
+    let base64Image;
+    const mimeType = req.file.mimetype || 'image/png';
+    
+    try {
+      if (req.file.buffer) {
+        console.log('[Profile Picture Upload] File is in memory, converting to base64...');
+        const base64String = req.file.buffer.toString('base64');
+        base64Image = `data:${mimeType};base64,${base64String}`;
+        console.log('[Profile Picture Upload] ✅ Base64 conversion complete. Length:', base64Image.length);
+      } else if (req.file.path) {
+        console.log('[Profile Picture Upload] File is on disk, reading from path:', req.file.path);
+        const fs = require('fs');
+        
+        if (!fs.existsSync(req.file.path)) {
+          console.log('[Profile Picture Upload] ❌ File path does not exist');
+          return res.status(400).json({ success: false, message: 'Uploaded file not found on server' });
+        }
+        
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const base64String = fileBuffer.toString('base64');
+        base64Image = `data:${mimeType};base64,${base64String}`;
+        console.log('[Profile Picture Upload] ✅ Base64 conversion complete. Length:', base64Image.length);
+        
+        // Delete the temporary file since we're storing in DB
+        try {
+          fs.unlinkSync(req.file.path);
+          console.log('[Profile Picture Upload] ✅ Temporary file deleted');
+        } catch (unlinkError) {
+          console.log('[Profile Picture Upload] ⚠️  Warning: Could not delete temporary file:', unlinkError.message);
+        }
+      } else {
+        console.log('[Profile Picture Upload] ❌ File has neither buffer nor path');
+        return res.status(400).json({ success: false, message: 'Unable to process uploaded file' });
       }
+    } catch (processingError) {
+      console.error('[Profile Picture Upload] ❌ Error processing file:', processingError);
+      return res.status(500).json({ success: false, message: 'Error processing uploaded file', error: processingError.message });
     }
 
-    user.profilePicture = publicUrl;
+    // Delete old image if it was a file path (not base64)
+    if (user.profilePicture && !user.profilePicture.startsWith('data:')) {
+      await deleteFileIfExists(user.profilePicture);
+    }
+
+    user.profilePicture = base64Image;
     await user.save();
 
+    console.log('[Profile Picture Upload] ✅ Upload completed successfully');
     res.status(200).json({ success: true, data: user });
   } catch (error) {
+    console.error('[Profile Picture Upload] ❌ Error:', error);
     next(error);
   }
 };
@@ -379,41 +413,73 @@ exports.updateOrganizationSettings = async (req, res, next) => {
 
 exports.uploadOrganizationLogo = async (req, res, next) => {
   try {
+    console.log('[Organization Logo Upload] Starting upload...');
+    const organization = await getSettingValue(req.tenantId, 'organization', {});
+    
     if (!req.file) {
+      console.log('[Organization Logo Upload] ❌ No file uploaded');
       return res.status(400).json({ success: false, message: 'No file uploaded' });
     }
 
-    const isServerless = process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME;
-    let publicUrl;
+    console.log('[Organization Logo Upload] File info:', {
+      mimetype: req.file.mimetype,
+      size: req.file.size,
+      hasBuffer: !!req.file.buffer,
+      hasPath: !!req.file.path
+    });
 
-    if (isServerless) {
-      // In serverless, file is in memory (req.file.buffer)
-      // For now, we'll use a data URL or need to implement cloud storage
-      // Temporary solution: convert to base64 data URL
-      const base64 = req.file.buffer.toString('base64');
-      const mimeType = req.file.mimetype || 'image/png';
-      publicUrl = `data:${mimeType};base64,${base64}`;
-      
-      // TODO: Implement cloud storage upload (S3, Cloudinary, Vercel Blob, etc.)
-      // For production, you should upload to cloud storage and get a public URL
-      console.warn('⚠️ File uploaded in serverless environment. Consider implementing cloud storage (S3, Cloudinary, Vercel Blob) for production.');
-    } else {
-      // Regular file system storage
-      const organization = await getSettingValue(req.tenantId, 'organization', {});
-      const storagePath = path.relative(baseUploadDir, req.file.path);
-      publicUrl = buildPublicUrl(storagePath);
-
-      if (organization.logoUrl && organization.logoUrl !== publicUrl) {
-        await deleteFileIfExists(organization.logoUrl);
+    // Convert image to base64 and store in database
+    let base64Image;
+    const mimeType = req.file.mimetype || 'image/png';
+    
+    try {
+      if (req.file.buffer) {
+        console.log('[Organization Logo Upload] File is in memory, converting to base64...');
+        const base64String = req.file.buffer.toString('base64');
+        base64Image = `data:${mimeType};base64,${base64String}`;
+        console.log('[Organization Logo Upload] ✅ Base64 conversion complete. Length:', base64Image.length);
+      } else if (req.file.path) {
+        console.log('[Organization Logo Upload] File is on disk, reading from path:', req.file.path);
+        const fs = require('fs');
+        
+        if (!fs.existsSync(req.file.path)) {
+          console.log('[Organization Logo Upload] ❌ File path does not exist');
+          return res.status(400).json({ success: false, message: 'Uploaded file not found on server' });
+        }
+        
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const base64String = fileBuffer.toString('base64');
+        base64Image = `data:${mimeType};base64,${base64String}`;
+        console.log('[Organization Logo Upload] ✅ Base64 conversion complete. Length:', base64Image.length);
+        
+        // Delete the temporary file since we're storing in DB
+        try {
+          fs.unlinkSync(req.file.path);
+          console.log('[Organization Logo Upload] ✅ Temporary file deleted');
+        } catch (unlinkError) {
+          console.log('[Organization Logo Upload] ⚠️  Warning: Could not delete temporary file:', unlinkError.message);
+        }
+      } else {
+        console.log('[Organization Logo Upload] ❌ File has neither buffer nor path');
+        return res.status(400).json({ success: false, message: 'Unable to process uploaded file' });
       }
+    } catch (processingError) {
+      console.error('[Organization Logo Upload] ❌ Error processing file:', processingError);
+      return res.status(500).json({ success: false, message: 'Error processing uploaded file', error: processingError.message });
     }
 
-    const organization = await getSettingValue(req.tenantId, 'organization', {});
-    organization.logoUrl = publicUrl;
+    // Delete old logo if it was a file path (not base64)
+    if (organization.logoUrl && !organization.logoUrl.startsWith('data:')) {
+      await deleteFileIfExists(organization.logoUrl);
+    }
+
+    organization.logoUrl = base64Image;
     const updated = await upsertSettingValue(req.tenantId, 'organization', organization);
 
+    console.log('[Organization Logo Upload] ✅ Upload completed successfully');
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
+    console.error('[Organization Logo Upload] ❌ Error:', error);
     next(error);
   }
 };

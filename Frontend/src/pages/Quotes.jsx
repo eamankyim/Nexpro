@@ -154,9 +154,14 @@ const Quotes = () => {
   };
 
   const handleView = async (quote) => {
+    // Set viewing quote immediately with data from table row
+    setViewingQuote(quote);
+    // Open drawer immediately
+    setDrawerVisible(true);
+    // Load full details asynchronously
     const details = await fetchQuoteDetails(quote.id);
     if (details) {
-      setDrawerVisible(true);
+      setViewingQuote(details);
     }
   };
 

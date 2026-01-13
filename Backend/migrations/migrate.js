@@ -5,6 +5,8 @@ const models = require('../models');
 const addUserFields = require('./add-user-fields');
 const createInviteTokens = require('./create-invite-tokens');
 const updateJobStatuses = require('./update-job-statuses');
+const updateVendorPriceListImageUrl = require('./update-vendor-price-list-image-url');
+const updateFileStorageToText = require('./update-file-storage-to-text');
 
 const migrate = async () => {
   try {
@@ -23,6 +25,12 @@ const migrate = async () => {
     
     // Add new user fields if they don't exist
     await addUserFields();
+    
+    // Update vendor price list imageUrl to TEXT
+    await updateVendorPriceListImageUrl();
+    
+    // Update file storage columns to TEXT
+    await updateFileStorageToText();
     
     // Create invite_tokens table if it doesn't exist
     await createInviteTokens.up(sequelize.getQueryInterface(), require('sequelize'));

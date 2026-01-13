@@ -229,4 +229,111 @@ code {
   margin-right: 0 !important;
 }
 
+/* ============================================
+   RESPONSIVE TABLES
+   ============================================ */
+
+/* Make tables scrollable on mobile */
+@media (max-width: 768px) {
+  .ant-table-wrapper {
+    overflow-x: auto;
+  }
+
+  .ant-table {
+    min-width: 600px;
+  }
+
+  /* Make table cells more compact on mobile */
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
+    padding: 8px 4px;
+    font-size: 12px;
+  }
+
+  /* Hide less important columns on very small screens */
+  @media (max-width: 480px) {
+    .ant-table-thead > tr > th,
+    .ant-table-tbody > tr > td {
+      padding: 6px 2px;
+      font-size: 11px;
+    }
+  }
+}
+
+/* ============================================
+   RESPONSIVE FORMS
+   ============================================ */
+
+/* Make form layouts responsive */
+@media (max-width: 768px) {
+  .ant-form-item-label {
+    padding-bottom: 4px;
+  }
+
+  .ant-form-item-label > label {
+    font-size: 14px;
+  }
+
+  /* Stack form items vertically on mobile */
+  .ant-row {
+    flex-direction: column;
+  }
+
+  .ant-col {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+}
+
+/* ============================================
+   RESPONSIVE DRAWERS
+   ============================================ */
+
+@media (max-width: 768px) {
+  .ant-drawer {
+    width: 100% !important;
+  }
+
+  .ant-drawer-body {
+    padding: 16px;
+  }
+}
+
+/* ============================================
+   RESPONSIVE DESCRIPTIONS
+   ============================================ */
+
+@media (max-width: 768px) {
+  .ant-descriptions-item-label,
+  .ant-descriptions-item-content {
+    font-size: 13px;
+    padding: 8px 4px;
+  }
+
+  .ant-descriptions-view {
+    font-size: 13px;
+  }
+}
+
+/* ============================================
+   RESPONSIVE BUTTONS AND SPACES
+   ============================================ */
+
+@media (max-width: 768px) {
+  .ant-space {
+    gap: 8px !important;
+  }
+
+  .ant-btn {
+    font-size: 13px;
+    padding: 4px 12px;
+    height: auto;
+  }
+
+  .ant-btn-lg {
+    font-size: 14px;
+    padding: 6px 16px;
+  }
+}
+
 

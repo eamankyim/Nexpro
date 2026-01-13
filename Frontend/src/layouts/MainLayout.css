@@ -39,3 +39,149 @@
   background-color: rgba(24, 144, 255, 0.2);
 }
 
+/* Tree-like connecting lines for sub-navigation - matching the design exactly */
+/* Reset submenu styling */
+.ant-menu-dark .ant-menu-submenu-inline .ant-menu {
+  position: relative;
+  padding-left: 0 !important;
+  margin-left: 0 !important;
+  background: transparent !important;
+}
+
+/* Submenu container - position for tree lines */
+.ant-menu-dark .ant-menu-submenu-inline > .ant-menu {
+  position: relative;
+  margin-left: 20px !important;
+  padding-left: 0 !important;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+/* Main vertical line - runs from top to bottom of all children */
+.ant-menu-dark .ant-menu-submenu-inline > .ant-menu::before {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background-color: rgba(255, 255, 255, 0.25);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Connection line from parent item down to vertical line */
+.ant-menu-dark .ant-menu-submenu-open > .ant-menu-submenu-title {
+  position: relative;
+}
+
+.ant-menu-dark .ant-menu-submenu-open > .ant-menu-submenu-title::after {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: 100%;
+  width: 1px;
+  height: 4px;
+  background-color: rgba(255, 255, 255, 0.25);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Child menu items - positioned with proper indentation */
+.ant-menu-dark .ant-menu-submenu-inline .ant-menu-item {
+  position: relative;
+  padding-left: 20px !important;
+  margin-left: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  height: 40px !important;
+  line-height: 40px !important;
+}
+
+/* Horizontal line connecting each child to the vertical line */
+.ant-menu-dark .ant-menu-submenu-inline .ant-menu-item::before {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 1px;
+  background-color: rgba(255, 255, 255, 0.25);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Vertical line continuation - stops at the middle of the last item */
+.ant-menu-dark .ant-menu-submenu-inline .ant-menu-item:last-child::after {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: 50%;
+  bottom: -4px;
+  width: 1px;
+  background-color: rgba(255, 255, 255, 0.25);
+  z-index: 0;
+  pointer-events: none;
+}
+
+/* Ensure icons and text are above the lines */
+.ant-menu-dark .ant-menu-submenu-inline .ant-menu-item .ant-menu-item-icon {
+  margin-right: 8px;
+  position: relative;
+  z-index: 2;
+}
+
+.ant-menu-dark .ant-menu-submenu-inline .ant-menu-item .ant-menu-title-content {
+  position: relative;
+  z-index: 2;
+}
+
+/* Remove default Ant Design submenu arrow spacing */
+.ant-menu-dark .ant-menu-submenu-inline .ant-menu-item {
+  padding-right: 16px !important;
+}
+
+/* Ensure proper visual hierarchy */
+.ant-menu-dark .ant-menu-submenu-inline .ant-menu-item-selected {
+  background-color: rgba(24, 144, 255, 0.2) !important;
+}
+
+.ant-menu-dark .ant-menu-submenu-inline .ant-menu-item:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Mobile Responsive Styles */
+@media (max-width: 768px) {
+  /* Ensure drawer menu has proper styling */
+  .ant-drawer-body {
+    padding: 0 !important;
+  }
+
+  /* Make header more compact on mobile */
+  .ant-layout-header {
+    padding: 0 16px !important;
+  }
+
+  /* Adjust content padding on mobile */
+  .ant-layout-content {
+    padding: 16px 8px !important;
+  }
+
+  /* Make pricing modal cards stack properly */
+  .ant-col {
+    margin-bottom: 16px;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Even more compact on small phones */
+  .ant-layout-header {
+    padding: 0 12px !important;
+  }
+
+  .ant-layout-content {
+    padding: 12px 4px !important;
+  }
+}
+

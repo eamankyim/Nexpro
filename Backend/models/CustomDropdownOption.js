@@ -52,3 +52,4 @@ const CustomDropdownOption = sequelize.define('CustomDropdownOption', {
 module.exports = CustomDropdownOption;
 
 
+

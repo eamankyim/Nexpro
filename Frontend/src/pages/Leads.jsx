@@ -34,6 +34,7 @@ import {
 import dayjs from 'dayjs';
 import DetailsDrawer from '../components/DetailsDrawer';
 import ActionColumn from '../components/ActionColumn';
+import PhoneNumberInput from '../components/PhoneNumberInput';
 import leadService from '../services/leadService';
 import userService from '../services/userService';
 import customDropdownService from '../services/customDropdownService';
@@ -289,16 +290,19 @@ const Leads = () => {
   };
 
   const handleViewLead = async (record) => {
+    // Set viewing lead immediately with data from table row
+    setViewingLead(record);
+    // Open drawer immediately
+    setDrawerVisible(true);
+    // Load full details asynchronously
     try {
       const response = await leadService.getById(record.id);
       const data = response?.data || response;
       setViewingLead(data || record);
-      setDrawerVisible(true);
     } catch (error) {
       console.error('Failed to fetch lead', error);
       message.error('Failed to load lead details');
-      setViewingLead(record);
-      setDrawerVisible(true);
+      // Keep the record data from table row if loading fails
     }
   };
 
@@ -882,7 +886,7 @@ const Leads = () => {
             </Col>
             <Col span={12}>
               <Form.Item name="phone" label="Phone">
-                <Input placeholder="Phone number" />
+                <PhoneNumberInput placeholder="Enter phone number" />
               </Form.Item>
             </Col>
           </Row>

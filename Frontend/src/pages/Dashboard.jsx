@@ -18,6 +18,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import dashboardService from '../services/dashboardService';
 import settingsService from '../services/settingsService';
+import PhoneNumberInput from '../components/PhoneNumberInput';
 import { API_BASE_URL } from '../services/api';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
@@ -53,6 +54,7 @@ const Dashboard = () => {
     queryFn: settingsService.getOrganization,
     retry: false,
     refetchOnWindowFocus: true,
+    staleTime: 0, // Always refetch to get latest data
   });
 
   // Extract organization data - API returns { success: true, data: {...} }
@@ -159,19 +161,110 @@ const Dashboard = () => {
     }
   });
 
+  // Auto-populate form when modal opens - refetch and populate in one go
+  useEffect(() => {
+    if (profileModalVisible) {
+      console.log('[Dashboard] 🔍 Modal opened, fetching organization data...');
+      console.log('[Dashboard] 📊 Current organization state:', {
+        hasOrganization: !!organization,
+        organizationName: organization?.name,
+        organizationEmail: organization?.email,
+        organizationPhone: organization?.phone,
+        organizationData: organization
+      });
+      
+      // Small delay to ensure modal is fully rendered
+      const timeoutId = setTimeout(() => {
+        // Refetch organization data when modal opens to ensure we have latest
+        refetchOrganization().then((result) => {
+          console.log('[Dashboard] ✅ Refetch completed:', {
+            hasData: !!result?.data,
+            resultData: result?.data,
+            resultDataType: typeof result?.data,
+            resultKeys: result?.data ? Object.keys(result?.data) : []
+          });
+          
+          // Extract organization data from the refetch result
+          // API can return { success: true, data: {...} } or just {...}
+          const orgData = result?.data?.data || result?.data || organization || {};
+          
+          console.log('[Dashboard] 📋 Extracted organization data:', {
+            name: orgData?.name,
+            email: orgData?.email,
+            phone: orgData?.phone,
+            website: orgData?.website,
+            hasName: !!orgData?.name,
+            hasEmail: !!orgData?.email,
+            hasPhone: !!orgData?.phone,
+            nameValue: orgData?.name || 'EMPTY',
+            emailValue: orgData?.email || 'EMPTY',
+            phoneValue: orgData?.phone || 'EMPTY',
+            fullData: JSON.stringify(orgData, null, 2)
+          });
+          
+          // Populate form with the fetched data
+          const formValues = {
+            name: orgData?.name || '',
+            email: orgData?.email || '',
+            phone: orgData?.phone || '',
+            website: orgData?.website || '',
+            legalName: orgData?.legalName || '',
+            invoiceFooter: orgData?.invoiceFooter || '',
+            logoUrl: orgData?.logoUrl || '',
+            address: orgData?.address || {},
+          };
+          
+          console.log('[Dashboard] ✏️ Setting form values:', {
+            name: formValues.name || 'EMPTY',
+            email: formValues.email || 'EMPTY',
+            phone: formValues.phone || 'EMPTY',
+            fullFormValues: formValues
+          });
+          
+          setLogoPreview(orgData?.logoUrl || '');
+          profileForm.setFieldsValue(formValues);
+          
+          // Verify the form was populated
+          const formValuesAfter = profileForm.getFieldsValue();
+          console.log('[Dashboard] ✅ Form values after setFieldsValue:', {
+            name: formValuesAfter.name || 'EMPTY',
+            email: formValuesAfter.email || 'EMPTY',
+            phone: formValuesAfter.phone || 'EMPTY',
+            fullFormValues: formValuesAfter
+          });
+        }).catch((error) => {
+          console.error('[Dashboard] ❌ Error refetching organization:', {
+            error: error.message,
+            errorResponse: error?.response?.data,
+            errorStatus: error?.response?.status
+          });
+          // Even if refetch fails, try to populate with existing organization data
+          if (organization) {
+            const formValues = {
+              name: organization?.name || '',
+              email: organization?.email || '',
+              phone: organization?.phone || '',
+              website: organization?.website || '',
+              legalName: organization?.legalName || '',
+              invoiceFooter: organization?.invoiceFooter || '',
+              logoUrl: organization?.logoUrl || '',
+              address: organization?.address || {},
+            };
+            setLogoPreview(organization?.logoUrl || '');
+            profileForm.setFieldsValue(formValues);
+            console.log('[Dashboard] ⚠️ Used existing organization data as fallback');
+          }
+        });
+      }, 100); // Small delay to ensure modal is rendered
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [profileModalVisible, profileForm, refetchOrganization, organization]);
+
   const handleProfileComplete = () => {
+    console.log('[Dashboard] 🎯 handleProfileComplete called, opening modal...');
     setProfileModalVisible(true);
-    setLogoPreview(organization?.logoUrl || '');
-    profileForm.setFieldsValue({
-      name: organization?.name || '',
-      email: organization?.email || '',
-      phone: organization?.phone || '',
-      website: organization?.website || '',
-      legalName: organization?.legalName || '',
-      invoiceFooter: organization?.invoiceFooter || '',
-      logoUrl: organization?.logoUrl || '',
-      address: organization?.address || {},
-    });
+    // Form will be populated by the useEffect when modal opens
   };
 
   const handleLogoUpload = async ({ file, onSuccess, onError }) => {
@@ -514,7 +607,9 @@ const Dashboard = () => {
   const expenseValue = Number(thisMonthSummary.expenses ?? 0);
   const revenueTitle = isFiltered ? 'Selected Revenue' : "This Month's Revenue";
   const expenseTitle = isFiltered ? 'Selected Expenses' : "This Month's Expenses";
-  const jobsTitle = isFiltered ? 'Total Jobs' : 'Total Jobs';
+  const profitTitle = isFiltered ? 'Selected Profit' : "This Month's Profit";
+  const profitValue = Number(thisMonthSummary.profit ?? (revenueValue - expenseValue));
+  const allTimeProfit = Number(displayData?.allTime?.profit ?? ((displayData?.allTime?.revenue ?? 0) - (displayData?.allTime?.expenses ?? 0)));
   const thisMonthRange = thisMonthSummary.range;
   const jobStatusMetrics = [
     {
@@ -740,11 +835,10 @@ const Dashboard = () => {
                 name="phone"
                 label="Phone Number"
                 rules={[
-                  { required: true, message: 'Please enter your phone number' },
-                  { pattern: /^[\d+\-()\s]+$/, message: 'Please enter a valid phone number' }
+                  { required: true, message: 'Please enter your phone number' }
                 ]}
               >
-                <Input placeholder="+233 555 123 456" size="large" />
+                <PhoneNumberInput placeholder="Enter phone number" size="large" />
               </Form.Item>
             </>
           )}
@@ -1007,12 +1101,12 @@ const Dashboard = () => {
                 title={revenueTitle}
                 value={revenueValue}
                 prefix="GHS "
-                valueStyle={{ color: '#3f8600' }}
-                precision={2}
+                valueStyle={{ color: '#1890ff' }}
+                precision={3}
                 suffix={<RiseOutlined />}
               />
               <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
-                All-time: GHS {Number(displayData?.allTime?.revenue ?? 0).toFixed(2)}
+                All-time: GHS {Number(displayData?.allTime?.revenue ?? 0).toFixed(3)}
                 {thisMonthRange && (
                   <div>
                     <Tooltip
@@ -1040,11 +1134,11 @@ const Dashboard = () => {
                 value={expenseValue}
                 prefix="GHS "
                 valueStyle={{ color: '#cf1322' }}
-                precision={2}
+                precision={3}
                 suffix={<FallOutlined />}
               />
               <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
-                All-time: GHS {Number(displayData?.allTime?.expenses ?? 0).toFixed(2)}
+                All-time: GHS {Number(displayData?.allTime?.expenses ?? 0).toFixed(3)}
                 {thisMonthRange && (
                   <div>
                     <Tooltip
@@ -1068,21 +1162,30 @@ const Dashboard = () => {
           <Card style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
               <Statistic
-                title={jobsTitle}
-                value={displayData?.summary?.totalJobs || 0}
-                prefix={<FileTextOutlined />}
-                valueStyle={{ color: '#1890ff' }}
+                title={profitTitle}
+                value={profitValue}
+                prefix="GHS "
+                valueStyle={{ color: profitValue >= 0 ? '#3f8600' : '#cf1322' }}
+                precision={3}
+                suffix={profitValue >= 0 ? <RiseOutlined /> : <FallOutlined />}
               />
-              {isFiltered && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
-                  Period: {thisMonthRange?.start ? dayjs(thisMonthRange.start).format('MMM DD') : ''} - {thisMonthRange?.end ? dayjs(thisMonthRange.end).format('MMM DD') : ''}
-                </div>
-              )}
-              {!isFiltered && (
-                <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
-                  In progress: {displayData?.summary?.inProgressJobs || 0}
-                </div>
-              )}
+              <div style={{ marginTop: 8, fontSize: 12, color: '#888' }}>
+                All-time: GHS {allTimeProfit.toFixed(3)}
+                {thisMonthRange && (
+                  <div>
+                    <Tooltip
+                      title={`Range: ${dayjs(thisMonthRange.start).format('MMM DD, YYYY')} → ${dayjs(
+                        thisMonthRange.end
+                      ).format('MMM DD, YYYY')}`}
+                    >
+                      <span>
+                        Period: {dayjs(thisMonthRange.start).format('MMM DD')} -{' '}
+                        {dayjs(thisMonthRange.end).format('MMM DD')}
+                      </span>
+                    </Tooltip>
+                  </div>
+                )}
+              </div>
             </div>
           </Card>
         </Col>

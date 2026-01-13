@@ -70,11 +70,60 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    const tenantId = localStorage.getItem('activeTenantId');
+    let tenantId = localStorage.getItem('activeTenantId');
+    
+    // If no tenantId, try to get it from memberships
+    if (!tenantId) {
+      try {
+        // Storage key is 'tenantMemberships' (from authService.STORAGE_KEYS.memberships)
+        const membershipsStr = localStorage.getItem('tenantMemberships') || '[]';
+        console.log('[API] 🔍 Checking memberships for tenantId:', {
+          hasMembershipsStr: !!membershipsStr,
+          membershipsStrLength: membershipsStr.length,
+          membershipsStr: membershipsStr.substring(0, 200) // First 200 chars
+        });
+        
+        const memberships = JSON.parse(membershipsStr);
+        console.log('[API] 🔍 Parsed memberships:', {
+          isArray: Array.isArray(memberships),
+          length: memberships?.length || 0,
+          firstMembership: memberships?.[0]
+        });
+        
+        if (memberships && Array.isArray(memberships) && memberships.length > 0) {
+          const defaultTenantId = memberships.find(m => m.isDefault)?.tenantId || memberships[0]?.tenantId;
+          console.log('[API] 🔍 Found tenantId from memberships:', {
+            defaultTenantId,
+            hasDefaultTenantId: !!defaultTenantId,
+            allTenantIds: memberships.map(m => m.tenantId)
+          });
+          
+          if (defaultTenantId) {
+            console.log('[API] 🔧 Setting activeTenantId from memberships:', defaultTenantId);
+            localStorage.setItem('activeTenantId', defaultTenantId);
+            tenantId = defaultTenantId;
+          }
+        } else {
+          console.warn('[API] ⚠️ No memberships found or empty array');
+        }
+      } catch (e) {
+        console.error('[API] ❌ Error parsing memberships from localStorage:', e);
+      }
+    }
+    
     if (tenantId) {
       config.headers['x-tenant-id'] = tenantId;
+      console.log('[API] ✅ Adding x-tenant-id header:', tenantId);
     } else {
       delete config.headers['x-tenant-id'];
+      console.error('[API] ❌ No activeTenantId available - request will likely fail');
+      console.log('[API] 🔍 localStorage contents:', {
+        hasToken: !!localStorage.getItem('token'),
+        hasUser: !!localStorage.getItem('user'),
+        hasMemberships: !!localStorage.getItem('tenantMemberships'),
+        hasActiveTenantId: !!localStorage.getItem('activeTenantId'),
+        allKeys: Object.keys(localStorage)
+      });
     }
     return config;
   },

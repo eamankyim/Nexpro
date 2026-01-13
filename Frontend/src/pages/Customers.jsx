@@ -8,6 +8,7 @@ import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import PhoneNumberInput from '../components/PhoneNumberInput';
 import { showSuccess, showError, showWarning, handleApiError } from '../utils/toast';
 import dayjs from 'dayjs';
 
@@ -378,18 +379,18 @@ const Customers = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h1>Customers</h1>
-        <Space>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+        <h1 style={{ margin: 0, fontSize: window.innerWidth < 768 ? '20px' : '24px' }}>Customers</h1>
+        <Space wrap style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
           <Input.Search
             placeholder="Search customers..."
             allowClear
             onSearch={handleSearch}
-            style={{ width: 250 }}
+            style={{ width: window.innerWidth < 768 ? '100%' : 250 }}
             prefix={<SearchOutlined />}
           />
           {(isManager || user?.role === 'staff') && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd} style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
               Add Customer
             </Button>
           )}
@@ -403,6 +404,7 @@ const Customers = () => {
         loading={loading}
         pagination={pagination}
         onChange={(newPagination) => setPagination(newPagination)}
+        scroll={{ x: 'max-content' }}
       />
 
       <Modal
@@ -417,8 +419,9 @@ const Customers = () => {
           setRegionOtherValue('');
         }}
         onOk={() => form.submit()}
-        width={800}
+        width={window.innerWidth < 768 ? '100%' : 800}
         okText={editingCustomer ? 'Update' : 'Create'}
+        style={window.innerWidth < 768 ? { top: 0, paddingBottom: 0 } : {}}
       >
         <Form
           form={form}
@@ -427,7 +430,7 @@ const Customers = () => {
           style={{ marginTop: 24 }}
         >
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item
                 name="name"
                 label="Name"
@@ -436,7 +439,7 @@ const Customers = () => {
                 <Input placeholder="Enter customer name" size="large" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="company" label="Company">
                 <Input placeholder="Enter company name" size="large" />
               </Form.Item>
@@ -444,7 +447,7 @@ const Customers = () => {
           </Row>
 
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item
                 name="email"
                 label="Email"
@@ -453,9 +456,9 @@ const Customers = () => {
                 <Input placeholder="email@example.com" size="large" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="phone" label="Phone">
-                <Input placeholder="(123) 456-7890" size="large" />
+                <PhoneNumberInput placeholder="Enter phone number" size="large" />
               </Form.Item>
             </Col>
           </Row>
@@ -473,12 +476,12 @@ const Customers = () => {
           </Row>
 
           <Row gutter={16}>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="city" label="Town">
                 <Input placeholder="e.g., Accra, Kumasi, Takoradi" size="large" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} sm={12}>
               <Form.Item name="state" label="Region">
                 <Select 
                   placeholder="Select region" 

@@ -1,4 +1,5 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useSearchParams, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import { ConfigProvider, App as AntdApp } from 'antd';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
@@ -43,6 +44,54 @@ const WorkspaceRoot = () => {
   return <MainLayout />;
 };
 
+// SSO Handler Component
+const SSOHandler = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { sabitoSSO, loginWithToken } = useAuth();
+
+  useEffect(() => {
+    const sabitoToken = searchParams.get('sabitoToken');
+    const nexproToken = searchParams.get('token'); // From GET /sso callback
+    
+    if (sabitoToken) {
+      // Remove token from URL
+      searchParams.delete('sabitoToken');
+      setSearchParams(searchParams, { replace: true });
+
+      // Perform SSO login via POST endpoint
+      sabitoSSO(sabitoToken)
+        .then(() => {
+          // SSO successful, user is now logged in
+          // AuthContext will handle redirect
+          window.location.href = '/dashboard';
+        })
+        .catch((error) => {
+          console.error('SSO login failed:', error);
+          // Redirect to login page on error
+          window.location.href = '/login?error=sso_failed';
+        });
+    } else if (nexproToken && searchParams.get('success') === 'true') {
+      // Handle GET /sso callback with Nexpro token
+      searchParams.delete('token');
+      searchParams.delete('success');
+      setSearchParams(searchParams, { replace: true });
+      
+      // Store token and login
+      localStorage.setItem('token', nexproToken);
+      loginWithToken(nexproToken)
+        .then(() => {
+          window.location.href = '/dashboard';
+        })
+        .catch((error) => {
+          console.error('SSO callback login failed:', error);
+          window.location.href = '/login?error=sso_failed';
+        });
+    }
+  }, [searchParams, sabitoSSO, loginWithToken, setSearchParams]);
+
+  return null;
+};
+
 function AppContent() {
   // ForcePasswordChange disabled - invited users set their own password during signup
   return (
@@ -52,6 +101,7 @@ function AppContent() {
         v7_relativeSplatPath: true
       }}
     >
+      <SSOHandler />
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />

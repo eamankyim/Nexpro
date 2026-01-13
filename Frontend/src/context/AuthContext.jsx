@@ -28,14 +28,77 @@ export const AuthProvider = ({ children }) => {
     const storedMemberships = authService.getStoredMemberships();
     const storedActiveTenantId = authService.getActiveTenantId();
 
+    console.log('[AuthContext] 🔍 Initializing auth state:', {
+      hasUser: !!storedUser,
+      hasMemberships: !!storedMemberships,
+      membershipsCount: storedMemberships?.length || 0,
+      storedActiveTenantId,
+      allLocalStorageKeys: Object.keys(localStorage)
+    });
+
     if (storedUser) {
       setUser(storedUser);
     }
-    if (storedMemberships) {
+    if (storedMemberships && storedMemberships.length > 0) {
       setMemberships(storedMemberships);
     }
-    setActiveTenantId(resolveInitialTenant(storedMemberships, storedActiveTenantId));
-    setLoading(false);
+    
+    // If user is logged in but has no memberships, fetch them from the backend
+    if (storedUser && (!storedMemberships || storedMemberships.length === 0)) {
+      console.log('[AuthContext] 🔄 User logged in but no memberships found, fetching from backend...');
+      authService.getCurrentUser()
+        .then((response) => {
+          const userData = response?.data || response;
+          const memberships = userData?.tenantMemberships || [];
+          console.log('[AuthContext] ✅ Fetched memberships from backend:', {
+            membershipsCount: memberships.length,
+            memberships: memberships.map(m => ({ tenantId: m.tenantId, isDefault: m.isDefault }))
+          });
+          
+          if (memberships.length > 0) {
+            setMemberships(memberships);
+            authService.persistAuthPayload({
+              user: userData,
+              memberships: memberships,
+              defaultTenantId: memberships[0]?.tenantId || null
+            });
+            
+            const resolvedTenantId = resolveInitialTenant(memberships, null);
+            if (resolvedTenantId) {
+              authService.setActiveTenantId(resolvedTenantId);
+              setActiveTenantId(resolvedTenantId);
+              console.log('[AuthContext] ✅ Set activeTenantId from fetched memberships:', resolvedTenantId);
+            }
+          } else {
+            console.warn('[AuthContext] ⚠️ User has no tenant memberships - they may need to log in via SSO');
+          }
+          setLoading(false);
+        })
+        .catch((error) => {
+          console.error('[AuthContext] ❌ Error fetching user memberships:', error);
+          setLoading(false);
+        });
+    } else {
+      const resolvedTenantId = resolveInitialTenant(storedMemberships, storedActiveTenantId);
+      
+      console.log('[AuthContext] 🔍 Resolved tenant ID:', {
+        resolvedTenantId,
+        storedActiveTenantId,
+        hasMemberships: !!storedMemberships,
+        memberships: storedMemberships?.map(m => ({ tenantId: m.tenantId, isDefault: m.isDefault }))
+      });
+      
+      // ALWAYS ensure activeTenantId is persisted to localStorage if we have a resolved tenant
+      if (resolvedTenantId) {
+        console.log('[AuthContext] ✅ Setting activeTenantId in localStorage:', resolvedTenantId);
+        authService.setActiveTenantId(resolvedTenantId);
+      } else {
+        console.warn('[AuthContext] ⚠️ No tenant ID resolved - user may not have tenant membership');
+      }
+      
+      setActiveTenantId(resolvedTenantId);
+      setLoading(false);
+    }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const syncAuthState = (payload = {}) => {
@@ -43,12 +106,20 @@ export const AuthProvider = ({ children }) => {
     setUser(nextUser || null);
     setMemberships(nextMemberships);
     const tenantFromStorage = authService.getActiveTenantId();
-    setActiveTenantId(
-      resolveInitialTenant(
-        nextMemberships,
-        tenantFromStorage || defaultTenantId || null
-      )
+    const resolvedTenantId = resolveInitialTenant(
+      nextMemberships,
+      tenantFromStorage || defaultTenantId || null
     );
+    
+    // Persist activeTenantId to localStorage so API calls include the header
+    if (resolvedTenantId) {
+      authService.setActiveTenantId(resolvedTenantId);
+      console.log('[AuthContext] ✅ Set activeTenantId in localStorage:', resolvedTenantId);
+    } else {
+      console.warn('[AuthContext] ⚠️ No tenant ID resolved, user may not have tenant membership');
+    }
+    
+    setActiveTenantId(resolvedTenantId);
   };
 
   const login = async (credentials) => {
@@ -84,6 +155,59 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.tenantSignup(payload);
       syncAuthState(response.data || {});
       return response;
+    } catch (error) {
+      throw error;
+    }
+  };
+
+  const sabitoSSO = async (sabitoToken) => {
+    try {
+      console.log('[AuthContext] 🔐 Starting Sabito SSO login...');
+      const response = await authService.sabitoSSO(sabitoToken);
+      console.log('[AuthContext] ✅ SSO response received:', {
+        hasData: !!response?.data,
+        hasUser: !!response?.data?.user,
+        hasMemberships: !!response?.data?.memberships,
+        membershipsCount: response?.data?.memberships?.length || 0,
+        defaultTenantId: response?.data?.defaultTenantId,
+        fullResponse: response?.data
+      });
+      
+      syncAuthState(response.data || {});
+      
+      // Verify activeTenantId was set
+      const activeTenantId = authService.getActiveTenantId();
+      console.log('[AuthContext] ✅ Active tenant ID after sync:', activeTenantId);
+      
+      // Invalidate organization settings query to refetch after SSO
+      queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
+      return response;
+    } catch (error) {
+      console.error('[AuthContext] ❌ SSO login failed:', error);
+      throw error;
+    }
+  };
+
+  const loginWithToken = async (token) => {
+    try {
+      // Get user info with the token
+      const response = await authService.getCurrentUser();
+      const userData = response?.data || response;
+      
+      // Get memberships
+      const memberships = userData?.tenantMemberships || [];
+      
+      // Sync auth state
+      syncAuthState({
+        user: userData,
+        memberships: memberships,
+        defaultTenantId: memberships[0]?.tenantId || null
+      });
+      
+      // Invalidate organization settings query to refetch after login
+      queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
+      
+      return { success: true, data: { user: userData, memberships } };
     } catch (error) {
       throw error;
     }
@@ -128,6 +252,8 @@ export const AuthProvider = ({ children }) => {
     register,
     logout,
     tenantSignup,
+    sabitoSSO,
+    loginWithToken,
     updateUser,
     loading,
     isAuthenticated: !!user,

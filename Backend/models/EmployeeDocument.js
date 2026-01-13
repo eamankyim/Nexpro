@@ -32,7 +32,7 @@ const EmployeeDocument = sequelize.define(
       type: DataTypes.STRING
     },
     fileUrl: {
-      type: DataTypes.STRING,
+      type: DataTypes.TEXT, // TEXT for base64 file data or file path
       allowNull: false
     },
     uploadedBy: {

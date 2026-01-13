@@ -32,6 +32,7 @@ const JournalEntryLine = require('./JournalEntryLine');
 const AccountBalance = require('./AccountBalance');
 const SubscriptionPlan = require('./SubscriptionPlan');
 const CustomDropdownOption = require('./CustomDropdownOption');
+const SabitoTenantMapping = require('./SabitoTenantMapping');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -270,6 +271,17 @@ User.belongsToMany(Tenant, {
   as: 'tenants'
 });
 
+// Sabito tenant mapping relationships
+SabitoTenantMapping.belongsTo(Tenant, { 
+  foreignKey: 'nexproTenantId', 
+  as: 'tenant' 
+});
+
+Tenant.hasMany(SabitoTenantMapping, { 
+  foreignKey: 'nexproTenantId', 
+  as: 'sabitoMappings' 
+});
+
 module.exports = {
   User,
   Customer,
@@ -304,7 +316,8 @@ module.exports = {
   Tenant,
   UserTenant,
   SubscriptionPlan,
-  CustomDropdownOption
+  CustomDropdownOption,
+  SabitoTenantMapping
 };
 
 

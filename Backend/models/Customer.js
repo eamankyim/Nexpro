@@ -62,6 +62,28 @@ const Customer = sequelize.define('Customer', {
   referralName: {
     type: DataTypes.STRING
   },
+  sabitoCustomerId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    field: 'sabito_customer_id'
+  },
+  sabitoSourceReferralId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    field: 'sabito_source_referral_id'
+  },
+  sabitoSourceType: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    defaultValue: 'standalone',
+    field: 'sabito_source_type'
+    // Values: 'referral', 'direct', 'standalone'
+  },
+  sabitoBusinessId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    field: 'sabito_business_id'
+  },
   balance: {
     type: DataTypes.DECIMAL(10, 2),
     defaultValue: 0

@@ -322,3 +322,4 @@ Simple!
 **Try it:** Create a job item and enter a discount amount - it will reflect in the total and on the invoice! 🎉
 
 
+
