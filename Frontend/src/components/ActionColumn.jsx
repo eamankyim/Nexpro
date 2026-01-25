@@ -1,5 +1,11 @@
-import { Button, Space, Dropdown } from 'antd';
-import { EyeOutlined, MoreOutlined } from '@ant-design/icons';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Eye, MoreVertical } from 'lucide-react';
 
 /**
  * Reusable Action Column Component for Tables
@@ -10,42 +16,51 @@ import { EyeOutlined, MoreOutlined } from '@ant-design/icons';
 const ActionColumn = ({ onView, record, extraActions = [] }) => {
   if (extraActions.length === 0) {
     return (
-      <Space>
+      <div className="flex items-center gap-2">
         <Button
-          type="primary"
-          icon={<EyeOutlined />}
+          variant="outline"
           onClick={() => onView(record)}
-          size="middle"
+          size="sm"
         >
+          <Eye className="h-4 w-4 mr-2" />
           View
         </Button>
-      </Space>
+      </div>
     );
   }
 
-  const menuItems = extraActions.map((action, index) => ({
-    key: index,
-    label: action.label,
-    onClick: action.onClick,
-    icon: action.icon
-  }));
-
   return (
-    <Space>
+    <div className="flex items-center gap-2">
       <Button
-        type="primary"
-        icon={<EyeOutlined />}
+        variant="outline"
         onClick={() => onView(record)}
-        size="middle"
+        size="sm"
       >
+        <Eye className="h-4 w-4 mr-2" />
         View
       </Button>
       {extraActions.length > 0 && (
-        <Dropdown menu={{ items: menuItems }} placement="bottomRight">
-          <Button icon={<MoreOutlined />} size="middle" />
-        </Dropdown>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              <MoreVertical className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {extraActions.map((action, index) => (
+              <DropdownMenuItem
+                key={index}
+                onClick={action.onClick}
+                className="flex items-center gap-2"
+              >
+                {action.icon}
+                {action.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
-    </Space>
+    </div>
   );
 };
 

@@ -84,7 +84,8 @@ const CHANNELS = {
   IN_APP: 'in_app',
   EMAIL: 'email',
   SMS: 'sms',
-  PUSH: 'push'
+  PUSH: 'push',
+  WHATSAPP: 'whatsapp'
 };
 
 // ============================================
@@ -444,6 +445,40 @@ const logActivity = async ({
         message: message.substring(0, 160)
       });
       // await sendSMS({ recipients, message, context });
+    }
+
+    // Implement WHATSAPP channel
+    if (channels.includes(CHANNELS.WHATSAPP)) {
+      try {
+        const whatsappService = require('./whatsappService');
+        const { Customer } = require('../models');
+        
+        // Get phone numbers for recipients (if they are customer IDs)
+        // For now, we'll send to phone numbers provided in context
+        if (context.phoneNumbers && Array.isArray(context.phoneNumbers)) {
+          for (const phoneNumber of context.phoneNumbers) {
+            if (phoneNumber) {
+              await whatsappService.sendTextMessage(tenantId, phoneNumber, `${title}\n\n${message}`)
+                .catch(error => {
+                  console.error(`${logPrefix} WhatsApp send failed:`, error);
+                });
+            }
+          }
+        } else if (context.customerId) {
+          // Try to get customer phone number
+          const customer = await Customer.findOne({
+            where: { id: context.customerId, tenantId }
+          });
+          if (customer && customer.phone) {
+            await whatsappService.sendTextMessage(tenantId, customer.phone, `${title}\n\n${message}`)
+              .catch(error => {
+                console.error(`${logPrefix} WhatsApp send failed:`, error);
+              });
+          }
+        }
+      } catch (error) {
+        console.error(`${logPrefix} WhatsApp notification error:`, error.message);
+      }
     }
 
     // TODO: Implement PUSH channel

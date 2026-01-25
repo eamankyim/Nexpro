@@ -1,35 +1,104 @@
 import { useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import {
-  Modal,
-  Form,
-  Input,
-  Button,
-  message,
-  Upload,
-  Avatar,
-  Space,
-  Typography,
-  Alert,
-  Divider
-} from 'antd';
-import {
-  LockOutlined,
-  UserOutlined,
-  UploadOutlined,
-  CameraOutlined
-} from '@ant-design/icons';
+  Lock,
+  User,
+  Camera,
+  Eye,
+  EyeOff,
+  Loader2,
+  Info
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import userService from '../services/userService';
+import { showSuccess, showError } from '../utils/toast';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Separator } from '@/components/ui/separator';
+import { useToast } from '@/components/ui/use-toast';
 
-const { Title, Text } = Typography;
+const passwordSchema = z.object({
+  newPassword: z
+    .string()
+    .min(6, 'Password must be at least 6 characters')
+    .regex(
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/,
+      'Password must contain at least one uppercase letter, one lowercase letter, and one number'
+    ),
+  confirmPassword: z.string().min(1, 'Please confirm new password'),
+}).refine((data) => data.newPassword === data.confirmPassword, {
+  message: "Passwords do not match",
+  path: ["confirmPassword"],
+});
 
 const ForcePasswordChange = ({ visible, onComplete }) => {
-  const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
   const [profilePicture, setProfilePicture] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const { user, updateUser } = useAuth();
+  const { toast } = useToast();
 
-  const handleSubmit = async (values) => {
+  const form = useForm({
+    resolver: zodResolver(passwordSchema),
+    defaultValues: {
+      newPassword: '',
+      confirmPassword: '',
+    },
+  });
+
+  const handleImageUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${localStorage.getItem('token')}`,
+        },
+        body: formData,
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setProfilePicture(data.url || data.data?.url);
+        toast({
+          title: 'Success',
+          description: 'Profile picture uploaded successfully',
+        });
+      } else {
+        throw new Error('Upload failed');
+      }
+    } catch (error) {
+      showError(error, 'Failed to upload profile picture');
+    }
+  };
+
+  const onSubmit = async (values) => {
     try {
       setLoading(true);
       
@@ -48,145 +117,173 @@ const ForcePasswordChange = ({ visible, onComplete }) => {
         profilePicture: profilePicture
       });
 
-      message.success('Profile updated successfully! Welcome to NexPro!');
+      showSuccess('Profile updated successfully! Welcome to NexPro!');
       onComplete();
     } catch (error) {
-      message.error('Failed to update profile');
+      showError(error, 'Failed to update profile');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleImageUpload = (info) => {
-    if (info.file.status === 'done') {
-      setProfilePicture(info.file.response?.url || info.file.url);
-    }
-  };
-
-  const uploadProps = {
-    name: 'file',
-    action: '/api/upload', // You'll need to implement this endpoint
-    headers: {
-      authorization: `Bearer ${localStorage.getItem('token')}`,
-    },
-    onChange: handleImageUpload,
-    showUploadList: false,
-  };
-
   return (
-    <Modal
-      title={
-        <Space>
-          <LockOutlined />
-          <span>Complete Your Profile</span>
-        </Space>
-      }
-      open={visible}
-      closable={false}
-      maskClosable={false}
-      footer={null}
-      width={600}
-      centered
-    >
-      <Alert
-        message="Welcome to NexPro!"
-        description="Please complete your profile setup by changing your password and adding a profile picture."
-        type="info"
-        showIcon
-        style={{ marginBottom: 24 }}
-      />
+    <Dialog open={visible} onOpenChange={() => {}}>
+      <DialogContent className="sm:max-w-[600px]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Lock className="h-4 w-4" />
+            Complete Your Profile
+          </DialogTitle>
+          <DialogDescription>
+            Please complete your profile setup by changing your password and adding a profile picture.
+          </DialogDescription>
+        </DialogHeader>
 
-      <Form
-        form={form}
-        layout="vertical"
-        onFinish={handleSubmit}
-        initialValues={{
-          name: user?.name,
-          email: user?.email
-        }}
-      >
-        {/* Profile Picture Section */}
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <Title level={4}>Profile Picture</Title>
-          <Space direction="vertical" align="center">
-            <Avatar
-              size={100}
-              src={profilePicture}
-              icon={<UserOutlined />}
-              style={{ marginBottom: 16 }}
-            />
-            <Upload {...uploadProps}>
-              <Button icon={<CameraOutlined />}>
-                Upload Profile Picture
-              </Button>
-            </Upload>
-            <Text type="secondary">
-              Click to upload a profile picture (optional)
-            </Text>
-          </Space>
-        </div>
+        <Alert className="mb-6">
+          <Info className="h-4 w-4" />
+          <AlertTitle>Welcome to NexPro!</AlertTitle>
+          <AlertDescription>
+            Please complete your profile setup by changing your password and adding a profile picture.
+          </AlertDescription>
+        </Alert>
 
-        <Divider />
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+            {/* Profile Picture Section */}
+            <div className="text-center">
+              <Label className="text-base font-semibold mb-4 block">Profile Picture</Label>
+              <div className="flex flex-col items-center gap-4">
+                <Avatar className="w-24 h-24">
+                  <AvatarImage src={profilePicture} alt={user?.name} />
+                  <AvatarFallback>
+                    <User className="h-8 w-8" />
+                  </AvatarFallback>
+                </Avatar>
+                <div className="flex flex-col items-center gap-2">
+                  <label htmlFor="profile-picture-upload">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="cursor-pointer"
+                      asChild
+                    >
+                      <span>
+                        <Camera className="h-4 w-4 mr-2" />
+                        Upload Profile Picture
+                      </span>
+                    </Button>
+                  </label>
+                  <input
+                    id="profile-picture-upload"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Click to upload a profile picture (optional)
+                  </p>
+                </div>
+              </div>
+            </div>
 
-        {/* Password Change Section */}
-        <Title level={4}>Change Your Password</Title>
-        <Text type="secondary" style={{ marginBottom: 16, display: 'block' }}>
-          You must change your default password for security reasons.
-        </Text>
+            <Separator />
 
-        <Form.Item
-          name="newPassword"
-          label="New Password"
-          rules={[
-            { required: true, message: 'Please enter new password' },
-            { min: 6, message: 'Password must be at least 6 characters' },
-            {
-              pattern: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/,
-              message: 'Password must contain at least one uppercase letter, one lowercase letter, and one number'
-            }
-          ]}
-        >
-          <Input.Password 
-            placeholder="Enter new password"
-            prefix={<LockOutlined />}
-          />
-        </Form.Item>
+            {/* Password Change Section */}
+            <div>
+              <Label className="text-base font-semibold mb-2 block">Change Your Password</Label>
+              <p className="text-sm text-muted-foreground mb-4">
+                You must change your default password for security reasons.
+              </p>
 
-        <Form.Item
-          name="confirmPassword"
-          label="Confirm New Password"
-          dependencies={['newPassword']}
-          rules={[
-            { required: true, message: 'Please confirm new password' },
-            ({ getFieldValue }) => ({
-              validator(_, value) {
-                if (!value || getFieldValue('newPassword') === value) {
-                  return Promise.resolve();
-                }
-                return Promise.reject(new Error('Passwords do not match'));
-              },
-            }),
-          ]}
-        >
-          <Input.Password 
-            placeholder="Confirm new password"
-            prefix={<LockOutlined />}
-          />
-        </Form.Item>
+              <div className="space-y-4">
+                <FormField
+                  control={form.control}
+                  name="newPassword"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>New Password</FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Input
+                            {...field}
+                            type={showPassword ? 'text' : 'password'}
+                            placeholder="Enter new password"
+                            className="pl-10 pr-10"
+                          />
+                          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <button
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          >
+                            {showPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
-        <Form.Item>
-          <Button 
-            type="primary" 
-            htmlType="submit" 
-            loading={loading}
-            block
-            size="large"
-          >
-            Complete Setup & Continue
-          </Button>
-        </Form.Item>
-      </Form>
-    </Modal>
+                <FormField
+                  control={form.control}
+                  name="confirmPassword"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Confirm New Password</FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Input
+                            {...field}
+                            type={showConfirmPassword ? 'text' : 'password'}
+                            placeholder="Confirm new password"
+                            className="pl-10 pr-10"
+                          />
+                          <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                          <button
+                            type="button"
+                            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          >
+                            {showConfirmPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
+
+            <Button 
+              type="submit" 
+              className="w-full"
+              disabled={loading}
+              size="lg"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Completing Setup...
+                </>
+              ) : (
+                'Complete Setup & Continue'
+              )}
+            </Button>
+          </form>
+        </Form>
+      </DialogContent>
+    </Dialog>
   );
 };
 

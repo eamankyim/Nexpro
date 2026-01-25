@@ -12,7 +12,7 @@ import {
 } from 'antd';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import adminService from '../../services/adminService';
+import StatusChip from '../../components/StatusChip';
 
 dayjs.extend(relativeTime);
 
@@ -89,9 +89,7 @@ const AdminHealth = () => {
               value={data?.database?.latencyMs ?? 0}
               suffix="ms"
             />
-            <Tag color={statusColor(data?.database?.status || 'online')}>
-              {data?.database?.status || 'unknown'}
-            </Tag>
+            <StatusChip status={data?.database?.status || 'online'} />
           </Card>
         </Col>
         <Col xs={24} sm={12} lg={6}>

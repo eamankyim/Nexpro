@@ -1,6 +1,6 @@
 import React from 'react';
 import dayjs from 'dayjs';
-import { EnvironmentOutlined, PhoneOutlined, GlobalOutlined, MailOutlined } from '@ant-design/icons';
+import { MapPin, Phone, Globe, Mail } from 'lucide-react';
 import logoImage from '../assets/nexus logo for dark bg.png';
 
 const PrintableInvoice = ({
@@ -232,19 +232,19 @@ const PrintableInvoice = ({
             <img src={logoImage} alt="Nexus Creative Studio" className="company-logo" />
             <div className="company-details">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                <EnvironmentOutlined style={{ fontSize: '14px' }} />
+                <MapPin className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
                 <span>{companyInfo.location}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                <PhoneOutlined style={{ fontSize: '14px' }} />
+                <Phone className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
                 <span>{companyInfo.phone}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                <GlobalOutlined style={{ fontSize: '14px' }} />
+                <Globe className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
                 <span>{companyInfo.website}</span>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <MailOutlined style={{ fontSize: '14px' }} />
+                <Mail className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
                 <span>{companyInfo.email}</span>
               </div>
             </div>

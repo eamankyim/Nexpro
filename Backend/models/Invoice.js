@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
+const crypto = require('crypto');
 
 const Invoice = sequelize.define('Invoice', {
   id: {
@@ -22,11 +23,33 @@ const Invoice = sequelize.define('Invoice', {
   },
   jobId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true,
     references: {
       model: 'jobs',
       key: 'id'
     }
+  },
+  saleId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'sales',
+      key: 'id'
+    }
+  },
+  prescriptionId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'prescriptions',
+      key: 'id'
+    }
+  },
+  sourceType: {
+    type: DataTypes.ENUM('job', 'sale', 'prescription'),
+    allowNull: false,
+    defaultValue: 'job',
+    comment: 'Source type: job (printing press), sale (shop), prescription (pharmacy)'
   },
   customerId: {
     type: DataTypes.UUID,
@@ -138,12 +161,29 @@ const Invoice = sequelize.define('Invoice', {
     type: DataTypes.TEXT,
     allowNull: true,
     field: 'sabito_sync_error'
+  },
+  paymentToken: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    unique: true,
+    comment: 'Unique token for public payment link'
   }
 }, {
   timestamps: true,
   tableName: 'invoices',
   hooks: {
+    beforeCreate: (invoice) => {
+      // Generate payment token if not provided
+      if (!invoice.paymentToken) {
+        invoice.paymentToken = crypto.randomBytes(32).toString('hex');
+      }
+    },
     beforeSave: (invoice) => {
+      // Generate payment token if not provided (for existing invoices)
+      if (!invoice.paymentToken) {
+        invoice.paymentToken = crypto.randomBytes(32).toString('hex');
+      }
+      
       // Calculate tax amount
       invoice.taxAmount = (parseFloat(invoice.subtotal) * parseFloat(invoice.taxRate || 0)) / 100;
       

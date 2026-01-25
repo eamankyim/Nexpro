@@ -1,33 +1,19 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useForm, useFieldArray } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Table, InputNumber } from 'antd';
 import {
-  Table,
-  Button,
-  Space,
-  Input,
-  Select,
-  message,
-  Modal,
-  Form,
-  InputNumber,
-  DatePicker,
-  Row,
-  Col,
-  Divider,
-  Tag,
-  Typography,
-  Card,
-  Alert,
-  Descriptions
-} from 'antd';
-import {
-  PlusOutlined,
-  SearchOutlined,
-  FileTextOutlined,
-  FileAddOutlined,
-  CheckCircleOutlined,
-  PrinterOutlined,
-  DownloadOutlined
-} from '@ant-design/icons';
+  Plus,
+  Search,
+  FileText,
+  FilePlus,
+  CheckCircle,
+  Printer,
+  Download,
+  Loader2,
+  X
+} from 'lucide-react';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 import quoteService from '../services/quoteService';
@@ -35,18 +21,54 @@ import customerService from '../services/customerService';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import PrintableInvoice from '../components/PrintableInvoice';
+import StatusChip from '../components/StatusChip';
+import TableSkeleton from '../components/TableSkeleton';
+import DetailSkeleton from '../components/DetailSkeleton';
+import { showSuccess, showError } from '../utils/toast';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import { DatePicker } from '@/components/ui/date-picker';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 
-const { Text } = Typography;
-const { Option } = Select;
-const { TextArea } = Input;
-
-const statusColors = {
-  draft: 'default',
-  sent: 'blue',
-  accepted: 'green',
-  declined: 'red',
-  expired: 'orange'
-};
 
 const statusOptions = [
   { value: 'draft', label: 'Draft' },
@@ -55,6 +77,23 @@ const statusOptions = [
   { value: 'declined', label: 'Declined' },
   { value: 'expired', label: 'Expired' }
 ];
+
+const quoteItemSchema = z.object({
+  description: z.string().min(1, 'Description is required'),
+  quantity: z.number().min(1, 'Quantity must be at least 1'),
+  unitPrice: z.number().min(0, 'Unit price must be at least 0'),
+  discountAmount: z.number().min(0, 'Discount must be at least 0').default(0),
+});
+
+const quoteSchema = z.object({
+  customerId: z.string().min(1, 'Customer is required'),
+  title: z.string().min(1, 'Quote title is required'),
+  description: z.string().optional(),
+  status: z.enum(['draft', 'sent', 'accepted', 'declined', 'expired']).default('draft'),
+  validUntil: z.date().optional().nullable(),
+  notes: z.string().optional(),
+  items: z.array(quoteItemSchema).min(1, 'At least one item is required'),
+});
 
 const Quotes = () => {
   const [quotes, setQuotes] = useState([]);
@@ -65,13 +104,32 @@ const Quotes = () => {
   const [viewingQuote, setViewingQuote] = useState(null);
   const [quoteModalVisible, setQuoteModalVisible] = useState(false);
   const [editingQuote, setEditingQuote] = useState(null);
-  const [form] = Form.useForm();
   const [customers, setCustomers] = useState([]);
   const [converting, setConverting] = useState(false);
   const navigate = useNavigate();
   const [printModalVisible, setPrintModalVisible] = useState(false);
   const [quotePrintable, setQuotePrintable] = useState(null);
   const [pendingDownload, setPendingDownload] = useState(false);
+  const [deleteQuoteId, setDeleteQuoteId] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  const form = useForm({
+    resolver: zodResolver(quoteSchema),
+    defaultValues: {
+      customerId: '',
+      title: '',
+      description: '',
+      status: 'draft',
+      validUntil: null,
+      notes: '',
+      items: [{ description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+    },
+  });
+
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: 'items',
+  });
 
   const buildPrintableQuote = (quote) => {
     if (!quote) return null;
@@ -123,10 +181,7 @@ const Quotes = () => {
         params.search = filters.search;
       }
 
-      console.log('[Quotes] Fetch params:', params);
       const response = await quoteService.getAll(params);
-      console.log('[Quotes] API response:', response);
-
       const quoteList = Array.isArray(response?.data) ? response.data : [];
       const totalCount = Number.isFinite(response?.count) ? response.count : quoteList.length;
 
@@ -134,7 +189,7 @@ const Quotes = () => {
       setPagination((prev) => ({ ...prev, total: totalCount }));
     } catch (error) {
       console.error('Failed to load quotes:', error);
-      message.error('Failed to load quotes');
+      showError(error, 'Failed to load quotes');
     } finally {
       setLoading(false);
     }
@@ -148,17 +203,14 @@ const Quotes = () => {
       return data;
     } catch (error) {
       console.error(`Failed to fetch quote ${quoteId}:`, error);
-      message.error('Failed to fetch quote details');
+      showError(error, 'Failed to fetch quote details');
       return null;
     }
   };
 
   const handleView = async (quote) => {
-    // Set viewing quote immediately with data from table row
     setViewingQuote(quote);
-    // Open drawer immediately
     setDrawerVisible(true);
-    // Load full details asynchronously
     const details = await fetchQuoteDetails(quote.id);
     if (details) {
       setViewingQuote(details);
@@ -171,7 +223,15 @@ const Quotes = () => {
   };
 
   const handleAddQuote = async () => {
-    form.resetFields();
+    form.reset({
+      customerId: '',
+      title: '',
+      description: '',
+      status: 'draft',
+      validUntil: null,
+      notes: '',
+      items: [{ description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+    });
     setEditingQuote(null);
     setQuoteModalVisible(true);
     try {
@@ -179,7 +239,7 @@ const Quotes = () => {
       setCustomers(customersResponse.data || []);
     } catch (error) {
       console.error('Failed to load customers for new quote:', error);
-      message.error('Failed to load customers');
+      showError(error, 'Failed to load customers');
     }
   };
 
@@ -194,16 +254,16 @@ const Quotes = () => {
       setCustomers(customersResponse.data || []);
     } catch (error) {
       console.error('Failed to load customers for quote editing:', error);
-      message.error('Failed to load customers');
+      showError(error, 'Failed to load customers');
     }
 
-    form.setFieldsValue({
+    form.reset({
       customerId: details.customerId,
       title: details.title,
-      description: details.description,
+      description: details.description || '',
       status: details.status,
-      validUntil: details.validUntil ? dayjs(details.validUntil) : null,
-      notes: details.notes,
+      validUntil: details.validUntil ? new Date(details.validUntil) : null,
+      notes: details.notes || '',
       items: (details.items || []).map((item) => ({
         description: item.description,
         quantity: item.quantity,
@@ -215,33 +275,33 @@ const Quotes = () => {
   };
 
   const handleDeleteQuote = async (quote) => {
-    Modal.confirm({
-      title: 'Delete Quote',
-      content: `Are you sure you want to delete quote ${quote.quoteNumber}?`,
-      okText: 'Delete',
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        try {
-          await quoteService.delete(quote.id);
-          message.success('Quote deleted successfully');
-          fetchQuotes();
-          if (viewingQuote?.id === quote.id) {
-            handleCloseDrawer();
-          }
-        } catch (error) {
-          message.error(error.error || 'Failed to delete quote');
-        }
-      }
-    });
+    setDeleteQuoteId(quote.id);
+    setDeleteDialogOpen(true);
   };
 
-  const handleSubmit = async (values) => {
+  const handleDeleteConfirm = async () => {
+    if (!deleteQuoteId) return;
+    try {
+      await quoteService.delete(deleteQuoteId);
+      showSuccess('Quote deleted successfully');
+      fetchQuotes();
+      if (viewingQuote?.id === deleteQuoteId) {
+        handleCloseDrawer();
+      }
+      setDeleteDialogOpen(false);
+      setDeleteQuoteId(null);
+    } catch (error) {
+      showError(error, error.error || 'Failed to delete quote');
+    }
+  };
+
+  const onSubmit = async (values) => {
     const payload = {
       customerId: values.customerId,
       title: values.title,
       description: values.description,
       status: values.status,
-      validUntil: values.validUntil ? values.validUntil.format('YYYY-MM-DD') : null,
+      validUntil: values.validUntil ? dayjs(values.validUntil).format('YYYY-MM-DD') : null,
       notes: values.notes,
       items: (values.items || []).map((item) => ({
         description: item.description,
@@ -254,16 +314,17 @@ const Quotes = () => {
     try {
       if (editingQuote) {
         await quoteService.update(editingQuote.id, payload);
-        message.success('Quote updated successfully');
+        showSuccess('Quote updated successfully');
       } else {
         await quoteService.create(payload);
-        message.success('Quote created successfully');
+        showSuccess('Quote created successfully');
       }
       setQuoteModalVisible(false);
+      form.reset();
       fetchQuotes();
     } catch (error) {
       console.error('Failed to save quote:', error);
-      message.error(error.error || 'Failed to save quote');
+      showError(error, error.error || 'Failed to save quote');
     }
   };
 
@@ -273,14 +334,14 @@ const Quotes = () => {
       const response = await quoteService.convertToJob(quote.id);
       const data = response?.data ?? response;
       const job = data?.data?.job ?? data?.job ?? data;
-      message.success(`Quote converted to job ${job?.jobNumber || ''}`.trim());
+      showSuccess(`Quote converted to job ${job?.jobNumber || ''}`.trim());
       fetchQuotes();
       if (job) {
         navigate('/jobs');
       }
     } catch (error) {
       console.error('Failed to convert quote to job:', error);
-      message.error(error.error || 'Failed to convert quote to job');
+      showError(error, error.error || 'Failed to convert quote to job');
     } finally {
       setConverting(false);
     }
@@ -304,16 +365,12 @@ const Quotes = () => {
     const target = quote || quotePrintable;
     if (!target) return;
     try {
-      if (!silent) {
-        message.loading({ content: 'Generating PDF...', key: 'download-quote', duration: 0 });
-      }
       const html2pdf = (await import('html2pdf.js')).default;
       const element = document.querySelector('.printable-invoice');
       if (!element) {
         if (!silent) {
-          message.destroy('download-quote');
+          showError(null, 'Preview the quote before downloading');
         }
-        message.error('Preview the quote before downloading');
         return;
       }
       const opt = {
@@ -325,15 +382,13 @@ const Quotes = () => {
       };
       await html2pdf().set(opt).from(element).save();
       if (!silent) {
-        message.destroy('download-quote');
-        message.success('Quote downloaded successfully');
+        showSuccess('Quote downloaded successfully');
       }
     } catch (error) {
       console.error('Error generating quote PDF:', error);
       if (!silent) {
-        message.destroy('download-quote');
+        showError(error, 'Failed to download quote');
       }
-      message.error('Failed to download quote');
     } finally {
       setPendingDownload(false);
     }
@@ -375,9 +430,7 @@ const Quotes = () => {
       dataIndex: 'status',
       key: 'status',
       render: (status) => (
-        <Tag color={statusColors[status]}>
-          {status?.toUpperCase()}
-        </Tag>
+        <StatusChip status={status} />
       )
     },
     {
@@ -403,18 +456,18 @@ const Quotes = () => {
             record.status !== 'accepted' && record.status !== 'declined' && record.status !== 'expired' && {
               label: 'Convert to Job',
               onClick: () => handleConvertToJob(record),
-              icon: <FileAddOutlined />,
+              icon: <FilePlus className="h-4 w-4" />,
               disabled: converting
             },
             {
               label: 'Edit',
               onClick: () => handleEditQuote(record),
-              icon: <FileTextOutlined />
+              icon: <FileText className="h-4 w-4" />
             },
             {
               label: 'Delete',
               onClick: () => handleDeleteQuote(record),
-              icon: <CheckCircleOutlined />,
+              icon: <CheckCircle className="h-4 w-4" />,
               danger: true
             }
           ].filter(Boolean)}
@@ -432,7 +485,7 @@ const Quotes = () => {
         <div>
           <div>{viewingQuote.customer?.name}</div>
           {viewingQuote.customer?.company && (
-            <div style={{ fontSize: 12, color: '#888' }}>{viewingQuote.customer.company}</div>
+            <div className="text-muted-foreground text-sm">{viewingQuote.customer.company}</div>
           )}
         </div>
       )
@@ -440,9 +493,7 @@ const Quotes = () => {
     {
       label: 'Status',
       value: (
-        <Tag color={statusColors[viewingQuote.status]}>
-          {viewingQuote.status?.toUpperCase()}
-        </Tag>
+        <StatusChip status={viewingQuote.status} />
       )
     },
     {
@@ -452,7 +503,7 @@ const Quotes = () => {
     {
       label: 'Total Amount',
       value: (
-        <strong style={{ fontSize: 16, color: '#1890ff' }}>
+        <strong className="text-lg text-primary">
           GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
         </strong>
       )
@@ -468,44 +519,57 @@ const Quotes = () => {
   ].filter(Boolean) : [], [viewingQuote]);
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h1>Quotes</h1>
-        <Space>
-          <Input.Search
-            placeholder="Search quotes..."
-            allowClear
-            prefix={<SearchOutlined />}
-            style={{ width: 200 }}
-            onSearch={(value) => setFilters((prev) => ({ ...prev, search: value }))}
-          />
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <h1 className="text-3xl font-bold">Quotes</h1>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search quotes..."
+              value={filters.search}
+              onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
+              className="pl-10 w-[200px]"
+            />
+          </div>
           <Select
-            placeholder="Filter by status"
             value={filters.status}
-            onChange={(value) => setFilters((prev) => ({ ...prev, status: value || 'all' }))}
-            style={{ width: 150 }}
+            onValueChange={(value) => setFilters((prev) => ({ ...prev, status: value || 'all' }))}
           >
-            <Option value="all">All</Option>
-            {statusOptions.map(option => (
-              <Option key={option.value} value={option.value}>
-                {option.label}
-              </Option>
-            ))}
+            <SelectTrigger className="w-[150px]">
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              {statusOptions.map(option => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
           </Select>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddQuote}>
+          <Button onClick={handleAddQuote}>
+            <Plus className="h-4 w-4 mr-2" />
             New Quote
           </Button>
-        </Space>
+        </div>
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={quotes}
-        rowKey="id"
-        loading={loading}
-        pagination={pagination}
-        onChange={(newPagination) => setPagination((prev) => ({ ...prev, ...newPagination }))}
-      />
+      {loading ? (
+        <Card>
+          <div className="p-4">
+            <TableSkeleton rows={8} cols={6} />
+          </div>
+        </Card>
+      ) : (
+        <Table
+          columns={columns}
+          dataSource={quotes}
+          rowKey="id"
+          pagination={pagination}
+          onChange={(newPagination) => setPagination((prev) => ({ ...prev, ...newPagination }))}
+        />
+      )}
 
       <DetailsDrawer
         open={drawerVisible}
@@ -519,37 +583,30 @@ const Quotes = () => {
             key: 'details',
             label: 'Summary',
             content: (
-              <div>
-                <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                  <div style={{
-                    padding: 16,
-                    borderRadius: 8,
-                    background: '#f0f5ff',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                  }}>
-                    <div>
-                      <div style={{ fontSize: 18, fontWeight: 600 }}>{viewingQuote.title}</div>
-                      <div style={{ color: '#888' }}>{viewingQuote.quoteNumber}</div>
-                    </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 14, color: '#888' }}>Total Amount</div>
-                      <div style={{ fontSize: 22, fontWeight: 700, color: '#1890ff' }}>
-                        GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
+              <div className="space-y-4">
+                <Card className="bg-primary/5">
+                  <CardContent className="pt-6">
+                    <div className="flex justify-between items-center">
+                      <div>
+                        <div className="text-lg font-semibold">{viewingQuote.title}</div>
+                        <div className="text-muted-foreground">{viewingQuote.quoteNumber}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm text-muted-foreground">Total Amount</div>
+                        <div className="text-2xl font-bold text-primary">
+                          GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <Descriptions
-                    column={1}
-                    bordered
-                    items={drawerFields.map((field) => ({
-                      key: field.label,
-                      label: field.label,
-                      children: field.value || '—'
-                    }))}
-                  />
-                </Space>
+                  </CardContent>
+                </Card>
+                <Descriptions column={1}>
+                  {drawerFields.map((field) => (
+                    <DescriptionItem key={field.label} label={field.label}>
+                      {field.value || '—'}
+                    </DescriptionItem>
+                  ))}
+                </Descriptions>
               </div>
             )
           },
@@ -557,56 +614,62 @@ const Quotes = () => {
             key: 'items',
             label: 'Line Items',
             content: (
-              <div style={{ padding: '16px 0' }}>
+              <div className="space-y-4">
                 {(viewingQuote.items || []).length ? (
-                  <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                  <div className="space-y-3">
                     {viewingQuote.items.map((item) => (
-                      <Card key={item.id} size="small" variant="bordered">
-                        <Row gutter={16}>
-                          <Col span={12}>
-                            <Text strong>{item.description}</Text>
-                            {item.metadata && Object.keys(item.metadata || {}).length > 0 && (
-                              <div style={{ color: '#888', marginTop: 4, fontSize: 12 }}>
-                                {JSON.stringify(item.metadata)}
-                              </div>
-                            )}
-                          </Col>
-                          <Col span={4} style={{ textAlign: 'right' }}>
-                            <div style={{ color: '#888' }}>Qty</div>
-                            <div>{item.quantity}</div>
-                          </Col>
-                          <Col span={4} style={{ textAlign: 'right' }}>
-                            <div style={{ color: '#888' }}>Unit Price</div>
-                            <div>GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
-                          </Col>
-                          <Col span={4} style={{ textAlign: 'right' }}>
-                            <div style={{ color: '#888' }}>Total</div>
-                            <div style={{ fontWeight: 600 }}>
-                              GHS {parseFloat(item.total || 0).toFixed(2)}
+                      <Card key={item.id}>
+                        <CardContent className="pt-6">
+                          <div className="grid grid-cols-12 gap-4">
+                            <div className="col-span-6">
+                              <div className="font-semibold">{item.description}</div>
+                              {item.metadata && Object.keys(item.metadata || {}).length > 0 && (
+                                <div className="text-muted-foreground text-xs mt-1">
+                                  {JSON.stringify(item.metadata)}
+                                </div>
+                              )}
                             </div>
-                          </Col>
-                        </Row>
+                            <div className="col-span-2 text-right">
+                              <div className="text-muted-foreground text-sm">Qty</div>
+                              <div>{item.quantity}</div>
+                            </div>
+                            <div className="col-span-2 text-right">
+                              <div className="text-muted-foreground text-sm">Unit Price</div>
+                              <div>GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
+                            </div>
+                            <div className="col-span-2 text-right">
+                              <div className="text-muted-foreground text-sm">Total</div>
+                              <div className="font-semibold">
+                                GHS {parseFloat(item.total || 0).toFixed(2)}
+                              </div>
+                            </div>
+                          </div>
+                        </CardContent>
                       </Card>
                     ))}
-                    <Card size="small" variant="bordered">
-                      <Row gutter={16}>
-                        <Col span={12}>
-                          <Text strong>Subtotal</Text><br />
-                          <Text strong>Total Discount</Text><br />
-                          <Text strong>Grand Total</Text>
-                        </Col>
-                        <Col span={12} style={{ textAlign: 'right' }}>
-                          <Text>GHS {parseFloat(viewingQuote.subtotal || 0).toFixed(2)}</Text><br />
-                          <Text>-GHS {parseFloat(viewingQuote.discountTotal || 0).toFixed(2)}</Text><br />
-                          <Text style={{ fontSize: 16, fontWeight: 700 }}>
-                            GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
-                          </Text>
-                        </Col>
-                      </Row>
+                    <Card>
+                      <CardContent className="pt-6">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <div className="font-semibold">Subtotal</div>
+                            <div className="font-semibold">Total Discount</div>
+                            <div className="font-semibold">Grand Total</div>
+                          </div>
+                          <div className="text-right">
+                            <div>GHS {parseFloat(viewingQuote.subtotal || 0).toFixed(2)}</div>
+                            <div>-GHS {parseFloat(viewingQuote.discountTotal || 0).toFixed(2)}</div>
+                            <div className="text-lg font-bold">
+                              GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
                     </Card>
-                  </Space>
+                  </div>
                 ) : (
-                  <Alert type="info" message="No line items found for this quote." />
+                  <Alert>
+                    <AlertDescription>No line items found for this quote.</AlertDescription>
+                  </Alert>
                 )}
               </div>
             )
@@ -614,240 +677,304 @@ const Quotes = () => {
         ] : []}
       />
 
-      <Modal
-        title={editingQuote ? `Edit Quote (${editingQuote.quoteNumber})` : 'Create Quote'}
-        open={quoteModalVisible}
-        onCancel={() => {
-          setQuoteModalVisible(false);
-          setEditingQuote(null);
-        }}
-        onOk={() => form.submit()}
-        width={900}
-        okText={editingQuote ? 'Update Quote' : 'Create Quote'}
-        styles={{
-        body: {
-          maxHeight: '80vh',
-          overflowY: 'auto',
-          paddingRight: 24
-        }
-      }}
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleSubmit}
-          initialValues={{
-            status: 'draft',
-            items: [{ description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }]
-          }}
-        >
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
-                name="customerId"
-                label="Customer"
-                rules={[{ required: true, message: 'Please select a customer' }]}
+      <Dialog open={quoteModalVisible} onOpenChange={setQuoteModalVisible}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingQuote ? `Edit Quote (${editingQuote.quoteNumber})` : 'Create Quote'}</DialogTitle>
+            <DialogDescription>
+              {editingQuote ? 'Update quote details' : 'Create a new quote for a customer'}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="customerId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Customer</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select customer" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {customers.map((customer) => (
+                            <SelectItem key={customer.id} value={customer.id}>
+                              {customer.name} {customer.company ? `(${customer.company})` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="status"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Status</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {statusOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="title"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Quote Title</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Quote title" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="validUntil"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Valid Until</FormLabel>
+                      <FormControl>
+                        <DatePicker
+                          date={field.value}
+                          onSelect={(date) => field.onChange(date)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={3} placeholder="Describe the work or specifications" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <Separator>Quote Items</Separator>
+
+              {fields.map((field, index) => (
+                <Card key={field.id}>
+                  <CardHeader className="flex flex-row items-center justify-between pb-4">
+                    <CardTitle className="text-base">Item {index + 1}</CardTitle>
+                    {fields.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => remove(index)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.description`}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Description</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="Item description" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <div className="grid grid-cols-3 gap-4">
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.quantity`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Quantity</FormLabel>
+                            <FormControl>
+                              <InputNumber
+                                min={1}
+                                style={{ width: '100%' }}
+                                value={field.value}
+                                onChange={(value) => field.onChange(value)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.unitPrice`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Unit Price</FormLabel>
+                            <FormControl>
+                              <InputNumber
+                                min={0}
+                                prefix="GHS "
+                                style={{ width: '100%' }}
+                                value={field.value}
+                                onChange={(value) => field.onChange(value)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.discountAmount`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Discount</FormLabel>
+                            <FormControl>
+                              <InputNumber
+                                min={0}
+                                prefix="GHS "
+                                style={{ width: '100%' }}
+                                value={field.value}
+                                onChange={(value) => field.onChange(value)}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+
+              <Button
+                type="button"
+                variant="dashed"
+                onClick={() => append({ description: '', quantity: 1, unitPrice: 0, discountAmount: 0 })}
+                className="w-full"
               >
-                <Select
-                  placeholder="Select customer"
-                  showSearch
-                  optionFilterProp="children"
-                  size="large"
+                <Plus className="h-4 w-4 mr-2" />
+                Add Item
+              </Button>
+
+              <FormField
+                control={form.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Internal Notes</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={3} placeholder="Notes for internal reference" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setQuoteModalVisible(false);
+                    setEditingQuote(null);
+                  }}
                 >
-                  {customers.map((customer) => (
-                    <Option key={customer.id} value={customer.id}>
-                      {customer.name} {customer.company ? `(${customer.company})` : ''}
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                name="status"
-                label="Status"
-                rules={[{ required: true, message: 'Please select status' }]}
-              >
-                <Select size="large">
-                  {statusOptions.map((option) => (
-                    <Option key={option.value} value={option.value}>
-                      {option.label}
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {editingQuote ? 'Update Quote' : 'Create Quote'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
-                name="title"
-                label="Quote Title"
-                rules={[{ required: true, message: 'Please enter quote title' }]}
-              >
-                <Input placeholder="Quote title" size="large" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                name="validUntil"
-                label="Valid Until"
-              >
-                <DatePicker style={{ width: '100%' }} size="large" format="YYYY-MM-DD" />
-              </Form.Item>
-            </Col>
-          </Row>
+      <Dialog open={printModalVisible} onOpenChange={setPrintModalVisible}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between w-full">
+              <span>Quote Preview</span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => handleDownloadQuote(quotePrintable)}
+                  disabled={!quotePrintable}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download
+                </Button>
+                <Button
+                  onClick={handlePrintQuote}
+                  disabled={!quotePrintable}
+                >
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print
+                </Button>
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+          {quotePrintable && (
+            <PrintableInvoice
+              invoice={buildPrintableQuote(quotePrintable)}
+              documentTitle="PROFORMA INVOICE"
+              documentSubtitle={`Quote ${quotePrintable.quoteNumber}`}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
-          <Form.Item
-            name="description"
-            label="Description"
-          >
-            <TextArea rows={3} placeholder="Describe the work or specifications" />
-          </Form.Item>
-
-          <Divider>Quote Items</Divider>
-
-          <Form.List name="items">
-            {(fields, { add, remove }) => (
-              <>
-                {fields.map(({ key, name, ...restField }) => (
-                  <Card
-                    key={key}
-                    size="small"
-                    style={{ marginBottom: 12 }}
-                    variant="bordered"
-                    title={`Item ${name + 1}`}
-                    extra={
-                      fields.length > 1 && (
-                        <Button danger type="link" onClick={() => remove(name)}>
-                          Remove
-                        </Button>
-                      )
-                    }
-                  >
-                    <Row gutter={16}>
-                      <Col span={12}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'description']}
-                          label="Description"
-                          rules={[{ required: true, message: 'Please enter description' }]}
-                        >
-                          <Input placeholder="Item description" />
-                        </Form.Item>
-                      </Col>
-                      <Col span={4}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'quantity']}
-                          label="Quantity"
-                          rules={[{ required: true, message: 'Required' }]}
-                          initialValue={1}
-                        >
-                          <InputNumber min={1} style={{ width: '100%' }} />
-                        </Form.Item>
-                      </Col>
-                      <Col span={4}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'unitPrice']}
-                          label="Unit Price"
-                          rules={[{ required: true, message: 'Required' }]}
-                        >
-                          <InputNumber
-                            min={0}
-                            prefix="GHS "
-                            style={{ width: '100%' }}
-                            formatter={(value) => value ? `${value}` : ''}
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col span={4}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'discountAmount']}
-                          label="Discount"
-                          initialValue={0}
-                        >
-                          <InputNumber
-                            min={0}
-                            prefix="GHS "
-                            style={{ width: '100%' }}
-                            formatter={(value) => value ? `${value}` : ''}
-                          />
-                        </Form.Item>
-                      </Col>
-                    </Row>
-                  </Card>
-                ))}
-                <Form.Item>
-                  <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
-                    Add Item
-                  </Button>
-                </Form.Item>
-              </>
-            )}
-          </Form.List>
-
-          <Form.Item
-            name="notes"
-            label="Internal Notes"
-          >
-            <TextArea rows={3} placeholder="Notes for internal reference" />
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      <Modal
-        title={
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-            <span>Quote Preview</span>
-            <Space>
-              <Button
-                icon={<DownloadOutlined />}
-                onClick={() => handleDownloadQuote(quotePrintable)}
-                disabled={!quotePrintable}
-              >
-                Download
-              </Button>
-              <Button
-                type="primary"
-                icon={<PrinterOutlined />}
-                onClick={handlePrintQuote}
-                disabled={!quotePrintable}
-              >
-                Print
-              </Button>
-            </Space>
-          </div>
-        }
-        open={printModalVisible}
-        onCancel={closePrintableQuote}
-        footer={null}
-        width="90%"
-        style={{ maxWidth: '1200px' }}
-        destroyOnClose
-        styles={{
-          body: {
-            maxHeight: '70vh',
-            overflowY: 'auto',
-            padding: 20
-          }
-        }}
-      >
-        {quotePrintable && (
-          <PrintableInvoice
-            invoice={buildPrintableQuote(quotePrintable)}
-            documentTitle="PROFORMA INVOICE"
-            documentSubtitle={`Quote ${quotePrintable.quoteNumber}`}
-          />
-        )}
-      </Modal>
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Quote</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this quote? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive text-destructive-foreground">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
 
 export default Quotes;
-
-

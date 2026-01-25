@@ -83,6 +83,10 @@ exports.getVendor = async (req, res, next) => {
 exports.createVendor = async (req, res, next) => {
   try {
     const payload = sanitizePayload(req.body);
+    // Normalize empty website string to null to avoid validation errors
+    if (payload.website === '' || payload.website === null || payload.website === undefined) {
+      payload.website = null;
+    }
     const vendor = await Vendor.create({
       ...payload,
       tenantId: req.tenantId
@@ -114,6 +118,10 @@ exports.updateVendor = async (req, res, next) => {
     }
 
     const payload = sanitizePayload(req.body);
+    // Normalize empty website string to null to avoid validation errors
+    if (payload.website === '' || payload.website === null || payload.website === undefined) {
+      payload.website = null;
+    }
     await vendor.update(payload);
 
     res.status(200).json({

@@ -1,4 +1,4 @@
-const { Invoice, Job, Customer, JobItem, Payment } = require('../models');
+const { Invoice, Job, Customer, JobItem, Payment, Sale, Prescription } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
 const { createInvoicePaymentJournal } = require('../services/invoiceAccountingService');
@@ -44,36 +44,100 @@ exports.getInvoices = async (req, res, next) => {
     const status = req.query.status;
     const customerId = req.query.customerId;
     const jobId = req.query.jobId;
+    const saleId = req.query.saleId;
+    const prescriptionId = req.query.prescriptionId;
+    const sourceType = req.query.sourceType;
 
     const where = applyTenantFilter(req.tenantId, {});
     
+    // Filter by business type - only show invoices relevant to the tenant's business type
+    const businessType = req.tenant?.businessType;
+    if (businessType) {
+      if (businessType === 'printing_press') {
+        // Printing press only sees job-based invoices (or legacy invoices without sourceType)
+        where[Op.or] = [
+          { sourceType: 'job' },
+          { sourceType: null }
+        ];
+      } else if (businessType === 'shop') {
+        // Shop only sees sale-based invoices
+        where.sourceType = 'sale';
+      } else if (businessType === 'pharmacy') {
+        // Pharmacy only sees prescription-based invoices
+        where.sourceType = 'prescription';
+      }
+    }
+    
     if (search) {
-      where[Op.or] = [
-        { invoiceNumber: { [Op.iLike]: `%${search}%` } }
-      ];
+      // Build search condition
+      const searchCondition = { invoiceNumber: { [Op.iLike]: `%${search}%` } };
+      
+      // If we already have Op.or from businessType filter, use Op.and to combine
+      if (where[Op.or]) {
+        where[Op.and] = [
+          { [Op.or]: where[Op.or] },
+          searchCondition
+        ];
+        delete where[Op.or];
+      } else {
+        where[Op.or] = [searchCondition];
+      }
     }
     
     if (status && status !== '') where.status = status;
     if (customerId) where.customerId = customerId;
     if (jobId) where.jobId = jobId;
+    if (saleId) where.saleId = saleId;
+    if (prescriptionId) where.prescriptionId = prescriptionId;
+    if (sourceType) where.sourceType = sourceType;
+
+    // Build includes array
+    const include = [
+      {
+        model: Customer,
+        as: 'customer',
+        attributes: ['id', 'name', 'company', 'email', 'phone']
+      },
+      {
+        model: Job,
+        as: 'job',
+        attributes: ['id', 'jobNumber', 'title', 'status'],
+        required: false
+      }
+    ];
+
+    // Include Sale if model is available (for shop/pharmacy business types)
+    if (Sale) {
+      include.push({
+        model: Sale,
+        as: 'sale',
+        attributes: ['id', 'saleNumber', 'createdAt', 'total'],
+        required: false
+      });
+    }
+
+    // Include Prescription if model is available (for pharmacy business type)
+    if (Prescription) {
+      include.push({
+        model: Prescription,
+        as: 'prescription',
+        attributes: ['id', 'prescriptionNumber', 'prescriptionDate'],
+        include: [{
+          model: Customer,
+          as: 'customer',
+          attributes: ['id', 'name'],
+          required: false
+        }],
+        required: false
+      });
+    }
 
     const { count, rows } = await Invoice.findAndCountAll({
       where,
       limit,
       offset,
       order: [['createdAt', 'DESC']],
-      include: [
-        {
-          model: Customer,
-          as: 'customer',
-          attributes: ['id', 'name', 'company', 'email', 'phone']
-        },
-        {
-          model: Job,
-          as: 'job',
-          attributes: ['id', 'jobNumber', 'title', 'status']
-        }
-      ]
+      include
     });
 
     res.status(200).json({
@@ -215,6 +279,7 @@ exports.createInvoice = async (req, res, next) => {
       jobId,
       customerId: job.customerId,
       tenantId: req.tenantId,
+      sourceType: 'job', // Set source type for business type filtering
       invoiceDate: new Date(),
       dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days
       subtotal,
@@ -251,7 +316,8 @@ exports.createInvoice = async (req, res, next) => {
 
     // Send webhook to Sabito (async, don't block response)
     try {
-      const customer = await Customer.findByPk(createdInvoice.customerId, {
+      const customer = await Customer.findOne({
+        where: applyTenantFilter(req.tenantId, { id: createdInvoice.customerId }),
         attributes: [
           'id', 
           'sabitoCustomerId', 
@@ -510,7 +576,8 @@ exports.recordPayment = async (req, res, next) => {
 
       // Send paid webhook to Sabito (async)
       try {
-        const customer = await Customer.findByPk(updatedInvoice.customerId, {
+        const customer = await Customer.findOne({
+          where: applyTenantFilter(req.tenantId, { id: updatedInvoice.customerId }),
           attributes: [
             'id', 
             'sabitoCustomerId', 
@@ -699,6 +766,14 @@ exports.sendInvoice = async (req, res, next) => {
       });
     }
 
+    // Ensure payment token exists
+    if (!invoice.paymentToken) {
+      const crypto = require('crypto');
+      await invoice.update({
+        paymentToken: crypto.randomBytes(32).toString('hex')
+      });
+    }
+
     await invoice.update({
       status: 'sent',
       sentDate: new Date()
@@ -714,9 +789,54 @@ exports.sendInvoice = async (req, res, next) => {
         {
           model: Job,
           as: 'job'
+        },
+        {
+          model: require('../models').Sale,
+          as: 'sale',
+          required: false
+        },
+        {
+          model: require('../models').Prescription,
+          as: 'prescription',
+          required: false
         }
       ]
     });
+
+    // Generate payment link
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const paymentLink = `${frontendUrl}/pay-invoice/${updatedInvoice.paymentToken}`;
+
+    // Send WhatsApp notification if enabled and customer has phone
+    try {
+      const whatsappService = require('../services/whatsappService');
+      const whatsappTemplates = require('../services/whatsappTemplates');
+      const config = await whatsappService.getConfig(req.tenantId);
+      
+      if (config && updatedInvoice.customer && updatedInvoice.customer.phone) {
+        const phoneNumber = whatsappService.validatePhoneNumber(updatedInvoice.customer.phone);
+        if (phoneNumber) {
+          const parameters = whatsappTemplates.prepareInvoiceNotification(
+            updatedInvoice,
+            updatedInvoice.customer,
+            paymentLink
+          );
+          
+          await whatsappService.sendMessage(
+            req.tenantId,
+            phoneNumber,
+            'invoice_notification',
+            parameters
+          ).catch(error => {
+            console.error('[Invoice] WhatsApp send failed:', error);
+            // Don't fail the request if WhatsApp fails
+          });
+        }
+      }
+    } catch (error) {
+      console.error('[Invoice] WhatsApp integration error:', error);
+      // Don't fail the request if WhatsApp fails
+    }
 
     // Log activity
     try {
@@ -726,11 +846,262 @@ exports.sendInvoice = async (req, res, next) => {
     }
 
     // TODO: Implement email sending functionality here
+    // For now, return the payment link so it can be sent manually or via email service
+    // Example email content:
+    // Subject: Invoice ${invoice.invoiceNumber} - Payment Required
+    // Body: Dear ${customer.name}, Please find attached your invoice. You can pay online at: ${paymentLink}
 
     res.status(200).json({
       success: true,
       message: 'Invoice marked as sent',
-      data: updatedInvoice
+      data: updatedInvoice,
+      paymentLink
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get invoice by payment token (public)
+// @route   GET /api/public/invoices/:token
+// @access  Public
+exports.getInvoiceByToken = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+
+    const invoice = await Invoice.findOne({
+      where: { paymentToken: token },
+      include: [
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['id', 'name', 'company', 'email', 'phone']
+        },
+        {
+          model: Job,
+          as: 'job',
+          attributes: ['id', 'jobNumber', 'title'],
+          required: false
+        },
+        {
+          model: require('../models').Sale,
+          as: 'sale',
+          attributes: ['id', 'saleNumber', 'createdAt'],
+          required: false
+        },
+        {
+          model: require('../models').Prescription,
+          as: 'prescription',
+          attributes: ['id', 'prescriptionNumber', 'prescriptionDate'],
+          include: [{
+            model: require('../models').Customer,
+            as: 'customer',
+            attributes: ['id', 'name'],
+            required: false
+          }],
+          required: false
+        },
+        {
+          model: require('../models').Tenant,
+          as: 'tenant',
+          attributes: ['id', 'name', 'slug']
+        }
+      ]
+    });
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found or invalid payment link'
+      });
+    }
+
+    if (invoice.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'This invoice has been cancelled'
+      });
+    }
+
+    // Return invoice data (without sensitive tenant info)
+    res.status(200).json({
+      success: true,
+      data: {
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceDate: invoice.invoiceDate,
+        dueDate: invoice.dueDate,
+        subtotal: invoice.subtotal,
+        taxRate: invoice.taxRate,
+        taxAmount: invoice.taxAmount,
+        discountAmount: invoice.discountAmount,
+        totalAmount: invoice.totalAmount,
+        amountPaid: invoice.amountPaid,
+        balance: invoice.balance,
+        status: invoice.status,
+        paymentTerms: invoice.paymentTerms,
+        items: invoice.items,
+        notes: invoice.notes,
+        termsAndConditions: invoice.termsAndConditions,
+        customer: invoice.customer,
+        tenant: {
+          name: invoice.tenant?.name
+        },
+        source: invoice.sourceType,
+        sourceDetails: invoice.job || invoice.sale || invoice.prescription || null
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Process payment via public link
+// @route   POST /api/public/invoices/:token/pay
+// @access  Public
+exports.processPublicPayment = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    const { amount, paymentMethod, referenceNumber, paymentDate, customerEmail, customerName } = sanitizePayload(req.body);
+
+    const invoice = await Invoice.findOne({
+      where: { paymentToken: token },
+      include: [
+        {
+          model: Customer,
+          as: 'customer'
+        }
+      ]
+    });
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found or invalid payment link'
+      });
+    }
+
+    if (invoice.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'This invoice has been cancelled'
+      });
+    }
+
+    if (invoice.status === 'paid') {
+      return res.status(400).json({
+        success: false,
+        message: 'This invoice has already been paid'
+      });
+    }
+
+    const paymentAmount = parseFloat(amount || invoice.balance);
+    const totalAmount = parseFloat(invoice.totalAmount || 0);
+    const newAmountPaid = parseFloat(invoice.amountPaid || 0) + paymentAmount;
+    const newBalance = Math.max(totalAmount - newAmountPaid, 0);
+
+    if (paymentAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment amount must be greater than zero'
+      });
+    }
+
+    if (newAmountPaid > totalAmount) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment amount exceeds invoice total'
+      });
+    }
+
+    // Update invoice
+    const effectivePaymentDate = paymentDate ? new Date(paymentDate) : new Date();
+    const updatePayload = {
+      amountPaid: newAmountPaid,
+      balance: newBalance
+    };
+
+    if (newBalance <= 0) {
+      updatePayload.status = 'paid';
+      updatePayload.paidDate = effectivePaymentDate;
+    } else if (invoice.status === 'draft') {
+      updatePayload.status = 'sent';
+    } else if (invoice.status === 'sent' && newAmountPaid > 0) {
+      updatePayload.status = 'partial';
+    }
+
+    await invoice.update(updatePayload);
+
+    // Create payment record
+    const paymentNumber = `PAY-${Date.now()}`;
+    const paymentData = {
+      paymentNumber,
+      type: 'income',
+      customerId: invoice.customerId,
+      tenantId: invoice.tenantId,
+      amount: paymentAmount,
+      paymentMethod: paymentMethod || 'online',
+      paymentDate: effectivePaymentDate,
+      referenceNumber: referenceNumber || `PUBLIC-${paymentNumber}`,
+      status: 'completed',
+      notes: `Payment via public link for invoice ${invoice.invoiceNumber}`
+    };
+
+    // Add source-specific fields if they exist
+    if (invoice.jobId) paymentData.jobId = invoice.jobId;
+    if (invoice.saleId) paymentData.saleId = invoice.saleId;
+    if (invoice.prescriptionId) paymentData.prescriptionId = invoice.prescriptionId;
+
+    // Add metadata if Payment model supports it
+    try {
+      paymentData.metadata = {
+        publicPayment: true,
+        customerEmail: customerEmail || invoice.customer?.email,
+        customerName: customerName || invoice.customer?.name
+      };
+    } catch (e) {
+      // Metadata field might not exist, skip it
+    }
+
+    const payment = await Payment.create(paymentData);
+
+    const updatedInvoice = await Invoice.findOne({
+      where: { id: invoice.id },
+      include: [
+        {
+          model: Customer,
+          as: 'customer'
+        }
+      ]
+    });
+
+    // Log activity (if user context available)
+    try {
+      await activityLogger.logInvoicePaid(updatedInvoice, null);
+    } catch (error) {
+      console.error('Failed to log payment activity:', error);
+    }
+
+    // Update customer balance
+    try {
+      await updateCustomerBalance(invoice.customerId);
+    } catch (error) {
+      console.error('Failed to update customer balance:', error);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment processed successfully',
+      data: {
+        invoice: updatedInvoice,
+        payment: {
+          id: payment.id,
+          paymentNumber: payment.paymentNumber,
+          amount: payment.amount,
+          paymentMethod: payment.paymentMethod,
+          paymentDate: payment.paymentDate
+        }
+      }
     });
   } catch (error) {
     next(error);

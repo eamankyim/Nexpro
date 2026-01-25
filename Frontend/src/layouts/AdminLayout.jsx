@@ -1,13 +1,13 @@
 import { Layout, Menu, Typography, Space, Avatar, Dropdown, Button } from 'antd';
 import {
-  BarChartOutlined,
-  TeamOutlined,
-  SettingOutlined,
-  DollarOutlined,
-  AlertOutlined,
-  FileSearchOutlined,
-  LinkOutlined
-} from '@ant-design/icons';
+  BarChart3,
+  Users,
+  Settings,
+  DollarSign,
+  AlertTriangle,
+  FileSearch,
+  Link
+} from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -17,32 +17,32 @@ const { Text } = Typography;
 const menuItems = [
   {
     key: '/admin',
-    icon: <BarChartOutlined />,
+    icon: <BarChart3 className="h-4 w-4" />,
     label: 'Overview',
   },
   {
     key: '/admin/tenants',
-    icon: <TeamOutlined />,
+    icon: <Users className="h-4 w-4" />,
     label: 'Tenants',
   },
   {
     key: '/admin/billing',
-    icon: <DollarOutlined />,
+    icon: <DollarSign className="h-4 w-4" />,
     label: 'Billing',
   },
   {
     key: '/admin/reports',
-    icon: <FileSearchOutlined />,
+    icon: <FileSearch className="h-4 w-4" />,
     label: 'Reports',
   },
   {
     key: '/admin/health',
-    icon: <AlertOutlined />,
+    icon: <AlertTriangle className="h-4 w-4" />,
     label: 'System Health',
   },
   {
     key: '/admin/settings',
-    icon: <SettingOutlined />,
+    icon: <Settings className="h-4 w-4" />,
     label: 'Settings',
   },
 ];

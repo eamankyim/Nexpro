@@ -1,13 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import {
   Card,
   Table,
-  Button,
-  Modal,
-  Form,
-  Input,
-  Select,
-  Space,
   Tag,
   Popconfirm,
   Row,
@@ -19,32 +16,90 @@ import {
   Spin,
   Tooltip,
   Descriptions,
-  Alert,
-  Switch,
   Avatar,
   Upload,
   Drawer,
-  message
+  Input as AntdInput,
+  Select as AntdSelect,
 } from 'antd';
 import { showSuccess, showError, showInfo, handleApiError } from '../utils/toast';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Card as ShadcnCard, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Avatar as ShadcnAvatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import {
-  PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  EyeOutlined,
-  UserOutlined,
-  TeamOutlined,
-  CrownOutlined,
-  SettingOutlined,
-  UploadOutlined,
-  LockOutlined,
-  UnlockOutlined,
-  MailOutlined,
-  PhoneOutlined,
-  CalendarOutlined,
-  LinkOutlined,
-  CopyOutlined
-} from '@ant-design/icons';
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+
+const userSchema = z.object({
+  name: z.string().min(1, 'Full name is required'),
+  email: z.string().email('Please enter a valid email'),
+  role: z.enum(['admin', 'manager', 'staff']),
+  isActive: z.boolean().default(true),
+});
+
+const passwordSchema = z.object({
+  newPassword: z.string().min(6, 'Password must be at least 6 characters'),
+  confirmPassword: z.string().min(6, 'Please confirm password'),
+}).refine((data) => data.newPassword === data.confirmPassword, {
+  message: "Passwords do not match!",
+  path: ["confirmPassword"],
+});
+
+const profileSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  email: z.string().email('Please enter a valid email'),
+  profilePicture: z.string().optional(),
+});
+
+const inviteSchema = z.object({
+  email: z.string().email('Please enter a valid email'),
+  role: z.enum(['admin', 'manager', 'staff']),
+});
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Eye,
+  User,
+  Users as UsersIcon,
+  Crown,
+  Settings,
+  Upload as UploadIcon,
+  Lock,
+  Unlock,
+  Mail,
+  Phone,
+  Calendar,
+  Link,
+  Copy
+} from 'lucide-react';
 import dayjs from 'dayjs';
 import userService from '../services/userService';
 import inviteService from '../services/inviteService';
@@ -52,16 +107,11 @@ import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 
-const { Option } = Select;
-const { TextArea } = Input;
-const { TabPane } = Tabs;
-
 const Users = () => {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
-  const [form] = Form.useForm();
   const [stats, setStats] = useState(null);
   const [pagination, setPagination] = useState({
     current: 1,
@@ -77,14 +127,46 @@ const Users = () => {
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingUser, setViewingUser] = useState(null);
   const [passwordModalVisible, setPasswordModalVisible] = useState(false);
-  const [passwordForm] = Form.useForm();
   const [profileModalVisible, setProfileModalVisible] = useState(false);
-  const [profileForm] = Form.useForm();
   const [inviteModalVisible, setInviteModalVisible] = useState(false);
-  const [inviteForm] = Form.useForm();
   const [generatedInviteLink, setGeneratedInviteLink] = useState(null);
   const [isExistingInvite, setIsExistingInvite] = useState(false);
   const { user, isAdmin, isManager } = useAuth();
+
+  const form = useForm({
+    resolver: zodResolver(userSchema),
+    defaultValues: {
+      name: '',
+      email: '',
+      role: 'staff',
+      isActive: true,
+    },
+  });
+
+  const passwordForm = useForm({
+    resolver: zodResolver(passwordSchema),
+    defaultValues: {
+      newPassword: '',
+      confirmPassword: '',
+    },
+  });
+
+  const profileForm = useForm({
+    resolver: zodResolver(profileSchema),
+    defaultValues: {
+      name: '',
+      email: '',
+      profilePicture: '',
+    },
+  });
+
+  const inviteForm = useForm({
+    resolver: zodResolver(inviteSchema),
+    defaultValues: {
+      email: '',
+      role: 'staff',
+    },
+  });
 
   useEffect(() => {
     fetchUsers();
@@ -132,18 +214,19 @@ const Users = () => {
 
   const handleCreate = () => {
     setEditingUser(null);
-    form.resetFields();
-    form.setFieldsValue({
+    form.reset({
+      name: '',
+      email: '',
       role: 'staff',
-      isActive: true
+      isActive: true,
     });
     setModalVisible(true);
   };
 
   const handleInviteUser = () => {
-    inviteForm.resetFields();
-    inviteForm.setFieldsValue({
-      role: 'staff'
+    inviteForm.reset({
+      email: '',
+      role: 'staff',
     });
     setGeneratedInviteLink(null);
     setIsExistingInvite(false);
@@ -175,10 +258,11 @@ const Users = () => {
 
   const handleEdit = (user) => {
     setEditingUser(user);
-    form.setFieldsValue({
-      ...user,
-      // Don't include password in edit form
-      password: undefined
+    form.reset({
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isActive: user.isActive,
     });
     setModalVisible(true);
   };
@@ -213,27 +297,65 @@ const Users = () => {
     }
   };
 
-  const handleSubmit = async (values) => {
+  const onSubmit = async (values) => {
     try {
       if (editingUser) {
-        // Don't update password through this form
-        const { password, ...updateData } = values;
-        await userService.update(editingUser.id, updateData);
+        await userService.update(editingUser.id, values);
         showSuccess('User updated successfully');
       } else {
-        // Create new user with default password
         const userData = {
           ...values,
-          password: 'default123' // Default password
+          password: 'default123'
         };
         await userService.create(userData);
         showSuccess('User created successfully with default password "default123"');
       }
-
       setModalVisible(false);
       fetchUsers();
     } catch (error) {
       handleApiError(error, { context: editingUser ? 'update user' : 'create user' });
+    }
+  };
+
+  const onPasswordSubmit = async (values) => {
+    try {
+      await userService.update(viewingUser.id, {
+        password: values.newPassword
+      });
+      showSuccess('Password updated successfully');
+      setPasswordModalVisible(false);
+      fetchUsers();
+    } catch (error) {
+      showError(null, 'Failed to update password');
+    }
+  };
+
+  const onProfileSubmit = async (values) => {
+    try {
+      await userService.update(viewingUser.id, values);
+      showSuccess('Profile updated successfully');
+      setProfileModalVisible(false);
+      fetchUsers();
+    } catch (error) {
+      showError(null, 'Failed to update profile');
+    }
+  };
+
+  const onInviteSubmit = async (values) => {
+    try {
+      const response = await inviteService.generateInvite(values);
+      setGeneratedInviteLink(response.data.inviteUrl);
+      setIsExistingInvite(false);
+      showSuccess('Invite link generated successfully!');
+    } catch (error) {
+      if (error?.response?.data?.message?.includes('already exists') || 
+          error?.response?.data?.message?.includes('already invited')) {
+        setGeneratedInviteLink(error.response.data.inviteUrl);
+        setIsExistingInvite(true);
+        showInfo('User already has an active invite. Showing existing invite link.');
+      } else {
+        handleApiError(error, { context: 'generate invite' });
+      }
     }
   };
 
@@ -250,42 +372,21 @@ const Users = () => {
 
   const handleChangePassword = (user) => {
     setViewingUser(user);
-    passwordForm.resetFields();
+    passwordForm.reset({
+      newPassword: '',
+      confirmPassword: '',
+    });
     setPasswordModalVisible(true);
-  };
-
-  const handlePasswordSubmit = async (values) => {
-    try {
-      await userService.update(viewingUser.id, {
-        password: values.newPassword
-      });
-      message.success('Password updated successfully');
-      setPasswordModalVisible(false);
-      fetchUsers();
-    } catch (error) {
-      message.error('Failed to update password');
-    }
   };
 
   const handleProfileUpdate = (user) => {
     setViewingUser(user);
-    profileForm.setFieldsValue({
+    profileForm.reset({
       name: user.name,
       email: user.email,
-      profilePicture: user.profilePicture
+      profilePicture: user.profilePicture || '',
     });
     setProfileModalVisible(true);
-  };
-
-  const handleProfileSubmit = async (values) => {
-    try {
-      await userService.update(viewingUser.id, values);
-      message.success('Profile updated successfully');
-      setProfileModalVisible(false);
-      fetchUsers();
-    } catch (error) {
-      message.error('Failed to update profile');
-    }
   };
 
   const columns = [
@@ -298,7 +399,7 @@ const Users = () => {
         <Avatar
           size={40}
           src={profilePicture}
-          icon={<UserOutlined />}
+          icon={<User className="h-4 w-4" />}
         />
       )
     },
@@ -324,13 +425,13 @@ const Users = () => {
       render: (role) => {
         const colors = {
           admin: 'red',
-          manager: 'blue',
+          manager: '#166534',
           staff: 'green'
         };
         const icons = {
-          admin: <CrownOutlined />,
-          manager: <SettingOutlined />,
-          staff: <UserOutlined />
+          admin: <Crown className="h-4 w-4" />,
+          manager: <Settings className="h-4 w-4" />,
+          staff: <User className="h-4 w-4" />
         };
         return (
           <Tag color={colors[role]} icon={icons[role]}>
@@ -348,8 +449,8 @@ const Users = () => {
         <Switch
           checked={isActive}
           onChange={() => handleToggleStatus(record.id)}
-          checkedChildren={<UnlockOutlined />}
-          unCheckedChildren={<LockOutlined />}
+          checkedChildren={<Unlock className="h-4 w-4" />}
+          unCheckedChildren={<Lock className="h-4 w-4" />}
         />
       )
     },
@@ -373,11 +474,11 @@ const Users = () => {
       width: 150,
       fixed: 'right',
       render: (_, record) => (
-        <Space>
+        <div className="flex items-center gap-2">
           <Tooltip title="View Details">
             <Button
               type="text"
-              icon={<EyeOutlined />}
+              icon={<Eye className="h-4 w-4" />}
               onClick={() => handleView(record)}
             />
           </Tooltip>
@@ -385,7 +486,7 @@ const Users = () => {
             <Tooltip title="Edit User">
               <Button
                 type="text"
-                icon={<EditOutlined />}
+                icon={<Pencil className="h-4 w-4" />}
                 onClick={() => handleEdit(record)}
               />
             </Tooltip>
@@ -394,7 +495,7 @@ const Users = () => {
             <Tooltip title="Change Password">
               <Button
                 type="text"
-                icon={<LockOutlined />}
+                icon={<Lock className="h-4 w-4" />}
                 onClick={() => handleChangePassword(record)}
               />
             </Tooltip>
@@ -410,20 +511,20 @@ const Users = () => {
                 <Button
                   type="text"
                   danger
-                  icon={<DeleteOutlined />}
+                  icon={<Trash2 className="h-4 w-4" />}
                 />
               </Tooltip>
             </Popconfirm>
           )}
-        </Space>
+        </div>
       )
     }
   ];
 
   const roleOptions = [
-    { value: 'admin', label: 'Admin', icon: <CrownOutlined /> },
-    { value: 'manager', label: 'Manager', icon: <SettingOutlined /> },
-    { value: 'staff', label: 'Staff', icon: <UserOutlined /> }
+    { value: 'admin', label: 'Admin', icon: <Crown className="h-4 w-4" /> },
+    { value: 'manager', label: 'Manager', icon: <Settings className="h-4 w-4" /> },
+    { value: 'staff', label: 'Staff', icon: <User className="h-4 w-4" /> }
   ];
 
   const statusOptions = [
@@ -433,24 +534,24 @@ const Users = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ margin: 0 }}>Users Management</h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="m-0">Users Management</h1>
         {isAdmin && (
-          <Space>
+          <div className="flex items-center gap-2">
             <Button
-              icon={<LinkOutlined />}
+              icon={<Link className="h-4 w-4" />}
               onClick={handleInviteUser}
             >
               Invite User
             </Button>
             <Button
               type="primary"
-              icon={<PlusOutlined />}
+              icon={<Plus className="h-4 w-4" />}
               onClick={handleCreate}
             >
               Add User
             </Button>
-          </Space>
+          </div>
         )}
       </div>
 
@@ -462,8 +563,8 @@ const Users = () => {
               <Statistic
                 title="Total Users"
                 value={stats.totalUsers || 0}
-                prefix={<TeamOutlined />}
-                valueStyle={{ color: '#1890ff' }}
+                prefix={<UsersIcon className="h-4 w-4" />}
+                valueStyle={{ color: '#166534' }}
               />
             </Card>
           </Col>
@@ -472,7 +573,7 @@ const Users = () => {
               <Statistic
                 title="Admins"
                 value={stats.adminUsers || 0}
-                prefix={<CrownOutlined />}
+                prefix={<Crown className="h-4 w-4" />}
                 valueStyle={{ color: '#ff4d4f' }}
               />
             </Card>
@@ -482,7 +583,7 @@ const Users = () => {
               <Statistic
                 title="Managers"
                 value={stats.managerUsers || 0}
-                prefix={<SettingOutlined />}
+                prefix={<Settings className="h-4 w-4" />}
                 valueStyle={{ color: '#722ed1' }}
               />
             </Card>
@@ -494,7 +595,7 @@ const Users = () => {
       <Card style={{ marginBottom: 16 }}>
         <Row gutter={[16, 16]}>
           <Col xs={24} sm={6}>
-            <Input.Search
+            <AntdInput.Search
               placeholder="Search users..."
               allowClear
               style={{ width: '100%' }}
@@ -502,7 +603,7 @@ const Users = () => {
             />
           </Col>
           <Col xs={24} sm={6}>
-            <Select
+            <AntdSelect
               placeholder="Filter by Role"
               allowClear
               style={{ width: '100%' }}
@@ -510,14 +611,14 @@ const Users = () => {
               onChange={(value) => handleFilterChange('role', value)}
             >
               {roleOptions.map(option => (
-                <Option key={option.value} value={option.value}>
+                <AntdSelect.Option key={option.value} value={option.value}>
                   {option.icon} {option.label}
-                </Option>
+                </AntdSelect.Option>
               ))}
-            </Select>
+            </AntdSelect>
           </Col>
           <Col xs={24} sm={6}>
-            <Select
+            <AntdSelect
               placeholder="Filter by Status"
               allowClear
               style={{ width: '100%' }}
@@ -525,9 +626,9 @@ const Users = () => {
               onChange={(value) => handleFilterChange('isActive', value)}
             >
               {statusOptions.map(option => (
-                <Option key={option.value} value={option.value}>{option.label}</Option>
+                <AntdSelect.Option key={option.value} value={option.value}>{option.label}</AntdSelect.Option>
               ))}
-            </Select>
+            </AntdSelect>
           </Col>
           <Col xs={24} sm={6}>
             <Button
@@ -636,151 +737,168 @@ const Users = () => {
         />
       </Card>
 
-      {/* Add/Edit Modal */}
-      <Modal
-        title={editingUser ? 'Edit User' : 'Add New User'}
-        open={modalVisible}
-        onCancel={() => setModalVisible(false)}
-        footer={null}
-        width={600}
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleSubmit}
-        >
-          <Row gutter={16}>
-            <Col xs={24} sm={12}>
-              <Form.Item
+      {/* Add/Edit Dialog */}
+      <Dialog open={modalVisible} onOpenChange={(open) => {
+        if (!open) setModalVisible(false);
+      }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingUser ? 'Edit User' : 'Add New User'}</DialogTitle>
+            <DialogDescription>
+              {editingUser ? 'Update user information' : 'Create a new user account'}
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
                 name="name"
-                label="Full Name"
-                rules={[{ required: true, message: 'Please enter full name' }]}
-              >
-                <Input placeholder="Enter full name" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                name="email"
-                label="Email"
-                rules={[
-                  { required: true, message: 'Please enter email' },
-                  { type: 'email', message: 'Please enter valid email' }
-                ]}
-              >
-                <Input placeholder="Enter email address" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                name="role"
-                label="Role"
-                rules={[{ required: true, message: 'Please select role' }]}
-              >
-                <Select placeholder="Select role">
-                  {roleOptions.map(option => (
-                    <Option key={option.value} value={option.value}>
-                      {option.icon} {option.label}
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                name="isActive"
-                label="Status"
-                valuePropName="checked"
-              >
-                <Switch 
-                  checkedChildren="Active" 
-                  unCheckedChildren="Inactive" 
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Full Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Enter full name" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          {!editingUser && (
-            <Alert
-              message="Default Password"
-              description="New users will be created with default password 'default123'. They will be required to change it on first login."
-              type="info"
-              showIcon
-              style={{ marginBottom: 16 }}
-            />
-          )}
-
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit">
-                {editingUser ? 'Update' : 'Create'} User
-              </Button>
-              <Button onClick={() => setModalVisible(false)}>
+                <FormField
+                  control={form.control}
+                name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input type="email" placeholder="Enter email address" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                name="role"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Role</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select role" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                  {roleOptions.map(option => (
+                            <SelectItem key={option.value} value={option.value}>
+                              <span className="flex items-center gap-2">
+                      {option.icon} {option.label}
+                              </span>
+                            </SelectItem>
+                  ))}
+                        </SelectContent>
+                </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                name="isActive"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-col space-y-2 pt-7">
+                      <FormLabel>Status</FormLabel>
+                      <FormControl>
+                        <div className="flex items-center space-x-2">
+                <Switch 
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                          <span className="text-sm text-muted-foreground">
+                            {field.value ? 'Active' : 'Inactive'}
+                          </span>
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              {!editingUser && (
+                <Alert>
+                  <AlertTitle>Default Password</AlertTitle>
+                  <AlertDescription>
+                    New users will be created with default password 'default123'. They will be required to change it on first login.
+                  </AlertDescription>
+                </Alert>
+              )}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setModalVisible(false)}>
                 Cancel
               </Button>
-            </Space>
-          </Form.Item>
+                <Button type="submit">
+                  {editingUser ? 'Update' : 'Create'} User
+                </Button>
+              </DialogFooter>
+            </form>
         </Form>
-      </Modal>
+        </DialogContent>
+      </Dialog>
 
-      {/* Change Password Modal */}
-      <Modal
-        title="Change Password"
-        open={passwordModalVisible}
-        onCancel={() => setPasswordModalVisible(false)}
-        footer={null}
-        width={500}
-      >
-        <Form
-          form={passwordForm}
-          layout="vertical"
-          onFinish={handlePasswordSubmit}
-        >
-          <Form.Item
+      {/* Change Password Dialog */}
+      <Dialog open={passwordModalVisible} onOpenChange={(open) => {
+        if (!open) setPasswordModalVisible(false);
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change Password</DialogTitle>
+            <DialogDescription>
+              Update password for {viewingUser?.name || 'user'}
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...passwordForm}>
+            <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className="space-y-4">
+              <FormField
+                control={passwordForm.control}
             name="newPassword"
-            label="New Password"
-            rules={[
-              { required: true, message: 'Please enter new password' },
-              { min: 6, message: 'Password must be at least 6 characters' }
-            ]}
-          >
-            <Input.Password placeholder="Enter new password" />
-          </Form.Item>
-
-          <Form.Item
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>New Password</FormLabel>
+                    <FormControl>
+                      <Input type="password" placeholder="Enter new password" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={passwordForm.control}
             name="confirmPassword"
-            label="Confirm Password"
-            dependencies={['newPassword']}
-            rules={[
-              { required: true, message: 'Please confirm password' },
-              ({ getFieldValue }) => ({
-                validator(_, value) {
-                  if (!value || getFieldValue('newPassword') === value) {
-                    return Promise.resolve();
-                  }
-                  return Promise.reject(new Error('Passwords do not match'));
-                },
-              }),
-            ]}
-          >
-            <Input.Password placeholder="Confirm new password" />
-          </Form.Item>
-
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit">
-                Update Password
-              </Button>
-              <Button onClick={() => setPasswordModalVisible(false)}>
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Confirm Password</FormLabel>
+                    <FormControl>
+                      <Input type="password" placeholder="Confirm new password" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setPasswordModalVisible(false)}>
                 Cancel
               </Button>
-            </Space>
-          </Form.Item>
+                <Button type="submit">
+                  Update Password
+                </Button>
+              </DialogFooter>
+            </form>
         </Form>
-      </Modal>
+        </DialogContent>
+      </Dialog>
 
       {/* User Details Drawer */}
       <DetailsDrawer
@@ -804,7 +922,7 @@ const Users = () => {
               handleChangePassword(viewingUser);
               setDrawerVisible(false);
             },
-            icon: <LockOutlined />
+            icon: <Lock className="h-4 w-4" />
           } : null,
           isAdmin && viewingUser ? {
             label: 'Update Profile',
@@ -812,7 +930,7 @@ const Users = () => {
               handleProfileUpdate(viewingUser);
               setDrawerVisible(false);
             },
-            icon: <UserOutlined />
+            icon: <User className="h-4 w-4" />
           } : null
         ].filter(Boolean)}
         fields={viewingUser ? [
@@ -823,7 +941,7 @@ const Users = () => {
               <Avatar
                 size={80}
                 src={picture}
-                icon={<UserOutlined />}
+                icon={<User className="h-4 w-4" />}
               />
             )
           },
@@ -833,8 +951,8 @@ const Users = () => {
             label: 'Role', 
             value: viewingUser.role,
             render: (role) => {
-              const colors = { admin: 'red', manager: 'blue', staff: 'green' };
-              const icons = { admin: <CrownOutlined />, manager: <SettingOutlined />, staff: <UserOutlined /> };
+              const colors = { admin: 'red', manager: '#166534', staff: 'green' };
+              const icons = { admin: <Crown className="h-4 w-4" />, manager: <Settings className="h-4 w-4" />, staff: <User className="h-4 w-4" /> };
               return <Tag color={colors[role]} icon={icons[role]}>{role.toUpperCase()}</Tag>;
             }
           },
@@ -865,113 +983,113 @@ const Users = () => {
         ] : []}
       />
 
-      {/* Invite User Modal */}
-      <Modal
-        title="Invite New User"
-        open={inviteModalVisible}
-        onCancel={() => {
+      {/* Invite User Dialog */}
+      <Dialog open={inviteModalVisible} onOpenChange={(open) => {
+        if (!open) {
           setInviteModalVisible(false);
           setGeneratedInviteLink(null);
-        }}
-        footer={null}
-        width={600}
-      >
+        }
+      }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Invite New User</DialogTitle>
+            <DialogDescription>
+              Generate an invite link to share with a new user
+            </DialogDescription>
+          </DialogHeader>
         {!generatedInviteLink ? (
-          <Form
-            form={inviteForm}
-            layout="vertical"
-            onFinish={handleInviteSubmit}
-          >
-            <Form.Item
+            <Form {...inviteForm}>
+              <form onSubmit={inviteForm.handleSubmit(onInviteSubmit)} className="space-y-4">
+                <FormField
+                  control={inviteForm.control}
               name="email"
-              label="Email Address"
-              rules={[
-                { required: true, message: 'Please enter email address' },
-                { type: 'email', message: 'Please enter valid email' }
-              ]}
-            >
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email Address</FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <Mail className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
               <Input 
+                            type="email"
                 placeholder="user@example.com"
-                prefix={<MailOutlined />}
-              />
-            </Form.Item>
-
-            <Form.Item
-              name="name"
-              label="Name (Optional)"
-              help="Pre-fills the signup form for the user"
-            >
-              <Input 
-                placeholder="John Doe"
-                prefix={<UserOutlined />}
-              />
-            </Form.Item>
-
-            <Form.Item
+                            className="pl-9"
+                            {...field}
+                          />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={inviteForm.control}
               name="role"
-              label="Role"
-              rules={[{ required: true, message: 'Please select role' }]}
-            >
-              <Select placeholder="Select role">
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Role</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select role" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
                 {roleOptions.map(option => (
-                  <Option key={option.value} value={option.value}>
+                            <SelectItem key={option.value} value={option.value}>
+                              <span className="flex items-center gap-2">
                     {option.icon} {option.label}
-                  </Option>
+                              </span>
+                            </SelectItem>
                 ))}
+                        </SelectContent>
               </Select>
-            </Form.Item>
-
-            <Alert
-              message="How It Works"
-              description="An invite link will be generated that you can share with the user. They'll click the link to complete registration."
-              type="info"
-              showIcon
-              style={{ marginBottom: 16 }}
-            />
-
-            <Form.Item>
-              <Space>
-                <Button type="primary" htmlType="submit">
-                  Generate Invite Link
-                </Button>
-                <Button onClick={() => {
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <Alert>
+                  <AlertTitle>How It Works</AlertTitle>
+                  <AlertDescription>
+                    An invite link will be generated that you can share with the user. They'll click the link to complete registration.
+                  </AlertDescription>
+                </Alert>
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => {
                   setInviteModalVisible(false);
                   setGeneratedInviteLink(null);
                 }}>
                   Cancel
                 </Button>
-              </Space>
-            </Form.Item>
+                  <Button type="submit">
+                    Generate Invite Link
+                  </Button>
+                </DialogFooter>
+              </form>
           </Form>
         ) : (
-          <div>
-            <Alert
-              message={isExistingInvite ? "Existing Invite Found!" : "Invite Link Generated!"}
-              description={isExistingInvite 
+            <div className="space-y-4">
+              <Alert variant={isExistingInvite ? 'default' : 'default'}>
+                <AlertTitle>{isExistingInvite ? "Existing Invite Found!" : "Invite Link Generated!"}</AlertTitle>
+                <AlertDescription>
+                  {isExistingInvite 
                 ? "This user has already been invited. You can copy the existing invite link below."
                 : "Copy the link below and share it with the user. The link will expire in 7 days."}
-              type={isExistingInvite ? "warning" : "success"}
-              showIcon
-              style={{ marginBottom: 24 }}
-            />
-
-            <Input.Group compact>
+                </AlertDescription>
+              </Alert>
+              <div className="flex gap-2">
               <Input
                 value={generatedInviteLink}
                 readOnly
-                style={{ width: 'calc(100% - 100px)' }}
+                  className="flex-1"
               />
               <Button
-                type="primary"
-                icon={<CopyOutlined />}
                 onClick={handleCopyInviteLink}
-                style={{ width: '100px' }}
               >
+                  <Copy className="h-4 w-4 mr-2" />
                 Copy
               </Button>
-            </Input.Group>
-
-            <Space style={{ marginTop: 16, width: '100%', justifyContent: 'flex-end' }}>
+              </div>
+              <DialogFooter>
               <Button onClick={() => {
                 setInviteModalVisible(false);
                 setGeneratedInviteLink(null);
@@ -979,10 +1097,11 @@ const Users = () => {
               }}>
                 Close
               </Button>
-            </Space>
+              </DialogFooter>
           </div>
         )}
-      </Modal>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

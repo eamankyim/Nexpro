@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, Progress, Statistic, Row, Col, Alert, Button, Tag, Tooltip, Space } from 'antd';
-import { TeamOutlined, InfoCircleOutlined, RocketOutlined } from '@ant-design/icons';
+import { Users, Info, Rocket } from 'lucide-react';
 import inviteService from '../services/inviteService';
 
 /**
@@ -65,10 +65,10 @@ function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
     <Card 
       title={
         <Space>
-          <TeamOutlined />
+          <Users className="h-4 w-4" />
           <span>Team Seats</span>
           {planName && (
-            <Tag color="blue" style={{ marginLeft: 8 }}>
+            <Tag color="#166534" style={{ marginLeft: 8 }}>
               {planName} Plan
             </Tag>
           )}
@@ -77,7 +77,7 @@ function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
       style={style}
       extra={
         isUnlimited ? (
-          <Tag color="green" icon={<InfoCircleOutlined />}>
+          <Tag color="green" icon={<Info className="h-4 w-4" />}>
             Unlimited
           </Tag>
         ) : null
@@ -154,7 +154,7 @@ function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
               style={{ marginBottom: 16 }}
               action={
                 showUpgradeButton && (
-                  <Button size="small" type="primary" icon={<RocketOutlined />}>
+                  <Button size="small" type="primary" icon={<Rocket className="h-4 w-4" />}>
                     Upgrade Plan
                   </Button>
                 )
@@ -180,7 +180,7 @@ function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
               marginTop: 12 
             }}>
               <Tooltip title="Add seats beyond your base limit">
-                <InfoCircleOutlined style={{ marginRight: 8, color: '#1890ff' }} />
+                <Info className="h-4 w-4" style={{ marginRight: 8, color: '#166534' }} />
                 <span style={{ fontSize: 13 }}>
                   Need more seats? Add them for <strong>GHS {pricePerAdditional}</strong> per user
                 </span>

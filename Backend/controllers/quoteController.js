@@ -199,6 +199,37 @@ exports.createQuote = async (req, res, next) => {
       success: true,
       data: formatQuoteResponse(fullQuote)
     });
+
+    // Send WhatsApp notification if enabled and customer has phone
+    try {
+      const whatsappService = require('../services/whatsappService');
+      const whatsappTemplates = require('../services/whatsappTemplates');
+      const config = await whatsappService.getConfig(req.tenantId);
+      
+      if (config && fullQuote.customer && fullQuote.customer.phone) {
+        const phoneNumber = whatsappService.validatePhoneNumber(fullQuote.customer.phone);
+        if (phoneNumber) {
+          const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+          const quoteLink = `${frontendUrl}/quotes/${fullQuote.id}`;
+          const parameters = whatsappTemplates.prepareQuoteDelivery(
+            fullQuote,
+            fullQuote.customer,
+            quoteLink
+          );
+          
+          await whatsappService.sendMessage(
+            req.tenantId,
+            phoneNumber,
+            'quote_delivery',
+            parameters
+          ).catch(error => {
+            console.error('[Quote] WhatsApp send failed:', error);
+          });
+        }
+      }
+    } catch (error) {
+      console.error('[Quote] WhatsApp integration error:', error);
+    }
   } catch (error) {
     console.error('Error creating quote:', error);
     next(error);

@@ -1,46 +1,76 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Table, InputNumber, Tag, Alert } from 'antd';
 import {
-  Row,
-  Col,
-  Card,
-  Statistic,
-  Table,
-  Space,
-  Button,
-  Input,
-  Select,
-  Tag,
-  message,
-  Modal,
-  Form,
-  InputNumber,
-  Typography,
-  Divider,
-  Alert,
-  Timeline,
-  Switch,
-  Descriptions
-} from 'antd';
-import {
-  AppstoreOutlined,
-  PlusOutlined,
-  ReloadOutlined,
-  InboxOutlined,
-  AlertOutlined,
-  DollarCircleOutlined,
-  PlusCircleOutlined,
-  EditOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined
-} from '@ant-design/icons';
+  AppWindow,
+  Plus,
+  RefreshCw,
+  Inbox,
+  AlertTriangle,
+  DollarSign,
+  PlusCircle,
+  Pencil,
+  ArrowUp,
+  ArrowDown,
+  Loader2,
+  Search
+} from 'lucide-react';
 import dayjs from 'dayjs';
 import DetailsDrawer from '../components/DetailsDrawer';
 import ActionColumn from '../components/ActionColumn';
+import StatusChip from '../components/StatusChip';
+import TableSkeleton from '../components/TableSkeleton';
+import DetailSkeleton from '../components/DetailSkeleton';
 import inventoryService from '../services/inventoryService';
 import vendorService from '../services/vendorService';
-
-const { Title, Text } = Typography;
-const { Option } = Select;
+import { useAuth } from '../context/AuthContext';
+import { showSuccess, showError } from '../utils/toast';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { StatisticCard } from '@/components/ui/statistic-card';
+import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
+import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 
 const sortCategories = (list = []) =>
   [...list].sort((a, b) => a.name.localeCompare(b.name));
@@ -50,12 +80,12 @@ const stockStatus = (item) => {
   const reorder = parseFloat(item.reorderLevel || 0);
 
   if (quantity <= 0) {
-    return { color: 'red', label: 'Out of stock' };
+    return { color: 'destructive', label: 'Out of stock' };
   }
   if (quantity <= reorder) {
-    return { color: 'orange', label: 'Low stock' };
+    return { color: 'secondary', label: 'Low stock' };
   }
-  return { color: 'green', label: 'In stock' };
+  return { color: 'default', label: 'In stock' };
 };
 
 const valueFormatter = (value) =>
@@ -64,7 +94,53 @@ const valueFormatter = (value) =>
     maximumFractionDigits: 2
   })}`;
 
+const itemSchema = z.object({
+  name: z.string().min(1, 'Item name is required'),
+  sku: z.string().optional(),
+  categoryId: z.string().optional(),
+  unit: z.string().min(1, 'Unit is required'),
+  quantityOnHand: z.number().min(0, 'Quantity must be at least 0'),
+  reorderLevel: z.number().min(0, 'Reorder level must be at least 0'),
+  preferredVendorId: z.string().optional(),
+  unitCost: z.number().min(0, 'Unit cost must be at least 0'),
+  location: z.string().optional(),
+  isActive: z.boolean().default(true),
+  description: z.string().optional(),
+});
+
+const categorySchema = z.object({
+  name: z.string().min(1, 'Category name is required'),
+  description: z.string().optional(),
+});
+
+const restockSchema = z.object({
+  quantity: z.number().min(0.01, 'Quantity must be greater than 0'),
+  unitCost: z.number().min(0, 'Unit cost must be at least 0').optional(),
+  reference: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+const adjustSchema = z.object({
+  adjustmentMode: z.enum(['set', 'delta']),
+  newQuantity: z.number().min(0, 'Quantity must be at least 0').optional(),
+  quantityDelta: z.number().optional(),
+  reason: z.string().optional(),
+  notes: z.string().optional(),
+}).refine((data) => {
+  if (data.adjustmentMode === 'set') {
+    return data.newQuantity !== undefined;
+  }
+  return data.quantityDelta !== undefined;
+}, {
+  message: 'Quantity is required',
+  path: ['newQuantity'],
+});
+
 const Inventory = () => {
+  const { activeTenant } = useAuth();
+  const businessType = activeTenant?.businessType || 'printing_press';
+  const isPrintingPress = businessType === 'printing_press';
+  
   const [items, setItems] = useState([]);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [loading, setLoading] = useState(false);
@@ -80,6 +156,8 @@ const Inventory = () => {
   const [restockModalVisible, setRestockModalVisible] = useState(false);
   const [adjustModalVisible, setAdjustModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
+  const [deactivateItemId, setDeactivateItemId] = useState(null);
+  const [deactivateDialogOpen, setDeactivateDialogOpen] = useState(false);
   const [filters, setFilters] = useState({
     search: '',
     categoryId: 'all',
@@ -87,10 +165,53 @@ const Inventory = () => {
     lowStock: false
   });
 
-  const [itemForm] = Form.useForm();
-  const [restockForm] = Form.useForm();
-  const [adjustForm] = Form.useForm();
-  const [categoryForm] = Form.useForm();
+  const itemForm = useForm({
+    resolver: zodResolver(itemSchema),
+    defaultValues: {
+      name: '',
+      sku: '',
+      categoryId: '',
+      unit: 'pcs',
+      quantityOnHand: 0,
+      reorderLevel: 0,
+      preferredVendorId: '',
+      unitCost: 0,
+      location: '',
+      isActive: true,
+      description: '',
+    },
+  });
+
+  const categoryForm = useForm({
+    resolver: zodResolver(categorySchema),
+    defaultValues: {
+      name: '',
+      description: '',
+    },
+  });
+
+  const restockForm = useForm({
+    resolver: zodResolver(restockSchema),
+    defaultValues: {
+      quantity: 1,
+      unitCost: 0,
+      reference: '',
+      notes: '',
+    },
+  });
+
+  const adjustForm = useForm({
+    resolver: zodResolver(adjustSchema),
+    defaultValues: {
+      adjustmentMode: 'set',
+      newQuantity: 0,
+      quantityDelta: 0,
+      reason: '',
+      notes: '',
+    },
+  });
+
+  const adjustmentMode = adjustForm.watch('adjustmentMode');
 
   useEffect(() => {
     fetchCategories();
@@ -108,7 +229,7 @@ const Inventory = () => {
       setCategories(sortCategories(data));
     } catch (error) {
       console.error('Failed to load categories', error);
-      message.error('Failed to load categories');
+      showError(error, 'Failed to load categories');
     }
   };
 
@@ -119,7 +240,7 @@ const Inventory = () => {
       setSummary(response?.data || {});
     } catch (error) {
       console.error('Failed to load inventory summary', error);
-      message.error('Failed to load inventory summary');
+      showError(error, 'Failed to load inventory summary');
     } finally {
       setSummaryLoading(false);
     }
@@ -128,14 +249,6 @@ const Inventory = () => {
   const fetchItems = async () => {
     setLoading(true);
     try {
-      console.log('[Inventory] Fetch items params', {
-        page: pagination.current,
-        limit: pagination.pageSize,
-        search: filters.search || undefined,
-        categoryId: filters.categoryId !== 'all' ? filters.categoryId : undefined,
-        status: filters.status !== 'all' ? filters.status : undefined,
-        lowStock: filters.lowStock
-      });
       const response = await inventoryService.getItems({
         page: pagination.current,
         limit: pagination.pageSize,
@@ -146,7 +259,6 @@ const Inventory = () => {
       });
 
       const payload = response || {};
-      console.log('[Inventory] Items response', payload);
       const rows = Array.isArray(payload.data) ? payload.data : [];
       setItems(rows);
       setPagination((prev) => ({
@@ -155,7 +267,7 @@ const Inventory = () => {
       }));
     } catch (error) {
       console.error('Failed to load inventory items', error);
-      message.error('Failed to load inventory items');
+      showError(error, 'Failed to load inventory items');
     } finally {
       setLoading(false);
     }
@@ -171,12 +283,12 @@ const Inventory = () => {
   };
 
   const openCategoryModal = (context = null) => {
-    categoryForm.resetFields();
+    categoryForm.reset();
     setCategoryModalContext(context);
     setCategoryModalVisible(true);
   };
 
-  const handleCategorySubmit = async (values) => {
+  const onCategorySubmit = async (values) => {
     try {
       const payload = await inventoryService.createCategory(values);
       const newCategory = payload?.data || payload;
@@ -184,22 +296,21 @@ const Inventory = () => {
         throw new Error('Invalid category response');
       }
       setCategories((prev) => sortCategories([...prev, newCategory]));
-      message.success('Category added successfully');
+      showSuccess('Category added successfully');
       setCategoryModalVisible(false);
 
       if (categoryModalContext === 'filter') {
         setFilters((prev) => ({ ...prev, categoryId: newCategory.id }));
         setPagination((prev) => ({ ...prev, current: 1 }));
       } else if (categoryModalContext === 'item') {
-        itemForm.setFieldsValue({ categoryId: newCategory.id });
+        itemForm.setValue('categoryId', newCategory.id);
       }
 
       setCategoryModalContext(null);
       fetchSummary();
     } catch (error) {
       console.error('Failed to create category', error);
-      const errorMsg = error?.response?.data?.message || 'Failed to create category';
-      message.error(errorMsg);
+      showError(error, error?.response?.data?.message || 'Failed to create category');
     }
   };
 
@@ -232,19 +343,15 @@ const Inventory = () => {
   };
 
   const handleViewItem = async (record) => {
-    // Set viewing item immediately with data from table row
     setViewingItem(record);
-    // Open drawer immediately
     setDrawerVisible(true);
-    // Load full details asynchronously
     try {
       const response = await inventoryService.getById(record.id);
       const data = response?.data || response;
       setViewingItem(data);
     } catch (error) {
       console.error('Failed to fetch inventory item', error);
-      message.error('Failed to load inventory details');
-      // Keep the record data from table row if loading fails
+      showError(error, 'Failed to load inventory details');
     }
   };
 
@@ -255,65 +362,71 @@ const Inventory = () => {
 
     setEditingItem(item);
     if (item) {
-      itemForm.setFieldsValue({
+      itemForm.reset({
         name: item.name,
-        sku: item.sku,
-        categoryId: item.categoryId || undefined,
+        sku: item.sku || '',
+        categoryId: item.categoryId || '',
         unit: item.unit,
         quantityOnHand: parseFloat(item.quantityOnHand || 0),
         reorderLevel: parseFloat(item.reorderLevel || 0),
-        preferredVendorId: item.preferredVendorId || undefined,
+        preferredVendorId: item.preferredVendorId || '',
         unitCost: parseFloat(item.unitCost || 0),
-        location: item.location,
-        isActive: item.isActive
+        location: item.location || '',
+        isActive: item.isActive,
+        description: item.description || '',
       });
     } else {
-      itemForm.resetFields();
-      itemForm.setFieldsValue({
+      itemForm.reset({
+        name: '',
+        sku: '',
+        categoryId: '',
         unit: 'pcs',
         quantityOnHand: 0,
         reorderLevel: 0,
+        preferredVendorId: '',
         unitCost: 0,
-        isActive: true
+        location: '',
+        isActive: true,
+        description: '',
       });
     }
 
     setItemModalVisible(true);
   };
 
-  const handleItemSubmit = async (values) => {
+  const onItemSubmit = async (values) => {
     try {
       if (editingItem) {
         await inventoryService.updateItem(editingItem.id, values);
-        message.success('Inventory item updated successfully');
+        showSuccess('Inventory item updated successfully');
       } else {
         await inventoryService.createItem(values);
-        message.success('Inventory item created successfully');
+        showSuccess('Inventory item created successfully');
       }
       setItemModalVisible(false);
       fetchItems();
       fetchSummary();
     } catch (error) {
       console.error('Failed to save inventory item', error);
-      const errorMsg = error?.response?.data?.message || 'Failed to save inventory item';
-      message.error(errorMsg);
+      showError(error, error?.response?.data?.message || 'Failed to save inventory item');
     }
   };
 
   const handleRestock = (record) => {
-    restockForm.resetFields();
-    restockForm.setFieldsValue({
+    restockForm.reset({
       quantity: 1,
-      unitCost: parseFloat(record.unitCost || 0)
+      unitCost: parseFloat(record.unitCost || 0),
+      reference: '',
+      notes: '',
     });
     setEditingItem(record);
     setRestockModalVisible(true);
   };
 
-  const submitRestock = async (values) => {
+  const onRestockSubmit = async (values) => {
     try {
       await inventoryService.restock(editingItem.id, values);
-      message.success('Inventory restocked successfully');
+      showSuccess('Inventory restocked successfully');
       setRestockModalVisible(false);
       fetchItems();
       fetchSummary();
@@ -322,29 +435,30 @@ const Inventory = () => {
       }
     } catch (error) {
       console.error('Failed to restock inventory', error);
-      const errorMsg = error?.response?.data?.message || 'Failed to restock inventory';
-      message.error(errorMsg);
+      showError(error, error?.response?.data?.message || 'Failed to restock inventory');
     }
   };
 
   const handleAdjust = (record) => {
-    adjustForm.resetFields();
-    adjustForm.setFieldsValue({
+    adjustForm.reset({
       adjustmentMode: 'set',
-      newQuantity: parseFloat(record.quantityOnHand || 0)
+      newQuantity: parseFloat(record.quantityOnHand || 0),
+      quantityDelta: 0,
+      reason: '',
+      notes: '',
     });
     setEditingItem(record);
     setAdjustModalVisible(true);
   };
 
-  const submitAdjustment = async (values) => {
+  const onAdjustSubmit = async (values) => {
     try {
       const payload = values.adjustmentMode === 'delta'
         ? { quantityDelta: values.quantityDelta, reason: values.reason, notes: values.notes }
         : { newQuantity: values.newQuantity, reason: values.reason, notes: values.notes };
 
       await inventoryService.adjust(editingItem.id, payload);
-      message.success('Inventory adjustment recorded');
+      showSuccess('Inventory adjustment recorded');
       setAdjustModalVisible(false);
       fetchItems();
       fetchSummary();
@@ -353,42 +467,39 @@ const Inventory = () => {
       }
     } catch (error) {
       console.error('Failed to adjust inventory', error);
-      const errorMsg = error?.response?.data?.message || 'Failed to adjust inventory';
-      message.error(errorMsg);
+      showError(error, error?.response?.data?.message || 'Failed to adjust inventory');
     }
   };
 
   const handleToggleActive = async (record) => {
     if (record.isActive) {
-      Modal.confirm({
-        title: 'Deactivate Inventory Item',
-        content: `Are you sure you want to deactivate ${record.name}?`,
-        okText: 'Deactivate',
-        okButtonProps: { danger: true },
-        onOk: async () => {
-          try {
-            await inventoryService.deleteItem(record.id);
-            message.success('Inventory item deactivated');
-            fetchItems();
-            fetchSummary();
-          } catch (error) {
-            console.error('Failed to deactivate inventory item', error);
-            const errorMsg = error?.response?.data?.message || 'Failed to deactivate inventory item';
-            message.error(errorMsg);
-          }
-        }
-      });
+      setDeactivateItemId(record.id);
+      setDeactivateDialogOpen(true);
     } else {
       try {
         await inventoryService.updateItem(record.id, { isActive: true });
-        message.success('Inventory item reactivated');
+        showSuccess('Inventory item reactivated');
+            fetchItems();
+            fetchSummary();
+          } catch (error) {
+        console.error('Failed to activate inventory item', error);
+        showError(error, error?.response?.data?.message || 'Failed to activate inventory item');
+      }
+    }
+  };
+
+  const handleDeactivate = async () => {
+    if (!deactivateItemId) return;
+    try {
+      await inventoryService.deleteItem(deactivateItemId);
+      showSuccess('Inventory item deactivated');
         fetchItems();
         fetchSummary();
+      setDeactivateDialogOpen(false);
+      setDeactivateItemId(null);
       } catch (error) {
-        console.error('Failed to activate inventory item', error);
-        const errorMsg = error?.response?.data?.message || 'Failed to activate inventory item';
-        message.error(errorMsg);
-      }
+      console.error('Failed to deactivate inventory item', error);
+      showError(error, error?.response?.data?.message || 'Failed to deactivate inventory item');
     }
   };
 
@@ -399,13 +510,13 @@ const Inventory = () => {
       key: 'name',
       render: (_, record) => {
         const status = stockStatus(record);
+        // Map stock status labels to status values for StatusChip
+        const statusValue = status.label.toLowerCase().replace(' ', '_');
         return (
           <div>
-            <div style={{ fontWeight: 600 }}>{record.name}</div>
-            <div style={{ color: '#888' }}>{record.sku || '—'}</div>
-            <Tag color={status.color} style={{ marginTop: 4 }}>
-              {status.label}
-            </Tag>
+            <div className="font-semibold">{record.name}</div>
+            <div className="text-muted-foreground text-sm">{record.sku || '—'}</div>
+            <StatusChip status={statusValue} className="mt-1" />
           </div>
         );
       }
@@ -422,8 +533,8 @@ const Inventory = () => {
       key: 'quantityOnHand',
       render: (value, record) => (
         <div>
-          <div style={{ fontWeight: 600 }}>{parseFloat(value || 0).toFixed(2)} {record.unit}</div>
-          <div style={{ color: '#888', fontSize: 12 }}>Reorder at {parseFloat(record.reorderLevel || 0).toFixed(2)}</div>
+          <div className="font-semibold">{parseFloat(value || 0).toFixed(2)} {record.unit}</div>
+          <div className="text-muted-foreground text-xs">Reorder at {parseFloat(record.reorderLevel || 0).toFixed(2)}</div>
         </div>
       )
     },
@@ -457,46 +568,46 @@ const Inventory = () => {
           extraActions={[
             {
               label: 'Restock',
-              icon: <PlusCircleOutlined />,
+              icon: <PlusCircle className="h-4 w-4" />,
               onClick: () => handleRestock(record)
             },
             {
               label: 'Adjust',
-              icon: <EditOutlined />,
+              icon: <Pencil className="h-4 w-4" />,
               onClick: () => handleAdjust(record)
             },
             {
               label: record.isActive ? 'Deactivate' : 'Activate',
               danger: record.isActive,
-              icon: record.isActive ? <ArrowDownOutlined /> : <ArrowUpOutlined />,
+              icon: record.isActive ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />,
               onClick: () => handleToggleActive(record)
             }
           ]}
         />
       )
     }
-  ], [handleAdjust, handleRestock, handleToggleActive]);
+  ], []);
 
   const summaryCards = [
     {
       title: 'Total Items',
       value: summary?.totals?.totalItems || 0,
-      prefix: <AppstoreOutlined style={{ color: '#1890ff' }} />
+      prefix: <AppWindow className="h-4 w-4 text-primary" />
     },
     {
       title: 'Total Quantity',
       value: parseFloat(summary?.totals?.totalQuantity || 0).toFixed(2),
-      prefix: <InboxOutlined style={{ color: '#52c41a' }} />
+      prefix: <Inbox className="h-4 w-4 text-green-500" />
     },
     {
       title: 'Inventory Value',
       value: valueFormatter(summary?.totals?.inventoryValue || 0),
-      prefix: <DollarCircleOutlined style={{ color: '#faad14' }} />
+      prefix: <DollarSign className="h-4 w-4 text-yellow-500" />
     },
     {
       title: 'Low Stock Items',
       value: summary?.totals?.lowStockCount || 0,
-      prefix: <AlertOutlined style={{ color: '#ff4d4f' }} />
+      prefix: <AlertTriangle className="h-4 w-4 text-red-500" />
     }
   ];
 
@@ -506,34 +617,37 @@ const Inventory = () => {
     const movementItems = viewingItem.movements
       ?.sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt))
       .map((movement) => ({
-        color: movement.type === 'purchase' ? 'green' : movement.type === 'usage' ? 'red' : 'blue',
+        color: movement.type === 'purchase' ? 'green' : movement.type === 'usage' ? 'red' : '#166534',
         children: (
-          <div>
-            <div style={{ fontWeight: 600, marginBottom: 4 }}>
+          <TimelineItem key={movement.id}>
+            <TimelineIndicator className={movement.type === 'purchase' ? 'bg-green-500' : movement.type === 'usage' ? 'bg-red-500' : 'bg-[#166534]'} />
+            <TimelineContent>
+              <TimelineTitle>
               {movement.type.toUpperCase()} {movement.quantityDelta > 0 ? '+' : ''}{parseFloat(movement.quantityDelta).toFixed(2)} {viewingItem.unit}
-            </div>
-            <div style={{ color: '#888', fontSize: 12, marginBottom: 4 }}>
+              </TimelineTitle>
+              <TimelineTime>
               {dayjs(movement.occurredAt).format('MMM DD, YYYY [at] hh:mm A')} • New Qty: {parseFloat(movement.newQuantity).toFixed(2)}
-            </div>
+              </TimelineTime>
             {movement.reference && (
-              <div style={{ color: '#555', fontSize: 12 }}>Reference: {movement.reference}</div>
+                <TimelineDescription>Reference: {movement.reference}</TimelineDescription>
             )}
             {movement.createdByUser && (
-              <div style={{ color: '#555', fontSize: 12 }}>
+                <TimelineDescription>
                 By: {movement.createdByUser.name} ({movement.createdByUser.email})
-              </div>
+                </TimelineDescription>
             )}
-            {movement.job && (
-              <div style={{ color: '#555', fontSize: 12 }}>
+            {movement.job && isPrintingPress && (
+                <TimelineDescription>
                 Job: {movement.job.jobNumber} — {movement.job.title}
-              </div>
+                </TimelineDescription>
             )}
             {movement.notes && (
-              <div style={{ color: '#888', fontStyle: 'italic', marginTop: 4 }}>
+                <TimelineDescription className="italic">
                 Notes: {movement.notes}
-              </div>
+                </TimelineDescription>
             )}
-          </div>
+            </TimelineContent>
+          </TimelineItem>
         )
       }));
 
@@ -542,53 +656,59 @@ const Inventory = () => {
         key: 'summary',
         label: 'Summary',
         content: (
-          <Space direction="vertical" size="large" style={{ width: '100%' }}>
-            <Divider orientation="left">Stock</Divider>
-            <Row gutter={16}>
-              <Col span={12}>
-                <Card bordered={false}>
-                  <Statistic
-                    title="Quantity on Hand"
-                    value={`${parseFloat(viewingItem.quantityOnHand || 0).toFixed(2)} ${viewingItem.unit}`}
-                  />
+          <div className="space-y-6">
+            <Separator />
+            <div className="grid grid-cols-2 gap-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">Quantity on Hand</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    {parseFloat(viewingItem.quantityOnHand || 0).toFixed(2)} {viewingItem.unit}
+                  </div>
+                </CardContent>
                 </Card>
-              </Col>
-              <Col span={12}>
-                <Card bordered={false}>
-                  <Statistic
-                    title="Reorder Level"
-                    value={`${parseFloat(viewingItem.reorderLevel || 0).toFixed(2)} ${viewingItem.unit}`}
-                  />
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">Reorder Level</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    {parseFloat(viewingItem.reorderLevel || 0).toFixed(2)} {viewingItem.unit}
+                  </div>
+                </CardContent>
                 </Card>
-              </Col>
-            </Row>
+            </div>
 
-            <Descriptions column={1} bordered size="small">
-              <Descriptions.Item label="SKU">{viewingItem.sku || '—'}</Descriptions.Item>
-              <Descriptions.Item label="Category">{viewingItem.category?.name || 'Uncategorized'}</Descriptions.Item>
-              <Descriptions.Item label="Preferred Vendor">
+            <Descriptions column={1}>
+              <DescriptionItem label="SKU">{viewingItem.sku || '—'}</DescriptionItem>
+              <DescriptionItem label="Category">{viewingItem.category?.name || 'Uncategorized'}</DescriptionItem>
+              <DescriptionItem label="Preferred Vendor">
                 {viewingItem.preferredVendor?.name || '—'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Unit Cost">{valueFormatter(viewingItem.unitCost)}</Descriptions.Item>
-              <Descriptions.Item label="Total Value">
+              </DescriptionItem>
+              <DescriptionItem label="Unit Cost">{valueFormatter(viewingItem.unitCost)}</DescriptionItem>
+              <DescriptionItem label="Total Value">
                 {valueFormatter(parseFloat(viewingItem.unitCost || 0) * parseFloat(viewingItem.quantityOnHand || 0))}
-              </Descriptions.Item>
-              <Descriptions.Item label="Location">{viewingItem.location || '—'}</Descriptions.Item>
-              <Descriptions.Item label="Status">
-                <Tag color={viewingItem.isActive ? 'green' : 'red'}>
+              </DescriptionItem>
+              <DescriptionItem label="Location">{viewingItem.location || '—'}</DescriptionItem>
+              <DescriptionItem label="Status">
+                <Badge variant={viewingItem.isActive ? 'default' : 'destructive'}>
                   {viewingItem.isActive ? 'Active' : 'Inactive'}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Description">{viewingItem.description || '—'}</Descriptions.Item>
+                </Badge>
+              </DescriptionItem>
+              <DescriptionItem label="Description">{viewingItem.description || '—'}</DescriptionItem>
             </Descriptions>
-          </Space>
+          </div>
         )
       },
       {
         key: 'movements',
         label: 'Movement History',
         content: movementItems?.length ? (
-          <Timeline items={movementItems} />
+          <Timeline>
+            {movementItems.map(item => item.children)}
+          </Timeline>
         ) : (
           <Alert type="info" message="No movement history yet" />
         )
@@ -597,106 +717,102 @@ const Inventory = () => {
   }, [viewingItem]);
 
   return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <div>
-      <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
-        <Col>
-          <Title level={3} style={{ margin: 0 }}>Inventory</Title>
-          <Text type="secondary">Track and manage materials, stock levels, and movements.</Text>
-        </Col>
-        <Col>
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={() => { fetchItems(); fetchSummary(); }}>
+          <h1 className="text-3xl font-bold">Inventory</h1>
+          <p className="text-muted-foreground">Track and manage materials, stock levels, and movements.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => { fetchItems(); fetchSummary(); }}>
+            <RefreshCw className="h-4 w-4 mr-2" />
               Refresh
             </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => openItemModal()}>
+          <Button onClick={() => openItemModal()}>
+            <Plus className="h-4 w-4 mr-2" />
               New Item
             </Button>
-          </Space>
-        </Col>
-      </Row>
+        </div>
+      </div>
 
-      <Row gutter={16} style={{ marginBottom: 24 }}>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {summaryCards.map((card) => (
-          <Col xs={24} sm={12} md={6} key={card.title}>
-            <Card loading={summaryLoading}>
-              <Statistic
+          <StatisticCard
+            key={card.title}
                 title={card.title}
                 value={card.value}
                 prefix={card.prefix}
-              />
-            </Card>
-          </Col>
+            className={summaryLoading ? 'opacity-50' : ''}
+          />
         ))}
-      </Row>
+      </div>
 
-      <Card style={{ marginBottom: 24 }}>
-        <Row gutter={[16, 16]} align="middle">
-          <Col xs={24} sm={12} md={6}>
-            <Input.Search
-              allowClear
+      <Card>
+        <CardContent className="pt-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
               placeholder="Search by name, SKU, description"
-              onSearch={handleSearch}
-              defaultValue={filters.search}
-            />
-          </Col>
-          <Col xs={24} sm={12} md={6}>
-            <Select
-              value={filters.categoryId}
-              onChange={handleCategoryChange}
-              style={{ width: '100%' }}
-              placeholder="Filter by category"
-              dropdownRender={(menu) => (
-                <>
-                  {menu}
-                  <Divider style={{ margin: '8px 0' }} />
+                value={filters.search}
+                onChange={(e) => handleSearch(e.target.value)}
+                className="pl-10"
+              />
+            </div>
+            <Select value={filters.categoryId} onValueChange={handleCategoryChange}>
+              <SelectTrigger>
+                <SelectValue placeholder="Filter by category" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Categories</SelectItem>
+                {categories.map((category) => (
+                  <SelectItem key={category.id} value={category.id}>
+                    {category.name}
+                  </SelectItem>
+                ))}
+                <Separator className="my-2" />
                   <Button
-                    type="link"
-                    icon={<PlusOutlined />}
+                  variant="ghost"
+                  className="w-full justify-start"
                     onClick={() => openCategoryModal('filter')}
-                    block
                   >
+                  <Plus className="h-4 w-4 mr-2" />
                     Add category
                   </Button>
-                </>
-              )}
-            >
-              <Option value="all">All Categories</Option>
-              {categories.map((category) => (
-                <Option key={category.id} value={category.id}>
-                  {category.name}
-                </Option>
-              ))}
+              </SelectContent>
             </Select>
-          </Col>
-          <Col xs={24} sm={12} md={6}>
-            <Select
-              value={filters.status}
-              onChange={handleStatusChange}
-              style={{ width: '100%' }}
-            >
-              <Option value="active">Active</Option>
-              <Option value="inactive">Inactive</Option>
-              <Option value="all">All</Option>
+            <Select value={filters.status} onValueChange={handleStatusChange}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+                <SelectItem value="all">All</SelectItem>
+              </SelectContent>
             </Select>
-          </Col>
-          <Col xs={24} sm={12} md={6}>
-            <Space>
-              <Switch checked={filters.lowStock} onChange={handleLowStockToggle} />
-              <Text>Show low stock only</Text>
-            </Space>
-          </Col>
-        </Row>
+            <div className="flex items-center gap-2">
+              <Switch checked={filters.lowStock} onCheckedChange={handleLowStockToggle} />
+              <Label>Show low stock only</Label>
+            </div>
+          </div>
+        </CardContent>
       </Card>
 
-      <Table
-        columns={columns}
-        dataSource={items}
-        rowKey="id"
-        loading={loading}
-        pagination={pagination}
-        onChange={handleTableChange}
-        scroll={{ x: 1000 }}
-      />
+        {loading ? (
+          <div className="p-4">
+            <TableSkeleton rows={8} cols={7} />
+          </div>
+        ) : (
+          <Table
+            rowKey="id"
+            columns={columns}
+            dataSource={items}
+            pagination={pagination}
+            onChange={handleTableChange}
+            scroll={{ x: 1000 }}
+          />
+        )}
 
       <DetailsDrawer
         open={drawerVisible}
@@ -711,13 +827,13 @@ const Inventory = () => {
                 {
                   key: 'restock',
                   label: 'Restock',
-                  icon: <PlusCircleOutlined />,
+                  icon: <PlusCircle className="h-4 w-4" />,
                   onClick: () => handleRestock(viewingItem)
                 },
                 {
                   key: 'adjust',
                   label: 'Adjust',
-                  icon: <EditOutlined />,
+                  icon: <Pencil className="h-4 w-4" />,
                   onClick: () => handleAdjust(viewingItem)
                 }
               ]
@@ -727,267 +843,529 @@ const Inventory = () => {
         tabs={drawerTabs}
       />
 
-      <Modal
-        title={editingItem ? `Edit ${editingItem.name}` : 'New Inventory Item'}
-        open={itemModalVisible}
-        onCancel={() => setItemModalVisible(false)}
-        onOk={() => itemForm.submit()}
-        okText={editingItem ? 'Update' : 'Create'}
-        width={720}
-      >
-        <Form
-          layout="vertical"
-          form={itemForm}
-          onFinish={handleItemSubmit}
-        >
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
+      <Dialog open={itemModalVisible} onOpenChange={setItemModalVisible}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingItem ? `Edit ${editingItem.name}` : 'New Inventory Item'}</DialogTitle>
+            <DialogDescription>
+              {editingItem ? 'Update inventory item details' : 'Add a new item to your inventory'}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <Form {...itemForm}>
+            <form onSubmit={itemForm.handleSubmit(onItemSubmit)} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={itemForm.control}
                 name="name"
-                label="Item Name"
-                rules={[{ required: true, message: 'Please enter the item name' }]}
-              >
-                <Input placeholder="e.g. A4 Paper Ream" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="sku" label="SKU">
-                <Input placeholder="Optional SKU" />
-              </Form.Item>
-            </Col>
-          </Row>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Item Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="e.g. A4 Paper Ream" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={itemForm.control}
+                  name="sku"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>SKU</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Optional SKU" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="categoryId" label="Category">
-                <Select
-                  placeholder="Select category"
-                  dropdownRender={(menu) => (
-                    <>
-                      {menu}
-                      <Divider style={{ margin: '8px 0' }} />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={itemForm.control}
+                  name="categoryId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Category</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select category" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {categories.map((category) => (
+                            <SelectItem key={category.id} value={category.id}>
+                              {category.name}
+                            </SelectItem>
+                          ))}
+                          <Separator className="my-2" />
                       <Button
-                        type="link"
-                        icon={<PlusOutlined />}
+                            variant="ghost"
+                            className="w-full justify-start"
                         onClick={() => openCategoryModal('item')}
-                        block
                       >
+                            <Plus className="h-4 w-4 mr-2" />
                         Add category
                       </Button>
-                    </>
+                        </SelectContent>
+                </Select>
+                      <FormMessage />
+                    </FormItem>
                   )}
-                >
-                  {categories.map((category) => (
-                    <Option key={category.id} value={category.id}>
-                      {category.name}
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
+                />
+                <FormField
+                  control={itemForm.control}
                 name="unit"
-                label="Unit"
-                rules={[{ required: true, message: 'Please specify unit of measure' }]}
-              >
-                <Input placeholder="e.g. pcs, box, roll" />
-              </Form.Item>
-            </Col>
-          </Row>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Unit</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="e.g. pcs, box, roll" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={itemForm.control}
                 name="quantityOnHand"
-                label="Quantity on Hand"
-                rules={[{ required: true, message: 'Enter current quantity' }]}
-              >
-                <InputNumber min={0} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Quantity on Hand</FormLabel>
+                      <FormControl>
+                        <InputNumber
+                          min={0}
+                          style={{ width: '100%' }}
+                          value={field.value}
+                          onChange={(value) => field.onChange(value)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={itemForm.control}
                 name="reorderLevel"
-                label="Reorder Level"
-                rules={[{ required: true, message: 'Enter reorder level' }]}
-              >
-                <InputNumber min={0} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Reorder Level</FormLabel>
+                      <FormControl>
+                        <InputNumber
+                          min={0}
+                          style={{ width: '100%' }}
+                          value={field.value}
+                          onChange={(value) => field.onChange(value)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={itemForm.control}
                 name="unitCost"
-                label="Unit Cost"
-                rules={[{ required: true, message: 'Enter unit cost' }]}
-              >
-                <InputNumber min={0} style={{ width: '100%' }} prefix="GHS" step={0.01} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="preferredVendorId" label="Preferred Vendor">
-                <Select
-                  showSearch
-                  optionFilterProp="children"
-                  placeholder="Select vendor"
-                  allowClear
-                >
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Unit Cost</FormLabel>
+                      <FormControl>
+                        <InputNumber
+                          min={0}
+                          style={{ width: '100%' }}
+                          prefix="GHS"
+                          step={0.01}
+                          value={field.value}
+                          onChange={(value) => field.onChange(value)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={itemForm.control}
+                  name="preferredVendorId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Preferred Vendor</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select vendor" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
                   {vendors.map((vendor) => (
-                    <Option key={vendor.id} value={vendor.id}>
+                            <SelectItem key={vendor.id} value={vendor.id}>
                       {vendor.name || vendor.company || vendor.email}
-                    </Option>
+                            </SelectItem>
                   ))}
+                        </SelectContent>
                 </Select>
-              </Form.Item>
-            </Col>
-          </Row>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="location" label="Storage Location">
-                <Input placeholder="Shelf, warehouse, etc." />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="isActive" label="Active" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-            </Col>
-          </Row>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={itemForm.control}
+                  name="location"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Storage Location</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Shelf, warehouse, etc." />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={itemForm.control}
+                  name="isActive"
+                  render={({ field }) => (
+                    <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <FormLabel>Active</FormLabel>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Form.Item name="description" label="Description">
-            <Input.TextArea rows={3} placeholder="Optional description or specifications" />
-          </Form.Item>
+              <FormField
+                control={itemForm.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={3} placeholder="Optional description or specifications" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setItemModalVisible(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={itemForm.formState.isSubmitting}>
+                  {itemForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {editingItem ? 'Update' : 'Create'}
+                </Button>
+              </DialogFooter>
+            </form>
         </Form>
-      </Modal>
+        </DialogContent>
+      </Dialog>
 
-      <Modal
-        title="Add Inventory Category"
-        open={categoryModalVisible}
-        onCancel={() => {
+      <Dialog open={categoryModalVisible} onOpenChange={setCategoryModalVisible}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Inventory Category</DialogTitle>
+            <DialogDescription>Create a new category for organizing inventory items</DialogDescription>
+          </DialogHeader>
+          
+          <Form {...categoryForm}>
+            <form onSubmit={categoryForm.handleSubmit(onCategorySubmit)} className="space-y-4">
+              <FormField
+                control={categoryForm.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Category Name</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="e.g. Specialty Papers" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={categoryForm.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={3} placeholder="Optional description" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
           setCategoryModalVisible(false);
           setCategoryModalContext(null);
         }}
-        onOk={() => categoryForm.submit()}
-        okText="Save Category"
-      >
-        <Form
-          layout="vertical"
-          form={categoryForm}
-          onFinish={handleCategorySubmit}
-        >
-          <Form.Item
-            name="name"
-            label="Category Name"
-            rules={[{ required: true, message: 'Please enter a category name' }]}
-          >
-            <Input placeholder="e.g. Specialty Papers" />
-          </Form.Item>
-          <Form.Item
-            name="description"
-            label="Description"
-          >
-            <Input.TextArea rows={3} placeholder="Optional description" />
-          </Form.Item>
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={categoryForm.formState.isSubmitting}>
+                  {categoryForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Category
+                </Button>
+              </DialogFooter>
+            </form>
         </Form>
-      </Modal>
+        </DialogContent>
+      </Dialog>
 
-      <Modal
-        title={editingItem ? `Restock ${editingItem.name}` : 'Restock'}
-        open={restockModalVisible}
-        onCancel={() => setRestockModalVisible(false)}
-        onOk={() => restockForm.submit()}
-        okText="Restock"
-      >
-        <Form
-          layout="vertical"
-          form={restockForm}
-          onFinish={submitRestock}
-        >
-          <Form.Item
+      <Dialog open={restockModalVisible} onOpenChange={setRestockModalVisible}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingItem ? `Restock ${editingItem.name}` : 'Restock'}</DialogTitle>
+            <DialogDescription>Add inventory to this item</DialogDescription>
+          </DialogHeader>
+          
+          <Form {...restockForm}>
+            <form onSubmit={restockForm.handleSubmit(onRestockSubmit)} className="space-y-4">
+              <FormField
+                control={restockForm.control}
             name="quantity"
-            label="Quantity to add"
-            rules={[{ required: true, message: 'Enter quantity to add' }]}
-          >
-            <InputNumber min={0.01} step={0.01} style={{ width: '100%' }} />
-          </Form.Item>
-          <Form.Item name="unitCost" label="Unit Cost">
-            <InputNumber min={0} step={0.01} style={{ width: '100%' }} prefix="GHS" />
-          </Form.Item>
-          <Form.Item name="reference" label="Reference">
-            <Input placeholder="Invoice number, supplier reference, etc." />
-          </Form.Item>
-          <Form.Item name="notes" label="Notes">
-            <Input.TextArea rows={3} placeholder="Optional notes" />
-          </Form.Item>
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Quantity to add</FormLabel>
+                    <FormControl>
+                      <InputNumber
+                        min={0.01}
+                        step={0.01}
+                        style={{ width: '100%' }}
+                        value={field.value}
+                        onChange={(value) => field.onChange(value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={restockForm.control}
+                name="unitCost"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Unit Cost</FormLabel>
+                    <FormControl>
+                      <InputNumber
+                        min={0}
+                        step={0.01}
+                        style={{ width: '100%' }}
+                        prefix="GHS"
+                        value={field.value}
+                        onChange={(value) => field.onChange(value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={restockForm.control}
+                name="reference"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Reference</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Invoice number, supplier reference, etc." />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={restockForm.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={3} placeholder="Optional notes" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setRestockModalVisible(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={restockForm.formState.isSubmitting}>
+                  {restockForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Restock
+                </Button>
+              </DialogFooter>
+            </form>
         </Form>
-      </Modal>
+        </DialogContent>
+      </Dialog>
 
-      <Modal
-        title={editingItem ? `Adjust ${editingItem.name}` : 'Adjust Inventory'}
-        open={adjustModalVisible}
-        onCancel={() => setAdjustModalVisible(false)}
-        onOk={() => adjustForm.submit()}
-        okText="Record Adjustment"
-      >
-        <Form
-          layout="vertical"
-          form={adjustForm}
-          onFinish={submitAdjustment}
-          initialValues={{ adjustmentMode: 'set' }}
-        >
-          <Form.Item name="adjustmentMode" label="Adjustment Mode">
-            <Select>
-              <Option value="set">Set to specific quantity</Option>
-              <Option value="delta">Increase / Decrease by amount</Option>
+      <Dialog open={adjustModalVisible} onOpenChange={setAdjustModalVisible}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingItem ? `Adjust ${editingItem.name}` : 'Adjust Inventory'}</DialogTitle>
+            <DialogDescription>Record an inventory adjustment</DialogDescription>
+          </DialogHeader>
+          
+          <Form {...adjustForm}>
+            <form onSubmit={adjustForm.handleSubmit(onAdjustSubmit)} className="space-y-4">
+              <FormField
+                control={adjustForm.control}
+                name="adjustmentMode"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Adjustment Mode</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="set">Set to specific quantity</SelectItem>
+                        <SelectItem value="delta">Increase / Decrease by amount</SelectItem>
+                      </SelectContent>
             </Select>
-          </Form.Item>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-          <Form.Item noStyle shouldUpdate={(prev, curr) => prev.adjustmentMode !== curr.adjustmentMode}>
-            {({ getFieldValue }) => {
-              const mode = getFieldValue('adjustmentMode');
-              if (mode === 'delta') {
-                return (
-                  <Form.Item
+              {adjustmentMode === 'delta' ? (
+                <FormField
+                  control={adjustForm.control}
                     name="quantityDelta"
-                    label="Quantity Change"
-                    rules={[{ required: true, message: 'Enter adjustment amount' }]}
-                  >
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Quantity Change</FormLabel>
+                      <FormControl>
                     <InputNumber
                       style={{ width: '100%' }}
                       step={0.01}
                       placeholder="Use positive to add, negative to subtract"
-                    />
-                  </Form.Item>
-                );
-              }
-              return (
-                <Form.Item
+                          value={field.value}
+                          onChange={(value) => field.onChange(value)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ) : (
+                <FormField
+                  control={adjustForm.control}
                   name="newQuantity"
-                  label="New Quantity"
-                  rules={[{ required: true, message: 'Enter the new quantity' }]}
-                >
-                  <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
-                </Form.Item>
-              );
-            }}
-          </Form.Item>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>New Quantity</FormLabel>
+                      <FormControl>
+                        <InputNumber
+                          min={0}
+                          step={0.01}
+                          style={{ width: '100%' }}
+                          value={field.value}
+                          onChange={(value) => field.onChange(value)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
 
-          <Form.Item name="reason" label="Reason">
-            <Input placeholder="e.g. Damage, audit correction, sample usage" />
-          </Form.Item>
-          <Form.Item name="notes" label="Notes">
-            <Input.TextArea rows={3} placeholder="Optional additional details" />
-          </Form.Item>
+              <FormField
+                control={adjustForm.control}
+                name="reason"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Reason</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="e.g. Damage, audit correction, sample usage" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={adjustForm.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={3} placeholder="Optional additional details" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setAdjustModalVisible(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={adjustForm.formState.isSubmitting}>
+                  {adjustForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Record Adjustment
+                </Button>
+              </DialogFooter>
+            </form>
         </Form>
-      </Modal>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deactivateDialogOpen} onOpenChange={setDeactivateDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Deactivate Inventory Item</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to deactivate this item? This action can be reversed later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeactivate} className="bg-destructive text-destructive-foreground">
+              Deactivate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
 
 export default Inventory;
-
-

@@ -33,8 +33,19 @@ const Vendor = sequelize.define('Vendor', {
   },
   website: {
     type: DataTypes.STRING,
+    allowNull: true,
     validate: {
-      isUrl: true
+      // Custom validator: only validate URL if value is provided
+      isValidUrl(value) {
+        if (value && value.trim() !== '') {
+          // Use a simple URL regex check
+          const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/i;
+          if (!urlPattern.test(value)) {
+            throw new Error('Please enter a valid URL');
+          }
+        }
+        // If value is null, undefined, or empty string, validation passes
+      }
     }
   },
   address: {

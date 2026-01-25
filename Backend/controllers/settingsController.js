@@ -208,7 +208,10 @@ exports.getOrganizationSettings = async (req, res, next) => {
       logoUrl: organizationSettings.logoUrl || '',
       invoiceFooter: organizationSettings.invoiceFooter || '',
       address: organizationSettings.address || {},
-      tax: organizationSettings.tax || {}
+      tax: {
+        vatNumber: organizationSettings.tax?.vatNumber || '',
+        tin: organizationSettings.tax?.tin || ''
+      }
     };
     
     res.status(200).json({ success: true, data: organization });
@@ -389,7 +392,10 @@ exports.updateOrganizationSettings = async (req, res, next) => {
       logoUrl: (updated && updated.hasOwnProperty('logoUrl')) ? updated.logoUrl : '',
       invoiceFooter: (updated && updated.hasOwnProperty('invoiceFooter')) ? updated.invoiceFooter : '',
       address: (updated && updated.address) ? updated.address : {},
-      tax: (updated && updated.tax) ? updated.tax : {}
+      tax: {
+        vatNumber: (updated && updated.tax?.vatNumber) ? updated.tax.vatNumber : '',
+        tin: (updated && updated.tax?.tin) ? updated.tax.tin : ''
+      }
     };
     
     console.log('🔵 [Backend] Final merged data:', JSON.stringify(mergedData, null, 2));
@@ -541,3 +547,141 @@ exports.updatePayrollSettings = async (req, res, next) => {
   }
 };
 
+
+// @desc    Get WhatsApp settings
+// @route   GET /api/settings/whatsapp
+// @access  Private
+exports.getWhatsAppSettings = async (req, res, next) => {
+  try {
+    const whatsappSettings = await getSettingValue(req.tenantId, 'whatsapp', {
+      enabled: false,
+      phoneNumberId: '',
+      accessToken: '',
+      businessAccountId: '',
+      webhookVerifyToken: '',
+      templateNamespace: ''
+    });
+
+    // Don't expose access token in response
+    const safeSettings = {
+      ...whatsappSettings,
+      accessToken: whatsappSettings.accessToken ? '***' : ''
+    };
+
+    res.status(200).json({
+      success: true,
+      data: safeSettings
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update WhatsApp settings
+// @route   PUT /api/settings/whatsapp
+// @access  Private
+exports.updateWhatsAppSettings = async (req, res, next) => {
+  try {
+    const {
+      enabled,
+      phoneNumberId,
+      accessToken,
+      businessAccountId,
+      webhookVerifyToken,
+      templateNamespace
+    } = sanitizePayload(req.body);
+
+    // Get existing settings to preserve access token if not provided
+    const existing = await getSettingValue(req.tenantId, 'whatsapp', {});
+
+    // Validate required fields if enabling
+    if (enabled) {
+      const finalAccessToken = accessToken || existing.accessToken;
+      const finalPhoneNumberId = phoneNumberId || existing.phoneNumberId;
+
+      if (!finalPhoneNumberId || !finalAccessToken) {
+        return res.status(400).json({
+          success: false,
+          message: 'Phone Number ID and Access Token are required when enabling WhatsApp'
+        });
+      }
+
+      // Test connection
+      const whatsappService = require('../services/whatsappService');
+      const testResult = await whatsappService.testConnection(finalAccessToken, finalPhoneNumberId);
+      
+      if (!testResult.success) {
+        return res.status(400).json({
+          success: false,
+          message: 'Failed to connect to WhatsApp API',
+          error: testResult.error
+        });
+      }
+    }
+
+    const whatsappData = {
+      enabled: enabled !== undefined ? enabled : existing.enabled || false,
+      phoneNumberId: phoneNumberId || existing.phoneNumberId || '',
+      accessToken: accessToken || existing.accessToken || '',
+      businessAccountId: businessAccountId || existing.businessAccountId || '',
+      webhookVerifyToken: webhookVerifyToken || existing.webhookVerifyToken || '',
+      templateNamespace: templateNamespace || existing.templateNamespace || ''
+    };
+
+    const updated = await upsertSettingValue(
+      req.tenantId,
+      'whatsapp',
+      whatsappData,
+      'WhatsApp Business API configuration'
+    );
+
+    // Don't expose access token in response
+    const safeSettings = {
+      ...updated,
+      accessToken: updated.accessToken ? '***' : ''
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'WhatsApp settings updated successfully',
+      data: safeSettings
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Test WhatsApp connection
+// @route   POST /api/settings/whatsapp/test
+// @access  Private
+exports.testWhatsAppConnection = async (req, res, next) => {
+  try {
+    const { accessToken, phoneNumberId } = sanitizePayload(req.body);
+
+    if (!accessToken || !phoneNumberId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Access Token and Phone Number ID are required'
+      });
+    }
+
+    const whatsappService = require('../services/whatsappService');
+    const result = await whatsappService.testConnection(accessToken, phoneNumberId);
+
+    if (result.success) {
+      res.status(200).json({
+        success: true,
+        message: 'Connection successful',
+        data: result.data
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: 'Connection failed',
+        error: result.error
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+};

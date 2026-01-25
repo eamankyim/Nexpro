@@ -1,6 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, Space, Tag, Row, Col, Select, Descriptions, List, Spin, Empty } from 'antd';
-import { PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import { useDebounce } from '../hooks/useDebounce';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Table, Tag, List, Space, Spin, Empty } from 'antd';
+import { Plus, Search, Loader2 } from 'lucide-react';
 import customerService from '../services/customerService';
 import jobService from '../services/jobService';
 import invoiceService from '../services/invoiceService';
@@ -9,20 +13,72 @@ import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import PhoneNumberInput from '../components/PhoneNumberInput';
+import StatusChip from '../components/StatusChip';
+import TableSkeleton from '../components/TableSkeleton';
+import DetailSkeleton from '../components/DetailSkeleton';
 import { showSuccess, showError, showWarning, handleApiError } from '../utils/toast';
 import dayjs from 'dayjs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+
+const customerSchema = z.object({
+  name: z.string().min(1, 'Customer name is required'),
+  company: z.string().optional(),
+  email: z.string().email('Please enter a valid email').optional().or(z.literal('')),
+  phone: z.string().optional(),
+  address: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  howDidYouHear: z.string().min(1, 'Please select an option'),
+  referralName: z.string().optional(),
+}).refine((data) => {
+  if (data.howDidYouHear === 'Referral') {
+    return data.referralName && data.referralName.trim().length > 0;
+  }
+  return true;
+}, {
+  message: 'Referral name is required when Referral is selected',
+  path: ['referralName'],
+});
 
 const Customers = () => {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [submittingCustomer, setSubmittingCustomer] = useState(false);
-  const [deletingCustomer, setDeletingCustomer] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [searchText, setSearchText] = useState('');
-  const [form] = Form.useForm();
-  const { isManager, user } = useAuth();
+  const debouncedSearchText = useDebounce(searchText, 500);
+  const { isManager, user, activeTenant } = useAuth();
+  const businessType = activeTenant?.businessType || 'printing_press';
+  const isPrintingPress = businessType === 'printing_press';
   const [showReferralName, setShowReferralName] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingCustomer, setViewingCustomer] = useState(null);
@@ -33,15 +89,28 @@ const Customers = () => {
   const [customCustomerSources, setCustomCustomerSources] = useState([]);
   const [showCustomerSourceOtherInput, setShowCustomerSourceOtherInput] = useState(false);
   const [customerSourceOtherValue, setCustomerSourceOtherValue] = useState('');
-  const [customRegions, setCustomRegions] = useState([]);
-  const [showRegionOtherInput, setShowRegionOtherInput] = useState(false);
-  const [regionOtherValue, setRegionOtherValue] = useState('');
+
+  const form = useForm({
+    resolver: zodResolver(customerSchema),
+    defaultValues: {
+      name: '',
+      company: '',
+      email: '',
+      phone: '',
+      address: '',
+      city: '',
+      state: '',
+      howDidYouHear: '',
+      referralName: '',
+    },
+  });
+
+  const howDidYouHear = form.watch('howDidYouHear');
 
   useEffect(() => {
     fetchCustomers();
-  }, [pagination.current, pagination.pageSize, searchText]);
+  }, [pagination.current, pagination.pageSize, debouncedSearchText]);
 
-  // Load custom customer sources and regions on mount
   useEffect(() => {
     const loadCustomOptions = async () => {
       try {
@@ -50,7 +119,6 @@ const Customers = () => {
           customDropdownService.getCustomOptions('region')
         ]);
         setCustomCustomerSources(sources || []);
-        setCustomRegions(regions || []);
       } catch (error) {
         console.error('Failed to load custom options:', error);
       }
@@ -58,18 +126,34 @@ const Customers = () => {
     loadCustomOptions();
   }, []);
 
+  useEffect(() => {
+    setShowReferralName(howDidYouHear === 'Referral');
+    if (howDidYouHear !== 'Referral') {
+      form.setValue('referralName', '');
+    }
+  }, [howDidYouHear, form]);
+
   const fetchCustomers = async () => {
     setLoading(true);
     try {
       const response = await customerService.getAll({
         page: pagination.current,
         limit: pagination.pageSize,
-        search: searchText,
+        search: debouncedSearchText,
       });
-      setCustomers(response.data);
-      setPagination({ ...pagination, total: response.count });
+      
+      // Handle response structure (API interceptor returns response.data)
+      if (response?.success !== false && response?.data) {
+        setCustomers(Array.isArray(response.data) ? response.data : []);
+        setPagination({ ...pagination, total: response.count || 0 });
+      } else {
+        // If response structure is unexpected, try to extract data
+        setCustomers(Array.isArray(response) ? response : []);
+        setPagination({ ...pagination, total: response?.count || 0 });
+      }
     } catch (error) {
       handleApiError(error, { context: 'load customers' });
+      setCustomers([]);
     } finally {
       setLoading(false);
     }
@@ -77,37 +161,43 @@ const Customers = () => {
 
   const handleAdd = () => {
     setEditingCustomer(null);
-    form.resetFields();
+    form.reset({
+      name: '',
+      company: '',
+      email: '',
+      phone: '',
+      address: '',
+      howDidYouHear: '',
+      referralName: '',
+    });
     setShowReferralName(false);
     setShowCustomerSourceOtherInput(false);
     setCustomerSourceOtherValue('');
-    setShowRegionOtherInput(false);
-    setRegionOtherValue('');
     setModalVisible(true);
   };
 
   const handleEdit = (customer) => {
     setEditingCustomer(customer);
-    form.setFieldsValue(customer);
+    form.reset(customer);
     setShowReferralName(customer.howDidYouHear === 'Referral');
     setModalVisible(true);
   };
 
   const handleHowDidYouHearChange = (value) => {
+    // Don't set form value here - it's already set by field.onChange
     if (value === '__OTHER__') {
       setShowCustomerSourceOtherInput(true);
       setShowReferralName(false);
-      form.setFieldsValue({ referralName: undefined });
+      form.setValue('referralName', '');
     } else {
       setShowCustomerSourceOtherInput(false);
       setShowReferralName(value === 'Referral');
       if (value !== 'Referral') {
-        form.setFieldsValue({ referralName: undefined });
+        form.setValue('referralName', '');
       }
     }
   };
 
-  // Save custom customer source
   const handleSaveCustomCustomerSource = async () => {
     if (!customerSourceOtherValue || !customerSourceOtherValue.trim()) {
       showWarning('Please enter a source name');
@@ -117,7 +207,6 @@ const Customers = () => {
     try {
       const saved = await customDropdownService.saveCustomOption('customer_source', customerSourceOtherValue.trim());
       if (saved && saved.value) {
-        // Add to custom sources
         setCustomCustomerSources(prev => {
           if (prev.find(s => s.value === saved.value)) {
             return prev;
@@ -125,13 +214,9 @@ const Customers = () => {
           return [...prev, saved];
         });
         
-        // Set the value in the form
-        form.setFieldValue('howDidYouHear', saved.value);
-        
-        // Clear the "Other" input
+        form.setValue('howDidYouHear', saved.value);
         setShowCustomerSourceOtherInput(false);
         setCustomerSourceOtherValue('');
-        
         showSuccess(`"${saved.label || saved.value}" added to sources`);
       } else {
         showWarning('Saved option but received invalid response. Please try again.');
@@ -141,83 +226,29 @@ const Customers = () => {
     }
   };
 
-  // Handle region change (including "Other")
-  const handleRegionChange = (value) => {
-    if (value === '__OTHER__') {
-      setShowRegionOtherInput(true);
-    } else {
-      setShowRegionOtherInput(false);
-    }
-  };
-
-  // Save custom region
-  const handleSaveCustomRegion = async () => {
-    if (!regionOtherValue || !regionOtherValue.trim()) {
-      showWarning('Please enter a region name');
-      return;
-    }
-
-    try {
-      const saved = await customDropdownService.saveCustomOption('region', regionOtherValue.trim());
-      if (saved) {
-        // Add to custom regions
-        setCustomRegions(prev => {
-          if (prev.find(r => r.value === saved.value)) {
-            return prev;
-          }
-          return [...prev, saved];
-        });
-        
-        // Set the value in the form
-        form.setFieldValue('state', saved.value);
-        
-        // Clear the "Other" input
-        setShowRegionOtherInput(false);
-        setRegionOtherValue('');
-        
-        showSuccess(`"${saved.label}" added to regions`);
-      }
-    } catch (error) {
-      handleApiError(error, { context: 'save custom region' });
-    }
-  };
-
-  // Get merged region options
-  const getMergedRegionOptions = () => {
-    const defaultRegions = [
-      'Greater Accra', 'Ashanti', 'Western', 'Western North', 'Central', 'Eastern',
-      'Volta', 'Oti', 'Bono', 'Bono East', 'Ahafo', 'Northern', 'Savannah',
-      'North East', 'Upper East', 'Upper West'
-    ];
-    const merged = [...defaultRegions];
-    customRegions.forEach(region => {
-      if (!merged.includes(region.value)) {
-        merged.push(region.value);
-      }
-    });
-    return merged;
-  };
 
   const handleView = async (customer) => {
     setViewingCustomer(customer);
     setDrawerVisible(true);
     
-    // Fetch customer jobs
-    setLoadingJobs(true);
-    try {
-      const response = await jobService.getAll({
-        customerId: customer.id,
-        limit: 50
-      });
-      setCustomerJobs(response.data || []);
-    } catch (error) {
-      console.error('Failed to load customer jobs:', error);
+    if (isPrintingPress) {
+      setLoadingJobs(true);
+      try {
+        const response = await jobService.getAll({
+          customerId: customer.id,
+          limit: 50
+        });
+        setCustomerJobs(response.data || []);
+      } catch (error) {
+        console.error('Failed to load customer jobs:', error);
+        setCustomerJobs([]);
+      } finally {
+        setLoadingJobs(false);
+      }
+    } else {
       setCustomerJobs([]);
-    } finally {
-      setLoadingJobs(false);
     }
 
-    // Fetch customer invoices
     setLoadingInvoices(true);
     try {
       const response = await invoiceService.getAll({
@@ -242,29 +273,21 @@ const Customers = () => {
 
   const handleDelete = async (id) => {
     try {
-      setDeletingCustomer(true);
       await customerService.delete(id);
       showSuccess('Customer deleted successfully');
       fetchCustomers();
     } catch (error) {
       handleApiError(error, { context: 'delete customer' });
-    } finally {
-      setDeletingCustomer(false);
     }
   };
 
-  const handleSubmit = async (values) => {
+  const onSubmit = async (values) => {
     try {
-      setSubmittingCustomer(true);
-      
-      // If "Other" is selected for howDidYouHear, save the custom value first
       if (values.howDidYouHear === '__OTHER__') {
         if (!customerSourceOtherValue || !customerSourceOtherValue.trim()) {
           showError('Please enter and save a custom source before submitting');
-          setSubmittingCustomer(false);
           return;
         }
-        // Save the custom source and update the form value
         const saved = await customDropdownService.saveCustomOption('customer_source', customerSourceOtherValue.trim());
         if (saved) {
           values.howDidYouHear = saved.value;
@@ -277,39 +300,35 @@ const Customers = () => {
         }
       }
       
-      // If "Other" is selected for region, save the custom value first
-      if (values.state === '__OTHER__') {
-        if (!regionOtherValue || !regionOtherValue.trim()) {
-          showError('Please enter and save a custom region before submitting');
-          setSubmittingCustomer(false);
-          return;
-        }
-        // Save the custom region and update the form value
-        const saved = await customDropdownService.saveCustomOption('region', regionOtherValue.trim());
-        if (saved) {
-          values.state = saved.value;
-          setCustomRegions(prev => {
-            if (prev.find(r => r.value === saved.value)) {
-              return prev;
-            }
-            return [...prev, saved];
-          });
-        }
+      let response;
+      if (editingCustomer) {
+        response = await customerService.update(editingCustomer.id, values);
+      } else {
+        response = await customerService.create(values);
       }
       
-      if (editingCustomer) {
-        await customerService.update(editingCustomer.id, values);
-        showSuccess('Customer updated successfully');
+      // Check if response indicates success
+      if (response && (response.success === true || response.data)) {
+        showSuccess(editingCustomer ? 'Customer updated successfully' : 'Customer created successfully');
+        setModalVisible(false);
+        form.reset();
+        fetchCustomers();
+      } else if (response && response.success === false) {
+        // Explicit failure response
+        const errorMessage = response.error || response.message || 'Operation failed';
+        showError(errorMessage);
       } else {
-        await customerService.create(values);
-        showSuccess('Customer created successfully');
+        // Unexpected response structure
+        console.warn('Unexpected response structure:', response);
+        showSuccess(editingCustomer ? 'Customer updated successfully' : 'Customer created successfully');
+        setModalVisible(false);
+        form.reset();
+        fetchCustomers();
       }
-      setModalVisible(false);
-      fetchCustomers();
     } catch (error) {
+      // Only show error if it's a real error (not a false positive from interceptor)
+      console.error('Customer operation error:', error);
       handleApiError(error, { context: editingCustomer ? 'update customer' : 'create customer' });
-    } finally {
-      setSubmittingCustomer(false);
     }
   };
 
@@ -351,23 +370,23 @@ const Customers = () => {
           'Social Media': 'purple',
           'Market Outreach': 'orange'
         };
-        return <Tag color={colors[source]}>{source}</Tag>;
+        return <Badge variant="outline">{source}</Badge>;
       }
     },
     {
       title: 'Balance',
       dataIndex: 'balance',
       key: 'balance',
-      render: (balance) => `GHS ${parseFloat(balance).toFixed(2)}`,
+      render: (balance) => `GHS ${parseFloat(balance || 0).toFixed(2)}`,
     },
     {
       title: 'Status',
       dataIndex: 'isActive',
       key: 'isActive',
       render: (isActive) => (
-        <Tag color={isActive ? 'green' : 'red'}>
+        <Badge variant={isActive ? 'default' : 'destructive'}>
           {isActive ? 'Active' : 'Inactive'}
-        </Tag>
+        </Badge>
       ),
     },
     {
@@ -377,245 +396,248 @@ const Customers = () => {
     },
   ];
 
+  const defaultSources = [
+    { group: 'Social Media', items: ['Facebook', 'Instagram', 'Twitter', 'LinkedIn', 'TikTok', 'WhatsApp'] },
+    { group: 'Online', items: ['Google Search', 'Website', 'Online Ad'] },
+    { group: 'Physical', items: ['Signboard', 'Walk-in', 'Market Outreach', 'Flyer/Brochure'] },
+    { group: 'Personal', items: ['Referral', 'Existing Customer'] },
+    { group: 'Other', items: ['Radio', 'TV', 'Newspaper', 'Event/Trade Show'] },
+  ];
+
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-        <h1 style={{ margin: 0, fontSize: window.innerWidth < 768 ? '20px' : '24px' }}>Customers</h1>
-        <Space wrap style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
-          <Input.Search
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <h1 className="text-3xl font-bold">Customers</h1>
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
             placeholder="Search customers..."
-            allowClear
-            onSearch={handleSearch}
-            style={{ width: window.innerWidth < 768 ? '100%' : 250 }}
-            prefix={<SearchOutlined />}
-          />
+              value={searchText}
+              onChange={(e) => handleSearch(e.target.value)}
+              className="pl-10 w-full sm:w-[250px]"
+            />
+          </div>
           {(isManager || user?.role === 'staff') && (
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd} style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
+            <Button onClick={handleAdd} className="w-full sm:w-auto">
+              <Plus className="h-4 w-4 mr-2" />
               Add Customer
             </Button>
           )}
-        </Space>
+        </div>
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={customers}
-        rowKey="id"
-        loading={loading}
-        pagination={pagination}
-        onChange={(newPagination) => setPagination(newPagination)}
-        scroll={{ x: 'max-content' }}
-      />
+      {loading ? (
+        <Card>
+          <div className="p-4">
+            <TableSkeleton rows={8} cols={6} />
+          </div>
+        </Card>
+      ) : (
+        <Table
+          columns={columns}
+          dataSource={customers}
+          rowKey="id"
+          pagination={pagination}
+          onChange={(newPagination) => setPagination(newPagination)}
+          scroll={{ x: 'max-content' }}
+        />
+      )}
 
-      <Modal
-        title={editingCustomer ? 'Edit Customer' : 'Add Customer'}
-        open={modalVisible}
-        confirmLoading={submittingCustomer}
-        onCancel={() => {
-          setModalVisible(false);
-          setShowCustomerSourceOtherInput(false);
-          setCustomerSourceOtherValue('');
-          setShowRegionOtherInput(false);
-          setRegionOtherValue('');
-        }}
-        onOk={() => form.submit()}
-        width={window.innerWidth < 768 ? '100%' : 800}
-        okText={editingCustomer ? 'Update' : 'Create'}
-        style={window.innerWidth < 768 ? { top: 0, paddingBottom: 0 } : {}}
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleSubmit}
-          style={{ marginTop: 24 }}
-        >
-          <Row gutter={16}>
-            <Col xs={24} sm={12}>
-              <Form.Item
+      <Dialog open={modalVisible} onOpenChange={setModalVisible}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingCustomer ? 'Edit Customer' : 'Add Customer'}</DialogTitle>
+            <DialogDescription>
+              {editingCustomer ? 'Update customer information' : 'Add a new customer to your system'}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
                 name="name"
-                label="Name"
-                rules={[{ required: true, message: 'Please enter customer name' }]}
-              >
-                <Input placeholder="Enter customer name" size="large" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item name="company" label="Company">
-                <Input placeholder="Enter company name" size="large" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col xs={24} sm={12}>
-              <Form.Item
-                name="email"
-                label="Email"
-                rules={[{ type: 'email', message: 'Please enter a valid email' }]}
-              >
-                <Input placeholder="email@example.com" size="large" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item name="phone" label="Phone">
-                <PhoneNumberInput placeholder="Enter phone number" size="large" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col span={24}>
-              <Form.Item name="address" label="Address">
-                <Input.TextArea 
-                  rows={2} 
-                  placeholder="Enter street address" 
-                  size="large"
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col xs={24} sm={12}>
-              <Form.Item name="city" label="Town">
-                <Input placeholder="e.g., Accra, Kumasi, Takoradi" size="large" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item name="state" label="Region">
-                <Select 
-                  placeholder="Select region" 
-                  size="large" 
-                  showSearch
-                  onChange={handleRegionChange}
-                >
-                  {getMergedRegionOptions().map((region) => (
-                    <Select.Option key={region} value={region}>{region}</Select.Option>
-                  ))}
-                  <Select.Option value="__OTHER__">Other (specify)</Select.Option>
-                </Select>
-              </Form.Item>
-              {showRegionOtherInput && (
-                <Form.Item
-                  label="Enter Region Name"
-                  style={{ marginTop: 8 }}
-                >
-                  <Input.Group compact>
-                    <Input
-                      style={{ width: 'calc(100% - 80px)' }}
-                      placeholder="e.g., New Region, District"
-                      value={regionOtherValue}
-                      onChange={(e) => setRegionOtherValue(e.target.value)}
-                      onPressEnter={handleSaveCustomRegion}
-                    />
-                    <Button
-                      type="primary"
-                      style={{ width: 80 }}
-                      onClick={handleSaveCustomRegion}
-                    >
-                      Save
-                    </Button>
-                  </Input.Group>
-                </Form.Item>
-              )}
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col span={24}>
-              <Form.Item 
-                name="howDidYouHear" 
-                label="How did you hear about us?"
-                rules={[{ required: true, message: 'Please select an option' }]}
-              >
-                <Select 
-                  placeholder="Select an option" 
-                  size="large"
-                  showSearch
-                  onChange={handleHowDidYouHearChange}
-                >
-                  <Select.OptGroup label="Social Media">
-                    <Select.Option value="Facebook">Facebook</Select.Option>
-                    <Select.Option value="Instagram">Instagram</Select.Option>
-                    <Select.Option value="Twitter">Twitter</Select.Option>
-                    <Select.Option value="LinkedIn">LinkedIn</Select.Option>
-                    <Select.Option value="TikTok">TikTok</Select.Option>
-                    <Select.Option value="WhatsApp">WhatsApp</Select.Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Online">
-                    <Select.Option value="Google Search">Google Search</Select.Option>
-                    <Select.Option value="Website">Website</Select.Option>
-                    <Select.Option value="Online Ad">Online Ad</Select.Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Physical">
-                    <Select.Option value="Signboard">Signboard</Select.Option>
-                    <Select.Option value="Walk-in">Walk-in</Select.Option>
-                    <Select.Option value="Market Outreach">Market Outreach</Select.Option>
-                    <Select.Option value="Flyer/Brochure">Flyer/Brochure</Select.Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Personal">
-                    <Select.Option value="Referral">Referral (Word of Mouth)</Select.Option>
-                    <Select.Option value="Existing Customer">Existing Customer</Select.Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Other">
-                    <Select.Option value="Radio">Radio</Select.Option>
-                    <Select.Option value="TV">TV</Select.Option>
-                    <Select.Option value="Newspaper">Newspaper</Select.Option>
-                    <Select.Option value="Event/Trade Show">Event/Trade Show</Select.Option>
-                  </Select.OptGroup>
-                  {customCustomerSources.length > 0 && (
-                    <Select.OptGroup label="Custom Sources">
-                      {customCustomerSources.map(source => (
-                        <Select.Option key={source.value} value={source.value}>{source.label}</Select.Option>
-                      ))}
-                    </Select.OptGroup>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Enter customer name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
                   )}
-                  <Select.OptGroup label="Other">
-                    <Select.Option value="__OTHER__">Other (specify)</Select.Option>
-                  </Select.OptGroup>
+                />
+                <FormField
+                  control={form.control}
+                  name="company"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Company</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Enter company name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input {...field} type="email" placeholder="email@example.com" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone</FormLabel>
+                      <FormControl>
+                        <PhoneNumberInput {...field} placeholder="Enter phone number" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="address"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Address</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={2} placeholder="Enter street address" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="howDidYouHear" 
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>How did you hear about us?</FormLabel>
+                    <Select 
+                      value={field.value} 
+                      onValueChange={(value) => {
+                        field.onChange(value);
+                        handleHowDidYouHearChange(value);
+                      }}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select an option" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {defaultSources.map(group => (
+                          <div key={group.group}>
+                            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                              {group.group}
+                            </div>
+                            {group.items.map(item => (
+                              <SelectItem key={item} value={item}>{item}</SelectItem>
+                            ))}
+                          </div>
+                        ))}
+                  {customCustomerSources.length > 0 && (
+                          <div>
+                            <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                              Custom Sources
+                            </div>
+                      {customCustomerSources.map(source => (
+                              <SelectItem key={source.value} value={source.value}>
+                                {source.label}
+                              </SelectItem>
+                            ))}
+                          </div>
+                        )}
+                        <div>
+                          <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                            Other
+                          </div>
+                          <SelectItem value="__OTHER__">Other (specify)</SelectItem>
+                        </div>
+                      </SelectContent>
                 </Select>
-              </Form.Item>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
               {showCustomerSourceOtherInput && (
-                <Form.Item
-                  label="Enter Source Name"
-                  style={{ marginTop: 8 }}
-                >
-                  <Input.Group compact>
+                <div className="flex gap-2">
                     <Input
-                      style={{ width: 'calc(100% - 80px)' }}
                       placeholder="e.g., Billboard, Magazine Ad"
                       value={customerSourceOtherValue}
                       onChange={(e) => setCustomerSourceOtherValue(e.target.value)}
-                      onPressEnter={handleSaveCustomCustomerSource}
-                    />
-                    <Button
-                      type="primary"
-                      style={{ width: 80 }}
-                      onClick={handleSaveCustomCustomerSource}
-                    >
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSaveCustomCustomerSource();
+                      }
+                    }}
+                    className="flex-1"
+                  />
+                  <Button type="button" onClick={handleSaveCustomCustomerSource}>
                       Save
                     </Button>
-                  </Input.Group>
-                </Form.Item>
+                </div>
               )}
-            </Col>
-          </Row>
 
           {showReferralName && (
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item 
+                <FormField
+                  control={form.control}
                   name="referralName" 
-                  label="Referral Name"
-                  rules={[{ required: true, message: 'Please enter referral name' }]}
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Referral Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Enter referral name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setModalVisible(false);
+                    setShowCustomerSourceOtherInput(false);
+                    setCustomerSourceOtherValue('');
+                  }}
                 >
-                  <Input placeholder="Enter referral name" size="large" />
-                </Form.Item>
-              </Col>
-            </Row>
-          )}
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {editingCustomer ? 'Update' : 'Create'}
+                </Button>
+              </DialogFooter>
+            </form>
         </Form>
-      </Modal>
+        </DialogContent>
+      </Dialog>
 
       <DetailsDrawer
         open={drawerVisible}
@@ -636,152 +658,148 @@ const Customers = () => {
             key: 'details',
             label: 'Details',
             content: (
-              <Descriptions column={1} bordered>
-                <Descriptions.Item label="Name">{viewingCustomer.name || '-'}</Descriptions.Item>
-                <Descriptions.Item label="Company">{viewingCustomer.company || '-'}</Descriptions.Item>
-                <Descriptions.Item label="Email">{viewingCustomer.email || '-'}</Descriptions.Item>
-                <Descriptions.Item label="Phone">{viewingCustomer.phone || '-'}</Descriptions.Item>
-                <Descriptions.Item label="Address">{viewingCustomer.address || '-'}</Descriptions.Item>
-                <Descriptions.Item label="City">{viewingCustomer.city || '-'}</Descriptions.Item>
-                <Descriptions.Item label="How did you hear about us?">
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground">Name</Label>
+                    <p className="font-medium">{viewingCustomer.name || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Company</Label>
+                    <p className="font-medium">{viewingCustomer.company || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Email</Label>
+                    <p className="font-medium">{viewingCustomer.email || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Phone</Label>
+                    <p className="font-medium">{viewingCustomer.phone || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Address</Label>
+                    <p className="font-medium">{viewingCustomer.address || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">City</Label>
+                    <p className="font-medium">{viewingCustomer.city || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">How did you hear about us?</Label>
+                    <p className="font-medium">
                   {viewingCustomer.howDidYouHear ? (
-                    <Tag color={{
-                      'Signboard': 'blue',
-                      'Referral': 'green',
-                      'Social Media': 'purple',
-                      'Market Outreach': 'orange'
-                    }[viewingCustomer.howDidYouHear]}>
-                      {viewingCustomer.howDidYouHear}
-                    </Tag>
+                        <Badge variant="outline">{viewingCustomer.howDidYouHear}</Badge>
                   ) : '-'}
-                </Descriptions.Item>
+                    </p>
+                  </div>
                 {viewingCustomer.howDidYouHear === 'Referral' && (
-                  <Descriptions.Item label="Referral Name">
-                    {viewingCustomer.referralName || '-'}
-                  </Descriptions.Item>
-                )}
-                <Descriptions.Item label="Balance">
-                  GHS {parseFloat(viewingCustomer.balance || 0).toFixed(2)}
-                </Descriptions.Item>
-                <Descriptions.Item label="Status">
-                  <Tag color={viewingCustomer.isActive ? 'green' : 'red'}>
+                    <div>
+                      <Label className="text-muted-foreground">Referral Name</Label>
+                      <p className="font-medium">{viewingCustomer.referralName || '-'}</p>
+                    </div>
+                  )}
+                  <div>
+                    <Label className="text-muted-foreground">Balance</Label>
+                    <p className="font-medium">GHS {parseFloat(viewingCustomer.balance || 0).toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Status</Label>
+                    <p className="font-medium">
+                      <Badge variant={viewingCustomer.isActive ? 'default' : 'destructive'}>
                     {viewingCustomer.isActive ? 'Active' : 'Inactive'}
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="Created At">
+                      </Badge>
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Created At</Label>
+                    <p className="font-medium">
                   {viewingCustomer.createdAt ? new Date(viewingCustomer.createdAt).toLocaleString() : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Last Updated">
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Last Updated</Label>
+                    <p className="font-medium">
                   {viewingCustomer.updatedAt ? new Date(viewingCustomer.updatedAt).toLocaleString() : '-'}
-                </Descriptions.Item>
-              </Descriptions>
+                    </p>
+                  </div>
+                </div>
+              </div>
             )
           },
-          {
+          ...(isPrintingPress ? [{
             key: 'activities',
             label: 'Activities',
             content: (
-              <div>
-                <h3 style={{ marginBottom: 16 }}>Jobs ({customerJobs.length})</h3>
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Jobs ({customerJobs.length})</h3>
                 {loadingJobs ? (
-                  <div style={{ textAlign: 'center', padding: 40 }}>
-                    <Spin size="large" />
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin" />
                   </div>
                 ) : customerJobs.length > 0 ? (
-                  <List
-                    dataSource={customerJobs}
-                    renderItem={(job) => (
-                      <List.Item
-                        key={job.id}
-                        actions={[
-                          <Tag color={{
-                            'new': 'gold',
-                            'in_progress': 'blue',
-                            'on_hold': 'orange',
-                            'cancelled': 'red',
-                            'completed': 'green'
-                          }[job.status]}>
-                            {job.status?.replace('_', ' ').toUpperCase()}
-                          </Tag>
-                        ]}
-                      >
-                        <List.Item.Meta
-                          title={`${job.jobNumber} - ${job.title}`}
-                          description={
-                            <Space direction="vertical" size={0}>
-                              <span>{job.description}</span>
-                              <span style={{ fontSize: 12, color: '#999' }}>
-                                Due: {job.dueDate ? new Date(job.dueDate).toLocaleDateString() : 'N/A'}
-                              </span>
-                            </Space>
-                          }
-                        />
-                        <div style={{ fontWeight: 'bold' }}>
-                          GHS {parseFloat(job.finalPrice || 0).toFixed(2)}
+                  <div className="space-y-3">
+                    {customerJobs.map((job) => (
+                      <div key={job.id} className="flex items-center justify-between p-4 border rounded-lg">
+                        <div className="flex-1">
+                          <div className="font-semibold">{job.jobNumber} - {job.title}</div>
+                          <p className="text-sm text-muted-foreground mt-1">{job.description}</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Due: {job.dueDate ? new Date(job.dueDate).toLocaleDateString() : 'N/A'}
+                          </p>
                         </div>
-                      </List.Item>
-                    )}
-                  />
+                        <div className="flex items-center gap-4">
+                          <Badge variant="outline">
+                            {job.status?.replace('_', ' ').toUpperCase()}
+                          </Badge>
+                          <div className="font-bold">GHS {parseFloat(job.finalPrice || 0).toFixed(2)}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 ) : (
                   <Empty description="No jobs found for this customer" />
                 )}
               </div>
             )
-          },
+          }] : []),
           {
             key: 'invoices',
             label: 'Invoices',
             content: (
-              <div>
-                <h3 style={{ marginBottom: 16 }}>Invoices ({customerInvoices.length})</h3>
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Invoices ({customerInvoices.length})</h3>
                 {loadingInvoices ? (
-                  <div style={{ textAlign: 'center', padding: 40 }}>
-                    <Spin size="large" />
+                  <div className="py-12">
+                    <TableSkeleton rows={3} cols={4} />
                   </div>
                 ) : customerInvoices.length > 0 ? (
-                  <List
-                    dataSource={customerInvoices}
-                    renderItem={(invoice) => (
-                      <List.Item
-                        key={invoice.id}
-                        actions={[
-                          <Tag color={{
-                            'draft': 'default',
-                            'sent': 'blue',
-                            'paid': 'green',
-                            'partial': 'orange',
-                            'overdue': 'red',
-                            'cancelled': 'gray'
-                          }[invoice.status]}>
-                            {invoice.status?.toUpperCase()}
-                          </Tag>
-                        ]}
-                      >
-                        <List.Item.Meta
-                          title={invoice.invoiceNumber}
-                          description={
-                            <Space direction="vertical" size={0}>
-                              <span>{invoice.job?.title || 'No job linked'}</span>
-                              <span style={{ fontSize: 12, color: '#999' }}>
-                                Due: {invoice.dueDate ? dayjs(invoice.dueDate).format('MMM DD, YYYY') : 'N/A'}
-                              </span>
-                              <span style={{ fontSize: 12, color: '#999' }}>
-                                Balance: GHS {parseFloat(invoice.balance || 0).toFixed(2)}
-                              </span>
-                            </Space>
-                          }
-                        />
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontWeight: 'bold', fontSize: 16 }}>
-                            GHS {parseFloat(invoice.totalAmount || 0).toFixed(2)}
-                          </div>
-                          <div style={{ fontSize: 12, color: '#52c41a' }}>
-                            Paid: GHS {parseFloat(invoice.amountPaid || 0).toFixed(2)}
+                  <div className="space-y-3">
+                    {customerInvoices.map((invoice) => (
+                      <div key={invoice.id} className="flex items-center justify-between p-4 border rounded-lg">
+                        <div className="flex-1">
+                          <div className="font-semibold">{invoice.invoiceNumber}</div>
+                          {isPrintingPress && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {invoice.job?.title || 'No job linked'}
+                            </p>
+                          )}
+                          <div className="text-xs text-muted-foreground mt-1 space-y-1">
+                            <p>Due: {invoice.dueDate ? dayjs(invoice.dueDate).format('MMM DD, YYYY') : 'N/A'}</p>
+                            <p>Balance: GHS {parseFloat(invoice.balance || 0).toFixed(2)}</p>
                           </div>
                         </div>
-                      </List.Item>
-                    )}
-                  />
+                        <div className="flex flex-col items-end gap-2">
+                          <StatusChip status={invoice.status} />
+                          <div className="text-right">
+                            <div className="font-bold text-lg">GHS {parseFloat(invoice.totalAmount || 0).toFixed(2)}</div>
+                            <div className="text-sm text-green-600">
+                            Paid: GHS {parseFloat(invoice.amountPaid || 0).toFixed(2)}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 ) : (
                   <Empty description="No invoices found for this customer" />
                 )}
@@ -795,5 +813,3 @@ const Customers = () => {
 };
 
 export default Customers;
-
-

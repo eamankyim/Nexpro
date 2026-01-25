@@ -1,59 +1,84 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Table, Tag, Card as AntdCard, Row, Col } from 'antd';
 import {
-  Row,
-  Col,
-  Card,
-  Statistic,
-  Table,
-  Space,
-  Button,
-  Input,
-  Select,
-  Tag,
-  message,
-  Modal,
-  Form,
-  DatePicker,
-  Typography,
-  Divider,
-  Timeline,
-  Alert,
-  Badge,
-  Descriptions
-} from 'antd';
-import {
-  PlusOutlined,
-  ReloadOutlined,
-  PhoneOutlined,
-  MailOutlined,
-  TeamOutlined,
-  UserSwitchOutlined,
-  MessageOutlined,
-  UserAddOutlined
-} from '@ant-design/icons';
+  Plus,
+  RefreshCw,
+  Phone,
+  Mail,
+  Users,
+  UserCog,
+  MessageSquare,
+  UserPlus,
+  Loader2,
+  CheckCircle,
+  XCircle,
+  TrendingUp
+} from 'lucide-react';
 import dayjs from 'dayjs';
 import DetailsDrawer from '../components/DetailsDrawer';
 import ActionColumn from '../components/ActionColumn';
 import PhoneNumberInput from '../components/PhoneNumberInput';
+import StatusChip from '../components/StatusChip';
+import TableSkeleton from '../components/TableSkeleton';
+import DetailSkeleton from '../components/DetailSkeleton';
 import leadService from '../services/leadService';
 import userService from '../services/userService';
 import customDropdownService from '../services/customDropdownService';
+import { useAuth } from '../context/AuthContext';
+import { showSuccess, showError, showWarning } from '../utils/toast';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
+import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { DatePicker } from '@/components/ui/date-picker';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 
-const { Title, Text } = Typography;
-const { Option } = Select;
-
-const statusColors = {
-  new: 'blue',
-  contacted: 'purple',
-  qualified: 'green',
-  converted: 'cyan',
-  lost: 'red'
-};
 
 const priorityColors = {
-  low: 'default',
-  medium: 'gold',
-  high: 'volcano'
+  low: 'secondary',
+  medium: 'default',
+  high: 'destructive'
 };
 
 const leadSourceOptions = [
@@ -69,18 +94,40 @@ const leadSourceOptions = [
   { value: 'Cold Call', label: 'Cold Call' }
 ];
 
+const leadSchema = z.object({
+  name: z.string().min(1, 'Lead name is required'),
+  company: z.string().optional(),
+  email: z.string().email('Please enter a valid email').optional().or(z.literal('')),
+  phone: z.string().optional(),
+  source: z.string().optional(),
+  status: z.enum(['new', 'contacted', 'qualified', 'converted', 'lost']).default('new'),
+  priority: z.enum(['low', 'medium', 'high']).default('medium'),
+  assignedTo: z.string().optional(),
+  nextFollowUp: z.date().optional().nullable(),
+  notes: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+});
+
+const activitySchema = z.object({
+  type: z.enum(['call', 'email', 'meeting', 'note', 'task']),
+  subject: z.string().optional(),
+  notes: z.string().optional(),
+  nextStep: z.string().optional(),
+  followUpDate: z.date().optional().nullable(),
+});
+
 const Leads = () => {
+  const { activeTenant } = useAuth();
+  const businessType = activeTenant?.businessType || 'printing_press';
+  const isPrintingPress = businessType === 'printing_press';
+  
   const [leads, setLeads] = useState([]);
   const [summary, setSummary] = useState(null);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
-  const [submittingLead, setSubmittingLead] = useState(false);
-  const [submittingActivity, setSubmittingActivity] = useState(false);
-  const [archivingLead, setArchivingLead] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({
-    search: '',
     status: 'all',
     priority: 'all',
     source: 'all',
@@ -93,18 +140,47 @@ const Leads = () => {
   const [editingLead, setEditingLead] = useState(null);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [convertingLead, setConvertingLead] = useState(false);
-  const [leadForm] = Form.useForm();
-  const [activityForm] = Form.useForm();
   const [customLeadSources, setCustomLeadSources] = useState([]);
   const [showLeadSourceOtherInput, setShowLeadSourceOtherInput] = useState(false);
   const [leadSourceOtherValue, setLeadSourceOtherValue] = useState('');
+  const [archiveLeadId, setArchiveLeadId] = useState(null);
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+  const [convertLeadId, setConvertLeadId] = useState(null);
+  const [convertDialogOpen, setConvertDialogOpen] = useState(false);
+
+  const leadForm = useForm({
+    resolver: zodResolver(leadSchema),
+    defaultValues: {
+      name: '',
+      company: '',
+      email: '',
+      phone: '',
+      source: 'website',
+      status: 'new',
+      priority: 'medium',
+      assignedTo: '',
+      nextFollowUp: null,
+      notes: '',
+      tags: [],
+    },
+  });
+
+  const activityForm = useForm({
+    resolver: zodResolver(activitySchema),
+    defaultValues: {
+      type: 'note',
+      subject: '',
+      notes: '',
+      nextStep: '',
+      followUpDate: null,
+    },
+  });
 
   useEffect(() => {
     fetchSummary();
     fetchUsers();
   }, []);
 
-  // Load custom lead sources on mount
   useEffect(() => {
     const loadCustomSources = async () => {
       try {
@@ -138,7 +214,7 @@ const Leads = () => {
       setSummary(response?.data || {});
     } catch (error) {
       console.error('Failed to load lead summary', error);
-      message.error('Failed to load lead summary');
+      showError(error, 'Failed to load lead summary');
     } finally {
       setSummaryLoading(false);
     }
@@ -150,7 +226,6 @@ const Leads = () => {
       const params = {
         page: pagination.current,
         limit: pagination.pageSize,
-        search: filters.search || undefined,
         status: filters.status,
         priority: filters.priority,
         source: filters.source === 'all' ? undefined : filters.source,
@@ -168,7 +243,7 @@ const Leads = () => {
       }));
     } catch (error) {
       console.error('Failed to load leads', error);
-      message.error('Failed to load leads');
+      showError(error, 'Failed to load leads');
     } finally {
       setLoading(false);
     }
@@ -187,32 +262,39 @@ const Leads = () => {
     setShowLeadSourceOtherInput(false);
     setLeadSourceOtherValue('');
     if (lead) {
-      leadForm.setFieldsValue({
+      leadForm.reset({
         name: lead.name,
-        company: lead.company,
-        email: lead.email,
-        phone: lead.phone,
-        source: lead.source,
-        status: lead.status,
-        priority: lead.priority,
-        assignedTo: lead.assignee?.id || lead.assignedTo || undefined,
-        nextFollowUp: lead.nextFollowUp ? dayjs(lead.nextFollowUp) : null,
-        notes: lead.notes,
-        tags: lead.tags || []
+        company: lead.company || '',
+        email: lead.email || '',
+        phone: lead.phone || '',
+        source: lead.source || '',
+        status: lead.status || 'new',
+        priority: lead.priority || 'medium',
+        assignedTo: lead.assignee?.id || lead.assignedTo || '',
+        nextFollowUp: lead.nextFollowUp ? new Date(lead.nextFollowUp) : null,
+        notes: lead.notes || '',
+        tags: lead.tags || [],
       });
     } else {
-      leadForm.resetFields();
-      leadForm.setFieldsValue({
+      leadForm.reset({
+        name: '',
+        company: '',
+        email: '',
+        phone: '',
+        source: 'website',
         status: 'new',
         priority: 'medium',
-        source: 'website'
+        assignedTo: '',
+        nextFollowUp: null,
+        notes: '',
+        tags: [],
       });
     }
     setLeadModalVisible(true);
   };
 
-  // Handle lead source change (including "Other")
   const handleLeadSourceChange = (value) => {
+    leadForm.setValue('source', value);
     if (value === '__OTHER__') {
       setShowLeadSourceOtherInput(true);
     } else {
@@ -220,17 +302,15 @@ const Leads = () => {
     }
   };
 
-  // Save custom lead source
   const handleSaveCustomLeadSource = async () => {
     if (!leadSourceOtherValue || !leadSourceOtherValue.trim()) {
-      message.warning('Please enter a source name');
+      showWarning('Please enter a source name');
       return;
     }
 
     try {
       const saved = await customDropdownService.saveCustomOption('lead_source', leadSourceOtherValue.trim());
       if (saved) {
-        // Add to custom sources
         setCustomLeadSources(prev => {
           if (prev.find(s => s.value === saved.value)) {
             return prev;
@@ -238,21 +318,16 @@ const Leads = () => {
           return [...prev, saved];
         });
         
-        // Set the value in the form
-        leadForm.setFieldValue('source', saved.value);
-        
-        // Clear the "Other" input
+        leadForm.setValue('source', saved.value);
         setShowLeadSourceOtherInput(false);
         setLeadSourceOtherValue('');
-        
-        message.success(`"${saved.label}" added to sources`);
+        showSuccess(`"${saved.label}" added to sources`);
       }
     } catch (error) {
-      message.error(error.response?.data?.error || 'Failed to save custom source');
+      showError(error, error.response?.data?.error || 'Failed to save custom source');
     }
   };
 
-  // Get merged lead source options
   const getMergedLeadSourceOptions = () => {
     const merged = [...leadSourceOptions];
     customLeadSources.forEach(source => {
@@ -263,46 +338,39 @@ const Leads = () => {
     return merged;
   };
 
-  const handleLeadSubmit = async (values) => {
+  const onLeadSubmit = async (values) => {
     const payload = {
       ...values,
       nextFollowUp: values.nextFollowUp ? values.nextFollowUp.toISOString() : null
     };
     try {
-      setSubmittingLead(true);
       if (editingLead) {
         await leadService.update(editingLead.id, payload);
-        message.success('Lead updated successfully');
+        showSuccess('Lead updated successfully');
       } else {
         await leadService.create(payload);
-        message.success('Lead created successfully');
+        showSuccess('Lead created successfully');
       }
       setLeadModalVisible(false);
+      leadForm.reset();
       fetchLeads();
       fetchSummary();
     } catch (error) {
       console.error('Failed to save lead', error);
-      const err = error?.response?.data?.message || 'Failed to save lead';
-      message.error(err);
-    } finally {
-      setSubmittingLead(false);
+      showError(error, error?.response?.data?.message || 'Failed to save lead');
     }
   };
 
   const handleViewLead = async (record) => {
-    // Set viewing lead immediately with data from table row
     setViewingLead(record);
-    // Open drawer immediately
     setDrawerVisible(true);
-    // Load full details asynchronously
     try {
       const response = await leadService.getById(record.id);
       const data = response?.data || response;
       setViewingLead(data || record);
     } catch (error) {
       console.error('Failed to fetch lead', error);
-      message.error('Failed to load lead details');
-      // Keep the record data from table row if loading fails
+      showError(error, 'Failed to load lead details');
     }
   };
 
@@ -311,35 +379,31 @@ const Leads = () => {
     if (!targetLead) {
       return;
     }
+    setConvertLeadId(targetLead.id);
+    setConvertDialogOpen(true);
+  };
 
-    Modal.confirm({
-      title: `Convert ${targetLead.name || 'Lead'} to customer`,
-      content: 'This will create a customer record using the lead details. You can adjust the customer later if needed.',
-      okText: 'Convert',
-      cancelText: 'Cancel',
-      okButtonProps: { type: 'primary' },
-      async onOk() {
+  const handleConvertConfirm = async () => {
+    if (!convertLeadId) return;
         try {
           setConvertingLead(true);
-          const response = await leadService.convert(targetLead.id);
+      const response = await leadService.convert(convertLeadId);
           const data = response?.data || response;
           if (data) {
             setViewingLead(data);
           }
           setDrawerVisible(true);
-          message.success('Lead converted to customer');
+      showSuccess('Lead converted to customer');
           fetchLeads();
           fetchSummary();
+      setConvertDialogOpen(false);
+      setConvertLeadId(null);
         } catch (error) {
           console.error('Failed to convert lead', error);
-          const errMsg = error?.response?.data?.message || 'Failed to convert lead';
-          message.error(errMsg);
-          throw error;
+      showError(error, error?.response?.data?.message || 'Failed to convert lead');
         } finally {
           setConvertingLead(false);
         }
-      }
-    });
   };
 
   useEffect(() => {
@@ -349,57 +413,52 @@ const Leads = () => {
   }, [viewingLead]);
 
   const openActivityModal = () => {
-    activityForm.resetFields();
-    activityForm.setFieldsValue({
-      type: 'note'
+    activityForm.reset({
+      type: 'note',
+      subject: '',
+      notes: '',
+      nextStep: '',
+      followUpDate: null,
     });
     setActivityModalVisible(true);
   };
 
-  const handleActivitySubmit = async (values) => {
+  const onActivitySubmit = async (values) => {
     if (!viewingLead) return;
     try {
-      setSubmittingActivity(true);
       await leadService.addActivity(viewingLead.id, {
         ...values,
         followUpDate: values.followUpDate ? values.followUpDate.toISOString() : null
       });
-      message.success('Activity added successfully');
+      showSuccess('Activity added successfully');
       setActivityModalVisible(false);
       handleViewLead({ id: viewingLead.id });
       fetchLeads();
       fetchSummary();
     } catch (error) {
       console.error('Failed to add activity', error);
-      const err = error?.response?.data?.message || 'Failed to add activity';
-      message.error(err);
-    } finally {
-      setSubmittingActivity(false);
+      showError(error, error?.response?.data?.message || 'Failed to add activity');
     }
   };
 
   const handleArchiveLead = (record) => {
-    Modal.confirm({
-      title: 'Archive Lead',
-      content: `Archive lead ${record.name}?`,
-      okText: 'Archive',
-      okButtonProps: { danger: true },
-      onOk: async () => {
-        try {
-          setArchivingLead(true);
-          await leadService.archive(record.id);
-          message.success('Lead archived');
+    setArchiveLeadId(record.id);
+    setArchiveDialogOpen(true);
+  };
+
+  const handleArchiveConfirm = async () => {
+    if (!archiveLeadId) return;
+    try {
+      await leadService.archive(archiveLeadId);
+      showSuccess('Lead archived');
           fetchLeads();
           fetchSummary();
+      setArchiveDialogOpen(false);
+      setArchiveLeadId(null);
         } catch (error) {
           console.error('Failed to archive lead', error);
-          const err = error?.response?.data?.message || 'Failed to archive lead';
-          message.error(err);
-        } finally {
-          setArchivingLead(false);
+      showError(error, error?.response?.data?.message || 'Failed to archive lead');
         }
-      }
-    });
   };
 
   const columns = useMemo(() => [
@@ -409,8 +468,8 @@ const Leads = () => {
       key: 'name',
       render: (_, record) => (
         <div>
-          <div style={{ fontWeight: 600 }}>{record.name || '—'}</div>
-          <div style={{ color: '#888', fontSize: 12 }}>
+          <div className="font-semibold">{record.name || '—'}</div>
+          <div className="text-muted-foreground text-sm">
             {record.company || '—'}
           </div>
         </div>
@@ -422,10 +481,10 @@ const Leads = () => {
       key: 'email',
       render: (email) =>
         email ? (
-          <Space size={4}>
-            <MailOutlined style={{ color: '#1677ff' }} />
-            <a href={`mailto:${email}`}>{email}</a>
-          </Space>
+          <div className="flex items-center gap-2">
+            <Mail className="h-4 w-4 text-primary" />
+            <a href={`mailto:${email}`} className="text-primary hover:underline">{email}</a>
+          </div>
         ) : (
           '—'
         )
@@ -436,10 +495,10 @@ const Leads = () => {
       key: 'phone',
       render: (phone) =>
         phone ? (
-          <Space size={4}>
-            <PhoneOutlined style={{ color: '#52c41a' }} />
+          <div className="flex items-center gap-2">
+            <Phone className="h-4 w-4 text-green-500" />
             <span>{phone}</span>
-          </Space>
+          </div>
         ) : (
           '—'
         )
@@ -449,7 +508,7 @@ const Leads = () => {
       dataIndex: 'status',
       key: 'status',
       render: (status) => (
-        <Tag color={statusColors[status] || 'default'}>{status?.toUpperCase()}</Tag>
+        <StatusChip status={status} />
       )
     },
     {
@@ -457,7 +516,7 @@ const Leads = () => {
       dataIndex: 'priority',
       key: 'priority',
       render: (priority) => (
-        <Tag color={priorityColors[priority] || 'default'}>{priority?.toUpperCase()}</Tag>
+        <Badge variant={priorityColors[priority] || 'default'}>{priority?.toUpperCase()}</Badge>
       )
     },
     {
@@ -466,7 +525,7 @@ const Leads = () => {
       key: 'source',
       render: (source) => {
         const matched = leadSourceOptions.find((option) => option.value === source);
-        return matched ? matched.label : '—';
+        return matched ? matched.label : source || '—';
       }
     },
     {
@@ -496,177 +555,154 @@ const Leads = () => {
             record.status !== 'converted' && !record.convertedCustomerId && {
               label: 'Convert to Customer',
               onClick: () => handleConvertLead(record),
-              icon: <UserAddOutlined />
+              icon: <UserPlus className="h-4 w-4" />
             },
             {
               label: 'Edit',
               onClick: () => openLeadModal(record),
-              icon: <UserSwitchOutlined />
+              icon: <UserCog className="h-4 w-4" />
             },
             {
               label: 'Archive',
               onClick: () => handleArchiveLead(record),
-              icon: <TeamOutlined />,
+              icon: <Users className="h-4 w-4" />,
               danger: true
             }
           ].filter(Boolean)}
         />
       )
     }
-  ], [handleArchiveLead, handleConvertLead, convertingLead]);
+  ], []);
 
-  const summaryCards = [
-    {
-      title: 'Total Leads',
-      value: summary?.totals?.totalLeads || 0,
-      prefix: <TeamOutlined style={{ color: '#1890ff' }} />
-    },
-    {
-      title: 'Qualified',
-      value: summary?.totals?.qualifiedLeads || 0,
-      prefix: <Badge status="processing" />
-    },
-    {
-      title: 'Converted',
-      value: summary?.totals?.convertedLeads || 0,
-      prefix: <Badge status="success" />
-    },
-    {
-      title: 'Lost',
-      value: summary?.totals?.lostLeads || 0,
-      prefix: <Badge status="error" />
-    }
-  ];
 
   const drawerTabs = useMemo(() => {
     if (!viewingLead) return [];
     const activities = viewingLead.activities || [];
 
-    const timelineItems = activities.map((activity) => ({
-      color:
-        activity.type === 'call'
-          ? 'green'
-          : activity.type === 'email'
-          ? 'blue'
-          : activity.type === 'meeting'
-          ? 'purple'
-          : 'gray',
-      children: (
-        <div>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>
+    const timelineItems = activities.map((activity) => (
+      <TimelineItem key={activity.id}>
+        <TimelineIndicator className={
+          activity.type === 'call' ? 'bg-green-500' :
+          activity.type === 'email' ? 'bg-[#166534]' :
+          activity.type === 'meeting' ? 'bg-purple-500' : 'bg-gray-500'
+        } />
+        <TimelineContent>
+          <TimelineTitle>
             {activity.type.toUpperCase()} {activity.subject ? `- ${activity.subject}` : ''}
-          </div>
-          <div style={{ color: '#888', fontSize: 12 }}>
+          </TimelineTitle>
+          <TimelineTime>
             {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
             {activity.createdByUser ? ` • ${activity.createdByUser.name}` : ''}
-          </div>
+          </TimelineTime>
           {activity.notes && (
-            <div style={{ marginTop: 4, color: '#555' }}>
-              {activity.notes}
-            </div>
+            <TimelineDescription>{activity.notes}</TimelineDescription>
           )}
           {activity.nextStep && (
-            <div style={{ marginTop: 4, color: '#888' }}>
-              Next Step: {activity.nextStep}
-            </div>
+            <TimelineDescription>Next Step: {activity.nextStep}</TimelineDescription>
           )}
           {activity.followUpDate && (
-            <div style={{ marginTop: 4, color: '#888' }}>
+            <TimelineDescription>
               Follow-up: {dayjs(activity.followUpDate).format('MMM DD, YYYY hh:mm A')}
-            </div>
+            </TimelineDescription>
           )}
-        </div>
-      )
-    }));
+        </TimelineContent>
+      </TimelineItem>
+    ));
 
     return [
       {
         key: 'overview',
         label: 'Overview',
         content: (
-          <Space direction="vertical" size="large" style={{ width: '100%' }}>
-            <Divider orientation="left">Lead Details</Divider>
+          <div className="space-y-6">
+            <Separator />
 
             {viewingLead.status === 'converted' && (
-              <Alert
-                type="success"
-                message="Lead converted"
-                description={
-                  viewingLead.convertedCustomer
+              <Alert>
+                <AlertTitle>Lead converted</AlertTitle>
+                <AlertDescription>
+                  {viewingLead.convertedCustomer
                     ? `Customer profile created for ${viewingLead.convertedCustomer.name}.`
-                    : 'This lead has been converted.'
-                }
-                showIcon
-              />
+                    : 'This lead has been converted.'}
+                </AlertDescription>
+              </Alert>
             )}
 
-            <Row gutter={16}>
-              <Col span={12}>
-                <Card bordered={false}>
-                  <Statistic
-                    title="Status"
-                    value={viewingLead.status?.toUpperCase()}
-                    prefix={<Badge color={statusColors[viewingLead.status]} />}
-                  />
+            <div className="grid grid-cols-2 gap-4">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">Status</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    <StatusChip status={viewingLead.status} />
+                  </div>
+                </CardContent>
                 </Card>
-              </Col>
-              <Col span={12}>
-                <Card bordered={false}>
-                  <Statistic
-                    title="Priority"
-                    value={viewingLead.priority?.toUpperCase()}
-                    prefix={<Badge color={priorityColors[viewingLead.priority]} />}
-                  />
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium">Priority</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">
+                    <Badge variant={priorityColors[viewingLead.priority]}>{viewingLead.priority?.toUpperCase()}</Badge>
+                  </div>
+                </CardContent>
                 </Card>
-              </Col>
-            </Row>
+            </div>
 
-            <Descriptions column={1} bordered size="small">
-              <Descriptions.Item label="Name">{viewingLead.name}</Descriptions.Item>
-              <Descriptions.Item label="Company">{viewingLead.company || '—'}</Descriptions.Item>
-              <Descriptions.Item label="Email">{viewingLead.email || '—'}</Descriptions.Item>
-              <Descriptions.Item label="Phone">{viewingLead.phone || '—'}</Descriptions.Item>
-              <Descriptions.Item label="Source">{viewingLead.source || '—'}</Descriptions.Item>
-              <Descriptions.Item label="Assigned To">{viewingLead.assignee?.name || 'Unassigned'}</Descriptions.Item>
-              <Descriptions.Item label="Next Follow-Up">
+            <Descriptions column={1}>
+              <DescriptionItem label="Name">{viewingLead.name}</DescriptionItem>
+              <DescriptionItem label="Company">{viewingLead.company || '—'}</DescriptionItem>
+              <DescriptionItem label="Email">{viewingLead.email || '—'}</DescriptionItem>
+              <DescriptionItem label="Phone">{viewingLead.phone || '—'}</DescriptionItem>
+              <DescriptionItem label="Source">{viewingLead.source || '—'}</DescriptionItem>
+              <DescriptionItem label="Assigned To">{viewingLead.assignee?.name || 'Unassigned'}</DescriptionItem>
+              <DescriptionItem label="Next Follow-Up">
                 {viewingLead.nextFollowUp ? dayjs(viewingLead.nextFollowUp).format('MMM DD, YYYY hh:mm A') : '—'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Last Contacted">
+              </DescriptionItem>
+              <DescriptionItem label="Last Contacted">
                 {viewingLead.lastContactedAt ? dayjs(viewingLead.lastContactedAt).format('MMM DD, YYYY hh:mm A') : '—'}
-              </Descriptions.Item>
+              </DescriptionItem>
               {viewingLead.convertedCustomer && (
-                <Descriptions.Item label="Converted Customer">
-                  <Space size="small">
-                    <Tag color="cyan">{viewingLead.convertedCustomer.name}</Tag>
+                <DescriptionItem label="Converted Customer">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">{viewingLead.convertedCustomer.name}</Badge>
                     {viewingLead.convertedCustomer.company && (
-                      <span style={{ color: '#888' }}>{viewingLead.convertedCustomer.company}</span>
+                      <span className="text-muted-foreground">{viewingLead.convertedCustomer.company}</span>
                     )}
-                  </Space>
-                </Descriptions.Item>
+                  </div>
+                </DescriptionItem>
               )}
-              {viewingLead.convertedJob && (
-                <Descriptions.Item label="Linked Job">
-                  <Tag color="green">{viewingLead.convertedJob.jobNumber}</Tag>
-                  <span style={{ marginLeft: 8 }}>{viewingLead.convertedJob.title}</span>
-                </Descriptions.Item>
+              {viewingLead.convertedJob && isPrintingPress && (
+                <DescriptionItem label="Linked Job">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="default">{viewingLead.convertedJob.jobNumber}</Badge>
+                    <span>{viewingLead.convertedJob.title}</span>
+                  </div>
+                </DescriptionItem>
               )}
-              <Descriptions.Item label="Tags">
+              <DescriptionItem label="Tags">
                 {(viewingLead.tags || []).length
-                  ? viewingLead.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)
+                  ? viewingLead.tags.map((tag) => <Badge key={tag} variant="outline" className="mr-1">{tag}</Badge>)
                   : '—'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Notes">{viewingLead.notes || '—'}</Descriptions.Item>
+              </DescriptionItem>
+              <DescriptionItem label="Notes">{viewingLead.notes || '—'}</DescriptionItem>
             </Descriptions>
-          </Space>
+          </div>
         )
       },
       {
         key: 'activities',
         label: 'Activity',
         content: timelineItems.length ? (
-          <Timeline items={timelineItems} />
+          <Timeline>
+            {timelineItems}
+          </Timeline>
         ) : (
-          <Alert type="info" message="No activity logged yet." />
+          <Alert>
+            <AlertTitle>No activity logged yet.</AlertTitle>
+          </Alert>
         )
       }
     ];
@@ -676,146 +712,270 @@ const Leads = () => {
   const priorityOptions = ['all', 'low', 'medium', 'high'];
 
   return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
     <div>
-      <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
-        <Col>
-          <Title level={3} style={{ margin: 0 }}>Leads</Title>
-          <Text type="secondary">Track prospects and follow-ups for customer service and marketing.</Text>
-        </Col>
-        <Col>
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={() => { fetchLeads(); fetchSummary(); }}>
+          <h1 className="text-3xl font-bold">Leads</h1>
+          <p className="text-muted-foreground">Track prospects and follow-ups for customer service and marketing.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => { fetchLeads(); fetchSummary(); }}>
+            <RefreshCw className="h-4 w-4 mr-2" />
               Refresh
             </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => openLeadModal()}>
+          <Button onClick={() => openLeadModal()}>
+            <Plus className="h-4 w-4 mr-2" />
               New Lead
             </Button>
-          </Space>
+        </div>
+      </div>
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        {/* Total Leads Card */}
+        <Col xs={24} sm={12} lg={6}>
+          <AntdCard
+            bodyStyle={{ padding: 20 }}
+            style={{
+              borderRadius: 12,
+              border: '1px solid #e5e7eb',
+              backgroundColor: 'white',
+              opacity: summaryLoading ? 0.5 : 1
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div style={{ fontSize: 14, color: '#666', fontWeight: 700 }}>Total Leads</div>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(22, 101, 52, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <Users className="h-5 w-5" style={{ color: '#166534' }} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>
+                {summary?.totals?.totalLeads || 0}
+              </div>
+            </div>
+          </AntdCard>
+        </Col>
+
+        {/* Qualified Card */}
+        <Col xs={24} sm={12} lg={6}>
+          <AntdCard
+            bodyStyle={{ padding: 20 }}
+            style={{
+              borderRadius: 12,
+              border: '1px solid #e5e7eb',
+              backgroundColor: 'white',
+              opacity: summaryLoading ? 0.5 : 1
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div style={{ fontSize: 14, color: '#666', fontWeight: 700 }}>Qualified</div>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <CheckCircle className="h-5 w-5" style={{ color: '#166534' }} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>
+                {summary?.totals?.qualifiedLeads || 0}
+              </div>
+            </div>
+          </AntdCard>
+          </Col>
+
+        {/* Converted Card */}
+        <Col xs={24} sm={12} lg={6}>
+          <AntdCard
+            bodyStyle={{ padding: 20 }}
+            style={{
+              borderRadius: 12,
+              border: '1px solid #e5e7eb',
+              backgroundColor: 'white',
+              opacity: summaryLoading ? 0.5 : 1
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div style={{ fontSize: 14, color: '#666', fontWeight: 700 }}>Converted</div>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(132, 204, 22, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <TrendingUp className="h-5 w-5" style={{ color: '#84cc16' }} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>
+                {summary?.totals?.convertedLeads || 0}
+              </div>
+            </div>
+          </AntdCard>
+          </Col>
+
+        {/* Lost Card */}
+        <Col xs={24} sm={12} lg={6}>
+          <AntdCard
+            bodyStyle={{ padding: 20 }}
+            style={{
+              borderRadius: 12,
+              border: '1px solid #e5e7eb',
+              backgroundColor: 'white',
+              opacity: summaryLoading ? 0.5 : 1
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
+              <div style={{ fontSize: 14, color: '#666', fontWeight: 700 }}>Lost</div>
+              <div style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}>
+                <XCircle className="h-5 w-5" style={{ color: '#ef4444' }} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 28, fontWeight: 700, color: '#1a1a1a', lineHeight: 1.2 }}>
+                {summary?.totals?.lostLeads || 0}
+              </div>
+            </div>
+          </AntdCard>
         </Col>
       </Row>
 
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        {summaryCards.map((card) => (
-          <Col xs={24} sm={12} md={6} key={card.title}>
-            <Card loading={summaryLoading}>
-              <Statistic
-                title={card.title}
-                value={card.value}
-                prefix={card.prefix}
-              />
-            </Card>
-          </Col>
-        ))}
-      </Row>
-
-      <Card style={{ marginBottom: 24 }}>
-        <Row gutter={[16, 16]}>
-          <Col xs={24} sm={24} md={12} lg={4}>
-            <Input.Search
-              placeholder="Search name, company, email, phone"
-              allowClear
-              onSearch={(value) => {
-                setPagination((prev) => ({ ...prev, current: 1 }));
-                setFilters((prev) => ({ ...prev, search: value }));
-              }}
-            />
-          </Col>
-          <Col xs={24} sm={24} md={12} lg={4}>
+      <Card>
+        <CardContent className="pt-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <Select
               value={filters.status}
-              onChange={(value) => {
+              onValueChange={(value) => {
                 setPagination((prev) => ({ ...prev, current: 1 }));
                 setFilters((prev) => ({ ...prev, status: value }));
               }}
-              style={{ width: '100%' }}
             >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
               {statusOptions.map((option) => (
-                <Option key={option} value={option}>
+                  <SelectItem key={option} value={option}>
                   {option.toUpperCase()}
-                </Option>
+                  </SelectItem>
               ))}
+              </SelectContent>
             </Select>
-          </Col>
-          <Col xs={24} sm={24} md={12} lg={4}>
             <Select
               value={filters.priority}
-              onChange={(value) => {
+              onValueChange={(value) => {
                 setPagination((prev) => ({ ...prev, current: 1 }));
                 setFilters((prev) => ({ ...prev, priority: value }));
               }}
-              style={{ width: '100%' }}
             >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
               {priorityOptions.map((option) => (
-                <Option key={option} value={option}>
+                  <SelectItem key={option} value={option}>
                   {option.toUpperCase()}
-                </Option>
+                  </SelectItem>
               ))}
+              </SelectContent>
             </Select>
-          </Col>
-          <Col xs={24} sm={24} md={12} lg={4}>
             <Select
               value={filters.source}
-              onChange={(value) => {
+              onValueChange={(value) => {
                 setPagination((prev) => ({ ...prev, current: 1 }));
                 setFilters((prev) => ({ ...prev, source: value }));
               }}
-              style={{ width: '100%' }}
-              placeholder="Filter by source"
             >
-              <Option value="all">All Sources</Option>
+              <SelectTrigger>
+                <SelectValue placeholder="Filter by source" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sources</SelectItem>
               {leadSourceOptions.map((option) => (
-                <Option key={option.value} value={option.value}>
+                  <SelectItem key={option.value} value={option.value}>
                   {option.label}
-                </Option>
+                  </SelectItem>
               ))}
+              </SelectContent>
             </Select>
-          </Col>
-          <Col xs={24} sm={24} md={12} lg={4}>
             <Select
-              allowClear
-              placeholder="Filter by assignee"
               value={filters.assignedTo || undefined}
-              onChange={(value) => {
+              onValueChange={(value) => {
                 setPagination((prev) => ({ ...prev, current: 1 }));
                 setFilters((prev) => ({ ...prev, assignedTo: value || '' }));
               }}
-              style={{ width: '100%' }}
-              showSearch
-              optionFilterProp="children"
             >
+              <SelectTrigger>
+                <SelectValue placeholder="Filter by assignee" />
+              </SelectTrigger>
+              <SelectContent>
               {users.map((user) => (
-                <Option key={user.id} value={user.id}>
+                  <SelectItem key={user.id} value={user.id}>
                   {user.name} ({user.email})
-                </Option>
+                  </SelectItem>
               ))}
+              </SelectContent>
             </Select>
-          </Col>
-          <Col xs={24} sm={24} md={12} lg={4}>
             <Select
               value={filters.isActive}
-              onChange={(value) => {
+              onValueChange={(value) => {
                 setPagination((prev) => ({ ...prev, current: 1 }));
                 setFilters((prev) => ({ ...prev, isActive: value }));
               }}
-              style={{ width: '100%' }}
             >
-              <Option value="true">Active</Option>
-              <Option value="false">Archived</Option>
-              <Option value="all">All</Option>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="true">Active</SelectItem>
+                <SelectItem value="false">Archived</SelectItem>
+                <SelectItem value="all">All</SelectItem>
+              </SelectContent>
             </Select>
-          </Col>
-        </Row>
+          </div>
+        </CardContent>
       </Card>
 
-      <Table
-        columns={columns}
-        dataSource={leads}
-        rowKey="id"
-        loading={loading}
-        pagination={pagination}
-        onChange={handleTableChange}
-        scroll={{ x: 1000 }}
-      />
+      {loading ? (
+        <Card>
+          <div className="p-4">
+            <TableSkeleton rows={8} cols={7} />
+          </div>
+        </Card>
+      ) : (
+        <Table
+          columns={columns}
+          dataSource={leads}
+          rowKey="id"
+          pagination={pagination}
+          onChange={handleTableChange}
+          scroll={{ x: 1000 }}
+        />
+      )}
 
       <DetailsDrawer
         open={drawerVisible}
@@ -832,13 +992,13 @@ const Leads = () => {
                 !viewingLead.convertedCustomerId && {
                   key: 'convert',
                   label: convertingLead ? 'Converting...' : 'Convert to Customer',
-                  icon: <UserAddOutlined />,
+                  icon: <UserPlus className="h-4 w-4" />,
                   onClick: () => handleConvertLead(viewingLead),
                 },
                 {
                   key: 'log-activity',
                   label: 'Log Activity',
-                  icon: <MessageOutlined />,
+                  icon: <MessageSquare className="h-4 w-4" />,
                   onClick: openActivityModal
                 }
               ].filter(Boolean)
@@ -847,183 +1007,414 @@ const Leads = () => {
         tabs={drawerTabs}
       />
 
-      <Modal
-        title={editingLead ? `Edit Lead (${editingLead.name})` : 'New Lead'}
-        open={leadModalVisible}
-        onCancel={() => {
-          setLeadModalVisible(false);
-          setShowLeadSourceOtherInput(false);
-          setLeadSourceOtherValue('');
-        }}
-        onOk={() => leadForm.submit()}
-        okText={editingLead ? 'Update Lead' : 'Create Lead'}
-        confirmLoading={submittingLead}
-        width={720}
-      >
-        <Form layout="vertical" form={leadForm} onFinish={handleLeadSubmit}>
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
+      <Dialog open={leadModalVisible} onOpenChange={setLeadModalVisible}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingLead ? `Edit Lead (${editingLead.name})` : 'New Lead'}</DialogTitle>
+            <DialogDescription>
+              {editingLead ? 'Update lead information' : 'Add a new lead to your system'}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <Form {...leadForm}>
+            <form onSubmit={leadForm.handleSubmit(onLeadSubmit)} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={leadForm.control}
                 name="name"
-                label="Lead Name"
-                rules={[{ required: true, message: 'Please enter lead name' }]}
-              >
-                <Input placeholder="Contact or company name" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="company" label="Company">
-                <Input placeholder="Company" />
-              </Form.Item>
-            </Col>
-          </Row>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Lead Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Contact or company name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={leadForm.control}
+                  name="company"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Company</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Company" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="email" label="Email">
-                <Input type="email" placeholder="Email address" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="phone" label="Phone">
-                <PhoneNumberInput placeholder="Enter phone number" />
-              </Form.Item>
-            </Col>
-          </Row>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={leadForm.control}
+                  name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input {...field} type="email" placeholder="Email address" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={leadForm.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone</FormLabel>
+                      <FormControl>
+                        <PhoneNumberInput {...field} placeholder="Enter phone number" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="source" label="Lead Source">
-              <Select 
-                placeholder="Select lead source"
-                onChange={handleLeadSourceChange}
-              >
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={leadForm.control}
+                  name="source"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Lead Source</FormLabel>
+                      <Select value={field.value} onValueChange={handleLeadSourceChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select lead source" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
                 {getMergedLeadSourceOptions().map((option) => (
-                  <Option key={option.value} value={option.value}>
+                            <SelectItem key={option.value} value={option.value}>
                     {option.label}
-                  </Option>
+                            </SelectItem>
                 ))}
-                <Option value="__OTHER__">Other (specify)</Option>
+                          <SelectItem value="__OTHER__">Other (specify)</SelectItem>
+                        </SelectContent>
               </Select>
-              </Form.Item>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={leadForm.control}
+                  name="assignedTo"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Assigned To</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select team member" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {users.map((user) => (
+                            <SelectItem key={user.id} value={user.id}>
+                              {user.name} ({user.email})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
               {showLeadSourceOtherInput && (
-                <Form.Item
-                  label="Enter Source Name"
-                  style={{ marginTop: 8 }}
-                >
-                  <Input.Group compact>
+                <div className="flex gap-2">
                     <Input
-                      style={{ width: 'calc(100% - 80px)' }}
                       placeholder="e.g., Trade Show, Partner Referral"
                       value={leadSourceOtherValue}
                       onChange={(e) => setLeadSourceOtherValue(e.target.value)}
-                      onPressEnter={handleSaveCustomLeadSource}
-                    />
-                    <Button
-                      type="primary"
-                      style={{ width: 80 }}
-                      onClick={handleSaveCustomLeadSource}
-                    >
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSaveCustomLeadSource();
+                      }
+                    }}
+                    className="flex-1"
+                  />
+                  <Button type="button" onClick={handleSaveCustomLeadSource}>
                       Save
                     </Button>
-                  </Input.Group>
-                </Form.Item>
+                </div>
               )}
-            </Col>
-            <Col span={12}>
-              <Form.Item name="assignedTo" label="Assigned To">
-                <Select
-                  allowClear
-                  placeholder="Select team member"
-                  showSearch
-                  optionFilterProp="children"
-                >
-                  {users.map((user) => (
-                    <Option key={user.id} value={user.id}>
-                      {user.name} ({user.email})
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="status" label="Status">
-                <Select>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={leadForm.control}
+                  name="status"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Status</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
                   {['new', 'contacted', 'qualified', 'converted', 'lost'].map((status) => (
-                    <Option key={status} value={status}>
+                            <SelectItem key={status} value={status}>
                       {status.toUpperCase()}
-                    </Option>
+                            </SelectItem>
                   ))}
+                        </SelectContent>
                 </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="priority" label="Priority">
-                <Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={leadForm.control}
+                  name="priority"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Priority</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
                   {['low', 'medium', 'high'].map((priority) => (
-                    <Option key={priority} value={priority}>
+                            <SelectItem key={priority} value={priority}>
                       {priority.toUpperCase()}
-                    </Option>
+                            </SelectItem>
                   ))}
+                        </SelectContent>
                 </Select>
-              </Form.Item>
-            </Col>
-          </Row>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="nextFollowUp" label="Next Follow-up">
-                <DatePicker showTime style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="tags" label="Tags">
-                <Select mode="tags" placeholder="Add tags" />
-              </Form.Item>
-            </Col>
-          </Row>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={leadForm.control}
+                  name="nextFollowUp"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Next Follow-up</FormLabel>
+                      <FormControl>
+                        <DatePicker
+                          date={field.value}
+                          onSelect={(date) => field.onChange(date)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={leadForm.control}
+                  name="tags"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Tags</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          value={field.value?.join(', ') || ''}
+                          onChange={(e) => {
+                            const tags = e.target.value.split(',').map(t => t.trim()).filter(Boolean);
+                            field.onChange(tags);
+                          }}
+                          placeholder="Add tags separated by commas"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Form.Item name="notes" label="Notes">
-            <Input.TextArea rows={3} placeholder="Internal notes or context" />
-          </Form.Item>
-        </Form>
-      </Modal>
+              <FormField
+                control={leadForm.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={3} placeholder="Internal notes or context" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-      <Modal
-        title="Log Activity"
-        open={activityModalVisible}
-        onCancel={() => setActivityModalVisible(false)}
-        onOk={() => activityForm.submit()}
-        okText="Save Activity"
-        confirmLoading={submittingActivity}
-      >
-        <Form layout="vertical" form={activityForm} onFinish={handleActivitySubmit}>
-          <Form.Item name="type" label="Activity Type">
-            <Select>
-              <Option value="call">Call</Option>
-              <Option value="email">Email</Option>
-              <Option value="meeting">Meeting</Option>
-              <Option value="note">Note</Option>
-              <Option value="task">Task</Option>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setLeadModalVisible(false);
+                    setShowLeadSourceOtherInput(false);
+                    setLeadSourceOtherValue('');
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={leadForm.formState.isSubmitting}>
+                  {leadForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {editingLead ? 'Update Lead' : 'Create Lead'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={activityModalVisible} onOpenChange={setActivityModalVisible}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Log Activity</DialogTitle>
+            <DialogDescription>Record an interaction with this lead</DialogDescription>
+          </DialogHeader>
+          
+          <Form {...activityForm}>
+            <form onSubmit={activityForm.handleSubmit(onActivitySubmit)} className="space-y-4">
+              <FormField
+                control={activityForm.control}
+                name="type"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Activity Type</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="call">Call</SelectItem>
+                        <SelectItem value="email">Email</SelectItem>
+                        <SelectItem value="meeting">Meeting</SelectItem>
+                        <SelectItem value="note">Note</SelectItem>
+                        <SelectItem value="task">Task</SelectItem>
+                      </SelectContent>
             </Select>
-          </Form.Item>
-          <Form.Item name="subject" label="Subject">
-            <Input placeholder="Short subject or summary" />
-          </Form.Item>
-          <Form.Item name="notes" label="Notes">
-            <Input.TextArea rows={3} placeholder="Details of the interaction" />
-          </Form.Item>
-          <Form.Item name="nextStep" label="Next Step">
-            <Input placeholder="Optional next step" />
-          </Form.Item>
-          <Form.Item name="followUpDate" label="Follow-up Date">
-            <DatePicker showTime style={{ width: '100%' }} />
-          </Form.Item>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={activityForm.control}
+                name="subject"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Subject</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Short subject or summary" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={activityForm.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={3} placeholder="Details of the interaction" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={activityForm.control}
+                name="nextStep"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Next Step</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Optional next step" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={activityForm.control}
+                name="followUpDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Follow-up Date</FormLabel>
+                    <FormControl>
+                      <DatePicker
+                        date={field.value}
+                        onSelect={(date) => field.onChange(date)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setActivityModalVisible(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={activityForm.formState.isSubmitting}>
+                  {activityForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Save Activity
+                </Button>
+              </DialogFooter>
+            </form>
         </Form>
-      </Modal>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={convertDialogOpen} onOpenChange={setConvertDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Convert Lead to Customer</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will create a customer record using the lead details. You can adjust the customer later if needed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConvertConfirm} disabled={convertingLead}>
+              {convertingLead && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Convert
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={archiveDialogOpen} onOpenChange={setArchiveDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive Lead</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to archive this lead? You can restore it later if needed.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleArchiveConfirm} className="bg-destructive text-destructive-foreground">
+              Archive
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

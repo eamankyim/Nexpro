@@ -1,0 +1,24 @@
+{
+  "name": "nexpro-e2e-tests",
+  "version": "1.0.0",
+  "description": "End-to-end tests for NEXPro application",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:dashboard": "playwright test tests/01-dashboard.spec.js",
+    "test:jobs": "playwright test tests/02-jobs.spec.js",
+    "test:leads": "playwright test tests/03-leads.spec.js",
+    "test:customers": "playwright test tests/04-customers.spec.js",
+    "test:financial": "playwright test tests/05-financial.spec.js",
+    "test:resources": "playwright test tests/06-resources.spec.js",
+    "test:reports": "playwright test tests/07-reports.spec.js",
+    "test:settings": "playwright test tests/08-settings.spec.js",
+    "test:full": "playwright test tests/00-full-flow.spec.js",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0"
+  }
+}

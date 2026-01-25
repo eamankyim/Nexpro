@@ -9,6 +9,9 @@ const {
   updateSubscriptionSettings,
   getPayrollSettings,
   updatePayrollSettings,
+  getWhatsAppSettings,
+  updateWhatsAppSettings,
+  testWhatsAppConnection,
   uploadProfilePicture,
   uploadOrganizationLogo
 } = require('../controllers/settingsController');
@@ -79,6 +82,17 @@ router
   .route('/payroll')
   .get(getPayrollSettings)
   .put(authorize('admin', 'manager'), updatePayrollSettings);
+
+router
+  .route('/whatsapp')
+  .get(getWhatsAppSettings)
+  .put(authorize('admin', 'manager'), updateWhatsAppSettings);
+
+router.post(
+  '/whatsapp/test',
+  authorize('admin', 'manager'),
+  testWhatsAppConnection
+);
 
 module.exports = router;
 

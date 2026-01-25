@@ -1,0 +1,196 @@
+# Cursor Rules for Nexpro
+
+## Design Guidelines
+
+### Shadows
+- **DO NOT use shadows** (box-shadow, drop-shadow, text-shadow, etc.) anywhere in the application
+- Use borders and background colors for visual separation instead
+- All components should use flat design without shadow effects
+
+## Code Style
+
+### UI Components
+- **USE shadcn/ui components ONLY** - DO NOT use Ant Design components
+- Use shadcn/ui components with Tailwind CSS (Table, Dialog, Select, etc. from @/components/ui)
+- DO NOT import or use components from 'antd' package
+- If a component seems to need Ant Design functionality, implement it using shadcn/ui components instead
+- Use react-hook-form with zod for form validation
+- Use lucide-react for icons (not @ant-design/icons)
+- Primary color: #166534 (dark green from login button)
+
+### Styling
+- Use Tailwind CSS classes for styling
+- Use inline styles only when necessary for dynamic values
+- Maintain consistent spacing using Tailwind's spacing scale
+- Use borders (1px solid #e5e7eb) for card separation instead of shadows
+
+## Email Notification Routing
+
+### User Email (Account Email)
+- **Purpose:** User account-related notifications
+- **Source:** User's account email (from signup/login)
+- **Use for:**
+ - Welcome emails
+ - Password reset emails
+ - Login alerts
+ - Account verification emails
+ - Security notifications
+ - User profile updates
+
+### Business Email (Business Setup Email)
+- **Purpose:** Business operations and customer-facing notifications
+- **Source:** Business email from workspace setup (companyEmail field in onboarding)
+- **Use for:**
+ - Invoice receipts
+ - Sales reports
+ - Business updates
+ - Customer notifications
+ - Order confirmations
+ - Payment receipts
+ - Business-related alerts
+
+### Implementation Guidelines
+- Always use the appropriate email address based on notification type
+- If business email is not set, fallback to user email for business notifications
+- User account notifications should ALWAYS go to user email, never business email
+- Business/customer-facing notifications should prefer business email when available
+
+## Performance Best Practices
+
+### React Performance Optimization
+- **ALWAYS use `useMemo`** for expensive computations (filtered lists, derived stats, chart data, computed values)
+- **ALWAYS use `useCallback`** for functions passed as props or used in dependencies
+- **Memoize table columns** with `useMemo` and proper dependencies
+- **Memoize chart configurations** and data transformations
+- Use `React.memo()` for expensive child components that receive stable props
+- Avoid creating new objects/arrays in render - use `useMemo` instead
+
+### Code Splitting
+- **ALWAYS use `React.lazy()`** for route-based code splitting
+- Import pages using: `const PageName = lazy(() => import('./pages/PageName'));`
+- Wrap lazy-loaded routes in `<Suspense>` with a loading fallback
+- Use the `PageLoader` component for consistent loading states
+
+### Bundle Optimization
+- Keep bundle chunks under 1MB when possible
+- Use manual chunks configuration in `vite.config.js` for vendor splitting
+- Lazy load heavy dependencies (charts, PDF libraries, etc.)
+
+### API Performance
+- **ALWAYS debounce search inputs** using `useDebounce` hook (500ms default)
+- Use `useDebounce` from `Frontend/src/hooks/useDebounce.js`
+- Example: `const debouncedSearch = useDebounce(searchText, 500);`
+- Apply debouncing to all search/filter inputs that trigger API calls
+
+### Database Query Optimization
+- Always filter by `tenantId` first in queries
+- Use `attributes` to select only needed fields
+- Implement pagination with reasonable limits (max 100 items per page)
+- Use database indexes for frequently queried fields
+- Avoid N+1 queries - use `include` with proper `attributes`
+
+## Robustness & Error Handling
+
+### Error Boundaries
+- Wrap main app routes in `ErrorBoundary` component
+- Use `ErrorBoundary` from `Frontend/src/components/ErrorBoundary.jsx`
+- Create page-level error boundaries for critical pages if needed
+
+### API Error Handling
+- API retry logic is automatically handled (max 3 retries with exponential backoff)
+- API timeout is set to 30 seconds
+- Use `showError` from `utils/toast.js` for user-facing error messages
+- Use `handleApiError` for API calls with context
+- Never show raw error objects to users - always use error extraction utilities
+
+### Request Cancellation
+- Use `AbortController` for canceling stale requests
+- Export `createCancelToken` from `api.js` for manual cancellation
+- Cancel requests when components unmount or when new requests are made
+
+### Backend Error Handling
+- All errors must return standardized format: `{ success: false, error, errorCode, requestId }`
+- Use error codes for client-side error handling
+- Log errors with context (request ID, user, tenant, timestamp)
+- Handle Sequelize errors gracefully (validation, foreign keys, connection errors)
+
+## Code Quality & Organization
+
+### Custom Hooks
+- Use `useDebounce` from `Frontend/src/hooks/useDebounce.js` for debouncing
+- Use `useApi` from `Frontend/src/hooks/useApi.js` for React Query wrappers
+- Create reusable hooks for common patterns
+- Extract business logic from components to custom hooks
+
+### Constants & Configuration
+- **ALWAYS use constants** from `Frontend/src/constants/index.js` instead of magic numbers/strings
+- Import constants: `import { PAGINATION, DEBOUNCE_DELAYS, BUSINESS_TYPES } from '../constants'`
+- Use status enums from constants (e.g., `JOB_STATUSES.NEW` instead of `'new'`)
+- Use date formats from `DATE_FORMATS` constant
+- Use error/success messages from `ERROR_MESSAGES` and `SUCCESS_MESSAGES`
+
+### Documentation
+- **ALWAYS add JSDoc comments** to complex functions
+- Document function parameters, return values, and examples
+- Use JSDoc format:
+  ```javascript
+  /**
+   * Function description
+   * @param {Type} paramName - Parameter description
+   * @returns {Type} Return description
+   * @example
+   * functionName(param);
+   */
+  ```
+
+### Component Structure
+- Follow standard component structure (see `Frontend/src/components/COMPONENT_TEMPLATE.md`)
+- Import order: 1) External deps, 2) Internal services/hooks, 3) UI components, 4) Constants, 5) Types/Schemas
+- Organize component code: 1) Hooks, 2) State, 3) Debounced values, 4) Memoized values, 5) Callbacks, 6) Effects, 7) Handlers, 8) Render
+- Use consistent naming: PascalCase for components, camelCase for functions, UPPER_SNAKE_CASE for constants
+
+### Naming Conventions
+- **Components**: PascalCase (e.g., `CustomerList`, `InvoiceForm`)
+- **Functions**: camelCase (e.g., `handleSubmit`, `fetchData`)
+- **Constants**: UPPER_SNAKE_CASE (e.g., `MAX_RETRIES`, `API_TIMEOUT`)
+- **Files**: Match component name (e.g., `CustomerList.jsx`)
+
+## Business Type Awareness
+
+### Multi-Tenant Business Types
+- **ALWAYS check business type** before rendering business-type-specific features
+- Use: `const { activeTenant } = useAuth(); const businessType = activeTenant?.businessType || 'printing_press';`
+- Use: `const isPrintingPress = businessType === 'printing_press';`
+- Conditionally render job-related features only for `printing_press`
+- Use conditional rendering: `{isPrintingPress && <JobRelatedComponent />}`
+- Use spread operator for conditional array items: `[...(isPrintingPress ? [item] : [])]`
+
+## Import Organization
+
+### Standard Import Order
+1. React and external libraries (`react`, `react-router-dom`, etc.)
+2. Internal services, hooks, utils (`../services`, `../hooks`, `../utils`)
+3. UI components (`@/components/ui`)
+4. Constants (`../constants`)
+5. Types/Schemas (Zod schemas, TypeScript types)
+
+### Example
+```javascript
+// 1. External
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+
+// 2. Internal
+import { useAuth } from '../context/AuthContext';
+import { useDebounce } from '../hooks/useDebounce';
+import service from '../services/service';
+
+// 3. UI Components
+import { Button } from '@/components/ui/button';
+
+// 4. Constants
+import { PAGINATION, DEBOUNCE_DELAYS } from '../constants';
+
+// 5. Types/Schemas
+import { z } from 'zod';
+```

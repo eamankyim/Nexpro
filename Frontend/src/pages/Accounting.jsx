@@ -1,30 +1,89 @@
 import { useMemo, useState } from 'react';
-import {
-  Row,
-  Col,
-  Button,
-  Table,
-  Tag,
-  Space,
-  Modal,
-  Form,
-  Input,
-  Select,
-  DatePicker,
-  InputNumber,
-  Tabs,
-  Descriptions,
-  Typography,
-  Divider,
-  Drawer,
-  App
-} from 'antd';
-import { PlusOutlined, ReloadOutlined, EyeOutlined } from '@ant-design/icons';
+import { useForm, useFieldArray } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { showSuccess, showError } from '../utils/toast';
+// Removed Ant Design imports - using shadcn/ui only
+import { Plus, RefreshCw, Eye, Loader2, MinusCircle } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import accountingService from '../services/accountingService';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import TableSkeleton from '../components/TableSkeleton';
+import { DatePicker } from '@/components/ui/date-picker';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
-const { Title, Text } = Typography;
+const accountSchema = z.object({
+  code: z.string().min(1, 'Account code is required'),
+  name: z.string().min(1, 'Account name is required'),
+  type: z.enum(['asset', 'liability', 'equity', 'income', 'expense', 'cogs', 'other']),
+  category: z.string().optional(),
+  description: z.string().optional(),
+});
+
+const journalLineSchema = z.object({
+  accountId: z.string().min(1, 'Account is required'),
+  debit: z.number().min(0).default(0),
+  credit: z.number().min(0).default(0),
+  description: z.string().optional(),
+}).refine((data) => (data.debit > 0 && data.credit === 0) || (data.debit === 0 && data.credit > 0), {
+  message: 'Either debit or credit must be greater than 0, but not both',
+  path: ['debit'],
+});
+
+const journalEntrySchema = z.object({
+  date: z.date({ required_error: 'Date is required' }),
+  reference: z.string().optional(),
+  description: z.string().min(1, 'Description is required'),
+  lines: z.array(journalLineSchema).min(2, 'At least 2 journal lines required'),
+}).refine((data) => {
+  const totalDebits = data.lines.reduce((sum, line) => sum + (line.debit || 0), 0);
+  const totalCredits = data.lines.reduce((sum, line) => sum + (line.credit || 0), 0);
+  return Math.abs(totalDebits - totalCredits) < 0.01; // Allow small floating point differences
+}, {
+  message: 'Total debits must equal total credits',
+  path: ['lines'],
+});
 
 const accountTypeLabels = {
   asset: 'Asset',
@@ -36,118 +95,41 @@ const accountTypeLabels = {
   other: 'Other'
 };
 
-const AccountForm = ({ form }) => (
-  <>
-    <Row gutter={16}>
-      <Col span={12}>
-        <Form.Item
-          name="code"
-          label="Account Code"
-          rules={[{ required: true, message: 'Account code is required' }]}
-        >
-          <Input placeholder="1000" />
-        </Form.Item>
-      </Col>
-      <Col span={12}>
-        <Form.Item
-          name="name"
-          label="Account Name"
-          rules={[{ required: true, message: 'Account name is required' }]}
-        >
-          <Input placeholder="Cash at Bank" />
-        </Form.Item>
-      </Col>
-    </Row>
-    <Row gutter={16}>
-      <Col span={12}>
-        <Form.Item
-          name="type"
-          label="Type"
-          rules={[{ required: true, message: 'Account type is required' }]}
-        >
-          <Select placeholder="Select account type">
-            {Object.entries(accountTypeLabels).map(([value, label]) => (
-              <Select.Option key={value} value={value}>
-                {label}
-              </Select.Option>
-            ))}
-          </Select>
-        </Form.Item>
-      </Col>
-      <Col span={12}>
-        <Form.Item name="category" label="Category">
-          <Input placeholder="Current Assets / Operating Expenses" />
-        </Form.Item>
-      </Col>
-    </Row>
-    <Form.Item name="description" label="Description">
-      <Input.TextArea rows={3} placeholder="Optional description of the account" />
-    </Form.Item>
-  </>
-);
-
-const JournalLineForm = ({ field, remove, accountOptions }) => (
-  <Row gutter={16} align="middle" wrap>
-    <Col xs={24} md={8}>
-      <Form.Item
-        {...field}
-        name={[field.name, 'accountId']}
-        fieldKey={[field.fieldKey, 'accountId']}
-        rules={[{ required: true, message: 'Account is required' }]}
-      >
-        <Select placeholder="Select account" showSearch optionFilterProp="children">
-          {accountOptions.map((option) => (
-            <Select.Option key={option.value} value={option.value}>
-              {option.label}
-            </Select.Option>
-          ))}
-        </Select>
-      </Form.Item>
-    </Col>
-    <Col xs={12} md={4}>
-      <Form.Item {...field} name={[field.name, 'debit']} fieldKey={[field.fieldKey, 'debit']}>
-        <InputNumber
-          style={{ width: '100%' }}
-          min={0}
-          parser={(value) => value.replace(/[^0-9.]/g, '')}
-          prefix="GHS "
-        />
-      </Form.Item>
-    </Col>
-    <Col xs={12} md={4}>
-      <Form.Item {...field} name={[field.name, 'credit']} fieldKey={[field.fieldKey, 'credit']}>
-        <InputNumber
-          style={{ width: '100%' }}
-          min={0}
-          parser={(value) => value.replace(/[^0-9.]/g, '')}
-          prefix="GHS "
-        />
-      </Form.Item>
-    </Col>
-    <Col xs={24} md={7}>
-      <Form.Item {...field} name={[field.name, 'description']} fieldKey={[field.fieldKey, 'description']}>
-        <Input placeholder="Line description" />
-      </Form.Item>
-    </Col>
-    <Col xs={24} md={1} style={{ textAlign: 'right' }}>
-      <Button danger type="link" style={{ padding: 0 }} onClick={() => remove(field.name)}>
-        Remove
-      </Button>
-    </Col>
-  </Row>
-);
 
 const Accounting = () => {
-  const { message } = App.useApp();
   const queryClient = useQueryClient();
   const [accountModalVisible, setAccountModalVisible] = useState(false);
   const [journalModalVisible, setJournalModalVisible] = useState(false);
-  const [accountForm] = Form.useForm();
-  const [journalForm] = Form.useForm();
   const [selectedAccount, setSelectedAccount] = useState(null);
   const [accountDrawerVisible, setAccountDrawerVisible] = useState(false);
   const [selectedJournalEntry, setSelectedJournalEntry] = useState(null);
   const [journalDrawerVisible, setJournalDrawerVisible] = useState(false);
+
+  const accountForm = useForm({
+    resolver: zodResolver(accountSchema),
+    defaultValues: {
+      code: '',
+      name: '',
+      type: 'asset',
+      category: '',
+      description: '',
+    },
+  });
+
+  const journalForm = useForm({
+    resolver: zodResolver(journalEntrySchema),
+    defaultValues: {
+      date: new Date(),
+      reference: '',
+      description: '',
+      lines: [{ accountId: '', debit: 0, credit: 0, description: '' }],
+    },
+  });
+
+  const { fields: journalFields, append: appendJournalLine, remove: removeJournalLine } = useFieldArray({
+    control: journalForm.control,
+    name: 'lines',
+  });
 
   const accountsQuery = useQuery({
     queryKey: ['accounts'],
@@ -167,25 +149,25 @@ const Accounting = () => {
   const createAccountMutation = useMutation({
     mutationFn: accountingService.createAccount,
     onSuccess: () => {
-      message.success('Account created');
+      showSuccess('Account created');
       queryClient.invalidateQueries({ queryKey: ['accounts'] });
       setAccountModalVisible(false);
     },
     onError: (error) => {
-      message.error(error?.response?.data?.message || 'Failed to create account');
+      showError(error, error?.response?.data?.message || 'Failed to create account');
     }
   });
 
   const createJournalMutation = useMutation({
     mutationFn: accountingService.createJournalEntry,
     onSuccess: () => {
-      message.success('Journal entry created');
+      showSuccess('Journal entry created');
       queryClient.invalidateQueries({ queryKey: ['journalEntries'] });
       queryClient.invalidateQueries({ queryKey: ['trialBalance'] });
       setJournalModalVisible(false);
     },
     onError: (error) => {
-      message.error(error?.response?.data?.message || 'Failed to create journal entry');
+      showError(error, error?.response?.data?.message || 'Failed to create journal entry');
     }
   });
 
@@ -197,6 +179,24 @@ const Accounting = () => {
   const handleViewAccount = (account) => {
     setSelectedAccount(account);
     setAccountDrawerVisible(true);
+  };
+
+  const handleOpenAccountModal = () => {
+    accountForm.reset();
+    setAccountModalVisible(true);
+  };
+
+  const handleOpenJournalModal = () => {
+    journalForm.reset();
+    setJournalModalVisible(true);
+  };
+
+  const onSubmitAccount = (data) => {
+    createAccountMutation.mutate(data);
+  };
+
+  const onSubmitJournal = (data) => {
+    createJournalMutation.mutate(data);
   };
 
   const accountColumns = useMemo(() => [
@@ -227,7 +227,7 @@ const Accounting = () => {
       title: 'Active',
       dataIndex: 'isActive',
       key: 'isActive',
-      render: (value) => <Tag color={value ? 'green' : 'red'}>{value ? 'Active' : 'Inactive'}</Tag>
+      render: (value) => <Badge className={value ? 'bg-green-600' : 'bg-red-600'}>{value ? 'Active' : 'Inactive'}</Badge>
     },
     {
       title: 'Actions',
@@ -235,13 +235,14 @@ const Accounting = () => {
       width: 100,
       render: (_, record) => (
         <Button
-          type="link"
-          icon={<EyeOutlined />}
+          variant="ghost"
+          size="sm"
           onClick={(e) => {
             e.stopPropagation();
             handleViewAccount(record);
           }}
         >
+          <Eye className="h-4 w-4 mr-2" />
           View
         </Button>
       )
@@ -254,8 +255,77 @@ const Accounting = () => {
       setSelectedJournalEntry(response.data || response);
       setJournalDrawerVisible(true);
     } catch (error) {
-      message.error('Failed to load journal entry');
+      showError(null, 'Failed to load journal entry');
     }
+  };
+
+  // Helper function to render table from columns and dataSource
+  const renderTable = (columns, dataSource, rowKey = 'id', options = {}) => {
+    const { pagination: tablePagination, summary } = options;
+    const pageSize = tablePagination?.pageSize || 10;
+    const current = tablePagination?.current || 1;
+    const total = tablePagination?.total || dataSource?.length || 0;
+    const showPagination = tablePagination !== false && total > pageSize;
+    
+    const startIndex = (current - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    const paginatedData = showPagination ? (dataSource?.slice(startIndex, endIndex) || []) : (dataSource || []);
+
+    return (
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {columns.map((col) => (
+                <TableHead 
+                  key={col.key || col.dataIndex} 
+                  style={{ width: col.width, textAlign: col.align }}
+                >
+                  {col.title}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {paginatedData.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={columns.length} className="text-center py-8 text-muted-foreground">
+                  No data available
+                </TableCell>
+              </TableRow>
+            ) : (
+              paginatedData.map((record) => (
+                <TableRow key={record[rowKey]}>
+                  {columns.map((col) => {
+                    const value = col.dataIndex 
+                      ? (Array.isArray(col.dataIndex) 
+                          ? col.dataIndex.reduce((obj, key) => obj?.[key], record)
+                          : record[col.dataIndex])
+                      : null;
+                    const renderedValue = col.render ? col.render(value, record) : value;
+                    return (
+                      <TableCell 
+                        key={col.key || col.dataIndex}
+                        style={{ textAlign: col.align }}
+                      >
+                        {renderedValue}
+                      </TableCell>
+                    );
+                  })}
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+          {summary && (
+            <TableFooter>
+              <TableRow>
+                {summary(paginatedData)}
+              </TableRow>
+            </TableFooter>
+          )}
+        </Table>
+      </div>
+    );
   };
 
   const journalColumns = useMemo(() => [
@@ -280,7 +350,7 @@ const Accounting = () => {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      render: (value) => <Tag color={value === 'posted' ? 'green' : 'default'}>{value.toUpperCase()}</Tag>
+      render: (value) => <Badge className={value === 'posted' ? 'bg-green-600' : 'bg-gray-600'}>{value.toUpperCase()}</Badge>
     },
     {
       title: 'Lines',
@@ -292,20 +362,20 @@ const Accounting = () => {
             <>
               {lines.slice(0, 2).map((line) => (
                 <div key={line.id}>
-                  <Text strong>{line.account?.code}</Text> — {line.account?.name}{' '}
-                  <Text type="secondary">
+                  <strong>{line.account?.code}</strong> — {line.account?.name}{' '}
+                  <span className="text-muted-foreground">
                     {line.debit > 0 ? `Debit GHS ${parseFloat(line.debit).toFixed(2)}` : `Credit GHS ${parseFloat(line.credit).toFixed(2)}`}
-                  </Text>
+                  </span>
                 </div>
               ))}
               {lines.length > 2 && (
-                <Text type="secondary" style={{ fontSize: 12 }}>
+                <span className="text-muted-foreground text-xs">
                   +{lines.length - 2} more line{lines.length - 2 > 1 ? 's' : ''}
-                </Text>
+                </span>
               )}
             </>
           ) : (
-            <Text type="secondary">No lines</Text>
+            <span className="text-muted-foreground">No lines</span>
           )}
         </div>
       )
@@ -316,13 +386,14 @@ const Accounting = () => {
       width: 100,
       render: (_, record) => (
         <Button
-          type="link"
-          icon={<EyeOutlined />}
+          variant="ghost"
+          size="sm"
           onClick={(e) => {
             e.stopPropagation();
             handleViewJournalEntry(record.id);
           }}
         >
+          <Eye className="h-4 w-4 mr-2" />
           View
         </Button>
       )
@@ -335,7 +406,7 @@ const Accounting = () => {
       key: 'account',
       render: (_, record) => (
         <div>
-          <Text strong>{record.account?.code}</Text> — {record.account?.name}
+          <strong>{record.account?.code}</strong> — {record.account?.name}
         </div>
       )
     },
@@ -367,222 +438,198 @@ const Accounting = () => {
     value: account.id
   }));
 
-  const handleOpenJournalModal = () => {
-    journalForm.resetFields();
-    journalForm.setFieldsValue({
-      entryDate: dayjs(),
-      lines: [
-        { debit: 0, credit: 0 },
-        { debit: 0, credit: 0 }
-      ]
-    });
-    setJournalModalVisible(true);
-  };
 
   return (
     <div>
-      <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
-        <Col>
-          <Title level={3} style={{ margin: 0 }}>Accounting</Title>
-          <Text type="secondary">Manage your chart of accounts, journal entries, and trial balance.</Text>
-        </Col>
-        <Col>
-          <Space>
-            <Button icon={<ReloadOutlined />} onClick={() => {
-              queryClient.invalidateQueries({ queryKey: ['accounts'] });
-              queryClient.invalidateQueries({ queryKey: ['journalEntries'] });
-              queryClient.invalidateQueries({ queryKey: ['trialBalance'] });
-            }}>
-              Refresh
-            </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => {
-              accountForm.resetFields();
-              setAccountModalVisible(true);
-            }}>
-              New Account
-            </Button>
-            <Button onClick={handleOpenJournalModal} icon={<PlusOutlined />}>
-              New Journal Entry
-            </Button>
-          </Space>
-        </Col>
-      </Row>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <div>
+          <h1 className="text-3xl font-bold mb-2">Accounting</h1>
+          <p className="text-muted-foreground">Manage your chart of accounts, journal entries, and trial balance.</p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => {
+            queryClient.invalidateQueries({ queryKey: ['accounts'] });
+            queryClient.invalidateQueries({ queryKey: ['journalEntries'] });
+            queryClient.invalidateQueries({ queryKey: ['trialBalance'] });
+          }}>
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Refresh
+          </Button>
+          <Button onClick={handleOpenAccountModal}>
+            <Plus className="h-4 w-4 mr-2" />
+            New Account
+          </Button>
+          <Button onClick={handleOpenJournalModal}>
+            <Plus className="h-4 w-4 mr-2" />
+            New Journal Entry
+          </Button>
+        </div>
+      </div>
 
-      <Tabs
-        defaultActiveKey="accounts"
-        items={[
-          {
-            key: 'accounts',
-            label: 'Accounts',
-            children: (
-              <Table
-                rowKey="id"
-                columns={accountColumns}
-                dataSource={accounts}
-                loading={accountsQuery.isLoading}
-              />
-            )
-          },
-          {
-            key: 'journal',
-            label: 'Journal',
-            children: (
-              <Table
-                rowKey="id"
-                columns={journalColumns}
-                dataSource={journalEntries}
-                loading={journalQuery.isLoading}
-              />
-            )
-          },
-          {
-            key: 'trial',
-            label: 'Trial Balance',
-            children: (
-              <>
-                <Table
-                  rowKey="id"
-                  columns={trialColumns}
-                  dataSource={trialBalance}
-                  loading={trialBalanceQuery.isLoading}
-                  pagination={false}
-                  summary={() => (
-                    <Table.Summary.Row>
-                      <Table.Summary.Cell index={0}><Text strong>Total</Text></Table.Summary.Cell>
-                      <Table.Summary.Cell index={1} align="right">
-                        <Text strong>GHS {parseFloat(totals.debit || 0).toFixed(2)}</Text>
-                      </Table.Summary.Cell>
-                      <Table.Summary.Cell index={2} align="right">
-                        <Text strong>GHS {parseFloat(totals.credit || 0).toFixed(2)}</Text>
-                      </Table.Summary.Cell>
-                      <Table.Summary.Cell index={3} />
-                    </Table.Summary.Row>
-                  )}
-                />
-                <Divider />
-                <Descriptions bordered size="small" column={2}>
-                  <Descriptions.Item label="Total Debit">GHS {parseFloat(totals.debit || 0).toFixed(2)}</Descriptions.Item>
-                  <Descriptions.Item label="Total Credit">GHS {parseFloat(totals.credit || 0).toFixed(2)}</Descriptions.Item>
-                  <Descriptions.Item label="Balanced?">
-                    <Tag color={Math.abs((totals.debit || 0) - (totals.credit || 0)) < 0.01 ? 'green' : 'red'}>
-                      {Math.abs((totals.debit || 0) - (totals.credit || 0)) < 0.01 ? 'Yes' : 'No'}
-                    </Tag>
-                  </Descriptions.Item>
-                </Descriptions>
-              </>
-            )
-          }
-        ]}
-      />
+      <Tabs defaultValue="accounts">
+        <TabsList>
+          <TabsTrigger value="accounts">Accounts</TabsTrigger>
+          <TabsTrigger value="journal">Journal</TabsTrigger>
+          <TabsTrigger value="trial">Trial Balance</TabsTrigger>
+        </TabsList>
+        <TabsContent value="accounts">
+          {accountsQuery.isLoading ? (
+            <Card>
+              <div className="p-4">
+                <TableSkeleton rows={8} cols={5} />
+              </div>
+            </Card>
+          ) : (
+            renderTable(accountColumns, accounts, 'id')
+          )}
+        </TabsContent>
+        <TabsContent value="journal">
+          {journalQuery.isLoading ? (
+            <Card>
+              <div className="p-4">
+                <TableSkeleton rows={8} cols={5} />
+              </div>
+            </Card>
+          ) : (
+            renderTable(journalColumns, journalEntries, 'id')
+          )}
+        </TabsContent>
+        <TabsContent value="trial">
+          {trialBalanceQuery.isLoading ? (
+            <Card>
+              <div className="p-4">
+                <TableSkeleton rows={8} cols={4} />
+              </div>
+            </Card>
+          ) : (
+            <>
+              {renderTable(trialColumns, trialBalance, 'id', {
+                pagination: false,
+                summary: () => (
+                  <>
+                    <TableCell><strong>Total</strong></TableCell>
+                    <TableCell style={{ textAlign: 'right' }}>
+                      <strong>GHS {parseFloat(totals.debit || 0).toFixed(2)}</strong>
+                    </TableCell>
+                    <TableCell style={{ textAlign: 'right' }}>
+                      <strong>GHS {parseFloat(totals.credit || 0).toFixed(2)}</strong>
+                    </TableCell>
+                    <TableCell />
+                  </>
+                )
+              })}
+              <Separator className="my-6" />
+              <Descriptions column={2}>
+                <DescriptionItem label="Total Debit">GHS {parseFloat(totals.debit || 0).toFixed(2)}</DescriptionItem>
+                <DescriptionItem label="Total Credit">GHS {parseFloat(totals.credit || 0).toFixed(2)}</DescriptionItem>
+                <DescriptionItem label="Balanced?">
+                  <Badge className={Math.abs((totals.debit || 0) - (totals.credit || 0)) < 0.01 ? 'bg-green-600' : 'bg-red-600'}>
+                    {Math.abs((totals.debit || 0) - (totals.credit || 0)) < 0.01 ? 'Yes' : 'No'}
+                  </Badge>
+                </DescriptionItem>
+              </Descriptions>
+            </>
+          )}
+        </TabsContent>
+      </Tabs>
 
-      <Drawer
-        title={
-          selectedAccount
-            ? `${selectedAccount.code} — ${selectedAccount.name}`
-            : 'Account'
-        }
-        open={accountDrawerVisible}
-        onClose={() => {
+      <Sheet open={accountDrawerVisible} onOpenChange={(open) => {
+        if (!open) {
           setAccountDrawerVisible(false);
           setSelectedAccount(null);
-        }}
-        width={520}
-        destroyOnClose
-      >
-        {selectedAccount ? (
-          <Descriptions
-            bordered
-            column={1}
-            size="small"
-            styles={{
-              label: { width: '40%', flexBasis: '40%' },
-              content: { width: '60%', flexBasis: '60%' }
-            }}
-          >
-            <Descriptions.Item label="Code">{selectedAccount.code}</Descriptions.Item>
-            <Descriptions.Item label="Name">{selectedAccount.name}</Descriptions.Item>
-            <Descriptions.Item label="Type">{accountTypeLabels[selectedAccount.type] || selectedAccount.type}</Descriptions.Item>
-            <Descriptions.Item label="Category">{selectedAccount.category || '—'}</Descriptions.Item>
-            <Descriptions.Item label="Status">
-              <Tag color={selectedAccount.isActive ? 'green' : 'red'}>
-                {selectedAccount.isActive ? 'Active' : 'Inactive'}
-              </Tag>
-            </Descriptions.Item>
-            <Descriptions.Item label="Description">{selectedAccount.description || '—'}</Descriptions.Item>
-            <Descriptions.Item label="Created At">
-              {selectedAccount.createdAt ? dayjs(selectedAccount.createdAt).format('MMM DD, YYYY HH:mm') : '—'}
-            </Descriptions.Item>
-            <Descriptions.Item label="Updated At">
-              {selectedAccount.updatedAt ? dayjs(selectedAccount.updatedAt).format('MMM DD, YYYY HH:mm') : '—'}
-            </Descriptions.Item>
-          </Descriptions>
-        ) : (
-          <Text type="secondary">Select an account to view details.</Text>
-        )}
-      </Drawer>
+        }
+      }}>
+        <SheetContent className="w-full sm:max-w-[520px]">
+          <SheetHeader>
+            <SheetTitle>
+              {selectedAccount
+                ? `${selectedAccount.code} — ${selectedAccount.name}`
+                : 'Account'}
+            </SheetTitle>
+          </SheetHeader>
+          {selectedAccount ? (
+            <Descriptions column={1} className="mt-6">
+              <DescriptionItem label="Code">{selectedAccount.code}</DescriptionItem>
+              <DescriptionItem label="Name">{selectedAccount.name}</DescriptionItem>
+              <DescriptionItem label="Type">{accountTypeLabels[selectedAccount.type] || selectedAccount.type}</DescriptionItem>
+              <DescriptionItem label="Category">{selectedAccount.category || '—'}</DescriptionItem>
+              <DescriptionItem label="Status">
+                <Badge className={selectedAccount.isActive ? 'bg-green-600' : 'bg-red-600'}>
+                  {selectedAccount.isActive ? 'Active' : 'Inactive'}
+                </Badge>
+              </DescriptionItem>
+              <DescriptionItem label="Description">{selectedAccount.description || '—'}</DescriptionItem>
+              <DescriptionItem label="Created At">
+                {selectedAccount.createdAt ? dayjs(selectedAccount.createdAt).format('MMM DD, YYYY HH:mm') : '—'}
+              </DescriptionItem>
+              <DescriptionItem label="Updated At">
+                {selectedAccount.updatedAt ? dayjs(selectedAccount.updatedAt).format('MMM DD, YYYY HH:mm') : '—'}
+              </DescriptionItem>
+            </Descriptions>
+          ) : (
+            <p className="text-muted-foreground mt-6">Select an account to view details.</p>
+          )}
+        </SheetContent>
+      </Sheet>
 
-      <Drawer
-        title="Journal Entry Details"
-        open={journalDrawerVisible}
-        onClose={() => {
+      <Sheet open={journalDrawerVisible} onOpenChange={(open) => {
+        if (!open) {
           setJournalDrawerVisible(false);
           setSelectedJournalEntry(null);
-        }}
-        width={1000}
-        destroyOnClose
-      >
-        {selectedJournalEntry ? (
-          <>
-            <Descriptions bordered column={2} size="small" style={{ marginBottom: 24 }}>
-              <Descriptions.Item label="Reference" span={2}>
-                <Text strong>{selectedJournalEntry.reference || '—'}</Text>
-              </Descriptions.Item>
-              <Descriptions.Item label="Date">
-                {dayjs(selectedJournalEntry.entryDate).format('MMM DD, YYYY')}
-              </Descriptions.Item>
-              <Descriptions.Item label="Status">
-                <Tag color={selectedJournalEntry.status === 'posted' ? 'green' : 'default'}>
-                  {selectedJournalEntry.status?.toUpperCase() || 'DRAFT'}
-                </Tag>
-              </Descriptions.Item>
-              <Descriptions.Item label="Source">
-                {selectedJournalEntry.source || '—'}
-              </Descriptions.Item>
-              <Descriptions.Item label="Description" span={2}>
-                {selectedJournalEntry.description || '—'}
-              </Descriptions.Item>
-              {selectedJournalEntry.creator && (
-                <Descriptions.Item label="Created By">
-                  {selectedJournalEntry.creator?.name || '—'}
-                </Descriptions.Item>
-              )}
-              {selectedJournalEntry.approver && (
-                <Descriptions.Item label="Approved By">
-                  {selectedJournalEntry.approver?.name || '—'}
-                </Descriptions.Item>
-              )}
-            </Descriptions>
+        }
+      }}>
+        <SheetContent className="w-full sm:max-w-[1000px]">
+          <SheetHeader>
+            <SheetTitle>Journal Entry Details</SheetTitle>
+          </SheetHeader>
+          {selectedJournalEntry ? (
+            <>
+              <Descriptions column={2} className="mt-6 mb-6">
+                <DescriptionItem label="Reference" span={2}>
+                  <strong>{selectedJournalEntry.reference || '—'}</strong>
+                </DescriptionItem>
+                <DescriptionItem label="Date">
+                  {dayjs(selectedJournalEntry.entryDate).format('MMM DD, YYYY')}
+                </DescriptionItem>
+                <DescriptionItem label="Status">
+                  <Badge className={selectedJournalEntry.status === 'posted' ? 'bg-green-600' : 'bg-gray-600'}>
+                    {selectedJournalEntry.status?.toUpperCase() || 'DRAFT'}
+                  </Badge>
+                </DescriptionItem>
+                <DescriptionItem label="Source">
+                  {selectedJournalEntry.source || '—'}
+                </DescriptionItem>
+                <DescriptionItem label="Description" span={2}>
+                  {selectedJournalEntry.description || '—'}
+                </DescriptionItem>
+                {selectedJournalEntry.creator && (
+                  <DescriptionItem label="Created By">
+                    {selectedJournalEntry.creator?.name || '—'}
+                  </DescriptionItem>
+                )}
+                {selectedJournalEntry.approver && (
+                  <DescriptionItem label="Approved By">
+                    {selectedJournalEntry.approver?.name || '—'}
+                  </DescriptionItem>
+                )}
+              </Descriptions>
 
-            <Divider orientation="left">
-              <Title level={4} style={{ margin: 0 }}>Journal Entry Lines</Title>
-            </Divider>
+              <Separator className="my-6">
+                <h3 className="text-lg font-semibold">Journal Entry Lines</h3>
+              </Separator>
 
-            <Table
-              rowKey="id"
-              dataSource={selectedJournalEntry.lines || []}
-              pagination={false}
-              columns={[
+            {renderTable([
                 {
                   title: 'Account',
                   key: 'account',
                   width: 300,
                   render: (_, line) => (
                     <div>
-                      <Text strong>{line.account?.code || '—'}</Text>
+                      <strong>{line.account?.code || '—'}</strong>
                       <br />
-                      <Text type="secondary" style={{ fontSize: 12 }}>
+                      <span className="text-muted-foreground text-xs">
                         {line.account?.name || '—'}
-                      </Text>
+                      </span>
                     </div>
                   )
                 },
@@ -600,11 +647,11 @@ const Accounting = () => {
                   width: 150,
                   render: (value) => (
                     value > 0 ? (
-                      <Text strong style={{ color: '#52c41a' }}>
+                      <strong className="text-green-600">
                         GHS {parseFloat(value || 0).toFixed(2)}
-                      </Text>
+                      </strong>
                     ) : (
-                      <Text type="secondary">GHS 0.00</Text>
+                      <span className="text-muted-foreground">GHS 0.00</span>
                     )
                   )
                 },
@@ -616,121 +663,336 @@ const Accounting = () => {
                   width: 150,
                   render: (value) => (
                     value > 0 ? (
-                      <Text strong style={{ color: '#ff4d4f' }}>
+                      <strong className="text-red-600">
                         GHS {parseFloat(value || 0).toFixed(2)}
-                      </Text>
+                      </strong>
                     ) : (
-                      <Text type="secondary">GHS 0.00</Text>
+                      <span className="text-muted-foreground">GHS 0.00</span>
                     )
                   )
                 }
-              ]}
-              summary={(pageData) => {
-                const totalDebit = pageData.reduce((sum, line) => sum + parseFloat(line.debit || 0), 0);
-                const totalCredit = pageData.reduce((sum, line) => sum + parseFloat(line.credit || 0), 0);
-                
-                return (
-                  <Table.Summary fixed>
-                    <Table.Summary.Row>
-                      <Table.Summary.Cell index={0} colSpan={2}>
-                        <Text strong>Total</Text>
-                      </Table.Summary.Cell>
-                      <Table.Summary.Cell index={2} align="right">
-                        <Text strong style={{ color: '#52c41a' }}>
+              ], selectedJournalEntry.lines || [], 'id', {
+                pagination: false,
+                summary: (pageData) => {
+                  const totalDebit = pageData.reduce((sum, line) => sum + parseFloat(line.debit || 0), 0);
+                  const totalCredit = pageData.reduce((sum, line) => sum + parseFloat(line.credit || 0), 0);
+                  
+                  return (
+                    <>
+                      <TableCell colSpan={2}>
+                        <strong>Total</strong>
+                      </TableCell>
+                      <TableCell style={{ textAlign: 'right' }}>
+                        <strong className="text-green-600">
                           GHS {totalDebit.toFixed(2)}
-                        </Text>
-                      </Table.Summary.Cell>
-                      <Table.Summary.Cell index={3} align="right">
-                        <Text strong style={{ color: '#ff4d4f' }}>
+                        </strong>
+                      </TableCell>
+                      <TableCell style={{ textAlign: 'right' }}>
+                        <strong className="text-red-600">
                           GHS {totalCredit.toFixed(2)}
-                        </Text>
-                      </Table.Summary.Cell>
-                    </Table.Summary.Row>
-                  </Table.Summary>
-                );
-              }}
-            />
+                        </strong>
+                      </TableCell>
+                    </>
+                  );
+                }
+              })}
           </>
         ) : (
-          <Text type="secondary">Select a journal entry to view details.</Text>
+          <p className="text-muted-foreground mt-6">Select a journal entry to view details.</p>
         )}
-      </Drawer>
+        </SheetContent>
+      </Sheet>
 
-      <Modal
-        title="New Account"
-        open={accountModalVisible}
-        onCancel={() => setAccountModalVisible(false)}
-        onOk={() => accountForm.submit()}
-        confirmLoading={createAccountMutation.isLoading}
-        width={600}
-      >
-        <Form layout="vertical" form={accountForm} onFinish={(values) => createAccountMutation.mutate(values)}>
-          <AccountForm form={accountForm} />
-        </Form>
-      </Modal>
+      <Dialog open={accountModalVisible} onOpenChange={(open) => {
+        if (!open) setAccountModalVisible(false);
+      }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>New Account</DialogTitle>
+            <DialogDescription>
+              Create a new chart of accounts entry
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...accountForm}>
+            <form onSubmit={accountForm.handleSubmit(onSubmitAccount)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={accountForm.control}
+                  name="code"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Account Code</FormLabel>
+                      <FormControl>
+                        <Input placeholder="1000" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={accountForm.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Account Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Cash at Bank" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={accountForm.control}
+                  name="type"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Type</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select account type" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {Object.entries(accountTypeLabels).map(([value, label]) => (
+                            <SelectItem key={value} value={value}>
+                              {label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={accountForm.control}
+                  name="category"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Category</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Current Assets / Operating Expenses" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <FormField
+                control={accountForm.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea rows={3} placeholder="Optional description of the account" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setAccountModalVisible(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={createAccountMutation.isLoading}>
+                  {createAccountMutation.isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Create Account
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
 
-      <Modal
-        title="New Journal Entry"
-        open={journalModalVisible}
-        onCancel={() => setJournalModalVisible(false)}
-        onOk={() => journalForm.submit()}
-        confirmLoading={createJournalMutation.isLoading}
-        width={860}
-      >
-        <Form
-          layout="vertical"
-          form={journalForm}
-          onFinish={(values) => {
-            const payload = {
-              reference: values.reference,
-              description: values.description,
-              entryDate: values.entryDate ? values.entryDate.format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'),
-              status: 'posted',
-              lines: values.lines.map((line) => ({
-                accountId: line.accountId,
-                description: line.description,
-                debit: parseFloat(line.debit || 0),
-                credit: parseFloat(line.credit || 0)
-              }))
-            };
-            createJournalMutation.mutate(payload);
-          }}
-        >
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="reference" label="Reference">
-                <Input placeholder="AUTOMATIC" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="entryDate" label="Date" initialValue={dayjs()}>
-                <DatePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Form.Item name="description" label="Description">
-            <Input.TextArea rows={3} placeholder="Narration" />
-          </Form.Item>
-
-          <Form.List name="lines">
-            {(fields, { add, remove }) => (
-              <Space direction="vertical" style={{ width: '100%' }}>
-                {fields.map((field) => (
-                  <JournalLineForm key={field.key} field={field} remove={remove} accountOptions={accountOptions} />
+      <Dialog open={journalModalVisible} onOpenChange={(open) => {
+        if (!open) setJournalModalVisible(false);
+      }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>New Journal Entry</DialogTitle>
+            <DialogDescription>
+              Create a new journal entry with balanced debit and credit lines
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...journalForm}>
+            <form onSubmit={journalForm.handleSubmit(onSubmitJournal)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={journalForm.control}
+                  name="reference"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Reference</FormLabel>
+                      <FormControl>
+                        <Input placeholder="AUTOMATIC" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={journalForm.control}
+                  name="date"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Date</FormLabel>
+                      <FormControl>
+                        <DatePicker
+                          date={field.value}
+                          onSelect={(date) => field.onChange(date)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <FormField
+                control={journalForm.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea rows={3} placeholder="Narration" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="space-y-2">
+                <Label>Journal Lines</Label>
+                {journalFields.map((field, index) => (
+                  <Card key={field.id} className="p-4">
+                    <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="col-span-12 md:col-span-4">
+                        <FormField
+                          control={journalForm.control}
+                          name={`lines.${index}.accountId`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs">Account</FormLabel>
+                              <Select value={field.value} onValueChange={field.onChange}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select account" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {accountOptions.map((option) => (
+                                    <SelectItem key={option.value} value={option.value}>
+                                      {option.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <div className="col-span-6 md:col-span-2">
+                        <FormField
+                          control={journalForm.control}
+                          name={`lines.${index}.debit`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs">Debit</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  placeholder="0.00"
+                                  {...field}
+                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                  value={field.value || ''}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <div className="col-span-6 md:col-span-2">
+                        <FormField
+                          control={journalForm.control}
+                          name={`lines.${index}.credit`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs">Credit</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  step="0.01"
+                                  placeholder="0.00"
+                                  {...field}
+                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                  value={field.value || ''}
+                                />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <div className="col-span-10 md:col-span-3">
+                        <FormField
+                          control={journalForm.control}
+                          name={`lines.${index}.description`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel className="text-xs">Description</FormLabel>
+                              <FormControl>
+                                <Input placeholder="Line description" {...field} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeJournalLine(index)}
+                        >
+                          <MinusCircle className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
                 ))}
                 <Button
-                  type="dashed"
-                  onClick={() => add({ debit: 0, credit: 0 })}
-                  block
-                  icon={<PlusOutlined />}
+                  type="button"
+                  variant="outline"
+                  onClick={() => appendJournalLine({ accountId: '', debit: 0, credit: 0, description: '' })}
+                  className="w-full"
                 >
+                  <Plus className="h-4 w-4 mr-2" />
                   Add Line
                 </Button>
-              </Space>
-            )}
-          </Form.List>
-        </Form>
-      </Modal>
+              </div>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setJournalModalVisible(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={createJournalMutation.isLoading}>
+                  {createJournalMutation.isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Create Journal Entry
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

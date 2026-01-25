@@ -1,39 +1,96 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import {
-  Tabs,
   Card,
-  Form,
-  Input,
-  Button,
   Row,
   Col,
-  Space,
-  Typography,
-  Divider,
-  DatePicker,
-  InputNumber,
-  Alert,
+  Descriptions,
   Upload,
-  Avatar,
-  Descriptions
+  Form as AntdForm,
 } from 'antd';
 import dayjs from 'dayjs';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import settingsService from '../services/settingsService';
-import { CameraOutlined, UserOutlined, MailOutlined, UserSwitchOutlined } from '@ant-design/icons';
+import whatsappService from '../services/whatsappService';
+import { Camera, User, Mail, UserCog, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { showSuccess, showError } from '../utils/toast';
 import StorageUsageCard from '../components/StorageUsageCard';
 import SeatUsageCard from '../components/SeatUsageCard';
 import PhoneNumberInput from '../components/PhoneNumberInput';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Card as ShadcnCard, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { Switch } from '@/components/ui/switch';
+import { DatePicker } from '@/components/ui/date-picker';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Descriptions as ShadcnDescriptions, DescriptionItem } from '@/components/ui/descriptions';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 
-const { Title, Text } = Typography;
+const profileSchema = z.object({
+  name: z.string().min(1, 'Please enter your name'),
+  email: z.string().email().optional(),
+  profilePicture: z.string().optional(),
+  currentPassword: z.string().optional(),
+  newPassword: z.string().optional(),
+}).refine((data) => {
+  if (data.newPassword && !data.currentPassword) {
+    return false;
+  }
+  return true;
+}, {
+  message: 'Enter current password to set a new password',
+  path: ['currentPassword'],
+});
+
+const organizationSchema = z.object({
+  name: z.string().min(1, 'Organization name is required'),
+  legalName: z.string().optional(),
+  email: z.string().email().optional(),
+  phone: z.string().optional(),
+  website: z.string().url().optional().or(z.literal('')),
+  logoUrl: z.string().optional(),
+  invoiceFooter: z.string().optional(),
+  address: z.object({
+    line1: z.string().optional(),
+    line2: z.string().optional(),
+    city: z.string().optional(),
+    state: z.string().optional(),
+    postalCode: z.string().optional(),
+    country: z.string().optional(),
+  }).optional(),
+  tax: z.object({
+    vatNumber: z.string().optional(),
+    tin: z.string().optional(),
+  }).optional(),
+});
+
+const whatsappSchema = z.object({
+  enabled: z.boolean().default(false),
+  phoneNumberId: z.string().optional(),
+  accessToken: z.string().optional(),
+  businessAccountId: z.string().optional(),
+  webhookVerifyToken: z.string().optional(),
+  templateNamespace: z.string().optional(),
+});
 
 const Settings = () => {
-  const [profileForm] = Form.useForm();
-  const [organizationForm] = Form.useForm();
-  const [subscriptionForm] = Form.useForm();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const tabFromUrl = searchParams.get('tab') || 'profile';
@@ -48,8 +105,58 @@ const Settings = () => {
   const [profileEditing, setProfileEditing] = useState(false);
   const [organizationLogoPreview, setOrganizationLogoPreview] = useState('');
   const [organizationEditing, setOrganizationEditing] = useState(false);
-  const { user, updateUser } = useAuth();
+  const { user, updateUser, activeTenant } = useAuth();
   const canManageOrganization = ['admin', 'manager'].includes(user?.role);
+
+  const profileForm = useForm({
+    resolver: zodResolver(profileSchema),
+    defaultValues: {
+      name: '',
+      email: '',
+      profilePicture: '',
+      currentPassword: '',
+      newPassword: '',
+    },
+  });
+
+  const organizationForm = useForm({
+    resolver: zodResolver(organizationSchema),
+    defaultValues: {
+      name: '',
+      legalName: '',
+      email: '',
+      phone: '',
+      website: '',
+      logoUrl: '',
+      invoiceFooter: '',
+      address: {
+        line1: '',
+        line2: '',
+        city: '',
+        state: '',
+        postalCode: '',
+        country: '',
+      },
+      tax: {
+        vatNumber: '',
+        tin: '',
+      },
+    },
+  });
+
+  const whatsappForm = useForm({
+    resolver: zodResolver(whatsappSchema),
+    defaultValues: {
+      enabled: false,
+      phoneNumberId: '',
+      accessToken: '',
+      businessAccountId: '',
+      webhookVerifyToken: '',
+      templateNamespace: '',
+    },
+  });
+
+  const [subscriptionForm] = AntdForm.useForm();
 
   const {
     data: profileData,
@@ -75,22 +182,32 @@ const Settings = () => {
     queryFn: settingsService.getSubscription
   });
 
+  const {
+    data: whatsappData,
+    isLoading: loadingWhatsApp
+  } = useQuery({
+    queryKey: ['settings', 'whatsapp'],
+    queryFn: whatsappService.getSettings,
+    enabled: canManageOrganization
+  });
+
   useEffect(() => {
-    if (profileData?.data) {
-      profileForm.setFieldsValue({
-        name: profileData.data.name,
-        email: profileData.data.email,
-        profilePicture: profileData.data.profilePicture || ''
+    if (whatsappData?.data && canManageOrganization) {
+      whatsappForm.reset({
+        enabled: whatsappData.data.enabled || false,
+        phoneNumberId: whatsappData.data.phoneNumberId || '',
+        accessToken: whatsappData.data.accessToken === '***' ? '' : (whatsappData.data.accessToken || ''),
+        businessAccountId: whatsappData.data.businessAccountId || '',
+        webhookVerifyToken: whatsappData.data.webhookVerifyToken || '',
+        templateNamespace: whatsappData.data.templateNamespace || ''
       });
-      setProfilePreview(profileData.data.profilePicture || '');
-      setProfileEditing(false);
     }
-  }, [profileData, profileForm]);
+  }, [whatsappData, whatsappForm, canManageOrganization]);
 
   useEffect(() => {
     if (organizationData?.data) {
       const organization = organizationData.data;
-      organizationForm.setFieldsValue({
+      organizationForm.reset({
         name: organization.name || '',
         legalName: organization.legalName || '',
         email: organization.email || '',
@@ -119,23 +236,57 @@ const Settings = () => {
   }, [organizationData, organizationForm]);
 
   useEffect(() => {
+    if (profileData?.data) {
+      profileForm.reset({
+        name: profileData.data.name || '',
+        email: profileData.data.email || '',
+        profilePicture: profileData.data.profilePicture || '',
+      });
+      setProfilePreview(profileData.data.profilePicture || '');
+    }
+  }, [profileData, profileForm]);
+
+  useEffect(() => {
     if (subscriptionData?.data) {
       const subscription = subscriptionData.data;
+      const isTrial = subscription.plan === 'trial' || subscription.status === 'trialing';
+      
+      // Calculate currentPeriodEnd: if trial and no existing date, set to 30 days from now
+      let currentPeriodEnd = null;
+      if (subscription.currentPeriodEnd) {
+        currentPeriodEnd = dayjs(subscription.currentPeriodEnd);
+      } else if (isTrial) {
+        // Auto-calculate 30 days from today for trial
+        currentPeriodEnd = dayjs().add(30, 'days');
+      }
+      
       subscriptionForm.setFieldsValue({
         plan: subscription.plan || 'free',
         status: subscription.status || 'active',
         seats: subscription.seats || 5,
-        currentPeriodEnd: subscription.currentPeriodEnd ? dayjs(subscription.currentPeriodEnd) : null,
-        paymentMethod: subscription.paymentMethod || {
-          brand: '',
-          last4: '',
-          expMonth: '',
-          expYear: ''
-        },
+        currentPeriodEnd: currentPeriodEnd,
         notes: subscription.notes || ''
       });
     }
   }, [subscriptionData, subscriptionForm]);
+  
+  // Watch for plan/status changes to auto-calculate trial period end
+  const planValue = AntdForm.useWatch('plan', subscriptionForm);
+  const statusValue = AntdForm.useWatch('status', subscriptionForm);
+  
+  useEffect(() => {
+    if (!subscriptionForm) return;
+    
+    const isTrial = planValue === 'trial' || statusValue === 'trialing';
+    const currentPeriodEnd = subscriptionForm.getFieldValue('currentPeriodEnd');
+    
+    // If trial/trialing and no currentPeriodEnd set, auto-calculate 30 days from now
+    if (isTrial && !currentPeriodEnd) {
+      subscriptionForm.setFieldsValue({
+        currentPeriodEnd: dayjs().add(30, 'days')
+      });
+    }
+  }, [planValue, statusValue, subscriptionForm]);
 
   const updateProfileMutation = useMutation({
     mutationFn: settingsService.updateProfile,
@@ -188,7 +339,30 @@ const Settings = () => {
     }
   });
 
-  const handleProfileSubmit = (values) => {
+  const updateWhatsAppMutation = useMutation({
+    mutationFn: whatsappService.updateSettings,
+    onSuccess: () => {
+      showSuccess('WhatsApp settings saved successfully');
+      queryClient.invalidateQueries({ queryKey: ['settings', 'whatsapp'] });
+    },
+    onError: (error) => {
+      const errMsg = error?.response?.data?.message || 'Failed to update WhatsApp settings';
+      showError(error, errMsg);
+    }
+  });
+
+  const testWhatsAppMutation = useMutation({
+    mutationFn: ({ accessToken, phoneNumberId }) => whatsappService.testConnection(accessToken, phoneNumberId),
+    onSuccess: () => {
+      showSuccess('WhatsApp connection test successful!');
+    },
+    onError: (error) => {
+      const errMsg = error?.response?.data?.error || error?.response?.data?.message || 'Connection test failed';
+      showError(error, errMsg);
+    }
+  });
+
+  const onProfileSubmit = async (values) => {
     const payload = {
       name: values.name,
       profilePicture: values.profilePicture || undefined
@@ -202,7 +376,7 @@ const Settings = () => {
     updateProfileMutation.mutate(payload);
   };
 
-  const handleOrganizationSubmit = (values) => {
+  const onOrganizationSubmit = async (values) => {
     const payload = {
       name: values.name || '',
       legalName: values.legalName || '',
@@ -230,25 +404,69 @@ const Settings = () => {
     updateOrganizationMutation.mutate(payload);
   };
 
-  const handleSubscriptionSubmit = (values) => {
+  const onSubscriptionSubmit = async (values) => {
     const payload = {
       plan: values.plan,
       status: values.status,
       seats: values.seats,
       currentPeriodEnd: values.currentPeriodEnd ? values.currentPeriodEnd.toISOString() : null,
-      paymentMethod: values.paymentMethod,
       notes: values.notes || ''
     };
 
     updateSubscriptionMutation.mutate(payload);
   };
 
+  const onWhatsAppSubmit = async (values) => {
+    const payload = {
+      enabled: values.enabled || false,
+      phoneNumberId: values.phoneNumberId || '',
+      accessToken: values.accessToken || '', // Only send if changed
+      businessAccountId: values.businessAccountId || '',
+      webhookVerifyToken: values.webhookVerifyToken || '',
+      templateNamespace: values.templateNamespace || ''
+    };
+
+    updateWhatsAppMutation.mutate(payload);
+  };
+
+  const handleTestWhatsApp = () => {
+    const values = whatsappForm.getFieldsValue();
+    if (!values.accessToken || !values.phoneNumberId) {
+      showError(null, 'Please provide Access Token and Phone Number ID to test connection');
+      return;
+    }
+    testWhatsAppMutation.mutate({
+      accessToken: values.accessToken,
+      phoneNumberId: values.phoneNumberId
+    });
+  };
+
   const handleProfileImageUpload = async ({ file, onSuccess, onError }) => {
     try {
+      console.log('[Profile Upload] Starting upload, file object:', file);
+      
+      // Ant Design Upload customRequest passes file object directly
+      // The service will handle extracting the actual file
       const response = await settingsService.uploadProfilePicture(file);
-      const result = response?.data || response;
-      const updatedUser = result?.data || result;
-      const imageUrl = updatedUser?.profilePicture || '';
+      
+      console.log('[Profile Upload] Response received:', response);
+      
+      // API interceptor returns response.data, so response is already the data object
+      // Backend returns: { success: true, data: user }
+      const updatedUser = response?.data || response;
+      
+      if (!updatedUser) {
+        throw new Error('Invalid response from server');
+      }
+
+      const imageUrl = updatedUser.profilePicture || '';
+      
+      if (!imageUrl) {
+        throw new Error('Upload succeeded but no image URL returned');
+      }
+
+      console.log('[Profile Upload] Image URL:', imageUrl.substring(0, 50) + '...');
+      
       profileForm.setFieldsValue({ profilePicture: imageUrl });
       setProfilePreview(imageUrl);
       updateUser(updatedUser);
@@ -256,8 +474,10 @@ const Settings = () => {
       showSuccess('Profile picture updated successfully');
       if (onSuccess) onSuccess('ok');
     } catch (error) {
-      const errMsg = error?.response?.data?.message || 'Failed to upload profile picture';
-      showError(error, 'Failed to update profile. Please try again.');
+      console.error('[Profile Upload] Error:', error);
+      console.error('[Profile Upload] Error response:', error?.response);
+      const errMsg = error?.response?.data?.message || error?.message || 'Failed to upload profile picture';
+      showError(error, errMsg);
       if (onError) onError(error);
     }
   };
@@ -283,6 +503,7 @@ const Settings = () => {
   const subscriptionSummary = useMemo(() => {
     if (!subscriptionData?.data) return null;
     const subscription = subscriptionData.data;
+    const isTrialOrFree = subscription.plan === 'trial' || subscription.plan === 'free';
     return (
       <div style={{ marginBottom: 16 }}>
         <Row gutter={16}>
@@ -291,7 +512,7 @@ const Settings = () => {
               <Title level={4} style={{ marginBottom: 0 }}>
                 {subscription.plan?.toUpperCase() || 'FREE'}
               </Title>
-              <Text type={subscription.status === 'active' ? 'success' : 'danger'}>
+              <Text type={subscription.status === 'active' ? 'success' : subscription.status === 'trialing' ? 'warning' : 'danger'}>
                 {subscription.status?.toUpperCase()}
               </Text>
               {subscription.currentPeriodEnd && (
@@ -302,26 +523,30 @@ const Settings = () => {
                   </div>
                 </div>
               )}
-            </Card>
-          </Col>
-          <Col xs={24} md={8}>
-            <Card bordered style={{ boxShadow: 'none' }}>
-              <Text type="secondary">Payment Method</Text>
-              <div style={{ marginTop: 12 }}>
-                {subscription.paymentMethod ? (
-                  <div>
-                    <div style={{ fontWeight: 500 }}>
-                      {subscription.paymentMethod.brand?.toUpperCase() || 'CARD'} ••••{' '}
-                      {subscription.paymentMethod.last4 || '0000'}
-                    </div>
-                    <Text type="secondary">
-                      Expires {subscription.paymentMethod.expMonth}/{subscription.paymentMethod.expYear}
-                    </Text>
-                  </div>
-                ) : (
-                  <Text type="warning">No payment method on file</Text>
-                )}
-              </div>
+              {isTrialOrFree && (
+                <div style={{ marginTop: 16 }}>
+                  <Button
+                    type="primary"
+                    block
+                    onClick={() => {
+                      navigate('/checkout', {
+                        state: {
+                          plan: 'professional',
+                          billingPeriod: 'monthly',
+                          price: 199
+                        }
+                      });
+                    }}
+                    style={{
+                      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+                      border: 'none',
+                      fontWeight: 500
+                    }}
+                  >
+                    Upgrade to Pro
+                  </Button>
+                </div>
+              )}
             </Card>
           </Col>
           <Col xs={24} md={8}>
@@ -335,7 +560,7 @@ const Settings = () => {
         </Row>
       </div>
     );
-  }, [subscriptionData]);
+  }, [subscriptionData, navigate]);
 
   const profileTab = (
     <Row gutter={[16, 16]}>
@@ -345,13 +570,12 @@ const Settings = () => {
           loading={loadingProfile}
           style={{ boxShadow: 'none' }}
           extra={
-            <Space>
+            <div className="flex gap-2">
               <Button
                 onClick={() => {
                   if (profileEditing) {
-                    profileForm.resetFields();
                     if (profileData?.data) {
-                      profileForm.setFieldsValue({
+                      profileForm.reset({
                         name: profileData.data.name,
                         email: profileData.data.email,
                         profilePicture: profileData.data.profilePicture || ''
@@ -365,119 +589,125 @@ const Settings = () => {
                 {profileEditing ? 'Cancel' : 'Edit Profile'}
               </Button>
               {profileEditing && (
-                <Button type="primary" onClick={() => profileForm.submit()} loading={updateProfileMutation.isLoading}>
+                <Button onClick={profileForm.handleSubmit(onProfileSubmit)} disabled={updateProfileMutation.isLoading}>
+                  {updateProfileMutation.isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                   Save
                 </Button>
               )}
-            </Space>
+            </div>
           }
         >
-          <Form
-            form={profileForm}
-            layout="vertical"
-            onFinish={handleProfileSubmit}
-          >
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item
+          <Form {...profileForm}>
+            <form onSubmit={profileForm.handleSubmit(onProfileSubmit)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={profileForm.control}
                   name="name"
-                  label="Full Name"
-                  rules={[{ required: true, message: 'Please enter your name' }]}
-                >
-                  <Input size="large" placeholder="Enter your full name" disabled={!profileEditing} />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Full Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Enter your full name" disabled={!profileEditing} {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={profileForm.control}
                   name="email"
-                  label="Email"
-                >
-                  <Input size="large" disabled />
-                </Form.Item>
-              </Col>
-            </Row>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input type="email" disabled {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-            <Form.Item name="profilePicture" hidden>
-              <Input type="hidden" />
-            </Form.Item>
-
-            <Divider orientation="left">Profile Picture</Divider>
-            <Space align="center" size="large" style={{ marginBottom: 24 }}>
-              <Avatar
-                size={96}
-                src={profilePreview}
-                icon={<UserOutlined />}
-                style={{ backgroundColor: '#f0f0f0' }}
-              />
-              <Space direction="vertical" size={8}>
-                <Upload
-                  accept="image/*"
-                  showUploadList={false}
-                  disabled={!profileEditing}
-                  customRequest={handleProfileImageUpload}
-                >
-                  <Button icon={<CameraOutlined />} type="primary" disabled={!profileEditing}>
-                    Upload New Photo
-                  </Button>
-                </Upload>
-                {profilePreview && (
-                  <Button
-                    danger
-                    type="link"
-                    disabled={!profileEditing}
-                    onClick={() => {
-                      profileForm.setFieldsValue({ profilePicture: '' });
-                      setProfilePreview('');
-                    }}
-                    style={{ padding: 0 }}
-                  >
-                    Remove Photo
-                  </Button>
+              <FormField
+                control={profileForm.control}
+                name="profilePicture"
+                render={({ field }) => (
+                  <FormItem className="hidden">
+                    <FormControl>
+                      <Input type="hidden" {...field} />
+                    </FormControl>
+                  </FormItem>
                 )}
-                <Text type="secondary">Upload a square image (PNG/JPG) for best results.</Text>
-              </Space>
-            </Space>
+              />
 
-            <Divider orientation="left">Change Password</Divider>
+              <Separator />
+              <h3 className="text-lg font-semibold mb-4">Profile Picture</h3>
+              <div className="flex items-center gap-6 mb-6">
+                <Avatar className="h-24 w-24">
+                  {profilePreview && <AvatarImage src={profilePreview} alt="Profile" />}
+                  <AvatarFallback><User className="h-8 w-8" /></AvatarFallback>
+                </Avatar>
+                <div className="flex flex-col gap-2">
+                  <Upload
+                    accept="image/*"
+                    showUploadList={false}
+                    disabled={!profileEditing}
+                    customRequest={handleProfileImageUpload}
+                  >
+                    <Button type="button" disabled={!profileEditing}>
+                      <Camera className="h-4 w-4 mr-2" />
+                      Upload New Photo
+                    </Button>
+                  </Upload>
+                  {profilePreview && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={!profileEditing}
+                      onClick={() => {
+                        profileForm.setValue('profilePicture', '');
+                        setProfilePreview('');
+                      }}
+                    >
+                      Remove Photo
+                    </Button>
+                  )}
+                  <p className="text-sm text-muted-foreground">Upload a square image (PNG/JPG) for best results.</p>
+                </div>
+              </div>
 
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item
+              <Separator />
+              <h3 className="text-lg font-semibold mb-4">Change Password</h3>
+
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={profileForm.control}
                   name="currentPassword"
-                  label="Current Password"
-                  rules={[
-                    ({ getFieldValue }) => ({
-                      validator(_, value) {
-                        if (!getFieldValue('newPassword') || value) {
-                          return Promise.resolve();
-                        }
-                        return Promise.reject(new Error('Enter current password to set a new password'));
-                      }
-                    })
-                  ]}
-                >
-                  <Input.Password size="large" placeholder="Enter current password" disabled={!profileEditing} />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Current Password</FormLabel>
+                      <FormControl>
+                        <Input type="password" placeholder="Enter current password" disabled={!profileEditing} {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={profileForm.control}
                   name="newPassword"
-                  label="New Password"
-                  rules={[
-                    ({ getFieldValue }) => ({
-                      validator(_, value) {
-                        if (!value || (value && getFieldValue('currentPassword'))) {
-                          return Promise.resolve();
-                        }
-                        return Promise.reject(new Error('Enter your current password to change password'));
-                      }
-                    })
-                  ]}
-                >
-                  <Input.Password size="large" placeholder="Enter new password" disabled={!profileEditing} />
-                </Form.Item>
-              </Col>
-            </Row>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>New Password</FormLabel>
+                      <FormControl>
+                        <Input type="password" placeholder="Enter new password" disabled={!profileEditing} {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </form>
           </Form>
         </Card>
       </Col>
@@ -488,25 +718,22 @@ const Settings = () => {
           <Descriptions column={1} size="small" bordered>
             <Descriptions.Item label="Full Name">{profileData?.data?.name || '—'}</Descriptions.Item>
             <Descriptions.Item label="Email">
-              <Space size="small">
-                <MailOutlined />
+              <div className="flex items-center gap-2">
+                <Mail className="h-4 w-4" />
                 {profileData?.data?.email || '—'}
-              </Space>
+              </div>
             </Descriptions.Item>
             <Descriptions.Item label="Role">
-              <Space size="small">
-                <UserSwitchOutlined />
+              <div className="flex items-center gap-2">
+                <UserCog className="h-4 w-4" />
                 {profileData?.data?.role?.toUpperCase() || '—'}
-              </Space>
+              </div>
             </Descriptions.Item>
             <Descriptions.Item label="Status">
               {profileData?.data?.isActive ? 'Active' : 'Inactive'}
             </Descriptions.Item>
             <Descriptions.Item label="Member Since">
               {profileData?.data?.createdAt ? dayjs(profileData.data.createdAt).format('MMM DD, YYYY') : '—'}
-            </Descriptions.Item>
-            <Descriptions.Item label="Last Login">
-              {profileData?.data?.lastLogin ? dayjs(profileData.data.lastLogin).format('MMM DD, YYYY HH:mm') : '—'}
             </Descriptions.Item>
           </Descriptions>
         </Card>
@@ -518,7 +745,7 @@ const Settings = () => {
   const organizationLogo = organizationLogoPreview || organization.logoUrl || '';
 
   const organizationTab = organizationEditing && canManageOrganization ? (
-    <Form
+    <AntdForm
       form={organizationForm}
       layout="vertical"
       onFinish={handleOrganizationSubmit}
@@ -528,7 +755,7 @@ const Settings = () => {
         loading={loadingOrganization}
         style={{ boxShadow: 'none' }}
         extra={
-          <Space>
+          <div className="flex gap-2">
             <Button
               onClick={() => {
                 organizationForm.resetFields();
@@ -542,67 +769,67 @@ const Settings = () => {
             <Button type="primary" onClick={() => organizationForm.submit()} loading={updateOrganizationMutation.isLoading}>
               Save
             </Button>
-          </Space>
+          </div>
         }
       >
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item
+            <AntdForm.Item
               name="name"
               label="Display Name"
               rules={[{ required: true, message: 'Organization name is required' }]}
             >
               <Input size="large" placeholder="Nexus Printing Press" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
           <Col span={12}>
-            <Form.Item
+            <AntdForm.Item
               name="legalName"
               label="Legal Name"
             >
               <Input size="large" placeholder="Legal registered name" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
         </Row>
 
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item
+            <AntdForm.Item
               name="email"
               label="Email"
               rules={[{ type: 'email', message: 'Enter a valid email' }]}
             >
               <Input size="large" placeholder="info@company.com" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
           <Col span={12}>
-            <Form.Item
+            <AntdForm.Item
               name="phone"
               label="Phone"
             >
               <PhoneNumberInput size="large" placeholder="Enter phone number" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
         </Row>
 
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item
+            <AntdForm.Item
               name="website"
               label="Website"
             >
               <Input size="large" placeholder="https://nexuspress.com" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
           <Col span={12}>
-            <Form.Item name="logoUrl" hidden>
+            <AntdForm.Item name="logoUrl" hidden>
               <Input type="hidden" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
         </Row>
 
         <Divider orientation="left">Branding</Divider>
-        <Space align="center" size="large" style={{ marginBottom: 24 }}>
+        <div className="flex items-center gap-6 mb-6">
           <div
             style={{
               width: 120,
@@ -626,7 +853,7 @@ const Settings = () => {
               <Text type="secondary">No logo uploaded</Text>
             )}
           </div>
-          <Space direction="vertical" size={8}>
+          <div className="flex flex-col gap-2">
             <Upload
               accept="image/*"
               showUploadList={false}
@@ -650,65 +877,65 @@ const Settings = () => {
               </Button>
             )}
             <Text type="secondary">Upload a high-resolution image for invoices and quotes.</Text>
-          </Space>
-        </Space>
+          </div>
+        </div>
 
         <Divider orientation="left">Address</Divider>
         <Row gutter={16}>
           <Col span={24}>
-            <Form.Item name={['address', 'line1']} label="Street Address">
+            <AntdForm.Item name={['address', 'line1']} label="Street Address">
               <Input size="large" placeholder="123 Printing Ave" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
           <Col span={24}>
-            <Form.Item name={['address', 'line2']} label="Address Line 2">
+            <AntdForm.Item name={['address', 'line2']} label="Address Line 2">
               <Input size="large" placeholder="Suite / Landmark" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
         </Row>
 
         <Row gutter={16}>
           <Col span={6}>
-            <Form.Item name={['address', 'city']} label="City">
+            <AntdForm.Item name={['address', 'city']} label="City">
               <Input size="large" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
           <Col span={6}>
-            <Form.Item name={['address', 'state']} label="State / Region">
+            <AntdForm.Item name={['address', 'state']} label="State / Region">
               <Input size="large" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
           <Col span={6}>
-            <Form.Item name={['address', 'postalCode']} label="Postal Code">
+            <AntdForm.Item name={['address', 'postalCode']} label="Postal Code">
               <Input size="large" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
           <Col span={6}>
-            <Form.Item name={['address', 'country']} label="Country">
+            <AntdForm.Item name={['address', 'country']} label="Country">
               <Input size="large" placeholder="Ghana" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
         </Row>
 
         <Divider orientation="left">Tax & Compliance</Divider>
         <Row gutter={16}>
           <Col span={12}>
-            <Form.Item name={['tax', 'vatNumber']} label="VAT Number">
+            <AntdForm.Item name={['tax', 'vatNumber']} label="VAT Number">
               <Input size="large" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
           <Col span={12}>
-            <Form.Item name={['tax', 'tin']} label="TIN">
+            <AntdForm.Item name={['tax', 'tin']} label="TIN">
               <Input size="large" />
-            </Form.Item>
+            </AntdForm.Item>
           </Col>
         </Row>
 
-        <Form.Item name="invoiceFooter" label="Invoice & Quote Footer">
+        <AntdForm.Item name="invoiceFooter" label="Invoice & Quote Footer">
           <Input.TextArea rows={4} placeholder="Thank you for doing business with us." />
-        </Form.Item>
+        </AntdForm.Item>
       </Card>
-    </Form>
+    </AntdForm>
   ) : (
     <Card
       title="Organization Profile"
@@ -740,7 +967,7 @@ const Settings = () => {
       </Descriptions>
 
       <Divider orientation="left">Branding</Divider>
-      <Space align="center" size="large" style={{ marginBottom: 24 }}>
+      <div className="flex items-center gap-6 mb-6">
         <div
           style={{
             width: 120,
@@ -767,7 +994,7 @@ const Settings = () => {
         <div>
           <Text type="secondary">This logo is displayed on invoices and quotes.</Text>
         </div>
-      </Space>
+      </div>
 
       <Divider orientation="left">Address</Divider>
       <Descriptions column={1} size="small" bordered>
@@ -783,8 +1010,50 @@ const Settings = () => {
 
       <Divider orientation="left">Tax & Compliance</Divider>
       <Descriptions column={1} size="small" bordered>
-        <Descriptions.Item label="VAT Number">{organization.tax?.vatNumber || '—'}</Descriptions.Item>
-        <Descriptions.Item label="TIN">{organization.tax?.tin || '—'}</Descriptions.Item>
+        <Descriptions.Item label="VAT Number">
+          {organization.tax?.vatNumber ? (
+            organization.tax.vatNumber
+          ) : (
+            <div className="flex items-center gap-2">
+              <Text type="secondary">Not set</Text>
+              {canManageOrganization && (
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => {
+                    organizationForm.setFieldsValue(organization);
+                    setOrganizationLogoPreview(organization.logoUrl || '');
+                    setOrganizationEditing(true);
+                  }}
+                >
+                  Add VAT Number
+                </Button>
+              )}
+            </div>
+          )}
+        </Descriptions.Item>
+        <Descriptions.Item label="TIN">
+          {organization.tax?.tin ? (
+            organization.tax.tin
+          ) : (
+            <div className="flex items-center gap-2">
+              <Text type="secondary">Not set</Text>
+              {canManageOrganization && (
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => {
+                    organizationForm.setFieldsValue(organization);
+                    setOrganizationLogoPreview(organization.logoUrl || '');
+                    setOrganizationEditing(true);
+                  }}
+                >
+                  Add TIN
+                </Button>
+              )}
+            </div>
+          )}
+        </Descriptions.Item>
       </Descriptions>
 
       <Divider orientation="left">Invoice & Quote Footer</Divider>
@@ -810,97 +1079,63 @@ const Settings = () => {
       </Row>
 
       <Card title="Subscription & Billing" loading={loadingSubscription} style={{ boxShadow: 'none' }}>
-        <Form
+        <AntdForm
           form={subscriptionForm}
           layout="vertical"
           onFinish={handleSubscriptionSubmit}
         >
           <Row gutter={16}>
             <Col span={8}>
-              <Form.Item
+              <AntdForm.Item
                 name="plan"
                 label="Plan"
                 rules={[{ required: true, message: 'Plan is required' }]}
               >
                 <Input size="large" placeholder="free / pro / enterprise" />
-              </Form.Item>
+              </AntdForm.Item>
             </Col>
             <Col span={8}>
-              <Form.Item
+              <AntdForm.Item
                 name="status"
                 label="Status"
                 rules={[{ required: true, message: 'Status is required' }]}
               >
                 <Input size="large" placeholder="active / paused / cancelled" />
-              </Form.Item>
+              </AntdForm.Item>
             </Col>
             <Col span={8}>
-              <Form.Item
+              <AntdForm.Item
                 name="seats"
                 label="Seats"
                 rules={[{ required: true, message: 'Seats count is required' }]}
               >
                 <InputNumber min={1} size="large" style={{ width: '100%' }} />
-              </Form.Item>
+              </AntdForm.Item>
             </Col>
           </Row>
 
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item
+              <AntdForm.Item
                 name="currentPeriodEnd"
                 label="Current Period Ends"
+                tooltip={(planValue === 'trial' || statusValue === 'trialing') ? 'Automatically calculated as 30 days from today for trial plans' : undefined}
               >
                 <DatePicker size="large" style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                name={['paymentMethod', 'brand']}
-                label="Payment Method Brand"
-              >
-                <Input size="large" placeholder="Visa" />
-              </Form.Item>
+              </AntdForm.Item>
             </Col>
           </Row>
 
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item
-                name={['paymentMethod', 'last4']}
-                label="Last 4 Digits"
-              >
-                <Input size="large" placeholder="1234" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item
-                name={['paymentMethod', 'expMonth']}
-                label="Exp Month"
-              >
-                <Input size="large" placeholder="09" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item
-                name={['paymentMethod', 'expYear']}
-                label="Exp Year"
-              >
-                <Input size="large" placeholder="2026" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Form.Item name="notes" label="Internal Notes">
+          <AntdForm.Item name="notes" label="Internal Notes">
             <Input.TextArea rows={4} placeholder="Add billing notes or context here" />
-          </Form.Item>
+          </AntdForm.Item>
 
           {subscriptionHistory.length > 0 && (
             <>
               <Divider orientation="left">Billing History</Divider>
               {subscriptionHistory.map((entry, index) => (
                 <div key={index} style={{ marginBottom: 12, padding: 16, border: '1px solid #f0f0f0', borderRadius: 8 }}>
-                  <Space direction="vertical" size={4}>
+                  <div className="flex flex-col gap-1">
                     <Text strong>{entry.description || 'Subscription change'}</Text>
                     <Text type="secondary">
                       {entry.date ? dayjs(entry.date).format('MMM DD, YYYY HH:mm') : '—'}
@@ -911,14 +1146,14 @@ const Settings = () => {
                     {entry.metadata && (
                       <Text type="secondary">Details: {JSON.stringify(entry.metadata)}</Text>
                     )}
-                  </Space>
+                  </div>
                 </div>
               ))}
             </>
           )}
 
-          <Form.Item>
-            <Space>
+          <AntdForm.Item>
+            <div className="flex gap-2">
               <Button type="primary" htmlType="submit" loading={updateSubscriptionMutation.isLoading}>
                 Save Subscription
               </Button>
@@ -937,24 +1172,217 @@ const Settings = () => {
               >
                 Reset
               </Button>
-            </Space>
-          </Form.Item>
-        </Form>
+            </div>
+          </AntdForm.Item>
+        </AntdForm>
       </Card>
 
+    </div>
+  );
+
+  const whatsappTab = canManageOrganization ? (
+    <Card title="WhatsApp Business API Configuration" loading={loadingWhatsApp} style={{ boxShadow: 'none' }}>
       <Alert
-        style={{ marginTop: 16 }}
-        message="Note"
-        description="Subscription updates here will change what the team sees in-app. Integration with an external billing provider (Stripe, Paystack, etc.) can replace this manual control later."
+        message="WhatsApp Integration"
+        description="Configure WhatsApp Business API to send automated notifications to customers. You'll need to set up a WhatsApp Business Account in Meta Business Manager first."
         type="info"
         showIcon
+        style={{ marginBottom: 24 }}
       />
-    </div>
+
+      <AntdForm
+        form={whatsappForm}
+        layout="vertical"
+        onFinish={handleWhatsAppSubmit}
+      >
+        <AntdForm.Item
+          name="enabled"
+          valuePropName="checked"
+        >
+          <Switch checkedChildren="Enabled" unCheckedChildren="Disabled" />
+        </AntdForm.Item>
+
+        <Row gutter={16}>
+          <Col span={12}>
+            <AntdForm.Item
+              name="phoneNumberId"
+              label="Phone Number ID"
+              tooltip="Your WhatsApp Business Phone Number ID from Meta Business Manager"
+              rules={[
+                { required: true, message: 'Phone Number ID is required when enabled' }
+              ]}
+            >
+              <Input size="large" placeholder="e.g., 123456789012345" />
+            </AntdForm.Item>
+          </Col>
+          <Col span={12}>
+            <AntdForm.Item
+              name="businessAccountId"
+              label="Business Account ID"
+              tooltip="Your Meta Business Account ID (optional)"
+            >
+              <Input size="large" placeholder="e.g., 123456789012345" />
+            </AntdForm.Item>
+          </Col>
+        </Row>
+
+        <AntdForm.Item
+          name="accessToken"
+          label="Access Token"
+          tooltip="Your WhatsApp Business API Access Token (keep this secure)"
+        >
+          <Input.Password size="large" placeholder="Enter access token" />
+        </AntdForm.Item>
+
+        <Row gutter={16}>
+          <Col span={12}>
+            <AntdForm.Item
+              name="webhookVerifyToken"
+              label="Webhook Verify Token"
+              tooltip="Token for webhook verification (set this in Meta Business Manager)"
+            >
+              <Input size="large" placeholder="Your verify token" />
+            </AntdForm.Item>
+          </Col>
+          <Col span={12}>
+            <AntdForm.Item
+              name="templateNamespace"
+              label="Template Namespace"
+              tooltip="Optional template namespace"
+            >
+              <Input size="large" placeholder="Optional" />
+            </AntdForm.Item>
+          </Col>
+        </Row>
+
+        <AntdForm.Item>
+          <div className="flex gap-2">
+            <Button type="primary" htmlType="submit" loading={updateWhatsAppMutation.isLoading}>
+              Save Settings
+            </Button>
+            <Button
+              onClick={handleTestWhatsApp}
+              loading={testWhatsAppMutation.isLoading}
+            >
+              Test Connection
+            </Button>
+            <Button
+              onClick={() => {
+                whatsappForm.resetFields();
+                if (whatsappData?.data) {
+                  whatsappForm.setFieldsValue({
+                    enabled: whatsappData.data.enabled || false,
+                    phoneNumberId: whatsappData.data.phoneNumberId || '',
+                    accessToken: '',
+                    businessAccountId: whatsappData.data.businessAccountId || '',
+                    webhookVerifyToken: whatsappData.data.webhookVerifyToken || '',
+                    templateNamespace: whatsappData.data.templateNamespace || ''
+                  });
+                }
+              }}
+            >
+              Reset
+            </Button>
+          </div>
+        </AntdForm.Item>
+      </AntdForm>
+
+      <Divider orientation="left">Message Templates</Divider>
+      <Alert
+        message="Template Setup Required"
+        description="You need to create and approve the following message templates in Meta Business Manager before they can be used: invoice_notification, quote_delivery, order_confirmation, payment_reminder, low_stock_alert"
+        type="warning"
+        showIcon
+        style={{ marginTop: 16 }}
+      />
+    </Card>
+  ) : (
+    <Card>
+      <Alert
+        message="Access Restricted"
+        description="You need admin or manager permissions to configure WhatsApp settings."
+        type="warning"
+      />
+    </Card>
+  );
+
+  // Map businessType to display names
+  const getWorkspaceTypeDisplay = (businessType) => {
+    const mapping = {
+      shop: 'Shop',
+      printing_press: 'Studio',
+      pharmacy: 'Pharmacy'
+    };
+    return mapping[businessType] || 'Studio';
+  };
+
+  const getWorkspaceDescription = (businessType) => {
+    const descriptions = {
+      shop: 'Optimized for inventory, POS, and sales',
+      printing_press: 'Optimized for print jobs, quotes, and production workflows',
+      pharmacy: 'Optimized for prescriptions, drug inventory, and patient records'
+    };
+    return descriptions[businessType] || descriptions.printing_press;
+  };
+
+  const workspaceType = activeTenant?.businessType || 'printing_press';
+  const workspaceTypeDisplay = getWorkspaceTypeDisplay(workspaceType);
+  const workspaceDescription = getWorkspaceDescription(workspaceType);
+
+  const workspaceTab = (
+    <ShadcnCard>
+      <CardHeader>
+        <CardTitle>Workspace</CardTitle>
+        <CardDescription>
+          Your workspace type and configuration. This cannot be changed after signup.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="space-y-4">
+          <div>
+            <Label className="text-sm font-medium text-gray-500">Workspace Type</Label>
+            <div className="mt-2">
+              <div className="text-lg font-semibold text-gray-900">{workspaceTypeDisplay}</div>
+              <p className="text-sm text-gray-600 mt-1">{workspaceDescription}</p>
+            </div>
+          </div>
+        </div>
+        <Separator />
+        <div className="space-y-4">
+          <h3 className="text-sm font-semibold text-gray-900">Workspace Actions</h3>
+          <div className="flex flex-col gap-3">
+            <Button
+              variant="outline"
+              onClick={() => {
+                // Future feature: Add another workspace
+                showError(null, 'This feature is coming soon. Contact support for assistance.');
+              }}
+              className="w-full sm:w-auto"
+            >
+              Add another workspace
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                window.open('mailto:support@nexpro.com?subject=Workspace Inquiry', '_blank');
+              }}
+              className="w-full sm:w-auto"
+            >
+              Contact support
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </ShadcnCard>
   );
 
   const tabItems = [
     {
-      key: 'profile',
+      key: 'workspace',
+      label: 'Workspace',
+      children: workspaceTab
+    },
+    {
       label: 'Profile',
       children: profileTab
     },
@@ -967,6 +1395,11 @@ const Settings = () => {
       key: 'subscription',
       label: 'Subscription & Billing',
       children: subscriptionTab
+    },
+    {
+      key: 'whatsapp',
+      label: 'WhatsApp',
+      children: whatsappTab
     }
   ];
 

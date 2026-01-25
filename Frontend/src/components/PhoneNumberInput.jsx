@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Input, Select } from 'antd';
+import { useState, useEffect, useMemo, forwardRef } from 'react';
+import { Input, Select, Space } from 'antd';
 import ReactCountryFlag from 'react-country-flag';
 
 const { Option } = Select;
@@ -256,14 +256,14 @@ const COUNTRIES = [
  * @param {string} defaultCountry - Default country code (default: 'GH')
  * @param {object} inputProps - Additional props to pass to the Input component
  */
-const PhoneNumberInput = ({ 
+const PhoneNumberInput = forwardRef(({ 
   value = '', 
   onChange, 
   placeholder = 'Enter phone number',
   size = 'large',
   defaultCountry = 'GH',
   ...inputProps 
-}) => {
+}, ref) => {
   // Parse value to extract country code and number
   const parsePhoneValue = (phoneValue) => {
     if (!phoneValue || typeof phoneValue !== 'string') {
@@ -319,7 +319,7 @@ const PhoneNumberInput = ({
   const selectedCountryData = COUNTRIES.find(c => c.code === selectedCountry) || COUNTRIES[0];
 
   return (
-    <Input.Group compact style={{ display: 'flex' }}>
+    <Space.Compact style={{ display: 'flex', width: '100%' }}>
       <Select
         value={selectedCountry}
         onChange={handleCountryChange}
@@ -351,6 +351,7 @@ const PhoneNumberInput = ({
         ))}
       </Select>
       <Input
+        ref={ref}
         value={phoneNumber}
         onChange={handleNumberChange}
         placeholder={placeholder}
@@ -358,9 +359,11 @@ const PhoneNumberInput = ({
         style={{ flex: 1 }}
         {...inputProps}
       />
-    </Input.Group>
+    </Space.Compact>
   );
-};
+});
+
+PhoneNumberInput.displayName = 'PhoneNumberInput';
 
 export default PhoneNumberInput;
 

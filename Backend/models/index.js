@@ -33,6 +33,20 @@ const AccountBalance = require('./AccountBalance');
 const SubscriptionPlan = require('./SubscriptionPlan');
 const CustomDropdownOption = require('./CustomDropdownOption');
 const SabitoTenantMapping = require('./SabitoTenantMapping');
+// Shop Management Models
+const Shop = require('./Shop');
+const Product = require('./Product');
+const Sale = require('./Sale');
+const SaleItem = require('./SaleItem');
+const ProductVariant = require('./ProductVariant');
+const Barcode = require('./Barcode');
+// Pharmacy Management Models
+const Pharmacy = require('./Pharmacy');
+const Drug = require('./Drug');
+const Prescription = require('./Prescription');
+const PrescriptionItem = require('./PrescriptionItem');
+const DrugInteraction = require('./DrugInteraction');
+const ExpiryAlert = require('./ExpiryAlert');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -176,6 +190,12 @@ Invoice.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
 Job.hasMany(Invoice, { foreignKey: 'jobId', as: 'invoices' });
 Invoice.belongsTo(Job, { foreignKey: 'jobId', as: 'job' });
 
+Sale.hasMany(Invoice, { foreignKey: 'saleId', as: 'invoices' });
+Invoice.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
+
+Prescription.hasMany(Invoice, { foreignKey: 'prescriptionId', as: 'invoices' });
+Invoice.belongsTo(Prescription, { foreignKey: 'prescriptionId', as: 'prescription' });
+
 Job.hasMany(JobStatusHistory, { foreignKey: 'jobId', as: 'statusHistory' });
 JobStatusHistory.belongsTo(Job, { foreignKey: 'jobId', as: 'job' });
 JobStatusHistory.belongsTo(User, { foreignKey: 'changedBy', as: 'changedByUser' });
@@ -282,6 +302,86 @@ Tenant.hasMany(SabitoTenantMapping, {
   as: 'sabitoMappings' 
 });
 
+// Shop Management Relationships
+Tenant.hasMany(Shop, { foreignKey: 'tenantId', as: 'shops' });
+Shop.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+Tenant.hasMany(Product, { foreignKey: 'tenantId', as: 'products' });
+Product.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Product.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Shop.hasMany(Product, { foreignKey: 'shopId', as: 'products' });
+Product.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' });
+InventoryCategory.hasMany(Product, { foreignKey: 'categoryId', as: 'products' });
+
+Product.hasMany(ProductVariant, { foreignKey: 'productId', as: 'variants' });
+ProductVariant.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+
+Tenant.hasMany(Barcode, { foreignKey: 'tenantId', as: 'barcodes' });
+Barcode.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Barcode.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+Product.hasMany(Barcode, { foreignKey: 'productId', as: 'barcodes' });
+Barcode.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'productVariant' });
+ProductVariant.hasMany(Barcode, { foreignKey: 'productVariantId', as: 'barcodes' });
+
+Tenant.hasMany(Sale, { foreignKey: 'tenantId', as: 'sales' });
+Sale.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Sale.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Shop.hasMany(Sale, { foreignKey: 'shopId', as: 'sales' });
+Sale.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
+Customer.hasMany(Sale, { foreignKey: 'customerId', as: 'sales' });
+Sale.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' });
+// Note: Invoice.belongsTo(Sale) is already defined above with alias 'sale', so we don't need Invoice.hasOne(Sale)
+Sale.belongsTo(User, { foreignKey: 'soldBy', as: 'seller' });
+User.hasMany(Sale, { foreignKey: 'soldBy', as: 'sales' });
+
+Sale.hasMany(SaleItem, { foreignKey: 'saleId', as: 'items' });
+SaleItem.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
+SaleItem.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+Product.hasMany(SaleItem, { foreignKey: 'productId', as: 'saleItems' });
+SaleItem.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
+ProductVariant.hasMany(SaleItem, { foreignKey: 'productVariantId', as: 'saleItems' });
+
+// Pharmacy Management Relationships
+Tenant.hasMany(Pharmacy, { foreignKey: 'tenantId', as: 'pharmacies' });
+Pharmacy.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+Tenant.hasMany(Drug, { foreignKey: 'tenantId', as: 'drugs' });
+Drug.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Drug.belongsTo(Pharmacy, { foreignKey: 'pharmacyId', as: 'pharmacy' });
+Pharmacy.hasMany(Drug, { foreignKey: 'pharmacyId', as: 'drugs' });
+Drug.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' });
+InventoryCategory.hasMany(Drug, { foreignKey: 'categoryId', as: 'drugs' });
+
+Tenant.hasMany(Prescription, { foreignKey: 'tenantId', as: 'prescriptions' });
+Prescription.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Prescription.belongsTo(Pharmacy, { foreignKey: 'pharmacyId', as: 'pharmacy' });
+Pharmacy.hasMany(Prescription, { foreignKey: 'pharmacyId', as: 'prescriptions' });
+Prescription.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
+Customer.hasMany(Prescription, { foreignKey: 'customerId', as: 'prescriptions' });
+Prescription.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' });
+// Note: Invoice.belongsTo(Prescription) is already defined above with alias 'prescription', so we don't need Invoice.hasOne(Prescription)
+Prescription.belongsTo(User, { foreignKey: 'filledBy', as: 'filler' });
+User.hasMany(Prescription, { foreignKey: 'filledBy', as: 'prescriptions' });
+
+Prescription.hasMany(PrescriptionItem, { foreignKey: 'prescriptionId', as: 'items' });
+PrescriptionItem.belongsTo(Prescription, { foreignKey: 'prescriptionId', as: 'prescription' });
+PrescriptionItem.belongsTo(Drug, { foreignKey: 'drugId', as: 'drug' });
+Drug.hasMany(PrescriptionItem, { foreignKey: 'drugId', as: 'prescriptionItems' });
+
+Tenant.hasMany(DrugInteraction, { foreignKey: 'tenantId', as: 'drugInteractions' });
+DrugInteraction.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+DrugInteraction.belongsTo(Drug, { foreignKey: 'drug1Id', as: 'drug1' });
+DrugInteraction.belongsTo(Drug, { foreignKey: 'drug2Id', as: 'drug2' });
+Drug.hasMany(DrugInteraction, { foreignKey: 'drug1Id', as: 'interactionsAsDrug1' });
+Drug.hasMany(DrugInteraction, { foreignKey: 'drug2Id', as: 'interactionsAsDrug2' });
+
+Tenant.hasMany(ExpiryAlert, { foreignKey: 'tenantId', as: 'expiryAlerts' });
+ExpiryAlert.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+ExpiryAlert.belongsTo(Drug, { foreignKey: 'drugId', as: 'drug' });
+Drug.hasMany(ExpiryAlert, { foreignKey: 'drugId', as: 'expiryAlerts' });
+ExpiryAlert.belongsTo(User, { foreignKey: 'acknowledgedBy', as: 'acknowledger' });
+User.hasMany(ExpiryAlert, { foreignKey: 'acknowledgedBy', as: 'acknowledgedAlerts' });
+
 module.exports = {
   User,
   Customer,
@@ -317,7 +417,21 @@ module.exports = {
   UserTenant,
   SubscriptionPlan,
   CustomDropdownOption,
-  SabitoTenantMapping
+  SabitoTenantMapping,
+  // Shop Management
+  Shop,
+  Product,
+  Sale,
+  SaleItem,
+  ProductVariant,
+  Barcode,
+  // Pharmacy Management
+  Pharmacy,
+  Drug,
+  Prescription,
+  PrescriptionItem,
+  DrugInteraction,
+  ExpiryAlert
 };
 
 

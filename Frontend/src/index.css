@@ -1,17 +1,104 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-  --page-max-width: 1100px;
-  --color-bg: #0b1020;
-  --color-surface: rgba(18, 23, 44, 0.75);
-  --color-surface-strong: rgba(31, 37, 63, 0.9);
-  --color-accent: #7f5af0;
-  --color-accent-soft: rgba(127, 90, 240, 0.16);
-  --color-accent-strong: #6245c4;
-  --color-muted: #b5bdd9;
-  --color-on-dark: #f2f4ff;
-  --shadow-soft: 0 24px 40px -30px rgba(127, 90, 240, 0.65);
-  --gradient-background: radial-gradient(circle at top center, rgba(127, 90, 240, 0.25), rgba(11, 16, 32, 0.15) 45%, transparent 70%);
+@layer base {
+  :root {
+    /* Import colors from centralized color system */
+    --color-primary: #166534;
+    --color-primary-light: rgba(22, 101, 52, 0.1);
+    --color-primary-lighter: rgba(22, 101, 52, 0.05);
+    --color-primary-dark: #0f4a22;
+    --color-success: #166534;
+    --color-error: #ef4444;
+    --color-warning: #f97316;
+    --color-info: #166534;
+    --color-loader: #166534;
+    --color-focus: #166534;
+    --color-focus-ring: rgba(22, 101, 52, 0.2);
+    --color-link: #166534;
+    --color-link-hover: #0f4a22;
+    
+    --page-max-width: 1100px;
+    --color-bg: #ffffff;
+    --color-surface: rgba(255, 255, 255, 0.95);
+    --color-surface-strong: rgba(249, 250, 251, 0.98);
+    --color-accent: #7f5af0;
+    --color-accent-soft: rgba(127, 90, 240, 0.1);
+    --color-accent-strong: #6245c4;
+    --color-muted: #6b7280;
+    --color-on-dark: #1f2937;
+    --shadow-soft: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    --gradient-background: radial-gradient(circle at top center, rgba(127, 90, 240, 0.05), rgba(255, 255, 255, 0.95) 45%, transparent 70%);
+    
+    --background: 0 0% 100%;
+    --foreground: 222.2 47.4% 11.2%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 47.4% 11.2%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 47.4% 11.2%;
+    --primary: 143 64% 24%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 143 64% 24%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    /* Import colors from centralized color system */
+    --color-primary: #166534;
+    --color-primary-light: rgba(22, 101, 52, 0.1);
+    --color-primary-lighter: rgba(22, 101, 52, 0.05);
+    --color-primary-dark: #0f4a22;
+    --color-success: #166534;
+    --color-error: #ef4444;
+    --color-warning: #f97316;
+    --color-info: #166534;
+    --color-loader: #166534;
+    --color-focus: #166534;
+    --color-focus-ring: rgba(22, 101, 52, 0.2);
+    --color-link: #166534;
+    --color-link-hover: #0f4a22;
+    
+    --background: 0 0% 100%;
+    --foreground: 222.2 47.4% 11.2%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 47.4% 11.2%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 47.4% 11.2%;
+    --primary: 143 64% 24%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 143 64% 24%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
 }
 
 * {
@@ -26,8 +113,8 @@ body {
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: var(--color-bg);
-  color: var(--color-on-dark);
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
 }
 
 code {
@@ -45,16 +132,16 @@ code {
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.05);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(127, 90, 240, 0.35);
+  background: rgba(0, 0, 0, 0.2);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(127, 90, 240, 0.55);
+  background: rgba(0, 0, 0, 0.3);
 }
 
 /* ============================================
@@ -334,6 +421,279 @@ code {
     font-size: 14px;
     padding: 6px 16px;
   }
+}
+
+/* ============================================
+   ANT DESIGN COLOR OVERRIDES - GREEN THEME
+   ============================================ */
+
+/* Primary button color */
+.ant-btn-primary {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.ant-btn-primary:hover,
+.ant-btn-primary:focus {
+  background-color: var(--color-primary-dark);
+  border-color: var(--color-primary-dark);
+}
+
+/* Link color */
+.ant-btn-link {
+  color: var(--color-link);
+}
+
+.ant-btn-link:hover,
+.ant-btn-link:focus {
+  color: var(--color-link-hover);
+}
+
+a {
+  color: var(--color-link);
+}
+
+a:hover {
+  color: var(--color-link-hover);
+}
+
+/* Input focus border */
+.ant-input:focus,
+.ant-input-focused,
+.ant-input-affix-wrapper:focus,
+.ant-input-affix-wrapper-focused {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+.ant-select-focused:not(.ant-select-disabled).ant-select:not(.ant-select-customize-input) .ant-select-selector {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+.ant-picker-focused {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+/* Spin/Loader color */
+.ant-spin-dot-item {
+  background-color: var(--color-loader);
+}
+
+.ant-spin {
+  color: var(--color-loader);
+}
+
+/* Progress bar */
+.ant-progress-bg {
+  background-color: var(--color-primary);
+}
+
+.ant-progress-status-success .ant-progress-bg {
+  background-color: var(--color-success);
+}
+
+/* Tag colors */
+.ant-tag {
+  border-color: var(--color-primary-light);
+}
+
+.ant-tag-blue {
+  background-color: var(--color-primary-light);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* Checkbox and Radio */
+.ant-checkbox-checked .ant-checkbox-inner {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.ant-checkbox-wrapper:hover .ant-checkbox-inner,
+.ant-checkbox:hover .ant-checkbox-inner,
+.ant-checkbox-input:focus + .ant-checkbox-inner {
+  border-color: var(--color-primary);
+}
+
+.ant-radio-checked .ant-radio-inner {
+  border-color: var(--color-primary);
+}
+
+.ant-radio-checked .ant-radio-inner::after {
+  background-color: var(--color-primary);
+}
+
+.ant-radio-wrapper:hover .ant-radio,
+.ant-radio:hover .ant-radio-inner,
+.ant-radio-input:focus + .ant-radio-inner {
+  border-color: var(--color-primary);
+}
+
+/* Switch */
+.ant-switch-checked {
+  background-color: var(--color-primary);
+}
+
+/* Table row hover */
+.ant-table-tbody > tr:hover > td {
+  background-color: var(--color-primary-lighter);
+}
+
+/* Menu selected */
+.ant-menu-item-selected {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.ant-menu-item-selected::after {
+  border-right-color: var(--color-primary);
+}
+
+/* Tabs */
+.ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn {
+  color: var(--color-primary);
+}
+
+.ant-tabs-ink-bar {
+  background: var(--color-primary);
+}
+
+/* Pagination */
+.ant-pagination-item-active {
+  border-color: var(--color-primary);
+}
+
+.ant-pagination-item-active a {
+  color: var(--color-primary);
+}
+
+.ant-pagination-item:focus-visible a,
+.ant-pagination-item:hover a {
+  color: var(--color-primary);
+}
+
+/* DatePicker */
+.ant-picker-cell-selected .ant-picker-cell-inner {
+  background: var(--color-primary);
+}
+
+.ant-picker-cell-in-view.ant-picker-cell-today .ant-picker-cell-inner::before {
+  border-color: var(--color-primary);
+}
+
+/* Steps */
+.ant-steps-item-process .ant-steps-item-icon {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.ant-steps-item-finish .ant-steps-item-icon {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* Tooltip */
+.ant-tooltip-inner {
+  background-color: var(--color-primary-dark);
+}
+
+/* Message/Notification */
+.ant-message-notice-content {
+  background-color: var(--color-primary-light);
+}
+
+.ant-notification-notice-message {
+  color: var(--color-primary);
+}
+
+/* Upload */
+.ant-upload.ant-upload-drag:hover {
+  border-color: var(--color-primary);
+}
+
+.ant-upload-list-item-card-actions .anticon {
+  color: var(--color-primary);
+}
+
+/* Rate */
+.ant-rate-star-full .ant-rate-star-first,
+.ant-rate-star-full .ant-rate-star-second {
+  color: var(--color-primary);
+}
+
+/* Slider */
+.ant-slider-track {
+  background-color: var(--color-primary);
+}
+
+.ant-slider-handle {
+  border-color: var(--color-primary);
+}
+
+.ant-slider-handle:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 5px var(--color-focus-ring);
+}
+
+/* Tree */
+.ant-tree-node-selected {
+  background-color: var(--color-primary-light);
+}
+
+/* Transfer */
+.ant-transfer-list-header {
+  background-color: var(--color-primary-light);
+}
+
+/* Timeline */
+.ant-timeline-item-head {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+/* Badge */
+.ant-badge-status-processing {
+  background-color: var(--color-primary);
+}
+
+/* Anchor */
+.ant-anchor-link-active > .ant-anchor-link-title {
+  color: var(--color-primary);
+}
+
+/* BackTop */
+.ant-back-top {
+  background-color: var(--color-primary);
+}
+
+.ant-back-top:hover {
+  background-color: var(--color-primary-dark);
+}
+
+/* ============================================
+   Z-INDEX FIXES FOR DROPDOWNS IN MODALS
+   ============================================ */
+
+/* Ant Design Select dropdown in Dialog/Modal - ensure it appears above */
+.ant-select-dropdown {
+  z-index: 100 !important;
+}
+
+/* Radix UI Select dropdown in Dialog - ensure it appears above */
+[data-radix-select-content] {
+  z-index: 100 !important;
+}
+
+/* Ant Design Popover in Dialog */
+.ant-popover {
+  z-index: 100 !important;
+}
+
+/* Ant Design Tooltip in Dialog */
+.ant-tooltip {
+  z-index: 100 !important;
 }
 
 

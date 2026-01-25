@@ -1,12 +1,73 @@
 import { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, message, Space, Tag, Descriptions, List, Spin, Empty, InputNumber, Select, Image, Popconfirm, Upload } from 'antd';
-import { PlusOutlined, SearchOutlined, EditOutlined, DeleteOutlined, EyeOutlined, UploadOutlined } from '@ant-design/icons';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Table, InputNumber, Tag, List, Space, Image, Empty, Spin } from 'antd';
+import { Plus, Search, Pencil, Trash2, Eye, Upload as UploadIcon, Loader2 } from 'lucide-react';
 import vendorService from '../services/vendorService';
 import vendorPriceListService from '../services/vendorPriceListService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import PhoneNumberInput from '../components/PhoneNumberInput';
+import { showSuccess, showError } from '../utils/toast';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+
+const vendorSchema = z.object({
+  name: z.string().min(1, 'Vendor name is required'),
+  company: z.string().optional(),
+  email: z.string().email('Please enter a valid email').optional().or(z.literal('')),
+  phone: z.string().optional(),
+  website: z.string().url('Please enter a valid URL').optional().or(z.literal('')),
+  category: z.string().min(1, 'Category is required'),
+  address: z.string().optional(),
+});
+
+const priceListItemSchema = z.object({
+  itemType: z.enum(['service', 'product']),
+  name: z.string().min(1, 'Name is required'),
+  description: z.string().optional(),
+  price: z.number().min(0, 'Price must be at least 0'),
+  unit: z.string().optional(),
+  imageUrl: z.string().optional().nullable(),
+});
 
 const Vendors = () => {
   const [vendors, setVendors] = useState([]);
@@ -15,7 +76,6 @@ const Vendors = () => {
   const [editingVendor, setEditingVendor] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [searchText, setSearchText] = useState('');
-  const [form] = Form.useForm();
   const { isManager } = useAuth();
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingVendor, setViewingVendor] = useState(null);
@@ -23,9 +83,35 @@ const Vendors = () => {
   const [loadingPriceList, setLoadingPriceList] = useState(false);
   const [priceListModalVisible, setPriceListModalVisible] = useState(false);
   const [editingPriceItem, setEditingPriceItem] = useState(null);
-  const [priceListForm] = Form.useForm();
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
+  const [deletePriceItemId, setDeletePriceItemId] = useState(null);
+  const [deletePriceItemDialogOpen, setDeletePriceItemDialogOpen] = useState(false);
+
+  const form = useForm({
+    resolver: zodResolver(vendorSchema),
+    defaultValues: {
+      name: '',
+      company: '',
+      email: '',
+      phone: '',
+      website: '',
+      category: '',
+      address: '',
+    },
+  });
+
+  const priceListForm = useForm({
+    resolver: zodResolver(priceListItemSchema),
+    defaultValues: {
+      itemType: 'service',
+      name: '',
+      description: '',
+      price: 0,
+      unit: 'unit',
+      imageUrl: null,
+    },
+  });
 
   useEffect(() => {
     fetchVendors();
@@ -39,38 +125,66 @@ const Vendors = () => {
         limit: pagination.pageSize,
         search: searchText,
       });
-      setVendors(response.data);
-      setPagination({ ...pagination, total: response.count });
+      
+      // Handle response structure (API interceptor returns response.data)
+      if (response?.success !== false && response?.data) {
+        setVendors(Array.isArray(response.data) ? response.data : []);
+        setPagination({ ...pagination, total: response.count || 0 });
+      } else {
+        // If response structure is unexpected, try to extract data
+        setVendors(Array.isArray(response) ? response : []);
+        setPagination({ ...pagination, total: response?.count || 0 });
+      }
     } catch (error) {
-      message.error('Failed to load vendors');
+      showError(error, 'Failed to load vendors');
+      setVendors([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = async (values) => {
+  const onSubmit = async (values) => {
     try {
+      let response;
       if (editingVendor) {
-        await vendorService.update(editingVendor.id, values);
-        message.success('Vendor updated successfully');
+        response = await vendorService.update(editingVendor.id, values);
       } else {
-        await vendorService.create(values);
-        message.success('Vendor created successfully');
+        response = await vendorService.create(values);
       }
-      setModalVisible(false);
-      fetchVendors();
+      
+      // Check if response indicates success
+      if (response && (response.success === true || response.data)) {
+        showSuccess(editingVendor ? 'Vendor updated successfully' : 'Vendor created successfully');
+        setModalVisible(false);
+        form.reset();
+        fetchVendors();
+      } else if (response && response.success === false) {
+        // Explicit failure response
+        const errorMessage = response.error || response.message || 'Operation failed';
+        showError(errorMessage);
+      } else {
+        // Unexpected response structure
+        console.warn('Unexpected response structure:', response);
+        showSuccess(editingVendor ? 'Vendor updated successfully' : 'Vendor created successfully');
+        setModalVisible(false);
+        form.reset();
+        fetchVendors();
+      }
     } catch (error) {
-      message.error(error.error || 'Operation failed');
+      // Only show error if it's a real error (not a false positive from interceptor)
+      console.error('Vendor operation error:', error);
+      const errorMessage = error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Operation failed';
+      showError(errorMessage);
     }
   };
 
   const handleDelete = async (id) => {
     try {
       await vendorService.delete(id);
-      message.success('Vendor deleted successfully');
+      showSuccess('Vendor deleted successfully');
       fetchVendors();
     } catch (error) {
-      message.error('Failed to delete vendor');
+      showError(error, 'Failed to delete vendor');
     }
   };
 
@@ -78,7 +192,6 @@ const Vendors = () => {
     setViewingVendor(vendor);
     setDrawerVisible(true);
     
-    // Fetch vendor price list
     setLoadingPriceList(true);
     try {
       const response = await vendorPriceListService.getAll(vendor.id);
@@ -97,9 +210,7 @@ const Vendors = () => {
     setPriceList([]);
   };
 
-  // Printing services/products list for dropdown
   const printingItems = [
-    // Printing Services
     'Black & White Printing',
     'Color Printing',
     'Large Format Printing',
@@ -109,7 +220,6 @@ const Vendors = () => {
     'Screen Printing',
     '3D Printing',
     'DTF',
-    // Print Products
     'Business Cards',
     'Brochures',
     'Flyers',
@@ -127,7 +237,6 @@ const Vendors = () => {
     'Window Graphics',
     'Floor Graphics',
     'One Way Vision Sticker',
-    // Finishing Services
     'Binding',
     'Lamination',
     'Scanning',
@@ -140,7 +249,6 @@ const Vendors = () => {
     'Foil Stamping',
     'UV Coating',
     'Varnishing',
-    // Professional Services
     'Design Services',
     'Pre-Press Services',
     'Color Correction',
@@ -149,7 +257,6 @@ const Vendors = () => {
     'Proofing',
   ];
 
-  // Check if vendor is in printing-related category
   const isPrintingVendor = viewingVendor && (
     viewingVendor.category === 'Printing Services' ||
     viewingVendor.category === 'Printing Equipment' ||
@@ -160,121 +267,98 @@ const Vendors = () => {
 
   const handleAddPriceItem = () => {
     setEditingPriceItem(null);
-    priceListForm.resetFields();
+    priceListForm.reset({
+      itemType: 'service',
+      name: '',
+      description: '',
+      price: 0,
+      unit: 'unit',
+      imageUrl: null,
+    });
     setImagePreview(null);
     setPriceListModalVisible(true);
   };
 
   const handleEditPriceItem = (item) => {
     setEditingPriceItem(item);
-    priceListForm.setFieldsValue(item);
+    priceListForm.reset({
+      ...item,
+      imageUrl: item.imageUrl || null,
+    });
     setImagePreview(item.imageUrl || null);
     setPriceListModalVisible(true);
   };
 
-  const handleImageUpload = async ({ file, onSuccess, onError }) => {
+  const handleImageUpload = async (file) => {
     try {
-      console.log('[Vendors Component] Image upload started');
-      console.log('[Vendors Component] File:', {
-        name: file.name,
-        type: file.type,
-        size: file.size
-      });
-      console.log('[Vendors Component] Editing item:', editingPriceItem);
-      console.log('[Vendors Component] Viewing vendor:', viewingVendor?.id);
-      
       setUploadingImage(true);
       
-      // If editing, upload to existing item
       if (editingPriceItem && editingPriceItem.id) {
-        console.log('[Vendors Component] Uploading to existing item:', editingPriceItem.id);
         const response = await vendorPriceListService.uploadImage(
           viewingVendor.id,
           editingPriceItem.id,
           file
         );
         
-        console.log('[Vendors Component] Upload response:', response);
-        
         if (response.data?.imageUrl) {
-          console.log('[Vendors Component] ✅ Image URL received, length:', response.data.imageUrl.length);
           setImagePreview(response.data.imageUrl);
-          priceListForm.setFieldsValue({ imageUrl: response.data.imageUrl });
-          message.success('Image uploaded successfully');
-          onSuccess();
+          priceListForm.setValue('imageUrl', response.data.imageUrl);
+          showSuccess('Image uploaded successfully');
         } else {
-          console.error('[Vendors Component] ❌ No imageUrl in response:', response);
           throw new Error('Upload failed - no image URL in response');
         }
       } else {
-        console.log('[Vendors Component] New item - creating preview');
-        // For new items, we'll upload after creation
-        // For now, create a preview URL
         const reader = new FileReader();
         reader.onload = (e) => {
-          console.log('[Vendors Component] Preview created, length:', e.target.result.length);
           setImagePreview(e.target.result);
-          priceListForm.setFieldsValue({ imageUrl: e.target.result });
+          priceListForm.setValue('imageUrl', e.target.result);
         };
         reader.onerror = (error) => {
-          console.error('[Vendors Component] ❌ FileReader error:', error);
-          message.error('Failed to read image file');
-          onError(error);
+          showError(error, 'Failed to read image file');
         };
         reader.readAsDataURL(file);
-        onSuccess();
       }
     } catch (error) {
-      console.error('[Vendors Component] ❌ Upload error:', error);
-      console.error('[Vendors Component] Error details:', {
-        message: error.message,
-        response: error.response,
-        status: error.response?.status,
-        data: error.response?.data
-      });
-      message.error(error?.response?.data?.message || error?.message || 'Failed to upload image');
-      onError(error);
+      showError(error, error?.response?.data?.message || error?.message || 'Failed to upload image');
     } finally {
       setUploadingImage(false);
-      console.log('[Vendors Component] Upload process completed');
     }
   };
 
   const handleImageRemove = () => {
     setImagePreview(null);
-    priceListForm.setFieldsValue({ imageUrl: null });
+    priceListForm.setValue('imageUrl', null);
   };
 
-  const handleDeletePriceItem = async (itemId) => {
+  const handleDeletePriceItem = async () => {
+    if (!deletePriceItemId) return;
     try {
-      await vendorPriceListService.delete(viewingVendor.id, itemId);
-      message.success('Price item deleted successfully');
-      // Refresh price list
+      await vendorPriceListService.delete(viewingVendor.id, deletePriceItemId);
+      showSuccess('Price item deleted successfully');
       const response = await vendorPriceListService.getAll(viewingVendor.id);
       setPriceList(response.data || []);
+      setDeletePriceItemDialogOpen(false);
+      setDeletePriceItemId(null);
     } catch (error) {
-      message.error('Failed to delete price item');
+      showError(error, 'Failed to delete price item');
     }
   };
 
-  const handlePriceListSubmit = async (values) => {
+  const onPriceListSubmit = async (values) => {
     try {
-      // imageUrl can be base64 (for new items) or URL (for existing items)
-      // Backend will store base64 directly in DB
       if (editingPriceItem) {
         await vendorPriceListService.update(viewingVendor.id, editingPriceItem.id, values);
-        message.success('Price item updated successfully');
+        showSuccess('Price item updated successfully');
       } else {
         await vendorPriceListService.create(viewingVendor.id, values);
-        message.success('Price item added successfully');
+        showSuccess('Price item added successfully');
       }
       setPriceListModalVisible(false);
       setImagePreview(null);
-      // Refresh price list
       const response = await vendorPriceListService.getAll(viewingVendor.id);
       setPriceList(response.data || []);
     } catch (error) {
-      message.error(error.error || 'Operation failed');
+      showError(error, error.error || 'Operation failed');
     }
   };
 
@@ -287,16 +371,16 @@ const Vendors = () => {
       title: 'Category', 
       dataIndex: 'category', 
       key: 'category',
-      render: (category) => category ? <Tag color="blue">{category}</Tag> : '-'
+      render: (category) => category ? <Badge variant="outline">{category}</Badge> : '-'
     },
     {
       title: 'Status',
       dataIndex: 'isActive',
       key: 'isActive',
       render: (isActive) => (
-        <Tag color={isActive ? 'green' : 'red'}>
+        <Badge variant={isActive ? 'default' : 'destructive'}>
           {isActive ? 'Active' : 'Inactive'}
-        </Tag>
+        </Badge>
       ),
     },
     {
@@ -307,34 +391,35 @@ const Vendors = () => {
   ];
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-        <h1>Vendors</h1>
-        <Space>
-          <Input.Search
-            placeholder="Search vendors..."
-            allowClear
-            onSearch={(value) => {
-              setSearchText(value);
-              setPagination({ ...pagination, current: 1 });
-            }}
-            style={{ width: 250 }}
-            prefix={<SearchOutlined />}
-          />
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Vendors</h1>
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search vendors..."
+              value={searchText}
+              onChange={(e) => {
+                setSearchText(e.target.value);
+                setPagination({ ...pagination, current: 1 });
+              }}
+              className="pl-10 w-[250px]"
+            />
+          </div>
           {isManager && (
             <Button
-              type="primary"
-              icon={<PlusOutlined />}
               onClick={() => {
                 setEditingVendor(null);
-                form.resetFields();
+                form.reset();
                 setModalVisible(true);
               }}
             >
+              <Plus className="h-4 w-4 mr-2" />
               Add Vendor
             </Button>
           )}
-        </Space>
+        </div>
       </div>
 
       <Table
@@ -346,52 +431,154 @@ const Vendors = () => {
         onChange={(newPagination) => setPagination(newPagination)}
       />
 
-      <Modal
-        title={editingVendor ? 'Edit Vendor' : 'Add Vendor'}
-        open={modalVisible}
-        onCancel={() => setModalVisible(false)}
-        onOk={() => form.submit()}
-        width={700}
-      >
-        <Form form={form} layout="vertical" onFinish={handleSubmit}>
-          <Form.Item name="name" label="Name" rules={[{ required: true, message: 'Please enter vendor name' }]}>
-            <Input placeholder="Enter vendor name" size="large" />
-          </Form.Item>
-          <Form.Item name="company" label="Company">
-            <Input placeholder="Enter company name" size="large" />
-          </Form.Item>
-          <Form.Item name="email" label="Email" rules={[{ type: 'email', message: 'Please enter a valid email' }]}>
-            <Input placeholder="vendor@example.com" size="large" />
-          </Form.Item>
-          <Form.Item name="phone" label="Phone">
-            <PhoneNumberInput placeholder="Enter phone number" size="large" />
-          </Form.Item>
-          <Form.Item name="website" label="Website (Optional)">
-            <Input placeholder="https://www.example.com" size="large" />
-          </Form.Item>
-          <Form.Item name="category" label="Category" rules={[{ required: true, message: 'Please select a category' }]}>
-            <Select placeholder="Select category" size="large">
-              <Select.Option value="Paper Supplier">Paper Supplier</Select.Option>
-              <Select.Option value="Ink Supplier">Ink Supplier</Select.Option>
-              <Select.Option value="Equipment Supplier">Equipment Supplier</Select.Option>
-              <Select.Option value="Printing Equipment">Printing Equipment</Select.Option>
-              <Select.Option value="Printing Services">Printing Services</Select.Option>
-              <Select.Option value="Binding & Finishing">Binding & Finishing</Select.Option>
-              <Select.Option value="Design Services">Design Services</Select.Option>
-              <Select.Option value="Pre-Press Services">Pre-Press Services</Select.Option>
-              <Select.Option value="Packaging Materials">Packaging Materials</Select.Option>
-              <Select.Option value="Specialty Papers">Specialty Papers</Select.Option>
-              <Select.Option value="Maintenance & Repair">Maintenance & Repair</Select.Option>
-              <Select.Option value="Shipping & Logistics">Shipping & Logistics</Select.Option>
-              <Select.Option value="Software & Technology">Software & Technology</Select.Option>
-              <Select.Option value="Other">Other</Select.Option>
-            </Select>
-          </Form.Item>
-          <Form.Item name="address" label="Address">
-            <Input.TextArea rows={2} placeholder="Enter address" size="large" />
-          </Form.Item>
-        </Form>
-      </Modal>
+      <Dialog open={modalVisible} onOpenChange={setModalVisible}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{editingVendor ? 'Edit Vendor' : 'Add Vendor'}</DialogTitle>
+            <DialogDescription>
+              {editingVendor ? 'Update vendor information' : 'Add a new vendor to your system'}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Enter vendor name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="company"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Company</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Enter company name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input {...field} type="email" placeholder="vendor@example.com" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone</FormLabel>
+                      <FormControl>
+                        <PhoneNumberInput {...field} placeholder="Enter phone number" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="website"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Website (Optional)</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="https://www.example.com" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="category"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Category</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select category" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="Paper Supplier">Paper Supplier</SelectItem>
+                          <SelectItem value="Ink Supplier">Ink Supplier</SelectItem>
+                          <SelectItem value="Equipment Supplier">Equipment Supplier</SelectItem>
+                          <SelectItem value="Printing Equipment">Printing Equipment</SelectItem>
+                          <SelectItem value="Printing Services">Printing Services</SelectItem>
+                          <SelectItem value="Binding & Finishing">Binding & Finishing</SelectItem>
+                          <SelectItem value="Design Services">Design Services</SelectItem>
+                          <SelectItem value="Pre-Press Services">Pre-Press Services</SelectItem>
+                          <SelectItem value="Packaging Materials">Packaging Materials</SelectItem>
+                          <SelectItem value="Specialty Papers">Specialty Papers</SelectItem>
+                          <SelectItem value="Maintenance & Repair">Maintenance & Repair</SelectItem>
+                          <SelectItem value="Shipping & Logistics">Shipping & Logistics</SelectItem>
+                          <SelectItem value="Software & Technology">Software & Technology</SelectItem>
+                          <SelectItem value="Other">Other</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="address"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Address</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={2} placeholder="Enter address" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setModalVisible(false)}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={form.formState.isSubmitting}>
+                  {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {editingVendor ? 'Update' : 'Create'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
 
       <DetailsDrawer
         open={drawerVisible}
@@ -400,7 +587,7 @@ const Vendors = () => {
         width={900}
         onEdit={isManager && viewingVendor ? () => {
           setEditingVendor(viewingVendor);
-          form.setFieldsValue(viewingVendor);
+          form.reset(viewingVendor);
           setModalVisible(true);
           setDrawerVisible(false);
         } : null}
@@ -414,158 +601,162 @@ const Vendors = () => {
             key: 'details',
             label: 'Details',
             content: (
-              <Descriptions column={1} bordered>
-                <Descriptions.Item label="Name">{viewingVendor.name || '-'}</Descriptions.Item>
-                <Descriptions.Item label="Company">{viewingVendor.company || '-'}</Descriptions.Item>
-                <Descriptions.Item label="Email">
-                  {viewingVendor.email ? (
-                    <a href={`mailto:${viewingVendor.email}`}>{viewingVendor.email}</a>
-                  ) : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Phone">
-                  {viewingVendor.phone ? (
-                    <a href={`tel:${viewingVendor.phone}`}>{viewingVendor.phone}</a>
-                  ) : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Website">
-                  {viewingVendor.website ? (
-                    <a href={viewingVendor.website} target="_blank" rel="noopener noreferrer">
-                      {viewingVendor.website}
-                    </a>
-                  ) : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Category">
-                  {viewingVendor.category ? (
-                    <Tag color="blue">{viewingVendor.category}</Tag>
-                  ) : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Address">{viewingVendor.address || '-'}</Descriptions.Item>
-                <Descriptions.Item label="Status">
-                  <Tag color={viewingVendor.isActive ? 'green' : 'red'}>
-                    {viewingVendor.isActive ? 'Active' : 'Inactive'}
-                  </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="Created At">
-                  {viewingVendor.createdAt ? new Date(viewingVendor.createdAt).toLocaleString() : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Last Updated">
-                  {viewingVendor.updatedAt ? new Date(viewingVendor.updatedAt).toLocaleString() : '-'}
-                </Descriptions.Item>
-              </Descriptions>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-muted-foreground">Name</Label>
+                    <p className="font-medium">{viewingVendor.name || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Company</Label>
+                    <p className="font-medium">{viewingVendor.company || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Email</Label>
+                    <p className="font-medium">
+                      {viewingVendor.email ? (
+                        <a href={`mailto:${viewingVendor.email}`} className="text-primary hover:underline">
+                          {viewingVendor.email}
+                        </a>
+                      ) : '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Phone</Label>
+                    <p className="font-medium">
+                      {viewingVendor.phone ? (
+                        <a href={`tel:${viewingVendor.phone}`} className="text-primary hover:underline">
+                          {viewingVendor.phone}
+                        </a>
+                      ) : '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Website</Label>
+                    <p className="font-medium">
+                      {viewingVendor.website ? (
+                        <a href={viewingVendor.website} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">
+                          {viewingVendor.website}
+                        </a>
+                      ) : '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Category</Label>
+                    <p className="font-medium">
+                      {viewingVendor.category ? (
+                        <Badge variant="outline">{viewingVendor.category}</Badge>
+                      ) : '-'}
+                    </p>
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="text-muted-foreground">Address</Label>
+                    <p className="font-medium">{viewingVendor.address || '-'}</p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Status</Label>
+                    <p className="font-medium">
+                      <Badge variant={viewingVendor.isActive ? 'default' : 'destructive'}>
+                        {viewingVendor.isActive ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Created At</Label>
+                    <p className="font-medium">
+                      {viewingVendor.createdAt ? new Date(viewingVendor.createdAt).toLocaleString() : '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-muted-foreground">Last Updated</Label>
+                    <p className="font-medium">
+                      {viewingVendor.updatedAt ? new Date(viewingVendor.updatedAt).toLocaleString() : '-'}
+                    </p>
+                  </div>
+                </div>
+              </div>
             )
           },
           {
             key: 'pricelist',
             label: 'Price Lists',
             content: (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-                  <h3>Services & Products ({priceList.length})</h3>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Services & Products ({priceList.length})</h3>
                   {isManager && (
-                    <Button type="primary" icon={<PlusOutlined />} onClick={handleAddPriceItem}>
+                    <Button onClick={handleAddPriceItem}>
+                      <Plus className="h-4 w-4 mr-2" />
                       Add Item
                     </Button>
                   )}
                 </div>
                 {loadingPriceList ? (
-                  <div style={{ textAlign: 'center', padding: 40 }}>
-                    <Spin size="large" />
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin" />
                   </div>
                 ) : priceList.length > 0 ? (
-                  <List
-                    dataSource={priceList}
-                    renderItem={(item) => (
-                      <List.Item
-                        style={{
-                          padding: '12px 16px',
-                          background: '#fff',
-                          border: '1px solid #f0f0f0',
-                          borderRadius: 8,
-                          marginBottom: 12
-                        }}
-                        actions={isManager ? [
-                          <Button 
-                            key="edit" 
-                            type="text" 
-                            icon={<EditOutlined />}
-                            onClick={() => handleEditPriceItem(item)}
-                          />,
-                          <Popconfirm
-                            key="delete"
-                            title="Delete this item?"
-                            onConfirm={() => handleDeletePriceItem(item.id)}
-                            okText="Yes"
-                            cancelText="No"
-                          >
-                            <Button 
-                              type="text" 
-                              danger 
-                              icon={<DeleteOutlined />}
-                            />
-                          </Popconfirm>
-                        ] : []}
+                  <div className="space-y-3">
+                    {priceList.map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-start gap-4 p-4 border rounded-lg bg-card"
                       >
-                        <List.Item.Meta
-                          avatar={
-                            item.imageUrl ? (
-                              <Image
-                                src={item.imageUrl}
-                                alt={item.name}
-                                width={60}
-                                height={60}
-                                style={{ 
-                                  objectFit: 'cover', 
-                                  borderRadius: 8,
-                                  cursor: 'pointer'
-                                }}
-                                preview={{
-                                  mask: <EyeOutlined />
-                                }}
-                              />
-                            ) : (
-                              <div style={{
-                                width: 60,
-                                height: 60,
-                                background: '#f0f0f0',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                borderRadius: 8,
-                                fontSize: 10,
-                                color: '#999',
-                                textAlign: 'center'
-                              }}>
-                                No Image
-                              </div>
-                            )
-                          }
-                          title={
-                            <Space>
-                              <span style={{ fontWeight: 600, fontSize: 15 }}>{item.name}</span>
-                              <Tag color={item.itemType === 'service' ? 'blue' : 'green'}>
-                                {item.itemType}
-                              </Tag>
-                            </Space>
-                          }
-                          description={
-                            <div style={{ marginTop: 4 }}>
-                              <div style={{ color: '#666', fontSize: 13, marginBottom: 8 }}>
-                                {item.description || 'No description'}
-                              </div>
-                              <Space size={16}>
-                                <span style={{ fontSize: 18, fontWeight: 'bold', color: '#1890ff' }}>
-                                  GHS {parseFloat(item.price || 0).toFixed(2)}
-                                </span>
-                                <span style={{ color: '#999', fontSize: 13 }}>
-                                  per {item.unit || 'unit'}
-                                </span>
-                              </Space>
-                            </div>
-                          }
-                        />
-                      </List.Item>
-                    )}
-                  />
+                        {item.imageUrl ? (
+                          <img
+                            src={item.imageUrl}
+                            alt={item.name}
+                            className="w-16 h-16 object-cover rounded-lg cursor-pointer"
+                            onClick={() => window.open(item.imageUrl, '_blank')}
+                          />
+                        ) : (
+                          <div className="w-16 h-16 bg-muted rounded-lg flex items-center justify-center text-xs text-muted-foreground text-center">
+                            No Image
+                          </div>
+                        )}
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-2">
+                            <span className="font-semibold">{item.name}</span>
+                            <Badge variant={item.itemType === 'service' ? 'default' : 'secondary'}>
+                              {item.itemType}
+                            </Badge>
+                          </div>
+                          <p className="text-sm text-muted-foreground mb-2">
+                            {item.description || 'No description'}
+                          </p>
+                          <div className="flex items-center gap-4">
+                            <span className="text-lg font-bold text-primary">
+                              GHS {parseFloat(item.price || 0).toFixed(2)}
+                            </span>
+                            <span className="text-sm text-muted-foreground">
+                              per {item.unit || 'unit'}
+                            </span>
+                          </div>
+                        </div>
+                        {isManager && (
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleEditPriceItem(item)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                setDeletePriceItemId(item.id);
+                                setDeletePriceItemDialogOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 ) : (
                   <Empty description="No price list items found" />
                 )}
@@ -575,130 +766,203 @@ const Vendors = () => {
         ] : null}
       />
 
-      <Modal
-        title={editingPriceItem ? 'Edit Price Item' : 'Add Price Item'}
-        open={priceListModalVisible}
-        onCancel={() => setPriceListModalVisible(false)}
-        onOk={() => priceListForm.submit()}
-        width={600}
-        zIndex={1050}
-      >
-        <Form
-          form={priceListForm}
-          layout="vertical"
-          onFinish={handlePriceListSubmit}
-          initialValues={{ itemType: 'service', unit: 'unit' }}
-        >
-          <Form.Item
-            name="itemType"
-            label="Type"
-            rules={[{ required: true, message: 'Please select type' }]}
-          >
-            <Select size="large">
-              <Select.Option value="service">Service</Select.Option>
-              <Select.Option value="product">Product</Select.Option>
-            </Select>
-          </Form.Item>
+      <Dialog open={priceListModalVisible} onOpenChange={setPriceListModalVisible}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>{editingPriceItem ? 'Edit Price Item' : 'Add Price Item'}</DialogTitle>
+            <DialogDescription>
+              {editingPriceItem ? 'Update price item details' : 'Add a new service or product to the price list'}
+            </DialogDescription>
+          </DialogHeader>
+          
+          <Form {...priceListForm}>
+            <form onSubmit={priceListForm.handleSubmit(onPriceListSubmit)} className="space-y-4">
+              <FormField
+                control={priceListForm.control}
+                name="itemType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Type</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="service">Service</SelectItem>
+                        <SelectItem value="product">Product</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-          <Form.Item
-            name="name"
-            label="Name"
-            rules={[{ required: true, message: 'Please enter or select name' }]}
-          >
-            {isPrintingVendor ? (
-              <Select 
-                placeholder="Select printing item" 
-                size="large"
-                showSearch
-                optionFilterProp="children"
-                filterOption={(input, option) =>
-                  option.children.toLowerCase().includes(input.toLowerCase())
-                }
-                notFoundContent="No printing items found"
-              >
-                {printingItems.map(item => (
-                  <Select.Option key={item} value={item}>
-                    {item}
-                  </Select.Option>
-                ))}
-              </Select>
-            ) : (
-              <Input placeholder="Enter item name" size="large" />
-            )}
-          </Form.Item>
+              <FormField
+                control={priceListForm.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Name</FormLabel>
+                    {isPrintingVendor ? (
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select printing item" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {printingItems.map(item => (
+                            <SelectItem key={item} value={item}>{item}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <FormControl>
+                        <Input {...field} placeholder="Enter item name" />
+                      </FormControl>
+                    )}
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-          <Form.Item name="description" label="Description">
-            <Input.TextArea rows={3} placeholder="Enter description" size="large" />
-          </Form.Item>
+              <FormField
+                control={priceListForm.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea {...field} rows={3} placeholder="Enter description" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-          <Form.Item
-            name="price"
-            label="Price"
-            rules={[{ required: true, message: 'Please enter price' }]}
-          >
-            <InputNumber
-              style={{ width: '100%' }}
-              placeholder="0.00"
-              prefix="GHS "
-              min={0}
-              precision={2}
-              size="large"
-            />
-          </Form.Item>
+              <FormField
+                control={priceListForm.control}
+                name="price"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Price</FormLabel>
+                    <FormControl>
+                      <InputNumber
+                        style={{ width: '100%' }}
+                        placeholder="0.00"
+                        prefix="GHS "
+                        min={0}
+                        precision={2}
+                        value={field.value}
+                        onChange={(value) => field.onChange(value)}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-          <Form.Item name="unit" label="Unit">
-            <Input placeholder="e.g., unit, hour, piece" size="large" />
-          </Form.Item>
+              <FormField
+                control={priceListForm.control}
+                name="unit"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Unit</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="e.g., unit, hour, piece" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-          <Form.Item name="imageUrl" label="Image (Optional)" style={{ display: 'none' }}>
-            <Input />
-          </Form.Item>
-          <Form.Item label="Image (Optional)">
-            <Upload
-              accept="image/*"
-              showUploadList={false}
-              customRequest={handleImageUpload}
-              beforeUpload={(file) => {
-                const isImage = file.type.startsWith('image/');
-                if (!isImage) {
-                  message.error('You can only upload image files!');
-                }
-                const isLt10M = file.size / 1024 / 1024 < 10;
-                if (!isLt10M) {
-                  message.error('Image must be smaller than 10MB!');
-                }
-                return isImage && isLt10M;
-              }}
-            >
-              <Button icon={<UploadOutlined />} loading={uploadingImage} size="large" style={{ width: '100%' }}>
-                {uploadingImage ? 'Uploading...' : 'Upload Image'}
-              </Button>
-            </Upload>
-            {imagePreview && (
-              <div style={{ marginTop: 16 }}>
-                <Image
-                  src={imagePreview}
-                  alt="Preview"
-                  style={{ maxWidth: '100%', maxHeight: 200, objectFit: 'contain' }}
-                  preview
-                />
-                <Button
-                  type="link"
-                  danger
-                  onClick={handleImageRemove}
-                  style={{ marginTop: 8 }}
-                >
-                  Remove Image
-                </Button>
+              <div className="space-y-2">
+                <Label>Image (Optional)</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const isImage = file.type.startsWith('image/');
+                        if (!isImage) {
+                          showError(null, 'You can only upload image files!');
+                          return;
+                        }
+                        const isLt10M = file.size / 1024 / 1024 < 10;
+                        if (!isLt10M) {
+                          showError(null, 'Image must be smaller than 10MB!');
+                          return;
+                        }
+                        handleImageUpload(file);
+                      }
+                    }}
+                    className="flex-1"
+                    disabled={uploadingImage}
+                  />
+                  {uploadingImage && <Loader2 className="h-4 w-4 animate-spin" />}
+                </div>
+                {imagePreview && (
+                  <div className="mt-4 space-y-2">
+                    <img
+                      src={imagePreview}
+                      alt="Preview"
+                      className="max-w-full max-h-48 object-contain rounded-lg border"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={handleImageRemove}
+                    >
+                      Remove Image
+                    </Button>
+                  </div>
+                )}
               </div>
-            )}
-          </Form.Item>
-        </Form>
-      </Modal>
+
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setPriceListModalVisible(false);
+                    setImagePreview(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={priceListForm.formState.isSubmitting}>
+                  {priceListForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {editingPriceItem ? 'Update' : 'Create'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deletePriceItemDialogOpen} onOpenChange={setDeletePriceItemDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Price Item?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the price item.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeletePriceItem} className="bg-destructive text-destructive-foreground">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };
 
 export default Vendors;
-
-

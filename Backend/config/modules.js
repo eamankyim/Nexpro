@@ -12,6 +12,7 @@ const MODULES = [
     description: 'Customer and vendor relationship management',
     icon: 'contacts',
     category: 'core',
+    businessTypes: ['printing_press', 'shop', 'pharmacy'], // Available for all business types
     features: [
       {
         key: 'crm',
@@ -41,12 +42,14 @@ const MODULES = [
     description: 'Quote generation, pricing, and sales tracking',
     icon: 'dollar',
     category: 'core',
+    businessTypes: ['printing_press'], // Only available for printing press
     features: [
       {
         key: 'quoteBuilder',
         name: 'Quote Builder',
         description: 'Create and manage quotes',
         routes: ['/quotes'],
+        businessTypes: ['printing_press'],
         marketingCopy: {
           highlight: 'Professional quote generation',
           perk: 'Unlimited quotes'
@@ -91,12 +94,14 @@ const MODULES = [
     description: 'Job workflow, tracking, and execution',
     icon: 'setting',
     category: 'core',
+    businessTypes: ['printing_press'], // Only available for printing press
     features: [
       {
         key: 'jobWorkflow',
         name: 'Job Workflow & Tracking',
         description: 'Complete job management system',
         routes: ['/jobs'],
+        businessTypes: ['printing_press'],
         marketingCopy: {
           highlight: 'End-to-end job workflow management',
           perk: 'Unlimited jobs & tracking'
@@ -130,6 +135,7 @@ const MODULES = [
     description: 'Inventory tracking and vendor management',
     icon: 'appstore',
     category: 'operations',
+    businessTypes: ['printing_press', 'shop', 'pharmacy'], // Available for all business types
     features: [
       {
         key: 'inventoryTracking',
@@ -154,11 +160,131 @@ const MODULES = [
     ]
   },
   {
+    key: 'shop',
+    name: 'Shop Management',
+    description: 'Shop locations, products, POS, and sales management',
+    icon: 'shop',
+    category: 'operations',
+    businessTypes: ['shop'], // Only available for shop business type
+    features: [
+      {
+        key: 'shopManagement',
+        name: 'Shop Management',
+        description: 'Manage shop locations and branches',
+        routes: ['/shops'],
+        businessTypes: ['shop'],
+        marketingCopy: {
+          highlight: 'Multi-location shop management',
+          perk: 'Manage multiple shop locations'
+        }
+      },
+      {
+        key: 'productCatalog',
+        name: 'Product Catalog',
+        description: 'Manage shop products with variants and barcodes',
+        routes: ['/products'],
+        businessTypes: ['shop'],
+        marketingCopy: {
+          highlight: 'Complete product catalog with variants',
+          perk: 'Product management with barcodes'
+        }
+      },
+      {
+        key: 'pos',
+        name: 'Point of Sale (POS)',
+        description: 'POS system for quick checkout',
+        routes: ['/pos'],
+        businessTypes: ['shop'],
+        marketingCopy: {
+          highlight: 'Point of Sale system',
+          perk: 'Quick checkout & sales processing'
+        }
+      },
+      {
+        key: 'salesTracking',
+        name: 'Sales Tracking',
+        description: 'Track all sales transactions',
+        routes: ['/sales'],
+        businessTypes: ['shop'],
+        marketingCopy: {
+          highlight: 'Complete sales tracking',
+          perk: 'Sales history & reporting'
+        }
+      }
+    ]
+  },
+  {
+    key: 'pharmacy',
+    name: 'Pharmacy Management',
+    description: 'Pharmacy operations, drug catalog, and prescription management',
+    icon: 'medicine-box',
+    category: 'operations',
+    businessTypes: ['pharmacy'], // Only available for pharmacy business type
+    features: [
+      {
+        key: 'pharmacyManagement',
+        name: 'Pharmacy Management',
+        description: 'Manage pharmacy locations',
+        routes: ['/pharmacies'],
+        businessTypes: ['pharmacy'],
+        marketingCopy: {
+          highlight: 'Multi-location pharmacy management',
+          perk: 'Manage multiple pharmacy locations'
+        }
+      },
+      {
+        key: 'drugCatalog',
+        name: 'Drug Catalog',
+        description: 'Manage drug inventory with expiry tracking',
+        routes: ['/drugs'],
+        businessTypes: ['pharmacy'],
+        marketingCopy: {
+          highlight: 'Complete drug catalog',
+          perk: 'Drug inventory with expiry alerts'
+        }
+      },
+      {
+        key: 'prescriptions',
+        name: 'Prescription Management',
+        description: 'Manage prescriptions and drug interactions',
+        routes: ['/prescriptions'],
+        businessTypes: ['pharmacy'],
+        marketingCopy: {
+          highlight: 'Prescription management system',
+          perk: 'Prescription tracking & drug interaction checks'
+        }
+      },
+      {
+        key: 'drugInteractions',
+        name: 'Drug Interaction Checker',
+        description: 'Check for drug interactions before filling prescriptions',
+        routes: [],
+        businessTypes: ['pharmacy'],
+        marketingCopy: {
+          highlight: 'Drug interaction checking',
+          perk: 'Safety checks for prescriptions'
+        }
+      },
+      {
+        key: 'expiryAlerts',
+        name: 'Drug Expiry Alerts',
+        description: 'Automated alerts for expiring drugs',
+        routes: [],
+        businessTypes: ['pharmacy'],
+        marketingCopy: {
+          highlight: 'Expiry date tracking',
+          perk: 'Automated expiry alerts'
+        }
+      }
+    ]
+  },
+  {
     key: 'finance',
     name: 'Finance & Billing',
     description: 'Payments, expenses, and invoicing',
     icon: 'dollar-circle',
     category: 'finance',
+    businessTypes: ['printing_press', 'shop', 'pharmacy'], // Available for all business types
     features: [
       {
         key: 'payments',

@@ -5,13 +5,38 @@ const getProfile = async () => api.get('/settings/profile');
 const updateProfile = async (payload) => api.put('/settings/profile', payload);
 
 const uploadProfilePicture = async (file) => {
-  const formData = new FormData();
-  formData.append('file', file);
-  return api.post('/settings/profile/avatar', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data'
-    }
+  console.log('[Settings Service] Uploading profile picture:', {
+    name: file?.name,
+    type: file?.type,
+    size: file?.size,
+    isFile: file instanceof File,
+    hasOriginFileObj: !!file?.originFileObj
   });
+
+  // Handle Ant Design Upload file wrapper
+  const actualFile = file.originFileObj || file;
+  
+  if (!actualFile) {
+    throw new Error('No file provided');
+  }
+
+  const formData = new FormData();
+  formData.append('file', actualFile);
+  
+  console.log('[Settings Service] FormData created, sending request...');
+  
+  try {
+    const response = await api.post('/settings/profile/avatar', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    });
+    console.log('[Settings Service] Upload response:', response);
+    return response;
+  } catch (error) {
+    console.error('[Settings Service] Upload error:', error);
+    throw error;
+  }
 };
 
 const getOrganization = async () => api.get('/settings/organization');

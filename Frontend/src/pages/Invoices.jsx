@@ -1,16 +1,59 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Table, Button, Modal, Form, Input, message, Space, Tag, Select, InputNumber, DatePicker, Row, Col, Descriptions, Statistic, Card, Divider } from 'antd';
-import { PlusOutlined, DollarCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, PrinterOutlined, DownloadOutlined } from '@ant-design/icons';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useDebounce } from '../hooks/useDebounce';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Table, InputNumber } from 'antd';
+import { Plus, DollarSign, FileText, Clock, CheckCircle, Printer, Download, Search, Loader2 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import invoiceService from '../services/invoiceService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import PrintableInvoice from '../components/PrintableInvoice';
+import StatusChip from '../components/StatusChip';
+import TableSkeleton from '../components/TableSkeleton';
+import DetailSkeleton from '../components/DetailSkeleton';
+import { showSuccess, showError } from '../utils/toast';
 import dayjs from 'dayjs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { StatisticCard } from '@/components/ui/statistic-card';
+import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import { DatePicker } from '@/components/ui/date-picker';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
 
-const { Option } = Select;
-const { TextArea } = Input;
+const paymentSchema = z.object({
+  amount: z.number().min(0.01, 'Payment amount must be greater than 0'),
+  paymentMethod: z.string().min(1, 'Payment method is required'),
+  paymentDate: z.date(),
+  referenceNumber: z.string().optional(),
+});
 
 const Invoices = () => {
   const location = useLocation();
@@ -19,22 +62,34 @@ const Invoices = () => {
   const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({ search: '', status: '' });
+  const debouncedSearch = useDebounce(filters.search, 500);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingInvoice, setViewingInvoice] = useState(null);
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
   const [printModalVisible, setPrintModalVisible] = useState(false);
-  const [paymentForm] = Form.useForm();
   const [stats, setStats] = useState(null);
-  const { isManager } = useAuth();
+  const { isManager, activeTenant } = useAuth();
+  const businessType = activeTenant?.businessType || 'printing_press';
+  const isPrintingPress = businessType === 'printing_press';
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [markingAsPaid, setMarkingAsPaid] = useState(false);
   const [sendingInvoice, setSendingInvoice] = useState(false);
+
+  const paymentForm = useForm({
+    resolver: zodResolver(paymentSchema),
+    defaultValues: {
+      amount: 0,
+      paymentMethod: 'cash',
+      paymentDate: new Date(),
+      referenceNumber: '',
+    },
+  });
 
   const fetchInvoices = useCallback(async () => {
     setLoading(true);
     try {
       const cleanFilters = {};
-      if (filters.search) cleanFilters.search = filters.search;
+      if (debouncedSearch) cleanFilters.search = debouncedSearch;
       if (filters.status) cleanFilters.status = filters.status;
 
       const response = await invoiceService.getAll({
@@ -45,7 +100,7 @@ const Invoices = () => {
       setInvoices(response.data);
       setPagination(prev => ({ ...prev, total: response.count }));
     } catch (error) {
-      message.error('Failed to load invoices');
+      showError(error, 'Failed to load invoices');
     } finally {
       setLoading(false);
     }
@@ -65,17 +120,13 @@ const Invoices = () => {
     fetchStats();
   }, [fetchInvoices, fetchStats, refreshTrigger]);
 
-  // Auto-open invoice if coming from Jobs page
   useEffect(() => {
     if (location.state?.openInvoiceId && invoices.length > 0) {
       const invoiceToOpen = invoices.find(inv => inv.id === location.state.openInvoiceId);
       if (invoiceToOpen) {
-        // Clear the state
         navigate(location.pathname, { replace: true, state: {} });
-        // Open the invoice
         handleView(invoiceToOpen);
       } else {
-        // Invoice not in current page, try to fetch it
         const fetchSpecificInvoice = async () => {
           try {
             const response = await invoiceService.getById(location.state.openInvoiceId);
@@ -116,20 +167,14 @@ const Invoices = () => {
     if (!viewingInvoice) return;
     
     try {
-      message.loading({ content: 'Generating PDF...', key: 'download', duration: 0 });
-      
-      // Import html2pdf dynamically
       const html2pdf = (await import('html2pdf.js')).default;
-      
-      // Find the invoice element
       const invoiceElement = document.querySelector('.printable-invoice');
       
       if (!invoiceElement) {
-        message.error({ content: 'Invoice not found', key: 'download' });
+        showError(null, 'Invoice not found');
         return;
       }
       
-      // Configure PDF options
       const opt = {
         margin: 0,
         filename: `Invoice_${viewingInvoice.invoiceNumber}.pdf`,
@@ -138,28 +183,26 @@ const Invoices = () => {
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
       };
       
-      // Generate PDF and save it
       await html2pdf()
         .set(opt)
         .from(invoiceElement)
         .save();
       
-      message.destroy('download');
-      message.success({ content: 'PDF downloaded successfully!', key: 'download-success', duration: 3 });
+      showSuccess('PDF downloaded successfully!');
       
     } catch (error) {
       console.error('Error generating PDF:', error);
-      message.error({ content: 'Failed to generate PDF. Please try again.', key: 'download' });
+      showError(error, 'Failed to generate PDF. Please try again.');
     }
   };
 
   const handleRecordPayment = (invoice) => {
     setViewingInvoice(invoice);
-    paymentForm.resetFields();
-    paymentForm.setFieldsValue({
+    paymentForm.reset({
       amount: parseFloat(invoice.balance),
       paymentMethod: 'cash',
-      paymentDate: dayjs()
+      paymentDate: new Date(),
+      referenceNumber: '',
     });
     setPaymentModalVisible(true);
   };
@@ -174,7 +217,7 @@ const Invoices = () => {
         setViewingInvoice(updatedInvoice);
       }
 
-      message.success(response?.message || 'Invoice marked as paid');
+      showSuccess(response?.message || 'Invoice marked as paid');
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       const errorMessage =
@@ -182,23 +225,23 @@ const Invoices = () => {
         error?.error ||
         error?.message ||
         'Failed to mark invoice as paid';
-      message.error(errorMessage);
+      showError(error, errorMessage);
     } finally {
       setMarkingAsPaid(false);
     }
   };
 
-  const handlePaymentSubmit = async (values) => {
+  const onPaymentSubmit = async (values) => {
     try {
       await invoiceService.recordPayment(viewingInvoice.id, {
         ...values,
-        paymentDate: values.paymentDate.format('YYYY-MM-DD')
+        paymentDate: dayjs(values.paymentDate).format('YYYY-MM-DD')
       });
-      message.success('Payment recorded successfully');
+      showSuccess('Payment recorded successfully');
       setPaymentModalVisible(false);
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
-      message.error(error.error || 'Failed to record payment');
+      showError(error, error.error || 'Failed to record payment');
     }
   };
 
@@ -206,10 +249,10 @@ const Invoices = () => {
     try {
       setSendingInvoice(true);
       await invoiceService.send(id);
-      message.success('Invoice marked as sent');
+      showSuccess('Invoice marked as sent');
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
-      message.error('Failed to send invoice');
+      showError(error, 'Failed to send invoice');
     } finally {
       setSendingInvoice(false);
     }
@@ -218,24 +261,16 @@ const Invoices = () => {
   const handleCancelInvoice = async (id) => {
     try {
       await invoiceService.cancel(id);
-      message.success('Invoice cancelled');
+      showSuccess('Invoice cancelled');
       setRefreshTrigger(prev => prev + 1);
       if (drawerVisible) handleCloseDrawer();
     } catch (error) {
-      message.error('Failed to cancel invoice');
+      showError(error, 'Failed to cancel invoice');
     }
   };
 
-  const statusColors = {
-    draft: 'default',
-    sent: 'blue',
-    paid: 'green',
-    partial: 'orange',
-    overdue: 'red',
-    cancelled: 'gray',
-  };
 
-  const columns = [
+  const columns = useMemo(() => [
     {
       title: 'Invoice #',
       dataIndex: 'invoiceNumber',
@@ -251,17 +286,17 @@ const Invoices = () => {
         <div>
           <div>{name}</div>
           {record.customer?.company && (
-            <div style={{ fontSize: 12, color: '#888' }}>{record.customer.company}</div>
+            <div className="text-muted-foreground text-xs">{record.customer.company}</div>
           )}
         </div>
       ),
     },
-    {
+    ...(isPrintingPress ? [{
       title: 'Job',
       dataIndex: ['job', 'jobNumber'],
       key: 'job',
       render: (jobNumber) => jobNumber || '-',
-    },
+    }] : []),
     {
       title: 'Invoice Date',
       dataIndex: 'invoiceDate',
@@ -285,7 +320,7 @@ const Invoices = () => {
       dataIndex: 'balance',
       key: 'balance',
       render: (balance) => (
-        <span style={{ fontWeight: 'bold', color: balance > 0 ? '#fa8c16' : '#52c41a' }}>
+        <span className={`font-bold ${balance > 0 ? 'text-orange-500' : 'text-green-500'}`}>
           GHS {parseFloat(balance || 0).toFixed(2)}
         </span>
       ),
@@ -295,9 +330,7 @@ const Invoices = () => {
       dataIndex: 'status',
       key: 'status',
       render: (status) => (
-        <Tag color={statusColors[status]}>
-          {status?.toUpperCase()}
-        </Tag>
+        <StatusChip status={status} />
       ),
     },
     {
@@ -327,101 +360,89 @@ const Invoices = () => {
         />
       ),
     },
-  ];
+  ], [isPrintingPress, isManager, handleView, handleRecordPayment, handleMarkAsPaid, handleSendInvoice]);
 
   return (
-    <div>
-      <h1 style={{ marginBottom: 24 }}>Invoices</h1>
+    <div className="space-y-6">
+      <h1 className="text-3xl font-bold">Invoices</h1>
 
-      {/* Statistics Cards */}
       {stats && (
-        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-          <Col xs={24} sm={12} lg={6}>
-            <Card>
-              <Statistic
-                title="Total Revenue"
-                value={stats.totalRevenue || 0}
-                prefix="GHS "
-                valueStyle={{ color: '#3f8600' }}
-                suffix={<CheckCircleOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card>
-              <Statistic
-                title="Outstanding"
-                value={stats.outstandingAmount || 0}
-                prefix="GHS "
-                valueStyle={{ color: '#fa8c16' }}
-                suffix={<ClockCircleOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card>
-              <Statistic
-                title="Paid Invoices"
-                value={stats.paidInvoices || 0}
-                prefix={<FileTextOutlined />}
-                valueStyle={{ color: '#52c41a' }}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={6}>
-            <Card>
-              <Statistic
-                title="Overdue"
-                value={stats.overdueInvoices || 0}
-                prefix={<FileTextOutlined />}
-                valueStyle={{ color: '#ff4d4f' }}
-              />
-            </Card>
-          </Col>
-        </Row>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatisticCard
+            title="Total Revenue"
+            value={`GHS ${parseFloat(stats.totalRevenue || 0).toFixed(2)}`}
+            prefix={<CheckCircle className="h-4 w-4 text-green-500" />}
+          />
+          <StatisticCard
+            title="Outstanding"
+            value={`GHS ${parseFloat(stats.outstandingAmount || 0).toFixed(2)}`}
+            prefix={<Clock className="h-4 w-4 text-orange-500" />}
+          />
+          <StatisticCard
+            title="Paid Invoices"
+            value={stats.paidInvoices || 0}
+            prefix={<FileText className="h-4 w-4 text-green-500" />}
+          />
+          <StatisticCard
+            title="Overdue"
+            value={stats.overdueInvoices || 0}
+            prefix={<FileText className="h-4 w-4 text-red-500" />}
+          />
+        </div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-        <h1 style={{ margin: 0, fontSize: window.innerWidth < 768 ? '20px' : '24px' }}>Invoices</h1>
-        <Space wrap style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
-          <Input.Search
-            placeholder="Search invoices..."
-            allowClear
-            style={{ width: window.innerWidth < 768 ? '100%' : 250 }}
-            onSearch={(value) => setFilters({ ...filters, search: value })}
-          />
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search invoices..."
+              value={filters.search}
+              onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+              className="pl-10 w-[250px]"
+            />
+          </div>
           <Select
-            placeholder="Filter by status"
-            allowClear
-            style={{ width: window.innerWidth < 768 ? '100%' : 150 }}
-            onChange={(value) => setFilters({ ...filters, status: value || '' })}
+            value={filters.status}
+            onValueChange={(value) => setFilters({ ...filters, status: value || '' })}
           >
-            <Option value="draft">Draft</Option>
-            <Option value="sent">Sent</Option>
-            <Option value="paid">Paid</Option>
-            <Option value="partial">Partial</Option>
-            <Option value="overdue">Overdue</Option>
-            <Option value="cancelled">Cancelled</Option>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="sent">Sent</SelectItem>
+              <SelectItem value="paid">Paid</SelectItem>
+              <SelectItem value="partial">Partial</SelectItem>
+              <SelectItem value="overdue">Overdue</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
+            </SelectContent>
           </Select>
-        </Space>
+        </div>
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={invoices}
-        rowKey="id"
-        loading={loading}
-        pagination={pagination}
-        onChange={(newPagination) => setPagination(newPagination)}
-        scroll={{ x: 'max-content' }}
-      />
+      {loading ? (
+        <Card>
+          <div className="p-4">
+            <TableSkeleton rows={8} cols={7} />
+          </div>
+        </Card>
+      ) : (
+        <Table
+          columns={columns}
+          dataSource={invoices}
+          rowKey="id"
+          pagination={pagination}
+          onChange={(newPagination) => setPagination(newPagination)}
+          scroll={{ x: 'max-content' }}
+        />
+      )}
 
-      {/* Invoice Details Drawer */}
       <DetailsDrawer
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Invoice Details"
-        width={window.innerWidth < 768 ? '100%' : 900}
+        width={900}
         onPrint={viewingInvoice ? () => handlePrint(viewingInvoice) : null}
         onMarkPaid={
           isManager &&
@@ -442,17 +463,17 @@ const Invoices = () => {
             label: 'Status', 
             value: viewingInvoice.status,
             render: (status) => (
-              <Tag color={statusColors[status]} style={{ fontSize: 14, padding: '4px 12px' }}>
-                {status?.toUpperCase()}
-              </Tag>
+              <StatusChip status={status} />
             )
           },
           { label: 'Customer', value: viewingInvoice.customer?.name },
           { label: 'Company', value: viewingInvoice.customer?.company || '-' },
           { label: 'Email', value: viewingInvoice.customer?.email || '-' },
           { label: 'Phone', value: viewingInvoice.customer?.phone || '-' },
-          { label: 'Job Number', value: viewingInvoice.job?.jobNumber },
-          { label: 'Job Title', value: viewingInvoice.job?.title },
+          ...(isPrintingPress ? [
+            { label: 'Job Number', value: viewingInvoice.job?.jobNumber },
+            { label: 'Job Title', value: viewingInvoice.job?.title },
+          ] : []),
           { 
             label: 'Invoice Date', 
             value: viewingInvoice.invoiceDate,
@@ -470,24 +491,26 @@ const Invoices = () => {
             render: (items) => {
               if (!items || items.length === 0) return '-';
               return (
-                <div style={{ marginTop: 8 }}>
+                <div className="mt-2 space-y-2">
                   {items.map((item, idx) => (
-                    <Card key={idx} size="small" style={{ marginBottom: 8 }}>
-                      <Row gutter={16}>
-                        <Col span={12}>
-                          <strong>{item.description || item.category}</strong>
-                          {item.paperSize && <div style={{ fontSize: 12, color: '#888' }}>Size: {item.paperSize}</div>}
-                        </Col>
-                        <Col span={4} style={{ textAlign: 'right' }}>
-                          Qty: {item.quantity}
-                        </Col>
-                        <Col span={4} style={{ textAlign: 'right' }}>
-                          GHS {parseFloat(item.unitPrice || 0).toFixed(2)}
-                        </Col>
-                        <Col span={4} style={{ textAlign: 'right' }}>
-                          <strong>GHS {parseFloat(item.total || 0).toFixed(2)}</strong>
-                        </Col>
-                      </Row>
+                    <Card key={idx}>
+                      <CardContent className="pt-6">
+                        <div className="grid grid-cols-12 gap-4">
+                          <div className="col-span-6">
+                            <div className="font-semibold">{item.description || item.category}</div>
+                            {item.paperSize && <div className="text-muted-foreground text-xs">Size: {item.paperSize}</div>}
+                          </div>
+                          <div className="col-span-2 text-right">
+                            Qty: {item.quantity}
+                          </div>
+                          <div className="col-span-2 text-right">
+                            GHS {parseFloat(item.unitPrice || 0).toFixed(2)}
+                          </div>
+                          <div className="col-span-2 text-right">
+                            <strong>GHS {parseFloat(item.total || 0).toFixed(2)}</strong>
+                          </div>
+                        </div>
+                      </CardContent>
                     </Card>
                   ))}
                 </div>
@@ -515,17 +538,17 @@ const Invoices = () => {
           { 
             label: 'Total Amount', 
             value: viewingInvoice.totalAmount,
-            render: (val) => <strong style={{ fontSize: 16, color: '#1890ff' }}>GHS {parseFloat(val || 0).toFixed(2)}</strong>
+            render: (val) => <strong className="text-lg text-primary">GHS {parseFloat(val || 0).toFixed(2)}</strong>
           },
           { 
             label: 'Amount Paid', 
             value: viewingInvoice.amountPaid,
-            render: (val) => <span style={{ color: '#52c41a' }}>GHS {parseFloat(val || 0).toFixed(2)}</span>
+            render: (val) => <span className="text-green-500">GHS {parseFloat(val || 0).toFixed(2)}</span>
           },
           { 
             label: 'Balance Due', 
             value: viewingInvoice.balance,
-            render: (val) => <strong style={{ fontSize: 16, color: val > 0 ? '#fa8c16' : '#52c41a' }}>GHS {parseFloat(val || 0).toFixed(2)}</strong>
+            render: (val) => <strong className={`text-lg ${val > 0 ? 'text-orange-500' : 'text-green-500'}`}>GHS {parseFloat(val || 0).toFixed(2)}</strong>
           },
           { label: 'Notes', value: viewingInvoice.notes || '-' },
           { label: 'Terms & Conditions', value: viewingInvoice.termsAndConditions || '-' },
@@ -547,167 +570,178 @@ const Invoices = () => {
         ] : []}
       />
 
-      {/* Record Payment Modal */}
-      <Modal
-        title="Record Payment"
-        open={paymentModalVisible}
-        onCancel={() => setPaymentModalVisible(false)}
-        onOk={() => paymentForm.submit()}
-        width={window.innerWidth < 768 ? '100%' : 600}
-      >
-        {viewingInvoice && (
-          <>
-            <Descriptions column={window.innerWidth < 768 ? 1 : 2} bordered style={{ marginBottom: 24 }}>
-              <Descriptions.Item label="Invoice">{viewingInvoice.invoiceNumber}</Descriptions.Item>
-              <Descriptions.Item label="Customer">{viewingInvoice.customer?.name}</Descriptions.Item>
-              <Descriptions.Item label="Total Amount">GHS {parseFloat(viewingInvoice.totalAmount).toFixed(2)}</Descriptions.Item>
-              <Descriptions.Item label="Amount Paid">GHS {parseFloat(viewingInvoice.amountPaid || 0).toFixed(2)}</Descriptions.Item>
-              <Descriptions.Item label="Balance Due" span={2}>
-                <strong style={{ fontSize: 16, color: '#fa8c16' }}>
-                  GHS {parseFloat(viewingInvoice.balance).toFixed(2)}
-                </strong>
-              </Descriptions.Item>
-            </Descriptions>
+      <Dialog open={paymentModalVisible} onOpenChange={setPaymentModalVisible}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Record Payment</DialogTitle>
+            <DialogDescription>Record a payment for this invoice</DialogDescription>
+          </DialogHeader>
+          
+          {viewingInvoice && (
+            <>
+              <Descriptions column={2} className="mb-6">
+                <DescriptionItem label="Invoice">{viewingInvoice.invoiceNumber}</DescriptionItem>
+                <DescriptionItem label="Customer">{viewingInvoice.customer?.name}</DescriptionItem>
+                <DescriptionItem label="Total Amount">GHS {parseFloat(viewingInvoice.totalAmount).toFixed(2)}</DescriptionItem>
+                <DescriptionItem label="Amount Paid">GHS {parseFloat(viewingInvoice.amountPaid || 0).toFixed(2)}</DescriptionItem>
+                <DescriptionItem label="Balance Due" className="col-span-2">
+                  <strong className="text-lg text-orange-500">
+                    GHS {parseFloat(viewingInvoice.balance).toFixed(2)}
+                  </strong>
+                </DescriptionItem>
+              </Descriptions>
 
-            <Form
-              form={paymentForm}
-              layout="vertical"
-              onFinish={handlePaymentSubmit}
-            >
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Form.Item
-                    name="amount"
-                    label="Payment Amount"
-                    rules={[
-                      { required: true, message: 'Please enter payment amount' },
-                      {
-                        validator: (_, value) => {
-                          if (value > parseFloat(viewingInvoice.balance)) {
-                            return Promise.reject('Amount exceeds balance due');
+              <Form {...paymentForm}>
+                <form onSubmit={paymentForm.handleSubmit(onPaymentSubmit)} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <FormField
+                      control={paymentForm.control}
+                      name="amount"
+                      rules={[
+                        {
+                          validate: (value) => {
+                            if (value > parseFloat(viewingInvoice.balance || 0)) {
+                              return 'Amount exceeds balance due';
+                            }
+                            return true;
                           }
-                          return Promise.resolve();
                         }
-                      }
-                    ]}
-                  >
-                    <InputNumber
-                      style={{ width: '100%' }}
-                      placeholder="0.00"
-                      prefix="GHS "
-                      min={0}
-                      max={parseFloat(viewingInvoice.balance)}
-                      precision={2}
-                      size="large"
+                      ]}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Payment Amount</FormLabel>
+                          <FormControl>
+                            <InputNumber
+                              style={{ width: '100%' }}
+                              placeholder="0.00"
+                              prefix="GHS "
+                              min={0}
+                              max={parseFloat(viewingInvoice.balance)}
+                              precision={2}
+                              value={field.value}
+                              onChange={(value) => field.onChange(value)}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item
-                    name="paymentMethod"
-                    label="Payment Method"
-                    rules={[{ required: true, message: 'Please select payment method' }]}
-                  >
-                    <Select size="large">
-                      <Option value="cash">Cash</Option>
-                      <Option value="check">Check</Option>
-                      <Option value="credit_card">Credit Card</Option>
-                      <Option value="bank_transfer">Bank Transfer</Option>
-                      <Option value="momo">Mobile Money</Option>
-                      <Option value="other">Other</Option>
-                    </Select>
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Row gutter={16}>
-                <Col span={12}>
-                  <Form.Item
-                    name="paymentDate"
-                    label="Payment Date"
-                    rules={[{ required: true, message: 'Please select payment date' }]}
-                  >
-                    <DatePicker 
-                      style={{ width: '100%' }}
-                      size="large"
-                      format="YYYY-MM-DD"
+                    <FormField
+                      control={paymentForm.control}
+                      name="paymentMethod"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Payment Method</FormLabel>
+                          <Select value={field.value} onValueChange={field.onChange}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="cash">Cash</SelectItem>
+                              <SelectItem value="check">Check</SelectItem>
+                              <SelectItem value="credit_card">Credit Card</SelectItem>
+                              <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                              <SelectItem value="momo">Mobile Money</SelectItem>
+                              <SelectItem value="other">Other</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </Form.Item>
-                </Col>
-                <Col span={12}>
-                  <Form.Item name="referenceNumber" label="Reference Number">
-                    <Input placeholder="Transaction ref. number" size="large" />
-                  </Form.Item>
-                </Col>
-              </Row>
-            </Form>
-          </>
-        )}
-      </Modal>
+                  </div>
 
-      {/* Print Invoice Modal */}
-      <Modal
-        title={
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
-            <span>Print Invoice</span>
-            <Space>
-              <Button
-                icon={<DownloadOutlined />}
-                onClick={handleDownloadInvoice}
-              >
-                Download
-              </Button>
-              <Button
-                type="primary"
-                icon={<PrinterOutlined />}
-                onClick={handlePrintInvoice}
-                style={{ marginRight: 24 }}
-              >
-                Print
-              </Button>
-            </Space>
-          </div>
-        }
-        open={printModalVisible}
-        onCancel={() => {
-          setPrintModalVisible(false);
-          // Don't clear viewingInvoice if drawer is still open
-          if (!drawerVisible) {
-            setViewingInvoice(null);
-          }
-        }}
-        footer={null}
-        width="90%"
-        style={{ maxWidth: '1200px' }}
-        destroyOnClose
-        bodyStyle={{ 
-          maxHeight: '70vh', 
-          overflowY: 'auto',
-          padding: '20px'
-        }}
-      >
-        {viewingInvoice && (
-          <PrintableInvoice
-            invoice={viewingInvoice}
-            onClose={() => {
-              setPrintModalVisible(false);
-              // Don't clear viewingInvoice if drawer is still open
-              if (!drawerVisible) {
-                setViewingInvoice(null);
-              }
-            }}
-          />
-        )}
-      </Modal>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <FormField
+                      control={paymentForm.control}
+                      name="paymentDate"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Payment Date</FormLabel>
+                          <FormControl>
+                            <DatePicker
+                              date={field.value}
+                              onSelect={(date) => field.onChange(date)}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={paymentForm.control}
+                      name="referenceNumber"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Reference Number</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="Transaction ref. number" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </div>
+
+                  <DialogFooter>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setPaymentModalVisible(false)}
+                    >
+                      Cancel
+                    </Button>
+                    <Button type="submit" disabled={paymentForm.formState.isSubmitting}>
+                      {paymentForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Record Payment
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </Form>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={printModalVisible} onOpenChange={setPrintModalVisible}>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between w-full">
+              <span>Print Invoice</span>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  onClick={handleDownloadInvoice}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download
+                </Button>
+                <Button
+                  onClick={handlePrintInvoice}
+                >
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print
+                </Button>
+              </div>
+            </DialogTitle>
+          </DialogHeader>
+          {viewingInvoice && (
+            <PrintableInvoice
+              invoice={viewingInvoice}
+              onClose={() => {
+                setPrintModalVisible(false);
+                if (!drawerVisible) {
+                  setViewingInvoice(null);
+                }
+              }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
 
 export default Invoices;
-
-
-
-
-
-
-

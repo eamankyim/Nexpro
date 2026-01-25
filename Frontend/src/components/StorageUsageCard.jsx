@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Card, Progress, Statistic, Row, Col, Alert, Button, Tag, Tooltip, Space } from 'antd';
-import { CloudOutlined, InfoCircleOutlined, RocketOutlined, DatabaseOutlined } from '@ant-design/icons';
+import { Cloud, Info, Rocket, Database } from 'lucide-react';
 import inviteService from '../services/inviteService';
 
 /**
@@ -65,10 +65,10 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
     <Card 
       title={
         <Space>
-          <CloudOutlined />
+          <Cloud className="h-4 w-4" />
           <span>Storage Usage</span>
           {planName && (
-            <Tag color="blue" style={{ marginLeft: 8 }}>
+            <Tag color="#166534" style={{ marginLeft: 8 }}>
               {planName} Plan
             </Tag>
           )}
@@ -77,7 +77,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
       style={style}
       extra={
         isUnlimited ? (
-          <Tag color="green" icon={<InfoCircleOutlined />}>
+          <Tag color="green" icon={<Info className="h-4 w-4" />}>
             Unlimited
           </Tag>
         ) : null
@@ -89,7 +89,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
           description={`Your ${planName} plan includes unlimited file storage.`}
           type="success"
           showIcon
-          icon={<CloudOutlined />}
+          icon={<Cloud className="h-4 w-4" />}
         />
       ) : (
         <>
@@ -99,7 +99,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
                 title="Used"
                 value={currentGB}
                 suffix="GB"
-                prefix={<DatabaseOutlined />}
+                prefix={<Database className="h-4 w-4" />}
                 valueStyle={{ color: isAtLimit ? '#cf1322' : '#3f8600' }}
                 precision={2}
               />
@@ -157,7 +157,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
               style={{ marginBottom: 16 }}
               action={
                 showUpgradeButton && (
-                  <Button size="small" type="primary" icon={<RocketOutlined />}>
+                  <Button size="small" type="primary" icon={<Rocket className="h-4 w-4" />}>
                     Upgrade Plan
                   </Button>
                 )
@@ -183,7 +183,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
               marginTop: 12 
             }}>
               <Tooltip title="Add storage beyond your base limit">
-                <InfoCircleOutlined style={{ marginRight: 8, color: '#1890ff' }} />
+                <Info className="h-4 w-4" style={{ marginRight: 8, color: '#166534' }} />
                 <span style={{ fontSize: 13 }}>
                   Need more storage? Add 100GB for <strong>GHS {price100GB}</strong>
                 </span>

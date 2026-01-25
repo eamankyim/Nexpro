@@ -6,7 +6,6 @@ import {
   Button,
   Tabs,
   Switch,
-  message,
   Typography,
   Table,
   Modal,
@@ -22,7 +21,8 @@ import {
   Checkbox,
   Divider,
 } from 'antd';
-import { UploadOutlined, EditOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { Upload as UploadIcon, Pencil, Trash2, Plus } from 'lucide-react';
+import { showSuccess, showError } from '../../utils/toast';
 import adminService from '../../services/adminService';
 
 const { Text } = Typography;
@@ -82,7 +82,7 @@ const AdminSettings = () => {
       }
     } catch (error) {
       console.error('Failed to load platform settings', error);
-      message.error('Failed to load settings');
+      showError(null, 'Failed to load settings');
       form.setFieldsValue(defaultFormValues);
       setBrandingLogoPreview('');
     } finally {
@@ -98,7 +98,7 @@ const AdminSettings = () => {
       }
     } catch (error) {
       console.error('Failed to load platform admins', error);
-      message.error('Failed to load admins');
+      showError(null, 'Failed to load admins');
     }
   };
 
@@ -114,10 +114,10 @@ const AdminSettings = () => {
     setSaving(true);
     try {
       await adminService.updatePlatformSettings(values);
-      message.success('Platform settings updated');
+      showSuccess('Platform settings updated');
     } catch (error) {
       console.error('Failed to update platform settings', error);
-      message.error('Failed to update settings');
+      showError(null, 'Failed to update settings');
     } finally {
       setSaving(false);
     }
@@ -142,10 +142,10 @@ const AdminSettings = () => {
         },
       });
       setBrandingLogoPreview(base64);
-      message.success('Logo uploaded');
+      showSuccess('Logo uploaded');
     } catch (error) {
       console.error('Failed to read file', error);
-      message.error('Failed to upload logo');
+      showError(null, 'Failed to upload logo');
     }
 
     return false; // prevent default upload
@@ -179,7 +179,7 @@ const AdminSettings = () => {
           isActive: values.isActive,
           ...(values.password ? { password: values.password } : {}),
         });
-        message.success('Platform admin updated');
+        showSuccess('Platform admin updated');
       } else {
         await adminService.createPlatformAdmin({
           name: values.name,
@@ -187,7 +187,7 @@ const AdminSettings = () => {
           password: values.password,
           isActive: values.isActive,
         });
-        message.success('Platform admin created');
+        showSuccess('Platform admin created');
       }
 
       setAdminModalVisible(false);
@@ -197,7 +197,7 @@ const AdminSettings = () => {
         return;
       }
       console.error('Failed to save platform admin', error);
-      message.error('Failed to save admin');
+      showError(null, 'Failed to save admin');
     } finally {
       setAdminSaving(false);
     }
@@ -277,7 +277,7 @@ const AdminSettings = () => {
       }
     } catch (error) {
       console.error('Failed to load subscription plans', error);
-      message.error('Failed to load subscription plans');
+      showError(null, 'Failed to load subscription plans');
     } finally {
       setPlansLoading(false);
     }
@@ -342,7 +342,7 @@ const AdminSettings = () => {
 
     planForm.setFieldsValue(updates);
     
-    message.success(`${checked ? 'Enabled' : 'Disabled'} ${module.name} module`);
+    showSuccess(`${checked ? 'Enabled' : 'Disabled'} ${module.name} module`);
   };
 
   const generateMarketingCopy = () => {
@@ -369,7 +369,7 @@ const AdminSettings = () => {
       marketingPerks: perks
     });
     
-    message.success(`Generated ${enabledFeatures.length} highlights and perks from enabled features!`);
+    showSuccess(`Generated ${enabledFeatures.length} highlights and perks from enabled features!`);
   };
 
   const handlePlanSubmit = async () => {
@@ -415,10 +415,10 @@ const AdminSettings = () => {
 
       if (editingPlan) {
         await adminService.updateSubscriptionPlan(editingPlan.id, planData);
-        message.success('Subscription plan updated successfully');
+        showSuccess('Subscription plan updated successfully');
       } else {
         await adminService.createSubscriptionPlan(planData);
-        message.success('Subscription plan created successfully');
+        showSuccess('Subscription plan created successfully');
       }
 
       setPlanModalVisible(false);
@@ -426,18 +426,18 @@ const AdminSettings = () => {
     } catch (error) {
       if (error?.errorFields) return;
       console.error('Failed to save subscription plan', error);
-      message.error(error?.response?.data?.message || 'Failed to save subscription plan');
+      showError(error, error?.response?.data?.message || 'Failed to save subscription plan');
     }
   };
 
   const handleDeletePlan = async (planId) => {
     try {
       await adminService.deleteSubscriptionPlan(planId);
-      message.success('Subscription plan deleted successfully');
+      showSuccess('Subscription plan deleted successfully');
       await loadSubscriptionPlans();
     } catch (error) {
       console.error('Failed to delete subscription plan', error);
-      message.error('Failed to delete subscription plan');
+      showError(null, 'Failed to delete subscription plan');
     }
   };
 
@@ -539,7 +539,7 @@ const AdminSettings = () => {
           <Button
             type="link"
             size="small"
-            icon={<EditOutlined />}
+            icon={<Pencil className="h-4 w-4" />}
             onClick={() => openEditPlanModal(record)}
           >
             Edit
@@ -551,7 +551,7 @@ const AdminSettings = () => {
             okText="Yes"
             cancelText="No"
           >
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+            <Button type="link" size="small" danger icon={<Trash2 className="h-4 w-4" />}>
               Delete
             </Button>
           </Popconfirm>
@@ -630,7 +630,7 @@ const AdminSettings = () => {
                                 showUploadList={false}
                                 beforeUpload={handleLogoBeforeUpload}
                               >
-                                <Button icon={<UploadOutlined />} size="small">Upload logo</Button>
+                                <Button icon={<UploadIcon className="h-4 w-4" />} size="small">Upload logo</Button>
                               </Upload>
                               {brandingLogoPreview && (
                                 <Button
@@ -741,7 +741,7 @@ const AdminSettings = () => {
                     
                     <Button
                       type="primary"
-                      icon={<PlusOutlined />}
+                      icon={<Plus className="h-4 w-4" />}
                       onClick={openCreatePlanModal}
                       style={{ marginBottom: 16 }}
                     >

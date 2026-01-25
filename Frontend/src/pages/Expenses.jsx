@@ -1,57 +1,135 @@
 import { useState, useEffect } from 'react';
+import { useForm, useFieldArray } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+// Removed Ant Design imports - using shadcn/ui only
 import {
-  Card,
-  Table,
-  Button,
-  Modal,
-  Form,
-  Input,
-  Select,
-  DatePicker,
-  InputNumber,
-  Upload,
-  message,
-  Space,
-  Tag,
-  Popconfirm,
-  Row,
-  Col,
-  Statistic,
-  Divider,
-  Tabs,
-  Empty,
-  Spin,
-  Tooltip,
-  Descriptions
-} from 'antd';
-import {
-  PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  EyeOutlined,
-  UploadOutlined,
-  DollarCircleOutlined,
-  ShoppingCartOutlined,
-  FileTextOutlined,
-  CalendarOutlined,
-  SendOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  MinusCircleOutlined
-} from '@ant-design/icons';
+  Plus,
+  Pencil,
+  Trash2,
+  Eye,
+  Upload as UploadIcon,
+  DollarSign,
+  ShoppingCart,
+  FileText,
+  Calendar,
+  Send,
+  CheckCircle,
+  XCircle,
+  MinusCircle,
+  Loader2,
+  Search
+} from 'lucide-react';
 import dayjs from 'dayjs';
 import expenseService from '../services/expenseService';
 import jobService from '../services/jobService';
 import vendorService from '../services/vendorService';
 import { useAuth } from '../context/AuthContext';
+import { showSuccess, showError, showWarning } from '../utils/toast';
 import DetailsDrawer from '../components/DetailsDrawer';
+import TableSkeleton from '../components/TableSkeleton';
+import StatusChip from '../components/StatusChip';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { StatisticCard } from '@/components/ui/statistic-card';
+import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import { DatePicker } from '@/components/ui/date-picker';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
-const { Option } = Select;
-const { TextArea } = Input;
-const { TabPane } = Tabs;
+// Schema definitions
+const baseExpenseSchema = z.object({
+  category: z.string().min(1, 'Category is required'),
+  amount: z.number().min(0.01, 'Amount must be greater than 0'),
+  expenseDate: z.date({ required_error: 'Expense date is required' }),
+  description: z.string().optional(),
+  vendorId: z.string().optional().nullable(),
+  paymentMethod: z.string().optional(),
+  status: z.string().optional(),
+  receiptUrl: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+const expenseSchema = baseExpenseSchema.extend({
+  jobId: z.string().optional().nullable(),
+});
+
+const multipleExpenseItemSchema = z.object({
+  category: z.string().min(1, 'Category is required'),
+  amount: z.number().min(0.01, 'Amount must be greater than 0'),
+  description: z.string().optional(),
+  jobId: z.string().optional().nullable(),
+  vendorId: z.string().optional().nullable(),
+  paymentMethod: z.string().optional(),
+  status: z.string().optional(),
+  receiptUrl: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+const multipleExpenseSchema = z.object({
+  expenseDate: z.date({ required_error: 'Expense date is required' }),
+  expenses: z.array(multipleExpenseItemSchema).min(1, 'At least one expense is required'),
+});
+
+const rejectionSchema = z.object({
+  rejectionReason: z.string().min(1, 'Rejection reason is required'),
+});
 
 const Expenses = () => {
-  const { isAdmin } = useAuth();
+  const { isAdmin, activeTenant } = useAuth();
+  const businessType = activeTenant?.businessType || 'printing_press';
+  const isPrintingPress = businessType === 'printing_press';
   const [expenses, setExpenses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [submittingExpense, setSubmittingExpense] = useState(false);
@@ -62,7 +140,6 @@ const Expenses = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [multipleMode, setMultipleMode] = useState(false);
-  const [form] = Form.useForm();
   const [jobs, setJobs] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [stats, setStats] = useState(null);
@@ -78,16 +155,42 @@ const Expenses = () => {
   });
   const [activeTab, setActiveTab] = useState('all');
   const [rejectionModalVisible, setRejectionModalVisible] = useState(false);
-  const [rejectionForm] = Form.useForm();
+
+  const form = useForm({
+    resolver: zodResolver(multipleMode ? multipleExpenseSchema : expenseSchema),
+    defaultValues: multipleMode ? {
+      expenseDate: new Date(),
+      expenses: [{ category: '', amount: 0, description: '' }],
+    } : {
+      category: '',
+      amount: 0,
+      expenseDate: new Date(),
+      description: '',
+    },
+  });
+
+  const { fields: expenseFields, append: appendExpense, remove: removeExpense } = useFieldArray({
+    control: form.control,
+    name: 'expenses',
+  });
+
+  const rejectionForm = useForm({
+    resolver: zodResolver(rejectionSchema),
+    defaultValues: {
+      rejectionReason: '',
+    },
+  });
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingExpense, setViewingExpense] = useState(null);
 
   useEffect(() => {
     fetchExpenses();
-    fetchJobs();
+    if (isPrintingPress) {
+      fetchJobs();
+    }
     fetchVendors();
     fetchStats();
-  }, [pagination.current, pagination.pageSize, filters, activeTab]);
+  }, [pagination.current, pagination.pageSize, filters, activeTab, isPrintingPress]);
 
   const fetchExpenses = async () => {
     try {
@@ -114,7 +217,7 @@ const Expenses = () => {
         total: response.count || 0
       }));
     } catch (error) {
-      message.error('Failed to fetch expenses');
+      showError(null, 'Failed to fetch expenses');
     } finally {
       setLoading(false);
     }
@@ -150,7 +253,15 @@ const Expenses = () => {
   const handleCreate = () => {
     setEditingExpense(null);
     setMultipleMode(false);
-    form.resetFields();
+    form.reset(multipleMode ? {
+      expenseDate: new Date(),
+      expenses: [{ category: '', amount: 0, description: '' }],
+    } : {
+      category: '',
+      amount: 0,
+      expenseDate: new Date(),
+      description: '',
+    });
     setModalVisible(true);
   };
 
@@ -166,9 +277,11 @@ const Expenses = () => {
 
   const handleEdit = (expense) => {
     setEditingExpense(expense);
-    form.setFieldsValue({
+    setMultipleMode(false);
+    form.reset({
       ...expense,
-      expenseDate: expense.expenseDate ? dayjs(expense.expenseDate) : null
+      amount: expense.amount || 0,
+      expenseDate: expense.expenseDate ? dayjs(expense.expenseDate).toDate() : new Date(),
     });
     setModalVisible(true);
     // Close drawer if open
@@ -180,15 +293,15 @@ const Expenses = () => {
   const handleDelete = async (id) => {
     try {
       await expenseService.delete(id);
-      message.success('Expense deleted successfully');
+      showSuccess('Expense deleted successfully');
       fetchExpenses();
       fetchStats();
     } catch (error) {
-      message.error('Failed to delete expense');
+      showError(null, 'Failed to delete expense');
     }
   };
 
-  const handleSubmit = async (values) => {
+  const onSubmit = async (values) => {
     try {
       setSubmittingExpense(true);
 
@@ -196,10 +309,10 @@ const Expenses = () => {
         // Single expense update
         const expenseData = {
           ...values,
-          expenseDate: values.expenseDate ? values.expenseDate.format('YYYY-MM-DD') : null
+          expenseDate: values.expenseDate ? dayjs(values.expenseDate).format('YYYY-MM-DD') : null
         };
         await expenseService.update(editingExpense.id, expenseData);
-        message.success('Expense updated successfully');
+        showSuccess('Expense updated successfully');
         setModalVisible(false);
         fetchExpenses();
         fetchStats();
@@ -209,17 +322,17 @@ const Expenses = () => {
           .filter(exp => exp.category && exp.amount && exp.description)
           .map(expense => ({
             ...expense,
-            expenseDate: expense.expenseDate ? expense.expenseDate.format('YYYY-MM-DD') : null
+            expenseDate: expense.expenseDate ? dayjs(expense.expenseDate).format('YYYY-MM-DD') : dayjs(values.expenseDate).format('YYYY-MM-DD')
           }));
         
         if (expensesToCreate.length === 0) {
-          message.warning('Please add at least one expense');
+          showWarning('Please add at least one expense');
           return;
         }
 
         // Common fields that apply to all expenses
         const commonFields = {
-          expenseDate: values.expenseDate ? values.expenseDate.format('YYYY-MM-DD') : null,
+          expenseDate: values.expenseDate ? dayjs(values.expenseDate).format('YYYY-MM-DD') : null,
           jobId: values.jobId || null,
           vendorId: values.vendorId || null,
           paymentMethod: values.paymentMethod || null,
@@ -229,7 +342,7 @@ const Expenses = () => {
 
         // Use bulk create endpoint
         const response = await expenseService.createBulk(expensesToCreate, commonFields);
-        message.success(`Successfully created ${response.data.count || expensesToCreate.length} expense(s)`);
+        showSuccess(`Successfully created ${response.data.count || expensesToCreate.length} expense(s)`);
         setModalVisible(false);
         fetchExpenses();
         fetchStats();
@@ -237,18 +350,33 @@ const Expenses = () => {
         // Single expense creation
         const expenseData = {
           ...values,
-          expenseDate: values.expenseDate ? values.expenseDate.format('YYYY-MM-DD') : null
+          expenseDate: values.expenseDate ? dayjs(values.expenseDate).format('YYYY-MM-DD') : null
         };
         await expenseService.create(expenseData);
-        message.success('Expense created successfully');
+        showSuccess('Expense created successfully');
         setModalVisible(false);
         fetchExpenses();
         fetchStats();
       }
     } catch (error) {
-      message.error('Failed to save expense(s)');
+      showError(null, 'Failed to save expense(s)');
     } finally {
       setSubmittingExpense(false);
+    }
+  };
+
+  const onReject = async (values) => {
+    try {
+      setRejectingExpenseLoading(true);
+      await expenseService.reject(rejectingExpense.id, { rejectionReason: values.rejectionReason });
+      showSuccess('Expense rejected successfully');
+      setRejectionModalVisible(false);
+      setRejectingExpense(null);
+      fetchExpenses();
+    } catch (error) {
+      showError(null, 'Failed to reject expense');
+    } finally {
+      setRejectingExpenseLoading(false);
     }
   };
 
@@ -267,10 +395,10 @@ const Expenses = () => {
     try {
       setSubmittingForApproval(true);
       await expenseService.submit(expenseId);
-      message.success('Expense submitted for approval');
+      showSuccess('Expense submitted for approval');
       fetchExpenses();
     } catch (error) {
-      message.error('Failed to submit expense');
+      showError(null, 'Failed to submit expense');
     } finally {
       setSubmittingForApproval(false);
     }
@@ -280,11 +408,11 @@ const Expenses = () => {
     try {
       setApprovingExpense(true);
       await expenseService.approve(expenseId);
-      message.success('Expense approved successfully');
+      showSuccess('Expense approved successfully');
       fetchExpenses();
       fetchStats();
     } catch (error) {
-      message.error('Failed to approve expense');
+      showError(null, 'Failed to approve expense');
     } finally {
       setApprovingExpense(false);
     }
@@ -292,24 +420,88 @@ const Expenses = () => {
 
   const handleRejectClick = (expense) => {
     setRejectingExpense(expense);
-    rejectionForm.resetFields();
+    rejectionForm.reset();
     setRejectionModalVisible(true);
   };
 
-  const handleRejectSubmit = async (values) => {
-    try {
-      setRejectingExpenseLoading(true);
-      await expenseService.reject(rejectingExpense.id, values.rejectionReason);
-      message.success('Expense rejected');
-      setRejectionModalVisible(false);
-      setRejectingExpense(null);
-      fetchExpenses();
-    } catch (error) {
-      message.error('Failed to reject expense');
-    } finally {
-      setRejectingExpenseLoading(false);
-    }
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [expenseToDelete, setExpenseToDelete] = useState(null);
+
+  // Helper function to render table from columns and dataSource
+  const renderTable = (columns, dataSource, rowKey = 'id') => {
+    const startIndex = (pagination.current - 1) * pagination.pageSize;
+    const endIndex = startIndex + pagination.pageSize;
+    const paginatedData = dataSource?.slice(startIndex, endIndex) || [];
+
+    return (
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              {columns.map((col) => (
+                <TableHead key={col.key || col.dataIndex} style={{ width: col.width }}>
+                  {col.title}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {paginatedData.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={columns.length} className="text-center py-8 text-muted-foreground">
+                  No data available
+                </TableCell>
+              </TableRow>
+            ) : (
+              paginatedData.map((record) => (
+                <TableRow key={record[rowKey]}>
+                  {columns.map((col) => {
+                    const value = col.dataIndex 
+                      ? (Array.isArray(col.dataIndex) 
+                          ? col.dataIndex.reduce((obj, key) => obj?.[key], record)
+                          : record[col.dataIndex])
+                      : null;
+                    const renderedValue = col.render ? col.render(value, record) : value;
+                    return (
+                      <TableCell key={col.key || col.dataIndex}>
+                        {renderedValue}
+                      </TableCell>
+                    );
+                  })}
+                </TableRow>
+              ))
+            )}
+          </TableBody>
+        </Table>
+        {pagination.total > pagination.pageSize && (
+          <div className="flex items-center justify-between px-4 py-3 border-t">
+            <div className="text-sm text-muted-foreground">
+              Showing {startIndex + 1} to {Math.min(endIndex, pagination.total)} of {pagination.total} entries
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPagination(prev => ({ ...prev, current: prev.current - 1 }))}
+                disabled={pagination.current === 1}
+              >
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPagination(prev => ({ ...prev, current: prev.current + 1 }))}
+                disabled={pagination.current >= Math.ceil(pagination.total / pagination.pageSize)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
   };
+
 
   const columns = [
     {
@@ -330,7 +522,7 @@ const Expenses = () => {
       dataIndex: 'category',
       key: 'category',
       width: 150,
-      render: (category) => <Tag color="blue">{category}</Tag>
+      render: (category) => <Badge className="bg-green-700">{category}</Badge>
     },
     {
       title: 'Description',
@@ -354,9 +546,9 @@ const Expenses = () => {
       width: 150,
       render: (jobNumber, record) => (
         jobNumber ? (
-          <Tag color="green">{jobNumber}</Tag>
+          <Badge className="bg-green-600">{jobNumber}</Badge>
         ) : (
-          <Tag color="default">General</Tag>
+          <Badge variant="outline">General</Badge>
         )
       )
     },
@@ -373,12 +565,7 @@ const Expenses = () => {
       key: 'status',
       width: 120,
       render: (status) => {
-        const colors = {
-          pending: 'orange',
-          paid: 'green',
-          overdue: 'red'
-        };
-        return <Tag color={colors[status]}>{status.toUpperCase()}</Tag>;
+        return <StatusChip status={status} />;
       }
     },
     {
@@ -386,36 +573,53 @@ const Expenses = () => {
       key: 'actions',
       width: 180,
       render: (_, record) => (
-        <Space>
-          <Tooltip title="View">
-            <Button
-              type="text"
-              icon={<EyeOutlined />}
-              onClick={() => handleView(record)}
-            />
-          </Tooltip>
-          <Tooltip title="Edit">
-            <Button
-              type="text"
-              icon={<EditOutlined />}
-              onClick={() => handleEdit(record)}
-            />
-          </Tooltip>
-          <Popconfirm
-            title="Are you sure you want to delete this expense?"
-            onConfirm={() => handleDelete(record.id)}
-            okText="Yes"
-            cancelText="No"
-          >
-            <Tooltip title="Delete">
-              <Button
-                type="text"
-                danger
-                icon={<DeleteOutlined />}
-              />
+        <div className="flex items-center gap-2">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleView(record)}
+                >
+                  <Eye className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>View</TooltipContent>
             </Tooltip>
-          </Popconfirm>
-        </Space>
+          </TooltipProvider>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleEdit(record)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Edit</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setExpenseToDelete(record);
+                    setDeleteConfirmOpen(true);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Delete</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       )
     }
   ];
@@ -440,7 +644,7 @@ const Expenses = () => {
       dataIndex: 'category',
       key: 'category',
       width: 130,
-      render: (category) => <Tag color="blue">{category}</Tag>
+      render: (category) => <Badge className="bg-green-700">{category}</Badge>
     },
     {
       title: 'Description',
@@ -469,19 +673,7 @@ const Expenses = () => {
       key: 'approvalStatus',
       width: 150,
       render: (status) => {
-        const colors = {
-          draft: 'default',
-          pending_approval: 'orange',
-          approved: 'green',
-          rejected: 'red'
-        };
-        const labels = {
-          draft: 'DRAFT',
-          pending_approval: 'PENDING',
-          approved: 'APPROVED',
-          rejected: 'REJECTED'
-        };
-        return <Tag color={colors[status]}>{labels[status]}</Tag>;
+        return <StatusChip status={status} />;
       }
     },
     {
@@ -490,76 +682,105 @@ const Expenses = () => {
       width: 240,
       fixed: 'right',
       render: (_, record) => (
-        <Space>
-          <Tooltip title="View">
-            <Button
-              type="text"
-              size="small"
-              icon={<EyeOutlined />}
-              onClick={() => handleView(record)}
-            />
-          </Tooltip>
-          {record.approvalStatus === 'draft' && !isAdmin && (
-            <Tooltip title="Submit for Approval">
+        <div className="flex items-center gap-2">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
                 <Button
-                  type="primary"
-                  size="small"
-                  icon={<SendOutlined />}
-                  onClick={() => handleSubmitForApproval(record.id)}
-                  loading={submittingForApproval}
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handleView(record)}
                 >
-                  Submit
+                  <Eye className="h-4 w-4" />
                 </Button>
+              </TooltipTrigger>
+              <TooltipContent>View</TooltipContent>
             </Tooltip>
+          </TooltipProvider>
+          {record.approvalStatus === 'draft' && !isAdmin && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="sm"
+                    onClick={() => handleSubmitForApproval(record.id)}
+                    disabled={submittingForApproval}
+                  >
+                    {submittingForApproval ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
+                    Submit
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Submit for Approval</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
           {record.approvalStatus === 'pending_approval' && isAdmin && (
             <>
-              <Tooltip title="Approve">
-                <Button
-                  type="primary"
-                  size="small"
-                  icon={<CheckCircleOutlined />}
-                  onClick={() => handleApprove(record.id)}
-                  loading={approvingExpense}
-                >
-                  Approve
-                </Button>
-              </Tooltip>
-              <Tooltip title="Reject">
-                <Button
-                  danger
-                  size="small"
-                  icon={<CloseCircleOutlined />}
-                  onClick={() => handleRejectClick(record)}
-                  loading={rejectingExpenseLoading}
-                >
-                  Reject
-                </Button>
-              </Tooltip>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="sm"
+                      onClick={() => handleApprove(record.id)}
+                      disabled={approvingExpense}
+                    >
+                      {approvingExpense ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle className="h-4 w-4 mr-2" />}
+                      Approve
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Approve</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => handleRejectClick(record)}
+                      disabled={rejectingExpenseLoading}
+                    >
+                      {rejectingExpenseLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <XCircle className="h-4 w-4 mr-2" />}
+                      Reject
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Reject</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </>
           )}
           {(record.approvalStatus === 'draft' || record.approvalStatus === 'rejected') && (
-            <Tooltip title="Edit">
-              <Button
-                type="text"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() => handleEdit(record)}
-              />
-            </Tooltip>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleEdit(record)}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Edit</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
           {record.approvalStatus === 'rejected' && record.rejectionReason && (
-            <Tooltip title={`Rejection Reason: ${record.rejectionReason}`}>
-              <Button
-                type="text"
-                size="small"
-                danger
-              >
-                View Reason
-              </Button>
-            </Tooltip>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                  >
+                    View Reason
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Rejection Reason: {record.rejectionReason}</TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
-        </Space>
+        </div>
       )
     }
   ];
@@ -605,730 +826,832 @@ const Expenses = () => {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ margin: 0 }}>Expenses {activeTab === 'requests' && '& Requests'}</h1>
-        {!isAdmin && (
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={handleCreate}
-          >
-            {activeTab === 'requests' ? 'New Request' : 'Add Expense'}
-          </Button>
-        )}
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-2xl font-bold m-0">Expenses {activeTab === 'requests' && '& Requests'}</h1>
+        <Button
+          onClick={handleCreate}
+        >
+          <Plus className="h-4 w-4 mr-2" />
+          {activeTab === 'requests' ? 'New Request' : 'Add Expense'}
+        </Button>
       </div>
 
       {/* Statistics Cards */}
       {stats && (
-        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-          <Col xs={24} sm={8}>
-            <Card>
-              <Statistic
-                title="Total Expenses"
-                value={stats.totalExpenses || 0}
-                prefix="GHS "
-                valueStyle={{ color: '#cf1322' }}
-                suffix={<ShoppingCartOutlined />}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Card>
-              <Statistic
-                title="Categories"
-                value={stats.categoryStats ? stats.categoryStats.length : 0}
-                prefix={<FileTextOutlined />}
-                valueStyle={{ color: '#1890ff' }}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Card>
-              <Statistic
-                title="This Month"
-                value={stats.thisMonthExpenses || 0}
-                prefix="GHS "
-                valueStyle={{ color: '#52c41a' }}
-                suffix={<CalendarOutlined />}
-              />
-            </Card>
-          </Col>
-        </Row>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Total Expenses</p>
+                  <p className="text-2xl font-bold text-red-600">
+                    GHS {parseFloat(stats.totalExpenses || 0).toFixed(2)}
+                  </p>
+                </div>
+                <ShoppingCart className="h-8 w-8 text-red-600" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Categories</p>
+                  <p className="text-2xl font-bold text-green-700">
+                    {stats.categoryStats ? stats.categoryStats.length : 0}
+                  </p>
+                </div>
+                <FileText className="h-8 w-8 text-green-700" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">This Month</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    GHS {parseFloat(stats.thisMonthExpenses || 0).toFixed(2)}
+                  </p>
+                </div>
+                <Calendar className="h-8 w-8 text-green-600" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Filters */}
-      <Card style={{ marginBottom: 16 }}>
-        <Row gutter={[16, 16]}>
-          <Col xs={24} sm={6}>
-            <Select
-              placeholder="Filter by Category"
-              allowClear
-              style={{ width: '100%' }}
-              value={filters.category}
-              onChange={(value) => handleFilterChange('category', value)}
-            >
+      <Card className="mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+          <Select
+            value={filters.category || '__all__'}
+            onValueChange={(value) => handleFilterChange('category', value === '__all__' ? null : value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Filter by Category" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Categories</SelectItem>
               {expenseCategories.map(category => (
-                <Option key={category} value={category}>{category}</Option>
+                <SelectItem key={category} value={category}>{category}</SelectItem>
               ))}
-            </Select>
-          </Col>
-          <Col xs={24} sm={6}>
-            <Select
-              placeholder="Filter by Status"
-              allowClear
-              style={{ width: '100%' }}
-              value={filters.status}
-              onChange={(value) => handleFilterChange('status', value)}
-            >
+            </SelectContent>
+          </Select>
+          <Select
+            value={filters.status || '__all__'}
+            onValueChange={(value) => handleFilterChange('status', value === '__all__' ? null : value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Filter by Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">All Statuses</SelectItem>
               {statusOptions.map(status => (
-                <Option key={status} value={status}>{status.toUpperCase()}</Option>
+                <SelectItem key={status} value={status}>{status.toUpperCase()}</SelectItem>
               ))}
-            </Select>
-          </Col>
-          <Col xs={24} sm={6}>
+            </SelectContent>
+          </Select>
+          {isPrintingPress && (
             <Select
-              placeholder="Filter by Job"
-              allowClear
-              style={{ width: '100%' }}
-              value={filters.jobId}
-              onChange={(value) => handleFilterChange('jobId', value)}
+              value={filters.jobId || '__all__'}
+              onValueChange={(value) => handleFilterChange('jobId', value === '__all__' ? null : value)}
             >
-              {jobs.map(job => (
-                <Option key={job.id} value={job.id}>{job.jobNumber} - {job.title}</Option>
-              ))}
+              <SelectTrigger>
+                <SelectValue placeholder="Filter by Job" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All Jobs</SelectItem>
+                {jobs.map(job => (
+                  <SelectItem key={job.id} value={job.id}>{job.jobNumber} - {job.title}</SelectItem>
+                ))}
+              </SelectContent>
             </Select>
-          </Col>
-          <Col xs={24} sm={6}>
-            <Button
-              onClick={() => {
-                setFilters({ category: null, status: null, jobId: null });
-                setPagination(prev => ({ ...prev, current: 1 }));
-              }}
-            >
-              Clear Filters
-            </Button>
-          </Col>
-        </Row>
+          )}
+          <Button
+            variant="outline"
+            onClick={() => {
+              setFilters({ category: null, status: null, jobId: null });
+              setPagination(prev => ({ ...prev, current: 1 }));
+            }}
+          >
+            Clear Filters
+          </Button>
+        </div>
       </Card>
 
       {/* Expenses Table with Tabs */}
       <Card>
-        <Tabs 
-          activeKey={activeTab} 
-          onChange={(key) => {
-            setActiveTab(key);
-            fetchExpenses();
-          }}
-          items={[
-            {
-              key: 'all',
-              label: 'All Expenses',
-              children: (
-                <Table
-                  columns={columns}
-                  dataSource={expenses}
-                  rowKey="id"
-                  loading={loading}
-                  pagination={{
-                    current: pagination.current,
-                    pageSize: pagination.pageSize,
-                    total: pagination.total,
-                    showSizeChanger: true,
-                    showQuickJumper: true,
-                    showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} expenses`,
-                    onChange: (page, pageSize) => {
-                      setPagination(prev => ({
-                        ...prev,
-                        current: page,
-                        pageSize: pageSize || prev.pageSize
-                      }));
-                    }
-                  }}
-                />
-              )
-            },
-            {
-              key: 'approved',
-              label: 'Approved Expenses',
-              children: (
-                <Table
-                  columns={columns}
-                  dataSource={expenses}
-                  rowKey="id"
-                  loading={loading}
-                  pagination={{
-                    current: pagination.current,
-                    pageSize: pagination.pageSize,
-                    total: pagination.total,
-                    showSizeChanger: true,
-                    showQuickJumper: true,
-                    showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} expenses`,
-                    onChange: (page, pageSize) => {
-                      setPagination(prev => ({
-                        ...prev,
-                        current: page,
-                        pageSize: pageSize || prev.pageSize
-                      }));
-                    }
-                  }}
-                />
-              )
-            },
-            {
-              key: 'requests',
-              label: 'Expense Requests',
-              children: (
-                <Table
-                  columns={requestColumns}
-                  dataSource={expenses}
-                  rowKey="id"
-                  loading={loading}
-                  pagination={{
-                    current: pagination.current,
-                    pageSize: pagination.pageSize,
-                    total: pagination.total,
-                    showSizeChanger: true,
-                    showQuickJumper: true,
-                    showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} requests`,
-                    onChange: (page, pageSize) => {
-                      setPagination(prev => ({
-                        ...prev,
-                        current: page,
-                        pageSize: pageSize || prev.pageSize
-                      }));
-                    }
-                  }}
-                  scroll={{ x: 1400 }}
-                />
-              )
-            },
-            {
-              key: 'job-specific',
-              label: 'Job-Specific Expenses',
-              children: (
-                <div>
-                  <div style={{ marginBottom: 16 }}>
+        <Tabs value={activeTab} onValueChange={(key) => {
+          setActiveTab(key);
+          fetchExpenses();
+        }}>
+          <TabsList className={isPrintingPress ? "grid w-full grid-cols-5" : "grid w-full grid-cols-3"}>
+            <TabsTrigger value="all">All Expenses</TabsTrigger>
+            <TabsTrigger value="approved">Approved Expenses</TabsTrigger>
+            <TabsTrigger value="requests">Expense Requests</TabsTrigger>
+            {isPrintingPress && (
+              <>
+                <TabsTrigger value="job-specific">Job-Specific Expenses</TabsTrigger>
+                <TabsTrigger value="general">General Expenses</TabsTrigger>
+              </>
+            )}
+          </TabsList>
+          <TabsContent value="all">
+            {loading ? (
+              <div className="p-4">
+                <TableSkeleton rows={8} cols={7} />
+              </div>
+            ) : (
+              renderTable(columns, expenses, 'id')
+            )}
+          </TabsContent>
+          <TabsContent value="approved">
+            {loading ? (
+              <div className="p-4">
+                <TableSkeleton rows={8} cols={7} />
+              </div>
+            ) : (
+              renderTable(columns, expenses, 'id')
+            )}
+          </TabsContent>
+          <TabsContent value="requests">
+            {loading ? (
+              <div className="p-4">
+                <TableSkeleton rows={8} cols={7} />
+              </div>
+            ) : (
+              renderTable(requestColumns, expenses, 'id')
+            )}
+          </TabsContent>
+          {isPrintingPress && (
+            <>
+              <TabsContent value="job-specific">
+                <div className="space-y-4">
                     <Select
-                      placeholder="Select a job to view its expenses"
-                      style={{ width: 300 }}
-                      onChange={(jobId) => {
-                        if (jobId) {
+                      value={filters.jobId || '__all__'}
+                      onValueChange={(jobId) => {
+                        if (jobId && jobId !== '__all__') {
                           setFilters(prev => ({ ...prev, jobId }));
                         } else {
                           setFilters(prev => ({ ...prev, jobId: null }));
                         }
                       }}
-                      allowClear
                     >
+                      <SelectTrigger className="w-[300px]">
+                        <SelectValue placeholder="Select a job to view its expenses" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">All Jobs</SelectItem>
                       {jobs.map(job => (
-                        <Option key={job.id} value={job.id}>
+                        <SelectItem key={job.id} value={job.id}>
                           {job.jobNumber} - {job.title}
-                        </Option>
+                        </SelectItem>
                       ))}
-                    </Select>
-                  </div>
-                  <Table
-                    columns={columns}
-                    dataSource={expenses?.filter(expense => expense.jobId) || []}
-                    rowKey="id"
-                    loading={loading}
-                    pagination={{
-                      current: pagination.current,
-                      pageSize: pagination.pageSize,
-                      total: pagination.total,
-                      showSizeChanger: true,
-                      showQuickJumper: true,
-                      showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} job expenses`,
-                      onChange: (page, pageSize) => {
-                        setPagination(prev => ({
-                          ...prev,
-                          current: page,
-                          pageSize: pageSize || prev.pageSize
-                        }));
-                      }
-                    }}
-                  />
+                    </SelectContent>
+                  </Select>
+                  {loading ? (
+                    <div className="p-4">
+                      <TableSkeleton rows={8} cols={7} />
+                    </div>
+                  ) : (
+                    renderTable(columns, expenses?.filter(expense => expense.jobId) || [], 'id')
+                  )}
                 </div>
-              )
-            },
-            {
-              key: 'general',
-              label: 'General Expenses',
-              children: (
-                <Table
-                  columns={columns}
-                  dataSource={expenses?.filter(expense => !expense.jobId) || []}
-                  rowKey="id"
-                  loading={loading}
-                  pagination={{
-                    current: pagination.current,
-                    pageSize: pagination.pageSize,
-                    total: pagination.total,
-                    showSizeChanger: true,
-                    showQuickJumper: true,
-                    showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} general expenses`,
-                    onChange: (page, pageSize) => {
-                      setPagination(prev => ({
-                        ...prev,
-                        current: page,
-                        pageSize: pageSize || prev.pageSize
-                      }));
-                    }
-                  }}
-                />
-              )
-            }
-          ]}
-        />
+              </TabsContent>
+              <TabsContent value="general">
+                {loading ? (
+                  <div className="p-4">
+                    <TableSkeleton rows={8} cols={7} />
+                  </div>
+                ) : (
+                  renderTable(columns, expenses?.filter(expense => !expense.jobId) || [], 'id')
+                )}
+              </TabsContent>
+            </>
+          )}
+        </Tabs>
       </Card>
 
-      {/* Add/Edit Modal */}
-      <Modal
-        title={editingExpense ? 'Edit Expense' : multipleMode ? 'Add Multiple Expenses' : 'Add New Expense'}
-        open={modalVisible}
-        onCancel={() => {
+      {/* Add/Edit Dialog */}
+      <Dialog open={modalVisible} onOpenChange={(open) => {
+        if (!open) {
           setModalVisible(false);
           setMultipleMode(false);
-          form.resetFields();
-        }}
-        footer={null}
-        width={multipleMode ? 1000 : 800}
-      >
+          form.reset();
+        }
+      }}>
+        <DialogContent className={`max-w-[90vw] ${multipleMode ? 'max-w-6xl' : 'max-w-4xl'} max-h-[90vh] overflow-y-auto`}>
+          <DialogHeader>
+            <DialogTitle>
+              {editingExpense ? 'Edit Expense' : multipleMode ? 'Add Multiple Expenses' : 'Add New Expense'}
+            </DialogTitle>
+            <DialogDescription>
+              {editingExpense ? 'Update expense details' : multipleMode ? 'Create multiple expenses at once' : 'Add a new expense to track'}
+            </DialogDescription>
+          </DialogHeader>
         {!editingExpense && (
-          <div style={{ marginBottom: 16, textAlign: 'right' }}>
+          <div className="mb-4 text-right">
             <Button
-              type={multipleMode ? 'default' : 'dashed'}
+              variant={multipleMode ? 'default' : 'outline'}
               onClick={() => {
                 setMultipleMode(!multipleMode);
-                form.resetFields();
+                form.reset();
               }}
-              icon={multipleMode ? <EditOutlined /> : <PlusOutlined />}
             >
+              {multipleMode ? <Pencil className="h-4 w-4 mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
               {multipleMode ? 'Switch to Single' : 'Switch to Multiple'}
             </Button>
           </div>
         )}
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleSubmit}
-          initialValues={multipleMode ? { expenses: [{}] } : {}}
-        >
-          {multipleMode && !editingExpense ? (
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+              {multipleMode && !editingExpense ? (
             <>
               {/* Common fields for all expenses */}
-              <Divider orientation="left">Common Fields (Applied to All Expenses)</Divider>
-              <Row gutter={16}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
+              <Separator />
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Common Fields (Applied to All Expenses)</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
                     name="expenseDate"
-                    label="Expense Date"
-                    rules={[{ required: true, message: 'Please select date' }]}
-                  >
-                    <DatePicker style={{ width: '100%' }} />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Expense Date</FormLabel>
+                        <FormControl>
+                          <DatePicker
+                            date={field.value}
+                            onDateChange={field.onChange}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
                     name="paymentMethod"
-                    label="Payment Method (Optional)"
-                  >
-                    <Select placeholder="Select payment method (optional)">
-                      {paymentMethods.map(method => (
-                        <Option key={method} value={method}>
-                          {formatPaymentMethod(method)}
-                        </Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-              </Row>
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Payment Method (Optional)</FormLabel>
+                        <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select payment method (optional)" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {paymentMethods.map(method => (
+                              <SelectItem key={method} value={method}>
+                                {formatPaymentMethod(method)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
-              <Row gutter={16}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <FormField
+                    control={form.control}
                     name="jobId"
-                    label="Associated Job (Optional)"
-                  >
-                    <Select
-                      placeholder="Select job (leave empty for general expense)"
-                      allowClear
-                    >
-                      {jobs.map(job => (
-                        <Option key={job.id} value={job.id}>
-                          {job.jobNumber} - {job.title}
-                        </Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Associated Job (Optional)</FormLabel>
+                        <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select job (leave empty for general expense)" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {jobs.map(job => (
+                              <SelectItem key={job.id} value={job.id}>
+                                {job.jobNumber} - {job.title}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
                     name="vendorId"
-                    label="Vendor (Optional)"
-                  >
-                    <Select
-                      placeholder="Select vendor"
-                      allowClear
-                    >
-                      {vendors.map(vendor => (
-                        <Option key={vendor.id} value={vendor.id}>
-                          {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
-                        </Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-              </Row>
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Vendor (Optional)</FormLabel>
+                        <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select vendor" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {vendors.map(vendor => (
+                              <SelectItem key={vendor.id} value={vendor.id}>
+                                {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
 
-              <Form.Item
-                name="notes"
-                label="Common Notes (Optional)"
-              >
-                <TextArea rows={2} placeholder="Notes that apply to all expenses" />
-              </Form.Item>
+                <FormField
+                  control={form.control}
+                  name="notes"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Common Notes (Optional)</FormLabel>
+                      <FormControl>
+                        <Textarea
+                          rows={2}
+                          placeholder="Notes that apply to all expenses"
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-              <Divider orientation="left">Expense Items</Divider>
-
-              {/* Multiple expenses list */}
-              <Form.List name="expenses">
-                {(fields, { add, remove }) => (
-                  <>
-                    {fields.map(({ key, name, ...restField }) => (
-                      <Card key={key} size="small" style={{ marginBottom: 16, background: '#fafafa' }}>
-                        <Row gutter={16}>
-                          <Col xs={24} sm={8}>
-                            <Form.Item
-                              {...restField}
-                              name={[name, 'category']}
-                              label="Category"
-                              rules={[{ required: true, message: 'Required' }]}
-                            >
-                              <Select placeholder="Select category">
+              <Separator />
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Expense Items</h3>
+                {expenseFields.map((field, index) => (
+                  <Card key={field.id} className="p-4 bg-muted">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                      <FormField
+                        control={form.control}
+                        name={`expenses.${index}.category`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Category</FormLabel>
+                            <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select category" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
                                 {expenseCategories.map(category => (
-                                  <Option key={category} value={category}>{category}</Option>
+                                  <SelectItem key={category} value={category}>{category}</SelectItem>
                                 ))}
-                              </Select>
-                            </Form.Item>
-                          </Col>
-                          <Col xs={24} sm={8}>
-                            <Form.Item
-                              {...restField}
-                              name={[name, 'amount']}
-                              label="Amount"
-                              rules={[{ required: true, message: 'Required' }]}
-                            >
-                              <InputNumber
-                                style={{ width: '100%' }}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`expenses.${index}.amount`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Amount</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                step="0.01"
+                                min="0"
                                 placeholder="0.00"
-                                min={0}
-                                step={0.01}
-                                precision={2}
+                                value={field.value || undefined}
+                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
                               />
-                            </Form.Item>
-                          </Col>
-                          <Col xs={24} sm={8}>
-                            <Form.Item
-                              {...restField}
-                              name={[name, 'expenseDate']}
-                              label="Date (Optional)"
-                              tooltip="Leave empty to use common date"
-                            >
-                              <DatePicker style={{ width: '100%' }} />
-                            </Form.Item>
-                          </Col>
-                        </Row>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'description']}
-                          label="Description"
-                          rules={[{ required: true, message: 'Required' }]}
-                        >
-                          <TextArea rows={2} placeholder="Enter expense description" />
-                        </Form.Item>
-                        <Row gutter={16}>
-                          <Col xs={24} sm={12}>
-                            <Form.Item
-                              {...restField}
-                              name={[name, 'jobId']}
-                              label="Job (Optional)"
-                              tooltip="Leave empty to use common job"
-                            >
-                              <Select
-                                placeholder="Select job (optional)"
-                                allowClear
-                              >
-                                {jobs.map(job => (
-                                  <Option key={job.id} value={job.id}>
-                                    {job.jobNumber} - {job.title}
-                                  </Option>
-                                ))}
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`expenses.${index}.expenseDate`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Date (Optional)</FormLabel>
+                            <FormControl>
+                              <DatePicker
+                                date={field.value}
+                                onDateChange={field.onChange}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                    <FormField
+                      control={form.control}
+                      name={`expenses.${index}.description`}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Description</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              rows={2}
+                              placeholder="Enter expense description"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+                      {isPrintingPress && (
+                        <FormField
+                          control={form.control}
+                          name={`expenses.${index}.jobId`}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Job (Optional)</FormLabel>
+                              <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select job (optional)" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {jobs.map(job => (
+                                    <SelectItem key={job.id} value={job.id}>
+                                      {job.jobNumber} - {job.title}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
                               </Select>
-                            </Form.Item>
-                          </Col>
-                          <Col xs={24} sm={12}>
-                            <Form.Item
-                              {...restField}
-                              name={[name, 'vendorId']}
-                              label="Vendor (Optional)"
-                              tooltip="Leave empty to use common vendor"
-                            >
-                              <Select
-                                placeholder="Select vendor (optional)"
-                                allowClear
-                              >
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+                      <FormField
+                        control={form.control}
+                        name={`expenses.${index}.vendorId`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Vendor (Optional)</FormLabel>
+                            <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select vendor (optional)" />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent>
                                 {vendors.map(vendor => (
-                                  <Option key={vendor.id} value={vendor.id}>
+                                  <SelectItem key={vendor.id} value={vendor.id}>
                                     {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
-                                  </Option>
+                                  </SelectItem>
                                 ))}
-                              </Select>
-                            </Form.Item>
-                          </Col>
-                        </Row>
-                        <Button
-                          type="dashed"
-                          danger
-                          onClick={() => remove(name)}
-                          icon={<MinusCircleOutlined />}
-                          block
-                          style={{ marginTop: 8 }}
-                        >
-                          Remove Expense
-                        </Button>
-                      </Card>
-                    ))}
-                    <Form.Item>
-                      <Button
-                        type="dashed"
-                        onClick={() => add()}
-                        block
-                        icon={<PlusOutlined />}
-                        size="large"
-                      >
-                        Add Another Expense
-                      </Button>
-                    </Form.Item>
-                  </>
-                )}
-              </Form.List>
-
-              <Form.Item shouldUpdate={(prevValues, currentValues) => prevValues.expenses?.length !== currentValues.expenses?.length}>
-                {({ getFieldValue }) => (
-                  <Space>
-                    <Button type="primary" htmlType="submit" loading={submittingExpense}>
-                      Create {getFieldValue('expenses')?.length || 0} Expense(s)
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => removeExpense(index)}
+                      className="w-full mt-4"
+                    >
+                      <MinusCircle className="h-4 w-4 mr-2" />
+                      Remove Expense
                     </Button>
-                    <Button onClick={() => {
+                  </Card>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => appendExpense({ category: '', amount: 0, description: '' })}
+                  className="w-full"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Another Expense
+                </Button>
+                <div className="flex gap-2 justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
                       setModalVisible(false);
                       setMultipleMode(false);
-                      form.resetFields();
-                    }} disabled={submittingExpense}>
-                      Cancel
-                    </Button>
-                  </Space>
-                )}
-              </Form.Item>
-            </>
-          ) : (
-            <>
-              {/* Single expense form */}
-              <Row gutter={16}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    name="category"
-                    label="Category"
-                    rules={[{ required: true, message: 'Please select a category' }]}
+                      form.reset();
+                    }}
+                    disabled={submittingExpense}
                   >
-                    <Select placeholder="Select category">
-                      {expenseCategories.map(category => (
-                        <Option key={category} value={category}>{category}</Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    name="amount"
-                    label="Amount"
-                    rules={[{ required: true, message: 'Please enter amount' }]}
-                  >
-                    <InputNumber
-                      style={{ width: '100%' }}
-                      placeholder="0.00"
-                      min={0}
-                      step={0.01}
-                      precision={2}
-                    />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Form.Item
-                name="description"
-                label="Description"
-                rules={[{ required: true, message: 'Please enter description' }]}
-              >
-                <TextArea rows={3} placeholder="Enter expense description" />
-              </Form.Item>
-
-              <Row gutter={16}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    name="expenseDate"
-                    label="Expense Date"
-                    rules={[{ required: true, message: 'Please select date' }]}
-                  >
-                    <DatePicker style={{ width: '100%' }} />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    name="paymentMethod"
-                    label="Payment Method (Optional)"
-                    tooltip="Only needed when expense is approved and ready for payment"
-                  >
-                    <Select placeholder="Select payment method (optional)">
-                      {paymentMethods.map(method => (
-                        <Option key={method} value={method}>
-                          {formatPaymentMethod(method)}
-                        </Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Row gutter={16}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    name="jobId"
-                    label="Associated Job (Optional)"
-                  >
-                    <Select
-                      placeholder="Select job (leave empty for general expense)"
-                      allowClear
-                    >
-                      {jobs.map(job => (
-                        <Option key={job.id} value={job.id}>
-                          {job.jobNumber} - {job.title}
-                        </Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    name="vendorId"
-                    label="Vendor (Optional)"
-                  >
-                    <Select
-                      placeholder="Select vendor"
-                      allowClear
-                    >
-                      {vendors.map(vendor => (
-                        <Option key={vendor.id} value={vendor.id}>
-                          {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
-                        </Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Row gutter={16}>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    name="status"
-                    label="Status (Optional)"
-                    tooltip="Payment status - only relevant after expense is approved and paid"
-                  >
-                    <Select placeholder="Select status (optional)" allowClear>
-                      {statusOptions.map(status => (
-                        <Option key={status} value={status}>
-                          {status.toUpperCase()}
-                        </Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col xs={24} sm={12}>
-                  <Form.Item
-                    name="receiptUrl"
-                    label="Receipt URL (Optional)"
-                  >
-                    <Input placeholder="Enter receipt URL" />
-                  </Form.Item>
-                </Col>
-              </Row>
-
-              <Form.Item
-                name="notes"
-                label="Notes (Optional)"
-              >
-                <TextArea rows={2} placeholder="Additional notes" />
-              </Form.Item>
-
-              <Form.Item>
-                <Space>
-                  <Button type="primary" htmlType="submit" loading={submittingExpense}>
-                    {editingExpense ? 'Update' : 'Create'} Expense
-                  </Button>
-                  <Button onClick={() => {
-                    setModalVisible(false);
-                    setMultipleMode(false);
-                    form.resetFields();
-                  }} disabled={submittingExpense}>
                     Cancel
                   </Button>
-                </Space>
-              </Form.Item>
-            </>
-          )}
-        </Form>
-      </Modal>
+                  <Button type="submit" disabled={submittingExpense}>
+                    {submittingExpense && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                    Create {expenseFields.length} Expense(s)
+                  </Button>
+                </div>
+              </div>
+              </>
+              ) : (
+              <>
+              {/* Single expense form */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="category"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Category</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select category" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {expenseCategories.map(category => (
+                            <SelectItem key={category} value={category}>{category}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="amount"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Amount</FormLabel>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="0.00"
+                          value={field.value || undefined}
+                          onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-      {/* Rejection Modal */}
-      <Modal
-        title="Reject Expense Request"
-        open={rejectionModalVisible}
-        onCancel={() => {
+              <FormField
+                control={form.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Description</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={3}
+                        placeholder="Enter expense description"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="expenseDate"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Expense Date</FormLabel>
+                      <FormControl>
+                        <DatePicker
+                          date={field.value}
+                          onDateChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="paymentMethod"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Payment Method (Optional)</FormLabel>
+                      <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select payment method (optional)" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {paymentMethods.map(method => (
+                            <SelectItem key={method} value={method}>
+                              {formatPaymentMethod(method)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="jobId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Associated Job (Optional)</FormLabel>
+                      <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select job (leave empty for general expense)" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {jobs.map(job => (
+                            <SelectItem key={job.id} value={job.id}>
+                              {job.jobNumber} - {job.title}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="vendorId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Vendor (Optional)</FormLabel>
+                      <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select vendor" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {vendors.map(vendor => (
+                            <SelectItem key={vendor.id} value={vendor.id}>
+                              {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
+                  name="status"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Status (Optional)</FormLabel>
+                      <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select status (optional)" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {statusOptions.map(status => (
+                            <SelectItem key={status} value={status}>
+                              {status.toUpperCase()}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="receiptUrl"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Receipt URL (Optional)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Enter receipt URL" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes (Optional)</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={2}
+                        placeholder="Additional notes"
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              </>
+              )}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => {
+                  setModalVisible(false);
+                  setMultipleMode(false);
+                  form.reset();
+                }} disabled={submittingExpense}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={submittingExpense}>
+                  {submittingExpense && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  {editingExpense ? 'Update' : 'Create'} Expense
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rejection Dialog */}
+      <Dialog open={rejectionModalVisible} onOpenChange={(open) => {
+        if (!open) {
           setRejectionModalVisible(false);
           setRejectingExpense(null);
-        }}
-        onOk={() => rejectionForm.submit()}
-        okText="Reject"
-        okButtonProps={{ danger: true }}
-        confirmLoading={rejectingExpenseLoading}
-      >
-        {rejectingExpense && (
-          <>
-            <div style={{ marginBottom: 16 }}>
-              <strong>Expense:</strong> {rejectingExpense.expenseNumber}
-              <br />
-              <strong>Amount:</strong> GHS {parseFloat(rejectingExpense.amount).toFixed(2)}
-              <br />
-              <strong>Description:</strong> {rejectingExpense.description}
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject Expense Request</DialogTitle>
+            <DialogDescription>
+              Please provide a reason for rejecting this expense request
+            </DialogDescription>
+          </DialogHeader>
+          {rejectingExpense && (
+            <div className="mb-4 p-4 bg-muted rounded-md">
+              <div><strong>Expense:</strong> {rejectingExpense.expenseNumber}</div>
+              <div><strong>Amount:</strong> GHS {parseFloat(rejectingExpense.amount).toFixed(2)}</div>
+              <div><strong>Description:</strong> {rejectingExpense.description}</div>
             </div>
-            <Form
-              form={rejectionForm}
-              layout="vertical"
-              onFinish={handleRejectSubmit}
-            >
-              <Form.Item
+          )}
+          <Form {...rejectionForm}>
+            <form onSubmit={rejectionForm.handleSubmit(onReject)} className="space-y-4">
+              <FormField
+                control={rejectionForm.control}
                 name="rejectionReason"
-                label="Reason for Rejection"
-                rules={[{ required: true, message: 'Please provide a reason for rejection' }]}
-              >
-                <TextArea
-                  rows={4}
-                  placeholder="Explain why this expense request is being rejected..."
-                />
-              </Form.Item>
-            </Form>
-          </>
-        )}
-      </Modal>
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Reason for Rejection</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        rows={4}
+                        placeholder="Explain why this expense request is being rejected..."
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => {
+                  setRejectionModalVisible(false);
+                  setRejectingExpense(null);
+                }}>
+                  Cancel
+                </Button>
+                <Button type="submit" variant="destructive" disabled={rejectingExpenseLoading}>
+                  {rejectingExpenseLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                  Reject
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
 
       {/* Expense Details Drawer */}
       <DetailsDrawer
@@ -1348,112 +1671,127 @@ const Expenses = () => {
             label: 'Details',
             content: (
               <Descriptions column={1} bordered>
-                <Descriptions.Item label="Expense Number">
+                <DescriptionItem label="Expense Number">
                   <strong>{viewingExpense.expenseNumber}</strong>
-                </Descriptions.Item>
-                <Descriptions.Item label="Date">
+                </DescriptionItem>
+                <DescriptionItem label="Date">
                   {viewingExpense.expenseDate ? dayjs(viewingExpense.expenseDate).format('MMMM DD, YYYY') : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Category">
-                  <Tag color="blue">{viewingExpense.category}</Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="Description">
+                </DescriptionItem>
+                <DescriptionItem label="Category">
+                  <Badge className="bg-blue-600">{viewingExpense.category}</Badge>
+                </DescriptionItem>
+                <DescriptionItem label="Description">
                   {viewingExpense.description || '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Amount">
-                  <strong style={{ fontSize: '18px', color: '#1890ff' }}>
+                </DescriptionItem>
+                <DescriptionItem label="Amount">
+                  <strong style={{ fontSize: '18px', color: '#166534' }}>
                     GHS {parseFloat(viewingExpense.amount || 0).toFixed(2)}
                   </strong>
-                </Descriptions.Item>
-                <Descriptions.Item label="Payment Method">
+                </DescriptionItem>
+                <DescriptionItem label="Payment Method">
                   {viewingExpense.paymentMethod ? formatPaymentMethod(viewingExpense.paymentMethod) : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Payment Status">
+                </DescriptionItem>
+                <DescriptionItem label="Payment Status">
                   {viewingExpense.status ? (
-                    <Tag color={{
-                      pending: 'orange',
-                      paid: 'green',
-                      overdue: 'red'
-                    }[viewingExpense.status]}>
-                      {viewingExpense.status.toUpperCase()}
-                    </Tag>
+                    <StatusChip status={viewingExpense.status} />
                   ) : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Approval Status">
+                </DescriptionItem>
+                <DescriptionItem label="Approval Status">
                   {viewingExpense.approvalStatus ? (
-                    <Tag color={{
-                      draft: 'default',
-                      pending_approval: 'orange',
-                      approved: 'green',
-                      rejected: 'red'
-                    }[viewingExpense.approvalStatus]}>
-                      {viewingExpense.approvalStatus === 'pending_approval' ? 'PENDING APPROVAL' : 
-                       viewingExpense.approvalStatus.toUpperCase()}
-                    </Tag>
+                    <StatusChip status={viewingExpense.approvalStatus} />
                   ) : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Vendor">
+                </DescriptionItem>
+                <DescriptionItem label="Vendor">
                   {viewingExpense.vendor ? (
                     <span>{viewingExpense.vendor.name} {viewingExpense.vendor.company ? `(${viewingExpense.vendor.company})` : ''}</span>
                   ) : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Job">
-                  {viewingExpense.job ? (
-                    <span>{viewingExpense.job.jobNumber} - {viewingExpense.job.title}</span>
-                  ) : 'General Expense'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Submitted By">
+                </DescriptionItem>
+                {isPrintingPress && (
+                  <DescriptionItem label="Job">
+                    {viewingExpense.job ? (
+                      <span>{viewingExpense.job.jobNumber} - {viewingExpense.job.title}</span>
+                    ) : 'General Expense'}
+                  </DescriptionItem>
+                )}
+                <DescriptionItem label="Submitted By">
                   {viewingExpense.submitter ? (
                     <span>{viewingExpense.submitter.name} ({viewingExpense.submitter.email})</span>
                   ) : '-'}
-                </Descriptions.Item>
+                </DescriptionItem>
                 {viewingExpense.approver && (
-                  <Descriptions.Item label="Approved By">
+                  <DescriptionItem label="Approved By">
                     <span>{viewingExpense.approver.name} ({viewingExpense.approver.email})</span>
-                  </Descriptions.Item>
+                  </DescriptionItem>
                 )}
                 {viewingExpense.approvedAt && (
-                  <Descriptions.Item label="Approved At">
+                  <DescriptionItem label="Approved At">
                     {dayjs(viewingExpense.approvedAt).format('MMMM DD, YYYY [at] hh:mm A')}
-                  </Descriptions.Item>
+                  </DescriptionItem>
                 )}
                 {viewingExpense.rejectionReason && (
-                  <Descriptions.Item label="Rejection Reason">
+                  <DescriptionItem label="Rejection Reason">
                     <span style={{ color: '#ff4d4f' }}>{viewingExpense.rejectionReason}</span>
-                  </Descriptions.Item>
+                  </DescriptionItem>
                 )}
                 {viewingExpense.receiptUrl && (
-                  <Descriptions.Item label="Receipt">
+                  <DescriptionItem label="Receipt">
                     <a href={viewingExpense.receiptUrl} target="_blank" rel="noopener noreferrer">
                       View Receipt
                     </a>
-                  </Descriptions.Item>
+                  </DescriptionItem>
                 )}
                 {viewingExpense.isRecurring && (
-                  <Descriptions.Item label="Recurring">
-                    <Tag color="purple">Yes</Tag>
+                  <DescriptionItem label="Recurring">
+                    <Badge className="bg-purple-600">Yes</Badge>
                     {viewingExpense.recurringFrequency && (
-                      <Tag style={{ marginLeft: 8 }}>
+                      <Badge variant="outline" className="ml-2">
                         {viewingExpense.recurringFrequency.charAt(0).toUpperCase() + 
                          viewingExpense.recurringFrequency.slice(1)}
-                      </Tag>
+                      </Badge>
                     )}
-                  </Descriptions.Item>
+                  </DescriptionItem>
                 )}
-                <Descriptions.Item label="Notes">
+                <DescriptionItem label="Notes">
                   {viewingExpense.notes || '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Created At">
+                </DescriptionItem>
+                <DescriptionItem label="Created At">
                   {viewingExpense.createdAt ? dayjs(viewingExpense.createdAt).format('MMMM DD, YYYY [at] hh:mm A') : '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Last Updated">
+                </DescriptionItem>
+                <DescriptionItem label="Last Updated">
                   {viewingExpense.updatedAt ? dayjs(viewingExpense.updatedAt).format('MMMM DD, YYYY [at] hh:mm A') : '-'}
-                </Descriptions.Item>
+                </DescriptionItem>
               </Descriptions>
             )
           }
         ] : null}
       />
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the expense.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (expenseToDelete) {
+                  handleDelete(expenseToDelete.id);
+                  setExpenseToDelete(null);
+                }
+                setDeleteConfirmOpen(false);
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

@@ -30,6 +30,11 @@ const Tenant = sequelize.define('Tenant', {
     allowNull: false,
     defaultValue: 'trial'
   },
+  businessType: {
+    type: DataTypes.ENUM('printing_press', 'shop', 'pharmacy'),
+    allowNull: true,
+    defaultValue: null
+  },
   metadata: {
     type: DataTypes.JSONB,
     allowNull: false,

@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import {
-  Card,
   Select,
   DatePicker,
   Button,
@@ -8,7 +7,6 @@ import {
   Row,
   Col,
   Spin,
-  message,
   Table,
   Tag,
   Statistic,
@@ -22,24 +20,31 @@ import {
   Form,
   Dropdown
 } from 'antd';
+import { Card as AntdCard } from 'antd';
+import { showSuccess, showError, showWarning } from '../utils/toast';
+import StatusChip from '../components/StatusChip';
+import TableSkeleton from '../components/TableSkeleton';
+import DetailSkeleton from '../components/DetailSkeleton';
+import { Skeleton } from '../components/ui/skeleton';
+import { Card, CardContent } from '../components/ui/card';
 
 const { RangePicker } = DatePicker;
 import {
-  DownloadOutlined,
-  BarChartOutlined,
-  DollarOutlined,
-  ShoppingOutlined,
-  FileTextOutlined,
-  CalendarOutlined,
-  RobotOutlined,
-  ThunderboltOutlined,
-  EyeOutlined,
-  TeamOutlined,
-  CloseCircleOutlined,
-  CheckCircleOutlined,
-  PlusOutlined,
-  DownOutlined
-} from '@ant-design/icons';
+  Download,
+  BarChart3,
+  DollarSign,
+  ShoppingCart,
+  FileText,
+  Calendar,
+  Bot,
+  Zap,
+  Eye,
+  Users,
+  XCircle,
+  CheckCircle,
+  Plus,
+  ChevronDown
+} from 'lucide-react';
 import {
   LineChart,
   Line,
@@ -56,6 +61,7 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import reportService from '../services/reportService';
+import { useAuth } from '../context/AuthContext';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
@@ -66,6 +72,10 @@ const { CheckableTag } = Tag;
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
 
 const Reports = () => {
+  const { activeTenant } = useAuth();
+  const businessType = activeTenant?.businessType || 'printing_press';
+  const isPrintingPress = businessType === 'printing_press';
+  
   const [activeTab, setActiveTab] = useState('overview');
   const [loading, setLoading] = useState(false);
   const [reportType, setReportType] = useState('revenue');
@@ -510,7 +520,7 @@ const Reports = () => {
       });
     } catch (error) {
       console.error('Error fetching overview stats:', error);
-      message.error('Failed to load overview statistics');
+      showError(null, 'Failed to load overview statistics');
     } finally {
       setLoading(false);
     }
@@ -545,7 +555,7 @@ const Reports = () => {
       await generateSmartReport(reportConfig);
     } catch (error) {
       console.error('Error creating report:', error);
-      message.error('Failed to create report');
+      showError(null, 'Failed to create report');
       setAiLoading(false);
     }
   };
@@ -771,9 +781,9 @@ const Reports = () => {
               revenueChange > 0 
                 ? `Revenue has ${revenueChange > 0 ? 'increased' : 'decreased'} by ${Math.abs(revenueChange).toFixed(1)}% compared to the previous period.`
                 : 'Revenue remains stable compared to the previous period.',
-              salesData.data?.byJobType?.length > 0
-                ? `Your top service category (${salesData.data.byJobType[0]?.jobType || 'N/A'}) accounts for ${revenue > 0 ? ((parseFloat(salesData.data.byJobType[0]?.totalSales || 0) / revenue) * 100).toFixed(1) : 0}% of total revenue.`
-                : 'Service performance data is being analyzed.',
+              ...(isPrintingPress && salesData.data?.byJobType?.length > 0
+                ? [`Your top service category (${salesData.data.byJobType[0]?.jobType || 'N/A'}) accounts for ${revenue > 0 ? ((parseFloat(salesData.data.byJobType[0]?.totalSales || 0) / revenue) * 100).toFixed(1) : 0}% of total revenue.`]
+                : ['Service performance data is being analyzed.']),
               outstandingData.data?.totalOutstanding > 0
                 ? `Outstanding payments total GHS ${outstandingData.data.totalOutstanding.toLocaleString()}. Consider implementing automated payment reminders.`
                 : 'All payments are up to date.',
@@ -829,10 +839,10 @@ const Reports = () => {
       };
 
       setGeneratedReport(mockReport);
-      message.success('Smart report generated successfully!');
+      showSuccess('Smart report generated successfully!');
     } catch (error) {
       console.error('Error generating report:', error);
-      message.error('Failed to generate report');
+      showError(null, 'Failed to generate report');
     } finally {
       setAiLoading(false);
     }
@@ -870,7 +880,7 @@ const Reports = () => {
       setReportData(response.data);
     } catch (error) {
       console.error('Error fetching report:', error);
-      message.error('Failed to load report data');
+      showError(null, 'Failed to load report data');
     } finally {
       setLoading(false);
     }
@@ -878,7 +888,7 @@ const Reports = () => {
 
   const handleDownloadPDF = async () => {
     if (!reportData) {
-      message.warning('No report data to download');
+      showWarning('No report data to download');
       return;
     }
 
@@ -890,7 +900,7 @@ const Reports = () => {
       
       const reportElement = document.getElementById('report-content');
       if (!reportElement) {
-        message.error({ content: 'Report content not found', key: 'pdf' });
+        showError(null, 'Report content not found');
         return;
       }
 
@@ -905,10 +915,10 @@ const Reports = () => {
       await html2pdf().set(opt).from(reportElement).save();
       
       message.destroy('pdf');
-      message.success('PDF downloaded successfully!');
+      showSuccess('PDF downloaded successfully!');
     } catch (error) {
       console.error('Error generating PDF:', error);
-      message.error({ content: 'Failed to generate PDF', key: 'pdf' });
+      showError(null, 'Failed to generate PDF');
     }
   };
 
@@ -939,7 +949,7 @@ const Reports = () => {
       <div id="report-content">
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={24}>
-            <Card>
+            <AntdCard>
               <Statistic
                 title="Total Revenue"
                 value={totalRevenue}
@@ -947,13 +957,13 @@ const Reports = () => {
                 precision={2}
                 valueStyle={{ color: '#3f8600' }}
               />
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={24}>
-            <Card title="Revenue Trend" extra={
+            <AntdCard title="Revenue Trend" extra={
               <Select value={groupBy} onChange={setGroupBy} style={{ width: 120 }}>
                 <Option value="day">By Day</Option>
                 <Option value="month">By Month</Option>
@@ -969,13 +979,13 @@ const Reports = () => {
                   <Line type="monotone" dataKey="revenue" stroke="#8884d8" strokeWidth={2} name="Revenue" />
                 </LineChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={12}>
-            <Card title="Top Customers">
+            <AntdCard title="Top Customers">
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={customerChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -985,10 +995,10 @@ const Reports = () => {
                   <Bar dataKey="revenue" fill="#8884d8" />
                 </BarChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
           <Col span={12}>
-            <Card title="Revenue by Payment Method">
+            <AntdCard title="Revenue by Payment Method">
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
@@ -1008,13 +1018,13 @@ const Reports = () => {
                   <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                 </PieChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16}>
           <Col span={24}>
-            <Card title="Customer Details">
+            <AntdCard title="Customer Details">
               <Table
                 dataSource={byCustomer || []}
                 rowKey={(record) => record.customerId || Math.random()}
@@ -1044,7 +1054,7 @@ const Reports = () => {
                   },
                 ]}
               />
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
       </div>
@@ -1075,7 +1085,7 @@ const Reports = () => {
       <div id="report-content">
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={24}>
-            <Card>
+            <AntdCard>
               <Statistic
                 title="Total Expenses"
                 value={totalExpenses}
@@ -1083,13 +1093,13 @@ const Reports = () => {
                 precision={2}
                 valueStyle={{ color: '#cf1322' }}
               />
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={12}>
-            <Card title="Expenses by Category">
+            <AntdCard title="Expenses by Category">
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
@@ -1109,10 +1119,10 @@ const Reports = () => {
                   <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                 </PieChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
           <Col span={12}>
-            <Card title="Top Vendors">
+            <AntdCard title="Top Vendors">
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={vendorChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -1122,13 +1132,13 @@ const Reports = () => {
                   <Bar dataKey="amount" fill="#ff4d4f" />
                 </BarChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={24}>
-            <Card title="Expense Trend">
+            <AntdCard title="Expense Trend">
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={dateChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -1139,13 +1149,13 @@ const Reports = () => {
                   <Line type="monotone" dataKey="amount" stroke="#ff4d4f" strokeWidth={2} name="Expenses" />
                 </LineChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16}>
           <Col span={12}>
-            <Card title="Expenses by Category">
+            <AntdCard title="Expenses by Category">
               <Table
                 dataSource={byCategory || []}
                 rowKey="category"
@@ -1161,10 +1171,10 @@ const Reports = () => {
                   { title: 'Count', dataIndex: 'count', key: 'count' },
                 ]}
               />
-            </Card>
+            </AntdCard>
           </Col>
           <Col span={12}>
-            <Card title="Top Vendors">
+            <AntdCard title="Top Vendors">
               <Table
                 dataSource={byVendor?.slice(0, 10) || []}
                 rowKey={(record) => record.vendorId || Math.random()}
@@ -1184,7 +1194,7 @@ const Reports = () => {
                   { title: 'Count', dataIndex: 'count', key: 'count' },
                 ]}
               />
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
       </div>
@@ -1212,7 +1222,7 @@ const Reports = () => {
       <div id="report-content">
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={24}>
-            <Card>
+            <AntdCard>
               <Statistic
                 title="Total Outstanding"
                 value={totalOutstanding}
@@ -1220,13 +1230,13 @@ const Reports = () => {
                 precision={2}
                 valueStyle={{ color: '#cf1322' }}
               />
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={12}>
-            <Card title="Outstanding by Customer">
+            <AntdCard title="Outstanding by Customer">
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={customerChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -1236,10 +1246,10 @@ const Reports = () => {
                   <Bar dataKey="amount" fill="#ff4d4f" />
                 </BarChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
           <Col span={12}>
-            <Card title="Aging Analysis">
+            <AntdCard title="Aging Analysis">
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
@@ -1259,13 +1269,13 @@ const Reports = () => {
                   <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
                 </PieChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16}>
           <Col span={24}>
-            <Card title="Outstanding Invoices">
+            <AntdCard title="Outstanding Invoices">
               <Table
                 dataSource={invoices || []}
                 rowKey="id"
@@ -1298,17 +1308,12 @@ const Reports = () => {
                     dataIndex: 'status',
                     key: 'status',
                     render: (status) => {
-                      const colors = {
-                        sent: 'blue',
-                        partial: 'orange',
-                        overdue: 'red',
-                      };
-                      return <Tag color={colors[status]}>{status?.toUpperCase()}</Tag>;
+                      return <StatusChip status={status} />;
                     },
                   },
                 ]}
               />
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
       </div>
@@ -1320,10 +1325,10 @@ const Reports = () => {
 
     const { totalSales, byJobType, byCustomer, byDate, byStatus } = reportData;
 
-    const jobTypeChartData = byJobType?.map(item => ({
+    const jobTypeChartData = isPrintingPress && byJobType ? byJobType.map(item => ({
       name: item.jobType || 'Unknown',
       value: parseFloat(item.totalSales || 0)
-    })) || [];
+    })) : [];
 
     const customerChartData = byCustomer?.slice(0, 10).map(item => ({
       name: item.customer?.name || 'Unknown',
@@ -1339,7 +1344,7 @@ const Reports = () => {
       <div id="report-content">
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={24}>
-            <Card>
+            <AntdCard>
               <Statistic
                 title="Total Sales"
                 value={totalSales}
@@ -1347,36 +1352,38 @@ const Reports = () => {
                 precision={2}
                 valueStyle={{ color: '#3f8600' }}
               />
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={12}>
-            <Card title="Sales by Job Type">
-              <ResponsiveContainer width="100%" height={300}>
-                <PieChart>
-                  <Pie
-                    data={jobTypeChartData}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="value"
-                  >
-                    {jobTypeChartData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
-                </PieChart>
-              </ResponsiveContainer>
-            </Card>
-          </Col>
-          <Col span={12}>
-            <Card title="Top Customers">
+          {isPrintingPress && (
+            <Col span={12}>
+              <AntdCard title="Sales by Job Type">
+                <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={jobTypeChartData}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      outerRadius={80}
+                      fill="#8884d8"
+                      dataKey="value"
+                    >
+                      {jobTypeChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </AntdCard>
+            </Col>
+          )}
+          <Col span={isPrintingPress ? 12 : 24}>
+            <AntdCard title="Top Customers">
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={customerChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -1386,13 +1393,13 @@ const Reports = () => {
                   <Bar dataKey="sales" fill="#8884d8" />
                 </BarChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={24}>
-            <Card title="Sales Trend">
+            <AntdCard title="Sales Trend">
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={dateChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -1403,38 +1410,40 @@ const Reports = () => {
                   <Line type="monotone" dataKey="sales" stroke="#8884d8" strokeWidth={2} name="Sales" />
                 </LineChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16}>
-          <Col span={12}>
-            <Card title="Sales by Job Type">
-              <Table
-                dataSource={byJobType || []}
-                rowKey="jobType"
-                pagination={false}
-                columns={[
-                  { title: 'Job Type', dataIndex: 'jobType', key: 'jobType' },
-                  {
-                    title: 'Total Sales',
-                    dataIndex: 'totalSales',
-                    key: 'sales',
-                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
-                  },
-                  { title: 'Jobs', dataIndex: 'jobCount', key: 'count' },
-                  {
-                    title: 'Avg Price',
-                    dataIndex: 'averagePrice',
-                    key: 'avg',
-                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
-                  },
-                ]}
-              />
-            </Card>
-          </Col>
-          <Col span={12}>
-            <Card title="Sales by Status">
+          {isPrintingPress && (
+            <Col span={12}>
+              <AntdCard title="Sales by Job Type">
+                <Table
+                  dataSource={byJobType || []}
+                  rowKey="jobType"
+                  pagination={false}
+                  columns={[
+                    { title: 'Job Type', dataIndex: 'jobType', key: 'jobType' },
+                    {
+                      title: 'Total Sales',
+                      dataIndex: 'totalSales',
+                      key: 'sales',
+                      render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
+                    },
+                    { title: 'Jobs', dataIndex: 'jobCount', key: 'count' },
+                    {
+                      title: 'Avg Price',
+                      dataIndex: 'averagePrice',
+                      key: 'avg',
+                      render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
+                    },
+                  ]}
+                />
+              </AntdCard>
+            </Col>
+          )}
+          <Col span={isPrintingPress ? 12 : 24}>
+            <AntdCard title="Sales by Status">
               <Table
                 dataSource={byStatus || []}
                 rowKey="status"
@@ -1445,9 +1454,7 @@ const Reports = () => {
                     dataIndex: 'status',
                     key: 'status',
                     render: (status) => (
-                      <Tag color={status === 'completed' ? 'green' : status === 'in_progress' ? 'blue' : 'orange'}>
-                        {status?.toUpperCase()}
-                      </Tag>
+                      <StatusChip status={status} />
                     ),
                   },
                   {
@@ -1459,7 +1466,7 @@ const Reports = () => {
                   { title: 'Jobs', dataIndex: 'jobCount', key: 'count' },
                 ]}
               />
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
       </div>
@@ -1481,7 +1488,7 @@ const Reports = () => {
       <div id="report-content">
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={8}>
-            <Card>
+            <AntdCard>
               <Statistic
                 title="Revenue"
                 value={revenue}
@@ -1489,10 +1496,10 @@ const Reports = () => {
                 precision={2}
                 valueStyle={{ color: '#3f8600' }}
               />
-            </Card>
+            </AntdCard>
           </Col>
           <Col span={8}>
-            <Card>
+            <AntdCard>
               <Statistic
                 title="Expenses"
                 value={expenses}
@@ -1500,10 +1507,10 @@ const Reports = () => {
                 precision={2}
                 valueStyle={{ color: '#cf1322' }}
               />
-            </Card>
+            </AntdCard>
           </Col>
           <Col span={8}>
-            <Card>
+            <AntdCard>
               <Statistic
                 title="Gross Profit"
                 value={grossProfit}
@@ -1511,13 +1518,13 @@ const Reports = () => {
                 precision={2}
                 valueStyle={{ color: grossProfit >= 0 ? '#3f8600' : '#cf1322' }}
               />
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={24}>
-            <Card>
+            <AntdCard>
               <Statistic
                 title="Profit Margin"
                 value={profitMargin}
@@ -1525,13 +1532,13 @@ const Reports = () => {
                 precision={2}
                 valueStyle={{ color: profitMargin >= 0 ? '#3f8600' : '#cf1322' }}
               />
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
         <Row gutter={16}>
           <Col span={24}>
-            <Card title="Profit & Loss Overview">
+            <AntdCard title="Profit & Loss Overview">
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={profitData}>
                   <CartesianGrid strokeDasharray="3 3" />
@@ -1545,7 +1552,7 @@ const Reports = () => {
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
       </div>
@@ -1570,11 +1577,11 @@ const Reports = () => {
   };
 
   const reportTypes = [
-    { value: 'revenue', label: 'Revenue Report', icon: <DollarOutlined /> },
-    { value: 'expenses', label: 'Expense Report', icon: <ShoppingOutlined /> },
-    { value: 'outstanding', label: 'Outstanding Payments', icon: <FileTextOutlined /> },
-    { value: 'sales', label: 'Sales Report', icon: <BarChartOutlined /> },
-    { value: 'profit-loss', label: 'Profit & Loss', icon: <BarChartOutlined /> },
+    { value: 'revenue', label: 'Revenue Report', icon: <DollarSign className="h-4 w-4" /> },
+    { value: 'expenses', label: 'Expense Report', icon: <ShoppingCart className="h-4 w-4" /> },
+    { value: 'outstanding', label: 'Outstanding Payments', icon: <FileText className="h-4 w-4" /> },
+    { value: 'sales', label: 'Sales Report', icon: <BarChart3 className="h-4 w-4" /> },
+    { value: 'profit-loss', label: 'Profit & Loss', icon: <BarChart3 className="h-4 w-4" /> },
   ];
 
   const cardStyle = {
@@ -1893,7 +1900,7 @@ const Reports = () => {
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
           {/* Card 1: Financial Summary */}
           <Col xs={24} md={8}>
-            <Card style={cardStyle} bodyStyle={{ padding: '24px' }}>
+            <AntdCard style={cardStyle} bodyStyle={{ padding: '24px' }}>
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 <div>
                   <Text style={{ fontSize: 13, color: '#8c8c8c', fontWeight: 400 }}>Revenue growth {overviewStats?.periodTypeLabel || 'M/M'}</Text>
@@ -1927,12 +1934,12 @@ const Reports = () => {
                   </Text>
                 </div>
               </Space>
-            </Card>
+            </AntdCard>
           </Col>
 
           {/* Card 2: Expense Chart */}
           <Col xs={24} md={8}>
-            <Card 
+            <AntdCard 
               title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>Expense Breakdown</span>}
               style={cardStyle}
               bodyStyle={{ padding: '20px 24px' }}
@@ -1981,12 +1988,12 @@ const Reports = () => {
                   <Text type="secondary" style={{ fontSize: 12 }}>No expense data available for this period</Text>
                 )}
               </div>
-            </Card>
+            </AntdCard>
           </Col>
 
           {/* Card 3: Jobs Summary */}
           <Col xs={24} md={8}>
-            <Card style={cardStyle} bodyStyle={{ padding: '24px' }}>
+            <AntdCard style={cardStyle} bodyStyle={{ padding: '24px' }}>
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 <div>
                   <Text style={{ fontSize: 13, color: '#8c8c8c', fontWeight: 400 }}>Total Jobs</Text>
@@ -2026,7 +2033,7 @@ const Reports = () => {
                   </div>
                 </div>
               </Space>
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
@@ -2034,7 +2041,7 @@ const Reports = () => {
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
           {/* Card 4: Revenue Generated */}
           <Col xs={24} md={16}>
-            <Card style={cardStyle} bodyStyle={{ padding: '24px' }}>
+            <AntdCard style={cardStyle} bodyStyle={{ padding: '24px' }}>
               <div style={{ marginBottom: 20 }}>
                 <Text style={{ fontSize: 13, color: '#8c8c8c', display: 'block', marginBottom: 8 }}>Total revenue generated</Text>
                 <Title level={2} style={{ margin: 0, color: '#006d32', fontSize: 28, fontWeight: 700 }}>
@@ -2083,12 +2090,12 @@ const Reports = () => {
                   <Text type="secondary">No revenue data available for this period</Text>
                 </div>
               )}
-            </Card>
+            </AntdCard>
           </Col>
 
           {/* Card 5: Jobs Trend */}
           <Col xs={24} md={8}>
-            <Card 
+            <AntdCard 
               title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>Jobs Trend</span>}
               style={cardStyle}
               bodyStyle={{ padding: '20px 24px' }}
@@ -2124,7 +2131,7 @@ const Reports = () => {
                   <Text type="secondary">No jobs data available for this period</Text>
                 </div>
               )}
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
 
@@ -2132,7 +2139,7 @@ const Reports = () => {
         <Row gutter={[16, 16]}>
           {/* Card 6: Top 5 Services/Customers */}
           <Col xs={24} md={12}>
-            <Card 
+            <AntdCard 
               title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>Top 5 Revenue Sources</span>}
               style={cardStyle}
               bodyStyle={{ padding: '20px 24px' }}
@@ -2199,12 +2206,12 @@ const Reports = () => {
                   <Text type="secondary">No revenue sources data available</Text>
                 </div>
               )}
-            </Card>
+            </AntdCard>
           </Col>
 
           {/* Card 7: Revenue by Channel */}
           <Col xs={24} md={12}>
-            <Card 
+            <AntdCard 
               title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>Revenue by Channel</span>}
               style={cardStyle}
               bodyStyle={{ padding: '20px 24px' }}
@@ -2237,7 +2244,7 @@ const Reports = () => {
                       />
                       <Bar 
                         dataKey="value" 
-                        fill="#1890ff" 
+                        fill="#166534" 
                         radius={[0, 4, 4, 0]}
                       />
                     </BarChart>
@@ -2262,7 +2269,7 @@ const Reports = () => {
                               {percentage.toFixed(1)}% of total
                             </Text>
                           </div>
-                          <Text style={{ color: '#1890ff', fontSize: 16, fontWeight: 700, marginLeft: 16 }}>
+                          <Text style={{ color: '#166534', fontSize: 16, fontWeight: 700, marginLeft: 16 }}>
                             GHS {(item.revenue / 1000).toFixed(2)}K
                           </Text>
                         </div>
@@ -2275,7 +2282,7 @@ const Reports = () => {
                   <Text type="secondary">No channel data available</Text>
                 </div>
               )}
-            </Card>
+            </AntdCard>
           </Col>
         </Row>
       </div>
@@ -2312,7 +2319,7 @@ const Reports = () => {
         <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <Title level={4} style={{ margin: 0 }}>
-              <RobotOutlined /> Smart Report Generator
+              <Bot className="h-4 w-4" /> Smart Report Generator
             </Title>
             <Text type="secondary">
               Configure and generate comprehensive business intelligence reports with AI-powered insights
@@ -2321,7 +2328,7 @@ const Reports = () => {
           <Button
             type="primary"
             size="large"
-            icon={<PlusOutlined />}
+            icon={<Plus className="h-4 w-4" />}
             onClick={handleOpenCreateReportModal}
           >
             Create Report
@@ -2330,27 +2337,23 @@ const Reports = () => {
 
         {/* Loading State */}
         {aiLoading && (
-          <Card style={cardStyle}>
-            <div style={{ textAlign: 'center', padding: '60px 0' }}>
-              <Spin size="large" tip="Generating your smart report..." />
-              <div style={{ marginTop: 24 }}>
-                <Progress 
-                  percent={Math.floor(Math.random() * 30) + 60} 
-                  status="active"
-                />
-                <Text type="secondary" style={{ display: 'block', marginTop: 12, fontSize: 14 }}>
-                  Analyzing business data and applying AI models...
-                </Text>
+          <AntdCard style={cardStyle}>
+            <div className="space-y-6 p-12">
+              <div className="text-center">
+                <Skeleton className="h-12 w-12 mx-auto mb-4 rounded-full" />
+                <Skeleton className="h-6 w-64 mx-auto mb-2" />
+                <Skeleton className="h-4 w-48 mx-auto" />
               </div>
+              <Skeleton className="h-2 w-full" />
             </div>
-          </Card>
+          </AntdCard>
         )}
 
         {/* Empty State */}
         {!generatedReport && !aiLoading && (
-          <Card style={cardStyle}>
+          <AntdCard style={cardStyle}>
             <div style={{ textAlign: 'center', padding: '80px 40px' }}>
-              <FileTextOutlined style={{ fontSize: 64, color: '#d9d9d9', marginBottom: 16 }} />
+              <FileText className="h-16 w-16" style={{ fontSize: 64, color: '#d9d9d9', marginBottom: 16 }} />
               <Title level={4}>No Report Generated Yet</Title>
               <Paragraph type="secondary" style={{ maxWidth: 480, margin: '0 auto 24px' }}>
                 Click "Create Report" to configure and generate a comprehensive business intelligence report with AI-powered insights and recommendations.
@@ -2358,19 +2361,19 @@ const Reports = () => {
               <Button
                 type="primary"
                 size="large"
-                icon={<PlusOutlined />}
+                icon={<Plus className="h-4 w-4" />}
                 onClick={handleOpenCreateReportModal}
               >
                 Create Your First Report
               </Button>
             </div>
-          </Card>
+          </AntdCard>
         )}
 
         {generatedReport && !aiLoading && (
           <div id="generated-report-content">
             {/* Report Header */}
-            <Card style={{ ...cardStyle, marginBottom: 16 }}>
+            <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
@@ -2382,19 +2385,19 @@ const Reports = () => {
                     </Text>
                   </div>
                   <Space>
-                    <Button icon={<EyeOutlined />}>Print</Button>
-                    <Button type="primary" icon={<DownloadOutlined />}>
+                    <Button icon={<Eye className="h-4 w-4" />}>Print</Button>
+                    <Button type="primary" icon={<Download className="h-4 w-4" />}>
                       Export
                     </Button>
                   </Space>
                 </div>
                 <Paragraph style={{ margin: '16px 0 0 0', fontSize: 14 }}>{generatedReport.greeting}</Paragraph>
               </Space>
-            </Card>
+            </AntdCard>
 
             {/* Performance Summary */}
             {generatedReport.insights.find(i => i.type === 'performance') && (
-              <Card style={{ ...cardStyle, marginBottom: 16 }}>
+              <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
                 {(() => {
                   const perfSection = generatedReport.insights.find(i => i.type === 'performance');
                   return (
@@ -2428,12 +2431,12 @@ const Reports = () => {
                     </>
                   );
                 })()}
-              </Card>
+              </AntdCard>
             )}
 
             {/* Service Analytics Section */}
             {generatedReport.insights.find(i => i.type === 'service-analytics') && (
-              <Card style={{ ...cardStyle, marginBottom: 16 }}>
+              <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
                 {(() => {
                   const section = generatedReport.insights.find(i => i.type === 'service-analytics');
                   return (
@@ -2476,12 +2479,12 @@ const Reports = () => {
                     </>
                   );
                 })()}
-              </Card>
+              </AntdCard>
             )}
 
             {/* Cost Analysis Section */}
             {generatedReport.insights.find(i => i.type === 'cost-analysis') && (
-              <Card style={{ ...cardStyle, marginBottom: 16 }}>
+              <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
                 {(() => {
                   const section = generatedReport.insights.find(i => i.type === 'cost-analysis');
                   const chartData = section.data.map((item, index) => ({
@@ -2554,12 +2557,12 @@ const Reports = () => {
                     </>
                   );
                 })()}
-              </Card>
+              </AntdCard>
             )}
 
             {/* Invoice Summary Section */}
             {generatedReport.insights.find(i => i.type === 'invoice-summary') && (
-              <Card style={{ ...cardStyle, marginBottom: 16 }}>
+              <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
                 {(() => {
                   const section = generatedReport.insights.find(i => i.type === 'invoice-summary');
                   
@@ -2602,13 +2605,13 @@ const Reports = () => {
                     </>
                   );
                 })()}
-              </Card>
+              </AntdCard>
             )}
 
             {/* Footer */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 0', borderTop: '1px solid #f0f0f0' }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                Powered by <Text strong style={{ color: '#1890ff' }}>NEXpro Intelligence Systems</Text>
+                Powered by <Text strong style={{ color: '#166534' }}>NEXpro Intelligence Systems</Text>
               </Text>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 Copyright © {dayjs().year()} Nexus Creative Studio. Confidential and proprietary information.
@@ -2636,7 +2639,7 @@ const Reports = () => {
         onCancel={() => setCreateReportModalVisible(false)}
         footer={null}
         width={600}
-        closeIcon={<CloseCircleOutlined />}
+        closeIcon={<XCircle className="h-4 w-4" />}
       >
         <Form
           form={reportConfigForm}
@@ -2672,7 +2675,7 @@ const Reports = () => {
                 label="Year"
                 rules={[{ required: true, message: 'Please select year' }]}
               >
-                <Select size="large" placeholder="Select year" suffixIcon={<CalendarOutlined />}>
+                <Select size="large" placeholder="Select year" suffixIcon={<Calendar className="h-4 w-4" />}>
                   {years.map(year => (
                     <Option key={year} value={year}>{year}</Option>
                   ))}
@@ -2685,7 +2688,7 @@ const Reports = () => {
                 label="Month"
                 rules={[{ required: true, message: 'Please select month' }]}
               >
-                <Select size="large" placeholder="Select month" suffixIcon={<CalendarOutlined />}>
+                <Select size="large" placeholder="Select month" suffixIcon={<Calendar className="h-4 w-4" />}>
                   {months.map(month => (
                     <Option key={month} value={month}>{month}</Option>
                   ))}
@@ -2731,14 +2734,14 @@ const Reports = () => {
                     width: 20,
                     height: 20,
                     borderRadius: 4,
-                    border: selectedReportTypes.includes(type.value) ? '2px solid #1890ff' : '2px solid #d9d9d9',
-                    background: selectedReportTypes.includes(type.value) ? '#1890ff' : '#fff',
+                    border: selectedReportTypes.includes(type.value) ? '2px solid #166534' : '2px solid #d9d9d9',
+                    background: selectedReportTypes.includes(type.value) ? '#166534' : '#fff',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center'
                   }}>
                     {selectedReportTypes.includes(type.value) && (
-                      <CheckCircleOutlined style={{ color: '#fff', fontSize: 12 }} />
+                      <CheckCircle className="h-3 w-3" style={{ color: '#fff', fontSize: 12 }} />
                     )}
                   </div>
                 </div>
@@ -2783,7 +2786,7 @@ const Reports = () => {
             onChange={handleFilterChange}
             size="large"
             style={{ width: 180, borderRadius: 8 }}
-            suffixIcon={<CalendarOutlined />}
+            suffixIcon={<Calendar className="h-4 w-4" />}
           >
             <Option value="today">Today</Option>
             <Option value="yesterday">Yesterday</Option>
@@ -2813,7 +2816,7 @@ const Reports = () => {
         </Space>
       </div>
 
-      <Card 
+      <AntdCard 
         style={{ 
           borderRadius: '8px',
           border: '1px solid #f4f4f4'
@@ -2830,14 +2833,28 @@ const Reports = () => {
               key: 'overview',
               label: (
                 <span style={{ fontSize: 15, fontWeight: 500 }}>
-                  <BarChartOutlined /> Overview
+                  <BarChart3 className="h-4 w-4" /> Overview
                 </span>
               ),
               children: (
                 <div style={{ padding: '24px' }}>
                   {loading ? (
-                    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '60vh' }}>
-                      <Spin size="large" />
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        {Array.from({ length: 4 }).map((_, i) => (
+                          <Card key={i}>
+                            <CardContent className="pt-6">
+                              <Skeleton className="h-4 w-24 mb-2" />
+                              <Skeleton className="h-8 w-32" />
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                      <Card>
+                        <CardContent className="pt-6">
+                          <TableSkeleton rows={8} cols={5} />
+                        </CardContent>
+                      </Card>
                     </div>
                   ) : (
                     renderOverviewDashboard()
@@ -2849,7 +2866,7 @@ const Reports = () => {
               key: 'generated',
               label: (
                 <span style={{ fontSize: 15, fontWeight: 500 }}>
-                  <RobotOutlined /> Generated Report
+                  <Bot className="h-4 w-4" /> Generated Report
                 </span>
               ),
               children: (
@@ -2860,7 +2877,7 @@ const Reports = () => {
             }
         ]}
       />
-    </Card>
+    </AntdCard>
     </div>
     </>
   );

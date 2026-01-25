@@ -1,37 +1,64 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import {
-  Card,
-  Form,
-  Input,
-  Button,
-  Row,
-  Col,
-  Typography,
-  Divider,
-  Radio,
-  Space,
-  Alert,
-  message,
-  Spin
-} from 'antd';
-import {
-  CreditCardOutlined,
-  MobileOutlined,
-  CheckCircleOutlined,
-  ArrowLeftOutlined
-} from '@ant-design/icons';
+  CreditCard,
+  Smartphone,
+  CheckCircle,
+  ArrowLeft,
+  Loader2
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useMutation } from '@tanstack/react-query';
 import settingsService from '../services/settingsService';
+import { showSuccess, showError } from '../utils/toast';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Separator } from '@/components/ui/separator';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import { Info } from 'lucide-react';
 
-const { Title, Text } = Typography;
+const cardSchema = z.object({
+  cardNumber: z.string()
+    .min(13, 'Card number must be at least 13 digits')
+    .max(19, 'Card number must be at most 19 digits')
+    .regex(/^\d+$/, 'Card number must contain only digits'),
+  expMonth: z.string()
+    .length(2, 'Month must be 2 digits')
+    .regex(/^(0[1-9]|1[0-2])$/, 'Invalid month (01-12)'),
+  expYear: z.string()
+    .length(4, 'Year must be 4 digits')
+    .regex(/^\d{4}$/, 'Invalid year'),
+  cardName: z.string().min(1, 'Please enter cardholder name'),
+  cvv: z.string()
+    .min(3, 'CVV must be at least 3 digits')
+    .max(4, 'CVV must be at most 4 digits')
+    .regex(/^\d+$/, 'CVV must contain only digits'),
+});
+
+const momoSchema = z.object({
+  phoneNumber: z.string()
+    .regex(/^0\d{9}$/, 'Invalid MoMo number (e.g., 0244123456)')
+    .length(10, 'Phone number must be 10 digits'),
+});
 
 const Checkout = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { activeTenant } = useAuth();
-  const [form] = Form.useForm();
   const [paymentMethod, setPaymentMethod] = useState('card');
   const [loading, setLoading] = useState(false);
 
@@ -64,20 +91,46 @@ const Checkout = () => {
     enterprise: 'Enterprise'
   };
 
+  const form = useForm({
+    resolver: zodResolver(paymentMethod === 'card' ? cardSchema : momoSchema),
+    defaultValues: paymentMethod === 'card' ? {
+      cardNumber: '',
+      expMonth: '',
+      expYear: '',
+      cardName: '',
+      cvv: '',
+    } : {
+      phoneNumber: '',
+    },
+  });
+
+  // Reset form when payment method changes
+  useEffect(() => {
+    form.reset(paymentMethod === 'card' ? {
+      cardNumber: '',
+      expMonth: '',
+      expYear: '',
+      cardName: '',
+      cvv: '',
+    } : {
+      phoneNumber: '',
+    });
+  }, [paymentMethod, form]);
+
   const upgradeMutation = useMutation({
     mutationFn: async (payload) => {
       return await settingsService.updateSubscription(payload);
     },
     onSuccess: () => {
-      message.success('Subscription upgraded successfully!');
+      showSuccess('Subscription upgraded successfully!');
       navigate('/settings?tab=subscription');
     },
     onError: (error) => {
-      message.error(error?.response?.data?.message || 'Failed to upgrade subscription');
+      showError(error, error?.response?.data?.message || 'Failed to upgrade subscription');
     }
   });
 
-  const handleSubmit = async (values) => {
+  const onSubmit = async (values) => {
     try {
       setLoading(true);
       
@@ -99,7 +152,7 @@ const Checkout = () => {
         paymentMethod: {
           type: paymentMethod,
           ...(paymentMethod === 'card' ? {
-            brand: values.cardBrand || 'visa',
+            brand: 'visa', // Could be determined from card number
             last4: values.cardNumber?.slice(-4) || '0000',
             expMonth: values.expMonth || '12',
             expYear: values.expYear || '2025'
@@ -121,218 +174,297 @@ const Checkout = () => {
 
   if (!plan || !billingPeriod) {
     return (
-      <div style={{ textAlign: 'center', padding: '48px' }}>
-        <Alert
-          message="No Plan Selected"
-          description="Please select a plan from the pricing page to continue."
-          type="warning"
-          showIcon
-          action={
-            <Button onClick={() => navigate('/settings?tab=subscription')}>
+      <div className="flex items-center justify-center min-h-[400px] p-12">
+        <Alert className="max-w-md">
+          <Info className="h-4 w-4" />
+          <AlertTitle>No Plan Selected</AlertTitle>
+          <AlertDescription className="mt-2">
+            Please select a plan from the pricing page to continue.
+            <Button 
+              onClick={() => navigate('/settings?tab=subscription')}
+              className="mt-4"
+            >
               Go to Pricing
             </Button>
-          }
-        />
+          </AlertDescription>
+        </Alert>
       </div>
     );
   }
 
   return (
-    <div style={{ maxWidth: 1000, margin: '0 auto', padding: '24px' }}>
+    <div className="max-w-5xl mx-auto p-6">
       <Button
-        icon={<ArrowLeftOutlined />}
+        variant="ghost"
         onClick={() => navigate(-1)}
-        style={{ marginBottom: 24 }}
+        className="mb-6"
       >
+        <ArrowLeft className="h-4 w-4 mr-2" />
         Back
       </Button>
 
-      <Title level={2} style={{ marginBottom: 8 }}>Checkout</Title>
-      <Text type="secondary" style={{ marginBottom: 32, display: 'block' }}>
+      <h1 className="text-3xl font-bold mb-2">Checkout</h1>
+      <p className="text-muted-foreground mb-8">
         Complete your subscription upgrade
-      </Text>
+      </p>
 
-      <Row gutter={24}>
+      <div className="grid grid-cols-1 lg:grid-cols-[40%_60%] gap-6">
         {/* Order Summary */}
-        <Col xs={24} lg={10}>
-          <Card title="Order Summary" style={{ marginBottom: 24 }}>
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text strong>Plan:</Text>
-                <Text>{planNames[plan]}</Text>
+        <Card>
+          <CardHeader>
+            <CardTitle>Order Summary</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <span className="font-semibold">Plan:</span>
+                <span>{planNames[plan]}</span>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text strong>Billing:</Text>
-                <Text>{billingPeriod === 'yearly' ? 'Yearly' : 'Monthly'}</Text>
+              <div className="flex justify-between">
+                <span className="font-semibold">Billing:</span>
+                <span>{billingPeriod === 'yearly' ? 'Yearly' : 'Monthly'}</span>
               </div>
               {billingPeriod === 'yearly' && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                  <Text type="success">Savings:</Text>
-                  <Text type="success">20% off</Text>
+                <div className="flex justify-between text-green-600">
+                  <span>Savings:</span>
+                  <span>20% off</span>
                 </div>
               )}
-              <Divider style={{ margin: '16px 0' }} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <Text strong style={{ fontSize: 16 }}>Total:</Text>
-                <Text strong style={{ fontSize: 20, color: '#1890ff' }}>
+            </div>
+
+            <Separator />
+
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-lg font-semibold">Total:</span>
+                <span className="text-2xl font-bold text-primary">
                   GHS {finalPrice}
-                </Text>
+                </span>
               </div>
-              <Text type="secondary" style={{ fontSize: 12 }}>
+              <p className="text-sm text-muted-foreground">
                 {billingPeriod === 'yearly' 
                   ? `Billed annually (GHS ${Math.round(finalPrice / 12)}/month)` 
                   : 'Billed monthly'}
-              </Text>
+              </p>
             </div>
 
-            <Alert
-              message="14-Day Free Trial"
-              description="Your subscription includes a 14-day free trial. You won't be charged until the trial period ends."
-              type="info"
-              showIcon
-              style={{ marginTop: 16 }}
-            />
-          </Card>
-        </Col>
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertTitle>14-Day Free Trial</AlertTitle>
+              <AlertDescription>
+                Your subscription includes a 14-day free trial. You won't be charged until the trial period ends.
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
 
         {/* Payment Form */}
-        <Col xs={24} lg={14}>
-          <Card title="Payment Information">
-            <Form
-              form={form}
-              layout="vertical"
-              onFinish={handleSubmit}
-            >
-              <Form.Item label="Payment Method" required>
-                <Radio.Group
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  style={{ width: '100%' }}
-                >
-                  <Space direction="vertical" style={{ width: '100%' }}>
-                    <Radio value="card" style={{ width: '100%', padding: '12px', border: '1px solid #d9d9d9', borderRadius: 8 }}>
-                      <Space>
-                        <CreditCardOutlined />
-                        <span>Credit/Debit Card</span>
-                      </Space>
-                    </Radio>
-                    <Radio value="momo" style={{ width: '100%', padding: '12px', border: '1px solid #d9d9d9', borderRadius: 8 }}>
-                      <Space>
-                        <MobileOutlined />
-                        <span>Mobile Money (MoMo)</span>
-                      </Space>
-                    </Radio>
-                  </Space>
-                </Radio.Group>
-              </Form.Item>
+        <Card>
+          <CardHeader>
+            <CardTitle>Payment Information</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Form {...form}>
+              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                <FormField
+                  control={form.control}
+                  name={paymentMethod === 'card' ? 'cardNumber' : 'phoneNumber'}
+                  render={() => (
+                    <FormItem>
+                      <FormLabel>Payment Method</FormLabel>
+                      <FormControl>
+                        <RadioGroup
+                          value={paymentMethod}
+                          onValueChange={setPaymentMethod}
+                          className="space-y-3"
+                        >
+                          <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-accent cursor-pointer">
+                            <RadioGroupItem value="card" id="card" />
+                            <Label htmlFor="card" className="flex items-center gap-2 cursor-pointer flex-1">
+                              <CreditCard className="h-4 w-4" />
+                              <span>Credit/Debit Card</span>
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-accent cursor-pointer">
+                            <RadioGroupItem value="momo" id="momo" />
+                            <Label htmlFor="momo" className="flex items-center gap-2 cursor-pointer flex-1">
+                              <Smartphone className="h-4 w-4" />
+                              <span>Mobile Money (MoMo)</span>
+                            </Label>
+                          </div>
+                        </RadioGroup>
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
 
-              {paymentMethod === 'card' && (
-                <>
-                  <Form.Item
-                    name="cardNumber"
-                    label="Card Number"
-                    rules={[
-                      { required: true, message: 'Please enter card number' },
-                      { pattern: /^\d{13,19}$/, message: 'Invalid card number' }
-                    ]}
-                  >
-                    <Input
-                      placeholder="1234 5678 9012 3456"
-                      maxLength={19}
-                      prefix={<CreditCardOutlined />}
+                {paymentMethod === 'card' && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="cardNumber"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Card Number</FormLabel>
+                          <FormControl>
+                            <div className="relative">
+                              <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                {...field}
+                                placeholder="1234 5678 9012 3456"
+                                maxLength={19}
+                                className="pl-10"
+                                onChange={(e) => {
+                                  const value = e.target.value.replace(/\D/g, '');
+                                  field.onChange(value);
+                                }}
+                              />
+                            </div>
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
                     />
-                  </Form.Item>
 
-                  <Row gutter={16}>
-                    <Col span={12}>
-                      <Form.Item
+                    <div className="grid grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
                         name="expMonth"
-                        label="Expiry Month"
-                        rules={[{ required: true, message: 'Required' }]}
-                      >
-                        <Input placeholder="MM" maxLength={2} />
-                      </Form.Item>
-                    </Col>
-                    <Col span={12}>
-                      <Form.Item
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Expiry Month</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                placeholder="MM"
+                                maxLength={2}
+                                onChange={(e) => {
+                                  const value = e.target.value.replace(/\D/g, '').slice(0, 2);
+                                  field.onChange(value);
+                                }}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
                         name="expYear"
-                        label="Expiry Year"
-                        rules={[{ required: true, message: 'Required' }]}
-                      >
-                        <Input placeholder="YYYY" maxLength={4} />
-                      </Form.Item>
-                    </Col>
-                  </Row>
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Expiry Year</FormLabel>
+                            <FormControl>
+                              <Input
+                                {...field}
+                                placeholder="YYYY"
+                                maxLength={4}
+                                onChange={(e) => {
+                                  const value = e.target.value.replace(/\D/g, '').slice(0, 4);
+                                  field.onChange(value);
+                                }}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
 
-                  <Form.Item
-                    name="cardName"
-                    label="Cardholder Name"
-                    rules={[{ required: true, message: 'Please enter cardholder name' }]}
-                  >
-                    <Input placeholder="John Doe" />
-                  </Form.Item>
+                    <FormField
+                      control={form.control}
+                      name="cardName"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Cardholder Name</FormLabel>
+                          <FormControl>
+                            <Input {...field} placeholder="John Doe" />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
-                  <Form.Item
-                    name="cvv"
-                    label="CVV"
-                    rules={[
-                      { required: true, message: 'Please enter CVV' },
-                      { pattern: /^\d{3,4}$/, message: 'Invalid CVV' }
-                    ]}
-                  >
-                    <Input placeholder="123" maxLength={4} type="password" />
-                  </Form.Item>
-                </>
-              )}
+                    <FormField
+                      control={form.control}
+                      name="cvv"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>CVV</FormLabel>
+                          <FormControl>
+                            <Input
+                              {...field}
+                              type="password"
+                              placeholder="123"
+                              maxLength={4}
+                              onChange={(e) => {
+                                const value = e.target.value.replace(/\D/g, '').slice(0, 4);
+                                field.onChange(value);
+                              }}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                )}
 
-              {paymentMethod === 'momo' && (
-                <Form.Item
-                  name="phoneNumber"
-                  label="Mobile Money Number"
-                  rules={[
-                    { required: true, message: 'Please enter MoMo number' },
-                    { pattern: /^0\d{9}$/, message: 'Invalid MoMo number (e.g., 0244123456)' }
-                  ]}
-                >
-                  <Input
-                    placeholder="0244123456"
-                    prefix={<MobileOutlined />}
-                    maxLength={10}
+                {paymentMethod === 'momo' && (
+                  <FormField
+                    control={form.control}
+                    name="phoneNumber"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Mobile Money Number</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <Smartphone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                            <Input
+                              {...field}
+                              placeholder="0244123456"
+                              maxLength={10}
+                              className="pl-10"
+                              onChange={(e) => {
+                                const value = e.target.value.replace(/\D/g, '').slice(0, 10);
+                                field.onChange(value);
+                              }}
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
                   />
-                </Form.Item>
-              )}
+                )}
 
-              <Divider />
+                <Separator />
 
-              <Form.Item>
                 <Button
-                  type="primary"
-                  htmlType="submit"
-                  block
-                  size="large"
-                  loading={loading || upgradeMutation.isLoading}
-                  style={{
-                    height: 48,
-                    fontSize: 16,
-                    fontWeight: 600,
-                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                    border: 'none'
-                  }}
+                  type="submit"
+                  className="w-full h-12 text-base font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
+                  disabled={loading || upgradeMutation.isPending}
                 >
-                  Complete Purchase - GHS {finalPrice}
+                  {loading || upgradeMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    `Complete Purchase - GHS ${finalPrice}`
+                  )}
                 </Button>
-              </Form.Item>
 
-              <Text type="secondary" style={{ fontSize: 12, textAlign: 'center', display: 'block' }}>
-                By completing this purchase, you agree to our Terms of Service and Privacy Policy
-              </Text>
+                <p className="text-xs text-muted-foreground text-center">
+                  By completing this purchase, you agree to our Terms of Service and Privacy Policy
+                </p>
+              </form>
             </Form>
-          </Card>
-        </Col>
-      </Row>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 };
 
 export default Checkout;
-

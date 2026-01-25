@@ -7,10 +7,12 @@ const {
   getJobStatusDistribution
 } = require('../controllers/dashboardController');
 const { protect } = require('../middleware/auth');
+const { tenantContext } = require('../middleware/tenant');
 
 const router = express.Router();
 
 router.use(protect);
+router.use(tenantContext);
 
 router.get('/overview', getDashboardOverview);
 router.get('/revenue-by-month', getRevenueByMonth);

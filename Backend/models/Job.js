@@ -17,8 +17,9 @@ const Job = sequelize.define('Job', {
   },
   jobNumber: {
     type: DataTypes.STRING,
-    unique: true,
     allowNull: false
+    // Unique constraint is now composite (tenantId, jobNumber) at database level
+    // This allows same job number across different tenants
   },
   customerId: {
     type: DataTypes.UUID,
@@ -124,7 +125,14 @@ const Job = sequelize.define('Job', {
   }
 }, {
   timestamps: true,
-  tableName: 'jobs'
+  tableName: 'jobs',
+  indexes: [
+    {
+      unique: true,
+      fields: ['tenantId', 'jobNumber'],
+      name: 'jobs_tenantId_jobNumber_key'
+    }
+  ]
 });
 
 module.exports = Job;

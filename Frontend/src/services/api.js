@@ -37,11 +37,11 @@ const deriveApiBaseUrl = () => {
     }
 
     // Development fallback: use localhost
-    const fallbackPort = import.meta.env.VITE_API_PORT ?? '5000';
+    const fallbackPort = import.meta.env.VITE_API_PORT ?? '5001';
     return `http://localhost:${fallbackPort}`;
   }
 
-  return 'http://localhost:5000';
+  return 'http://localhost:5001';
 };
 
 export const API_BASE_URL = deriveApiBaseUrl();
@@ -55,21 +55,86 @@ if (!API_BASE_URL && typeof window !== 'undefined') {
   }
 }
 
+// Retry configuration
+const MAX_RETRIES = 3;
+const RETRY_DELAY_BASE = 1000; // 1 second base delay
+
+/**
+ * Calculate exponential backoff delay
+ * @param {number} attempt - Current retry attempt (0-indexed)
+ * @returns {number} Delay in milliseconds
+ */
+const getRetryDelay = (attempt) => {
+  return RETRY_DELAY_BASE * Math.pow(2, attempt);
+};
+
+/**
+ * Check if error should be retried
+ * @param {Error} error - Axios error object
+ * @returns {boolean} Whether to retry
+ */
+const shouldRetry = (error) => {
+  // Don't retry if request was cancelled
+  if (axios.isCancel(error)) {
+    return false;
+  }
+
+  // Retry on network errors
+  if (!error.response) {
+    return true;
+  }
+
+  // Retry on 5xx server errors
+  const status = error.response.status;
+  if (status >= 500 && status < 600) {
+    return true;
+  }
+
+  // Retry on 429 (Too Many Requests)
+  if (status === 429) {
+    return true;
+  }
+
+  // Don't retry on 4xx client errors (except 429)
+  return false;
+};
+
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL ? `${API_BASE_URL}/api` : '/api',
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 30000, // 30 second timeout
 });
 
-// Request interceptor to add auth token
+// Request interceptor to add auth token and AbortController
 api.interceptors.request.use(
   (config) => {
+    // Create AbortController if not already present
+    if (!config.signal) {
+      const abortController = new AbortController();
+      config.signal = abortController.signal;
+      config.abortController = abortController; // Store for potential cancellation
+    }
+
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    
+    // Skip tenantId check for public endpoints (signup, login, register)
+    const isPublicEndpoint = config.url?.includes('/tenants/signup') ||
+                            config.url?.includes('/auth/login') ||
+                            config.url?.includes('/auth/register') ||
+                            config.url?.includes('/auth/sso') ||
+                            config.url?.includes('/invites/validate');
+    
+    if (isPublicEndpoint) {
+      // Don't add tenant-id header for public endpoints
+      return config;
+    }
+    
     let tenantId = localStorage.getItem('activeTenantId');
     
     // If no tenantId, try to get it from memberships
@@ -132,10 +197,31 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor to handle errors
+// Response interceptor with retry logic
 api.interceptors.response.use(
   (response) => response.data,
-  (error) => {
+  async (error) => {
+    const config = error.config;
+
+    // Initialize retry count if not present
+    if (!config.__retryCount) {
+      config.__retryCount = 0;
+    }
+
+    // Check if we should retry
+    if (shouldRetry(error) && config.__retryCount < MAX_RETRIES) {
+      config.__retryCount += 1;
+      const delay = getRetryDelay(config.__retryCount - 1);
+
+      console.log(`[API] Retrying request (attempt ${config.__retryCount}/${MAX_RETRIES}) after ${delay}ms:`, config.url);
+
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, delay));
+
+      // Retry the request
+      return api(config);
+    }
+
     // Don't redirect on 401 for login/register endpoints - let them handle the error
     const isAuthEndpoint = error.config?.url?.includes('/auth/login') || 
                           error.config?.url?.includes('/auth/register') ||
@@ -150,6 +236,15 @@ api.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+// Export helper function to cancel requests
+export const createCancelToken = () => {
+  const abortController = new AbortController();
+  return {
+    signal: abortController.signal,
+    cancel: () => abortController.abort(),
+  };
+};
 
 export default api;
 

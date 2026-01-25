@@ -20,6 +20,7 @@ import {
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import adminService from '../../services/adminService';
+import StatusChip from '../../components/StatusChip';
 import { showSuccess, showError, handleApiError } from '../../utils/toast';
 
 const { Title, Text } = Typography;
@@ -166,7 +167,7 @@ const AdminTenants = () => {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      render: (status) => <Tag color={getStatusColor(status)}>{status}</Tag>,
+      render: (status) => <StatusChip status={status} />,
     },
     {
       title: 'Users',
@@ -352,9 +353,7 @@ const AdminTenants = () => {
                 <Tag color={getPlanColor(selectedTenant.plan)}>{selectedTenant.plan}</Tag>
               </Descriptions.Item>
               <Descriptions.Item label="Status">
-                <Tag color={getStatusColor(selectedTenant.status)}>
-                  {selectedTenant.status}
-                </Tag>
+                <StatusChip status={selectedTenant.status} />
               </Descriptions.Item>
               <Descriptions.Item label="Created">
                 {dayjs(selectedTenant.createdAt).format('MMM D, YYYY')}

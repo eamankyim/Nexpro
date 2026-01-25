@@ -1,5 +1,6 @@
 const { canAccessFeature, canAccessRoute, getFeatureByKey } = require('../config/features');
 const { Tenant, SubscriptionPlan } = require('../models');
+const { getFeaturesForBusinessType, isFeatureAvailableForBusinessType } = require('../config/businessTypes');
 
 /**
  * Middleware to check if tenant's plan includes a specific feature
@@ -31,36 +32,38 @@ const requireFeature = (featureKey) => {
         where: { planId: tenant.plan, isActive: true }
       });
 
+      // Get plan features
+      let planFeatures = [];
       if (!plan) {
         // Fallback: check config file
         const { getFeaturesForPlan } = require('../config/features');
-        const features = getFeaturesForPlan(tenant.plan);
-        
-        if (!canAccessFeature(features, featureKey)) {
-          const feature = getFeatureByKey(featureKey);
-          return res.status(403).json({
-            success: false,
-            message: `This feature (${feature?.name || featureKey}) is not included in your current plan`,
-            featureRequired: featureKey,
-            currentPlan: tenant.plan,
-            upgradeRequired: true
-          });
-        }
+        planFeatures = getFeaturesForPlan(tenant.plan);
       } else {
         // Check database plan features
-        const planFeatures = Object.keys(plan.marketing?.featureFlags || {})
+        planFeatures = Object.keys(plan.marketing?.featureFlags || {})
           .filter(key => plan.marketing.featureFlags[key] === true);
+      }
 
-        if (!canAccessFeature(planFeatures, featureKey)) {
-          const feature = getFeatureByKey(featureKey);
-          return res.status(403).json({
-            success: false,
-            message: `This feature (${feature?.name || featureKey}) is not included in your current plan`,
-            featureRequired: featureKey,
-            currentPlan: tenant.plan,
-            upgradeRequired: true
-          });
-        }
+      // Filter features by business type
+      if (tenant.businessType) {
+        const businessTypeFeatures = getFeaturesForBusinessType(tenant.businessType);
+        planFeatures = planFeatures.filter(f => businessTypeFeatures.includes(f));
+      }
+
+      // Check if feature is available
+      if (!canAccessFeature(planFeatures, featureKey)) {
+        const feature = getFeatureByKey(featureKey);
+        const businessTypeMessage = tenant.businessType 
+          ? ` or not available for ${tenant.businessType} business type`
+          : '';
+        return res.status(403).json({
+          success: false,
+          message: `This feature (${feature?.name || featureKey}) is not included in your current plan${businessTypeMessage}`,
+          featureRequired: featureKey,
+          currentPlan: tenant.plan,
+          businessType: tenant.businessType,
+          upgradeRequired: true
+        });
       }
 
       // Feature is available, proceed
@@ -109,6 +112,12 @@ const checkRouteAccess = async (req, res, next) => {
       planFeatures = getFeaturesForPlan(tenant.plan);
     }
 
+    // Filter features by business type
+    if (tenant.businessType) {
+      const businessTypeFeatures = getFeaturesForBusinessType(tenant.businessType);
+      planFeatures = planFeatures.filter(f => businessTypeFeatures.includes(f));
+    }
+
     // Check if route is accessible
     const route = req.path;
     if (!canAccessRoute(planFeatures, route)) {
@@ -142,14 +151,24 @@ const getTenantFeatures = async (tenantId) => {
     where: { planId: tenant.plan, isActive: true }
   });
 
+  let planFeatures = [];
+  
   if (plan) {
-    return Object.keys(plan.marketing?.featureFlags || {})
+    planFeatures = Object.keys(plan.marketing?.featureFlags || {})
       .filter(key => plan.marketing.featureFlags[key] === true);
+  } else {
+    // Fallback
+    const { getFeaturesForPlan } = require('../config/features');
+    planFeatures = getFeaturesForPlan(tenant.plan);
   }
 
-  // Fallback
-  const { getFeaturesForPlan } = require('../config/features');
-  return getFeaturesForPlan(tenant.plan);
+  // Filter features by business type
+  if (tenant.businessType) {
+    const businessTypeFeatures = getFeaturesForBusinessType(tenant.businessType);
+    planFeatures = planFeatures.filter(f => businessTypeFeatures.includes(f));
+  }
+
+  return planFeatures;
 };
 
 /**

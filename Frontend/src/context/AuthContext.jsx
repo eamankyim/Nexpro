@@ -11,6 +11,12 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const queryClient = useQueryClient();
 
+  /**
+   * Resolves the initial tenant ID from memberships
+   * @param {Array} membershipsList - List of tenant memberships
+   * @param {string|null} preferredTenantId - Preferred tenant ID (e.g., from localStorage)
+   * @returns {string|null} - Resolved tenant ID
+   */
   const resolveInitialTenant = (membershipsList = [], preferredTenantId = null) => {
     if (preferredTenantId) {
       return preferredTenantId;
@@ -42,13 +48,16 @@ export const AuthProvider = ({ children }) => {
     if (storedMemberships && storedMemberships.length > 0) {
       setMemberships(storedMemberships);
     }
-    
-    // If user is logged in but has no memberships, fetch them from the backend
-    if (storedUser && (!storedMemberships || storedMemberships.length === 0)) {
-      console.log('[AuthContext] 🔄 User logged in but no memberships found, fetching from backend...');
+
+    const firstStoredTenant = storedMemberships?.[0]?.tenant;
+    const hasStaleMemberships = storedUser && storedMemberships?.length > 0 && !firstStoredTenant?.metadata;
+
+    // If user is logged in but has no memberships, or memberships lack tenant metadata (stale cache), refetch from backend
+    if (storedUser && (hasStaleMemberships || !storedMemberships || storedMemberships.length === 0)) {
+      console.log('[AuthContext] 🔄 Refetching /auth/me...', hasStaleMemberships ? '(stale tenant metadata)' : '(no memberships)');
       authService.getCurrentUser()
-        .then((response) => {
-          const userData = response?.data || response;
+        .then((body) => {
+          const userData = body?.data ?? body;
           const memberships = userData?.tenantMemberships || [];
           console.log('[AuthContext] ✅ Fetched memberships from backend:', {
             membershipsCount: memberships.length,
@@ -101,6 +110,14 @@ export const AuthProvider = ({ children }) => {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /**
+   * Synchronizes authentication state across the application
+   * Updates user, memberships, and active tenant ID
+   * @param {Object} payload - Auth payload containing user, memberships, and defaultTenantId
+   * @param {Object} payload.user - User object
+   * @param {Array} payload.memberships - Array of tenant memberships
+   * @param {string} payload.defaultTenantId - Default tenant ID
+   */
   const syncAuthState = (payload = {}) => {
     const { user: nextUser, memberships: nextMemberships = [], defaultTenantId } = payload;
     setUser(nextUser || null);
@@ -122,6 +139,14 @@ export const AuthProvider = ({ children }) => {
     setActiveTenantId(resolvedTenantId);
   };
 
+  /**
+   * Logs in a user with credentials
+   * @param {Object} credentials - Login credentials
+   * @param {string} credentials.email - User email
+   * @param {string} credentials.password - User password
+   * @returns {Promise<Object>} - Login response
+   * @throws {Error} - If login fails
+   */
   const login = async (credentials) => {
     try {
       const response = await authService.login(credentials);
@@ -190,11 +215,9 @@ export const AuthProvider = ({ children }) => {
 
   const loginWithToken = async (token) => {
     try {
-      // Get user info with the token
-      const response = await authService.getCurrentUser();
-      const userData = response?.data || response;
-      
-      // Get memberships
+      // Get user info with the token (API returns { success, data: user })
+      const body = await authService.getCurrentUser();
+      const userData = body?.data ?? body;
       const memberships = userData?.tenantMemberships || [];
       
       // Sync auth state
@@ -224,6 +247,30 @@ export const AuthProvider = ({ children }) => {
     queryClient.clear();
   };
 
+  /** Refetch /auth/me and update auth state + storage. Call after onboarding or when tenant metadata may have changed. */
+  /**
+   * Refetches user data from the server and updates auth state
+   * Useful after operations that modify tenant metadata (e.g., onboarding)
+   * @returns {Promise<Object>} - Updated auth payload
+   */
+  const refreshAuthState = async () => {
+    console.log('[AuthContext] refreshAuthState: fetching /auth/me');
+    const body = await authService.getCurrentUser();
+    const userData = body?.data ?? body;
+    const nextMemberships = userData?.tenantMemberships || [];
+    const firstTenant = nextMemberships[0]?.tenant;
+    console.log('[AuthContext] refreshAuthState: body keys=%j, userData keys=%j, memberships count=%s, first tenant id=%s, metadata=%j', body ? Object.keys(body) : [], userData ? Object.keys(userData) : [], nextMemberships.length, firstTenant?.id, firstTenant?.metadata);
+    const payload = {
+      user: userData,
+      memberships: nextMemberships,
+      defaultTenantId: authService.getActiveTenantId() || nextMemberships.find((m) => m.isDefault)?.tenantId || nextMemberships[0]?.tenantId || null,
+    };
+    authService.persistAuthPayload(payload);
+    syncAuthState(payload);
+    console.log('[AuthContext] refreshAuthState: state updated, defaultTenantId=%s', payload.defaultTenantId);
+    return payload;
+  };
+
   const activeMembership = useMemo(
     () => memberships.find((membership) => membership.tenantId === activeTenantId) || null,
     [memberships, activeTenantId]
@@ -248,6 +295,7 @@ export const AuthProvider = ({ children }) => {
     activeTenant,
     tenantRole,
     setActiveTenant,
+    refreshAuthState,
     login,
     register,
     logout,

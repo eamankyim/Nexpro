@@ -25,6 +25,7 @@ import {
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import adminService from '../../services/adminService';
+import StatusChip from '../../components/StatusChip';
 
 const { Title, Text } = Typography;
 const PLAN_COLORS = ['#27ae60', '#2f80ed', '#9b51e0'];
@@ -120,7 +121,7 @@ const AdminBilling = () => {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
-      render: (status) => <Tag color={getStatusColor(status)}>{status}</Tag>,
+      render: (status) => <StatusChip status={status} />,
     },
     {
       title: 'Billing Method',

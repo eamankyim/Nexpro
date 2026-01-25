@@ -40,6 +40,14 @@ const platformSettingsRoutes = require('./routes/platformSettingsRoutes');
 const platformAdminRoutes = require('./routes/platformAdminRoutes');
 const customDropdownRoutes = require('./routes/customDropdownRoutes');
 const sabitoMappingRoutes = require('./routes/sabitoMappingRoutes');
+// Shop Management Routes
+const shopRoutes = require('./routes/shopRoutes');
+const productRoutes = require('./routes/productRoutes');
+const saleRoutes = require('./routes/saleRoutes');
+// Pharmacy Management Routes
+const pharmacyRoutes = require('./routes/pharmacyRoutes');
+const drugRoutes = require('./routes/drugRoutes');
+const prescriptionRoutes = require('./routes/prescriptionRoutes');
 const swaggerUi = require('swagger-ui-express');
 const openapiSpecification = require('./docs/openapi');
 
@@ -118,6 +126,14 @@ app.use('/api/platform-settings', platformSettingsRoutes);
 app.use('/api/platform-admins', platformAdminRoutes);
 app.use('/api/custom-dropdowns', customDropdownRoutes);
 app.use('/api/sabito', sabitoMappingRoutes);
+// Shop Management Routes
+app.use('/api/shops', shopRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/sales', saleRoutes);
+// Pharmacy Management Routes
+app.use('/api/pharmacies', pharmacyRoutes);
+app.use('/api/drugs', drugRoutes);
+app.use('/api/prescriptions', prescriptionRoutes);
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpecification));
 
 // Health check
@@ -192,6 +208,15 @@ if (!isVercel) {
           } catch (error) {
             console.error('[Server] Failed to start Sabito scheduler:', error);
           }
+        }
+
+        // Start payment reminder service
+        try {
+          const paymentReminderService = require('./services/paymentReminderService');
+          paymentReminderService.start();
+          console.log('[Server] ✅ Payment reminder service started');
+        } catch (error) {
+          console.error('[Server] Failed to start payment reminder service:', error);
         }
       });
     } catch (error) {

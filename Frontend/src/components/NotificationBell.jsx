@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Badge, Button, Empty, List, Popover, Space, Spin, Tag, Typography } from 'antd';
-import { BellOutlined, CheckCircleOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Bell, CheckCircle, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -50,7 +50,11 @@ const NotificationBell = () => {
         setSummary({ total: 0, unread: 0, recent: 0 });
       }
     } catch (error) {
-      console.error('Failed to load notification summary', error);
+      // Silently handle network errors (backend unavailable)
+      const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
+      if (!isNetworkError) {
+        console.error('Failed to load notification summary', error);
+      }
       setSummary({ total: 0, unread: 0, recent: 0 });
     } finally {
       setLoadingSummary(false);
@@ -84,7 +88,11 @@ const NotificationBell = () => {
           setPagination({ page: 1, totalPages: 1 });
         }
       } catch (error) {
-        console.error('Failed to load notifications', error);
+        // Silently handle network errors (backend unavailable)
+        const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
+        if (!isNetworkError) {
+          console.error('Failed to load notifications', error);
+        }
         if (!append) {
           setNotifications([]);
           setPagination({ page: 1, totalPages: 1 });
@@ -122,7 +130,11 @@ const NotificationBell = () => {
           }));
         }
       } catch (error) {
-        console.error('Failed to mark notification as read', error);
+        // Silently handle network errors (backend unavailable)
+        const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
+        if (!isNetworkError) {
+          console.error('Failed to mark notification as read', error);
+        }
       }
     },
     []
@@ -139,7 +151,11 @@ const NotificationBell = () => {
         setSummary((prev) => ({ ...prev, unread: 0 }));
       }
     } catch (error) {
-      console.error('Failed to mark all notifications as read', error);
+      // Silently handle network errors (backend unavailable)
+      const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
+      if (!isNetworkError) {
+        console.error('Failed to mark all notifications as read', error);
+      }
     }
   }, [hasUnread]);
 
@@ -202,7 +218,7 @@ const NotificationBell = () => {
           </div>
         </div>
         <Space>
-          <Button size="small" type="text" icon={<CheckCircleOutlined />} onClick={markAllRead} disabled={!hasUnread}>
+          <Button size="small" type="text" icon={<CheckCircle className="h-4 w-4" />} onClick={markAllRead} disabled={!hasUnread}>
             Mark all read
           </Button>
         </Space>
@@ -228,7 +244,7 @@ const NotificationBell = () => {
                 onClick={() => handleNotificationClick(item)}
                 style={{
                   cursor: 'pointer',
-                  backgroundColor: item.isRead ? 'transparent' : 'rgba(24, 144, 255, 0.08)',
+                  backgroundColor: item.isRead ? 'transparent' : 'rgba(22, 101, 52, 0.08)',
                   borderRadius: 8,
                   margin: '4px 8px',
                   padding: '12px 16px'
@@ -237,7 +253,7 @@ const NotificationBell = () => {
                 <Space direction="vertical" size={4} style={{ width: '100%' }}>
                   <Space style={{ width: '100%', justifyContent: 'space-between' }}>
                     <Space>
-                      <ThunderboltOutlined style={{ color: '#1890ff' }} />
+                      <Zap className="h-4 w-4" style={{ color: '#166534' }} />
                       <Text strong>{item.title}</Text>
                     </Space>
                     <Text type="secondary" style={{ fontSize: 12 }}>
@@ -250,9 +266,9 @@ const NotificationBell = () => {
                     </Text>
                   )}
                   <Space size={8} wrap>
-                    {item.type && <Tag color="blue">{item.type}</Tag>}
+                    {item.type && <Tag color="#166534">{item.type}</Tag>}
                     {item.priority && item.priority !== 'normal' && (
-                      <Tag color={item.priority === 'high' ? 'red' : 'blue'}>{item.priority}</Tag>
+                      <Tag color={item.priority === 'high' ? 'red' : '#166534'}>{item.priority}</Tag>
                     )}
                     {!item.isRead && <Tag color="green">New</Tag>}
                   </Space>
@@ -293,8 +309,9 @@ const NotificationBell = () => {
       >
         <Button
           type="text"
-          icon={<BellOutlined style={{ fontSize: 18 }} />}
+          icon={<Bell className="h-5 w-5" />}
           loading={loadingSummary}
+          className="bg-gray-100 hover:bg-gray-200"
           style={{ padding: '0 8px' }}
         />
       </Badge>

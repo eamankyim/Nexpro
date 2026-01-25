@@ -1,5 +1,96 @@
 const { Customer, Tenant, SabitoTenantMapping } = require('../models');
 const { verifySabitoWebhook } = require('../middleware/webhookAuth');
+const whatsappService = require('../services/whatsappService');
+
+/**
+ * Handle WhatsApp webhook from Meta
+ * GET /api/webhooks/whatsapp - Webhook verification
+ * POST /api/webhooks/whatsapp - Webhook events
+ */
+exports.handleWhatsAppWebhook = async (req, res) => {
+  try {
+    // Handle webhook verification (GET request)
+    if (req.method === 'GET') {
+      const mode = req.query['hub.mode'];
+      const token = req.query['hub.verify_token'];
+      const challenge = req.query['hub.challenge'];
+
+      // Get verify token from environment or tenant settings
+      const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+      
+      if (mode === 'subscribe' && token === verifyToken) {
+        console.log('[WhatsApp Webhook] Verification successful');
+        return res.status(200).send(challenge);
+      } else {
+        console.error('[WhatsApp Webhook] Verification failed', { mode, token, verifyToken });
+        return res.status(403).send('Forbidden');
+      }
+    }
+
+    // Handle webhook events (POST request)
+    if (req.method === 'POST') {
+      const signature = req.headers['x-hub-signature-256'];
+      const appSecret = process.env.WHATSAPP_APP_SECRET;
+      
+      // Verify signature if app secret is configured
+      if (appSecret && signature) {
+        const rawBody = JSON.stringify(req.body);
+        const isValid = whatsappService.verifyWebhookSignature(signature, rawBody, appSecret);
+        
+        if (!isValid) {
+          console.error('[WhatsApp Webhook] Invalid signature');
+          return res.status(401).json({
+            success: false,
+            message: 'Invalid webhook signature'
+          });
+        }
+      }
+
+      const webhookData = req.body;
+      const results = whatsappService.handleWebhook(webhookData);
+
+      // Process webhook results (update message status, handle incoming messages, etc.)
+      for (const result of results) {
+        if (result.type === 'status') {
+          console.log('[WhatsApp Webhook] Message status update:', {
+            messageId: result.messageId,
+            status: result.status,
+            recipientId: result.recipientId?.substring(0, 7) + '***' // Partial for privacy
+          });
+          
+          // TODO: Store message status in database if needed
+          // You could create a WhatsAppMessage model to track messages
+        } else if (result.type === 'message') {
+          console.log('[WhatsApp Webhook] Incoming message:', {
+            messageId: result.messageId,
+            from: result.from?.substring(0, 7) + '***',
+            messageType: result.messageType
+          });
+          
+          // TODO: Handle incoming messages for two-way communication
+        }
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: 'Webhook processed'
+      });
+    }
+
+    return res.status(405).json({
+      success: false,
+      message: 'Method not allowed'
+    });
+
+  } catch (error) {
+    console.error('[WhatsApp Webhook] Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Webhook processing failed',
+      error: error.message
+    });
+  }
+};
 
 /**
  * Handle customer webhook from Sabito

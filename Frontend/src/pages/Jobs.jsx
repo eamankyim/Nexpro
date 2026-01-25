@@ -1,6 +1,9 @@
-import { useState, useEffect } from 'react';
-import { Table, Button, Tag, Space, Input, Select, message, Modal, Form, InputNumber, DatePicker, Row, Col, Divider, Card, Alert, Descriptions, Timeline, Upload, List, Tooltip, Popconfirm, Spin } from 'antd';
-import { PlusOutlined, SearchOutlined, DeleteOutlined, MinusCircleOutlined, FileTextOutlined, ClockCircleOutlined, CheckCircleOutlined, UserOutlined, EditOutlined, PauseCircleOutlined, CloseCircleOutlined, UploadOutlined, PaperClipOutlined, DownloadOutlined, DollarOutlined } from '@ant-design/icons';
+import { useState, useEffect, useMemo } from 'react';
+import { useDebounce } from '../hooks/useDebounce';
+import { useForm, useFieldArray } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { Plus, XCircle, Loader2, Search, Trash2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, DollarSign, Eye, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import jobService from '../services/jobService';
@@ -13,9 +16,119 @@ import dayjs from 'dayjs';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import PhoneNumberInput from '../components/PhoneNumberInput';
+import StatusChip from '../components/StatusChip';
+import TableSkeleton from '../components/TableSkeleton';
+import DetailSkeleton from '../components/DetailSkeleton';
+import { showSuccess, showError, showWarning, showInfo } from '../utils/toast';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import { DatePicker } from '@/components/ui/date-picker';
+import { Badge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
+import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 
-const { Option } = Select;
-const { TextArea } = Input;
+const jobItemSchema = z.object({
+  category: z.string().min(1, 'Category is required'),
+  description: z.string().min(1, 'Item description is required'),
+  quantity: z.number().min(1, 'Quantity must be at least 1'),
+  unitPrice: z.number().min(0, 'Unit price must be at least 0'),
+  discountAmount: z.number().min(0, 'Discount must be at least 0').default(0),
+  paperSize: z.string().optional(),
+  pricingMethod: z.string().optional(),
+  itemHeight: z.number().optional(),
+  itemWidth: z.number().optional(),
+  itemUnit: z.string().optional(),
+  pricePerSquareFoot: z.number().optional(),
+  discountPercent: z.number().optional(),
+  discountReason: z.string().optional(),
+});
+
+const jobSchema = z.object({
+  customerId: z.string().min(1, 'Customer is required'),
+  title: z.string().optional(),
+  status: z.enum(['new', 'in_progress', 'completed', 'on_hold', 'cancelled']).default('new'),
+  priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
+  startDate: z.union([z.date(), z.null(), z.undefined()]).optional(),
+  dueDate: z.union([z.date(), z.null(), z.undefined()]).optional(),
+  assignedTo: z.string().optional().nullable(),
+  description: z.string().nullable().optional(),
+  items: z.array(jobItemSchema).min(1, 'At least one item is required'),
+});
+
+const assignmentSchema = z.object({
+  assignedTo: z.string().optional().nullable(),
+});
+
+const statusSchema = z.object({
+  status: z.enum(['new', 'in_progress', 'completed', 'on_hold', 'cancelled']),
+  statusComment: z.string().optional(),
+});
+
+const customerSchema = z.object({
+  name: z.string().min(1, 'Customer name is required'),
+  company: z.string().optional(),
+  email: z.string().email('Please enter a valid email').optional().or(z.literal('')),
+  phone: z.string().optional(),
+  address: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  howDidYouHear: z.string().min(1, 'Please select an option'),
+  referralName: z.string().optional(),
+});
+
 const uploadMaxSizeMb = Number.parseFloat(import.meta.env.VITE_UPLOAD_MAX_SIZE_MB ?? '') || 20;
 
 const Jobs = () => {
@@ -24,41 +137,78 @@ const Jobs = () => {
   const queryClient = useQueryClient();
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({ search: '', status: '' });
+  const debouncedSearch = useDebounce(filters.search, 500);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingJob, setViewingJob] = useState(null);
   const [jobDetailsLoading, setJobDetailsLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [customers, setCustomers] = useState([]);
-  const [form] = Form.useForm();
+  
+  const form = useForm({
+    resolver: zodResolver(jobSchema),
+    defaultValues: {
+      customerId: '',
+      title: '',
+      status: 'new',
+      priority: 'medium',
+      startDate: null,
+      dueDate: null,
+      assignedTo: null,
+      description: '',
+      items: [{ category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+    },
+  });
+
+  const { fields, append, remove } = useFieldArray({
+    control: form.control,
+    name: 'items',
+  });
   const [jobInvoices, setJobInvoices] = useState({});
-  const [pricingTemplates, setPricingTemplates] = useState([]);
   const [selectedJobType, setSelectedJobType] = useState(null);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [selectedTemplates, setSelectedTemplates] = useState({});
   const [customJobType, setCustomJobType] = useState('');
-  const [teamMembers, setTeamMembers] = useState([]);
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [jobBeingAssigned, setJobBeingAssigned] = useState(null);
-  const [assignmentForm] = Form.useForm();
+  const assignmentForm = useForm({
+    resolver: zodResolver(assignmentSchema),
+    defaultValues: {
+      assignedTo: null,
+    },
+  });
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [jobBeingUpdated, setJobBeingUpdated] = useState(null);
-  const [statusForm] = Form.useForm();
+  const statusForm = useForm({
+    resolver: zodResolver(statusSchema),
+    defaultValues: {
+      status: 'new',
+      statusComment: '',
+    },
+  });
   const [customerModalVisible, setCustomerModalVisible] = useState(false);
-  const [customerForm] = Form.useForm();
+  const customerForm = useForm({
+    resolver: zodResolver(customerSchema),
+    defaultValues: {
+      name: '',
+      company: '',
+      email: '',
+      phone: '',
+      address: '',
+      city: '',
+      state: '',
+      howDidYouHear: '',
+      referralName: '',
+    },
+  });
   const [submittingJob, setSubmittingJob] = useState(false);
   const [submittingCustomer, setSubmittingCustomer] = useState(false);
   const [updatingAssignment, setUpdatingAssignment] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [markingAsPaid, setMarkingAsPaid] = useState(false);
-  const [fetchingCustomers, setFetchingCustomers] = useState(false);
   const [showReferralName, setShowReferralName] = useState(false);
-  const [customCategories, setCustomCategories] = useState([]);
   const [categoryOtherInputs, setCategoryOtherInputs] = useState({}); // Track "Other" inputs per item index
-  const [customCustomerSources, setCustomCustomerSources] = useState([]);
   const [showCustomerSourceOtherInput, setShowCustomerSourceOtherInput] = useState(false);
   const [customerSourceOtherValue, setCustomerSourceOtherValue] = useState('');
-  const [customRegions, setCustomRegions] = useState([]);
   const [showRegionOtherInput, setShowRegionOtherInput] = useState(false);
   const [regionOtherValue, setRegionOtherValue] = useState('');
   const [editingJobId, setEditingJobId] = useState(null);
@@ -122,14 +272,23 @@ const Jobs = () => {
     isFetching: isJobsFetching,
     error: jobsError,
   } = useQuery({
-    queryKey: ['jobs', pagination.current, pagination.pageSize, filters.search || '', filters.status || ''],
-    queryFn: () =>
-      jobService.getAll({
+    queryKey: ['jobs', pagination.current, pagination.pageSize, debouncedSearch || '', filters.status || ''],
+    queryFn: async () => {
+      try {
+        const response = await jobService.getAll({
         page: pagination.current,
         limit: pagination.pageSize,
-        search: filters.search,
+        search: debouncedSearch,
         status: filters.status,
-      }),
+        });
+        console.log('Jobs API response:', response);
+        // The API interceptor already returns response.data, so response is the actual data object
+        return response;
+      } catch (error) {
+        console.error('Error in queryFn:', error);
+        throw error;
+      }
+    },
     keepPreviousData: true,
     staleTime: 60 * 1000,
     refetchOnWindowFocus: false,
@@ -137,6 +296,12 @@ const Jobs = () => {
 
   const jobs = jobsQueryResult?.data || [];
   const jobsCount = jobsQueryResult?.count || 0;
+  
+  useEffect(() => {
+    console.log('Jobs Query Result:', jobsQueryResult);
+    console.log('Jobs array:', jobs);
+    console.log('Jobs count:', jobsCount);
+  }, [jobsQueryResult, jobs, jobsCount]);
 
   useEffect(() => {
     setPagination((prev) => (prev.total === jobsCount ? prev : { ...prev, total: jobsCount }));
@@ -145,17 +310,53 @@ const Jobs = () => {
   useEffect(() => {
     if (jobsError) {
       console.error('Failed to load jobs:', jobsError);
-      message.error('Failed to load jobs');
+      showError('Failed to load jobs');
     }
   }, [jobsError]);
 
-  useEffect(() => {
-    fetchTeamMembers();
-  }, []);
+  // Use React Query for customers, templates, and team members with caching
+  const { data: customersData = [], isLoading: customersLoading } = useQuery({
+    queryKey: ['customers', 'all'],
+    queryFn: async () => {
+      const response = await customerService.getAll({ limit: 100 });
+      return response.data || [];
+    },
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    cacheTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  const { data: pricingTemplates = [], isLoading: templatesLoading } = useQuery({
+    queryKey: ['pricingTemplates', 'active'],
+    queryFn: async () => {
+      const response = await pricingService.getAll({ limit: 100, isActive: 'true' });
+      return response.data || [];
+    },
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    cacheTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  const { data: teamMembers = [], isLoading: teamMembersLoading } = useQuery({
+    queryKey: ['teamMembers', 'active'],
+    queryFn: async () => {
+      const response = await userService.getAll({ limit: 100, isActive: 'true' });
+      return response.data || [];
+    },
+    staleTime: 5 * 60 * 1000, // 5 minutes
+    cacheTime: 10 * 60 * 1000, // 10 minutes
+  });
+
+  const { data: customCategories = [] } = useQuery({
+    queryKey: ['customCategories'],
+    queryFn: async () => {
+      return await customDropdownService.getCustomOptions('job_category') || [];
+    },
+    staleTime: 10 * 60 * 1000, // 10 minutes
+    cacheTime: 30 * 60 * 1000, // 30 minutes
+  });
 
 useEffect(() => {
   if (assignModalVisible && jobBeingAssigned) {
-    assignmentForm.setFieldsValue({
+    assignmentForm.reset({
       assignedTo: jobBeingAssigned.assignedTo || null
     });
   }
@@ -163,7 +364,7 @@ useEffect(() => {
 
 useEffect(() => {
   if (statusModalVisible && jobBeingUpdated) {
-    statusForm.setFieldsValue({
+    statusForm.reset({
       status: jobBeingUpdated.status,
       statusComment: ''
     });
@@ -171,14 +372,6 @@ useEffect(() => {
 }, [statusModalVisible, jobBeingUpdated, statusForm]);
 
 
-  const fetchTeamMembers = async () => {
-    try {
-      const response = await userService.getAll({ limit: 100, isActive: 'true' });
-      setTeamMembers(response.data || []);
-    } catch (error) {
-      console.error('Failed to load team members:', error);
-    }
-  };
 
   const refreshJobDetails = async (jobId) => {
     const response = await jobService.getById(jobId);
@@ -199,7 +392,7 @@ useEffect(() => {
     try {
       await refreshJobDetails(job.id);
     } catch (error) {
-      message.error('Failed to load job details');
+      showError('Failed to load job details');
       // Keep the job data from table row if loading fails
     } finally {
       setJobDetailsLoading(false);
@@ -231,7 +424,7 @@ useEffect(() => {
       const invoice = jobInvoices[job.id];
       
       if (!invoice) {
-        message.error('No invoice found for this job. Please generate an invoice first.');
+        showError('No invoice found for this job. Please generate an invoice first.');
         return;
       }
 
@@ -242,7 +435,7 @@ useEffect(() => {
         paidDate: new Date().toISOString()
       });
 
-      message.success(`Invoice ${invoice.invoiceNumber} marked as paid!`);
+      showSuccess(`Invoice ${invoice.invoiceNumber} marked as paid!`);
       
       // Refresh job invoices
       await checkJobInvoice(job.id);
@@ -253,7 +446,7 @@ useEffect(() => {
         await refreshJobDetails(job.id);
       }
     } catch (error) {
-      message.error(error.error || 'Failed to mark invoice as paid');
+      showError(error.error || 'Failed to mark invoice as paid');
     } finally {
       setMarkingAsPaid(false);
     }
@@ -274,9 +467,6 @@ useEffect(() => {
   };
 
   const openAssignModal = (job) => {
-    if (!teamMembers.length) {
-      fetchTeamMembers();
-    }
     setJobBeingAssigned(job);
     setAssignModalVisible(true);
   };
@@ -284,20 +474,21 @@ useEffect(() => {
   const closeAssignModal = () => {
     setAssignModalVisible(false);
     setJobBeingAssigned(null);
-    assignmentForm.resetFields();
+    assignmentForm.reset();
   };
 
-  const handleAssignmentSubmit = async ({ assignedTo }) => {
+  const handleAssignmentSubmit = async (values) => {
     if (!jobBeingAssigned) {
       return;
     }
 
     const jobId = jobBeingAssigned.id;
+    const { assignedTo } = values;
 
     try {
       setUpdatingAssignment(true);
       await jobService.update(jobId, { assignedTo: assignedTo || null });
-      message.success(assignedTo ? 'Job assigned successfully' : 'Job assignment cleared');
+      showSuccess(assignedTo ? 'Job assigned successfully' : 'Job assignment cleared');
       closeAssignModal();
       invalidateJobs();
 
@@ -309,7 +500,7 @@ useEffect(() => {
         }
       }
     } catch (error) {
-      message.error(error.error || 'Failed to update job assignment');
+      showError(error.error || 'Failed to update job assignment');
     } finally {
       setUpdatingAssignment(false);
     }
@@ -325,12 +516,12 @@ useEffect(() => {
       setUploadingAttachment(true);
       await jobService.uploadAttachment(viewingJob.id, file);
       await refreshJobDetails(viewingJob.id);
-      message.success(`${file.name} uploaded successfully`);
+      showSuccess(`${file.name} uploaded successfully`);
       if (onSuccess) onSuccess('ok', file);
     } catch (error) {
       console.error('Failed to upload attachment:', error);
       const errMsg = error?.response?.data?.message || 'Failed to upload attachment';
-      message.error(errMsg);
+      showError(errMsg);
       if (onError) onError(error);
     } finally {
       setUploadingAttachment(false);
@@ -342,11 +533,11 @@ useEffect(() => {
     try {
       await jobService.deleteAttachment(viewingJob.id, attachment.id);
       await refreshJobDetails(viewingJob.id);
-      message.success('Attachment removed');
+      showSuccess('Attachment removed');
     } catch (error) {
       console.error('Failed to remove attachment:', error);
       const errMsg = error?.response?.data?.message || 'Failed to remove attachment';
-      message.error(errMsg);
+      showError(errMsg);
     }
   };
 
@@ -360,7 +551,7 @@ useEffect(() => {
   const closeStatusModal = () => {
     setStatusModalVisible(false);
     setJobBeingUpdated(null);
-    statusForm.resetFields();
+    statusForm.reset();
   };
 
   const handleStatusSubmit = async ({ status, statusComment }) => {
@@ -376,7 +567,7 @@ useEffect(() => {
         status,
         statusComment: statusComment || undefined
       });
-      message.success('Job status updated successfully');
+      showSuccess('Job status updated successfully');
       closeStatusModal();
       invalidateJobs();
 
@@ -388,7 +579,7 @@ useEffect(() => {
         }
       }
     } catch (error) {
-      message.error(error.error || 'Failed to update job status');
+      showError(error.error || 'Failed to update job status');
     } finally {
       setUpdatingStatus(false);
     }
@@ -398,34 +589,75 @@ useEffect(() => {
 
   const handleAddJob = async () => {
     setEditingJobId(null);
-    form.resetFields();
+    form.reset({
+      customerId: '',
+      title: '',
+      status: 'new',
+      priority: 'medium',
+      startDate: null,
+      dueDate: null,
+      assignedTo: null,
+      description: '',
+      items: [{ category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+    });
     setSelectedJobType(null);
     setSelectedCustomer(null);
     setSelectedTemplates({});
     setCustomJobType('');
     setCategoryOtherInputs({}); // Clear category "Other" inputs
-    await fetchTeamMembers();
     setModalVisible(true);
     
-    // Fetch customers and pricing templates
-    await fetchCustomersAndTemplates();
+    // Prefetch data if not already cached (React Query handles caching automatically)
+    queryClient.prefetchQuery({
+      queryKey: ['customers', 'all'],
+      queryFn: async () => {
+        const response = await customerService.getAll({ limit: 100 });
+        return response.data || [];
+      },
+    });
+    queryClient.prefetchQuery({
+      queryKey: ['pricingTemplates', 'active'],
+      queryFn: async () => {
+        const response = await pricingService.getAll({ limit: 100, isActive: 'true' });
+        return response.data || [];
+      },
+    });
   };
 
   const handleEdit = async (job) => {
     try {
       setEditingJobId(job.id);
       
-      // Fetch full job details with items
-      const jobDetails = await jobService.getById(job.id);
+      // Fetch full job details with items (parallel with prefetching)
+      const [jobDetailsResult] = await Promise.all([
+        jobService.getById(job.id),
+        // Prefetch customers and templates if not cached
+        queryClient.prefetchQuery({
+          queryKey: ['customers', 'all'],
+          queryFn: async () => {
+            const response = await customerService.getAll({ limit: 100 });
+            return response.data || [];
+          },
+        }),
+        queryClient.prefetchQuery({
+          queryKey: ['pricingTemplates', 'active'],
+          queryFn: async () => {
+            const response = await pricingService.getAll({ limit: 100, isActive: 'true' });
+            return response.data || [];
+          },
+        }),
+      ]);
+      
+      const jobDetails = jobDetailsResult;
       const jobData = jobDetails.data || jobDetails;
       
-      // Fetch customers and templates first and get the data directly
-      const { customersData, templatesData } = await fetchCustomersAndTemplates();
-      await fetchTeamMembers();
+      // Use cached data from React Query
+      const customersList = customersData || [];
+      const templatesList = pricingTemplates || [];
       
       // Set customer
       if (jobData.customerId) {
-        const customer = customersData.find(c => c.id === jobData.customerId) || 
+        const customer = customersList.find(c => c.id === jobData.customerId) || 
                         (jobDetails.data?.customer || jobData.customer);
         if (customer) {
           setSelectedCustomer(customer);
@@ -438,25 +670,38 @@ useEffect(() => {
         setSelectedJobType(jobData.jobType);
       }
       
-      // Format dates for form
+      // Format dates for form - convert to Date objects for DatePicker
       const formData = {
         ...jobData,
         customerId: jobData.customerId,
-        startDate: jobData.startDate ? dayjs(jobData.startDate) : null,
-        dueDate: jobData.dueDate ? dayjs(jobData.dueDate) : null,
+        startDate: jobData.startDate ? (dayjs(jobData.startDate).isValid() ? dayjs(jobData.startDate).toDate() : null) : null,
+        dueDate: jobData.dueDate ? (dayjs(jobData.dueDate).isValid() ? dayjs(jobData.dueDate).toDate() : null) : null,
         assignedTo: jobData.assignedTo || null,
-        items: jobData.items || []
+        description: jobData.description || '',
+        items: (jobData.items || []).map(item => ({
+          ...item,
+          // Parse unitPrice if it's a string (handle formatted values like "GHS 50,00", "50,00", "50.00", etc.)
+          unitPrice: typeof item.unitPrice === 'string' 
+            ? parseFloat(item.unitPrice.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0
+            : (typeof item.unitPrice === 'number' ? item.unitPrice : 0),
+          // Ensure quantity is a number
+          quantity: typeof item.quantity === 'string' ? parseFloat(item.quantity) || 1 : (typeof item.quantity === 'number' ? item.quantity : 1),
+          // Ensure discountAmount is a number (handle formatted strings)
+          discountAmount: typeof item.discountAmount === 'string' 
+            ? parseFloat(item.discountAmount.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0
+            : (typeof item.discountAmount === 'number' ? item.discountAmount : 0),
+        }))
       };
       
-      // Set form values
-      form.setFieldsValue(formData);
+        // Set form values
+        form.reset(formData);
       
       // Set selected templates for items
       if (jobData.items && jobData.items.length > 0) {
         const templates = {};
         jobData.items.forEach((item, index) => {
           // Try to find matching template
-          const matchingTemplate = templatesData.find(t => 
+          const matchingTemplate = templatesList.find(t => 
             t.category === item.category && 
             t.materialType === item.materialType
           );
@@ -469,52 +714,31 @@ useEffect(() => {
       
       setModalVisible(true);
     } catch (error) {
-      message.error('Failed to load job details');
+      showError('Failed to load job details');
       console.error('Error loading job:', error);
       setEditingJobId(null);
     }
   };
 
-  const fetchCustomersAndTemplates = async () => {
-    setFetchingCustomers(true);
-    try {
-      const [customersResponse, templatesResponse, customCategoriesResponse] = await Promise.all([
-        customerService.getAll({ limit: 100 }),
-        pricingService.getAll({ limit: 100, isActive: 'true' }),
-        customDropdownService.getCustomOptions('job_category')
-      ]);
-      const customersData = customersResponse.data || [];
-      const templatesData = templatesResponse.data || [];
-      setCustomers(customersData);
-      setPricingTemplates(templatesData);
-      setCustomCategories(customCategoriesResponse || []);
-      return { customersData, templatesData };
-    } catch (error) {
-      message.error('Failed to load data');
-      return { customersData: [], templatesData: [] };
-    } finally {
-      setFetchingCustomers(false);
-    }
-  };
 
-  // Load custom categories, customer sources, and regions on mount
-  useEffect(() => {
-    const loadCustomOptions = async () => {
-      try {
-        const [categories, sources, regions] = await Promise.all([
-          customDropdownService.getCustomOptions('job_category'),
-          customDropdownService.getCustomOptions('customer_source'),
-          customDropdownService.getCustomOptions('region')
-        ]);
-        setCustomCategories(categories || []);
-        setCustomCustomerSources(sources || []);
-        setCustomRegions(regions || []);
-      } catch (error) {
-        console.error('Failed to load custom options:', error);
-      }
-    };
-    loadCustomOptions();
-  }, []);
+  // Load custom customer sources and regions on mount (categories already loaded via React Query)
+  const { data: customCustomerSources = [] } = useQuery({
+    queryKey: ['customCustomerSources'],
+    queryFn: async () => {
+      return await customDropdownService.getCustomOptions('customer_source') || [];
+    },
+    staleTime: 10 * 60 * 1000, // 10 minutes
+    cacheTime: 30 * 60 * 1000, // 30 minutes
+  });
+
+  const { data: customRegions = [] } = useQuery({
+    queryKey: ['customRegions'],
+    queryFn: async () => {
+      return await customDropdownService.getCustomOptions('region') || [];
+    },
+    staleTime: 10 * 60 * 1000, // 10 minutes
+    cacheTime: 30 * 60 * 1000, // 30 minutes
+  });
 
   // Handle category change (including "Other")
   const handleCategoryChange = async (value, itemIndex) => {
@@ -534,25 +758,20 @@ useEffect(() => {
   // Save custom category
   const handleSaveCustomCategory = async (customValue, itemIndex) => {
     if (!customValue || !customValue.trim()) {
-      message.warning('Please enter a category name');
+      showWarning('Please enter a category name');
       return;
     }
 
     try {
       const saved = await customDropdownService.saveCustomOption('job_category', customValue.trim());
       if (saved) {
-        // Add to custom categories
-        setCustomCategories(prev => {
-          if (prev.find(c => c.value === saved.value)) {
-            return prev;
-          }
-          return [...prev, saved];
-        });
+        // Invalidate and refetch custom categories
+        queryClient.invalidateQueries({ queryKey: ['customCategories'] });
         
         // Set the category value in the form
-        const items = form.getFieldValue('items') || [];
+        const items = form.getValues('items') || [];
         items[itemIndex] = { ...items[itemIndex], category: saved.value };
-        form.setFieldValue('items', items);
+        form.setValue('items', items);
         
         // Clear the "Other" input
         setCategoryOtherInputs(prev => {
@@ -561,15 +780,15 @@ useEffect(() => {
           return newState;
         });
         
-        message.success(`"${saved.label}" added to categories`);
+        showSuccess(`"${saved.label}" added to categories`);
       }
     } catch (error) {
-      message.error(error.response?.data?.error || 'Failed to save custom category');
+      showError(error.response?.data?.error || 'Failed to save custom category');
     }
   };
 
   const handleAddNewCustomer = () => {
-    customerForm.resetFields();
+    customerForm.reset();
     setShowReferralName(false);
     setShowCustomerSourceOtherInput(false);
     setCustomerSourceOtherValue('');
@@ -582,12 +801,12 @@ useEffect(() => {
     if (value === '__OTHER__') {
       setShowCustomerSourceOtherInput(true);
       setShowReferralName(false);
-      customerForm.setFieldsValue({ referralName: undefined });
+      customerForm.setValue('referralName', undefined);
     } else {
       setShowCustomerSourceOtherInput(false);
       setShowReferralName(value === 'Referral');
       if (value !== 'Referral') {
-        customerForm.setFieldsValue({ referralName: undefined });
+        customerForm.setValue('referralName', undefined);
       }
     }
   };
@@ -595,32 +814,27 @@ useEffect(() => {
   // Save custom customer source
   const handleSaveCustomCustomerSource = async () => {
     if (!customerSourceOtherValue || !customerSourceOtherValue.trim()) {
-      message.warning('Please enter a source name');
+      showWarning('Please enter a source name');
       return;
     }
 
     try {
       const saved = await customDropdownService.saveCustomOption('customer_source', customerSourceOtherValue.trim());
       if (saved) {
-        // Add to custom sources
-        setCustomCustomerSources(prev => {
-          if (prev.find(s => s.value === saved.value)) {
-            return prev;
-          }
-          return [...prev, saved];
-        });
+        // Invalidate and refetch custom customer sources
+        queryClient.invalidateQueries({ queryKey: ['customCustomerSources'] });
         
         // Set the value in the form
-        customerForm.setFieldValue('howDidYouHear', saved.value);
+        customerForm.setValue('howDidYouHear', saved.value);
         
         // Clear the "Other" input
         setShowCustomerSourceOtherInput(false);
         setCustomerSourceOtherValue('');
         
-        message.success(`"${saved.label}" added to sources`);
+        showSuccess(`"${saved.label}" added to sources`);
       }
     } catch (error) {
-      message.error(error.response?.data?.error || 'Failed to save custom source');
+      showError(error.response?.data?.error || 'Failed to save custom source');
     }
   };
 
@@ -636,32 +850,27 @@ useEffect(() => {
   // Save custom region
   const handleSaveCustomRegion = async () => {
     if (!regionOtherValue || !regionOtherValue.trim()) {
-      message.warning('Please enter a region name');
+      showWarning('Please enter a region name');
       return;
     }
 
     try {
       const saved = await customDropdownService.saveCustomOption('region', regionOtherValue.trim());
       if (saved) {
-        // Add to custom regions
-        setCustomRegions(prev => {
-          if (prev.find(r => r.value === saved.value)) {
-            return prev;
-          }
-          return [...prev, saved];
-        });
+        // Invalidate and refetch custom regions
+        queryClient.invalidateQueries({ queryKey: ['customRegions'] });
         
         // Set the value in the form
-        customerForm.setFieldValue('state', saved.value);
+        customerForm.setValue('state', saved.value);
         
         // Clear the "Other" input
         setShowRegionOtherInput(false);
         setRegionOtherValue('');
         
-        message.success(`"${saved.label}" added to regions`);
+        showSuccess(`"${saved.label}" added to regions`);
       }
     } catch (error) {
-      message.error(error.response?.data?.error || 'Failed to save custom region');
+      showError(error.response?.data?.error || 'Failed to save custom region');
     }
   };
 
@@ -688,7 +897,7 @@ useEffect(() => {
       // If "Other" is selected for howDidYouHear, save the custom value first
       if (values.howDidYouHear === '__OTHER__') {
         if (!customerSourceOtherValue || !customerSourceOtherValue.trim()) {
-          message.error('Please enter and save a custom source before submitting');
+          showError('Please enter and save a custom source before submitting');
           setSubmittingCustomer(false);
           return;
         }
@@ -696,19 +905,15 @@ useEffect(() => {
         const saved = await customDropdownService.saveCustomOption('customer_source', customerSourceOtherValue.trim());
         if (saved) {
           values.howDidYouHear = saved.value;
-          setCustomCustomerSources(prev => {
-            if (prev.find(s => s.value === saved.value)) {
-              return prev;
-            }
-            return [...prev, saved];
-          });
+          // Invalidate and refetch custom customer sources
+          queryClient.invalidateQueries({ queryKey: ['customCustomerSources'] });
         }
       }
       
       // If "Other" is selected for region, save the custom value first
       if (values.state === '__OTHER__') {
         if (!regionOtherValue || !regionOtherValue.trim()) {
-          message.error('Please enter and save a custom region before submitting');
+          showError('Please enter and save a custom region before submitting');
           setSubmittingCustomer(false);
           return;
         }
@@ -716,37 +921,33 @@ useEffect(() => {
         const saved = await customDropdownService.saveCustomOption('region', regionOtherValue.trim());
         if (saved) {
           values.state = saved.value;
-          setCustomRegions(prev => {
-            if (prev.find(r => r.value === saved.value)) {
-              return prev;
-            }
-            return [...prev, saved];
-          });
+          // Invalidate and refetch custom regions
+          queryClient.invalidateQueries({ queryKey: ['customRegions'] });
         }
       }
       
       const response = await customerService.create(values);
-      message.success('Customer created successfully');
+      showSuccess('Customer created successfully');
       setCustomerModalVisible(false);
-      customerForm.resetFields();
+      customerForm.reset();
       
       // Refresh customers list
       await fetchCustomersAndTemplates();
       
       // Auto-select the newly created customer
       if (response?.data?.id) {
-        form.setFieldsValue({ customerId: response.data.id });
+        form.setValue('customerId', response.data.id);
         handleCustomerChange(response.data.id);
       }
     } catch (error) {
-      message.error(error.error || 'Failed to create customer');
+      showError(error.error || 'Failed to create customer');
     } finally {
       setSubmittingCustomer(false);
     }
   };
 
   const handleCustomerChange = (customerId) => {
-    const customer = customers.find(c => c.id === customerId);
+    const customer = customersData.find(c => c.id === customerId);
     setSelectedCustomer(customer);
     const baseJobType = selectedJobType === 'Other' ? 'Other' : selectedJobType;
     const labelOverride = selectedJobType === 'Other' ? customJobType : undefined;
@@ -759,19 +960,17 @@ useEffect(() => {
     
     if (jobType !== 'Other') {
       setCustomJobType('');
-      form.setFieldsValue({ customJobType: undefined });
+      form.setValue('customJobType', '');
     }
     
     // Apply default values
-    form.setFieldsValue({
-      priority: config.defaultValues.priority,
-      status: config.defaultValues.status
-    });
+    form.setValue('priority', config.defaultValues.priority);
+    form.setValue('status', config.defaultValues.status);
     
     // Auto-set due date for instant services (today)
     if (config.isInstant) {
-      form.setFieldValue('dueDate', dayjs());
-      message.info('Instant service - Due date set to today');
+      form.setValue('dueDate', dayjs().toDate());
+      showInfo('Instant service - Due date set to today');
     }
     
     const labelOverride = jobType === 'Other' ? customJobType : undefined;
@@ -795,10 +994,8 @@ useEffect(() => {
     const title = config.titleFormat(effectiveLabel, customer);
     const description = config.descriptionFormat(effectiveLabel, customer);
 
-    form.setFieldsValue({
-      title,
-      description
-    });
+    form.setValue('title', title);
+    form.setValue('description', description);
   };
 
   const resolveTemplateUnitPrice = (template) => {
@@ -836,7 +1033,7 @@ useEffect(() => {
           const discountAmount = (subtotal * discountPercent) / 100;
           
           if (discountPercent > 0) {
-            message.info(`${discountPercent}% discount applied for quantity ${quantity}!`, 3);
+            showInfo(`${discountPercent}% discount applied for quantity ${quantity}!`);
           }
           
           return { discountPercent, discountAmount };
@@ -866,7 +1063,7 @@ useEffect(() => {
       [itemIndex]: template
     }));
 
-    const items = form.getFieldValue('items') || [];
+    const items = form.getValues('items') || [];
     const currentItem = items[itemIndex] || {};
     
     // Check if template uses square-foot pricing
@@ -892,7 +1089,7 @@ useEffect(() => {
         discountPercent: 0,
         discountAmount: 0
       };
-      form.setFieldsValue({ items: updatedItems });
+      form.setValue('items', updatedItems);
     } else {
       // Standard unit-based pricing
       const quantity = currentItem.quantity || 1;
@@ -913,7 +1110,7 @@ useEffect(() => {
         discountPercent: discountPercent,
         discountAmount: discountAmount
       };
-      form.setFieldsValue({ items: updatedItems });
+      form.setValue('items', updatedItems);
     }
     
     // Smart auto-fill for job-level fields if first item
@@ -923,14 +1120,14 @@ useEffect(() => {
       
       // Only auto-fill if fields are empty
       if (!currentTitle || currentTitle.trim() === '') {
-        form.setFieldValue('title', template.name);
+        form.setValue('title', template.name);
       }
       if (!currentDescription || currentDescription.trim() === '') {
-        form.setFieldValue('description', template.description || template.name);
+        form.setValue('description', template.description || template.name);
       }
     }
     
-    message.success(`Applied pricing template: ${template.name}`);
+    showSuccess(`Applied pricing template: ${template.name}`);
   };
 
   // Handle quantity change with real-time discount recalculation
@@ -941,7 +1138,7 @@ useEffect(() => {
       return; // No template selected, just use the quantity as-is
     }
 
-    const items = form.getFieldValue('items') || [];
+    const items = form.getValues('items') || [];
     const currentItem = items[itemIndex] || {};
     
     // Recalculate discount with new quantity (unit price stays same)
@@ -957,7 +1154,7 @@ useEffect(() => {
       discountAmount: discountAmount
     };
     
-    form.setFieldsValue({ items: updatedItems });
+    form.setValue('items', updatedItems);
   };
 
   const handleSubmit = async (values) => {
@@ -996,7 +1193,7 @@ useEffect(() => {
 
       // Auto-generate job title from items if not provided
       if (!values.title && values.items && values.items.length > 0) {
-        const customer = customers.find(c => c.id === values.customerId);
+        const customer = customersData.find(c => c.id === values.customerId);
         const customerName = customer?.name || customer?.company || 'Customer';
         const categories = values.items.map(item => item.category).filter(Boolean);
         const uniqueCategories = [...new Set(categories)];
@@ -1012,32 +1209,83 @@ useEffect(() => {
         values.jobType = 'Other';
       }
 
-      // Format dates
-      const jobData = {
-        ...values,
-        startDate: values.startDate ? values.startDate.format('YYYY-MM-DD') : null,
-        dueDate: values.dueDate ? values.dueDate.format('YYYY-MM-DD') : null,
-        finalPrice: calculatedTotal || values.finalPrice || 0,
+      // Format dates and handle assignedTo
+      const formatDate = (date) => {
+        if (!date) return null;
+        if (typeof date === 'string') return date;
+        if (date instanceof Date) return dayjs(date).format('YYYY-MM-DD');
+        if (dayjs.isDayjs(date)) return date.format('YYYY-MM-DD');
+        return null;
       };
+
+      // Validate required fields
+      if (!values.customerId) {
+        showError('Customer is required');
+        setSubmittingJob(false);
+        return;
+      }
+
+      // Ensure title exists (auto-generated if not provided)
+      if (!values.title || values.title.trim() === '') {
+        showError('Job title is required');
+        setSubmittingJob(false);
+        return;
+      }
+
+      // Clean assignedTo - convert "__NONE__" to null
+      const cleanAssignedTo = values.assignedTo === "__NONE__" || !values.assignedTo ? null : values.assignedTo;
+
+      // Clean and validate items - ensure required fields are present
+      const cleanedItems = (values.items || []).map(item => ({
+        ...item,
+        quantity: parseFloat(item.quantity) || 1,
+        unitPrice: parseFloat(item.unitPrice) || 0,
+        discountAmount: parseFloat(item.discountAmount) || 0,
+        discountPercent: parseFloat(item.discountPercent) || 0,
+      })).filter(item => item.category && item.description); // Filter out invalid items
+
+      if (cleanedItems.length === 0) {
+        showError('At least one valid job item is required');
+        setSubmittingJob(false);
+        return;
+      }
+
+      // Build job data, only including valid fields
+      const jobData = {
+        customerId: values.customerId,
+        title: values.title.trim(),
+        description: values.description || null,
+        status: values.status || 'new',
+        priority: values.priority || 'medium',
+        jobType: values.jobType || null,
+        assignedTo: cleanAssignedTo,
+        startDate: formatDate(values.startDate),
+        dueDate: formatDate(values.dueDate),
+        finalPrice: calculatedTotal || values.finalPrice || 0,
+        items: cleanedItems,
+      };
+
+      // Log the data being sent for debugging
+      console.log('Job data being sent:', JSON.stringify(jobData, null, 2));
 
       let response;
       if (editingJobId) {
         // Update existing job
         response = await jobService.update(editingJobId, jobData);
-        message.success('Job updated successfully');
+        showSuccess('Job updated successfully');
       } else {
         // Create new job
         response = await jobService.create(jobData);
         
         // Check if invoice was auto-generated
         if (response.invoice) {
-          message.success({
-            content: `Job created successfully! Invoice ${response.invoice.invoiceNumber} automatically generated.`,
-            duration: 5,
-            onClick: () => navigate('/invoices', { state: { openInvoiceId: response.invoice.id } })
-          });
+          showSuccess(`Job created successfully! Invoice ${response.invoice.invoiceNumber} automatically generated.`);
+          // Navigate to invoice after a short delay
+          setTimeout(() => {
+            navigate('/invoices', { state: { openInvoiceId: response.invoice.id } });
+          }, 2000);
         } else {
-          message.success('Job created successfully');
+          showSuccess('Job created successfully');
         }
       }
       
@@ -1049,7 +1297,28 @@ useEffect(() => {
       setCustomJobType('');
       invalidateJobs();
     } catch (error) {
-      message.error(error.error || 'Failed to create job');
+      console.error('Job creation/update error:', error);
+      console.error('Error response data:', error?.response?.data);
+      const errorMessage = error?.response?.data?.error || error?.response?.data?.message || error?.error || error?.message || 'Failed to create job';
+      const validationErrors = error?.response?.data?.errors;
+      
+      // Check if it's a duplicate error - in this case, the job might have been created by another request
+      const isDuplicateError = error?.response?.data?.error?.includes('duplicate') || 
+                              error?.response?.data?.error?.includes('already exists') ||
+                              error?.message?.includes('duplicate') ||
+                              error?.message?.includes('already exists');
+      
+      if (isDuplicateError) {
+        // If it's a duplicate error, it might mean another request succeeded
+        // Refresh the jobs list to see if a job was created
+        invalidateJobs();
+        showError('Job creation failed due to duplicate job number. Please check if the job was created successfully.');
+      } else if (validationErrors) {
+        console.error('Validation errors:', validationErrors);
+        showError(`${errorMessage}: ${JSON.stringify(validationErrors)}`);
+      } else {
+        showError(errorMessage);
+      }
     } finally {
       setSubmittingJob(false);
     }
@@ -1084,149 +1353,180 @@ useEffect(() => {
 
   const unwrapResponse = (response) => (response && Object.prototype.hasOwnProperty.call(response, 'data') ? response.data : response);
 
-  const columns = [
-    { title: 'Job Number', dataIndex: 'jobNumber', key: 'jobNumber', width: 150 },
-    { title: 'Title', dataIndex: 'title', key: 'title' },
-    { 
-      title: 'Customer', 
-      dataIndex: ['customer', 'name'], 
-      key: 'customer',
-      render: (name, record) => record.customer?.name || 'N/A'
-    },
-    {
-      title: 'Assigned To',
-      dataIndex: ['assignedUser', 'name'],
-      key: 'assignedUser',
-      render: (_, record) => (
-        record.assignedUser
-          ? record.assignedUser.name
-          : <Tag color="default">Unassigned</Tag>
-      )
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-      render: (status) => (
-        <Tag color={statusColors[status]}>
-          {status?.replace('_', ' ').toUpperCase()}
-        </Tag>
-      ),
-    },
-    {
-      title: 'Priority',
-      dataIndex: 'priority',
-      key: 'priority',
-      render: (priority) => (
-        <Tag color={priorityColors[priority]}>
-          {priority?.toUpperCase()}
-        </Tag>
-      ),
-    },
-    {
-      title: 'Price',
-      dataIndex: 'finalPrice',
-      key: 'finalPrice',
-      render: (price) => `GHS ${parseFloat(price || 0).toFixed(2)}`,
-    },
-    {
-      title: 'Due Date',
-      dataIndex: 'dueDate',
-      key: 'dueDate',
-      render: (date) => date ? dayjs(date).format('MMM DD, YYYY') : 'N/A',
-    },
-    {
-      title: 'Actions',
-      key: 'actions',
-      render: (_, record) => (
-        <ActionColumn 
-          onView={handleView} 
-          record={record}
-          extraActions={[
-            {
-              label: 'Edit Job',
-              onClick: () => handleEdit(record),
-              icon: <EditOutlined />
-            },
-            {
-              label: record.assignedUser ? 'Reassign Job' : 'Assign Job',
-              onClick: () => openAssignModal(record),
-              icon: <UserOutlined />
-            },
-            {
-              label: 'Update Status',
-              onClick: () => openStatusModal(record),
-              icon: <ClockCircleOutlined />
-            },
-            jobInvoices[record.id] && {
-              label: 'View Invoice',
-              onClick: () => navigate('/invoices', { state: { openInvoiceId: jobInvoices[record.id].id } }),
-              icon: <FileTextOutlined />
-            },
-            jobInvoices[record.id] && jobInvoices[record.id].status !== 'paid' && {
-              label: 'Mark as Paid',
-              onClick: () => handleMarkAsPaid(record),
-              icon: <DollarOutlined />
-            }
-          ].filter(Boolean)}
-        />
-      ),
-    },
-  ];
-
-  const tablePagination = { ...pagination, total: jobsCount };
+  // Pagination helpers
+  const totalPages = Math.ceil(jobsCount / pagination.pageSize);
+  const startIndex = (pagination.current - 1) * pagination.pageSize + 1;
+  const endIndex = Math.min(pagination.current * pagination.pageSize, jobsCount);
 
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
         <h1 style={{ margin: 0, fontSize: window.innerWidth < 768 ? '20px' : '24px' }}>Jobs</h1>
-        <Space wrap style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
-          <Input.Search
-            placeholder="Search jobs..."
-            allowClear
-            onSearch={(value) => {
-              setPagination((prev) => ({ ...prev, current: 1 }));
-              setFilters((prev) => ({ ...prev, search: value }));
-            }}
-            style={{ width: window.innerWidth < 768 ? '100%' : 200 }}
-            prefix={<SearchOutlined />}
-          />
+        <div className="flex flex-wrap gap-2" style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
+          <div className="relative" style={{ width: window.innerWidth < 768 ? '100%' : 200 }}>
+            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search jobs..."
+              value={filters.search}
+              onChange={(e) => {
+                const value = e.target.value;
+                setPagination((prev) => ({ ...prev, current: 1 }));
+                setFilters((prev) => ({ ...prev, search: value }));
+              }}
+              className="pl-8"
+              style={{ width: '100%' }}
+            />
+          </div>
           <Select
-            placeholder="Filter by status"
-            allowClear
-            style={{ width: window.innerWidth < 768 ? '100%' : 150 }}
-            onChange={(value) => {
+            value={filters.status || undefined}
+            onValueChange={(value) => {
               setPagination((prev) => ({ ...prev, current: 1 }));
               setFilters((prev) => ({ ...prev, status: value || '' }));
             }}
           >
-            <Option value="new">New</Option>
-            <Option value="in_progress">In Progress</Option>
-            <Option value="completed">Completed</Option>
-            <Option value="on_hold">On Hold</Option>
-            <Option value="cancelled">Cancelled</Option>
+            <SelectTrigger style={{ width: window.innerWidth < 768 ? '100%' : 150 }}>
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="new">New</SelectItem>
+              <SelectItem value="in_progress">In Progress</SelectItem>
+              <SelectItem value="completed">Completed</SelectItem>
+              <SelectItem value="on_hold">On Hold</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
+            </SelectContent>
           </Select>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAddJob} style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
+          <Button onClick={handleAddJob} style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
+            <Plus className="h-4 w-4 mr-2" />
             Add Job
           </Button>
-        </Space>
+        </div>
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={jobs}
-        rowKey="id"
-        loading={isJobsLoading || isJobsFetching}
-        pagination={tablePagination}
-        onChange={(newPagination) =>
-          setPagination((prev) => ({
-            ...prev,
-            current: newPagination.current ?? prev.current,
-            pageSize: newPagination.pageSize ?? prev.pageSize,
-          }))
-        }
-        scroll={{ x: 'max-content' }}
-      />
+      {/* Jobs Table */}
+      <Card className="shadow-none border-0 p-0">
+        <div className="border rounded-t-md">
+          {(isJobsLoading || isJobsFetching) ? (
+            <div className="p-4">
+              <TableSkeleton rows={8} cols={8} />
+            </div>
+          ) : jobs.length === 0 ? (
+            <div className="flex items-center justify-center p-8 text-muted-foreground">
+              No jobs found
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[150px]">Job Number</TableHead>
+                  <TableHead>Title</TableHead>
+                  <TableHead>Customer</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Priority</TableHead>
+                  <TableHead>Price</TableHead>
+                  <TableHead>Due Date</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {jobs.map((job) => (
+                  <TableRow key={job.id} className="last:border-b-0">
+                    <TableCell className="font-medium">{job.jobNumber}</TableCell>
+                    <TableCell>{job.title || 'N/A'}</TableCell>
+                    <TableCell>{job.customer?.name || 'N/A'}</TableCell>
+                    <TableCell>
+                      <StatusChip status={job.status} />
+                    </TableCell>
+                    <TableCell>
+                      <Badge 
+                        variant="outline" 
+                        className={
+                          priorityColors[job.priority] === 'red' ? 'bg-red-100 text-red-800' : 
+                          priorityColors[job.priority] === 'orange' ? 'bg-orange-100 text-orange-800' : 
+                          priorityColors[job.priority] === 'blue' ? 'bg-blue-100 text-blue-800' : 
+                          ''
+                        }
+                      >
+                        {job.priority?.toUpperCase()}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="font-medium">
+                      GHS {parseFloat(job.finalPrice || 0).toFixed(2)}
+                    </TableCell>
+                    <TableCell>
+                      {job.dueDate ? dayjs(job.dueDate).format('MMM DD, YYYY') : 'N/A'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <ActionColumn 
+                        onView={handleView} 
+                        record={job}
+                        extraActions={[
+                          {
+                            label: 'Edit Job',
+                            onClick: () => handleEdit(job),
+                            icon: <Edit className="h-4 w-4" />
+                          },
+                          {
+                            label: job.assignedUser ? 'Reassign Job' : 'Assign Job',
+                            onClick: () => openAssignModal(job),
+                            icon: <User className="h-4 w-4" />
+                          },
+                          {
+                            label: 'Update Status',
+                            onClick: () => openStatusModal(job),
+                            icon: <Clock className="h-4 w-4" />
+                          },
+                          jobInvoices[job.id] && {
+                            label: 'View Invoice',
+                            onClick: () => navigate('/invoices', { state: { openInvoiceId: jobInvoices[job.id].id } }),
+                            icon: <FileText className="h-4 w-4" />
+                          },
+                          jobInvoices[job.id] && jobInvoices[job.id].status !== 'paid' && {
+                            label: 'Mark as Paid',
+                            onClick: () => handleMarkAsPaid(job),
+                            icon: <DollarSign className="h-4 w-4" />
+                          }
+                        ].filter(Boolean)}
+                      />
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </div>
+        
+        {/* Pagination */}
+        {jobsCount > 0 && (
+          <div className="flex items-center justify-between px-4 py-3 border border-t-0 rounded-b-md">
+            <div className="text-sm text-muted-foreground">
+              Showing {startIndex} to {endIndex} of {jobsCount} jobs
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPagination(prev => ({ ...prev, current: prev.current - 1 }))}
+                disabled={pagination.current === 1 || isJobsLoading}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+              <div className="text-sm">
+                Page {pagination.current} of {totalPages}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPagination(prev => ({ ...prev, current: prev.current + 1 }))}
+                disabled={pagination.current === totalPages || isJobsLoading}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </Card>
 
       <DetailsDrawer
         open={drawerVisible}
@@ -1235,148 +1535,193 @@ useEffect(() => {
         width={window.innerWidth < 768 ? '100%' : 700}
         showActions={false}
         extra={viewingJob && (
-          <Space wrap>
+          <div className="flex flex-wrap gap-2">
             <Button 
-              icon={<UserOutlined />}
               onClick={() => openAssignModal(viewingJob)}
             >
+              <User className="h-4 w-4 mr-2" />
               {viewingJob.assignedUser ? 'Reassign' : 'Assign'}
             </Button>
             <Button 
-              icon={<ClockCircleOutlined />}
               onClick={() => openStatusModal(viewingJob)}
             >
+              <Clock className="h-4 w-4 mr-2" />
               Update Status
             </Button>
             {jobInvoices[viewingJob.id] && (
               <Button 
-                icon={<FileTextOutlined />}
                 onClick={() => navigate('/invoices', { state: { openInvoiceId: jobInvoices[viewingJob.id].id } })}
               >
+                <FileText className="h-4 w-4 mr-2" />
                 View Invoice
               </Button>
             )}
             {jobInvoices[viewingJob.id] && jobInvoices[viewingJob.id].status !== 'paid' && (
               <Button 
-                type="primary"
-                icon={<DollarOutlined />}
                 onClick={() => handleMarkAsPaid(viewingJob)}
-                loading={markingAsPaid}
+                disabled={markingAsPaid}
               >
+                {markingAsPaid ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Marking...
+                  </>
+                ) : (
+                  <>
+                    <DollarSign className="h-4 w-4 mr-2" />
                 Mark as Paid
+                  </>
+                )}
               </Button>
             )}
-          </Space>
+          </div>
         )}
         tabs={viewingJob ? [
           {
             key: 'details',
             label: 'Details',
             content: (
-              <Spin spinning={jobDetailsLoading} tip="Loading job details...">
-                <Descriptions column={1} bordered>
-                <Descriptions.Item label="Job Number">
+              jobDetailsLoading ? (
+                <DetailSkeleton />
+              ) : (
+                <div className="space-y-4">
+                  {/* Job Information Section */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-muted-foreground mb-3">Job Information</h3>
+                    <div className="border rounded-lg px-5 py-4">
+                      <Descriptions column={1} className="space-y-2">
+                      <DescriptionItem label="Job Number">
                   {viewingJob.jobNumber}
-                </Descriptions.Item>
-                <Descriptions.Item label="Title">
+                      </DescriptionItem>
+                      <DescriptionItem label="Title">
                   {viewingJob.title}
-                </Descriptions.Item>
-                <Descriptions.Item label="Customer">
+                      </DescriptionItem>
+                      <DescriptionItem label="Customer">
                   {viewingJob.customer?.name}
-                </Descriptions.Item>
-                <Descriptions.Item label="Job Type">
+                      </DescriptionItem>
+                      <DescriptionItem label="Job Type">
                   {viewingJob.jobType || '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Description">
-                  {viewingJob.description}
-                </Descriptions.Item>
-                <Descriptions.Item label="Status">
-                  <Space size="small">
-                    <Tag color={statusColors[viewingJob.status]}>
-                      {viewingJob.status?.replace('_', ' ').toUpperCase()}
-                    </Tag>
-                    <Button size="small" type="link" onClick={() => openStatusModal(viewingJob)}>
+                      </DescriptionItem>
+                      <DescriptionItem label="Description">
+                        {viewingJob.description || '-'}
+                      </DescriptionItem>
+                      <DescriptionItem label="Status">
+                  <div className="flex items-center gap-2">
+                          <StatusChip status={viewingJob.status} />
+                          <Button variant="ghost" size="sm" onClick={() => openStatusModal(viewingJob)} className="text-[#166534] hover:text-[#166534]/80">
                       Update
                     </Button>
-                  </Space>
-                </Descriptions.Item>
-                <Descriptions.Item label="Priority">
-                  <Tag color={priorityColors[viewingJob.priority]}>
+                  </div>
+                      </DescriptionItem>
+                      <DescriptionItem label="Priority">
+                        <Badge 
+                          variant="outline" 
+                          className={
+                            viewingJob.priority === 'urgent' ? 'bg-red-100 text-red-800 border-red-300' :
+                            viewingJob.priority === 'high' ? 'bg-orange-100 text-orange-800 border-orange-300' :
+                            viewingJob.priority === 'medium' ? 'bg-blue-100 text-blue-800 border-blue-300' :
+                            ''
+                          }
+                        >
                     {viewingJob.priority?.toUpperCase()}
-              </Tag>
-                </Descriptions.Item>
-                <Descriptions.Item label="Created By">
-                  <Space size="small">
+              </Badge>
+                      </DescriptionItem>
+                      </Descriptions>
+                    </div>
+                  </div>
+
+                  {/* Assignment & Dates Section */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-muted-foreground mb-3">Assignment & Dates</h3>
+                    <div className="border rounded-lg px-5 py-4">
+                      <Descriptions column={1} className="space-y-2">
+                      <DescriptionItem label="Created By">
+                  <div className="flex items-center gap-2">
                     {viewingJob.creator ? (
                       <>
-                        <Tag icon={<UserOutlined />} color="geekblue">{viewingJob.creator.name}</Tag>
-                        <span style={{ color: '#888' }}>{viewingJob.creator.email}</span>
+                              <Badge variant="outline"><User className="h-3 w-3 mr-1" />{viewingJob.creator.name}</Badge>
+                              <span className="text-sm text-muted-foreground">{viewingJob.creator.email}</span>
                       </>
                     ) : (
-                      <Tag color="default">System</Tag>
+                      <Badge variant="outline">System</Badge>
                     )}
-                  </Space>
-                </Descriptions.Item>
-                <Descriptions.Item label="Assigned To">
-                  <Space>
+                  </div>
+                      </DescriptionItem>
+                      <DescriptionItem label="Assigned To">
+                  <div className="flex items-center gap-2">
                     {viewingJob.assignedUser ? (
                       <>
-                        <Tag icon={<UserOutlined />} color="blue">
+                              <Badge variant="outline"><User className="h-3 w-3 mr-1" />
                           {viewingJob.assignedUser.name}
-                        </Tag>
-                        <span style={{ color: '#888' }}>{viewingJob.assignedUser.email}</span>
+                        </Badge>
+                              <span className="text-sm text-muted-foreground">{viewingJob.assignedUser.email}</span>
                       </>
                     ) : (
-                      <Tag color="default">Unassigned</Tag>
+                      <Badge variant="outline">Unassigned</Badge>
                     )}
-                    <Button size="small" type="link" onClick={() => openAssignModal(viewingJob)}>
+                          <Button variant="ghost" size="sm" onClick={() => openAssignModal(viewingJob)} className="text-[#166534] hover:text-[#166534]/80">
                       Manage
                     </Button>
-                  </Space>
-                </Descriptions.Item>
-                <Descriptions.Item label="Final Price">
-                  <strong style={{ fontSize: 16, color: '#1890ff' }}>
-                    GHS {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
-                  </strong>
-                </Descriptions.Item>
-                <Descriptions.Item label="Start Date">
+                  </div>
+                      </DescriptionItem>
+                      <DescriptionItem label="Start Date">
                   {viewingJob.startDate ? dayjs(viewingJob.startDate).format('MMM DD, YYYY') : 'N/A'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Due Date">
+                      </DescriptionItem>
+                      <DescriptionItem label="Due Date">
                   {viewingJob.dueDate ? dayjs(viewingJob.dueDate).format('MMM DD, YYYY') : 'N/A'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Completion Date">
+                      </DescriptionItem>
+                      <DescriptionItem label="Completion Date">
                   {viewingJob.completionDate ? dayjs(viewingJob.completionDate).format('MMM DD, YYYY') : 'N/A'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Notes">
-                  {viewingJob.notes || '-'}
-                </Descriptions.Item>
-                <Descriptions.Item label="Invoice">
+                      </DescriptionItem>
+                      <DescriptionItem label="Created At">
+                        {viewingJob.createdAt ? new Date(viewingJob.createdAt).toLocaleString() : '-'}
+                      </DescriptionItem>
+                      </Descriptions>
+                    </div>
+                  </div>
+
+                  {/* Financial & Additional Information Section */}
+                  <div>
+                    <h3 className="text-sm font-semibold text-muted-foreground mb-3">Financial & Additional Information</h3>
+                    <div className="border rounded-lg px-5 py-4">
+                      <Descriptions column={1} className="space-y-2">
+                      <DescriptionItem label="Final Price">
+                        <strong className="text-base" style={{ color: '#166534' }}>
+                          GHS {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
+                        </strong>
+                      </DescriptionItem>
+                      <DescriptionItem label="Invoice">
                   {(() => {
                     const invoice = jobInvoices[viewingJob.id];
                     if (!invoice) {
                       return (
-                        <Space direction="vertical" size="small">
+                        <div className="flex flex-col gap-2">
                           <Button 
-                            type="primary" 
-                            icon={<FileTextOutlined />}
                             onClick={() => navigate('/invoices')}
                           >
+                            <FileText className="h-4 w-4 mr-2" />
                             View Invoice
                           </Button>
-                          <div style={{ fontSize: 12, color: '#999' }}>
+                                <div className="text-xs text-muted-foreground">
                             Invoice automatically generated
                           </div>
-                        </Space>
+                        </div>
                       );
                     }
                     return (
-                      <Space direction="vertical">
-                        <Tag color={invoice.status === 'paid' ? 'green' : 'orange'}>
+                      <div className="flex flex-col gap-2">
+                              <Badge 
+                                variant="outline" 
+                                className={
+                                  invoice.status === 'paid' ? 'bg-green-100 text-green-800 border-green-300' :
+                                  invoice.status === 'overdue' ? 'bg-red-100 text-red-800 border-red-300' :
+                                  'bg-orange-100 text-orange-800 border-orange-300'
+                                }
+                              >
                           {invoice.invoiceNumber} - {invoice.status?.toUpperCase()}
-                        </Tag>
+                        </Badge>
                         <Button 
-                          size="small"
+                          size="sm"
                           onClick={() => {
                             navigate('/invoices', { state: { openInvoiceId: invoice.id } });
                             handleCloseDrawer();
@@ -1384,154 +1729,205 @@ useEffect(() => {
                         >
                           View Invoice
                         </Button>
-                      </Space>
+                      </div>
                     );
                   })()}
-                </Descriptions.Item>
-                <Descriptions.Item label="Created At">
-                  {viewingJob.createdAt ? new Date(viewingJob.createdAt).toLocaleString() : '-'}
-                </Descriptions.Item>
+                      </DescriptionItem>
+                      <DescriptionItem label="Notes">
+                        {viewingJob.notes || '-'}
+                      </DescriptionItem>
               </Descriptions>
-              </Spin>
+                    </div>
+                  </div>
+                </div>
+              )
             )
           },
           {
             key: 'services',
             label: 'Services',
             content: (
-              <Spin spinning={jobDetailsLoading} tip="Loading job details...">
+              jobDetailsLoading ? (
+                <DetailSkeleton />
+              ) : (
                 <div>
                   {(!viewingJob.items || viewingJob.items.length === 0) ? (
                   <div style={{ padding: '24px', textAlign: 'center', color: '#999' }}>
                     No services/items added to this job
                   </div>
                 ) : (
-                  <div>
+                  <div className="space-y-3">
                     {viewingJob.items.map((item, idx) => (
-                      <Card key={idx} size="small" style={{ marginBottom: 12 }}>
-                        <Row gutter={16}>
-                          <Col span={12}>
-                            <div style={{ marginBottom: 8 }}>
-                              <strong style={{ fontSize: 14 }}>{item.category}</strong>
+                      <div key={idx} className="border rounded-lg p-4">
+                        <div className="grid grid-cols-12 gap-4">
+                          <div className="col-span-6">
+                            <div className="mb-2">
+                              <strong className="text-sm font-semibold">{item.category}</strong>
                             </div>
                             {item.paperSize && item.paperSize !== 'N/A' && (
-                              <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>
+                              <div className="text-xs text-muted-foreground mb-1">
                                 Paper Size: {item.paperSize}
                               </div>
                             )}
                             {item.description && (
-                              <div style={{ fontSize: 12, color: '#666' }}>
+                              <div className="text-sm text-foreground">
                                 {item.description}
                               </div>
                             )}
-                          </Col>
-                          <Col span={4} style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Quantity</div>
-                            <div style={{ fontWeight: 'bold', fontSize: 14 }}>{item.quantity}</div>
-                          </Col>
-                          <Col span={4} style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Unit Price</div>
-                            <div style={{ fontSize: 14 }}>GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
-                          </Col>
-                          <Col span={4} style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: 11, color: '#888', marginBottom: 4 }}>Total</div>
-                            <div style={{ fontWeight: 'bold', color: '#1890ff', fontSize: 14 }}>
+                          </div>
+                          <div className="col-span-2 text-right">
+                            <div className="text-xs text-muted-foreground mb-1">Quantity</div>
+                            <div className="font-semibold text-sm">{item.quantity}</div>
+                          </div>
+                          <div className="col-span-2 text-right">
+                            <div className="text-xs text-muted-foreground mb-1">Unit Price</div>
+                            <div className="text-sm font-medium">GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
+                          </div>
+                          <div className="col-span-2 text-right">
+                            <div className="text-xs text-muted-foreground mb-1">Total</div>
+                            <div className="font-bold text-sm" style={{ color: '#166534' }}>
                               GHS {(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
                             </div>
-                          </Col>
-                        </Row>
-                      </Card>
+                          </div>
+                        </div>
+                      </div>
                     ))}
-                    <div style={{ 
-                      marginTop: 16, 
-                      padding: '12px 16px', 
-                      background: '#f0f5ff', 
-                      borderRadius: 8,
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center'
-                    }}>
-                      <strong style={{ fontSize: 16 }}>Total:</strong>
-                      <strong style={{ fontSize: 18, color: '#1890ff' }}>
+                    <div className="border rounded-lg p-4 flex justify-between items-center bg-muted/30">
+                      <strong className="text-base font-semibold">Total:</strong>
+                      <strong className="text-lg font-bold" style={{ color: '#166534' }}>
                         GHS {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
                       </strong>
                     </div>
                   </div>
                 )}
               </div>
-              </Spin>
+              )
             )
           },
           {
             key: 'attachments',
             label: 'Attachments',
             content: (
-              <div style={{ padding: '16px 0' }}>
-                <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              <div className="py-4">
+                <div className="flex flex-col gap-4 w-full">
                   <div>
-                    <Upload
+                    <input
+                      type="file"
+                      id="file-upload"
+                      className="hidden"
                       accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.txt"
-                      customRequest={handleAttachmentUpload}
-                      multiple={false}
-                      showUploadList={false}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleAttachmentUpload({ file, onSuccess: () => {}, onError: () => {} });
+                        }
+                      }}
                       disabled={uploadingAttachment}
+                    />
+                    <label
+                      htmlFor="file-upload"
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (uploadingAttachment) return;
+                        const file = e.dataTransfer.files?.[0];
+                        if (file) {
+                          handleAttachmentUpload({ file, onSuccess: () => {}, onError: () => {} });
+                        }
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                      }}
+                      className={`
+                        flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer
+                        ${uploadingAttachment ? 'opacity-50 cursor-not-allowed' : 'hover:bg-muted/50 transition-colors'}
+                        border-gray-300 bg-white
+                      `}
                     >
-                      <Button icon={<UploadOutlined />} loading={uploadingAttachment}>
-                        {uploadingAttachment ? 'Uploading...' : 'Upload File'}
-                      </Button>
-                    </Upload>
-                    <div style={{ color: '#888', fontSize: 12, marginTop: 4 }}>
-                      Supported types: images, PDF, Office documents, ZIP (max {uploadMaxSizeMb} MB).
-                    </div>
+                      {uploadingAttachment ? (
+                        <div className="flex flex-col items-center gap-2">
+                          <Loader2 className="h-8 w-8 animate-spin" style={{ color: '#166534' }} />
+                          <span className="text-sm text-muted-foreground">Uploading...</span>
+                        </div>
+                      ) : (
+                        <>
+                          <Upload className="h-8 w-8 mb-2" style={{ color: '#166534' }} />
+                          <div className="text-sm text-center">
+                            <span style={{ color: '#166534' }} className="font-medium">Click to upload</span>
+                            <span className="text-muted-foreground"> or drag and drop</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            PNG, JPG, WEBP, JPEG, PDF, DOC, DOCX, XLS, XLSX, ZIP (Max. {uploadMaxSizeMb}MB)
+                          </div>
+                        </>
+                      )}
+                    </label>
                   </div>
 
-                  <List
-                    dataSource={attachmentList}
-                    locale={{ emptyText: 'No attachments uploaded yet.' }}
-                    renderItem={(item) => (
-                      <List.Item
-                        actions={[
-                          <Tooltip title="Open file" key="open">
-                            <Button
-                              size="small"
-                              icon={<DownloadOutlined />}
-                              onClick={() => window.open(item.url, '_blank', 'noopener')}
-                            />
-                          </Tooltip>,
-                          <Popconfirm
-                            key="delete"
-                            title="Remove attachment?"
-                            okText="Remove"
-                            okButtonProps={{ danger: true }}
-                            onConfirm={() => handleAttachmentRemove(item)}
-                          >
-                            <Button size="small" icon={<DeleteOutlined />} danger />
-                          </Popconfirm>
-                        ]}
-                      >
-                        <List.Item.Meta
-                          avatar={<PaperClipOutlined style={{ fontSize: 18 }} />}
-                          title={
-                            <a href={item.url} target="_blank" rel="noopener noreferrer">
-                              {item.originalName || item.filename}
-                            </a>
-                          }
-                          description={
-                            <Space size="middle">
-                              <span>
-                                {item.uploadedAt ? dayjs(item.uploadedAt).format('MMM DD, YYYY HH:mm') : ''}
-                              </span>
-                              <span>{formatFileSize(item.size)}</span>
-                              {item.uploadedBy?.name && (
-                                <span style={{ color: '#888' }}>by {item.uploadedBy.name}</span>
-                              )}
-                            </Space>
-                          }
-                        />
-                      </List.Item>
-                    )}
-                  />
-                </Space>
+                  <TooltipProvider>
+                    <div className="space-y-2">
+                      {attachmentList.length === 0 ? (
+                        <div className="text-sm text-gray-500 py-4 text-center">No attachments uploaded yet.</div>
+                      ) : (
+                        attachmentList.map((item) => (
+                          <div key={item.id} className="flex items-center justify-between p-3 border border-gray-200 rounded-md">
+                            <div className="flex items-center gap-3 flex-1">
+                              <Paperclip className="h-5 w-5 text-gray-500" />
+                              <div className="flex-1">
+                                <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium hover:underline">
+                                {item.originalName || item.filename}
+                              </a>
+                                <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
+                                <span>
+                                  {item.uploadedAt ? dayjs(item.uploadedAt).format('MMM DD, YYYY HH:mm') : ''}
+                                </span>
+                                <span>{formatFileSize(item.size)}</span>
+                                {item.uploadedBy?.name && (
+                                    <span>by {item.uploadedBy.name}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => window.open(item.url, '_blank', 'noopener')}
+                                  >
+                                    <Download className="h-4 w-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Open file</TooltipContent>
+                              </Tooltip>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button size="sm" variant="ghost">
+                                    <Trash2 className="h-4 w-4 text-red-600" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Remove attachment?</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Are you sure you want to remove this attachment? This action cannot be undone.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => handleAttachmentRemove(item)} className="bg-red-600 hover:bg-red-700">
+                                      Remove
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </TooltipProvider>
+                </div>
               </div>
             )
           },
@@ -1545,15 +1941,39 @@ useEffect(() => {
                     .slice()
                     .sort((a, b) => dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf());
 
-                  const timelineItems = historyEntries.length ? historyEntries.map((entry) => {
+                  // If no status history but job exists, create a "Job created" entry
+                  const allActivities = [];
+                  
+                  // Add job creation activity if job exists
+                  if (viewingJob?.createdAt && (historyEntries.length === 0 || dayjs(viewingJob.createdAt).isBefore(dayjs(historyEntries[0]?.createdAt)))) {
+                    allActivities.push({
+                      id: 'created',
+                      type: 'created',
+                      status: viewingJob.status || 'new',
+                      createdAt: viewingJob.createdAt,
+                      comment: 'Job created',
+                      changedByUser: viewingJob.creator || null,
+                      isCreated: true
+                    });
+                  }
+                  
+                  // Add all status history entries
+                  allActivities.push(...historyEntries);
+                  
+                  // Sort all activities by date
+                  allActivities.sort((a, b) => dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf());
+
+                  const timelineItems = allActivities.length ? allActivities.map((entry) => {
                     const color = statusColors[entry.status] || 'blue';
-                    let icon = <ClockCircleOutlined style={{ fontSize: '16px' }} />;
+                    let icon = <Clock style={{ fontSize: '16px' }} />;
                     if (entry.status === 'completed') {
-                      icon = <CheckCircleOutlined style={{ fontSize: '16px' }} />;
+                      icon = <CheckCircle style={{ fontSize: '16px' }} />;
                     } else if (entry.status === 'on_hold') {
-                      icon = <PauseCircleOutlined style={{ fontSize: '16px' }} />;
+                      icon = <PauseCircle style={{ fontSize: '16px' }} />;
                     } else if (entry.status === 'cancelled') {
-                      icon = <CloseCircleOutlined style={{ fontSize: '16px' }} />;
+                      icon = <XCircle style={{ fontSize: '16px' }} />;
+                    } else if (entry.isCreated) {
+                      icon = <Plus style={{ fontSize: '16px' }} />;
                     }
 
                     return {
@@ -1562,25 +1982,37 @@ useEffect(() => {
                       children: (
                         <div>
                           <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
-                            Status changed to{' '}
-                            <Tag color={color} style={{ marginLeft: 4 }}>
-                              {entry.status.replace('_', ' ').toUpperCase()}
-                            </Tag>
+                            {entry.isCreated ? (
+                              <>
+                                Job created with status{' '}
+                                <Badge variant="outline" className={color === 'green' ? 'bg-green-100 text-green-800' : color === 'blue' ? 'bg-blue-100 text-blue-800' : color === 'orange' ? 'bg-orange-100 text-orange-800' : color === 'red' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'} style={{ marginLeft: 4 }}>
+                                  {entry.status.replace('_', ' ').toUpperCase()}
+                                </Badge>
+                              </>
+                            ) : (
+                              <>
+                                Status changed to{' '}
+                                <Badge variant="outline" className={color === 'green' ? 'bg-green-100 text-green-800' : color === 'blue' ? 'bg-blue-100 text-blue-800' : color === 'orange' ? 'bg-orange-100 text-orange-800' : color === 'red' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'} style={{ marginLeft: 4 }}>
+                                  {entry.status.replace('_', ' ').toUpperCase()}
+                                </Badge>
+                              </>
+                            )}
                           </div>
                           <div style={{ color: '#666', fontSize: 12, marginBottom: 4 }}>
                             {dayjs(entry.createdAt).format('MMM DD, YYYY [at] h:mm A')}
                           </div>
                           <div style={{ color: '#888', fontSize: 12, marginBottom: entry.comment ? 8 : 0 }}>
-                            Updated by: {entry.changedByUser?.name || 'System'}
-                            {entry.changedByUser?.email ? ` (${entry.changedByUser.email})` : ''}
+                            {entry.isCreated ? (
+                              <>Created by: {entry.changedByUser?.name || viewingJob?.creator?.name || 'System'}</>
+                            ) : (
+                              <>Updated by: {entry.changedByUser?.name || 'System'}</>
+                            )}
+                            {entry.changedByUser?.email ? ` (${entry.changedByUser.email})` : viewingJob?.creator?.email ? ` (${viewingJob.creator.email})` : ''}
                           </div>
                           {entry.comment && (
-                            <Alert
-                              type="info"
-                              showIcon
-                              message="Comment"
-                              description={entry.comment}
-                            />
+                            <Alert className="mt-2">
+                              <AlertDescription>{entry.comment}</AlertDescription>
+                            </Alert>
                           )}
                         </div>
                       )
@@ -1598,190 +2030,212 @@ useEffect(() => {
         ] : []}
       />
 
-      <Modal
-        title={editingJobId ? "Edit Job" : "Add New Job"}
-        open={modalVisible}
-        onCancel={() => {
+      <Dialog open={modalVisible} onOpenChange={(open) => {
+        if (!open) {
           setModalVisible(false);
           setEditingJobId(null);
           setCategoryOtherInputs({}); // Clear category "Other" inputs
-        }}
-        onOk={() => form.submit()}
-        width={1000}
-        okText={editingJobId ? "Update Job" : "Create Job"}
-        confirmLoading={submittingJob}
-        style={{ top: 20 }}
-        bodyStyle={{
-          maxHeight: '70vh',
-          overflowY: 'auto'
-        }}
-      >
-        <Form
-          form={form}
-          layout="vertical"
-          onFinish={handleSubmit}
-          style={{ marginTop: 24 }}
-          initialValues={{
-            status: 'new',
-            priority: 'medium'
-          }}
-        >
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
-                name="customerId"
-                label="Customer"
-                rules={[{ required: true, message: 'Please select a customer' }]}
-              >
-                <Select 
-                  placeholder="Select customer first" 
-                  size="large"
-                  showSearch
-                  filterOption={(input, option) =>
-                    option.children.toLowerCase().includes(input.toLowerCase())
-                  }
-                  onChange={handleCustomerChange}
-                  dropdownRender={(menu) => (
-                    <>
-                      {menu}
-                      <Divider style={{ margin: '8px 0' }} />
+        }
+      }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingJobId ? "Edit Job" : "Add New Job"}</DialogTitle>
+            <DialogDescription>
+              {editingJobId ? "Update the job details below." : "Fill in the details to create a new job."}
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...form}>
+            <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                {!customerModalVisible && (
+                <FormField
+                  control={form.control}
+                  name="customerId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Customer</FormLabel>
+                      <Select onValueChange={(value) => {
+                        field.onChange(value);
+                        handleCustomerChange(value);
+                      }} value={field.value || undefined}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select customer first" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {customersData.map(customer => (
+                            <SelectItem key={customer.id} value={customer.id}>
+                              {customer.name} {customer.company ? `(${customer.company})` : ''}
+                            </SelectItem>
+                          ))}
+                          <Separator className="my-2" />
+                          <div className="px-2 py-1.5">
                       <Button
-                        type="link"
-                        icon={<PlusOutlined />}
+                              type="button"
+                              variant="ghost"
+                              className="w-full justify-start"
                         onClick={handleAddNewCustomer}
-                        style={{ width: '100%', textAlign: 'left' }}
                       >
+                              <Plus className="h-4 w-4 mr-2" />
                         Add New Customer
                       </Button>
-                    </>
+                          </div>
+                        </SelectContent>
+                </Select>
+                      <FormMessage />
+                    </FormItem>
                   )}
-                >
-                  {customers.map(customer => (
-                    <Option key={customer.id} value={customer.id}>
-                      {customer.name} {customer.company ? `(${customer.company})` : ''}
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
+                />
+                )}
+                <FormField
+                  control={form.control}
                 name="title"
-                label="Job Title (Auto-generated from items, editable)"
-              >
-                <Input placeholder="Will auto-generate based on items added" size="large" />
-              </Form.Item>
-            </Col>
-          </Row>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Job Title (Auto-generated from items, editable)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Will auto-generate based on items added" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
                 name="status"
-                label="Status"
-                rules={[{ required: true, message: 'Please select status' }]}
-              >
-                <Select placeholder="Select status" size="large">
-                  <Option value="new">New</Option>
-                  <Option value="in_progress">In Progress</Option>
-                  <Option value="completed">Completed</Option>
-                  <Option value="on_hold">On Hold</Option>
-                  <Option value="cancelled">Cancelled</Option>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Status</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select status" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="new">New</SelectItem>
+                          <SelectItem value="in_progress">In Progress</SelectItem>
+                          <SelectItem value="completed">Completed</SelectItem>
+                          <SelectItem value="on_hold">On Hold</SelectItem>
+                          <SelectItem value="cancelled">Cancelled</SelectItem>
+                        </SelectContent>
                 </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
                 name="priority"
-                label="Priority"
-                rules={[{ required: true, message: 'Please select priority' }]}
-              >
-                <Select placeholder="Select priority" size="large">
-                  <Option value="low">Low</Option>
-                  <Option value="medium">Medium</Option>
-                  <Option value="high">High</Option>
-                  <Option value="urgent">Urgent</Option>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Priority</FormLabel>
+                      <Select onValueChange={field.onChange} value={field.value}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select priority" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="low">Low</SelectItem>
+                          <SelectItem value="medium">Medium</SelectItem>
+                          <SelectItem value="high">High</SelectItem>
+                          <SelectItem value="urgent">Urgent</SelectItem>
+                        </SelectContent>
                 </Select>
-              </Form.Item>
-            </Col>
-          </Row>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
                 name="startDate"
-                label="Start Date"
-              >
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Start Date</FormLabel>
+                      <FormControl>
                 <DatePicker 
-                  style={{ width: '100%' }} 
-                  size="large"
-                  format="YYYY-MM-DD"
+                          date={field.value}
+                          onDateChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
+                <FormField
+                  control={form.control}
                 name="dueDate"
-                label="Due Date"
-              >
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Due Date</FormLabel>
+                      <FormControl>
                 <DatePicker 
-                  style={{ width: '100%' }} 
-                  size="large"
-                  format="YYYY-MM-DD"
+                          date={field.value}
+                          onDateChange={field.onChange}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
                 />
-              </Form.Item>
-            </Col>
-          </Row>
+              </div>
 
-          <Row gutter={16}>
-            <Col span={24}>
-              <Form.Item
+              <FormField
+                control={form.control}
                 name="assignedTo"
-                label="Assign To"
-              >
-                <Select
-                  placeholder="Select team member (optional)"
-                  allowClear
-                  size="large"
-                  showSearch
-                  filterOption={(input, option) =>
-                    (option?.children?.toString() || '').toLowerCase().includes(input.toLowerCase())
-                  }
-                >
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Assign To</FormLabel>
+                    <Select onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)} value={field.value ? String(field.value) : "__NONE__"}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select team member (optional)" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__NONE__">None</SelectItem>
                   {teamMembers.map(member => (
-                    <Option key={member.id} value={member.id}>
+                          <SelectItem key={member.id} value={member.id}>
                       {member.name} {member.role ? `(${member.role})` : ''}
-                    </Option>
+                          </SelectItem>
                   ))}
+                      </SelectContent>
                 </Select>
-              </Form.Item>
-            </Col>
-          </Row>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-          <Divider>Job Items / Services</Divider>
+              <div className="relative my-2" style={{ marginBottom: '8px' }}>
+                <div className="absolute inset-0 flex items-center">
+                  <Separator />
+                </div>
+                <div className="relative flex justify-center text-xs uppercase">
+                  <span className="bg-background px-2 text-sm font-medium">Job Items / Services</span>
+                </div>
+              </div>
 
-          <Form.List name="items">
-            {(fields, { add, remove }) => (
-              <>
-                {fields.map(({ key, name, ...restField }) => (
-                  <Card 
-                    key={key} 
-                    size="small" 
-                    style={{ marginBottom: 16, background: '#fafafa' }}
-                  >
+              <div className="space-y-4">
+                {fields.map((field, index) => (
+                  <Card key={field.id} className="p-4 bg-gray-50">
                     {pricingTemplates.length > 0 && (
-                      <Row gutter={16} style={{ marginBottom: 16 }}>
-                        <Col span={24}>
-                          <Form.Item label="Select Pricing Template (Optional)">
+                      <div className="mb-4">
+                        <Label>Select Pricing Template (Optional)</Label>
                             <Select
-                              placeholder="Select a pricing template to auto-fill"
-                              style={{ width: '100%' }}
-                              size="large"
-                              allowClear
-                              showSearch
-                              optionFilterProp="children"
-                              onChange={(value) => handleTemplateSelect(value, name)}
-                            >
+                          onValueChange={(value) => handleTemplateSelect(value, index)}
+                        >
+                          <SelectTrigger className="mt-2">
+                            <SelectValue placeholder="Select a pricing template to auto-fill" />
+                          </SelectTrigger>
+                          <SelectContent>
                               {pricingTemplates.map(template => {
                                 const resolvedPrice = resolveTemplateUnitPrice(template);
                                 const hasUnitPricing = Number.isFinite(parseFloat(template.pricePerUnit)) && parseFloat(template.pricePerUnit) > 0;
@@ -1793,272 +2247,284 @@ useEffect(() => {
                                   return ` (GHS ${resolvedPrice.toFixed(2)})`;
                                 })();
                                 return (
-                                  <Option key={template.id} value={template.id}>
+                                <SelectItem key={template.id} value={template.id}>
                                     {template.name} - {template.category}
                                     {priceLabel}
-                                  </Option>
+                                </SelectItem>
                                 );
                               })}
+                          </SelectContent>
                             </Select>
-                          </Form.Item>
-                        </Col>
-                      </Row>
+                      </div>
                     )}
 
-                    <Form.Item shouldUpdate noStyle>
-                      {({ getFieldValue }) => {
-                        const items = getFieldValue('items') || [];
-                        const currentItem = items[name] || {};
-                        const hasTemplate = selectedTemplates[name];
+                    {(() => {
+                      const items = form.getValues('items') || [];
+                      const currentItem = items[index] || {};
+                      const hasTemplate = selectedTemplates[index];
                         
-                        // Only show category dropdown if no template selected
-                        if (!hasTemplate && !currentItem.category) {
+                        // Show category dropdown if no template selected (always visible, not just when empty)
+                        if (!hasTemplate) {
                           return (
-                            <Row gutter={16}>
-                              <Col span={24}>
-                                <Form.Item
-                                  {...restField}
-                                  name={[name, 'category']}
-                                  label="Category"
-                                  rules={[{ required: true, message: 'Please select category or use a pricing template' }]}
-                                >
-                                  <Select 
-                                    placeholder="Select category" 
-                                    size="large" 
-                                    showSearch
-                                    onChange={(value) => handleCategoryChange(value, name)}
-                                  >
-                                    <Select.OptGroup label="Printing Services">
-                                      <Option value="Black & White Printing">Black & White Printing</Option>
-                                      <Option value="Color Printing">Color Printing</Option>
-                                      <Option value="Large Format Printing">Large Format Printing</Option>
-                                      <Option value="Photocopying">Photocopying</Option>
-                                    </Select.OptGroup>
-                                    <Select.OptGroup label="Print Products">
-                                      <Option value="Business Cards">Business Cards</Option>
-                                      <Option value="Brochures">Brochures</Option>
-                                      <Option value="Flyers">Flyers</Option>
-                                      <Option value="Posters">Posters</Option>
-                                      <Option value="Banners">Banners</Option>
-                                      <Option value="Booklets">Booklets</Option>
-                                    </Select.OptGroup>
-                                    <Select.OptGroup label="Finishing Services">
-                                      <Option value="Binding">Binding</Option>
-                                      <Option value="Lamination">Lamination</Option>
-                                      <Option value="Scanning">Scanning</Option>
-                                    </Select.OptGroup>
-                                    <Select.OptGroup label="Professional Services">
-                                      <Option value="Design Services">Design Services</Option>
-                                    </Select.OptGroup>
+                          <FormField
+                            control={form.control}
+                            name={`items.${index}.category`}
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Category</FormLabel>
+                                <Select onValueChange={(value) => {
+                                  field.onChange(value);
+                                  handleCategoryChange(value, index);
+                                }} value={field.value || undefined}>
+                                  <FormControl>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Select category" />
+                                    </SelectTrigger>
+                                  </FormControl>
+                                  <SelectContent>
+                                    <div className="px-2 py-1.5 text-sm font-semibold">Printing Services</div>
+                                    <SelectItem value="Black & White Printing">Black & White Printing</SelectItem>
+                                    <SelectItem value="Color Printing">Color Printing</SelectItem>
+                                    <SelectItem value="Large Format Printing">Large Format Printing</SelectItem>
+                                    <SelectItem value="Photocopying">Photocopying</SelectItem>
+                                    <div className="px-2 py-1.5 text-sm font-semibold">Print Products</div>
+                                    <SelectItem value="Business Cards">Business Cards</SelectItem>
+                                    <SelectItem value="Brochures">Brochures</SelectItem>
+                                    <SelectItem value="Flyers">Flyers</SelectItem>
+                                    <SelectItem value="Posters">Posters</SelectItem>
+                                    <SelectItem value="Banners">Banners</SelectItem>
+                                    <SelectItem value="Booklets">Booklets</SelectItem>
+                                    <div className="px-2 py-1.5 text-sm font-semibold">Finishing Services</div>
+                                    <SelectItem value="Binding">Binding</SelectItem>
+                                    <SelectItem value="Lamination">Lamination</SelectItem>
+                                    <SelectItem value="Scanning">Scanning</SelectItem>
+                                    <div className="px-2 py-1.5 text-sm font-semibold">Professional Services</div>
+                                    <SelectItem value="Design Services">Design Services</SelectItem>
                                     {customCategories.length > 0 && (
-                                      <Select.OptGroup label="Custom Categories">
+                                      <>
+                                        <div className="px-2 py-1.5 text-sm font-semibold">Custom Categories</div>
                                         {customCategories.map(cat => (
-                                          <Option key={cat.value} value={cat.value}>{cat.label}</Option>
+                                          <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
                                         ))}
-                                      </Select.OptGroup>
+                                      </>
                                     )}
-                                    <Select.OptGroup label="Other">
-                                      <Option value="__OTHER__">Other (specify)</Option>
-                                    </Select.OptGroup>
+                                    <div className="px-2 py-1.5 text-sm font-semibold">Other</div>
+                                    <SelectItem value="__OTHER__">Other (specify)</SelectItem>
+                                  </SelectContent>
                                   </Select>
-                                </Form.Item>
-                                {categoryOtherInputs[name] !== undefined && (
-                                  <Form.Item
-                                    label="Enter Category Name"
-                                    style={{ marginTop: 8 }}
-                                  >
-                                    <Input.Group compact>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        );
+                      } else {
+                        // Category is hidden when template is selected
+                        return (
+                          <FormField
+                            control={form.control}
+                            name={`items.${index}.category`}
+                            render={({ field }) => <input type="hidden" {...field} />}
+                          />
+                        );
+                      }
+                    })()}
+                    {categoryOtherInputs[index] !== undefined && (
+                      <div className="mt-2">
+                        <Label>Enter Category Name</Label>
+                        <div className="flex gap-2 mt-2">
                                       <Input
-                                        style={{ width: 'calc(100% - 80px)' }}
+                            className="flex-1"
                                         placeholder="e.g., T-shirt Printing"
-                                        value={categoryOtherInputs[name] || ''}
-                                        onChange={(e) => setCategoryOtherInputs(prev => ({ ...prev, [name]: e.target.value }))}
-                                        onPressEnter={() => handleSaveCustomCategory(categoryOtherInputs[name], name)}
+                            value={categoryOtherInputs[index] || ''}
+                            onChange={(e) => setCategoryOtherInputs(prev => ({ ...prev, [index]: e.target.value }))}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSaveCustomCategory(categoryOtherInputs[index], index)}
                                       />
                                       <Button
-                                        type="primary"
-                                        style={{ width: 80 }}
-                                        onClick={() => handleSaveCustomCategory(categoryOtherInputs[name], name)}
+                            type="button"
+                            onClick={() => handleSaveCustomCategory(categoryOtherInputs[index], index)}
+                            className="w-20"
                                       >
                                         Save
                                       </Button>
-                                    </Input.Group>
-                                  </Form.Item>
-                                )}
-                              </Col>
-                            </Row>
-                          );
-                        } else {
-                          // Category is hidden when template is selected
-                          return (
-                            <Form.Item {...restField} name={[name, 'category']} hidden>
-                              <Input />
-                            </Form.Item>
-                          );
-                        }
-                      }}
-                    </Form.Item>
+                        </div>
+                      </div>
+                    )}
 
-                    <Row gutter={16}>
-                      <Col span={24}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'description']}
-                          label="Item Description"
-                          rules={[{ required: true, message: 'Please enter item description' }]}
-                        >
-                          <Input 
-                            placeholder="e.g., Full color, double-sided, glossy finish" 
-                            size="large"
-                          />
-                        </Form.Item>
-                      </Col>
-                    </Row>
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.description`}
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Item Description</FormLabel>
+                          <FormControl>
+                            <Input placeholder="e.g., Full color, double-sided, glossy finish" {...field} />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
                     {/* Hidden fields - populated by template */}
-                    <Form.Item {...restField} name={[name, 'paperSize']} hidden>
-                      <Input />
-                    </Form.Item>
-                    <Form.Item {...restField} name={[name, 'pricingMethod']} hidden>
-                      <Input />
-                    </Form.Item>
-                    <Form.Item {...restField} name={[name, 'itemHeight']} hidden>
-                      <InputNumber />
-                    </Form.Item>
-                    <Form.Item {...restField} name={[name, 'itemWidth']} hidden>
-                      <InputNumber />
-                    </Form.Item>
-                    <Form.Item {...restField} name={[name, 'itemUnit']} hidden>
-                      <Input />
-                    </Form.Item>
-                    <Form.Item {...restField} name={[name, 'pricePerSquareFoot']} hidden>
-                      <InputNumber />
-                    </Form.Item>
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.paperSize`}
+                      render={({ field }) => <input type="hidden" {...field} />}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.pricingMethod`}
+                      render={({ field }) => <input type="hidden" {...field} />}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.itemHeight`}
+                      render={({ field }) => <input type="hidden" {...field} />}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.itemWidth`}
+                      render={({ field }) => <input type="hidden" {...field} />}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.itemUnit`}
+                      render={({ field }) => <input type="hidden" {...field} />}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.pricePerSquareFoot`}
+                      render={({ field }) => <input type="hidden" {...field} />}
+                    />
 
                     {/* Only show the 4 essential fields + discount */}
-                    <Row gutter={16}>
-                      <Col span={6}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'quantity']}
-                          label="Quantity"
-                          rules={[{ required: true, message: 'Required' }]}
-                          initialValue={1}
-                        >
-                          <InputNumber
-                            style={{ width: '100%' }}
+                    <div className="grid grid-cols-4 gap-4">
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.quantity`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Quantity</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
                             placeholder="1"
                             min={1}
-                            size="large"
-                            onChange={(value) => handleQuantityChange(name, value)}
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col span={6}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'unitPrice']}
-                          label="Unit Price"
-                          rules={[{ required: true, message: 'Required' }]}
-                        >
-                          <InputNumber
-                            style={{ width: '100%' }}
+                                {...field}
+                                onChange={(e) => {
+                                  const value = parseInt(e.target.value) || 1;
+                                  field.onChange(value);
+                                  handleQuantityChange(index, value);
+                                }}
+                                value={field.value || 1}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.unitPrice`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Unit Price</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">GHS</span>
+                                <Input
+                                  type="number"
                             placeholder="0.00"
-                            prefix="GHS "
                             min={0}
-                            precision={2}
-                            size="large"
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col span={6}>
-                        <Form.Item
-                          {...restField}
-                          name={[name, 'discountAmount']}
-                          label="Discount"
-                        >
-                          <InputNumber
-                            style={{ width: '100%' }}
+                                  step="0.01"
+                                  className="pl-12"
+                                  {...field}
+                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                  value={field.value || ''}
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.discountAmount`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Discount</FormLabel>
+                            <FormControl>
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">GHS</span>
+                                <Input
+                                  type="number"
                             placeholder="0.00"
-                            prefix="GHS "
                             min={0}
-                            precision={2}
-                            size="large"
-                          />
-                        </Form.Item>
-                      </Col>
-                      <Col span={6}>
-                        <Form.Item shouldUpdate noStyle>
-                          {() => {
-                            const items = form.getFieldValue('items') || [];
-                            const currentItem = items[name] || {};
+                                  step="0.01"
+                                  className="pl-12"
+                                  {...field}
+                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                  value={field.value || ''}
+                                />
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <div className="space-y-2">
+                        <Label>Total</Label>
+                        <div className="h-10 px-3 py-2 border border-input rounded-md bg-background flex items-center text-sm font-semibold">
+                          GHS {(() => {
+                            const items = form.getValues('items') || [];
+                            const currentItem = items[index] || {};
                             const qty = parseFloat(currentItem.quantity || 1);
                             const price = parseFloat(currentItem.unitPrice || 0);
                             const discountAmount = parseFloat(currentItem.discountAmount || 0);
                             const subtotal = qty * price;
                             const total = subtotal - discountAmount;
-                            
-                            return (
-                              <Form.Item label="Total">
-                                <div style={{ 
-                                  padding: '8px 11px', 
-                                  background: '#fff', 
-                                  border: '1px solid #d9d9d9',
-                                  borderRadius: 4,
-                                  fontSize: 14,
-                                  fontWeight: 600,
-                                  color: '#000',
-                                  height: 40,
-                                  display: 'flex',
-                                  alignItems: 'center'
-                                }}>
-                                  GHS {total.toFixed(2)}
-                                </div>
-                              </Form.Item>
-                            );
-                          }}
-                        </Form.Item>
-                      </Col>
-                    </Row>
+                            return total.toFixed(2);
+                          })()}
+                        </div>
+                      </div>
+                    </div>
 
                     {/* Hidden discount metadata fields - populated by template */}
-                    <Form.Item {...restField} name={[name, 'discountPercent']} hidden>
-                      <InputNumber />
-                    </Form.Item>
-                    <Form.Item {...restField} name={[name, 'discountReason']} hidden>
-                      <Input />
-                    </Form.Item>
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.discountPercent`}
+                      render={({ field }) => <input type="hidden" {...field} />}
+                    />
+                    <FormField
+                      control={form.control}
+                      name={`items.${index}.discountReason`}
+                      render={({ field }) => <input type="hidden" {...field} />}
+                    />
 
                     <Button 
-                      type="dashed" 
-                      danger 
-                      onClick={() => remove(name)} 
-                      icon={<MinusCircleOutlined />}
-                      block
-                      style={{ marginTop: '8px' }}
+                      type="button"
+                      variant="outline"
+                      className="w-full mt-2"
+                      onClick={() => remove(index)}
                     >
+                      <MinusCircle className="h-4 w-4 mr-2" />
                       Remove Item
                     </Button>
                   </Card>
                 ))}
-                <Form.Item>
                   <Button 
-                    type="dashed" 
-                    onClick={() => add()} 
-                    block 
-                    icon={<PlusOutlined />}
-                    size="large"
-                  >
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => append({ category: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 })}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
                     Add Job Item
                   </Button>
-                </Form.Item>
-              </>
-            )}
-          </Form.List>
+              </div>
 
-          <Form.Item shouldUpdate noStyle>
-            {() => {
-              const items = form.getFieldValue('items') || [];
+              {(() => {
+                const items = form.getValues('items') || [];
               const subtotal = items.reduce((sum, item) => {
                 const qty = parseFloat(item?.quantity || 1);
                 const price = parseFloat(item?.unitPrice || 0);
@@ -2073,315 +2539,457 @@ useEffect(() => {
               const total = subtotal - totalDiscount;
               
               return (
-                <div style={{
-                  padding: '10px 12px',
-                  background: '#f5f5f5',
-                  border: '1px solid #d9d9d9',
-                  borderRadius: 4,
-                  marginBottom: 12
-                }}>
-                  <Row justify="space-between" style={{ marginBottom: 4 }}>
-                    <Col style={{ fontSize: 14, color: '#666' }}>Subtotal:</Col>
-                    <Col style={{ fontSize: 14, fontWeight: 500 }}>GHS {subtotal.toFixed(2)}</Col>
-                  </Row>
+                  <div className="bg-gray-50 border border-gray-200 rounded-md mb-4 overflow-hidden">
+                    <div className="p-3">
+                    <div className="flex justify-between mb-1 text-sm text-gray-600">
+                      <span>Subtotal:</span>
+                      <span className="font-medium">GHS {subtotal.toFixed(2)}</span>
+                    </div>
                   {totalDiscount > 0 && (
-                    <Row justify="space-between" style={{ marginBottom: 4 }}>
-                      <Col style={{ fontSize: 14, color: '#666' }}>Total Discount:</Col>
-                      <Col style={{ fontSize: 14, fontWeight: 500 }}>-GHS {totalDiscount.toFixed(2)}</Col>
-                    </Row>
-                  )}
-                  <Divider style={{ margin: '6px 0', borderColor: '#d9d9d9' }} />
-                  <Row justify="space-between">
-                    <Col style={{ fontSize: 16, fontWeight: 'bold' }}>Grand Total:</Col>
-                    <Col style={{ fontSize: 18, fontWeight: 'bold', color: '#000' }}>GHS {total.toFixed(2)}</Col>
-                  </Row>
+                      <div className="flex justify-between mb-1 text-sm text-gray-600">
+                        <span>Total Discount:</span>
+                        <span className="font-medium">-GHS {totalDiscount.toFixed(2)}</span>
+                      </div>
+                    )}
+                    </div>
+                    <Separator className="w-full" />
+                    <div className="p-3 flex justify-between">
+                      <span className="text-base font-bold">Grand Total:</span>
+                      <span className="text-lg font-bold">GHS {total.toFixed(2)}</span>
+                    </div>
                 </div>
               );
-            }}
-          </Form.Item>
+              })()}
 
-          <Row gutter={16}>
-            <Col span={24}>
-              <Form.Item name="description" label="Special Instructions (Optional)">
-                <TextArea 
+              <FormField
+                control={form.control}
+                name="description"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Special Instructions (Optional)</FormLabel>
+                    <FormControl>
+                      <Textarea 
                   rows={3} 
                   placeholder="Add any special instructions for this job (e.g., Rush order, call before delivery, customer will pick up)" 
-                  size="large"
-                />
-              </Form.Item>
-            </Col>
-          </Row>
-        </Form>
-      </Modal>
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => {
+                  setModalVisible(false);
+                  setEditingJobId(null);
+                  setCategoryOtherInputs({});
+                }}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={submittingJob}>
+                  {submittingJob ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      {editingJobId ? 'Updating...' : 'Creating...'}
+                    </>
+                  ) : (
+                    editingJobId ? 'Update Job' : 'Create Job'
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
 
-      <Modal
-        title={jobBeingAssigned ? `Assign ${jobBeingAssigned.jobNumber}` : 'Assign Job'}
-        open={assignModalVisible}
-        onCancel={closeAssignModal}
-        onOk={() => assignmentForm.submit()}
-        okText="Save"
-        confirmLoading={updatingAssignment}
-        destroyOnClose
-      >
-        <Form form={assignmentForm} layout="vertical" onFinish={handleAssignmentSubmit}>
-          <Form.Item
+      <Dialog open={assignModalVisible} onOpenChange={(open) => !open && closeAssignModal()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{jobBeingAssigned ? `Assign ${jobBeingAssigned.jobNumber}` : 'Assign Job'}</DialogTitle>
+            <DialogDescription>
+              Select a team member to assign this job to, or leave it unassigned.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...assignmentForm}>
+            <form onSubmit={assignmentForm.handleSubmit(handleAssignmentSubmit)} className="space-y-4">
+              <FormField
+                control={assignmentForm.control}
             name="assignedTo"
-            label="Team Member"
-          >
-            <Select
-              placeholder="Select team member"
-              allowClear
-              showSearch
-              filterOption={(input, option) =>
-                (option?.children?.toString() || '').toLowerCase().includes(input.toLowerCase())
-              }
-            >
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Team Member</FormLabel>
+                    <Select onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)} value={field.value ? String(field.value) : "__NONE__"}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select team member" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__NONE__">None</SelectItem>
               {teamMembers.map(member => (
-                <Option key={member.id} value={member.id}>
+                          <SelectItem key={member.id} value={member.id}>
                   {member.name} {member.role ? `(${member.role})` : ''}
-                </Option>
+                          </SelectItem>
               ))}
+                      </SelectContent>
             </Select>
-          </Form.Item>
-        </Form>
-      </Modal>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={closeAssignModal}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={updatingAssignment}>
+                  {updatingAssignment ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    'Save'
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
 
-      <Modal
-        title={jobBeingUpdated ? `Update Status - ${jobBeingUpdated.jobNumber}` : 'Update Status'}
-        open={statusModalVisible}
-        onCancel={closeStatusModal}
-        onOk={() => statusForm.submit()}
-        okText="Update Status"
-        confirmLoading={updatingStatus}
-        destroyOnClose
-      >
-        <Form form={statusForm} layout="vertical" onFinish={handleStatusSubmit}>
-          <Form.Item
+      <Dialog open={statusModalVisible} onOpenChange={(open) => !open && closeStatusModal()}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{jobBeingUpdated ? `Update Status - ${jobBeingUpdated.jobNumber}` : 'Update Status'}</DialogTitle>
+            <DialogDescription>
+              Update the status of this job and optionally add a comment.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...statusForm}>
+            <form onSubmit={statusForm.handleSubmit(handleStatusSubmit)} className="space-y-4">
+              <FormField
+                control={statusForm.control}
             name="status"
-            label="Status"
-            rules={[{ required: true, message: 'Please select a status' }]}
-          >
-            <Select placeholder="Select status">
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Status</FormLabel>
+                    <Select onValueChange={field.onChange} value={field.value}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select status" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
               {statusOptions.map(option => (
-                <Option key={option.value} value={option.value}>
+                          <SelectItem key={option.value} value={option.value}>
                   {option.label}
-                </Option>
+                          </SelectItem>
               ))}
+                      </SelectContent>
             </Select>
-          </Form.Item>
-          <Form.Item
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={statusForm.control}
             name="statusComment"
-            label="Comment"
-          >
-            <TextArea rows={3} placeholder="Add an optional comment for this status update" />
-          </Form.Item>
-        </Form>
-      </Modal>
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Comment</FormLabel>
+                    <FormControl>
+                      <Textarea rows={3} placeholder="Add an optional comment for this status update" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={closeStatusModal}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={updatingStatus}>
+                  {updatingStatus ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Updating...
+                    </>
+                  ) : (
+                    'Update Status'
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
 
       {/* Add New Customer Modal */}
-      <Modal
-        title="Add New Customer"
-        open={customerModalVisible}
-        onCancel={() => {
+      <Dialog open={customerModalVisible} onOpenChange={(open) => {
+        if (!open) {
           setCustomerModalVisible(false);
           setShowCustomerSourceOtherInput(false);
           setCustomerSourceOtherValue('');
           setShowRegionOtherInput(false);
           setRegionOtherValue('');
-        }}
-        onOk={() => customerForm.submit()}
-        width={800}
-        okText="Create Customer"
-        confirmLoading={submittingCustomer}
-      >
-        <Form
-          form={customerForm}
-          layout="vertical"
-          onFinish={handleCustomerSubmit}
-        >
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
+        }
+      }}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Add New Customer</DialogTitle>
+            <DialogDescription>
+              Enter the customer information below to add them to your system.
+            </DialogDescription>
+          </DialogHeader>
+          <Form {...customerForm}>
+            <form onSubmit={customerForm.handleSubmit(handleCustomerSubmit)} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={customerForm.control}
                 name="name"
-                label="Customer Name"
-                rules={[{ required: true, message: 'Please enter customer name' }]}
-              >
-                <Input placeholder="Enter name" size="large" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="company" label="Company">
-                <Input placeholder="Enter company name" size="large" />
-              </Form.Item>
-            </Col>
-          </Row>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Customer Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Enter name" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={customerForm.control}
+                  name="company"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Company</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Enter company name" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={customerForm.control}
                 name="email"
-                label="Email"
-                rules={[{ type: 'email', message: 'Please enter a valid email' }]}
-              >
-                <Input placeholder="Enter email" size="large" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="phone" label="Phone">
-                <PhoneNumberInput placeholder="Enter phone number" size="large" />
-              </Form.Item>
-            </Col>
-          </Row>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Email</FormLabel>
+                      <FormControl>
+                        <Input type="email" placeholder="Enter email" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={customerForm.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone</FormLabel>
+                      <FormControl>
+                        <PhoneNumberInput placeholder="Enter phone number" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
 
-          <Row gutter={16}>
-            <Col span={24}>
-              <Form.Item name="address" label="Address">
-                <Input placeholder="Enter address" size="large" />
-              </Form.Item>
-            </Col>
-          </Row>
+              <FormField
+                control={customerForm.control}
+                name="address"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Address</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Enter address" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="city" label="Town">
-                <Input placeholder="e.g., Accra, Kumasi, Takoradi" size="large" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="state" label="Region">
-                <Select 
-                  placeholder="Select region" 
-                  size="large" 
-                  showSearch
-                  onChange={handleRegionChange}
-                >
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={customerForm.control}
+                  name="city"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Town</FormLabel>
+                      <FormControl>
+                        <Input placeholder="e.g., Accra, Kumasi, Takoradi" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={customerForm.control}
+                  name="state"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Region</FormLabel>
+                      <Select onValueChange={(value) => {
+                        field.onChange(value);
+                        handleRegionChange(value);
+                      }} value={field.value || undefined}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select region" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
                   {getMergedRegionOptions().map((region) => (
-                    <Select.Option key={region} value={region}>{region}</Select.Option>
+                            <SelectItem key={region} value={region}>{region}</SelectItem>
                   ))}
-                  <Select.Option value="__OTHER__">Other (specify)</Select.Option>
+                          <SelectItem value="__OTHER__">Other (specify)</SelectItem>
+                        </SelectContent>
                 </Select>
-              </Form.Item>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
               {showRegionOtherInput && (
-                <Form.Item
-                  label="Enter Region Name"
-                  style={{ marginTop: 8 }}
-                >
-                  <Input.Group compact>
+                <div className="flex gap-2">
                     <Input
-                      style={{ width: 'calc(100% - 80px)' }}
+                    className="flex-1"
                       placeholder="e.g., New Region, District"
                       value={regionOtherValue}
                       onChange={(e) => setRegionOtherValue(e.target.value)}
-                      onPressEnter={handleSaveCustomRegion}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSaveCustomRegion()}
                     />
                     <Button
-                      type="primary"
-                      style={{ width: 80 }}
+                    type="button"
                       onClick={handleSaveCustomRegion}
+                    className="w-20"
                     >
                       Save
                     </Button>
-                  </Input.Group>
-                </Form.Item>
+                </div>
               )}
-            </Col>
-          </Row>
 
-          <Row gutter={16}>
-            <Col span={24}>
-              <Form.Item 
+              <FormField
+                control={customerForm.control}
                 name="howDidYouHear" 
-                label="How did you hear about us?"
-                rules={[{ required: true, message: 'Please select an option' }]}
-              >
-                <Select 
-                  placeholder="Select an option" 
-                  size="large"
-                  showSearch
-                  onChange={handleHowDidYouHearChange}
-                >
-                  <Select.OptGroup label="Social Media">
-                    <Select.Option value="Facebook">Facebook</Select.Option>
-                    <Select.Option value="Instagram">Instagram</Select.Option>
-                    <Select.Option value="Twitter">Twitter</Select.Option>
-                    <Select.Option value="LinkedIn">LinkedIn</Select.Option>
-                    <Select.Option value="TikTok">TikTok</Select.Option>
-                    <Select.Option value="WhatsApp">WhatsApp</Select.Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Online">
-                    <Select.Option value="Google Search">Google Search</Select.Option>
-                    <Select.Option value="Website">Website</Select.Option>
-                    <Select.Option value="Online Ad">Online Ad</Select.Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Physical">
-                    <Select.Option value="Signboard">Signboard</Select.Option>
-                    <Select.Option value="Walk-in">Walk-in</Select.Option>
-                    <Select.Option value="Market Outreach">Market Outreach</Select.Option>
-                    <Select.Option value="Flyer/Brochure">Flyer/Brochure</Select.Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Personal">
-                    <Select.Option value="Referral">Referral (Word of Mouth)</Select.Option>
-                    <Select.Option value="Existing Customer">Existing Customer</Select.Option>
-                  </Select.OptGroup>
-                  <Select.OptGroup label="Other">
-                    <Select.Option value="Radio">Radio</Select.Option>
-                    <Select.Option value="TV">TV</Select.Option>
-                    <Select.Option value="Newspaper">Newspaper</Select.Option>
-                    <Select.Option value="Event/Trade Show">Event/Trade Show</Select.Option>
-                  </Select.OptGroup>
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>How did you hear about us?</FormLabel>
+                    <Select onValueChange={(value) => {
+                      field.onChange(value);
+                      handleHowDidYouHearChange(value);
+                    }} value={field.value || undefined}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select an option" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <div className="px-2 py-1.5 text-sm font-semibold">Social Media</div>
+                        <SelectItem value="Facebook">Facebook</SelectItem>
+                        <SelectItem value="Instagram">Instagram</SelectItem>
+                        <SelectItem value="Twitter">Twitter</SelectItem>
+                        <SelectItem value="LinkedIn">LinkedIn</SelectItem>
+                        <SelectItem value="TikTok">TikTok</SelectItem>
+                        <SelectItem value="WhatsApp">WhatsApp</SelectItem>
+                        <div className="px-2 py-1.5 text-sm font-semibold">Online</div>
+                        <SelectItem value="Google Search">Google Search</SelectItem>
+                        <SelectItem value="Website">Website</SelectItem>
+                        <SelectItem value="Online Ad">Online Ad</SelectItem>
+                        <div className="px-2 py-1.5 text-sm font-semibold">Physical</div>
+                        <SelectItem value="Signboard">Signboard</SelectItem>
+                        <SelectItem value="Walk-in">Walk-in</SelectItem>
+                        <SelectItem value="Market Outreach">Market Outreach</SelectItem>
+                        <SelectItem value="Flyer/Brochure">Flyer/Brochure</SelectItem>
+                        <div className="px-2 py-1.5 text-sm font-semibold">Personal</div>
+                        <SelectItem value="Referral">Referral (Word of Mouth)</SelectItem>
+                        <SelectItem value="Existing Customer">Existing Customer</SelectItem>
+                        <div className="px-2 py-1.5 text-sm font-semibold">Other</div>
+                        <SelectItem value="Radio">Radio</SelectItem>
+                        <SelectItem value="TV">TV</SelectItem>
+                        <SelectItem value="Newspaper">Newspaper</SelectItem>
+                        <SelectItem value="Event/Trade Show">Event/Trade Show</SelectItem>
                   {customCustomerSources.length > 0 && (
-                    <Select.OptGroup label="Custom Sources">
+                          <>
+                            <div className="px-2 py-1.5 text-sm font-semibold">Custom Sources</div>
                       {customCustomerSources.map(source => (
-                        <Select.Option key={source.value} value={source.value}>{source.label}</Select.Option>
-                      ))}
-                    </Select.OptGroup>
-                  )}
-                  <Select.OptGroup label="Other">
-                    <Select.Option value="__OTHER__">Other (specify)</Select.Option>
-                  </Select.OptGroup>
+                              <SelectItem key={source.value} value={source.value}>{source.label}</SelectItem>
+                            ))}
+                          </>
+                        )}
+                        <div className="px-2 py-1.5 text-sm font-semibold">Other</div>
+                        <SelectItem value="__OTHER__">Other (specify)</SelectItem>
+                      </SelectContent>
                 </Select>
-              </Form.Item>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
               {showCustomerSourceOtherInput && (
-                <Form.Item
-                  label="Enter Source Name"
-                  style={{ marginTop: 8 }}
-                >
-                  <Input.Group compact>
+                <div className="flex gap-2">
                     <Input
-                      style={{ width: 'calc(100% - 80px)' }}
+                    className="flex-1"
                       placeholder="e.g., Billboard, Magazine Ad"
                       value={customerSourceOtherValue}
                       onChange={(e) => setCustomerSourceOtherValue(e.target.value)}
-                      onPressEnter={handleSaveCustomCustomerSource}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSaveCustomCustomerSource()}
                     />
                     <Button
-                      type="primary"
-                      style={{ width: 80 }}
+                    type="button"
                       onClick={handleSaveCustomCustomerSource}
+                    className="w-20"
                     >
                       Save
                     </Button>
-                  </Input.Group>
-                </Form.Item>
+                </div>
               )}
-            </Col>
-          </Row>
 
           {showReferralName && (
-            <Row gutter={16}>
-              <Col span={24}>
-                <Form.Item 
+                <FormField
+                  control={customerForm.control}
                   name="referralName" 
-                  label="Referral Name"
-                  rules={[{ required: true, message: 'Please enter referral name' }]}
-                >
-                  <Input placeholder="Enter referral name" size="large" />
-                </Form.Item>
-              </Col>
-            </Row>
-          )}
-        </Form>
-      </Modal>
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Referral Name</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Enter referral name" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => {
+                  setCustomerModalVisible(false);
+                  setShowCustomerSourceOtherInput(false);
+                  setCustomerSourceOtherValue('');
+                  setShowRegionOtherInput(false);
+                  setRegionOtherValue('');
+                }}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={submittingCustomer}>
+                  {submittingCustomer ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Creating...
+                    </>
+                  ) : (
+                    'Create Customer'
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

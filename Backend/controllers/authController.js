@@ -264,6 +264,9 @@ exports.getMe = async (req, res, next) => {
         }
       ]
     });
+    const firstMembership = user?.tenantMemberships?.[0];
+    const firstTenant = firstMembership?.tenant;
+    console.log('[getMe] userId=%s, memberships=%s, first tenant id=%s, first tenant.metadata.onboarding=%j', req.user.id, user?.tenantMemberships?.length, firstTenant?.id, firstTenant?.metadata?.onboarding);
 
     res.status(200).json({
       success: true,

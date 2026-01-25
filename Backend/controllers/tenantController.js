@@ -3,6 +3,7 @@ const dayjs = require('dayjs');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const { Tenant, User, UserTenant, Setting } = require('../models');
+const { seedDefaultCategories } = require('../utils/categorySeeder');
 
 const generateToken = (userId) =>
   jwt.sign({ id: userId }, config.jwt.secret, {
@@ -52,6 +53,9 @@ exports.signupTenant = async (req, res, next) => {
     adminEmail,
     password,
     plan = 'trial',
+    businessType, // NEW: business type ('printing_press', 'shop', 'pharmacy')
+    shopType, // NEW: shop type (only if businessType is 'shop')
+    businessInfo, // NEW: business information object
   } = req.body || {};
 
   try {
@@ -88,22 +92,48 @@ exports.signupTenant = async (req, res, next) => {
       const trialEndDate =
         plan === 'trial' ? dayjs().add(1, 'month').toDate() : null;
 
+      // Build metadata object with business information
+      const metadata = {
+        website: companyWebsite || null,
+        email: companyEmail || null,
+        phone: companyPhone || null,
+        signupSource: 'self_service',
+      };
+
+      // Add shopType to metadata if provided (only for shop business type)
+      if (businessType === 'shop' && shopType) {
+        metadata.shopType = shopType;
+      }
+
+      // Add businessInfo to metadata if provided
+      if (businessInfo) {
+        metadata.businessInfo = businessInfo;
+      }
+
+      // Default to 'printing_press' if businessType is not provided (for backward compatibility)
+      const finalBusinessType = businessType || 'printing_press';
+
       const tenant = await Tenant.create(
         {
           name: trimmedCompanyName,
           slug,
           plan,
+          businessType: finalBusinessType, // Store business type (defaults to 'printing_press')
           status: 'active',
-          metadata: {
-            website: companyWebsite || null,
-            email: companyEmail || null,
-            phone: companyPhone || null,
-            signupSource: 'self_service',
-          },
+          metadata,
           trialEndsAt: trialEndDate,
         },
         { transaction }
       );
+
+      // Seed default inventory categories based on business type and shop type
+      try {
+        await seedDefaultCategories(tenant.id, finalBusinessType, shopType || null);
+        console.log(`✅ Seeded default categories for business type: ${finalBusinessType}`);
+      } catch (categoryError) {
+        console.error('Error seeding default categories:', categoryError);
+        // Don't fail the signup if category seeding fails
+      }
 
       const user = await User.create(
         {
@@ -219,3 +249,100 @@ exports.signupTenant = async (req, res, next) => {
   }
 };
 
+// @desc    Complete onboarding
+// @route   POST /api/tenants/onboarding
+// @access  Private
+exports.completeOnboarding = async (req, res, next) => {
+  const { businessType, shopType, industry, companyName, companyEmail, companyPhone, companyWebsite, companyAddress } = req.body;
+  const companyLogo = req.file;
+  const tenantId = req.tenantId;
+
+  try {
+    if (!tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant ID is required'
+      });
+    }    const tenant = await Tenant.findByPk(tenantId);
+    if (!tenant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found'
+      });
+    }    // Update tenant with onboarding data
+    const updates = {};
+    
+    if (businessType) {
+      updates.businessType = businessType;
+    }
+
+    if (companyName) {
+      updates.name = companyName;
+    }
+
+    // Store onboarding data in metadata
+    // Create a new metadata object to ensure Sequelize detects the change
+    const metadata = { ...(tenant.metadata || {}) };
+    metadata.onboarding = {
+      industry,
+      completedAt: new Date().toISOString()
+    };
+    
+    // Store business contact information in metadata
+    if (companyEmail) metadata.email = companyEmail;
+    if (companyPhone) metadata.phone = companyPhone;
+    if (companyWebsite) metadata.website = companyWebsite;
+    if (companyAddress) metadata.address = companyAddress;
+    
+    // Handle logo upload (convert to base64 or save file path)
+    if (companyLogo) {
+      const fs = require('fs');
+      const logoBuffer = companyLogo.buffer;
+      const logoBase64 = logoBuffer.toString('base64');
+      metadata.logo = `data:${companyLogo.mimetype};base64,${logoBase64}`;
+    }
+    
+    // Apply updates
+    if (businessType) {
+      tenant.businessType = businessType;
+    }
+    if (companyName) {
+      tenant.name = companyName;
+    }
+    
+    // Directly assign metadata and save to ensure JSONB changes are persisted
+    tenant.metadata = metadata;
+    await tenant.save();
+    
+    // Reload to get the latest data
+    await tenant.reload();
+
+    // If business type changed, reseed categories
+    if (businessType && businessType !== tenant.businessType) {
+      try {
+        await seedDefaultCategories(tenantId, businessType);
+      } catch (error) {
+        console.error('Failed to seed categories during onboarding:', error);
+        // Don't fail onboarding if category seeding fails
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Onboarding completed successfully',
+      data: {
+        tenant: {
+          id: tenant.id,
+          name: tenant.name,
+          businessType: tenant.businessType,
+          metadata: tenant.metadata
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+
+// Update the completeOnboarding function - replace the destructuring line
