@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -13,7 +14,7 @@ import {
  * @param {number} rows - Number of skeleton rows to show (default: 5)
  * @param {number} cols - Number of skeleton columns to show (default: 5)
  */
-const TableSkeleton = ({ rows = 5, cols = 5, className }) => {
+const TableSkeleton = memo(({ rows = 5, cols = 5, className }) => {
   return (
     <div className={className}>
       <Table>
@@ -40,6 +41,8 @@ const TableSkeleton = ({ rows = 5, cols = 5, className }) => {
       </Table>
     </div>
   );
-};
+});
+
+TableSkeleton.displayName = 'TableSkeleton';
 
 export default TableSkeleton;

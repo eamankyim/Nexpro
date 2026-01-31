@@ -6,13 +6,34 @@ import {
   DollarSign,
   AlertTriangle,
   FileSearch,
-  Link
+  Link as LinkIcon,
+  Search,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { SmartSearchProvider, useSmartSearch } from '../context/SmartSearchContext';
+import { Input } from '@/components/ui/input';
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
+
+function AdminHeaderSearch() {
+  const { placeholder, scope, searchValue, setSearchValue } = useSmartSearch();
+  return (
+    <div className="relative flex-1 max-w-md">
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+      <Input
+        key={scope}
+        type="search"
+        placeholder={placeholder}
+        value={searchValue}
+        onChange={(e) => setSearchValue(e.target.value)}
+        className="pl-10 w-full"
+        style={{ borderRadius: '32px' }}
+      />
+    </div>
+  );
+}
 
 const menuItems = [
   {
@@ -86,7 +107,7 @@ const AdminLayout = () => {
     {
       key: 'sabito',
       label: 'Open Sabito',
-      icon: <LinkOutlined />,
+      icon: <LinkIcon className="h-4 w-4" />,
       onClick: handleNavigateToSabito,
     },
     {
@@ -123,7 +144,7 @@ const AdminLayout = () => {
             letterSpacing: 0.5,
           }}
         >
-          NexPRO Control Center
+          ShopWISE Control Center
         </div>
         <Menu
           theme="dark"
@@ -134,19 +155,23 @@ const AdminLayout = () => {
           style={{ borderInlineEnd: 'none' }}
         />
       </Sider>
-      <Layout style={{ marginLeft: 220 }}>
-        <Header
-          style={{
-            padding: '0 24px',
-            background: '#fff',
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            borderBottom: '1px solid #f0f0f0',
-          }}
-        >
-          <div />
-          <Space size={12}>
+      <SmartSearchProvider>
+        <Layout style={{ marginLeft: 220 }}>
+          <Header
+            style={{
+              padding: '0 24px',
+              background: '#fff',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 16,
+              borderBottom: '1px solid #f0f0f0',
+            }}
+          >
+            <div style={{ flex: 1, maxWidth: 400, minWidth: 200 }}>
+              <AdminHeaderSearch />
+            </div>
+            <Space size={12}>
             <Dropdown
               menu={{ items: userMenuItems, onClick: handleMenuClick }}
               placement="bottomRight"
@@ -161,14 +186,15 @@ const AdminLayout = () => {
               </Button>
             </Dropdown>
             <Text strong>{user?.name}</Text>
-          </Space>
-        </Header>
-        <Content style={{ margin: '24px', overflow: 'initial' }}>
-          <div style={{ padding: 24, background: '#fff', minHeight: 360, borderRadius: 8 }}>
-            <Outlet />
-          </div>
-        </Content>
-      </Layout>
+            </Space>
+          </Header>
+          <Content style={{ margin: '24px', overflow: 'initial' }}>
+            <div style={{ padding: 24, background: '#fff', minHeight: 360, borderRadius: 8 }}>
+              <Outlet />
+            </div>
+          </Content>
+        </Layout>
+      </SmartSearchProvider>
     </Layout>
   );
 };

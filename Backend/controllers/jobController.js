@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const { Job, Customer, User, Payment, Expense, JobItem, Invoice, Quote, JobStatusHistory } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
-const config = require('../config/config');
+const { getPagination } = require('../utils/paginationUtils');
 const { baseUploadDir } = require('../middleware/upload');
 const activityLogger = require('../services/activityLogger');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
@@ -363,9 +363,7 @@ exports.getJobs = async (req, res, next) => {
       });
     }
 
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const search = req.query.search || '';
     const status = req.query.status;
     const customerId = req.query.customerId;
@@ -681,15 +679,13 @@ exports.updateJob = async (req, res, next) => {
     }
 
     const statusChanged = newStatus && newStatus !== oldStatus;
-    if (statusChanged || statusComment) {
-      await JobStatusHistory.create({
-        jobId: job.id,
-        tenantId: req.tenantId,
-        status: statusChanged ? newStatus : job.status,
-        comment: statusComment || null,
-        changedBy: req.user?.id || null
-      });
-    }
+    await JobStatusHistory.create({
+      jobId: job.id,
+      tenantId: req.tenantId,
+      status: statusChanged ? newStatus : job.status,
+      comment: statusComment || (statusChanged ? null : 'Details updated'),
+      changedBy: req.user?.id || null
+    });
 
     const updatedJob = await Job.findOne({
       where: applyTenantFilter(req.tenantId, { id: job.id }),

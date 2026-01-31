@@ -49,7 +49,16 @@ const DialogContent = React.forwardRef(({ className, children, onInteractOutside
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
-          "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-lg",
+          // Mobile: full viewport; horizontal padding via Header/Body/Footer for full-bleed separators
+          "fixed z-50 grid w-full gap-4 border bg-background shadow-lg duration-200",
+          "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+          "inset-0 w-[100vw] min-h-[100vh] max-h-[100vh] overflow-y-auto rounded-none pt-4 pb-4",
+          // Desktop: flex column so DialogBody scrolls; header/footer fixed; no horizontal padding so separators can full-bleed
+          "sm:inset-auto sm:left-[50%] sm:top-[2.5vh] sm:translate-x-[-50%] sm:translate-y-0",
+          "sm:flex sm:flex-col sm:w-[var(--modal-w)] sm:min-w-[min(90vw,20rem)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)] sm:overflow-hidden sm:rounded-lg sm:pt-6 sm:pb-6",
+          "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95",
+          "sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%]",
+          "sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%]",
           className
         )}
         onInteractOutside={handleInteractOutside}
@@ -57,8 +66,8 @@ const DialogContent = React.forwardRef(({ className, children, onInteractOutside
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
-          <X className="h-4 w-4" />
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full bg-gray-100 w-10 h-10 sm:w-8 sm:h-8 flex items-center justify-center transition-all duration-200 hover:bg-gray-200 hover:scale-110 opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none group min-h-[44px] min-w-[44px] sm:min-h-[32px] sm:min-w-[32px]">
+          <X className="h-5 w-5 sm:h-4 sm:w-4 transition-transform duration-200 group-hover:rotate-[-90deg]" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>
       </DialogPrimitive.Content>
@@ -73,7 +82,7 @@ const DialogHeader = ({
 }) => (
   <div
     className={cn(
-      "flex flex-col space-y-1.5 text-center sm:text-left",
+      "flex flex-col space-y-1.5 text-center sm:text-left flex-shrink-0 px-4 sm:px-6",
       className
     )}
     {...props}
@@ -81,13 +90,36 @@ const DialogHeader = ({
 )
 DialogHeader.displayName = "DialogHeader"
 
+/** Full-bleed separator: extends to modal edges when inside DialogBody */
+const SEPARATOR_FULL_BLEED =
+  "[&_[role=separator]]:-mx-4 [&_[role=separator]]:w-[calc(100%+2rem)] [&_[role=separator]]:min-w-[calc(100%+2rem)] sm:[&_[role=separator]]:-mx-6 sm:[&_[role=separator]]:w-[calc(100%+3rem)] sm:[&_[role=separator]]:min-w-[calc(100%+3rem)] [&_hr]:-mx-4 [&_hr]:w-[calc(100%+2rem)] [&_hr]:min-w-[calc(100%+2rem)] sm:[&_hr]:-mx-6 sm:[&_hr]:w-[calc(100%+3rem)] sm:[&_hr]:min-w-[calc(100%+3rem)]";
+
+/**
+ * Scrollable body for form modals. Wrap form content between DialogHeader and DialogFooter in DialogBody
+ * so only this region scrolls when content is long; header and footer stay fixed.
+ * Inner wrapper has horizontal padding and full-bleed separators so dividers hit edge-to-edge.
+ */
+const DialogBody = React.forwardRef(({ className, children, ...rest }, ref) => (
+  <div
+    ref={ref}
+    className={cn("flex-1 min-h-0 overflow-y-auto overflow-x-hidden", className)}
+    {...rest}
+  >
+    <div className={cn("px-4 sm:px-6", SEPARATOR_FULL_BLEED)}>
+      {children}
+    </div>
+  </div>
+))
+DialogBody.displayName = "DialogBody"
+
 const DialogFooter = ({
   className,
   ...props
 }) => (
   <div
     className={cn(
-      "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
+      // Mobile: stack buttons vertically, Desktop: horizontal
+      "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:space-x-2 flex-shrink-0 px-4 sm:px-6",
       className
     )}
     {...props}
@@ -124,6 +156,7 @@ export {
   DialogTrigger,
   DialogContent,
   DialogHeader,
+  DialogBody,
   DialogFooter,
   DialogTitle,
   DialogDescription,

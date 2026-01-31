@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Card,
   Table,
@@ -12,15 +12,17 @@ import {
   Row,
   Col,
   Select,
-  Input,
   List,
   Empty,
   Alert,
 } from 'antd';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import { useDebounce } from '../../hooks/useDebounce';
 import adminService from '../../services/adminService';
 import StatusChip from '../../components/StatusChip';
+import { useSmartSearch } from '../../context/SmartSearchContext';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../../constants';
 import { showSuccess, showError, handleApiError } from '../../utils/toast';
 
 const { Title, Text } = Typography;
@@ -40,20 +42,10 @@ const getPlanColor = (plan) => {
   }
 };
 
-const getStatusColor = (status) => {
-  switch (status) {
-    case 'active':
-      return 'success';
-    case 'paused':
-      return 'orange';
-    case 'suspended':
-      return 'red';
-    default:
-      return 'default';
-  }
-};
-
 const AdminTenants = () => {
+  const { isMobile } = useResponsive();
+  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const [loading, setLoading] = useState(false);
   const [tenants, setTenants] = useState([]);
   const [pagination, setPagination] = useState({
@@ -64,7 +56,6 @@ const AdminTenants = () => {
   const [filters, setFilters] = useState({
     plan: undefined,
     status: undefined,
-    search: '',
   });
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [selectedTenant, setSelectedTenant] = useState(null);
@@ -80,6 +71,7 @@ const AdminTenants = () => {
         ...filters,
         ...overrideFilters,
       };
+      if (debouncedSearch) params.search = debouncedSearch;
       const response = await adminService.getTenants(params);
       if (response?.success) {
         setTenants(response.data || []);
@@ -126,9 +118,18 @@ const AdminTenants = () => {
   };
 
   useEffect(() => {
-    fetchTenants();
+    setPageSearchConfig({ scope: 'admin_tenants', placeholder: SEARCH_PLACEHOLDERS.ADMIN_TENANTS });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig]);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [searchValue]);
+
+  useEffect(() => {
+    fetchTenants(pagination.current, pagination.pageSize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [pagination.current, pagination.pageSize, filters.plan, filters.status, debouncedSearch]);
 
   const handleFilterChange = (key, value) => {
     const nextFilters = { ...filters, [key]: value };
@@ -136,13 +137,11 @@ const AdminTenants = () => {
     fetchTenants(1, pagination.pageSize, nextFilters);
   };
 
-  const handleSearch = (value) => {
-    const nextFilters = { ...filters, search: value };
-    setFilters(nextFilters);
-    fetchTenants(1, pagination.pageSize, nextFilters);
-  };
+  const fetchTenantDetailMemo = useCallback((id) => {
+    fetchTenantDetail(id);
+  }, []);
 
-  const columns = [
+  const columns = useMemo(() => [
     {
       title: 'Organization',
       dataIndex: 'name',
@@ -191,12 +190,12 @@ const AdminTenants = () => {
       title: 'Actions',
       key: 'actions',
       render: (_, record) => (
-        <Button type="link" onClick={() => fetchTenantDetail(record.id)}>
+        <Button type="link" onClick={() => fetchTenantDetailMemo(record.id)}>
           View
         </Button>
       ),
     },
-  ];
+  ], [fetchTenantDetailMemo]);
 
   return (
     <>
@@ -239,29 +238,81 @@ const AdminTenants = () => {
               ]}
             />
           </Col>
-          <Col xs={24} sm={8}>
-            <Input.Search
-              allowClear
-              placeholder="Search by name or slug"
-              onSearch={handleSearch}
-              defaultValue={filters.search}
-            />
-          </Col>
         </Row>
 
-        <Table
-          rowKey="id"
-          loading={loading}
-          columns={columns}
-          dataSource={tenants}
-          pagination={{
-            current: pagination.current,
-            pageSize: pagination.pageSize,
-            total: pagination.total,
-            onChange: (page) => fetchTenants(page, pagination.pageSize),
-            showSizeChanger: false,
-          }}
-        />
+        {isMobile ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {loading ? (
+              <div style={{ display: 'flex', justifyContent: 'center', padding: 40 }}>
+                <Spin />
+              </div>
+            ) : tenants.length === 0 ? (
+              <Empty description="No tenants found" />
+            ) : (
+              <>
+                {tenants.map((tenant) => (
+                  <Card key={tenant.id} size="small" style={{ border: '1px solid #f0f0f0' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                      <div>
+                        <Text strong>{tenant.name}</Text>
+                        <br />
+                        <Text type="secondary" style={{ fontSize: 12 }}>{tenant.slug}</Text>
+                      </div>
+                      <StatusChip status={tenant.status} />
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+                      <Tag color={getPlanColor(tenant.plan)}>{tenant.plan}</Tag>
+                      <Text type="secondary" style={{ fontSize: 12 }}>Users: {tenant.userCount ?? 0}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(tenant.createdAt).format('MMM D, YYYY')}</Text>
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      <Button type="link" size="small" onClick={() => fetchTenantDetailMemo(tenant.id)} style={{ padding: 0 }}>
+                        View
+                      </Button>
+                    </div>
+                  </Card>
+                ))}
+                {pagination.total > pagination.pageSize && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, paddingTop: 16, borderTop: '1px solid #f0f0f0' }}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Page {pagination.current} of {Math.ceil(pagination.total / pagination.pageSize)}
+                    </Text>
+                    <Space>
+                      <Button
+                        size="small"
+                        disabled={pagination.current <= 1}
+                        onClick={() => fetchTenants(pagination.current - 1, pagination.pageSize)}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        size="small"
+                        disabled={pagination.current >= Math.ceil(pagination.total / pagination.pageSize)}
+                        onClick={() => fetchTenants(pagination.current + 1, pagination.pageSize)}
+                      >
+                        Next
+                      </Button>
+                    </Space>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        ) : (
+          <Table
+            rowKey="id"
+            loading={loading}
+            columns={columns}
+            dataSource={tenants}
+            pagination={{
+              current: pagination.current,
+              pageSize: pagination.pageSize,
+              total: pagination.total,
+              onChange: (page) => fetchTenants(page, pagination.pageSize),
+              showSizeChanger: false,
+            }}
+          />
+        )}
       </Card>
 
       <Drawer
@@ -312,8 +363,9 @@ const AdminTenants = () => {
               <Space direction="vertical">
                 {selectedTenant.organizationSettings?.logoUrl ? (
                   <img
-                    src={selectedTenant.organizationSettings.logoUrl}
+                    src={resolveImageUrl(selectedTenant.organizationSettings.logoUrl)}
                     alt="Organization logo"
+                    loading="lazy"
                     style={{
                       width: 140,
                       height: 140,

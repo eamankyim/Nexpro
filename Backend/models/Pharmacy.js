@@ -44,8 +44,14 @@ const Pharmacy = sequelize.define('Pharmacy', {
   },
   email: {
     type: DataTypes.STRING,
+    allowNull: true,
     validate: {
-      isEmail: true
+      isValidEmail(value) {
+        if (value == null || String(value).trim() === '') return;
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+          throw new Error('Please provide a valid email address');
+        }
+      }
     }
   },
   pharmacistName: {

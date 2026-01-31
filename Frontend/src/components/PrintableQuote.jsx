@@ -1,15 +1,37 @@
 import React from 'react';
 import dayjs from 'dayjs';
 import logoImage from '../assets/nexus logo for dark bg.png';
+import { API_BASE_URL } from '../services/api';
 
-const PrintableQuote = ({ quote }) => {
+const formatAddress = (address) => {
+  if (!address) return '';
+  const parts = [
+    address.line1,
+    address.line2,
+    [address.city, address.state, address.postalCode].filter(Boolean).join(', '),
+    address.country
+  ].filter(Boolean);
+  return parts.join('\n');
+};
+
+const PrintableQuote = ({ quote, organization = {} }) => {
   if (!quote) return null;
 
+  // Format logo URL - handle relative paths by prepending API base URL
+  const logoSource = organization?.logoUrl
+    ? (organization.logoUrl.startsWith('data:') || organization.logoUrl.startsWith('http')
+        ? organization.logoUrl
+        : (API_BASE_URL
+            ? `${API_BASE_URL}${organization.logoUrl.startsWith('/') ? '' : '/'}${organization.logoUrl}`
+            : organization.logoUrl))
+    : logoImage;
+
   const companyInfo = {
-    name: 'Nexus Creative Studio',
-    phone: '0591403367',
-    email: 'info@nexuscreativestudios.com',
-    location: 'Oyarifa School Junction, Adenta Municipal'
+    name: organization.name || 'Company Name',
+    phone: organization.phone || '',
+    email: organization.email || '',
+    website: organization.website || '',
+    location: formatAddress(organization.address)
   };
 
   return (
@@ -191,12 +213,13 @@ const PrintableQuote = ({ quote }) => {
       <div className="printable-quote">
         <div className="quote-header">
           <div className="quote-branding">
-            <img src={logoImage} alt="Company logo" />
+            <img src={logoSource} alt={companyInfo.name} />
             <div className="company-details">
-              <div>{companyInfo.name}</div>
-              <div>{companyInfo.location}</div>
-              <div>{companyInfo.email}</div>
-              <div>{companyInfo.phone}</div>
+              {companyInfo.name && <div>{companyInfo.name}</div>}
+              {companyInfo.location && <div style={{ whiteSpace: 'pre-line' }}>{companyInfo.location}</div>}
+              {companyInfo.email && <div>{companyInfo.email}</div>}
+              {companyInfo.phone && <div>{companyInfo.phone}</div>}
+              {companyInfo.website && <div>{companyInfo.website}</div>}
             </div>
           </div>
 
@@ -319,7 +342,7 @@ const PrintableQuote = ({ quote }) => {
         )}
 
         <div className="references">
-          <div>Thank you for considering {companyInfo.name}. We look forward to working with you.</div>
+          <div>Thank you for considering {companyInfo.name || 'us'}. We look forward to working with you.</div>
           <div>This quotation is valid until {quote.validUntil ? dayjs(quote.validUntil).format('MMM DD, YYYY') : '—'}.</div>
         </div>
       </div>

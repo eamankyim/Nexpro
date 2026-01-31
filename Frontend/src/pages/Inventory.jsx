@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Table, InputNumber, Tag, Alert } from 'antd';
 import {
   AppWindow,
   Plus,
@@ -15,18 +14,27 @@ import {
   ArrowUp,
   ArrowDown,
   Loader2,
-  Search
+  Filter,
+  Package,
 } from 'lucide-react';
 import dayjs from 'dayjs';
+import { useDebounce } from '../hooks/useDebounce';
+import { useResponsive } from '../hooks/useResponsive';
 import DetailsDrawer from '../components/DetailsDrawer';
+import DrawerSectionCard from '../components/DrawerSectionCard';
 import ActionColumn from '../components/ActionColumn';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
+import DashboardTable from '../components/DashboardTable';
+import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
 import inventoryService from '../services/inventoryService';
 import vendorService from '../services/vendorService';
 import { useAuth } from '../context/AuthContext';
+import { useSmartSearch } from '../context/SmartSearchContext';
 import { showSuccess, showError } from '../utils/toast';
+import { numberInputValue, handleNumberChange } from '../utils/formUtils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,7 +43,6 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { StatisticCard } from '@/components/ui/statistic-card';
 import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import {
@@ -47,6 +54,7 @@ import {
 } from '@/components/ui/select';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -71,6 +79,14 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, getStockStatus } from '../constants';
 
 const sortCategories = (list = []) =>
   [...list].sort((a, b) => a.name.localeCompare(b.name));
@@ -94,15 +110,16 @@ const valueFormatter = (value) =>
     maximumFractionDigits: 2
   })}`;
 
+const numOrEmpty = (min = 0) => z.union([z.number().min(min), z.literal('')]).transform((v) => (v === '' ? (min === 0 ? 0 : undefined) : v));
 const itemSchema = z.object({
   name: z.string().min(1, 'Item name is required'),
   sku: z.string().optional(),
   categoryId: z.string().optional(),
   unit: z.string().min(1, 'Unit is required'),
-  quantityOnHand: z.number().min(0, 'Quantity must be at least 0'),
-  reorderLevel: z.number().min(0, 'Reorder level must be at least 0'),
+  quantityOnHand: numOrEmpty(0),
+  reorderLevel: numOrEmpty(0),
   preferredVendorId: z.string().optional(),
-  unitCost: z.number().min(0, 'Unit cost must be at least 0'),
+  unitCost: numOrEmpty(0),
   location: z.string().optional(),
   isActive: z.boolean().default(true),
   description: z.string().optional(),
@@ -114,36 +131,40 @@ const categorySchema = z.object({
 });
 
 const restockSchema = z.object({
-  quantity: z.number().min(0.01, 'Quantity must be greater than 0'),
-  unitCost: z.number().min(0, 'Unit cost must be at least 0').optional(),
+  quantity: z.union([z.number(), z.literal('')]).transform((v) => (v === '' ? 0 : v)).refine((v) => v >= 0.01, 'Quantity must be greater than 0'),
+  unitCost: z.union([z.number().min(0), z.literal('')]).transform((v) => (v === '' ? undefined : v)).optional(),
   reference: z.string().optional(),
   notes: z.string().optional(),
 });
 
 const adjustSchema = z.object({
   adjustmentMode: z.enum(['set', 'delta']),
-  newQuantity: z.number().min(0, 'Quantity must be at least 0').optional(),
-  quantityDelta: z.number().optional(),
+  newQuantity: z.union([z.number().min(0), z.literal('')]).transform((v) => (v === '' ? undefined : v)).optional(),
+  quantityDelta: z.union([z.number(), z.literal('')]).transform((v) => (v === '' ? undefined : v)).optional(),
   reason: z.string().optional(),
   notes: z.string().optional(),
 }).refine((data) => {
   if (data.adjustmentMode === 'set') {
-    return data.newQuantity !== undefined;
+    return data.newQuantity !== undefined && data.newQuantity !== '';
   }
-  return data.quantityDelta !== undefined;
+  return data.quantityDelta !== undefined && data.quantityDelta !== '';
 }, {
   message: 'Quantity is required',
   path: ['newQuantity'],
 });
 
 const Inventory = () => {
-  const { activeTenant } = useAuth();
+  const { activeTenant, activeTenantId } = useAuth();
+  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+  const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
-  
+
   const [items, setItems] = useState([]);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [loading, setLoading] = useState(false);
+  const [refreshingInventory, setRefreshingInventory] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summary, setSummary] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -158,12 +179,27 @@ const Inventory = () => {
   const [editingItem, setEditingItem] = useState(null);
   const [deactivateItemId, setDeactivateItemId] = useState(null);
   const [deactivateDialogOpen, setDeactivateDialogOpen] = useState(false);
+  const [deactivatingItem, setDeactivatingItem] = useState(false);
   const [filters, setFilters] = useState({
-    search: '',
     categoryId: 'all',
-    status: 'active',
+    status: 'all',
     lowStock: false
   });
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+
+  useEffect(() => {
+    setPageSearchConfig({ scope: 'inventory', placeholder: SEARCH_PLACEHOLDERS.INVENTORY });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig]);
+
+  // Clear vendor list when tenant changes so we don't show another tenant's vendors
+  useEffect(() => {
+    setVendors([]);
+  }, [activeTenantId]);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [searchValue]);
 
   const itemForm = useForm({
     resolver: zodResolver(itemSchema),
@@ -220,7 +256,7 @@ const Inventory = () => {
 
   useEffect(() => {
     fetchItems();
-  }, [pagination.current, pagination.pageSize, filters]);
+  }, [pagination.current, pagination.pageSize, filters.categoryId, filters.status, filters.lowStock, debouncedSearch]);
 
   const fetchCategories = async () => {
     try {
@@ -246,32 +282,77 @@ const Inventory = () => {
     }
   };
 
-  const fetchItems = async () => {
-    setLoading(true);
+  const fetchItems = async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshingInventory(true);
+    } else {
+      setLoading(true);
+    }
     try {
-      const response = await inventoryService.getItems({
+      const params = {
         page: pagination.current,
-        limit: pagination.pageSize,
-        search: filters.search || undefined,
+        limit: 1000,
         categoryId: filters.categoryId !== 'all' ? filters.categoryId : undefined,
         status: filters.status !== 'all' ? filters.status : undefined,
-        lowStock: filters.lowStock
-      });
+        lowStock: filters.lowStock,
+      };
+      if (debouncedSearch) params.search = debouncedSearch;
+      const response = await inventoryService.getItems(params);
 
       const payload = response || {};
       const rows = Array.isArray(payload.data) ? payload.data : [];
       setItems(rows);
-      setPagination((prev) => ({
-        ...prev,
-        total: payload.count || rows.length || 0
-      }));
     } catch (error) {
       console.error('Failed to load inventory items', error);
       showError(error, 'Failed to load inventory items');
+      setItems([]);
     } finally {
-      setLoading(false);
+      if (isRefresh) {
+        setRefreshingInventory(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
+
+  // Apply client-side filtering
+  const filteredItems = useMemo(() => {
+    return items; // Backend already filters
+  }, [items, filters]);
+
+  // Paginate filtered items
+  const paginatedItems = useMemo(() => {
+    const start = (pagination.current - 1) * pagination.pageSize;
+    const end = start + pagination.pageSize;
+    return filteredItems.slice(start, end);
+  }, [filteredItems, pagination.current, pagination.pageSize]);
+
+  const itemsCount = filteredItems.length;
+
+  // Calculate summary stats
+  const calculatedStats = useMemo(() => {
+    const totalItems = items.length;
+    const inStock = items.filter(item => {
+      const qty = parseFloat(item.quantityOnHand || 0);
+      const reorder = parseFloat(item.reorderLevel || 0);
+      return qty > reorder && qty > 0;
+    }).length;
+    const lowStock = items.filter(item => {
+      const qty = parseFloat(item.quantityOnHand || 0);
+      const reorder = parseFloat(item.reorderLevel || 0);
+      return qty > 0 && qty <= reorder;
+    }).length;
+    const outOfStock = items.filter(item => parseFloat(item.quantityOnHand || 0) <= 0).length;
+    
+    return {
+      totals: {
+        totalItems,
+        inStock,
+        lowStock,
+        outOfStock
+      }
+    };
+  }, [items]);
 
   const loadVendors = async () => {
     try {
@@ -314,35 +395,30 @@ const Inventory = () => {
     }
   };
 
-  const handleTableChange = (newPagination) => {
+  const handleTableChange = useCallback((newPagination) => {
     setPagination((prev) => ({
       ...prev,
       current: newPagination.current,
       pageSize: newPagination.pageSize
     }));
-  };
+  }, []);
 
-  const handleSearch = (value) => {
-    setPagination((prev) => ({ ...prev, current: 1 }));
-    setFilters((prev) => ({ ...prev, search: value }));
-  };
-
-  const handleCategoryChange = (value) => {
+  const handleCategoryChange = useCallback((value) => {
     setPagination((prev) => ({ ...prev, current: 1 }));
     setFilters((prev) => ({ ...prev, categoryId: value }));
-  };
+  }, []);
 
-  const handleStatusChange = (value) => {
+  const handleStatusChange = useCallback((value) => {
     setPagination((prev) => ({ ...prev, current: 1 }));
     setFilters((prev) => ({ ...prev, status: value }));
-  };
+  }, []);
 
-  const handleLowStockToggle = (checked) => {
+  const handleLowStockToggle = useCallback((checked) => {
     setPagination((prev) => ({ ...prev, current: 1 }));
     setFilters((prev) => ({ ...prev, lowStock: checked }));
-  };
+  }, []);
 
-  const handleViewItem = async (record) => {
+  const handleViewItem = useCallback(async (record) => {
     setViewingItem(record);
     setDrawerVisible(true);
     try {
@@ -353,9 +429,9 @@ const Inventory = () => {
       console.error('Failed to fetch inventory item', error);
       showError(error, 'Failed to load inventory details');
     }
-  };
+  }, []);
 
-  const openItemModal = async (item = null) => {
+  const openItemModal = useCallback(async (item = null) => {
     if (!vendors.length) {
       await loadVendors();
     }
@@ -392,9 +468,9 @@ const Inventory = () => {
     }
 
     setItemModalVisible(true);
-  };
+  }, [vendors, loadVendors, itemForm]);
 
-  const onItemSubmit = async (values) => {
+  const onItemSubmit = useCallback(async (values) => {
     try {
       if (editingItem) {
         await inventoryService.updateItem(editingItem.id, values);
@@ -410,9 +486,9 @@ const Inventory = () => {
       console.error('Failed to save inventory item', error);
       showError(error, error?.response?.data?.message || 'Failed to save inventory item');
     }
-  };
+  }, [editingItem, itemForm, fetchItems, fetchSummary]);
 
-  const handleRestock = (record) => {
+  const handleRestock = useCallback((record) => {
     restockForm.reset({
       quantity: 1,
       unitCost: parseFloat(record.unitCost || 0),
@@ -421,9 +497,9 @@ const Inventory = () => {
     });
     setEditingItem(record);
     setRestockModalVisible(true);
-  };
+  }, [restockForm]);
 
-  const onRestockSubmit = async (values) => {
+  const onRestockSubmit = useCallback(async (values) => {
     try {
       await inventoryService.restock(editingItem.id, values);
       showSuccess('Inventory restocked successfully');
@@ -437,9 +513,9 @@ const Inventory = () => {
       console.error('Failed to restock inventory', error);
       showError(error, error?.response?.data?.message || 'Failed to restock inventory');
     }
-  };
+  }, [editingItem, drawerVisible, fetchItems, fetchSummary, handleViewItem]);
 
-  const handleAdjust = (record) => {
+  const handleAdjust = useCallback((record) => {
     adjustForm.reset({
       adjustmentMode: 'set',
       newQuantity: parseFloat(record.quantityOnHand || 0),
@@ -449,9 +525,9 @@ const Inventory = () => {
     });
     setEditingItem(record);
     setAdjustModalVisible(true);
-  };
+  }, [adjustForm]);
 
-  const onAdjustSubmit = async (values) => {
+  const onAdjustSubmit = useCallback(async (values) => {
     try {
       const payload = values.adjustmentMode === 'delta'
         ? { quantityDelta: values.quantityDelta, reason: values.reason, notes: values.notes }
@@ -469,9 +545,9 @@ const Inventory = () => {
       console.error('Failed to adjust inventory', error);
       showError(error, error?.response?.data?.message || 'Failed to adjust inventory');
     }
-  };
+  }, [editingItem, drawerVisible, fetchItems, fetchSummary, handleViewItem]);
 
-  const handleToggleActive = async (record) => {
+  const handleToggleActive = useCallback(async (record) => {
     if (record.isActive) {
       setDeactivateItemId(record.id);
       setDeactivateDialogOpen(true);
@@ -486,99 +562,102 @@ const Inventory = () => {
         showError(error, error?.response?.data?.message || 'Failed to activate inventory item');
       }
     }
-  };
+  }, [fetchItems, fetchSummary]);
 
-  const handleDeactivate = async () => {
+  const handleDeactivate = useCallback(async () => {
     if (!deactivateItemId) return;
     try {
+      setDeactivatingItem(true);
       await inventoryService.deleteItem(deactivateItemId);
       showSuccess('Inventory item deactivated');
-        fetchItems();
+        await fetchItems();
         fetchSummary();
       setDeactivateDialogOpen(false);
       setDeactivateItemId(null);
       } catch (error) {
       console.error('Failed to deactivate inventory item', error);
       showError(error, error?.response?.data?.message || 'Failed to deactivate inventory item');
+    } finally {
+      setDeactivatingItem(false);
     }
-  };
+  }, [deactivateItemId, fetchItems, fetchSummary]);
 
-  const columns = useMemo(() => [
+  // Table columns for DashboardTable
+  const tableColumns = useMemo(() => [
     {
-      title: 'Item',
-      dataIndex: 'name',
       key: 'name',
-      render: (_, record) => {
-        const status = stockStatus(record);
-        // Map stock status labels to status values for StatusChip
-        const statusValue = status.label.toLowerCase().replace(' ', '_');
-        return (
-          <div>
-            <div className="font-semibold">{record.name}</div>
-            <div className="text-muted-foreground text-sm">{record.sku || '—'}</div>
-            <StatusChip status={statusValue} className="mt-1" />
-          </div>
-        );
-      }
-    },
-    {
-      title: 'Category',
-      dataIndex: ['category', 'name'],
-      key: 'category',
-      render: (_, record) => record.category?.name || 'Uncategorized'
-    },
-    {
-      title: 'Quantity',
-      dataIndex: 'quantityOnHand',
-      key: 'quantityOnHand',
-      render: (value, record) => (
+      label: 'Item',
+      render: (_, record) => (
         <div>
-          <div className="font-semibold">{parseFloat(value || 0).toFixed(2)} {record.unit}</div>
-          <div className="text-muted-foreground text-xs">Reorder at {parseFloat(record.reorderLevel || 0).toFixed(2)}</div>
+          <div className="font-semibold text-black">{record?.name || '—'}</div>
+          <div className="text-muted-foreground text-sm">{record?.sku || '—'}</div>
         </div>
       )
     },
     {
-      title: 'Unit Cost',
-      dataIndex: 'unitCost',
+      key: 'category',
+      label: 'Category',
+      render: (_, record) => <span className="text-black">{record?.category?.name || 'Uncategorized'}</span>
+    },
+    {
+      key: 'quantityOnHand',
+      label: 'Quantity',
+      render: (_, record) => (
+        <div>
+          <div className="font-semibold text-black">{parseFloat(record?.quantityOnHand || 0).toFixed(2)} {record?.unit || ''}</div>
+          <div className="text-muted-foreground text-xs">Reorder at {parseFloat(record?.reorderLevel || 0).toFixed(2)}</div>
+        </div>
+      )
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      render: (_, record) => {
+        const statusKey = getStockStatus(record.quantityOnHand, record.reorderLevel);
+        return <StatusChip status={statusKey} />;
+      }
+    },
+    {
       key: 'unitCost',
-      render: (value) => valueFormatter(value)
+      label: 'Unit Cost',
+      render: (_, record) => <span className="text-black">{valueFormatter(record?.unitCost)}</span>
     },
     {
-      title: 'Location',
-      dataIndex: 'location',
       key: 'location',
-      render: (value) => value || '—'
+      label: 'Location',
+      render: (_, record) => <span className="text-black">{record?.location || '—'}</span>
     },
     {
-      title: 'Vendor',
-      dataIndex: ['preferredVendor', 'name'],
       key: 'vendor',
-      render: (_, record) => record.preferredVendor?.name || '—'
+      label: 'Vendor',
+      render: (_, record) => <span className="text-black">{record?.preferredVendor?.name || '—'}</span>
     },
     {
-      title: 'Actions',
       key: 'actions',
-      fixed: 'right',
-      width: 200,
+      label: 'Actions',
       render: (_, record) => (
         <ActionColumn
           record={record}
           onView={handleViewItem}
           extraActions={[
             {
+              key: 'restock',
               label: 'Restock',
+              variant: 'default',
               icon: <PlusCircle className="h-4 w-4" />,
               onClick: () => handleRestock(record)
             },
             {
+              key: 'adjust',
               label: 'Adjust',
+              variant: 'secondary',
               icon: <Pencil className="h-4 w-4" />,
               onClick: () => handleAdjust(record)
             },
             {
+              key: 'toggle',
               label: record.isActive ? 'Deactivate' : 'Activate',
-              danger: record.isActive,
+              variant: record.isActive ? 'destructive' : 'secondary',
               icon: record.isActive ? <ArrowDown className="h-4 w-4" /> : <ArrowUp className="h-4 w-4" />,
               onClick: () => handleToggleActive(record)
             }
@@ -586,7 +665,18 @@ const Inventory = () => {
         />
       )
     }
-  ], []);
+  ], [handleViewItem, handleRestock, handleAdjust, handleToggleActive]);
+
+  const handleClearFilters = () => {
+    setFilters({
+      categoryId: 'all',
+      status: 'all',
+      lowStock: false
+    });
+    setPagination({ ...pagination, current: 1 });
+  };
+
+  const hasActiveFilters = filters.categoryId !== 'all' || filters.status !== 'all' || filters.lowStock;
 
   const summaryCards = [
     {
@@ -614,74 +704,73 @@ const Inventory = () => {
   const drawerTabs = useMemo(() => {
     if (!viewingItem) return [];
 
-    const movementItems = viewingItem.movements
-      ?.sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt))
-      .map((movement) => ({
+    // Sort movements by date (oldest first for chronological timeline)
+    const sortedMovements = [...(viewingItem.movements || [])].sort(
+      (a, b) => new Date(a.occurredAt) - new Date(b.occurredAt)
+    );
+
+    // Check if the first movement (oldest) is a creation
+    const firstMovement = sortedMovements.length > 0 ? sortedMovements[0] : null;
+    const isCreationMovement = firstMovement && 
+      (firstMovement.reference === 'Item Creation' || 
+       (firstMovement.previousQuantity === 0 && firstMovement.type === 'purchase'));
+
+    const movementItems = sortedMovements.map((movement, index) => {
+      const isCreation = (index === 0) && isCreationMovement;
+      const isLast = index === sortedMovements.length - 1;
+      
+      return {
         color: movement.type === 'purchase' ? 'green' : movement.type === 'usage' ? 'red' : '#166534',
         children: (
-          <TimelineItem key={movement.id}>
-            <TimelineIndicator className={movement.type === 'purchase' ? 'bg-green-500' : movement.type === 'usage' ? 'bg-red-500' : 'bg-[#166534]'} />
+          <TimelineItem key={movement.id} isLast={isLast}>
+            <TimelineIndicator />
             <TimelineContent>
-              <TimelineTitle>
-              {movement.type.toUpperCase()} {movement.quantityDelta > 0 ? '+' : ''}{parseFloat(movement.quantityDelta).toFixed(2)} {viewingItem.unit}
+              <TimelineTitle className="text-black">
+                {isCreation 
+                  ? `ITEM WAS CREATED ${parseFloat(movement.quantityDelta).toFixed(2)} ${viewingItem.unit} IN STOCK`
+                  : `${movement.type.toUpperCase()} ${movement.quantityDelta > 0 ? '+' : ''}${parseFloat(movement.quantityDelta).toFixed(2)} ${viewingItem.unit}`
+                }
               </TimelineTitle>
-              <TimelineTime>
-              {dayjs(movement.occurredAt).format('MMM DD, YYYY [at] hh:mm A')} • New Qty: {parseFloat(movement.newQuantity).toFixed(2)}
+              <TimelineTime className="text-black">
+                {dayjs(movement.occurredAt).format('MMM DD, YYYY [at] h:mm A')} • New Qty: {parseFloat(movement.newQuantity).toFixed(2)}
               </TimelineTime>
-            {movement.reference && (
-                <TimelineDescription>Reference: {movement.reference}</TimelineDescription>
+            {!isCreation && movement.reference && (
+                <TimelineDescription className="text-black">Reference: {movement.reference}</TimelineDescription>
             )}
             {movement.createdByUser && (
-                <TimelineDescription>
+                <TimelineDescription className="text-black">
                 By: {movement.createdByUser.name} ({movement.createdByUser.email})
                 </TimelineDescription>
             )}
             {movement.job && isPrintingPress && (
-                <TimelineDescription>
+                <TimelineDescription className="text-black">
                 Job: {movement.job.jobNumber} — {movement.job.title}
                 </TimelineDescription>
             )}
-            {movement.notes && (
-                <TimelineDescription className="italic">
+            {!isCreation && movement.notes && (
+                <TimelineDescription className="text-black italic">
                 Notes: {movement.notes}
                 </TimelineDescription>
             )}
             </TimelineContent>
           </TimelineItem>
         )
-      }));
+      };
+    });
 
     return [
       {
         key: 'summary',
         label: 'Summary',
         content: (
-          <div className="space-y-6">
-            <Separator />
-            <div className="grid grid-cols-2 gap-4">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Quantity on Hand</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {parseFloat(viewingItem.quantityOnHand || 0).toFixed(2)} {viewingItem.unit}
-                  </div>
-                </CardContent>
-                </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Reorder Level</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">
-                    {parseFloat(viewingItem.reorderLevel || 0).toFixed(2)} {viewingItem.unit}
-                  </div>
-                </CardContent>
-                </Card>
-            </div>
-
-            <Descriptions column={1}>
+          <DrawerSectionCard title="Item summary">
+            <Descriptions column={1} className="space-y-0">
+              <DescriptionItem label="Quantity on Hand">
+                {parseFloat(viewingItem.quantityOnHand || 0).toFixed(2)} {viewingItem.unit}
+              </DescriptionItem>
+              <DescriptionItem label="Reorder Level">
+                {parseFloat(viewingItem.reorderLevel || 0).toFixed(2)} {viewingItem.unit}
+              </DescriptionItem>
               <DescriptionItem label="SKU">{viewingItem.sku || '—'}</DescriptionItem>
               <DescriptionItem label="Category">{viewingItem.category?.name || 'Uncategorized'}</DescriptionItem>
               <DescriptionItem label="Preferred Vendor">
@@ -699,142 +788,215 @@ const Inventory = () => {
               </DescriptionItem>
               <DescriptionItem label="Description">{viewingItem.description || '—'}</DescriptionItem>
             </Descriptions>
-          </div>
+          </DrawerSectionCard>
         )
       },
       {
         key: 'movements',
         label: 'Movement History',
-        content: movementItems?.length ? (
-          <Timeline>
-            {movementItems.map(item => item.children)}
-          </Timeline>
-        ) : (
-          <Alert type="info" message="No movement history yet" />
+        content: (
+          <DrawerSectionCard title="Movement history">
+            {movementItems?.length ? (
+              <Timeline>
+                {movementItems.map(item => item.children)}
+              </Timeline>
+            ) : (
+              <Alert>
+                <AlertDescription>No movement history yet</AlertDescription>
+              </Alert>
+            )}
+          </DrawerSectionCard>
         )
       }
     ];
   }, [viewingItem]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-    <div>
-          <h1 className="text-3xl font-bold">Inventory</h1>
-          <p className="text-muted-foreground">Track and manage materials, stock levels, and movements.</p>
-        </div>
+        <WelcomeSection
+          welcomeMessage="Inventory"
+          subText="Track and manage materials, stock levels, and movements."
+        />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => { fetchItems(); fetchSummary(); }}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-              Refresh
-            </Button>
-          <Button onClick={() => openItemModal()}>
-            <Plus className="h-4 w-4 mr-2" />
-              New Item
-            </Button>
+          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+            <Filter className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Filter</span>}
+          </Button>
+          <Button 
+            variant="outline" 
+            onClick={async () => { 
+              await fetchItems(true); 
+              fetchSummary(); 
+            }}
+            disabled={refreshingInventory}
+            size={isMobile ? "icon" : "default"}
+          >
+            {refreshingInventory ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {!isMobile && <span className="ml-2">Refresh</span>}
+          </Button>
+          <Button onClick={() => openItemModal()} size={isMobile ? "icon" : "default"}>
+            <Plus className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">New Item</span>}
+          </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {summaryCards.map((card) => (
-          <StatisticCard
-            key={card.title}
-                title={card.title}
-                value={card.value}
-                prefix={card.prefix}
-            className={summaryLoading ? 'opacity-50' : ''}
-          />
-        ))}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <DashboardStatsCard
+          title="Total Items"
+          value={calculatedStats?.totals?.totalItems || 0}
+          icon={AppWindow}
+          iconBgColor="rgba(22, 101, 52, 0.1)"
+          iconColor="#166534"
+        />
+        <DashboardStatsCard
+          title="In Stock"
+          value={calculatedStats?.totals?.inStock || 0}
+          icon={Inbox}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+        />
+        <DashboardStatsCard
+          title="Low Stock"
+          value={calculatedStats?.totals?.lowStock || 0}
+          icon={AlertTriangle}
+          iconBgColor="rgba(249, 115, 22, 0.1)"
+          iconColor="#f97316"
+        />
+        <DashboardStatsCard
+          title="Out of Stock"
+          value={calculatedStats?.totals?.outOfStock || 0}
+          icon={Package}
+          iconBgColor="rgba(239, 68, 68, 0.1)"
+          iconColor="#ef4444"
+        />
       </div>
 
-      <Card>
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-              placeholder="Search by name, SKU, description"
-                value={filters.search}
-                onChange={(e) => handleSearch(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Select value={filters.categoryId} onValueChange={handleCategoryChange}>
-              <SelectTrigger>
-                <SelectValue placeholder="Filter by category" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Categories</SelectItem>
-                {categories.map((category) => (
-                  <SelectItem key={category.id} value={category.id}>
-                    {category.name}
-                  </SelectItem>
-                ))}
-                <Separator className="my-2" />
+      {/* Main Content Area */}
+      <DashboardTable
+        data={paginatedItems}
+        columns={tableColumns}
+        loading={loading}
+        title={null}
+        emptyIcon={<Package className="h-12 w-12 text-muted-foreground" />}
+        emptyDescription="No inventory items found"
+        pageSize={pagination.pageSize}
+        onPageChange={(newPagination) => {
+          setPagination(newPagination);
+        }}
+        externalPagination={{
+          current: pagination.current,
+          total: itemsCount
+        }}
+      />
+
+      {/* Filter Drawer */}
+      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
+        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+          <SheetHeader className="pb-4 border-b">
+            <SheetTitle>Filter Inventory</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-6 mt-6">
+            <div className="space-y-2">
+              <Label>Category</Label>
+              <Select value={filters.categoryId} onValueChange={(value) => setFilters({ ...filters, categoryId: value })}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Filter by category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {categories.map((category) => (
+                    <SelectItem key={category.id} value={category.id}>
+                      {category.name}
+                    </SelectItem>
+                  ))}
+                  <Separator className="my-2" />
                   <Button
-                  variant="ghost"
-                  className="w-full justify-start"
+                    variant="ghost"
+                    className="w-full justify-start"
                     onClick={() => openCategoryModal('filter')}
                   >
-                  <Plus className="h-4 w-4 mr-2" />
+                    <Plus className="h-4 w-4 mr-2" />
                     Add category
                   </Button>
-              </SelectContent>
-            </Select>
-            <Select value={filters.status} onValueChange={handleStatusChange}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="inactive">Inactive</SelectItem>
-                <SelectItem value="all">All</SelectItem>
-              </SelectContent>
-            </Select>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={filters.status} onValueChange={(value) => setFilters({ ...filters, status: value })}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="flex items-center gap-2">
-              <Switch checked={filters.lowStock} onCheckedChange={handleLowStockToggle} />
+              <Switch checked={filters.lowStock} onCheckedChange={(checked) => setFilters({ ...filters, lowStock: checked })} />
               <Label>Show low stock only</Label>
             </div>
-          </div>
-        </CardContent>
-      </Card>
 
-        {loading ? (
-          <div className="p-4">
-            <TableSkeleton rows={8} cols={7} />
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={handleClearFilters} className="w-full">
+                Clear Filters
+              </Button>
+            )}
           </div>
-        ) : (
-          <Table
-            rowKey="id"
-            columns={columns}
-            dataSource={items}
-            pagination={pagination}
-            onChange={handleTableChange}
-            scroll={{ x: 1000 }}
-          />
-        )}
+        </SheetContent>
+      </Sheet>
 
       <DetailsDrawer
         open={drawerVisible}
         onClose={() => setDrawerVisible(false)}
         title={viewingItem ? `${viewingItem.name} (${viewingItem.sku || 'No SKU'})` : 'Item details'}
         width={720}
-        onEdit={viewingItem ? () => openItemModal(viewingItem) : null}
         onPrint={null}
+        extra={
+          viewingItem ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => openItemModal(viewingItem)}
+            >
+              <Pencil className="h-4 w-4 mr-2" />
+              Edit
+            </Button>
+          ) : null
+        }
         extraActions={
           viewingItem
             ? [
                 {
                   key: 'restock',
                   label: 'Restock',
+                  variant: 'secondary',
                   icon: <PlusCircle className="h-4 w-4" />,
-                  onClick: () => handleRestock(viewingItem)
+                  onClick: () => {
+                    if (viewingItem) {
+                      handleRestock(viewingItem);
+                    }
+                  }
                 },
                 {
                   key: 'adjust',
                   label: 'Adjust',
                   icon: <Pencil className="h-4 w-4" />,
-                  onClick: () => handleAdjust(viewingItem)
+                  onClick: () => {
+                    if (viewingItem) {
+                      handleAdjust(viewingItem);
+                    }
+                  }
                 }
               ]
             : []
@@ -844,14 +1006,14 @@ const Inventory = () => {
       />
 
       <Dialog open={itemModalVisible} onOpenChange={setItemModalVisible}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:w-[var(--modal-w-lg)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>{editingItem ? `Edit ${editingItem.name}` : 'New Inventory Item'}</DialogTitle>
             <DialogDescription>
               {editingItem ? 'Update inventory item details' : 'Add a new item to your inventory'}
             </DialogDescription>
           </DialogHeader>
-          
+          <DialogBody>
           <Form {...itemForm}>
             <form onSubmit={itemForm.handleSubmit(onItemSubmit)} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -873,7 +1035,7 @@ const Inventory = () => {
                   name="sku"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>SKU</FormLabel>
+                      <FormLabel>SKU (optional)</FormLabel>
                       <FormControl>
                         <Input {...field} placeholder="Optional SKU" />
                       </FormControl>
@@ -889,7 +1051,7 @@ const Inventory = () => {
                   name="categoryId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Category</FormLabel>
+                      <FormLabel>Category (optional)</FormLabel>
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger>
@@ -940,11 +1102,11 @@ const Inventory = () => {
                     <FormItem>
                       <FormLabel>Quantity on Hand</FormLabel>
                       <FormControl>
-                        <InputNumber
+                        <Input
+                          type="number"
                           min={0}
-                          style={{ width: '100%' }}
-                          value={field.value}
-                          onChange={(value) => field.onChange(value)}
+                          value={numberInputValue(field.value)}
+                          onChange={(e) => handleNumberChange(e, field.onChange)}
                         />
                       </FormControl>
                       <FormMessage />
@@ -958,11 +1120,14 @@ const Inventory = () => {
                     <FormItem>
                       <FormLabel>Reorder Level</FormLabel>
                       <FormControl>
-                        <InputNumber
+                        <Input
+                          type="number"
                           min={0}
-                          style={{ width: '100%' }}
-                          value={field.value}
-                          onChange={(value) => field.onChange(value)}
+                          value={field.value || ''}
+                          onChange={(e) => {
+                            const value = parseFloat(e.target.value) || 0;
+                            field.onChange(value);
+                          }}
                         />
                       </FormControl>
                       <FormMessage />
@@ -976,17 +1141,20 @@ const Inventory = () => {
                   control={itemForm.control}
                 name="unitCost"
                   render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Unit Cost</FormLabel>
-                      <FormControl>
-                        <InputNumber
-                          min={0}
-                          style={{ width: '100%' }}
-                          prefix="GHS"
-                          step={0.01}
-                          value={field.value}
-                          onChange={(value) => field.onChange(value)}
-                        />
+                  <FormItem>
+                    <FormLabel>Unit Cost (optional)</FormLabel>
+                    <FormControl>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            value={numberInputValue(field.value)}
+                            onChange={(e) => handleNumberChange(e, field.onChange)}
+                            className="pl-12"
+                          />
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -997,7 +1165,7 @@ const Inventory = () => {
                   name="preferredVendorId"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Preferred Vendor</FormLabel>
+                      <FormLabel>Preferred Vendor (optional)</FormLabel>
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger>
@@ -1024,7 +1192,7 @@ const Inventory = () => {
                   name="location"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Storage Location</FormLabel>
+                      <FormLabel>Storage Location (optional)</FormLabel>
                       <FormControl>
                         <Input {...field} placeholder="Shelf, warehouse, etc." />
                       </FormControl>
@@ -1056,7 +1224,7 @@ const Inventory = () => {
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Description</FormLabel>
+                    <FormLabel>Description (optional)</FormLabel>
                     <FormControl>
                       <Textarea {...field} rows={3} placeholder="Optional description or specifications" />
                     </FormControl>
@@ -1073,22 +1241,23 @@ const Inventory = () => {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={itemForm.formState.isSubmitting}>
-                  {itemForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Button type="submit" loading={itemForm.formState.isSubmitting}>
                   {editingItem ? 'Update' : 'Create'}
                 </Button>
               </DialogFooter>
             </form>
         </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
 
       <Dialog open={categoryModalVisible} onOpenChange={setCategoryModalVisible}>
-        <DialogContent>
+        <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>Add Inventory Category</DialogTitle>
             <DialogDescription>Create a new category for organizing inventory items</DialogDescription>
           </DialogHeader>
+          <DialogBody>
           
           <Form {...categoryForm}>
             <form onSubmit={categoryForm.handleSubmit(onCategorySubmit)} className="space-y-4">
@@ -1110,7 +1279,7 @@ const Inventory = () => {
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Description</FormLabel>
+                    <FormLabel>Description (optional)</FormLabel>
                     <FormControl>
                       <Textarea {...field} rows={3} placeholder="Optional description" />
                     </FormControl>
@@ -1136,16 +1305,17 @@ const Inventory = () => {
               </DialogFooter>
             </form>
         </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
 
       <Dialog open={restockModalVisible} onOpenChange={setRestockModalVisible}>
-        <DialogContent>
+        <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>{editingItem ? `Restock ${editingItem.name}` : 'Restock'}</DialogTitle>
             <DialogDescription>Add inventory to this item</DialogDescription>
           </DialogHeader>
-          
+          <DialogBody>
           <Form {...restockForm}>
             <form onSubmit={restockForm.handleSubmit(onRestockSubmit)} className="space-y-4">
               <FormField
@@ -1155,12 +1325,12 @@ const Inventory = () => {
                   <FormItem>
                     <FormLabel>Quantity to add</FormLabel>
                     <FormControl>
-                      <InputNumber
+                      <Input
+                        type="number"
                         min={0.01}
                         step={0.01}
-                        style={{ width: '100%' }}
-                        value={field.value}
-                        onChange={(value) => field.onChange(value)}
+                        value={numberInputValue(field.value)}
+                        onChange={(e) => handleNumberChange(e, field.onChange)}
                       />
                     </FormControl>
                     <FormMessage />
@@ -1172,16 +1342,19 @@ const Inventory = () => {
                 name="unitCost"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Unit Cost</FormLabel>
+                    <FormLabel>Unit Cost (optional)</FormLabel>
                     <FormControl>
-                      <InputNumber
-                        min={0}
-                        step={0.01}
-                        style={{ width: '100%' }}
-                        prefix="GHS"
-                        value={field.value}
-                        onChange={(value) => field.onChange(value)}
-                      />
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">GHS</span>
+                        <Input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          className="pl-12"
+                          value={numberInputValue(field.value)}
+                          onChange={(e) => handleNumberChange(e, field.onChange)}
+                        />
+                      </div>
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -1192,7 +1365,7 @@ const Inventory = () => {
                 name="reference"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Reference</FormLabel>
+                    <FormLabel>Reference (optional)</FormLabel>
                     <FormControl>
                       <Input {...field} placeholder="Invoice number, supplier reference, etc." />
                     </FormControl>
@@ -1205,7 +1378,7 @@ const Inventory = () => {
                 name="notes"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Notes</FormLabel>
+                    <FormLabel>Notes (optional)</FormLabel>
                     <FormControl>
                       <Textarea {...field} rows={3} placeholder="Optional notes" />
                     </FormControl>
@@ -1221,23 +1394,23 @@ const Inventory = () => {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={restockForm.formState.isSubmitting}>
-                  {restockForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Button type="submit" loading={restockForm.formState.isSubmitting}>
                   Restock
                 </Button>
               </DialogFooter>
             </form>
         </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
 
       <Dialog open={adjustModalVisible} onOpenChange={setAdjustModalVisible}>
-        <DialogContent>
+        <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>{editingItem ? `Adjust ${editingItem.name}` : 'Adjust Inventory'}</DialogTitle>
             <DialogDescription>Record an inventory adjustment</DialogDescription>
           </DialogHeader>
-          
+          <DialogBody>
           <Form {...adjustForm}>
             <form onSubmit={adjustForm.handleSubmit(onAdjustSubmit)} className="space-y-4">
               <FormField
@@ -1270,13 +1443,13 @@ const Inventory = () => {
                     <FormItem>
                       <FormLabel>Quantity Change</FormLabel>
                       <FormControl>
-                    <InputNumber
-                      style={{ width: '100%' }}
+                    <Input
+                      type="number"
                       step={0.01}
                       placeholder="Use positive to add, negative to subtract"
-                          value={field.value}
-                          onChange={(value) => field.onChange(value)}
-                        />
+                      value={numberInputValue(field.value)}
+                      onChange={(e) => handleNumberChange(e, field.onChange)}
+                    />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1290,12 +1463,12 @@ const Inventory = () => {
                     <FormItem>
                       <FormLabel>New Quantity</FormLabel>
                       <FormControl>
-                        <InputNumber
+                        <Input
+                          type="number"
                           min={0}
                           step={0.01}
-                          style={{ width: '100%' }}
-                          value={field.value}
-                          onChange={(value) => field.onChange(value)}
+                          value={numberInputValue(field.value)}
+                          onChange={(e) => handleNumberChange(e, field.onChange)}
                         />
                       </FormControl>
                       <FormMessage />
@@ -1309,7 +1482,7 @@ const Inventory = () => {
                 name="reason"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Reason</FormLabel>
+                    <FormLabel>Reason (optional)</FormLabel>
                     <FormControl>
                       <Input {...field} placeholder="e.g. Damage, audit correction, sample usage" />
                     </FormControl>
@@ -1322,7 +1495,7 @@ const Inventory = () => {
                 name="notes"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Notes</FormLabel>
+                    <FormLabel>Notes (optional)</FormLabel>
                     <FormControl>
                       <Textarea {...field} rows={3} placeholder="Optional additional details" />
                     </FormControl>
@@ -1338,13 +1511,13 @@ const Inventory = () => {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={adjustForm.formState.isSubmitting}>
-                  {adjustForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Button type="submit" loading={adjustForm.formState.isSubmitting}>
                   Record Adjustment
                 </Button>
               </DialogFooter>
             </form>
         </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
 
@@ -1358,7 +1531,11 @@ const Inventory = () => {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeactivate} className="bg-destructive text-destructive-foreground">
+            <AlertDialogAction 
+              onClick={handleDeactivate} 
+              className="bg-destructive text-destructive-foreground"
+              loading={deactivatingItem}
+            >
               Deactivate
             </AlertDialogAction>
           </AlertDialogFooter>

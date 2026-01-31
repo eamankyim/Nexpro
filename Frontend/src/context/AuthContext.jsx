@@ -287,6 +287,50 @@ export const AuthProvider = ({ children }) => {
   );
 
   const effectiveRole = tenantRole || user?.role || null;
+  const isPlatformAdmin = user?.isPlatformAdmin === true;
+  const isFirstLogin = user?.isFirstLogin === true;
+  const isWorkspaceAdmin = ['owner', 'admin'].includes(effectiveRole || '');
+
+  /** True if user signed up via invite link (invitedBy set on any membership). */
+  const wasInvited = useMemo(
+    () => Array.isArray(memberships) && memberships.some((m) => !!m.invitedBy),
+    [memberships]
+  );
+
+  /**
+   * Show "Complete Your Profile" only for admin-created users (isFirstLogin) who were
+   * NOT invited and are NOT admins (platform or workspace). Invited users set their own
+   * password at signup; admins are excluded.
+   */
+  const shouldCompleteProfile = useMemo(
+    () => Boolean(isFirstLogin && !isPlatformAdmin && !isWorkspaceAdmin && !wasInvited),
+    [isFirstLogin, isPlatformAdmin, isWorkspaceAdmin, wasInvited]
+  );
+
+  useEffect(() => {
+    if (!user) return;
+    console.log('[ProfileCompletion] Decision factors:', {
+      userId: user?.id,
+      email: user?.email,
+      isFirstLogin,
+      isPlatformAdmin,
+      isWorkspaceAdmin,
+      wasInvited,
+      effectiveRole,
+      membershipsInvitedBy: Array.isArray(memberships) ? memberships.map((m) => ({ tenantId: m.tenantId, role: m.role, invitedBy: m.invitedBy })) : [],
+      shouldCompleteProfile,
+      reason: !isFirstLogin
+        ? 'not first login'
+        : isPlatformAdmin
+          ? 'platform admin excluded'
+          : isWorkspaceAdmin
+            ? 'workspace admin excluded'
+            : wasInvited
+              ? 'invited user excluded'
+              : 'admin-created user → must complete profile',
+    });
+  }, [user, memberships, isFirstLogin, isPlatformAdmin, isWorkspaceAdmin, wasInvited, shouldCompleteProfile, effectiveRole]);
+
   const value = {
     user,
     memberships,
@@ -307,8 +351,10 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated: !!user,
     isAdmin: ['owner', 'admin'].includes(effectiveRole),
     isManager: ['owner', 'admin', 'manager'].includes(effectiveRole || ''),
-    isPlatformAdmin: user?.isPlatformAdmin === true,
-    isFirstLogin: user?.isFirstLogin === true,
+    isPlatformAdmin,
+    isFirstLogin,
+    wasInvited,
+    shouldCompleteProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -7,8 +7,11 @@ import MainLayout from './layouts/MainLayout';
 import AdminLayout from './layouts/AdminLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import TableSkeleton from './components/TableSkeleton';
+import { useSwipeBack } from './hooks/useSwipeBack';
+import { useIOSKeyboardFix } from './hooks/useKeyboardHandling';
+import Products from './pages/Products';
 
-// Lazy load heavy pages for code splitting
+// Lazy load heavy pages for code splitting (Products is static to avoid duplicate React)
 const Login = lazy(() => import('./pages/Login'));
 const Signup = lazy(() => import('./pages/Signup'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
@@ -33,10 +36,9 @@ const Checkout = lazy(() => import('./pages/Checkout'));
 const Sales = lazy(() => import('./pages/Sales'));
 const Shops = lazy(() => import('./pages/Shops'));
 const Pharmacies = lazy(() => import('./pages/Pharmacies'));
-const Products = lazy(() => import('./pages/Products'));
 const Drugs = lazy(() => import('./pages/Drugs'));
 const Prescriptions = lazy(() => import('./pages/Prescriptions'));
-const POS = lazy(() => import('./pages/POS'));
+const FootTraffic = lazy(() => import('./pages/FootTraffic'));
 const AdminOverview = lazy(() => import('./pages/admin/AdminOverview'));
 const AdminTenants = lazy(() => import('./pages/admin/AdminTenants'));
 const AdminBilling = lazy(() => import('./pages/admin/AdminBilling'));
@@ -91,7 +93,7 @@ const SSOHandler = () => {
           window.location.href = '/login?error=sso_failed';
         });
     } else if (nexproToken && searchParams.get('success') === 'true') {
-      // Handle GET /sso callback with Nexpro token
+      // Handle GET /sso callback with ShopWISE token
       searchParams.delete('token');
       searchParams.delete('success');
       setSearchParams(searchParams, { replace: true });
@@ -112,8 +114,17 @@ const SSOHandler = () => {
   return null;
 };
 
+// Component to handle mobile gestures and fixes inside Router context
+const MobileEnhancements = () => {
+  // Enable swipe-back gesture for mobile navigation
+  useSwipeBack();
+  // Fix iOS keyboard viewport issues
+  useIOSKeyboardFix();
+  return null;
+};
+
 function AppContent() {
-  // ForcePasswordChange disabled - invited users set their own password during signup
+  // ForcePasswordChange (Complete Your Profile) shown only for admin-created users; excluded for invited users and platform admins
   return (
     <Router
       future={{
@@ -121,6 +132,7 @@ function AppContent() {
         v7_relativeSplatPath: true
       }}
     >
+      <MobileEnhancements />
       <SSOHandler />
       <Suspense fallback={<PageLoader />}>
         <Routes>
@@ -154,7 +166,12 @@ function AppContent() {
             <Route path="expenses" element={<Expenses />} />
             <Route path="pricing" element={<Pricing />} />
             <Route path="leads" element={<Leads />} />
-            <Route path="reports" element={<Reports />} />
+            <Route path="reports">
+              <Route index element={<Navigate to="/reports/overview" replace />} />
+              <Route path="overview" element={<Reports />} />
+              <Route path="smart-report" element={<Reports />} />
+              <Route path="generated-reports" element={<Reports />} />
+            </Route>
             <Route path="inventory" element={<Inventory />} />
             <Route path="employees" element={<Employees />} />
             <Route path="payroll" element={<Payroll />} />
@@ -164,7 +181,7 @@ function AppContent() {
             <Route path="products" element={<Products />} />
             <Route path="drugs" element={<Drugs />} />
             <Route path="prescriptions" element={<Prescriptions />} />
-            <Route path="pos" element={<POS />} />
+            <Route path="foot-traffic" element={<FootTraffic />} />
             <Route path="users" element={<Users />} />
             <Route path="profile" element={<Profile />} />
             <Route path="settings" element={<Settings />} />

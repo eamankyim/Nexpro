@@ -5,6 +5,7 @@ const {
   createPrescription,
   fillPrescription,
   updatePrescription,
+  deletePrescription,
   checkDrugInteractions,
   generateInvoice,
   printLabel
@@ -26,7 +27,8 @@ router.route('/check-interactions')
 
 router.route('/:id')
   .get(getPrescription)
-  .put(authorize('admin', 'manager', 'staff'), updatePrescription);
+  .put(authorize('admin', 'manager', 'staff'), updatePrescription)
+  .delete(authorize('admin'), deletePrescription);
 
 router.route('/:id/fill')
   .post(authorize('admin', 'manager', 'staff'), fillPrescription);

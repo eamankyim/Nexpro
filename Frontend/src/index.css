@@ -52,6 +52,17 @@
     --input: 214.3 31.8% 91.4%;
     --ring: 143 64% 24%;
     --radius: 0.5rem;
+
+    /* Form modal – responsive vw/vh */
+    --modal-w: min(92vw, 54rem);
+    --modal-w-sm: min(92vw, 32rem);
+    --modal-w-md: min(92vw, 42rem);
+    --modal-w-lg: min(92vw, 48rem);
+    --modal-w-xl: min(92vw, 56rem);
+    --modal-w-2xl: min(92vw, 64rem);
+    --modal-w-3xl: min(92vw, 72rem);
+    --modal-max-h: 90vh;
+    --modal-min-h: 0;
   }
 
   .dark {
@@ -115,6 +126,76 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
+  /* Responsive base font size */
+  font-size: 14px; /* Mobile base */
+  line-height: 1.5; /* Mobile line height */
+}
+
+/* Responsive typography */
+@media (min-width: 768px) {
+  body {
+    font-size: 15px; /* Tablet base */
+    line-height: 1.55;
+  }
+}
+
+@media (min-width: 1024px) {
+  body {
+    font-size: 16px; /* Desktop base */
+    line-height: 1.6;
+  }
+}
+
+/* Responsive heading sizes */
+h1 {
+  font-size: 1.75rem; /* 28px mobile */
+  line-height: 1.2;
+}
+
+@media (min-width: 768px) {
+  h1 {
+    font-size: 2rem; /* 32px tablet */
+  }
+}
+
+@media (min-width: 1024px) {
+  h1 {
+    font-size: 2.25rem; /* 36px desktop */
+  }
+}
+
+h2 {
+  font-size: 1.5rem; /* 24px mobile */
+  line-height: 1.3;
+}
+
+@media (min-width: 768px) {
+  h2 {
+    font-size: 1.75rem; /* 28px tablet */
+  }
+}
+
+@media (min-width: 1024px) {
+  h2 {
+    font-size: 2rem; /* 32px desktop */
+  }
+}
+
+h3 {
+  font-size: 1.25rem; /* 20px mobile */
+  line-height: 1.4;
+}
+
+@media (min-width: 768px) {
+  h3 {
+    font-size: 1.5rem; /* 24px tablet */
+  }
+}
+
+@media (min-width: 1024px) {
+  h3 {
+    font-size: 1.75rem; /* 28px desktop */
+  }
 }
 
 code {
@@ -142,6 +223,190 @@ code {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 0, 0, 0.3);
+}
+
+/* ============================================
+   MOBILE-FIRST DESIGN SYSTEM
+   ============================================ */
+
+/* Mobile spacing scale */
+:root {
+  --mobile-spacing-xs: 0.25rem;   /* 4px */
+  --mobile-spacing-sm: 0.5rem;    /* 8px */
+  --mobile-spacing-md: 0.75rem;   /* 12px */
+  --mobile-spacing-lg: 1rem;      /* 16px */
+  --mobile-spacing-xl: 1.25rem;   /* 20px */
+  --mobile-spacing-2xl: 1.5rem;  /* 24px */
+  
+  --desktop-spacing-xs: 0.5rem;   /* 8px */
+  --desktop-spacing-sm: 0.75rem;  /* 12px */
+  --desktop-spacing-md: 1rem;     /* 16px */
+  --desktop-spacing-lg: 1.5rem;   /* 24px */
+  --desktop-spacing-xl: 2rem;     /* 32px */
+  --desktop-spacing-2xl: 3rem;   /* 48px */
+  
+  /* Mobile typography scale */
+  --mobile-font-xs: 0.75rem;     /* 12px */
+  --mobile-font-sm: 0.875rem;    /* 14px */
+  --mobile-font-base: 1rem;      /* 16px */
+  --mobile-font-lg: 1.125rem;    /* 18px */
+  --mobile-font-xl: 1.25rem;    /* 20px */
+  --mobile-font-2xl: 1.5rem;    /* 24px */
+  
+  /* Touch target minimum size */
+  --touch-target-min: 44px;
+  
+  /* Safe area insets (will be overridden by JS) */
+  --safe-area-inset-top: env(safe-area-inset-top, 0px);
+  --safe-area-inset-right: env(safe-area-inset-right, 0px);
+  --safe-area-inset-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-inset-left: env(safe-area-inset-left, 0px);
+}
+
+/* ============================================
+   MOBILE TOUCH INTERACTIONS
+   ============================================ */
+
+/* Improve touch interactions on mobile */
+@media (max-width: 768px) {
+  /* Better tap highlight */
+  * {
+    -webkit-tap-highlight-color: rgba(22, 101, 52, 0.1);
+    tap-highlight-color: rgba(22, 101, 52, 0.1);
+  }
+
+  /* Prevent text selection on buttons */
+  button,
+  [role="button"],
+  a[role="button"] {
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+    min-height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+  }
+
+  /* Improve scrolling performance */
+  * {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Prevent zoom on input focus (iOS) */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="tel"],
+  textarea,
+  select {
+    font-size: 16px; /* Prevents zoom on iOS */
+    min-height: var(--touch-target-min);
+  }
+
+  /* Full-height mobile layouts */
+  html,
+  body,
+  #root {
+    height: 100%;
+    height: -webkit-fill-available;
+  }
+
+  /* Mobile-optimized button sizes - ensure 44px minimum touch target */
+  button,
+  [role="button"],
+  a[role="button"] {
+    padding: 0.75rem 1rem;
+    font-size: var(--mobile-font-base);
+    min-height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+  }
+
+  /* Ensure icon buttons meet touch target */
+  button[class*="icon"],
+  button[size="icon"] {
+    min-height: var(--touch-target-min);
+    min-width: var(--touch-target-min);
+    padding: 0.5rem;
+  }
+
+  /* Ensure form inputs meet touch target */
+  input,
+  textarea,
+  select {
+    min-height: var(--touch-target-min);
+  }
+
+  /* Ensure links are touch-friendly */
+  a:not([class*="icon"]) {
+    min-height: var(--touch-target-min);
+    display: inline-flex;
+    align-items: center;
+  }
+
+  /* Mobile-optimized form inputs */
+  input,
+  textarea,
+  select {
+    padding: 0.75rem;
+    font-size: var(--mobile-font-base);
+    border-radius: 0.5rem;
+  }
+
+  /* Mobile-optimized spacing */
+  .mobile-spacing-xs { padding: var(--mobile-spacing-xs); }
+  .mobile-spacing-sm { padding: var(--mobile-spacing-sm); }
+  .mobile-spacing-md { padding: var(--mobile-spacing-md); }
+  .mobile-spacing-lg { padding: var(--mobile-spacing-lg); }
+  .mobile-spacing-xl { padding: var(--mobile-spacing-xl); }
+  .mobile-spacing-2xl { padding: var(--mobile-spacing-2xl); }
+
+  /* Native-like scrolling */
+  .mobile-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  /* Mobile card spacing */
+  .mobile-card {
+    margin-bottom: var(--mobile-spacing-md);
+    border-radius: 0.75rem;
+  }
+
+  /* Mobile-safe content padding */
+  .mobile-content {
+    padding-left: var(--safe-area-inset-left);
+    padding-right: var(--safe-area-inset-right);
+  }
+
+  /* Mobile header with safe area */
+  .mobile-header {
+    padding-top: calc(var(--mobile-spacing-lg) + var(--safe-area-inset-top));
+    padding-bottom: var(--mobile-spacing-md);
+  }
+
+  /* Mobile bottom sheet safe area */
+  .mobile-bottom-sheet {
+    padding-bottom: calc(var(--mobile-spacing-lg) + var(--safe-area-inset-bottom));
+  }
+
+  /* Touch feedback */
+  button:active,
+  [role="button"]:active,
+  a[role="button"]:active {
+    opacity: 0.7;
+    transform: scale(0.98);
+    transition: opacity 0.1s, transform 0.1s;
+  }
+
+  /* Prevent accidental taps */
+  .prevent-tap {
+    pointer-events: none;
+  }
+
+  /* Mobile-optimized modals/dialogs */
+  [role="dialog"] {
+    max-height: calc(100vh - var(--safe-area-inset-top) - var(--safe-area-inset-bottom));
+  }
 }
 
 /* ============================================
@@ -369,6 +634,33 @@ code {
   .ant-col {
     width: 100% !important;
     max-width: 100% !important;
+  }
+}
+
+/* Mobile-optimized form spacing */
+@media (max-width: 768px) {
+  /* Increase spacing between form items on mobile */
+  [class*="FormItem"] {
+    margin-bottom: 1rem;
+  }
+
+  /* Ensure labels are prominent on mobile */
+  [class*="FormLabel"] {
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+  }
+
+  /* Better spacing for form fields */
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="tel"],
+  textarea,
+  select {
+    font-size: 16px; /* Prevents zoom on iOS */
+    padding: 0.75rem;
   }
 }
 
@@ -696,4 +988,69 @@ a:hover {
   z-index: 100 !important;
 }
 
+/* ============================================
+   DASHBOARD STATS CARDS PADDING
+   ============================================ */
+
+/* Ensure dashboard stats cards have 8px padding - override any conflicting styles */
+.dashboard-stats-card [class*="CardContent"],
+.dashboard-stats-card > div > div {
+  padding: 8px !important;
+}
+
+/* Dashboard setup banner – very dark green background (override any other styles) */
+[data-setup-banner] {
+  background-color: #053902 !important;
+}
+
+/* ============================================
+   PRINT STYLES
+   ============================================ */
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* ============================================
+   REACT-TOASTIFY – design like reference (white cards, icons, progress bar, no shadows)
+   ============================================ */
+.Toastify__toast {
+  background: #ffffff !important;
+  color: #1f2937 !important;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  min-height: 56px;
+  padding: 14px 16px;
+  box-shadow: none !important;
+}
+.Toastify__toast--success {
+  border-left: 4px solid #22c55e;
+}
+.Toastify__toast--error {
+  border-left: 4px solid #ef4444;
+}
+.Toastify__toast--warning {
+  border-left: 4px solid #f59e0b;
+}
+.Toastify__toast--info {
+  border-left: 4px solid #3b82f6;
+}
+.Toastify__progress-bar {
+  height: 4px;
+  bottom: 0;
+  left: 0;
+}
+.Toastify__progress-bar--success { background: #22c55e !important; }
+.Toastify__progress-bar--error { background: #ef4444 !important; }
+.Toastify__progress-bar--warning { background: #f59e0b !important; }
+.Toastify__progress-bar--info { background: #3b82f6 !important; }
+.Toastify__close-button {
+  color: #6b7280;
+  opacity: 0.8;
+}
+.Toastify__close-button:hover {
+  opacity: 1;
+}
 

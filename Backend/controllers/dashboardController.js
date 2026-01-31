@@ -2,6 +2,7 @@ const { sequelize } = require('../config/database');
 const { Job, Expense, Customer, Vendor, Invoice, Tenant, Sale, SaleItem, InventoryItem } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
+const { getPagination } = require('../utils/paginationUtils');
 
 const logDashboardDebug = (...args) => {
   if (config.nodeEnv === 'development') {
@@ -57,63 +58,161 @@ exports.getDashboardOverview = async (req, res, next) => {
       });
     }
 
-    // Total customers and vendors - FILTER BY TENANT
-    const totalCustomers = await Customer.count({ where: { tenantId, isActive: true } });
-    const totalVendors = await Vendor.count({ where: { tenantId, isActive: true } });
+    // Group 1: Basic counts - Execute in parallel
+    const [
+      totalCustomers,
+      totalVendors,
+      totalJobs,
+      newJobs,
+      inProgressJobs,
+      onHoldJobs,
+      cancelledJobs,
+      completedJobs,
+      thisMonthJobs,
+      totalRevenue,
+      thisMonthRevenue,
+      totalExpenses,
+      thisMonthExpenses,
+      newCustomersThisMonth,
+      outstandingBalance
+    ] = await Promise.all([
+      Customer.count({ where: { tenantId, isActive: true } }),
+      Vendor.count({ where: { tenantId, isActive: true } }),
+      Job.count({ where: { tenantId } }),
+      Job.count({ where: { tenantId, status: 'new' } }),
+      Job.count({ where: { tenantId, status: 'in_progress' } }),
+      Job.count({ where: { tenantId, status: 'on_hold' } }),
+      Job.count({ where: { tenantId, status: 'cancelled' } }),
+      Job.count({ where: { tenantId, status: 'completed' } }),
+      Job.count({
+        where: {
+          tenantId,
+          createdAt: {
+            [Op.between]: [firstDayOfMonth, lastDayOfMonth]
+          }
+        }
+      }),
+      Invoice.sum('amountPaid', {
+        where: {
+          tenantId,
+          status: 'paid'
+        }
+      }) || 0,
+      Invoice.sum('amountPaid', {
+        where: {
+          tenantId,
+          status: 'paid',
+          paidDate: {
+            [Op.between]: [firstDayOfMonth, lastDayOfMonth]
+          }
+        }
+      }) || 0,
+      Expense.sum('amount', { where: { tenantId } }) || 0,
+      Expense.sum('amount', {
+        where: {
+          tenantId,
+          expenseDate: {
+            [Op.between]: [firstDayOfMonth, lastDayOfMonth]
+          }
+        }
+      }) || 0,
+      Customer.count({
+        where: {
+          tenantId,
+          isActive: true,
+          createdAt: {
+            [Op.between]: [firstDayOfMonth, lastDayOfMonth]
+          }
+        }
+      }),
+      Invoice.sum('balance', {
+        where: {
+          tenantId,
+          status: { [Op.ne]: 'paid' }
+        }
+      }) || 0
+    ]);
 
-    // Jobs statistics - FILTER BY TENANT
-    const totalJobs = await Job.count({ where: { tenantId } });
-    const newJobs = await Job.count({ where: { tenantId, status: 'new' } });
-    const inProgressJobs = await Job.count({ where: { tenantId, status: 'in_progress' } });
-    const onHoldJobs = await Job.count({ where: { tenantId, status: 'on_hold' } });
-    const cancelledJobs = await Job.count({ where: { tenantId, status: 'cancelled' } });
-    const completedJobs = await Job.count({ where: { tenantId, status: 'completed' } });
-
-    // Filtered jobs statistics (if date filter is applied)
+    // Group 2: Date-filtered queries (if filter exists) - Execute in parallel
     let filteredJobs = null;
     let filteredNewJobs = null;
     let filteredInProgressJobs = null;
     let filteredOnHoldJobs = null;
     let filteredCancelledJobs = null;
     let filteredCompletedJobs = null;
+    let filteredRevenue = null;
+    let filteredExpenses = null;
+    let filteredNewCustomers = 0;
     
     if (hasDateFilter) {
-      filteredJobs = await Job.count({ where: { tenantId, createdAt: dateFilter } });
-      filteredNewJobs = await Job.count({ 
-        where: { 
-          tenantId,
-          status: 'new',
-          createdAt: dateFilter 
-        } 
-      });
-      filteredInProgressJobs = await Job.count({ 
-        where: { 
-          tenantId,
-          status: 'in_progress',
-          createdAt: dateFilter 
-        } 
-      });
-      filteredCompletedJobs = await Job.count({ 
-        where: { 
-          tenantId,
-          status: 'completed',
-          createdAt: dateFilter 
-        } 
-      });
-      filteredOnHoldJobs = await Job.count({
-        where: {
-          tenantId,
-          status: 'on_hold',
-          createdAt: dateFilter
-        }
-      });
-      filteredCancelledJobs = await Job.count({
-        where: {
-          tenantId,
-          status: 'cancelled',
-          createdAt: dateFilter
-        }
-      });
+      [
+        filteredJobs,
+        filteredNewJobs,
+        filteredInProgressJobs,
+        filteredOnHoldJobs,
+        filteredCancelledJobs,
+        filteredCompletedJobs,
+        filteredRevenue,
+        filteredExpenses,
+        filteredNewCustomers
+      ] = await Promise.all([
+        Job.count({ where: { tenantId, createdAt: dateFilter } }),
+        Job.count({ 
+          where: { 
+            tenantId,
+            status: 'new',
+            createdAt: dateFilter 
+          } 
+        }),
+        Job.count({ 
+          where: { 
+            tenantId,
+            status: 'in_progress',
+            createdAt: dateFilter 
+          } 
+        }),
+        Job.count({
+          where: {
+            tenantId,
+            status: 'on_hold',
+            createdAt: dateFilter
+          }
+        }),
+        Job.count({
+          where: {
+            tenantId,
+            status: 'cancelled',
+            createdAt: dateFilter
+          }
+        }),
+        Job.count({ 
+          where: { 
+            tenantId,
+            status: 'completed',
+            createdAt: dateFilter 
+          } 
+        }),
+        Invoice.sum('amountPaid', {
+          where: {
+            tenantId,
+            status: 'paid',
+            paidDate: dateFilter
+          }
+        }) || 0,
+        Expense.sum('amount', {
+          where: {
+            tenantId,
+            expenseDate: dateFilter
+          }
+        }) || 0,
+        Customer.count({
+          where: {
+            tenantId,
+            isActive: true,
+            createdAt: dateFilter
+          }
+        })
+      ]);
       
       logDashboardDebug('Filtered job counts', {
         filteredJobs,
@@ -123,87 +222,18 @@ exports.getDashboardOverview = async (req, res, next) => {
         filteredCancelledJobs,
         filteredCompletedJobs
       });
-    }
-
-    // This month jobs - FILTER BY TENANT
-    const thisMonthJobs = await Job.count({
-      where: {
-        tenantId,
-        createdAt: {
-          [Op.between]: [firstDayOfMonth, lastDayOfMonth]
-        }
-      }
-    });
-
-    // Revenue statistics (from paid invoices) - FILTER BY TENANT
-    const totalRevenue = await Invoice.sum('amountPaid', {
-      where: {
-        tenantId,
-        status: 'paid'
-      }
-    }) || 0;
-
-    const thisMonthRevenue = await Invoice.sum('amountPaid', {
-      where: {
-        tenantId,
-        status: 'paid',
-        paidDate: {
-          [Op.between]: [firstDayOfMonth, lastDayOfMonth]
-        }
-      }
-    }) || 0;
-
-    // Filtered revenue (if date filter is applied) - FILTER BY TENANT
-    let filteredRevenue = null;
-    if (hasDateFilter) {
-      filteredRevenue = await Invoice.sum('amountPaid', {
-        where: {
-          tenantId,
-          status: 'paid',
-          paidDate: dateFilter
-        }
-      }) || 0;
       logDashboardDebug('Filtered revenue total', { filteredRevenue });
-    }
-
-    // Expense statistics - FILTER BY TENANT
-    const totalExpenses = await Expense.sum('amount', { where: { tenantId } }) || 0;
-
-    const thisMonthExpenses = await Expense.sum('amount', {
-      where: {
-        tenantId,
-        expenseDate: {
-          [Op.between]: [firstDayOfMonth, lastDayOfMonth]
-        }
-      }
-    }) || 0;
-
-    // Filtered expenses (if date filter is applied) - FILTER BY TENANT
-    let filteredExpenses = null;
-    if (hasDateFilter) {
-      filteredExpenses = await Expense.sum('amount', {
-        where: {
-          tenantId,
-          expenseDate: dateFilter
-        }
-      }) || 0;
       logDashboardDebug('Filtered expense total', { filteredExpenses });
+      logDashboardDebug('Filtered new customers', { filteredNewCustomers });
     }
 
-    // Outstanding invoices balance - FILTER BY TENANT
-    const outstandingBalance = await Invoice.sum('balance', {
-      where: {
-        tenantId,
-        status: { [Op.ne]: 'paid' }
-      }
-    }) || 0;
-
-    // In-progress jobs - FILTER BY TENANT (ALWAYS show all in-progress jobs for this tenant, ignore date filter)
+    // Group 3: In-progress jobs with includes - Execute separately (needs include)
     const recentJobs = await Job.findAll({
       where: {
         tenantId,
         status: 'in_progress'
       },
+      attributes: ['id', 'title', 'status', 'dueDate', 'createdAt', 'jobNumber'],
       order: [['dueDate', 'ASC'], ['createdAt', 'DESC']],
       include: [
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'company'] }
@@ -212,11 +242,31 @@ exports.getDashboardOverview = async (req, res, next) => {
     logDashboardDebug('In-progress jobs fetched', { count: recentJobs.length });
 
     // Prepare response data
+    // For shop/pharmacy, use sales data for revenue; otherwise use invoice data
+    let currentMonthRevenueValue = thisMonthRevenue;
+    if (businessType === 'shop' || businessType === 'pharmacy') {
+      try {
+        const monthSalesRevenue = await Sale.sum('total', {
+          where: {
+            tenantId,
+            status: 'completed',
+            createdAt: {
+              [Op.between]: [firstDayOfMonth, lastDayOfMonth]
+            }
+          }
+        }) || 0;
+        currentMonthRevenueValue = monthSalesRevenue;
+        logDashboardDebug('Using sales revenue for shop/pharmacy this month', { currentMonthRevenueValue });
+      } catch (error) {
+        logDashboardDebug('Error fetching this month sales revenue, falling back to invoice', error);
+      }
+    }
+    
     const currentMonthSummary = {
       jobs: thisMonthJobs,
-      revenue: Number(parseFloat(thisMonthRevenue).toFixed(2)),
+      revenue: Number(parseFloat(currentMonthRevenueValue).toFixed(2)),
       expenses: Number(parseFloat(thisMonthExpenses).toFixed(2)),
-      profit: Number(parseFloat(thisMonthRevenue - thisMonthExpenses).toFixed(2)),
+      profit: Number(parseFloat(currentMonthRevenueValue - thisMonthExpenses).toFixed(2)),
       range: {
         start: firstDayOfMonth.toISOString(),
         end: lastDayOfMonth.toISOString()
@@ -233,91 +283,95 @@ exports.getDashboardOverview = async (req, res, next) => {
     let shopData = null;
     if (businessType === 'shop') {
       try {
-        // Today's sales
-      const todayStart = new Date();
-      todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date();
-      todayEnd.setHours(23, 59, 59, 999);
-      
-      const todaySales = await Sale.sum('total', {
-        where: {
-          tenantId,
-          status: 'completed',
-          createdAt: {
-            [Op.between]: [todayStart, todayEnd]
-          }
+        // Calculate date ranges for shop queries
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const todayEnd = new Date();
+        todayEnd.setHours(23, 59, 59, 999);
+        
+        const weekStart = new Date();
+        weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+        weekStart.setHours(0, 0, 0, 0);
+        const weekEnd = new Date();
+        weekEnd.setHours(23, 59, 59, 999);
+
+        // Group 4: Shop-specific queries - Execute in parallel
+        const [
+          todaySales,
+          weekSales,
+          monthSales,
+          totalSales,
+          todaySalesCount,
+          lowStockItems,
+          totalInventoryItems
+        ] = await Promise.all([
+          Sale.sum('total', {
+            where: {
+              tenantId,
+              status: 'completed',
+              createdAt: {
+                [Op.between]: [todayStart, todayEnd]
+              }
+            }
+          }) || 0,
+          Sale.sum('total', {
+            where: {
+              tenantId,
+              status: 'completed',
+              createdAt: {
+                [Op.between]: [weekStart, weekEnd]
+              }
+            }
+          }) || 0,
+          Sale.sum('total', {
+            where: {
+              tenantId,
+              status: 'completed',
+              createdAt: {
+                [Op.between]: [firstDayOfMonth, lastDayOfMonth]
+              }
+            }
+          }) || 0,
+          Sale.count({
+            where: { tenantId, status: 'completed' }
+          }),
+          Sale.count({
+            where: {
+              tenantId,
+              status: 'completed',
+              createdAt: {
+                [Op.between]: [todayStart, todayEnd]
+              }
+            }
+          }),
+          InventoryItem.count({
+            where: {
+              tenantId,
+              isActive: true,
+              quantityOnHand: {
+                [Op.lte]: sequelize.col('reorderLevel')
+              }
+            }
+          }),
+          InventoryItem.count({
+            where: { tenantId, isActive: true }
+          })
+        ]);
+
+        // Recent sales (last 5, filtered by date range if applicable) - needs include, execute separately
+        const recentSalesWhere = { tenantId };
+        if (hasDateFilter) {
+          recentSalesWhere.createdAt = dateFilter;
         }
-      }) || 0;
-
-      // This week's sales
-      const weekStart = new Date();
-      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
-      weekStart.setHours(0, 0, 0, 0);
-      const weekEnd = new Date();
-      weekEnd.setHours(23, 59, 59, 999);
-      
-      const weekSales = await Sale.sum('total', {
-        where: {
-          tenantId,
-          status: 'completed',
-          createdAt: {
-            [Op.between]: [weekStart, weekEnd]
-          }
-        }
-      }) || 0;
-
-      // This month's sales
-      const monthSales = await Sale.sum('total', {
-        where: {
-          tenantId,
-          status: 'completed',
-          createdAt: {
-            [Op.between]: [firstDayOfMonth, lastDayOfMonth]
-          }
-        }
-      }) || 0;
-
-      // Total sales count
-      const totalSales = await Sale.count({
-        where: { tenantId, status: 'completed' }
-      });
-
-      // Today's sales count
-      const todaySalesCount = await Sale.count({
-        where: {
-          tenantId,
-          status: 'completed',
-          createdAt: {
-            [Op.between]: [todayStart, todayEnd]
-          }
-        }
-      });
-
-      // Low stock items
-      const lowStockItems = await InventoryItem.count({
-        where: {
-          tenantId,
-          isActive: true,
-          quantityOnHand: {
-            [Op.lte]: sequelize.col('reorderLevel')
-          }
-        }
-      });
-
-      // Total inventory items
-      const totalInventoryItems = await InventoryItem.count({
-        where: { tenantId, isActive: true }
-      });
-
-      // Recent sales (last 5)
-      const recentSales = await Sale.findAll({
-        where: { tenantId },
-        limit: 5,
-        order: [['createdAt', 'DESC']],
-        include: [
-          { model: Customer, as: 'customer', attributes: ['id', 'name', 'phone'], required: false }
-        ]
-      });
+        const recentSales = await Sale.findAll({
+          where: recentSalesWhere,
+          attributes: ['id', 'saleNumber', 'total', 'createdAt', 'paymentMethod'],
+          limit: 5,
+          order: [['createdAt', 'DESC']],
+          include: [
+            { model: Customer, as: 'customer', attributes: ['id', 'name', 'phone'], required: false }
+          ]
+        });
 
       // Top selling products (last 30 days)
       const thirtyDaysAgo = new Date();
@@ -403,7 +457,8 @@ exports.getDashboardOverview = async (req, res, next) => {
         onHoldJobs,
         cancelledJobs,
         completedJobs,
-        outstandingBalance: Number(parseFloat(outstandingBalance).toFixed(2))
+        outstandingBalance: Number(parseFloat(outstandingBalance).toFixed(2)),
+        newCustomers: hasDateFilter ? filteredNewCustomers : newCustomersThisMonth
       },
       currentMonth: currentMonthSummary,
       thisMonth: currentMonthSummary,
@@ -414,7 +469,26 @@ exports.getDashboardOverview = async (req, res, next) => {
 
     // Add filtered period data if date filter is applied
     if (hasDateFilter) {
-      const filteredRevenueValue = Number(parseFloat(filteredRevenue || 0).toFixed(2));
+      let filteredRevenueValue = Number(parseFloat(filteredRevenue || 0).toFixed(2));
+      
+      // For shop/pharmacy business types, use Sales data instead of Invoice for revenue
+      if (businessType === 'shop' || businessType === 'pharmacy') {
+        try {
+          const filteredSalesRevenue = await Sale.sum('total', {
+            where: {
+              tenantId,
+              status: 'completed',
+              createdAt: dateFilter
+            }
+          }) || 0;
+          filteredRevenueValue = Number(parseFloat(filteredSalesRevenue).toFixed(2));
+          logDashboardDebug('Filtered sales revenue for shop/pharmacy', { filteredRevenueValue });
+        } catch (error) {
+          logDashboardDebug('Error fetching filtered sales revenue', error);
+          filteredRevenueValue = 0;
+        }
+      }
+      
       const filteredExpensesValue = Number(parseFloat(filteredExpenses || 0).toFixed(2));
       const filteredProfitValue = Number(parseFloat(filteredRevenueValue - filteredExpensesValue).toFixed(2));
 
@@ -430,7 +504,7 @@ exports.getDashboardOverview = async (req, res, next) => {
       };
       responseData.thisMonth = responseData.filteredPeriod;
       
-      // Override summary with filtered job status counts
+      // Override summary with filtered job status counts and new customers
       responseData.summary = {
         ...responseData.summary,
         totalJobs: filteredJobs ?? 0,
@@ -439,7 +513,8 @@ exports.getDashboardOverview = async (req, res, next) => {
         inProgressJobs: filteredInProgressJobs ?? 0,
         onHoldJobs: filteredOnHoldJobs ?? 0,
         cancelledJobs: filteredCancelledJobs ?? 0,
-        completedJobs: filteredCompletedJobs ?? 0
+        completedJobs: filteredCompletedJobs ?? 0,
+        newCustomers: filteredNewCustomers
       };
       
       logDashboardDebug('Response with filtered period', responseData.filteredPeriod);
@@ -554,7 +629,7 @@ exports.getTopCustomers = async (req, res, next) => {
       });
     }
 
-    const limit = parseInt(req.query.limit) || 10;
+    const { limit } = getPagination(req, { defaultPageSize: 10 });
     const tenantId = req.tenantId;
 
     const topCustomers = await Invoice.findAll({

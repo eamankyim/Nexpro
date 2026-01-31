@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const { Setting, User, Tenant } = require('../models');
 const { baseUploadDir } = require('../middleware/upload');
-
+const { seedDefaultCategories } = require('../utils/categorySeeder');
 const { sanitizePayload } = require('../utils/tenantUtils');
 
 const getSettingValue = async (tenantId, key, fallback = {}) => {
@@ -192,18 +192,18 @@ exports.getOrganizationSettings = async (req, res, next) => {
     // Priority: Settings model > Tenant model
     // Check if value exists in Settings (even if empty string) before falling back to Tenant
     const organization = {
-      name: (organizationSettings.name !== undefined && organizationSettings.name !== null) 
-        ? organizationSettings.name 
+      name: (organizationSettings.name !== undefined && organizationSettings.name !== null)
+        ? organizationSettings.name
         : (tenant?.name || ''),
       legalName: organizationSettings.legalName || '',
-      email: (organizationSettings.email !== undefined && organizationSettings.email !== null) 
-        ? organizationSettings.email 
+      email: (organizationSettings.email !== undefined && organizationSettings.email !== null)
+        ? organizationSettings.email
         : (tenant?.metadata?.email || ''),
-      phone: (organizationSettings.phone !== undefined && organizationSettings.phone !== null) 
-        ? organizationSettings.phone 
+      phone: (organizationSettings.phone !== undefined && organizationSettings.phone !== null)
+        ? organizationSettings.phone
         : (tenant?.metadata?.phone || ''),
-      website: (organizationSettings.website !== undefined && organizationSettings.website !== null) 
-        ? organizationSettings.website 
+      website: (organizationSettings.website !== undefined && organizationSettings.website !== null)
+        ? organizationSettings.website
         : (tenant?.metadata?.website || ''),
       logoUrl: organizationSettings.logoUrl || '',
       invoiceFooter: organizationSettings.invoiceFooter || '',
@@ -211,9 +211,11 @@ exports.getOrganizationSettings = async (req, res, next) => {
       tax: {
         vatNumber: organizationSettings.tax?.vatNumber || '',
         tin: organizationSettings.tax?.tin || ''
-      }
+      },
+      businessType: tenant?.businessType || 'printing_press',
+      shopType: tenant?.metadata?.shopType || ''
     };
-    
+
     res.status(200).json({ success: true, data: organization });
   } catch (error) {
     next(error);
@@ -339,9 +341,20 @@ exports.updateOrganizationSettings = async (req, res, next) => {
       if (incoming.website !== undefined) {
         metadata.website = incoming.website || null;
       }
+      if (incoming.shopType !== undefined && tenant.businessType === 'shop') {
+        metadata.shopType = incoming.shopType || null;
+      }
       tenant.metadata = metadata;
-      
+
       await tenant.save();
+
+      if (incoming.shopType !== undefined && tenant.businessType === 'shop') {
+        try {
+          await seedDefaultCategories(req.tenantId, 'shop', incoming.shopType || null);
+        } catch (seedError) {
+          console.error('Failed to seed categories after shop type update:', seedError);
+        }
+      }
       console.log('🔵 [Backend] Tenant updated and saved:', {
         name: tenant.name,
         metadata: tenant.metadata
@@ -376,18 +389,18 @@ exports.updateOrganizationSettings = async (req, res, next) => {
     });
     
     const mergedData = {
-      name: nameFromSettings 
-        ? updated.name 
+      name: nameFromSettings
+        ? updated.name
         : (tenant?.name || ''),
       legalName: (updated && updated.hasOwnProperty('legalName')) ? updated.legalName : '',
-      email: emailFromSettings 
-        ? updated.email 
+      email: emailFromSettings
+        ? updated.email
         : (tenant?.metadata?.email || ''),
-      phone: phoneFromSettings 
-        ? updated.phone 
+      phone: phoneFromSettings
+        ? updated.phone
         : (tenant?.metadata?.phone || ''),
-      website: (updated && updated.hasOwnProperty('website') && updated.website !== undefined && updated.website !== null && updated.website.trim() !== '') 
-        ? updated.website 
+      website: (updated && updated.hasOwnProperty('website') && updated.website !== undefined && updated.website !== null && updated.website.trim() !== '')
+        ? updated.website
         : (tenant?.metadata?.website || ''),
       logoUrl: (updated && updated.hasOwnProperty('logoUrl')) ? updated.logoUrl : '',
       invoiceFooter: (updated && updated.hasOwnProperty('invoiceFooter')) ? updated.invoiceFooter : '',
@@ -395,7 +408,9 @@ exports.updateOrganizationSettings = async (req, res, next) => {
       tax: {
         vatNumber: (updated && updated.tax?.vatNumber) ? updated.tax.vatNumber : '',
         tin: (updated && updated.tax?.tin) ? updated.tax.tin : ''
-      }
+      },
+      businessType: tenant?.businessType || 'printing_press',
+      shopType: tenant?.metadata?.shopType || ''
     };
     
     console.log('🔵 [Backend] Final merged data:', JSON.stringify(mergedData, null, 2));
@@ -547,7 +562,6 @@ exports.updatePayrollSettings = async (req, res, next) => {
   }
 };
 
-
 // @desc    Get WhatsApp settings
 // @route   GET /api/settings/whatsapp
 // @access  Private
@@ -622,7 +636,7 @@ exports.updateWhatsAppSettings = async (req, res, next) => {
     const whatsappData = {
       enabled: enabled !== undefined ? enabled : existing.enabled || false,
       phoneNumberId: phoneNumberId || existing.phoneNumberId || '',
-      accessToken: accessToken || existing.accessToken || '',
+      accessToken: accessToken || existing.accessToken || '', // In production, encrypt this
       businessAccountId: businessAccountId || existing.businessAccountId || '',
       webhookVerifyToken: webhookVerifyToken || existing.webhookVerifyToken || '',
       templateNamespace: templateNamespace || existing.templateNamespace || ''
@@ -667,6 +681,415 @@ exports.testWhatsAppConnection = async (req, res, next) => {
 
     const whatsappService = require('../services/whatsappService');
     const result = await whatsappService.testConnection(accessToken, phoneNumberId);
+
+    if (result.success) {
+      res.status(200).json({
+        success: true,
+        message: 'Connection successful',
+        data: result.data
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: 'Connection failed',
+        error: result.error
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get SMS settings
+// @route   GET /api/settings/sms
+// @access  Private
+exports.getSMSSettings = async (req, res, next) => {
+  try {
+    const smsSettings = await getSettingValue(req.tenantId, 'sms', {
+      enabled: false,
+      provider: 'twilio',
+      accountSid: '',
+      authToken: '',
+      fromNumber: '',
+      apiKey: '',
+      username: ''
+    });
+
+    // Don't expose sensitive tokens in response
+    const safeSettings = {
+      ...smsSettings,
+      authToken: smsSettings.authToken ? '***' : '',
+      apiKey: smsSettings.apiKey ? '***' : ''
+    };
+
+    res.status(200).json({
+      success: true,
+      data: safeSettings
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update SMS settings
+// @route   PUT /api/settings/sms
+// @access  Private
+exports.updateSMSSettings = async (req, res, next) => {
+  try {
+    const {
+      enabled,
+      provider,
+      accountSid,
+      authToken,
+      fromNumber,
+      apiKey,
+      username
+    } = sanitizePayload(req.body);
+
+    // Get existing settings to preserve sensitive data if not provided
+    const existing = await getSettingValue(req.tenantId, 'sms', {});
+
+    // Validate required fields if enabling
+    if (enabled) {
+      const finalProvider = provider || existing.provider || 'twilio';
+      
+      if (finalProvider === 'twilio') {
+        const finalAccountSid = accountSid || existing.accountSid;
+        const finalAuthToken = authToken || existing.authToken;
+        const finalFromNumber = fromNumber || existing.fromNumber;
+
+        if (!finalAccountSid || !finalAuthToken || !finalFromNumber) {
+          return res.status(400).json({
+            success: false,
+            message: 'Account SID, Auth Token, and From Number are required for Twilio'
+          });
+        }
+
+        // Test connection
+        const smsService = require('../services/smsService');
+        const testResult = await smsService.testConnection({
+          provider: 'twilio',
+          accountSid: finalAccountSid,
+          authToken: finalAuthToken
+        });
+        
+        if (!testResult.success) {
+          return res.status(400).json({
+            success: false,
+            message: 'Failed to connect to SMS service',
+            error: testResult.error
+          });
+        }
+      } else if (finalProvider === 'africas_talking') {
+        const finalApiKey = apiKey || existing.apiKey;
+        const finalUsername = username || existing.username;
+        const finalFromNumber = fromNumber || existing.fromNumber;
+
+        if (!finalApiKey || !finalUsername || !finalFromNumber) {
+          return res.status(400).json({
+            success: false,
+            message: 'API Key, Username, and From Number are required for Africa\'s Talking'
+          });
+        }
+
+        // Test connection
+        const smsService = require('../services/smsService');
+        const testResult = await smsService.testConnection({
+          provider: 'africas_talking',
+          apiKey: finalApiKey,
+          username: finalUsername
+        });
+        
+        if (!testResult.success) {
+          return res.status(400).json({
+            success: false,
+            message: 'Failed to connect to SMS service',
+            error: testResult.error
+          });
+        }
+      }
+    }
+
+    const smsData = {
+      enabled: enabled !== undefined ? enabled : existing.enabled || false,
+      provider: provider || existing.provider || 'twilio',
+      accountSid: accountSid || existing.accountSid || '',
+      authToken: authToken || existing.authToken || '',
+      fromNumber: fromNumber || existing.fromNumber || '',
+      apiKey: apiKey || existing.apiKey || '',
+      username: username || existing.username || ''
+    };
+
+    const updated = await upsertSettingValue(
+      req.tenantId,
+      'sms',
+      smsData,
+      'SMS service configuration'
+    );
+
+    // Don't expose sensitive tokens in response
+    const safeSettings = {
+      ...updated,
+      authToken: updated.authToken ? '***' : '',
+      apiKey: updated.apiKey ? '***' : ''
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'SMS settings updated successfully',
+      data: safeSettings
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Test SMS connection
+// @route   POST /api/settings/sms/test
+// @access  Private
+exports.testSMSConnection = async (req, res, next) => {
+  try {
+    const config = sanitizePayload(req.body);
+
+    if (!config.provider) {
+      return res.status(400).json({
+        success: false,
+        message: 'Provider is required'
+      });
+    }
+
+    const smsService = require('../services/smsService');
+    const result = await smsService.testConnection(config);
+
+    if (result.success) {
+      res.status(200).json({
+        success: true,
+        message: 'Connection successful',
+        data: result.data
+      });
+    } else {
+      res.status(400).json({
+        success: false,
+        message: 'Connection failed',
+        error: result.error
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get Email settings
+// @route   GET /api/settings/email
+// @access  Private
+exports.getEmailSettings = async (req, res, next) => {
+  try {
+    const emailSettings = await getSettingValue(req.tenantId, 'email', {
+      enabled: false,
+      provider: 'smtp',
+      smtpHost: '',
+      smtpPort: 587,
+      smtpUser: '',
+      smtpPassword: '',
+      smtpRejectUnauthorized: true,
+      fromEmail: '',
+      fromName: '',
+      sendgridApiKey: '',
+      sesAccessKeyId: '',
+      sesSecretAccessKey: '',
+      sesRegion: 'us-east-1',
+      sesHost: ''
+    });
+
+    // Don't expose sensitive passwords/keys in response
+    const safeSettings = {
+      ...emailSettings,
+      smtpPassword: emailSettings.smtpPassword ? '***' : '',
+      sendgridApiKey: emailSettings.sendgridApiKey ? '***' : '',
+      sesSecretAccessKey: emailSettings.sesSecretAccessKey ? '***' : ''
+    };
+
+    res.status(200).json({
+      success: true,
+      data: safeSettings
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update Email settings
+// @route   PUT /api/settings/email
+// @access  Private
+exports.updateEmailSettings = async (req, res, next) => {
+  try {
+    const {
+      enabled,
+      provider,
+      smtpHost,
+      smtpPort,
+      smtpUser,
+      smtpPassword,
+      smtpRejectUnauthorized,
+      fromEmail,
+      fromName,
+      sendgridApiKey,
+      sesAccessKeyId,
+      sesSecretAccessKey,
+      sesRegion,
+      sesHost
+    } = sanitizePayload(req.body);
+
+    // Get existing settings to preserve sensitive data if not provided
+    const existing = await getSettingValue(req.tenantId, 'email', {});
+
+    // Validate required fields if enabling
+    if (enabled) {
+      const finalProvider = provider || existing.provider || 'smtp';
+      
+      if (finalProvider === 'smtp') {
+        const finalSmtpHost = smtpHost || existing.smtpHost;
+        const finalSmtpUser = smtpUser || existing.smtpUser;
+        const finalSmtpPassword = smtpPassword || existing.smtpPassword;
+
+        if (!finalSmtpHost || !finalSmtpUser || !finalSmtpPassword) {
+          return res.status(400).json({
+            success: false,
+            message: 'SMTP Host, User, and Password are required'
+          });
+        }
+
+        // Test connection
+        const emailService = require('../services/emailService');
+        const testResult = await emailService.testConnection({
+          provider: 'smtp',
+          smtpHost: finalSmtpHost,
+          smtpPort: smtpPort || existing.smtpPort || 587,
+          smtpUser: finalSmtpUser,
+          smtpPassword: finalSmtpPassword,
+          smtpRejectUnauthorized: smtpRejectUnauthorized !== undefined ? smtpRejectUnauthorized : existing.smtpRejectUnauthorized !== false
+        });
+        
+        if (!testResult.success) {
+          return res.status(400).json({
+            success: false,
+            message: 'Failed to connect to email service',
+            error: testResult.error
+          });
+        }
+      } else if (finalProvider === 'sendgrid') {
+        const finalSendgridApiKey = sendgridApiKey || existing.sendgridApiKey;
+
+        if (!finalSendgridApiKey) {
+          return res.status(400).json({
+            success: false,
+            message: 'SendGrid API Key is required'
+          });
+        }
+
+        // Test connection
+        const emailService = require('../services/emailService');
+        const testResult = await emailService.testConnection({
+          provider: 'sendgrid',
+          sendgridApiKey: finalSendgridApiKey
+        });
+        
+        if (!testResult.success) {
+          return res.status(400).json({
+            success: false,
+            message: 'Failed to connect to email service',
+            error: testResult.error
+          });
+        }
+      } else if (finalProvider === 'ses') {
+        const finalSesAccessKeyId = sesAccessKeyId || existing.sesAccessKeyId;
+        const finalSesSecretAccessKey = sesSecretAccessKey || existing.sesSecretAccessKey;
+
+        if (!finalSesAccessKeyId || !finalSesSecretAccessKey) {
+          return res.status(400).json({
+            success: false,
+            message: 'AWS SES Access Key ID and Secret Access Key are required'
+          });
+        }
+
+        // Test connection
+        const emailService = require('../services/emailService');
+        const testResult = await emailService.testConnection({
+          provider: 'ses',
+          sesAccessKeyId: finalSesAccessKeyId,
+          sesSecretAccessKey: finalSesSecretAccessKey,
+          sesRegion: sesRegion || existing.sesRegion || 'us-east-1',
+          sesHost: sesHost || existing.sesHost
+        });
+        
+        if (!testResult.success) {
+          return res.status(400).json({
+            success: false,
+            message: 'Failed to connect to email service',
+            error: testResult.error
+          });
+        }
+      }
+    }
+
+    const emailData = {
+      enabled: enabled !== undefined ? enabled : existing.enabled || false,
+      provider: provider || existing.provider || 'smtp',
+      smtpHost: smtpHost || existing.smtpHost || '',
+      smtpPort: smtpPort !== undefined ? smtpPort : (existing.smtpPort || 587),
+      smtpUser: smtpUser || existing.smtpUser || '',
+      smtpPassword: smtpPassword || existing.smtpPassword || '',
+      smtpRejectUnauthorized: smtpRejectUnauthorized !== undefined ? smtpRejectUnauthorized : (existing.smtpRejectUnauthorized !== false),
+      fromEmail: fromEmail || existing.fromEmail || '',
+      fromName: fromName || existing.fromName || '',
+      sendgridApiKey: sendgridApiKey || existing.sendgridApiKey || '',
+      sesAccessKeyId: sesAccessKeyId || existing.sesAccessKeyId || '',
+      sesSecretAccessKey: sesSecretAccessKey || existing.sesSecretAccessKey || '',
+      sesRegion: sesRegion || existing.sesRegion || 'us-east-1',
+      sesHost: sesHost || existing.sesHost || ''
+    };
+
+    const updated = await upsertSettingValue(
+      req.tenantId,
+      'email',
+      emailData,
+      'Email service configuration'
+    );
+
+    // Don't expose sensitive passwords/keys in response
+    const safeSettings = {
+      ...updated,
+      smtpPassword: updated.smtpPassword ? '***' : '',
+      sendgridApiKey: updated.sendgridApiKey ? '***' : '',
+      sesSecretAccessKey: updated.sesSecretAccessKey ? '***' : ''
+    };
+
+    res.status(200).json({
+      success: true,
+      message: 'Email settings updated successfully',
+      data: safeSettings
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Test Email connection
+// @route   POST /api/settings/email/test
+// @access  Private
+exports.testEmailConnection = async (req, res, next) => {
+  try {
+    const config = sanitizePayload(req.body);
+
+    if (!config.provider) {
+      return res.status(400).json({
+        success: false,
+        message: 'Provider is required'
+      });
+    }
+
+    const emailService = require('../services/emailService');
+    const result = await emailService.testConnection(config);
 
     if (result.success) {
       res.status(200).json({

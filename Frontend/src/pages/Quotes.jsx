@@ -2,28 +2,41 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Table, InputNumber } from 'antd';
+import { useDebounce } from '../hooks/useDebounce';
+import { useResponsive } from '../hooks/useResponsive';
+import { useAuth } from '../context/AuthContext';
+import { useSmartSearch } from '../context/SmartSearchContext';
 import {
   Plus,
-  Search,
   FileText,
   FilePlus,
   CheckCircle,
   Printer,
   Download,
   Loader2,
-  X
+  X,
+  Filter,
+  RefreshCw,
+  Receipt,
+  MessageSquare
 } from 'lucide-react';
+import { generatePDF } from '../utils/pdfUtils';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 import quoteService from '../services/quoteService';
 import customerService from '../services/customerService';
+import settingsService from '../services/settingsService';
+import { useQuery } from '@tanstack/react-query';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import DrawerSectionCard from '../components/DrawerSectionCard';
 import PrintableInvoice from '../components/PrintableInvoice';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
+import DashboardTable from '../components/DashboardTable';
+import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError } from '../utils/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,7 +45,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import { DatePicker } from '@/components/ui/date-picker';
 import {
@@ -50,6 +64,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import MobileFormDialog from '../components/MobileFormDialog';
+import FormFieldGrid from '../components/FormFieldGrid';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -68,7 +90,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 
 const statusOptions = [
   { value: 'draft', label: 'Draft' },
@@ -96,22 +118,29 @@ const quoteSchema = z.object({
 });
 
 const Quotes = () => {
+  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+  const { isMobile } = useResponsive();
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
-  const [filters, setFilters] = useState({ search: '', status: 'all', customerId: null });
+  const [filters, setFilters] = useState({ status: 'all', customerId: 'all' });
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingQuote, setViewingQuote] = useState(null);
   const [quoteModalVisible, setQuoteModalVisible] = useState(false);
   const [editingQuote, setEditingQuote] = useState(null);
   const [customers, setCustomers] = useState([]);
   const [converting, setConverting] = useState(false);
+  const [refreshingQuotes, setRefreshingQuotes] = useState(false);
   const navigate = useNavigate();
   const [printModalVisible, setPrintModalVisible] = useState(false);
   const [quotePrintable, setQuotePrintable] = useState(null);
   const [pendingDownload, setPendingDownload] = useState(false);
   const [deleteQuoteId, setDeleteQuoteId] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [quoteActivities, setQuoteActivities] = useState([]);
+  const [loadingActivities, setLoadingActivities] = useState(false);
 
   const form = useForm({
     resolver: zodResolver(quoteSchema),
@@ -159,47 +188,100 @@ const Quotes = () => {
   };
 
   useEffect(() => {
-    fetchQuotes();
-  }, [pagination.current, pagination.pageSize, filters]);
+    setPageSearchConfig({ scope: 'quotes', placeholder: SEARCH_PLACEHOLDERS.QUOTES });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig]);
 
-  const fetchQuotes = async () => {
-    setLoading(true);
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [searchValue]);
+
+  useEffect(() => {
+    fetchQuotes();
+  }, [pagination.current, pagination.pageSize, filters, debouncedSearch]);
+
+  const fetchQuotes = async (isRefresh = false) => {
+    if (isRefresh) setRefreshingQuotes(true);
+    else setLoading(true);
     try {
       const params = {
         page: pagination.current,
-        limit: pagination.pageSize,
-        _ts: Date.now()
+        limit: 1000, // Fetch more for client-side filtering
+        _ts: Date.now(),
       };
 
       if (filters.status && filters.status !== 'all') {
         params.status = filters.status;
       }
-      if (filters.customerId) {
+      if (filters.customerId && filters.customerId !== 'all') {
         params.customerId = filters.customerId;
       }
-      if (filters.search) {
-        params.search = filters.search;
-      }
+      if (debouncedSearch) params.search = debouncedSearch;
 
       const response = await quoteService.getAll(params);
       const quoteList = Array.isArray(response?.data) ? response.data : [];
-      const totalCount = Number.isFinite(response?.count) ? response.count : quoteList.length;
 
       setQuotes(quoteList);
-      setPagination((prev) => ({ ...prev, total: totalCount }));
     } catch (error) {
       console.error('Failed to load quotes:', error);
       showError(error, 'Failed to load quotes');
+      setQuotes([]);
     } finally {
-      setLoading(false);
+      if (isRefresh) setRefreshingQuotes(false);
+      else setLoading(false);
     }
   };
+
+  // Apply client-side filtering
+  const filteredQuotes = useMemo(() => {
+    return quotes; // Backend already filters by status and customerId
+  }, [quotes, filters]);
+
+  // Paginate filtered quotes
+  const paginatedQuotes = useMemo(() => {
+    const start = (pagination.current - 1) * pagination.pageSize;
+    const end = start + pagination.pageSize;
+    return filteredQuotes.slice(start, end);
+  }, [filteredQuotes, pagination.current, pagination.pageSize]);
+
+  const quotesCount = filteredQuotes.length;
+
+  // Calculate summary stats
+  const summaryStats = useMemo(() => {
+    const totalQuotes = quotes.length;
+    const draftQuotes = quotes.filter(q => q.status === 'draft').length;
+    const sentQuotes = quotes.filter(q => q.status === 'sent').length;
+    const acceptedQuotes = quotes.filter(q => q.status === 'accepted').length;
+    
+    return {
+      totals: {
+        totalQuotes,
+        draftQuotes,
+        sentQuotes,
+        acceptedQuotes
+      }
+    };
+  }, [quotes]);
 
   const fetchQuoteDetails = async (quoteId) => {
     try {
       const response = await quoteService.getById(quoteId);
       const data = response?.data ?? response;
       setViewingQuote(data);
+      
+      // Fetch activities
+      try {
+        setLoadingActivities(true);
+        const activitiesResponse = await quoteService.getActivities(quoteId);
+        const activitiesData = activitiesResponse?.data ?? activitiesResponse;
+        setQuoteActivities(Array.isArray(activitiesData) ? activitiesData : []);
+      } catch (activityError) {
+        console.error('Failed to fetch quote activities:', activityError);
+        setQuoteActivities([]);
+      } finally {
+        setLoadingActivities(false);
+      }
+      
       return data;
     } catch (error) {
       console.error(`Failed to fetch quote ${quoteId}:`, error);
@@ -328,6 +410,10 @@ const Quotes = () => {
     }
   };
 
+  const { activeTenant } = useAuth();
+  const businessType = activeTenant?.businessType || 'printing_press';
+  const isShop = businessType === 'shop';
+
   const handleConvertToJob = async (quote) => {
     setConverting(true);
     try {
@@ -342,6 +428,25 @@ const Quotes = () => {
     } catch (error) {
       console.error('Failed to convert quote to job:', error);
       showError(error, error.error || 'Failed to convert quote to job');
+    } finally {
+      setConverting(false);
+    }
+  };
+
+  const handleConvertToSale = async (quote) => {
+    setConverting(true);
+    try {
+      const response = await quoteService.convertToSale(quote.id, 'credit');
+      const data = response?.data ?? response;
+      const sale = data?.data?.sale ?? data?.sale ?? data;
+      showSuccess(`Quote converted to sale ${sale?.saleNumber || ''}`.trim());
+      fetchQuotes();
+      if (sale) {
+        navigate('/sales');
+      }
+    } catch (error) {
+      console.error('Failed to convert quote to sale:', error);
+      showError(error, error.error || 'Failed to convert quote to sale');
     } finally {
       setConverting(false);
     }
@@ -365,7 +470,6 @@ const Quotes = () => {
     const target = quote || quotePrintable;
     if (!target) return;
     try {
-      const html2pdf = (await import('html2pdf.js')).default;
       const element = document.querySelector('.printable-invoice');
       if (!element) {
         if (!silent) {
@@ -373,16 +477,13 @@ const Quotes = () => {
         }
         return;
       }
-      const opt = {
-        margin: 0,
-        filename: `Quote_${target.quoteNumber}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-      };
-      await html2pdf().set(opt).from(element).save();
+      await generatePDF(element, {
+        filename: `Quote-${target.quoteNumber}.pdf`,
+        format: 'a4',
+        orientation: 'portrait',
+      });
       if (!silent) {
-        showSuccess('Quote downloaded successfully');
+        showSuccess('Quote PDF downloaded successfully');
       }
     } catch (error) {
       console.error('Error generating quote PDF:', error);
@@ -394,8 +495,23 @@ const Quotes = () => {
     }
   }, [quotePrintable]);
 
-  const handlePrintQuote = () => {
-    window.print();
+  const handlePrintQuote = async () => {
+    if (!quotePrintable) return;
+    
+    const element = document.querySelector('.printable-invoice');
+    if (element) {
+      try {
+        await generatePDF(element, {
+          filename: `Quote-${quotePrintable.quoteNumber}.pdf`,
+          format: 'a4',
+          orientation: 'portrait',
+        });
+        showSuccess('Quote PDF downloaded successfully');
+      } catch (error) {
+        console.error('PDF generation error:', error);
+        showError(null, 'Failed to generate PDF');
+      }
+    }
   };
 
   useEffect(() => {
@@ -407,74 +523,91 @@ const Quotes = () => {
     }
   }, [printModalVisible, pendingDownload, quotePrintable, handleDownloadQuote]);
 
-  const columns = useMemo(() => [
+  // Table columns for DashboardTable
+  const tableColumns = useMemo(() => [
     {
-      title: 'Quote #',
-      dataIndex: 'quoteNumber',
       key: 'quoteNumber',
-      width: 160
+      label: 'Quote #',
+      render: (_, record) => <span className="font-medium text-black">{record?.quoteNumber || '—'}</span>
     },
     {
-      title: 'Title',
-      dataIndex: 'title',
-      key: 'title'
+      key: 'title',
+      label: 'Title',
+      render: (_, record) => <span className="text-black">{record?.title || '—'}</span>
     },
     {
-      title: 'Customer',
-      dataIndex: ['customer', 'name'],
       key: 'customer',
-      render: (_, record) => record.customer?.name || 'N/A'
+      label: 'Customer',
+      render: (_, record) => <span className="text-black">{record?.customer?.name || '—'}</span>
     },
     {
-      title: 'Status',
-      dataIndex: 'status',
       key: 'status',
-      render: (status) => (
-        <StatusChip status={status} />
-      )
+      label: 'Status',
+      render: (_, record) => <StatusChip status={record?.status} />
     },
     {
-      title: 'Valid Until',
-      dataIndex: 'validUntil',
       key: 'validUntil',
-      render: (date) => date ? dayjs(date).format('MMM DD, YYYY') : '—'
+      label: 'Valid Until',
+      render: (_, record) => <span className="text-black">{record?.validUntil ? dayjs(record.validUntil).format('MMM DD, YYYY') : '—'}</span>
     },
     {
-      title: 'Total',
-      dataIndex: 'totalAmount',
       key: 'totalAmount',
-      render: (amount) => `GHS ${parseFloat(amount || 0).toFixed(2)}`
+      label: 'Total',
+      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.totalAmount || 0).toFixed(2)}</span>
     },
     {
-      title: 'Actions',
       key: 'actions',
+      label: 'Actions',
       render: (_, record) => (
         <ActionColumn
           record={record}
           onView={handleView}
           extraActions={[
-            record.status !== 'accepted' && record.status !== 'declined' && record.status !== 'expired' && {
+            record.status !== 'accepted' && record.status !== 'declined' && record.status !== 'expired' && !isShop && {
+              key: 'convert-job',
               label: 'Convert to Job',
-              onClick: () => handleConvertToJob(record),
+              variant: 'default',
               icon: <FilePlus className="h-4 w-4" />,
+              onClick: () => handleConvertToJob(record),
+              disabled: converting
+            },
+            record.status !== 'accepted' && record.status !== 'declined' && record.status !== 'expired' && isShop && {
+              key: 'convert-sale',
+              label: 'Convert to Sale',
+              variant: 'default',
+              icon: <FilePlus className="h-4 w-4" />,
+              onClick: () => handleConvertToSale(record),
               disabled: converting
             },
             {
+              key: 'edit',
               label: 'Edit',
-              onClick: () => handleEditQuote(record),
-              icon: <FileText className="h-4 w-4" />
+              variant: 'secondary',
+              icon: <FileText className="h-4 w-4" />,
+              onClick: () => handleEditQuote(record)
             },
             {
+              key: 'delete',
               label: 'Delete',
-              onClick: () => handleDeleteQuote(record),
-              icon: <CheckCircle className="h-4 w-4" />,
-              danger: true
+              variant: 'destructive',
+              icon: <X className="h-4 w-4" />,
+              onClick: () => handleDeleteQuote(record)
             }
           ].filter(Boolean)}
         />
       )
     }
-  ], [converting]);
+  ], [converting, handleView, handleConvertToJob, handleConvertToSale, handleEditQuote, handleDeleteQuote, isShop]);
+
+  const handleClearFilters = () => {
+    setFilters({
+      status: 'all',
+      customerId: 'all'
+    });
+    setPagination({ ...pagination, current: 1 });
+  };
+
+  const hasActiveFilters = filters.status !== 'all' || filters.customerId !== 'all';
 
   const drawerFields = useMemo(() => viewingQuote ? [
     { label: 'Quote Number', value: viewingQuote.quoteNumber },
@@ -519,57 +652,148 @@ const Quotes = () => {
   ].filter(Boolean) : [], [viewingQuote]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h1 className="text-3xl font-bold">Quotes</h1>
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
+        <WelcomeSection
+          welcomeMessage="Quotes"
+          subText="Create and manage quotes for your customers."
+        />
         <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search quotes..."
-              value={filters.search}
-              onChange={(e) => setFilters((prev) => ({ ...prev, search: e.target.value }))}
-              className="pl-10 w-[200px]"
-            />
-          </div>
-          <Select
-            value={filters.status}
-            onValueChange={(value) => setFilters((prev) => ({ ...prev, status: value || 'all' }))}
+          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+            <Filter className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Filter</span>}
+          </Button>
+          <Button 
+            variant="outline" 
+            onClick={() => fetchQuotes(true)}
+            disabled={refreshingQuotes}
+            size={isMobile ? "icon" : "default"}
           >
-            <SelectTrigger className="w-[150px]">
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              {statusOptions.map(option => (
-                <SelectItem key={option.value} value={option.value}>
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button onClick={handleAddQuote}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Quote
+            {refreshingQuotes ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {!isMobile && <span className="ml-2">Refresh</span>}
+          </Button>
+          <Button onClick={handleAddQuote} size={isMobile ? "icon" : "default"}>
+            <Plus className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">New Quote</span>}
           </Button>
         </div>
       </div>
 
-      {loading ? (
-        <Card>
-          <div className="p-4">
-            <TableSkeleton rows={8} cols={6} />
-          </div>
-        </Card>
-      ) : (
-        <Table
-          columns={columns}
-          dataSource={quotes}
-          rowKey="id"
-          pagination={pagination}
-          onChange={(newPagination) => setPagination((prev) => ({ ...prev, ...newPagination }))}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
+        {/* Total Quotes Card */}
+        <DashboardStatsCard
+          title="Total Quotes"
+          value={summaryStats?.totals?.totalQuotes || 0}
+          icon={FileText}
+          iconBgColor="rgba(22, 101, 52, 0.1)"
+          iconColor="#166534"
         />
-      )}
+
+        {/* Draft Card */}
+        <DashboardStatsCard
+          title="Draft"
+          value={summaryStats?.totals?.draftQuotes || 0}
+          icon={FilePlus}
+          iconBgColor="rgba(59, 130, 246, 0.1)"
+          iconColor="#166534"
+        />
+
+        {/* Sent Card */}
+        <DashboardStatsCard
+          title="Sent"
+          value={summaryStats?.totals?.sentQuotes || 0}
+          icon={CheckCircle}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+        />
+
+        {/* Accepted Card */}
+        <DashboardStatsCard
+          title="Accepted"
+          value={summaryStats?.totals?.acceptedQuotes || 0}
+          icon={Receipt}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+        />
+      </div>
+
+      {/* Main Content Area */}
+      <DashboardTable
+        data={paginatedQuotes}
+        columns={tableColumns}
+        loading={loading}
+        title={null}
+        emptyIcon={<FileText className="h-12 w-12 text-muted-foreground" />}
+        emptyDescription="No quotes found"
+        pageSize={pagination.pageSize}
+        onPageChange={(newPagination) => {
+          setPagination(newPagination);
+        }}
+        externalPagination={{
+          current: pagination.current,
+          total: quotesCount
+        }}
+      />
+
+      {/* Filter Drawer */}
+      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
+        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+          <SheetHeader className="pb-4 border-b">
+            <SheetTitle>Filter Quotes</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-4 md:space-y-6 mt-4 md:mt-6">
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select
+                value={filters.status}
+                onValueChange={(value) => setFilters({ ...filters, status: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  {statusOptions.map(option => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Customer</Label>
+              <Select
+                value={filters.customerId}
+                onValueChange={(value) => setFilters({ ...filters, customerId: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Customers</SelectItem>
+                  {customers.map(customer => (
+                    <SelectItem key={customer.id} value={customer.id}>
+                      {customer.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={handleClearFilters} className="w-full">
+                Clear Filters
+              </Button>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <DetailsDrawer
         open={drawerVisible}
@@ -577,36 +801,52 @@ const Quotes = () => {
         title="Quote Details"
         width={720}
         onPrint={viewingQuote ? () => openPrintableQuote(viewingQuote) : null}
-        onDownload={viewingQuote ? () => openPrintableQuote(viewingQuote, { autoDownload: true }) : null}
+        onEdit={viewingQuote ? () => handleEditQuote(viewingQuote) : null}
+        extraActions={viewingQuote && viewingQuote.status !== 'accepted' && viewingQuote.status !== 'declined' && viewingQuote.status !== 'expired' ? [
+          !isShop && {
+            key: 'convert-job',
+            label: 'Convert to Job',
+            variant: 'default',
+            icon: <FilePlus className="h-4 w-4" />,
+            onClick: () => handleConvertToJob(viewingQuote),
+            disabled: converting
+          },
+          isShop && {
+            key: 'convert-sale',
+            label: 'Convert to Sale',
+            variant: 'default',
+            icon: <FilePlus className="h-4 w-4" />,
+            onClick: () => handleConvertToSale(viewingQuote),
+            disabled: converting
+          }
+        ].filter(Boolean) : []}
         tabs={viewingQuote ? [
           {
             key: 'details',
             label: 'Summary',
             content: (
-              <div className="space-y-4">
-                <Card className="bg-primary/5">
-                  <CardContent className="pt-6">
-                    <div className="flex justify-between items-center">
-                      <div>
-                        <div className="text-lg font-semibold">{viewingQuote.title}</div>
-                        <div className="text-muted-foreground">{viewingQuote.quoteNumber}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-sm text-muted-foreground">Total Amount</div>
-                        <div className="text-2xl font-bold text-primary">
-                          GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
-                        </div>
+              <div className="space-y-6">
+                <DrawerSectionCard title="Quote summary">
+                  <div className="flex justify-between items-center mb-4">
+                    <div>
+                      <div className="text-lg font-semibold text-gray-900">{viewingQuote.title}</div>
+                      <div className="text-muted-foreground text-sm">{viewingQuote.quoteNumber}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm text-muted-foreground">Total Amount</div>
+                      <div className="text-2xl font-bold text-primary">
+                        GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
-                <Descriptions column={1}>
-                  {drawerFields.map((field) => (
-                    <DescriptionItem key={field.label} label={field.label}>
-                      {field.value || '—'}
-                    </DescriptionItem>
-                  ))}
-                </Descriptions>
+                  </div>
+                  <Descriptions column={1} className="space-y-0">
+                    {drawerFields.map((field) => (
+                      <DescriptionItem key={field.label} label={field.label}>
+                        {field.value || '—'}
+                      </DescriptionItem>
+                    ))}
+                  </Descriptions>
+                </DrawerSectionCard>
               </div>
             )
           },
@@ -614,132 +854,240 @@ const Quotes = () => {
             key: 'items',
             label: 'Line Items',
             content: (
-              <div className="space-y-4">
+              <DrawerSectionCard title="Line items">
                 {(viewingQuote.items || []).length ? (
-                  <div className="space-y-3">
+                  <div className="space-y-0">
+                    <div className="grid grid-cols-12 gap-2 pb-2 border-b border-gray-200 text-sm font-semibold text-gray-900">
+                      <div className="col-span-6">Description</div>
+                      <div className="col-span-2 text-right">Qty</div>
+                      <div className="col-span-2 text-right">Unit price (GHS)</div>
+                      <div className="col-span-2 text-right">Total (GHS)</div>
+                    </div>
                     {viewingQuote.items.map((item) => (
-                      <Card key={item.id}>
-                        <CardContent className="pt-6">
-                          <div className="grid grid-cols-12 gap-4">
-                            <div className="col-span-6">
-                              <div className="font-semibold">{item.description}</div>
-                              {item.metadata && Object.keys(item.metadata || {}).length > 0 && (
-                                <div className="text-muted-foreground text-xs mt-1">
-                                  {JSON.stringify(item.metadata)}
-                                </div>
-                              )}
+                      <div
+                        key={item.id}
+                        className="grid grid-cols-12 gap-2 py-3 border-b border-gray-200/80 last:border-b-0 text-sm"
+                      >
+                        <div className="col-span-6">
+                          <div className="font-medium text-gray-900">{item.description}</div>
+                          {item.metadata && Object.keys(item.metadata || {}).length > 0 && (
+                            <div className="text-muted-foreground text-xs mt-0.5">
+                              {JSON.stringify(item.metadata)}
                             </div>
-                            <div className="col-span-2 text-right">
-                              <div className="text-muted-foreground text-sm">Qty</div>
-                              <div>{item.quantity}</div>
-                            </div>
-                            <div className="col-span-2 text-right">
-                              <div className="text-muted-foreground text-sm">Unit Price</div>
-                              <div>GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
-                            </div>
-                            <div className="col-span-2 text-right">
-                              <div className="text-muted-foreground text-sm">Total</div>
-                              <div className="font-semibold">
-                                GHS {parseFloat(item.total || 0).toFixed(2)}
-                              </div>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                    <Card>
-                      <CardContent className="pt-6">
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <div className="font-semibold">Subtotal</div>
-                            <div className="font-semibold">Total Discount</div>
-                            <div className="font-semibold">Grand Total</div>
-                          </div>
-                          <div className="text-right">
-                            <div>GHS {parseFloat(viewingQuote.subtotal || 0).toFixed(2)}</div>
-                            <div>-GHS {parseFloat(viewingQuote.discountTotal || 0).toFixed(2)}</div>
-                            <div className="text-lg font-bold">
-                              GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
-                            </div>
-                          </div>
+                          )}
                         </div>
-                      </CardContent>
-                    </Card>
+                        <div className="col-span-2 text-right text-gray-700">{item.quantity}</div>
+                        <div className="col-span-2 text-right text-gray-700">{parseFloat(item.unitPrice || 0).toFixed(2)}</div>
+                        <div className="col-span-2 text-right font-medium text-gray-900">{parseFloat(item.total || 0).toFixed(2)}</div>
+                      </div>
+                    ))}
+                    <div className="pt-3 mt-2 border-t border-gray-200 space-y-1 text-sm">
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Subtotal</span>
+                        <span className="text-gray-900 font-medium">GHS {parseFloat(viewingQuote.subtotal || 0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Total Discount</span>
+                        <span className="text-gray-900">-GHS {parseFloat(viewingQuote.discountTotal || 0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between text-base font-semibold text-gray-900 pt-2">
+                        <span>Grand Total</span>
+                        <span>GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}</span>
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <Alert>
                     <AlertDescription>No line items found for this quote.</AlertDescription>
                   </Alert>
                 )}
-              </div>
+              </DrawerSectionCard>
             )
+          },
+          {
+            key: 'activities',
+            label: 'Activity',
+            content: (() => {
+              const activities = quoteActivities || [];
+              
+              const creationActivity = viewingQuote ? {
+                id: 'creation',
+                type: 'creation',
+                createdAt: viewingQuote.createdAt,
+                createdByUser: viewingQuote.creator || null
+              } : null;
+              
+              const allActivities = creationActivity ? [creationActivity, ...activities] : activities;
+              
+              if (loadingActivities) {
+                return (
+                  <DrawerSectionCard title="Activity">
+                    <div className="text-center py-8 text-muted-foreground text-sm">Loading activities...</div>
+                  </DrawerSectionCard>
+                );
+              }
+              
+              if (allActivities.length === 0) {
+                return (
+                  <DrawerSectionCard title="Activity">
+                    <Alert>
+                      <AlertTitle>No activity logged yet.</AlertTitle>
+                    </Alert>
+                  </DrawerSectionCard>
+                );
+              }
+              
+              const timelineItems = allActivities.map((activity, index) => {
+                const isLast = index === allActivities.length - 1;
+                
+                if (activity.type === 'creation') {
+                  return (
+                    <TimelineItem key={activity.id} isLast={isLast}>
+                      <TimelineIndicator />
+                      <TimelineContent>
+                        <TimelineTitle className="text-black">
+                          {activity.createdByUser 
+                            ? `${activity.createdByUser.name} created quote ${viewingQuote.quoteNumber}`
+                            : `Quote ${viewingQuote.quoteNumber} created`}
+                        </TimelineTitle>
+                        <TimelineTime className="text-black">
+                          {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
+                        </TimelineTime>
+                      </TimelineContent>
+                    </TimelineItem>
+                  );
+                }
+                
+                const activityTypeLabels = {
+                  note: 'Note',
+                  status_change: 'Status Changed',
+                  conversion: 'Conversion'
+                };
+                
+                return (
+                  <TimelineItem key={activity.id} isLast={isLast}>
+                    <TimelineIndicator />
+                    <TimelineContent>
+                      <TimelineTitle className="text-black">
+                        {activityTypeLabels[activity.type] || activity.type.toUpperCase()} {activity.subject ? `- ${activity.subject}` : ''}
+                      </TimelineTitle>
+                      <TimelineTime className="text-black">
+                        {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
+                        {activity.createdByUser ? ` • ${activity.createdByUser.name}` : ''}
+                      </TimelineTime>
+                      {activity.notes && (
+                        <TimelineDescription className="text-black">{activity.notes}</TimelineDescription>
+                      )}
+                      {activity.metadata?.oldStatus && activity.metadata?.newStatus && (
+                        <TimelineDescription className="text-black">
+                          Status: {activity.metadata.oldStatus} → {activity.metadata.newStatus}
+                        </TimelineDescription>
+                      )}
+                      {activity.metadata?.jobNumber && (
+                        <TimelineDescription className="text-black">
+                          Converted to job: {activity.metadata.jobNumber}
+                        </TimelineDescription>
+                      )}
+                      {activity.metadata?.saleNumber && (
+                        <TimelineDescription className="text-black">
+                          Converted to sale: {activity.metadata.saleNumber}
+                        </TimelineDescription>
+                      )}
+                    </TimelineContent>
+                  </TimelineItem>
+                );
+              });
+              
+              return (
+                <DrawerSectionCard title="Activity">
+                  <Timeline>
+                    {timelineItems}
+                  </Timeline>
+                </DrawerSectionCard>
+              );
+            })()
           }
         ] : []}
       />
 
-      <Dialog open={quoteModalVisible} onOpenChange={setQuoteModalVisible}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editingQuote ? `Edit Quote (${editingQuote.quoteNumber})` : 'Create Quote'}</DialogTitle>
-            <DialogDescription>
-              {editingQuote ? 'Update quote details' : 'Create a new quote for a customer'}
-            </DialogDescription>
-          </DialogHeader>
-          
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="customerId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Customer</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select customer" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {customers.map((customer) => (
-                            <SelectItem key={customer.id} value={customer.id}>
-                              {customer.name} {customer.company ? `(${customer.company})` : ''}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="status"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Status</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {statusOptions.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+      <MobileFormDialog
+        open={quoteModalVisible}
+        onOpenChange={setQuoteModalVisible}
+        title={editingQuote ? `Edit Quote (${editingQuote.quoteNumber})` : 'Create Quote'}
+        description={editingQuote ? 'Update quote details' : 'Create a new quote for a customer'}
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setQuoteModalVisible(false);
+                setEditingQuote(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" form="quote-form" loading={form.formState.isSubmitting}>
+              {editingQuote ? 'Update Quote' : 'Create Quote'}
+            </Button>
+          </>
+        }
+        className="sm:w-[var(--modal-w-2xl)]"
+      >
+        <Form {...form}>
+          <form id="quote-form" onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormFieldGrid columns={2}>
+              <FormField
+                control={form.control}
+                name="customerId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Customer</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select customer" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {customers.map((customer) => (
+                          <SelectItem key={customer.id} value={customer.id}>
+                            {customer.name} {customer.company ? `(${customer.company})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="status"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Status</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {statusOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </FormFieldGrid>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <FormFieldGrid columns={2}>
                 <FormField
                   control={form.control}
                   name="title"
@@ -758,7 +1106,7 @@ const Quotes = () => {
                   name="validUntil"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Valid Until</FormLabel>
+                      <FormLabel>Valid Until (optional)</FormLabel>
                       <FormControl>
                         <DatePicker
                           date={field.value}
@@ -767,16 +1115,16 @@ const Quotes = () => {
                       </FormControl>
                       <FormMessage />
                     </FormItem>
-                  )}
-                />
-              </div>
+                    )}
+                  />
+            </FormFieldGrid>
 
-              <FormField
+            <FormField
                 control={form.control}
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Description</FormLabel>
+                    <FormLabel>Description (optional)</FormLabel>
                     <FormControl>
                       <Textarea {...field} rows={3} placeholder="Describe the work or specifications" />
                     </FormControl>
@@ -816,7 +1164,7 @@ const Quotes = () => {
                         </FormItem>
                       )}
                     />
-                    <div className="grid grid-cols-3 gap-4">
+                    <div className="grid grid-cols-3 gap-2 md:gap-4">
                       <FormField
                         control={form.control}
                         name={`items.${index}.quantity`}
@@ -824,11 +1172,14 @@ const Quotes = () => {
                           <FormItem>
                             <FormLabel>Quantity</FormLabel>
                             <FormControl>
-                              <InputNumber
+                              <Input
+                                type="number"
                                 min={1}
-                                style={{ width: '100%' }}
-                                value={field.value}
-                                onChange={(value) => field.onChange(value)}
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = parseInt(e.target.value) || 1;
+                                  field.onChange(value);
+                                }}
                               />
                             </FormControl>
                             <FormMessage />
@@ -842,13 +1193,20 @@ const Quotes = () => {
                           <FormItem>
                             <FormLabel>Unit Price</FormLabel>
                             <FormControl>
-                              <InputNumber
-                                min={0}
-                                prefix="GHS "
-                                style={{ width: '100%' }}
-                                value={field.value}
-                                onChange={(value) => field.onChange(value)}
-                              />
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  step={0.01}
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = parseFloat(e.target.value) || 0;
+                                    field.onChange(value);
+                                  }}
+                                  className="pl-12"
+                                />
+                              </div>
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -861,13 +1219,20 @@ const Quotes = () => {
                           <FormItem>
                             <FormLabel>Discount</FormLabel>
                             <FormControl>
-                              <InputNumber
-                                min={0}
-                                prefix="GHS "
-                                style={{ width: '100%' }}
-                                value={field.value}
-                                onChange={(value) => field.onChange(value)}
-                              />
+                              <div className="relative">
+                                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  step={0.01}
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = parseFloat(e.target.value) || 0;
+                                    field.onChange(value);
+                                  }}
+                                  className="pl-12"
+                                />
+                              </div>
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -893,7 +1258,7 @@ const Quotes = () => {
                 name="notes"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Internal Notes</FormLabel>
+                    <FormLabel>Internal Notes (optional)</FormLabel>
                     <FormControl>
                       <Textarea {...field} rows={3} placeholder="Notes for internal reference" />
                     </FormControl>
@@ -902,35 +1267,24 @@ const Quotes = () => {
                 )}
               />
 
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setQuoteModalVisible(false);
-                    setEditingQuote(null);
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
-                  {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {editingQuote ? 'Update Quote' : 'Create Quote'}
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-        </DialogContent>
-      </Dialog>
+          </form>
+        </Form>
+      </MobileFormDialog>
 
       <Dialog open={printModalVisible} onOpenChange={setPrintModalVisible}>
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-between w-full">
-              <span>Quote Preview</span>
+        <DialogContent className="!inset-0 !translate-x-0 !translate-y-0 !max-w-none w-screen h-screen flex flex-col p-0 !rounded-none">
+          <DialogHeader className="px-6 py-4 border-b flex-shrink-0 no-print">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle>Quote Preview</DialogTitle>
+                <DialogDescription>
+                  Review the quote before printing or downloading
+                </DialogDescription>
+              </div>
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
+                  size="sm"
                   onClick={() => handleDownloadQuote(quotePrintable)}
                   disabled={!quotePrintable}
                 >
@@ -938,6 +1292,7 @@ const Quotes = () => {
                   Download
                 </Button>
                 <Button
+                  size="sm"
                   onClick={handlePrintQuote}
                   disabled={!quotePrintable}
                 >
@@ -945,15 +1300,20 @@ const Quotes = () => {
                   Print
                 </Button>
               </div>
-            </DialogTitle>
+            </div>
           </DialogHeader>
-          {quotePrintable && (
-            <PrintableInvoice
-              invoice={buildPrintableQuote(quotePrintable)}
-              documentTitle="PROFORMA INVOICE"
-              documentSubtitle={`Quote ${quotePrintable.quoteNumber}`}
-            />
-          )}
+          <div className="flex-1 overflow-y-auto bg-gray-100 p-4 md:p-8 print-content-wrapper">
+            <div className="max-w-[850px] mx-auto bg-white rounded-lg shadow-sm">
+              {quotePrintable && (
+                <PrintableInvoice
+                  invoice={buildPrintableQuote(quotePrintable)}
+                  documentTitle="PROFORMA INVOICE"
+                  documentSubtitle={`Quote ${quotePrintable.quoteNumber}`}
+                  organization={organization}
+                />
+              )}
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 

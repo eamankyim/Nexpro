@@ -2,6 +2,19 @@ const { sequelize } = require('../config/database');
 const { Job, Expense, Customer, Vendor, Invoice, JobItem, Lead } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter } = require('../utils/tenantUtils');
+const config = require('../config/config');
+
+// Debug logging: no-op in production to avoid hot-path I/O
+const logReport = (...args) => {
+  if (config.nodeEnv === 'development') {
+    console.log(...args);
+  }
+};
+const logReportError = (...args) => {
+  if (config.nodeEnv === 'development') {
+    console.error(...args);
+  }
+};
 
 // Helper function to check if dateFilter has content (Op.between is a Symbol, so Object.keys() won't include it)
 const hasDateFilter = (dateFilter) => {
@@ -13,10 +26,10 @@ const hasDateFilter = (dateFilter) => {
 // @access  Private
 exports.getRevenueReport = async (req, res, next) => {
   try {
-    console.log('[Revenue Report] Starting revenue report generation');
-    console.log('[Revenue Report] Tenant ID:', req.tenantId);
+    logReport('[Revenue Report] Starting revenue report generation');
+    logReport('[Revenue Report] Tenant ID:', req.tenantId);
     const { startDate, endDate, groupBy = 'day' } = req.query;
-    console.log('[Revenue Report] Query params:', { startDate, endDate, groupBy });
+    logReport('[Revenue Report] Query params:', { startDate, endDate, groupBy });
     
     let dateFilter = {};
     if (startDate && endDate) {
@@ -26,15 +39,15 @@ exports.getRevenueReport = async (req, res, next) => {
       dateFilter = {
         [Op.between]: [start, end]
       };
-      console.log('[Revenue Report] Date filter applied:', { start, end });
+      logReport('[Revenue Report] Date filter applied:', { start, end });
     } else {
-      console.log('[Revenue Report] No date filter - fetching all data');
+      logReport('[Revenue Report] No date filter - fetching all data');
     }
 
     // Revenue by time period - using Invoice.amountPaid and Invoice.paidDate (same as Dashboard)
     // Support multiple grouping: hour (2-hour intervals), day, week, month
     let revenueByPeriod = [];
-    console.log('[Revenue Report] Fetching revenue by period, groupBy:', groupBy);
+    logReport('[Revenue Report] Fetching revenue by period, groupBy:', groupBy);
     
     if (groupBy === 'hour') {
       // Group by 2-hour intervals (0-2, 2-4, 4-6, ..., 22-24)
@@ -60,9 +73,9 @@ exports.getRevenueReport = async (req, res, next) => {
           },
           type: sequelize.QueryTypes.SELECT
         });
-        console.log('[Revenue Report] Revenue by period (hour - 2hr intervals) fetched:', revenueByPeriod.length, 'records');
+        logReport('[Revenue Report] Revenue by period (hour - 2hr intervals) fetched:', revenueByPeriod.length, 'records');
       } catch (periodError) {
-        console.error('[Revenue Report] Error fetching revenue by period (hour):', periodError);
+        logReportError('[Revenue Report] Error fetching revenue by period (hour):', periodError);
         throw periodError;
       }
     } else if (groupBy === 'day') {
@@ -81,9 +94,9 @@ exports.getRevenueReport = async (req, res, next) => {
           order: [[sequelize.literal(`CAST("paidDate" AS DATE)`), 'ASC']],
           raw: true
         });
-        console.log('[Revenue Report] Revenue by period (day) fetched:', revenueByPeriod.length, 'records');
+        logReport('[Revenue Report] Revenue by period (day) fetched:', revenueByPeriod.length, 'records');
       } catch (periodError) {
-        console.error('[Revenue Report] Error fetching revenue by period (day):', periodError);
+        logReportError('[Revenue Report] Error fetching revenue by period (day):', periodError);
         throw periodError;
       }
     } else if (groupBy === 'week') {
@@ -111,9 +124,9 @@ exports.getRevenueReport = async (req, res, next) => {
           },
           type: sequelize.QueryTypes.SELECT
         });
-        console.log('[Revenue Report] Revenue by period (week) fetched:', revenueByPeriod.length, 'records');
+        logReport('[Revenue Report] Revenue by period (week) fetched:', revenueByPeriod.length, 'records');
       } catch (periodError) {
-        console.error('[Revenue Report] Error fetching revenue by period (week):', periodError);
+        logReportError('[Revenue Report] Error fetching revenue by period (week):', periodError);
         throw periodError;
       }
     } else if (groupBy === 'month') {
@@ -139,15 +152,15 @@ exports.getRevenueReport = async (req, res, next) => {
           ],
           raw: true
         });
-        console.log('[Revenue Report] Revenue by period (month) fetched:', revenueByPeriod.length, 'records');
+        logReport('[Revenue Report] Revenue by period (month) fetched:', revenueByPeriod.length, 'records');
       } catch (periodError) {
-        console.error('[Revenue Report] Error fetching revenue by period (month):', periodError);
+        logReportError('[Revenue Report] Error fetching revenue by period (month):', periodError);
         throw periodError;
       }
     }
 
     // Revenue by customer
-    console.log('[Revenue Report] Fetching revenue by customer');
+    logReport('[Revenue Report] Fetching revenue by customer');
     let revenueByCustomer = [];
     try {
       revenueByCustomer = await Invoice.findAll({
@@ -169,14 +182,14 @@ exports.getRevenueReport = async (req, res, next) => {
         order: [[sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'DESC']],
         limit: 20
       });
-      console.log('[Revenue Report] Revenue by customer fetched:', revenueByCustomer.length, 'customers');
-    } catch (customerError) {
-      console.error('[Revenue Report] Error fetching revenue by customer:', customerError);
+      logReport('[Revenue Report] Revenue by customer fetched:', revenueByCustomer.length, 'customers');
+      } catch (customerError) {
+      logReportError('[Revenue Report] Error fetching revenue by customer:', customerError);
       throw customerError;
     }
 
     // Revenue by payment method - using Invoice.paymentMethod if available, otherwise skip
-    console.log('[Revenue Report] Fetching revenue by payment method');
+    logReport('[Revenue Report] Fetching revenue by payment method');
     // Revenue by payment method - Note: Invoice model doesn't have paymentMethod column
     // This is disabled until the column is added to the Invoice model
     let revenueByMethod = [];
@@ -203,26 +216,26 @@ exports.getRevenueReport = async (req, res, next) => {
     // }
 
     // Total revenue - using Invoice.sum('amountPaid') where status = 'paid' (same method as Dashboard)
-    console.log('[Revenue Report] Calculating total revenue (same method as Dashboard)');
+    logReport('[Revenue Report] Calculating total revenue (same method as Dashboard)');
     
     // Check if dateFilter has content - Op.between is a Symbol, so Object.keys() won't include it
     const hasDateFilterValue = hasDateFilter(dateFilter);
-    console.log('[Revenue Report] Has date filter?', hasDateFilterValue);
-    console.log('[Revenue Report] Date filter object:', dateFilter);
-    console.log('[Revenue Report] Date filter keys:', Object.keys(dateFilter));
-    console.log('[Revenue Report] Date filter Op.between:', dateFilter[Op.between]);
+    logReport('[Revenue Report] Has date filter?', hasDateFilterValue);
+    logReport('[Revenue Report] Date filter object:', dateFilter);
+    logReport('[Revenue Report] Date filter keys:', Object.keys(dateFilter));
+    logReport('[Revenue Report] Date filter Op.between:', dateFilter[Op.between]);
     
     const whereClause = applyTenantFilter(req.tenantId, {
       status: 'paid',
       ...(hasDateFilterValue && { paidDate: dateFilter })
     });
-    console.log('[Revenue Report] Where clause for total revenue (paidDate included?):', whereClause.paidDate ? 'YES' : 'NO');
+    logReport('[Revenue Report] Where clause for total revenue (paidDate included?):', whereClause.paidDate ? 'YES' : 'NO');
     
     // Also check how many invoices match this filter
     const invoiceCount = await Invoice.count({
       where: whereClause
     });
-    console.log('[Revenue Report] Number of invoices matching filter:', invoiceCount);
+    logReport('[Revenue Report] Number of invoices matching filter:', invoiceCount);
     
     // Check a sample of invoice dates to debug
     const sampleInvoices = await Invoice.findAll({
@@ -234,12 +247,12 @@ exports.getRevenueReport = async (req, res, next) => {
       order: [['paidDate', 'DESC']],
       raw: true
     });
-    console.log('[Revenue Report] Sample invoices (first 5 paid invoices):', sampleInvoices);
+    logReport('[Revenue Report] Sample invoices (first 5 paid invoices):', sampleInvoices);
     
     const totalRevenue = await Invoice.sum('amountPaid', {
       where: whereClause
     }) || 0;
-    console.log('[Revenue Report] Total revenue:', totalRevenue, '(from Invoice.amountPaid where status = paid)');
+    logReport('[Revenue Report] Total revenue:', totalRevenue, '(from Invoice.amountPaid where status = paid)');
 
     const responseData = {
       totalRevenue: parseFloat(totalRevenue),
@@ -247,7 +260,7 @@ exports.getRevenueReport = async (req, res, next) => {
       byCustomer: revenueByCustomer,
       byMethod: revenueByMethod
     };
-    console.log('[Revenue Report] Response data summary:', {
+    logReport('[Revenue Report] Response data summary:', {
       totalRevenue: responseData.totalRevenue,
       byPeriodCount: responseData.byPeriod.length,
       byCustomerCount: responseData.byCustomer.length,
@@ -259,9 +272,9 @@ exports.getRevenueReport = async (req, res, next) => {
       data: responseData
     });
   } catch (error) {
-    console.error('[Revenue Report] ERROR:', error.message);
-    console.error('[Revenue Report] Stack:', error.stack);
-    console.error('[Revenue Report] Full error:', error);
+    logReportError('[Revenue Report] ERROR:', error.message);
+    logReportError('[Revenue Report] Stack:', error.stack);
+    logReportError('[Revenue Report] Full error:', error);
     next(error);
   }
 };
@@ -364,7 +377,7 @@ exports.getExpenseReport = async (req, res, next) => {
       }
     });
   } catch (error) {
-    console.error('Error in getRevenueReport:', error);
+    logReportError('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -481,7 +494,7 @@ exports.getOutstandingPaymentsReport = async (req, res, next) => {
       }
     });
   } catch (error) {
-    console.error('Error in getRevenueReport:', error);
+    logReportError('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -796,7 +809,7 @@ exports.getSalesReport = async (req, res, next) => {
       }
     });
   } catch (error) {
-    console.error('Error in getRevenueReport:', error);
+    logReportError('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -849,7 +862,7 @@ exports.getProfitLossReport = async (req, res, next) => {
       }
     });
   } catch (error) {
-    console.error('Error in getRevenueReport:', error);
+    logReportError('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -906,7 +919,7 @@ exports.getKpiSummary = async (req, res, next) => {
       }
     });
   } catch (error) {
-    console.error('Error in getRevenueReport:', error);
+    logReportError('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -952,7 +965,7 @@ exports.getTopCustomers = async (req, res, next) => {
       data: customers
     });
   } catch (error) {
-    console.error('Error in getRevenueReport:', error);
+    logReportError('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -988,7 +1001,7 @@ exports.getPipelineSummary = async (req, res, next) => {
       }
     });
   } catch (error) {
-    console.error('Error in getRevenueReport:', error);
+    logReportError('Error in getRevenueReport:', error);
     next(error);
   }
 };
@@ -998,10 +1011,10 @@ exports.getPipelineSummary = async (req, res, next) => {
 // @access  Private
 exports.getServiceAnalyticsReport = async (req, res, next) => {
   try {
-    console.log('[Service Analytics] Starting service analytics report generation');
-    console.log('[Service Analytics] Tenant ID:', req.tenantId);
+    logReport('[Service Analytics] Starting service analytics report generation');
+    logReport('[Service Analytics] Tenant ID:', req.tenantId);
     const { startDate, endDate } = req.query;
-    console.log('[Service Analytics] Query params:', { startDate, endDate });
+    logReport('[Service Analytics] Query params:', { startDate, endDate });
     
     let dateFilter = {};
     if (startDate && endDate) {
@@ -1011,17 +1024,17 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
       dateFilter = {
         [Op.between]: [start, end]
       };
-      console.log('[Service Analytics] Date filter applied:', { start, end });
+      logReport('[Service Analytics] Date filter applied:', { start, end });
     } else {
-      console.log('[Service Analytics] No date filter - fetching all data');
+      logReport('[Service Analytics] No date filter - fetching all data');
     }
 
     // Service analytics by category from JobItems
-    console.log('[Service Analytics] Fetching service analytics by category');
+    logReport('[Service Analytics] Fetching service analytics by category');
     let serviceAnalytics = [];
     try {
       if (hasDateFilter(dateFilter)) {
-        console.log('[Service Analytics] Using date filter for category query');
+        logReport('[Service Analytics] Using date filter for category query');
         serviceAnalytics = await sequelize.query(`
           SELECT 
             "JobItem"."category",
@@ -1046,7 +1059,7 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
           type: sequelize.QueryTypes.SELECT
         });
       } else {
-        console.log('[Service Analytics] No date filter for category query');
+        logReport('[Service Analytics] No date filter for category query');
         serviceAnalytics = await sequelize.query(`
           SELECT 
             "JobItem"."category",
@@ -1068,14 +1081,14 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
           type: sequelize.QueryTypes.SELECT
         });
       }
-      console.log('[Service Analytics] Service analytics by category fetched:', serviceAnalytics.length, 'categories');
-    } catch (categoryError) {
-      console.error('[Service Analytics] Error fetching service analytics by category:', categoryError);
+      logReport('[Service Analytics] Service analytics by category fetched:', serviceAnalytics.length, 'categories');
+      } catch (categoryError) {
+      logReportError('[Service Analytics] Error fetching service analytics by category:', categoryError);
       throw categoryError;
     }
 
     // Service analytics by date - using raw SQL for better performance
-    console.log('[Service Analytics] Fetching service analytics by date');
+    logReport('[Service Analytics] Fetching service analytics by date');
     let serviceByDate = [];
     try {
       if (hasDateFilter(dateFilter)) {
@@ -1118,15 +1131,15 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
           type: sequelize.QueryTypes.SELECT
         });
       }
-      console.log('[Service Analytics] Service analytics by date fetched:', serviceByDate.length, 'dates');
-    } catch (dateError) {
-      console.error('[Service Analytics] Error fetching service analytics by date:', dateError);
+      logReport('[Service Analytics] Service analytics by date fetched:', serviceByDate.length, 'dates');
+      } catch (dateError) {
+      logReportError('[Service Analytics] Error fetching service analytics by date:', dateError);
       // Don't throw - make it optional
       serviceByDate = [];
     }
 
     // Service analytics by customer - using raw SQL for better performance
-    console.log('[Service Analytics] Fetching service analytics by customer');
+    logReport('[Service Analytics] Fetching service analytics by customer');
     let serviceByCustomer = [];
     try {
       if (hasDateFilter(dateFilter)) {
@@ -1196,15 +1209,15 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
           } : null
         }
       }));
-      console.log('[Service Analytics] Service analytics by customer fetched:', serviceByCustomer.length, 'customers');
-    } catch (customerError) {
-      console.error('[Service Analytics] Error fetching service analytics by customer:', customerError);
+      logReport('[Service Analytics] Service analytics by customer fetched:', serviceByCustomer.length, 'customers');
+      } catch (customerError) {
+      logReportError('[Service Analytics] Error fetching service analytics by customer:', customerError);
       // Don't throw - make it optional
       serviceByCustomer = [];
     }
 
     // Total revenue from services
-    console.log('[Service Analytics] Calculating total revenue and quantity');
+    logReport('[Service Analytics] Calculating total revenue and quantity');
     let totalRevenue = 0;
     let totalQuantity = 0;
     try {
@@ -1244,9 +1257,9 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
         totalRevenue = parseFloat(totalResult[0]?.totalRevenue || 0);
         totalQuantity = parseFloat(totalResult[0]?.totalQuantity || 0);
       }
-      console.log('[Service Analytics] Total revenue:', totalRevenue, 'Total quantity:', totalQuantity);
-    } catch (totalError) {
-      console.error('[Service Analytics] Error calculating totals:', totalError);
+      logReport('[Service Analytics] Total revenue:', totalRevenue, 'Total quantity:', totalQuantity);
+      } catch (totalError) {
+      logReportError('[Service Analytics] Error calculating totals:', totalError);
       // Use defaults (0)
     }
 
@@ -1266,7 +1279,7 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
       byCustomer: serviceByCustomer || []
     };
     
-    console.log('[Service Analytics] Response data summary:', {
+    logReport('[Service Analytics] Response data summary:', {
       totalRevenue: responseData.totalRevenue,
       totalQuantity: responseData.totalQuantity,
       byCategoryCount: responseData.byCategory.length,
@@ -1279,10 +1292,176 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
       data: responseData
     });
   } catch (error) {
-    console.error('[Service Analytics] ERROR:', error.message);
-    console.error('[Service Analytics] Stack:', error.stack);
-    console.error('[Service Analytics] Full error:', error);
+    logReportError('[Service Analytics] ERROR:', error.message);
+    logReportError('[Service Analytics] Stack:', error.stack);
+    logReportError('[Service Analytics] Full error:', error);
     next(error);
   }
 };
 
+// @desc    Generate AI-powered report analysis
+// @route   POST /api/reports/ai-analysis
+// @access  Private
+exports.generateAIAnalysis = async (req, res, next) => {
+  try {
+    const openaiService = require('../services/openaiService');
+    const { reportData, options } = req.body;
+
+    if (!reportData) {
+      return res.status(400).json({
+        success: false,
+        error: 'Report data is required'
+      });
+    }
+
+    const analysis = await openaiService.analyzeReportData(reportData, {
+      businessType: req.tenant?.businessType || 'printing_press',
+      ...options
+    });
+
+    res.status(200).json({
+      success: true,
+      data: analysis.analysis
+    });
+  } catch (error) {
+    if (error.code === 'OPENAI_NOT_CONFIGURED') {
+      return res.status(503).json({
+        success: false,
+        error: 'AI analysis is not configured. Set OPENAI_API_KEY in the backend .env to enable.',
+        code: 'OPENAI_NOT_CONFIGURED'
+      });
+    }
+    if (error.code === 'invalid_api_key' || error.status === 401) {
+      return res.status(503).json({
+        success: false,
+        error: 'Invalid OpenAI API key. Check OPENAI_API_KEY in Backend/.env, ensure no extra spaces or line breaks, and create a new key at https://platform.openai.com/api-keys if needed.',
+        code: 'OPENAI_INVALID_KEY'
+      });
+    }
+    logReportError('Error generating AI analysis:', error);
+    // Return a fallback response if OpenAI fails for other reasons
+    res.status(200).json({
+      success: true,
+      data: {
+        keyFindings: [
+          'Revenue and expense data has been analyzed.',
+          'Profit margins indicate business health.',
+          'Continue monitoring key performance indicators.'
+        ],
+        performanceAnalysis: 'The report data shows business performance metrics. Review the detailed sections for specific insights.',
+        recommendations: [],
+        riskAssessment: [],
+        growthOpportunities: [],
+        strategicSuggestions: [
+          'Continue tracking revenue and expense trends.',
+          'Monitor profit margins for optimization opportunities.'
+        ],
+        aiError: error.message
+      }
+    });
+  }
+};
+
+// @desc    Get product sales report (for shop/pharmacy)
+// @route   GET /api/reports/product-sales
+// @access  Private
+exports.getProductSalesReport = async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    // TODO: Implement product sales report
+    res.status(200).json({
+      success: true,
+      data: {
+        products: [],
+        totalProducts: 0,
+        totalRevenue: 0,
+        totalQuantitySold: 0
+      }
+    });
+  } catch (error) {
+    logReportError('Error getting product sales report:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get product sales report'
+    });
+  }
+};
+
+// @desc    Get inventory summary
+// @route   GET /api/reports/inventory-summary
+// @access  Private
+exports.getInventorySummary = async (req, res, next) => {
+  try {
+    // TODO: Implement inventory summary
+    res.status(200).json({
+      success: true,
+      data: {}
+    });
+  } catch (error) {
+    logReportError('Error getting inventory summary:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get inventory summary'
+    });
+  }
+};
+
+// @desc    Get inventory movements
+// @route   GET /api/reports/inventory-movements
+// @access  Private
+exports.getInventoryMovements = async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    // TODO: Implement inventory movements
+    res.status(200).json({
+      success: true,
+      data: []
+    });
+  } catch (error) {
+    logReportError('Error getting inventory movements:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get inventory movements'
+    });
+  }
+};
+
+// @desc    Get fastest moving items
+// @route   GET /api/reports/fastest-moving-items
+// @access  Private
+exports.getFastestMovingItems = async (req, res, next) => {
+  try {
+    const { startDate, endDate, limit = 5 } = req.query;
+    // TODO: Implement fastest moving items
+    res.status(200).json({
+      success: true,
+      data: []
+    });
+  } catch (error) {
+    logReportError('Error getting fastest moving items:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get fastest moving items'
+    });
+  }
+};
+
+// @desc    Get revenue by channel
+// @route   GET /api/reports/revenue-by-channel
+// @access  Private
+exports.getRevenueByChannel = async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    // TODO: Implement revenue by channel
+    res.status(200).json({
+      success: true,
+      data: []
+    });
+  } catch (error) {
+    logReportError('Error getting revenue by channel:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get revenue by channel'
+    });
+  }
+};

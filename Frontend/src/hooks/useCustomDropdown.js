@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { message } from 'antd';
+import { showWarning, showSuccess, showError } from '../utils/toast';
 import customDropdownService from '../services/customDropdownService';
 
 /**
@@ -124,7 +124,7 @@ export const useCustomDropdown = (dropdownType, defaultOptions = [], isGrouped =
   // Save custom value
   const handleCustomValueSave = useCallback(async (value) => {
     if (!value || !value.trim()) {
-      message.warning('Please enter a value');
+      showWarning('Please enter a value');
       return null;
     }
 
@@ -140,7 +140,7 @@ export const useCustomDropdown = (dropdownType, defaultOptions = [], isGrouped =
           return [...prev, saved];
         });
         
-        message.success(`"${saved.label}" added to options`);
+        showSuccess(`"${saved.label}" added to options`);
         setShowCustomInput(false);
         setCustomValue('');
         return saved.value; // Return the value to set in the form
@@ -148,7 +148,7 @@ export const useCustomDropdown = (dropdownType, defaultOptions = [], isGrouped =
       
       return null;
     } catch (error) {
-      message.error(error.response?.data?.error || 'Failed to save custom option');
+      showError(error.response?.data?.error || 'Failed to save custom option');
       return null;
     }
   }, [dropdownType]);

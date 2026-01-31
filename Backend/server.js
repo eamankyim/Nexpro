@@ -1,13 +1,21 @@
 const express = require('express');
+const http = require('http');
 const cors = require('cors');
+const compression = require('compression');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
-require('dotenv').config();
+
+// Load .env from Backend directory (avoids cwd issues when running from project root or different case)
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const { sequelize, testConnection } = require('./config/database');
 const config = require('./config/config');
 const errorHandler = require('./middleware/errorHandler');
+const { generalLimiter, webhookLimiter } = require('./middleware/rateLimiter');
+const { isOriginAllowed, setCorsHeaders } = require('./utils/corsUtils');
+const { csrfProtection } = require('./middleware/csrfProtection');
+const { sanitizeInputs } = require('./middleware/sanitizer');
 
 // Import models to ensure relationships are set up
 require('./models');
@@ -28,6 +36,7 @@ const dashboardRoutes = require('./routes/dashboardRoutes');
 const inviteRoutes = require('./routes/inviteRoutes');
 const tenantRoutes = require('./routes/tenantRoutes');
 const reportRoutes = require('./routes/reportRoutes');
+const assistantRoutes = require('./routes/assistantRoutes');
 const inventoryRoutes = require('./routes/inventoryRoutes');
 const leadRoutes = require('./routes/leadRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
@@ -44,10 +53,18 @@ const sabitoMappingRoutes = require('./routes/sabitoMappingRoutes');
 const shopRoutes = require('./routes/shopRoutes');
 const productRoutes = require('./routes/productRoutes');
 const saleRoutes = require('./routes/saleRoutes');
+const scanLogRoutes = require('./routes/scanLogRoutes');
 // Pharmacy Management Routes
 const pharmacyRoutes = require('./routes/pharmacyRoutes');
 const drugRoutes = require('./routes/drugRoutes');
 const prescriptionRoutes = require('./routes/prescriptionRoutes');
+// Retail Intelligence Routes
+const footTrafficRoutes = require('./routes/footTrafficRoutes');
+const stockCountRoutes = require('./routes/stockCountRoutes');
+// Mobile Money Routes
+const mobileMoneyRoutes = require('./routes/mobileMoneyRoutes');
+// Variance Detection Routes
+const varianceRoutes = require('./routes/varianceRoutes');
 const swaggerUi = require('swagger-ui-express');
 const openapiSpecification = require('./docs/openapi');
 
@@ -58,7 +75,35 @@ app.use(helmet());
 app.use(cors(config.cors));
 app.use(express.json({ limit: '10mb' })); // Increased limit for base64 images
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(compression());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Explicit OPTIONS preflight for /api (runs before rate limit). CORS uses preflightContinue,
+// so we must respond to OPTIONS here and always send CORS headers.
+app.use('/api', (req, res, next) => {
+  if (req.method !== 'OPTIONS') return next();
+  const origin = req.get('Origin');
+  setCorsHeaders(res, origin);
+  return res.sendStatus(204);
+});
+
+// Rate limiting - apply to all API routes
+app.use('/api', generalLimiter);
+
+// Reject obviously invalid paths (e.g. GET /api/& from malformed client requests)
+app.use('/api', (req, res, next) => {
+  const p = (req.path || '').replace(/^\/+/, '').trim();
+  if (p === '&') {
+    return res.status(400).json({ success: false, message: 'Invalid path' });
+  }
+  next();
+});
+
+// CSRF protection - validate origin on state-changing requests
+app.use('/api', csrfProtection);
+
+// Input sanitization - XSS protection for all inputs
+app.use('/api', sanitizeInputs);
 
 // Logging
 if (config.nodeEnv === 'development') {
@@ -91,7 +136,7 @@ app.use((req, res, next) => {
 });
 
 // Webhook routes (before auth middleware - uses API key authentication)
-app.use('/api/webhooks', require('./routes/webhookRoutes'));
+app.use('/api/webhooks', webhookLimiter, require('./routes/webhookRoutes'));
 
 // SSO route at root level (before auth routes)
 const { sabitoSSOGet } = require('./controllers/authController');
@@ -113,6 +158,7 @@ app.use('/api/invoices', invoiceRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/invites', inviteRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/assistant', assistantRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/notifications', notificationRoutes);
@@ -130,10 +176,18 @@ app.use('/api/sabito', sabitoMappingRoutes);
 app.use('/api/shops', shopRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/sales', saleRoutes);
+app.use('/api/scan-logs', scanLogRoutes);
 // Pharmacy Management Routes
 app.use('/api/pharmacies', pharmacyRoutes);
 app.use('/api/drugs', drugRoutes);
 app.use('/api/prescriptions', prescriptionRoutes);
+// Retail Intelligence Routes
+app.use('/api/foot-traffic', footTrafficRoutes);
+app.use('/api/stock-counts', stockCountRoutes);
+// Mobile Money Routes
+app.use('/api/mobile-money', mobileMoneyRoutes);
+// Variance Detection Routes
+app.use('/api/variance', varianceRoutes);
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpecification));
 
 // Health check
@@ -149,7 +203,7 @@ app.get('/health', (req, res) => {
 app.get('/', (req, res) => {
   res.status(200).json({
     success: true,
-    message: 'NEXPro - Printing Press Management API',
+    message: 'ShopWISE - Business Management API',
     version: '1.0.0',
     endpoints: {
       auth: '/api/auth',
@@ -190,6 +244,9 @@ app.use((req, res) => {
 // Only start server if not running on Vercel (serverless)
 const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
 
+// Create HTTP server for WebSocket support
+const server = http.createServer(app);
+
 if (!isVercel) {
   const PORT = config.port;
 
@@ -197,8 +254,19 @@ if (!isVercel) {
     try {
       await testConnection();
 
-      app.listen(PORT, () => {
+      // Initialize WebSocket server
+      try {
+        const { initializeWebSocket } = require('./services/websocketService');
+        initializeWebSocket(server);
+        console.log('[Server] ✅ WebSocket server initialized');
+      } catch (error) {
+        console.error('[Server] Failed to initialize WebSocket:', error);
+      }
+
+      server.listen(PORT, () => {
         console.log(`[Server] Running in ${config.nodeEnv} mode on port ${PORT}`);
+        const openaiKey = process.env.OPENAI_API_KEY?.trim();
+        console.log(`[Server] OpenAI: ${openaiKey ? 'configured' : 'not set (AI features disabled)'}`);
         
         // Start Sabito sync scheduler
         if (process.env.SABITO_SYNC_ENABLED !== 'false') {

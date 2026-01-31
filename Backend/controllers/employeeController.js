@@ -12,6 +12,7 @@ const { baseUploadDir } = require('../middleware/upload');
 const fs = require('fs');
 const multer = require('multer');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { getPagination } = require('../utils/paginationUtils');
 
 const buildFilter = (query) => {
   const where = {};
@@ -43,9 +44,7 @@ const buildFilter = (query) => {
 
 exports.getEmployees = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 20;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req, { defaultPageSize: 20 });
 
     const where = applyTenantFilter(req.tenantId, buildFilter(req.query));
 

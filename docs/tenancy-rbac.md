@@ -1,6 +1,6 @@
 # Multi-Tenant Roles & Permissions
 
-This document captures the baseline approach for handling tenants, roles, and permissions in **NEXPro**. Keep it updated as the authorization model evolves.
+This document captures the baseline approach for handling tenants, roles, and permissions in **ShopWISE**. Keep it updated as the authorization model evolves.
 
 ---
 
@@ -96,6 +96,13 @@ Only users with `settings.manage_roles` (typically the Owner role) may update ro
    - Attach `req.permissions` for downstream handlers.
 3. **Controllers/Services** call `authorize('permission.key')`.
 4. **Queries** must always filter by tenant to avoid data leakage.
+
+### Backend effective role (current implementation)
+
+Route authorization uses an **effective role** derived from both tenant membership and user:
+
+- **Effective role**: If `req.tenantRole` (from `user_tenants.role`) is `owner` or `admin`, the effective role is treated as `admin` for `authorize(...)` checks. Otherwise, `User.role` (`admin` \| `manager` \| `staff`) is used.
+- **Implication**: Tenant owners/admins get full API access (admin-level) even if `User.role` is lower. Routes that use `authorize('admin', 'manager', 'staff')` must run after `tenantContext` so `req.tenantRole` is set.
 
 ---
 

@@ -8,17 +8,20 @@ import {
   Camera,
   Eye,
   EyeOff,
-  Loader2,
   Info
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import userService from '../services/userService';
+import authService from '../services/authService';
 import { showSuccess, showError } from '../utils/toast';
+import { resolveImageUrl } from '../utils/fileUtils';
 import { Button } from '@/components/ui/button';
+import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -35,8 +38,6 @@ import {
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
-import { useToast } from '@/components/ui/use-toast';
-
 const passwordSchema = z.object({
   newPassword: z
     .string()
@@ -67,57 +68,52 @@ const ForcePasswordChange = ({ visible, onComplete }) => {
     },
   });
 
-  const handleImageUpload = async (event) => {
+  const handleImageUpload = (event) => {
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file || !file.type.startsWith('image/')) return;
 
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${localStorage.getItem('token')}`,
-        },
-        body: formData,
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setProfilePicture(data.url || data.data?.url);
-        toast({
-          title: 'Success',
-          description: 'Profile picture uploaded successfully',
-        });
-      } else {
-        throw new Error('Upload failed');
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target?.result;
+      if (dataUrl) {
+        setProfilePicture(dataUrl);
+        showSuccess('Profile picture ready. Save to update.');
       }
-    } catch (error) {
-      showError(error, 'Failed to upload profile picture');
-    }
+    };
+    reader.onerror = () => {
+      showError(null, 'Failed to read image file');
+    };
+    reader.readAsDataURL(file);
   };
 
   const onSubmit = async (values) => {
     try {
       setLoading(true);
-      
-      const updateData = {
-        password: values.newPassword,
-        profilePicture: profilePicture,
-        isFirstLogin: false
-      };
 
-      await userService.update(user.id, updateData);
-      
-      // Update user context
-      updateUser({
-        ...user,
-        isFirstLogin: false,
-        profilePicture: profilePicture
-      });
+      if (user?.isFirstLogin) {
+        const res = await authService.setInitialPassword(values.newPassword);
+        const data = res?.data ?? res;
+        if (data?.token) {
+          localStorage.setItem('token', data.token);
+        }
+        if (data?.user) {
+          updateUser({ ...data.user, profilePicture: profilePicture || data.user.profilePicture });
+        }
+        if (profilePicture) {
+          try {
+            await userService.update(user.id, { profilePicture, isFirstLogin: false });
+          } catch (_) {}
+        }
+      } else {
+        const updateData = {
+          profilePicture: profilePicture,
+          isFirstLogin: false
+        };
+        await userService.update(user.id, updateData);
+        updateUser({ ...user, isFirstLogin: false, profilePicture });
+      }
 
-      showSuccess('Profile updated successfully! Welcome to NexPro!');
+      showSuccess('Profile updated successfully! Welcome to ShopWISE!');
       onComplete();
     } catch (error) {
       showError(error, 'Failed to update profile');
@@ -128,7 +124,7 @@ const ForcePasswordChange = ({ visible, onComplete }) => {
 
   return (
     <Dialog open={visible} onOpenChange={() => {}}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:w-[min(92vw,720px)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Lock className="h-4 w-4" />
@@ -138,10 +134,10 @@ const ForcePasswordChange = ({ visible, onComplete }) => {
             Please complete your profile setup by changing your password and adding a profile picture.
           </DialogDescription>
         </DialogHeader>
-
+        <DialogBody>
         <Alert className="mb-6">
           <Info className="h-4 w-4" />
-          <AlertTitle>Welcome to NexPro!</AlertTitle>
+          <AlertTitle>Welcome to ShopWISE!</AlertTitle>
           <AlertDescription>
             Please complete your profile setup by changing your password and adding a profile picture.
           </AlertDescription>
@@ -154,16 +150,18 @@ const ForcePasswordChange = ({ visible, onComplete }) => {
               <Label className="text-base font-semibold mb-4 block">Profile Picture</Label>
               <div className="flex flex-col items-center gap-4">
                 <Avatar className="w-24 h-24">
-                  <AvatarImage src={profilePicture} alt={user?.name} />
+                  <AvatarImage
+                    src={resolveImageUrl(profilePicture || user?.profilePicture || '') || undefined}
+                    alt={user?.name}
+                  />
                   <AvatarFallback>
                     <User className="h-8 w-8" />
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col items-center gap-2">
                   <label htmlFor="profile-picture-upload">
-                    <Button
+                    <SecondaryButton
                       type="button"
-                      variant="outline"
                       className="cursor-pointer"
                       asChild
                     >
@@ -171,7 +169,7 @@ const ForcePasswordChange = ({ visible, onComplete }) => {
                         <Camera className="h-4 w-4 mr-2" />
                         Upload Profile Picture
                       </span>
-                    </Button>
+                    </SecondaryButton>
                   </label>
                   <input
                     id="profile-picture-upload"
@@ -268,20 +266,14 @@ const ForcePasswordChange = ({ visible, onComplete }) => {
             <Button 
               type="submit" 
               className="w-full"
-              disabled={loading}
+              loading={loading}
               size="lg"
             >
-              {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Completing Setup...
-                </>
-              ) : (
-                'Complete Setup & Continue'
-              )}
+              Complete Setup & Continue
             </Button>
           </form>
         </Form>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

@@ -7,11 +7,11 @@ const SEED_KEYS = [
   {
     key: 'platform:branding',
     value: {
-      appName: 'NexPRO',
+      appName: 'ShopWISE',
       primaryColor: '#2f80ed',
       secondaryColor: '#9b51e0',
       logoUrl: '',
-      emailFooter: 'Thank you for using NexPRO.',
+      emailFooter: 'Thank you for using ShopWISE.',
     },
   },
   {

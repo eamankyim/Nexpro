@@ -89,9 +89,7 @@ exports.updateInventoryCategory = async (req, res, next) => {
 
 exports.getInventoryItems = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const search = req.query.search;
     const categoryId = req.query.categoryId;
     const status = req.query.status;
@@ -215,13 +213,15 @@ exports.createInventoryItem = async (req, res, next) => {
       }
     }
 
+    const initialQuantity = parseDecimal(quantityOnHand, 0);
+    
     const item = await InventoryItem.create({
       name,
       sku: sku || null,
       description: description || null,
       categoryId: validatedCategoryId,
       unit: unit || 'pcs',
-      quantityOnHand: parseDecimal(quantityOnHand, 0),
+      quantityOnHand: initialQuantity,
       reorderLevel: parseDecimal(reorderLevel, 0),
       preferredVendorId: validatedVendorId,
       unitCost: parseDecimal(unitCost, 0),
@@ -230,6 +230,23 @@ exports.createInventoryItem = async (req, res, next) => {
       isActive: isActive !== undefined ? Boolean(isActive) : true,
       tenantId: req.tenantId
     });
+
+    // Create initial movement record if item was created with quantity
+    if (initialQuantity > 0) {
+      await InventoryMovement.create({
+        itemId: item.id,
+        tenantId: req.tenantId,
+        type: 'purchase',
+        quantityDelta: initialQuantity,
+        previousQuantity: 0,
+        newQuantity: initialQuantity,
+        unitCost: parseDecimal(unitCost, 0),
+        reference: 'Item Creation',
+        notes: `Item was created with ${initialQuantity} ${unit || 'pcs'} in stock`,
+        createdBy: req.user?.id || null,
+        occurredAt: item.createdAt
+      });
+    }
 
     const createdItem = await InventoryItem.findOne({
       where: applyTenantFilter(req.tenantId, { id: item.id }),
@@ -352,9 +369,7 @@ exports.getInventorySummary = async (req, res, next) => {
 
 exports.getInventoryMovements = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const itemId = req.query.itemId;
 
     const where = applyTenantFilter(req.tenantId, {});

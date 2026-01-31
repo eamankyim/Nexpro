@@ -9,9 +9,13 @@ export function Timeline({ children, className, ...props }) {
   )
 }
 
-export function TimelineItem({ children, className, ...props }) {
+export function TimelineItem({ children, className, isLast, ...props }) {
   return (
     <div className={cn("relative flex gap-4 pb-8 last:pb-0", className)} {...props}>
+      {/* Connecting line - vertical line from indicator to next item */}
+      {!isLast && (
+        <div className="absolute left-[5px] top-4 bottom-0 w-[1px] bg-gray-300" />
+      )}
       {children}
     </div>
   )
@@ -21,9 +25,12 @@ export function TimelineIndicator({ className, ...props }) {
   return (
     <div
       className={cn(
-        "absolute left-0 top-1 h-3 w-3 rounded-full border-2 border-primary bg-background",
+        "absolute left-0 top-1 h-3 w-3 rounded-full bg-green-500 border-2 border-white",
         className
       )}
+      style={{
+        boxShadow: '0 0 0 1px #22c55e'
+      }}
       {...props}
     />
   )

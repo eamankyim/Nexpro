@@ -11,9 +11,9 @@ const inviteService = {
     return await api.get(`/invites/validate/${token}`);
   },
 
-  // Get all invites
-  getAllInvites: async () => {
-    return await api.get('/invites');
+  // Get all invites (optional: { used: 'false' } for pending only)
+  getAllInvites: async (params = {}) => {
+    return await api.get('/invites', { params });
   },
 
   // Revoke invite

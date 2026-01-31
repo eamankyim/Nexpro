@@ -1,4 +1,4 @@
-# Cursor Rules for Nexpro
+# Cursor Rules for ShopWISE
 
 ## Design Guidelines
 
@@ -23,6 +23,12 @@
 - Use inline styles only when necessary for dynamic values
 - Maintain consistent spacing using Tailwind's spacing scale
 - Use borders (1px solid #e5e7eb) for card separation instead of shadows
+
+### Button Ordering
+- **ALWAYS place primary buttons LAST** in button groups
+- Secondary/outline buttons should come before primary buttons
+- Example: `[Secondary Button] [Primary Button]` not `[Primary Button] [Secondary Button]`
+- This applies to action buttons in headers, footers, and action groups
 
 ## Email Notification Routing
 

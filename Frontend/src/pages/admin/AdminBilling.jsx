@@ -10,6 +10,7 @@ import {
   Tag,
   Empty,
 } from 'antd';
+import { useResponsive } from '../../hooks/useResponsive';
 import {
   PieChart,
   Pie,
@@ -43,20 +44,8 @@ const getPlanLabel = (plan) => {
   }
 };
 
-const getStatusColor = (status) => {
-  switch (status) {
-    case 'active':
-      return 'success';
-    case 'paused':
-      return 'orange';
-    case 'suspended':
-      return 'red';
-    default:
-      return 'default';
-  }
-};
-
 const AdminBilling = () => {
+  const { isMobile } = useResponsive();
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [tenants, setTenants] = useState([]);
@@ -232,12 +221,40 @@ const AdminBilling = () => {
           </Text>
         }
       >
-        <Table
-          rowKey="id"
-          columns={columns}
-          dataSource={tenants}
-          pagination={false}
-        />
+        {isMobile ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {tenants.length === 0 ? (
+              <Empty description="No paying tenants" />
+            ) : (
+              tenants.map((tenant) => (
+                <Card key={tenant.id} size="small" style={{ border: '1px solid #f0f0f0' }}>
+                  <div>
+                    <Text strong>{tenant.name}</Text>
+                    <br />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {tenant.metadata?.billingCustomerId || tenant.slug}
+                    </Text>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+                    <Tag color={tenant.plan === 'pro' ? 'purple' : 'blue'}>{getPlanLabel(tenant.plan)}</Tag>
+                    <StatusChip status={tenant.status} />
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      {tenant.metadata?.paymentMethod || 'Not on file'}
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(tenant.updatedAt).fromNow()}</Text>
+                  </div>
+                </Card>
+              ))
+            )}
+          </div>
+        ) : (
+          <Table
+            rowKey="id"
+            columns={columns}
+            dataSource={tenants}
+            pagination={false}
+          />
+        )}
       </Card>
     </div>
   );

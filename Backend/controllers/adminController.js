@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const { Op, QueryTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
+const { getPagination } = require('../utils/paginationUtils');
 const { Tenant, User, UserTenant, Notification } = require('../models');
 
 const PLAN_PRICING = {
@@ -72,9 +73,7 @@ exports.getPlatformSummary = async (req, res, next) => {
 
 exports.getTenants = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 20;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req, { defaultPageSize: 20 });
     const { plan, status, search } = req.query;
 
     const where = {};

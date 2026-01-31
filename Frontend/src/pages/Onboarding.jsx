@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { ArrowRight, ArrowLeft, Loader2, X, Check, Camera, Search } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { showSuccess, showError } from '../utils/toast';
+import FileUpload from '../components/FileUpload';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
@@ -21,7 +22,7 @@ import ReactCountryFlag from 'react-country-flag';
 
 const onboardingSchema = z.object({
   shopType: z.string().optional(),
-  companyName: z.string().optional().or(z.literal('')),
+  companyName: z.string().min(1, 'Company name is required'),
   companyLogo: z.any().optional(),
   companyAddress: z.string().optional().or(z.literal('')),
   industry: z.string().optional(),
@@ -101,6 +102,7 @@ const Onboarding = () => {
   const queryClient = useQueryClient();
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Check if onboarding is already completed
   useEffect(() => {
@@ -125,7 +127,6 @@ const Onboarding = () => {
     }
   });
 
-  const fileInputRef = useRef(null);
 
   // Get businessType from tenant (set during signup)
   const businessType = activeTenant?.businessType || 'printing_press';
@@ -262,7 +263,7 @@ const Onboarding = () => {
         id: 'businessInfo',
         title: 'Tell us about your business',
         subtitle: 'This information will appear on your invoices and receipts.',
-        fields: ['companyLogo', 'companyAddress'] // companyName is optional
+        fields: ['companyName'] // Company name required; logo and address optional
       },
       {
         id: 'contactInfo',
@@ -438,7 +439,7 @@ const Onboarding = () => {
       
       {/* Creating Workspace Modal */}
       <Dialog open={loading} onOpenChange={() => {}}>
-        <DialogContent className="sm:max-w-md border-0 bg-white shadow-xl [&>button]:hidden">
+        <DialogContent className="sm:w-[var(--modal-w-sm)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)] border-0 bg-white shadow-xl [&>button]:hidden">
           <div className="flex flex-col items-center justify-center py-8 px-6">
             <div className="mb-6">
               <div className="relative w-48 h-48 flex items-end justify-center">
@@ -495,7 +496,7 @@ const Onboarding = () => {
                   <div key={step.id} className="relative pb-6">
                     <div className="flex items-start gap-3">
                       {/* Icon Circle */}
-                      <div className={`relative flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center border-2 z-10 ${
+                      <div className={`relative flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center border z-10 ${
                         status === 'completed'
                           ? 'bg-[#166534] border-[#166534]'
                           : status === 'current'
@@ -631,7 +632,7 @@ const Onboarding = () => {
                             <div className="flex items-center gap-4">
                               <div className="relative">
                                 {value ? (
-                                  <div className="w-20 h-20 rounded-full border-2 border-gray-300 overflow-hidden bg-gray-100">
+                                  <div className="w-20 h-20 rounded-full border border-gray-300 overflow-hidden bg-gray-100">
                                     <img 
                                       src={value instanceof File ? URL.createObjectURL(value) : value} 
                                       alt="Logo preview" 
@@ -639,7 +640,7 @@ const Onboarding = () => {
                                     />
                                   </div>
                                 ) : (
-                                  <div className="w-20 h-20 rounded-full border-2 border-gray-300 bg-gray-100 flex items-center justify-center">
+                                  <div className="w-20 h-20 rounded-full border border-gray-300 bg-gray-100 flex items-center justify-center">
                                     <span className="text-gray-400 text-sm">Logo</span>
                                   </div>
                                 )}
@@ -694,7 +695,7 @@ const Onboarding = () => {
                       name="companyAddress"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel className="text-gray-700">Address</FormLabel>
+                          <FormLabel className="text-gray-700">Address (optional)</FormLabel>
                           <FormControl>
                             <Input
                               {...field}
@@ -888,15 +889,11 @@ const Onboarding = () => {
                 <Button
                   type="button"
                   onClick={handleNext}
-                  disabled={!canProceed() || loading}
+                  disabled={!canProceed()}
+                  loading={loading}
                   className="bg-[#166534] hover:bg-[#14532d] text-white font-medium text-base px-6 py-2"
                 >
-                  {loading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      Setting up...
-                    </>
-                  ) : currentStep === steps.length - 1 ? (
+                  {currentStep === steps.length - 1 ? (
                     'Finish setup'
                   ) : (
                     <>

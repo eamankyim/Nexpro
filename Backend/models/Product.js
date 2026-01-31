@@ -40,7 +40,7 @@ const Product = sequelize.define('Product', {
     type: DataTypes.UUID,
     allowNull: true,
     references: {
-      model: 'inventory_categories',
+      model: 'product_categories',
       key: 'id'
     }
   },
@@ -94,6 +94,10 @@ const Product = sequelize.define('Product', {
   metadata: {
     type: DataTypes.JSONB,
     defaultValue: {}
+  },
+  imageUrl: {
+    type: DataTypes.TEXT,
+    allowNull: true
   }
 }, {
   tableName: 'products',

@@ -1,8 +1,13 @@
 import { useState, useEffect, useMemo, forwardRef } from 'react';
-import { Input, Select, Space } from 'antd';
 import ReactCountryFlag from 'react-country-flag';
-
-const { Option } = Select;
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 
 // Complete list of all countries with dial codes (sorted alphabetically by name)
 const COUNTRIES = [
@@ -319,47 +324,49 @@ const PhoneNumberInput = forwardRef(({
   const selectedCountryData = COUNTRIES.find(c => c.code === selectedCountry) || COUNTRIES[0];
 
   return (
-    <Space.Compact style={{ display: 'flex', width: '100%' }}>
+    <div className="flex gap-2 w-full items-stretch">
       <Select
         value={selectedCountry}
-        onChange={handleCountryChange}
-        style={{ width: 140 }}
-        size={size}
-        showSearch
-        optionFilterProp="children"
-        filterOption={(input, option) => {
-          const country = COUNTRIES.find(c => c.code === option.value);
-          if (!country) return false;
-          return (
-            country.name.toLowerCase().includes(input.toLowerCase()) ||
-            country.dialCode.toLowerCase().includes(input.toLowerCase()) ||
-            country.code.toLowerCase().includes(input.toLowerCase())
-          );
-        }}
+        onValueChange={handleCountryChange}
       >
-        {COUNTRIES.map(country => (
-          <Option key={country.code} value={country.code}>
-            <span style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <ReactCountryFlag 
-                countryCode={country.code} 
-                svg 
-                style={{ width: '20px', height: '15px' }}
-              />
-              <span>{country.dialCode} ({country.code})</span>
-            </span>
-          </Option>
-        ))}
+        <SelectTrigger className={cn(
+          "!w-auto min-w-fit px-2 sm:px-3 flex-shrink-0",
+          "h-10 min-h-[44px] md:min-h-[40px]"
+        )}>
+          <div className="flex items-center gap-1.5 sm:gap-2 whitespace-nowrap">
+            <ReactCountryFlag 
+              countryCode={selectedCountryData.code} 
+              svg 
+              className="w-4 h-3 sm:w-5 sm:h-4 flex-shrink-0"
+            />
+            <span className="text-sm font-medium">{selectedCountryData.dialCode}</span>
+          </div>
+        </SelectTrigger>
+        <SelectContent className="max-h-[300px]">
+          {COUNTRIES.map(country => (
+            <SelectItem key={country.code} value={country.code}>
+              <div className="flex items-center gap-2">
+                <ReactCountryFlag 
+                  countryCode={country.code} 
+                  svg 
+                  className="w-5 h-4 flex-shrink-0"
+                />
+                <span className="text-sm">{country.dialCode}</span>
+                <span className="text-xs text-muted-foreground ml-auto">{country.name}</span>
+              </div>
+            </SelectItem>
+          ))}
+        </SelectContent>
       </Select>
       <Input
         ref={ref}
         value={phoneNumber}
         onChange={handleNumberChange}
         placeholder={placeholder}
-        size={size}
-        style={{ flex: 1 }}
+        className="flex-1"
         {...inputProps}
       />
-    </Space.Compact>
+    </div>
   );
 });
 

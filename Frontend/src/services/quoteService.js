@@ -30,6 +30,23 @@ const quoteService = {
 
   convertToJob: async (id) => {
     return await api.post(`/quotes/${id}/convert`);
+  },
+
+  convertToSale: async (id, paymentMethod = 'credit', shopId = null) => {
+    return await api.post(`/quotes/${id}/convert-to-sale`, {
+      paymentMethod,
+      shopId
+    });
+  },
+
+  // Get quote activities
+  getActivities: async (quoteId) => {
+    return await api.get(`/quotes/${quoteId}/activities`);
+  },
+
+  // Add quote activity
+  addActivity: async (quoteId, activityData) => {
+    return await api.post(`/quotes/${quoteId}/activities`, activityData);
   }
 };
 

@@ -1,33 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useDebounce } from '../hooks/useDebounce';
+import { useResponsive } from '../hooks/useResponsive';
+import { useSmartSearch } from '../context/SmartSearchContext';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import {
-  Card,
-  Table,
-  Tag,
-  Popconfirm,
-  Row,
-  Col,
-  Statistic,
-  Divider,
-  Tabs,
-  Empty,
-  Spin,
-  Tooltip,
-  Descriptions,
-  Avatar,
-  Upload,
-  Drawer,
-  Input as AntdInput,
-  Select as AntdSelect,
-} from 'antd';
 import { showSuccess, showError, showInfo, handleApiError } from '../utils/toast';
 import { Button } from '@/components/ui/button';
+import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Card as ShadcnCard, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -42,6 +26,7 @@ import {
 } from '@/components/ui/select';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -57,21 +42,6 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 
-const userSchema = z.object({
-  name: z.string().min(1, 'Full name is required'),
-  email: z.string().email('Please enter a valid email'),
-  role: z.enum(['admin', 'manager', 'staff']),
-  isActive: z.boolean().default(true),
-});
-
-const passwordSchema = z.object({
-  newPassword: z.string().min(6, 'Password must be at least 6 characters'),
-  confirmPassword: z.string().min(6, 'Please confirm password'),
-}).refine((data) => data.newPassword === data.confirmPassword, {
-  message: "Passwords do not match!",
-  path: ["confirmPassword"],
-});
-
 const profileSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   email: z.string().email('Please enter a valid email'),
@@ -83,22 +53,22 @@ const inviteSchema = z.object({
   role: z.enum(['admin', 'manager', 'staff']),
 });
 import {
-  Plus,
-  Pencil,
   Trash2,
-  Eye,
   User,
   Users as UsersIcon,
   Crown,
   Settings,
   Upload as UploadIcon,
-  Lock,
   Unlock,
   Mail,
   Phone,
   Calendar,
   Link,
-  Copy
+  Copy,
+  Filter,
+  RefreshCw,
+  Shield,
+  Loader2
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import userService from '../services/userService';
@@ -106,8 +76,39 @@ import inviteService from '../services/inviteService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import DashboardTable from '../components/DashboardTable';
+import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
+import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, ROLE_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS } from '../constants';
+import { resolveImageUrl } from '../utils/fileUtils';
 
 const Users = () => {
+  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+  const { isMobile } = useResponsive();
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalVisible, setModalVisible] = useState(false);
@@ -119,37 +120,26 @@ const Users = () => {
     total: 0
   });
   const [filters, setFilters] = useState({
-    role: null,
-    isActive: null,
-    search: ''
+    role: 'all',
+    isActive: 'all'
   });
-  const [activeTab, setActiveTab] = useState('all');
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingUser, setViewingUser] = useState(null);
-  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
   const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [inviteModalVisible, setInviteModalVisible] = useState(false);
   const [generatedInviteLink, setGeneratedInviteLink] = useState(null);
   const [isExistingInvite, setIsExistingInvite] = useState(false);
+  const [pendingInvites, setPendingInvites] = useState([]);
+  const [loadingInvites, setLoadingInvites] = useState(false);
+  const [revokingInviteId, setRevokingInviteId] = useState(null);
+  const [deletingUserId, setDeletingUserId] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [submittingInvite, setSubmittingInvite] = useState(false);
+  const [deletingUser, setDeletingUser] = useState(false);
+  const [togglingStatus, setTogglingStatus] = useState(null);
+  const [refreshingUsers, setRefreshingUsers] = useState(false);
   const { user, isAdmin, isManager } = useAuth();
-
-  const form = useForm({
-    resolver: zodResolver(userSchema),
-    defaultValues: {
-      name: '',
-      email: '',
-      role: 'staff',
-      isActive: true,
-    },
-  });
-
-  const passwordForm = useForm({
-    resolver: zodResolver(passwordSchema),
-    defaultValues: {
-      newPassword: '',
-      confirmPassword: '',
-    },
-  });
 
   const profileForm = useForm({
     resolver: zodResolver(profileSchema),
@@ -168,9 +158,38 @@ const Users = () => {
     },
   });
 
+  const fetchPendingInvites = useCallback(async () => {
+    try {
+      setLoadingInvites(true);
+      const response = await inviteService.getAllInvites({ used: 'false' });
+      const data = response.data?.data ?? response.data ?? [];
+      setPendingInvites(Array.isArray(data) ? data : []);
+    } catch (error) {
+      handleApiError(error, { context: 'fetch pending invites' });
+      setPendingInvites([]);
+    } finally {
+      setLoadingInvites(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    setPageSearchConfig({ scope: 'users', placeholder: SEARCH_PLACEHOLDERS.USERS });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig]);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [searchValue]);
+
   useEffect(() => {
     fetchUsers();
-  }, [pagination.current, pagination.pageSize, filters]);
+  }, [pagination.current, pagination.pageSize, filters.role, filters.isActive, debouncedSearch]);
+
+  useEffect(() => {
+    if (isAdmin) {
+      fetchPendingInvites();
+    }
+  }, [isAdmin, fetchPendingInvites]);
 
   // Calculate stats whenever users data changes
   useEffect(() => {
@@ -191,37 +210,70 @@ const Users = () => {
     }
   }, [users]);
 
-  const fetchUsers = async () => {
+  const fetchUsers = async (isRefresh = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshingUsers(true);
+      } else {
+        setLoading(true);
+      }
       const params = {
         page: pagination.current,
-        limit: pagination.pageSize,
-        ...filters
+        limit: 1000, // Fetch more for client-side filtering
       };
+      
+      if (filters.role !== 'all') {
+        params.role = filters.role;
+      }
+      if (filters.isActive !== 'all') {
+        params.isActive = filters.isActive === 'true';
+      }
+      if (debouncedSearch) params.search = debouncedSearch;
+
       const response = await userService.getAll(params);
-      setUsers(response.data.data || response.data);
-      setPagination(prev => ({
-        ...prev,
-        total: response.data.count || response.count
-      }));
+      setUsers(response.data.data || response.data || []);
     } catch (error) {
       handleApiError(error, { context: 'fetch users' });
+      setUsers([]);
     } finally {
-      setLoading(false);
+      if (isRefresh) {
+        setRefreshingUsers(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
-  const handleCreate = () => {
-    setEditingUser(null);
-    form.reset({
-      name: '',
-      email: '',
-      role: 'staff',
-      isActive: true,
-    });
-    setModalVisible(true);
-  };
+  // Apply client-side filtering
+  const filteredUsers = useMemo(() => {
+    return users; // Backend already filters
+  }, [users, filters]);
+
+  // Paginate filtered users
+  const paginatedUsers = useMemo(() => {
+    const start = (pagination.current - 1) * pagination.pageSize;
+    const end = start + pagination.pageSize;
+    return filteredUsers.slice(start, end);
+  }, [filteredUsers, pagination.current, pagination.pageSize]);
+
+  const usersCount = filteredUsers.length;
+
+  // Calculate summary stats
+  const calculatedStats = useMemo(() => {
+    const totalUsers = users.length;
+    const adminUsers = users.filter(u => u.role === 'admin').length;
+    const managerUsers = users.filter(u => u.role === 'manager').length;
+    const staffUsers = users.filter(u => u.role === 'staff').length;
+    
+    return {
+      totals: {
+        totalUsers,
+        adminUsers,
+        managerUsers,
+        staffUsers
+      }
+    };
+  }, [users]);
 
   const handleInviteUser = () => {
     inviteForm.reset({
@@ -233,102 +285,69 @@ const Users = () => {
     setInviteModalVisible(true);
   };
 
-  const handleInviteSubmit = async (values) => {
-    try {
-      const response = await inviteService.generateInvite(values);
-      setGeneratedInviteLink(response.data.inviteUrl);
-      setIsExistingInvite(false);
-      showSuccess('Invite link generated successfully!');
-    } catch (error) {
-      // If there's an existing invite, show the link instead of error
-      if (error.response?.data?.data?.inviteUrl) {
-        setGeneratedInviteLink(error.response.data.data.inviteUrl);
-        setIsExistingInvite(true);
-        showInfo('This user has already been invited! Showing the existing invite link.');
-      } else {
-        handleApiError(error, { context: 'generate invite link' });
-      }
-    }
-  };
-
   const handleCopyInviteLink = () => {
     navigator.clipboard.writeText(generatedInviteLink);
     showSuccess('Invite link copied to clipboard!');
   };
 
-  const handleEdit = (user) => {
-    setEditingUser(user);
-    form.reset({
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      isActive: user.isActive,
-    });
-    setModalVisible(true);
+  const getInviteUrl = (token) => {
+    return `${window.location.origin}/signup?token=${token}`;
   };
 
-  const handleView = (user) => {
+  const handleCopyPendingInviteLink = (invite) => {
+    const url = getInviteUrl(invite.token);
+    navigator.clipboard.writeText(url);
+    showSuccess('Invite link copied to clipboard!');
+  };
+
+  const handleRevokeInvite = useCallback(async (id) => {
+    try {
+      setRevokingInviteId(id);
+      await inviteService.revokeInvite(id);
+      showSuccess('Invite revoked successfully');
+      await fetchPendingInvites();
+    } catch (error) {
+      handleApiError(error, { context: 'revoke invite' });
+    } finally {
+      setRevokingInviteId(null);
+    }
+  }, [fetchPendingInvites]);
+
+  const handleView = useCallback((user) => {
     setViewingUser(user);
     setDrawerVisible(true);
-  };
+  }, []);
 
-  const handleCloseDrawer = () => {
+  const handleCloseDrawer = useCallback(() => {
     setDrawerVisible(false);
     setViewingUser(null);
-  };
+  }, []);
 
-  const handleDelete = async (id) => {
+  const handleDelete = useCallback(async (id) => {
     try {
+      setDeletingUser(true);
       await userService.delete(id);
       showSuccess('User deleted successfully');
-      fetchUsers();
+      await fetchUsers();
     } catch (error) {
       handleApiError(error, { context: 'delete user' });
+    } finally {
+      setDeletingUser(false);
     }
-  };
+  }, []);
 
-  const handleToggleStatus = async (id) => {
+  const handleToggleStatus = useCallback(async (id) => {
     try {
+      setTogglingStatus(id);
       await userService.toggleStatus(id);
       showSuccess('User status updated successfully');
-      fetchUsers();
+      await fetchUsers();
     } catch (error) {
       handleApiError(error, { context: 'update user status' });
+    } finally {
+      setTogglingStatus(null);
     }
-  };
-
-  const onSubmit = async (values) => {
-    try {
-      if (editingUser) {
-        await userService.update(editingUser.id, values);
-        showSuccess('User updated successfully');
-      } else {
-        const userData = {
-          ...values,
-          password: 'default123'
-        };
-        await userService.create(userData);
-        showSuccess('User created successfully with default password "default123"');
-      }
-      setModalVisible(false);
-      fetchUsers();
-    } catch (error) {
-      handleApiError(error, { context: editingUser ? 'update user' : 'create user' });
-    }
-  };
-
-  const onPasswordSubmit = async (values) => {
-    try {
-      await userService.update(viewingUser.id, {
-        password: values.newPassword
-      });
-      showSuccess('Password updated successfully');
-      setPasswordModalVisible(false);
-      fetchUsers();
-    } catch (error) {
-      showError(null, 'Failed to update password');
-    }
-  };
+  }, []);
 
   const onProfileSubmit = async (values) => {
     try {
@@ -343,19 +362,30 @@ const Users = () => {
 
   const onInviteSubmit = async (values) => {
     try {
+      setSubmittingInvite(true);
       const response = await inviteService.generateInvite(values);
-      setGeneratedInviteLink(response.data.inviteUrl);
+      const inviteUrl = response.data?.data?.inviteUrl ?? response.data?.inviteUrl;
+      setGeneratedInviteLink(inviteUrl);
       setIsExistingInvite(false);
       showSuccess('Invite link generated successfully!');
+      await fetchPendingInvites();
     } catch (error) {
-      if (error?.response?.data?.message?.includes('already exists') || 
-          error?.response?.data?.message?.includes('already invited')) {
-        setGeneratedInviteLink(error.response.data.inviteUrl);
-        setIsExistingInvite(true);
-        showInfo('User already has an active invite. Showing existing invite link.');
+      if (error?.response?.data?.message?.includes('already exists') ||
+          error?.response?.data?.message?.includes('already invited') ||
+          error?.response?.data?.data?.inviteUrl) {
+        const url = error?.response?.data?.data?.inviteUrl ?? error?.response?.data?.inviteUrl;
+        if (url) {
+          setGeneratedInviteLink(url);
+          setIsExistingInvite(true);
+          showInfo('User already has an active invite. Showing existing invite link.');
+        } else {
+          handleApiError(error, { context: 'generate invite' });
+        }
       } else {
         handleApiError(error, { context: 'generate invite' });
       }
+    } finally {
+      setSubmittingInvite(false);
     }
   };
 
@@ -370,15 +400,6 @@ const Users = () => {
     }));
   };
 
-  const handleChangePassword = (user) => {
-    setViewingUser(user);
-    passwordForm.reset({
-      newPassword: '',
-      confirmPassword: '',
-    });
-    setPasswordModalVisible(true);
-  };
-
   const handleProfileUpdate = (user) => {
     setViewingUser(user);
     profileForm.reset({
@@ -389,137 +410,93 @@ const Users = () => {
     setProfileModalVisible(true);
   };
 
-  const columns = [
+  // Table columns for DashboardTable
+  const tableColumns = useMemo(() => [
     {
-      title: 'Avatar',
-      dataIndex: 'profilePicture',
       key: 'avatar',
-      width: 80,
-      render: (profilePicture, record) => (
-        <Avatar
-          size={40}
-          src={profilePicture}
-          icon={<User className="h-4 w-4" />}
-        />
+      label: 'Avatar',
+      render: (_, record) => (
+        <ShadcnAvatar>
+          <AvatarImage src={resolveImageUrl(record?.profilePicture || '') || undefined} />
+          <AvatarFallback>
+            <User className="h-4 w-4" />
+          </AvatarFallback>
+        </ShadcnAvatar>
       )
     },
     {
-      title: 'Name',
-      dataIndex: 'name',
       key: 'name',
-      width: 150,
-      render: (name, record) => (
+      label: 'Name',
+      render: (_, record) => (
         <div>
-          <div style={{ fontWeight: 'bold' }}>{name}</div>
-          {record.email && (
-            <div style={{ fontSize: 12, color: '#888' }}>{record.email}</div>
+          <div className="font-bold text-black">{record?.name || '—'}</div>
+          {record?.email && (
+            <div className="text-muted-foreground text-xs">{record.email}</div>
           )}
         </div>
       )
     },
     {
-      title: 'Role',
-      dataIndex: 'role',
       key: 'role',
-      width: 100,
-      render: (role) => {
-        const colors = {
-          admin: 'red',
-          manager: '#166534',
-          staff: 'green'
-        };
-        const icons = {
-          admin: <Crown className="h-4 w-4" />,
-          manager: <Settings className="h-4 w-4" />,
-          staff: <User className="h-4 w-4" />
+      label: 'Role',
+      render: (_, record) => {
+        const roleIcons = {
+          admin: <Crown className="h-3 w-3 mr-1" />,
+          manager: <Settings className="h-3 w-3 mr-1" />,
+          staff: <User className="h-3 w-3 mr-1" />,
+          employee: <User className="h-3 w-3 mr-1" />
         };
         return (
-          <Tag color={colors[role]} icon={icons[role]}>
-            {role.toUpperCase()}
-          </Tag>
+          <Badge
+            variant="outline"
+            className={ROLE_CHIP_CLASSES[record?.role] ?? STATUS_CHIP_DEFAULT_CLASS}
+          >
+            {roleIcons[record?.role]}
+            {record?.role?.toUpperCase() || '—'}
+          </Badge>
         );
       }
     },
     {
-      title: 'Status',
-      dataIndex: 'isActive',
       key: 'isActive',
-      width: 100,
-      render: (isActive, record) => (
+      label: 'Status',
+      render: (_, record) => isAdmin ? (
         <Switch
-          checked={isActive}
-          onChange={() => handleToggleStatus(record.id)}
-          checkedChildren={<Unlock className="h-4 w-4" />}
-          unCheckedChildren={<Lock className="h-4 w-4" />}
+          checked={record?.isActive}
+          onCheckedChange={() => handleToggleStatus(record.id)}
+          disabled={togglingStatus === record.id}
         />
+      ) : (
+        <Badge variant={record?.isActive ? 'default' : 'destructive'}>
+          {record?.isActive ? 'ACTIVE' : 'INACTIVE'}
+        </Badge>
       )
     },
     {
-      title: 'Created',
-      dataIndex: 'createdAt',
       key: 'createdAt',
-      width: 120,
-      render: (date) => dayjs(date).format('MMM DD, YYYY')
+      label: 'Created',
+      render: (_, record) => <span className="text-black">{record?.createdAt ? dayjs(record.createdAt).format('MMM DD, YYYY') : '—'}</span>
     },
     {
-      title: 'Last Login',
-      dataIndex: 'lastLogin',
       key: 'lastLogin',
-      width: 120,
-      render: (date) => date ? dayjs(date).format('MMM DD, YYYY') : 'Never'
+      label: 'Last Login',
+      render: (_, record) => <span className="text-black">{record?.lastLogin ? dayjs(record.lastLogin).format('MMM DD, YYYY') : 'Never'}</span>
     },
     {
-      title: 'Actions',
       key: 'actions',
-      width: 150,
-      fixed: 'right',
+      label: 'Actions',
       render: (_, record) => (
         <div className="flex items-center gap-2">
-          <Tooltip title="View Details">
-            <Button
-              type="text"
-              icon={<Eye className="h-4 w-4" />}
-              onClick={() => handleView(record)}
-            />
-          </Tooltip>
-          {isAdmin && (
-            <Tooltip title="Edit User">
-              <Button
-                type="text"
-                icon={<Pencil className="h-4 w-4" />}
-                onClick={() => handleEdit(record)}
-              />
-            </Tooltip>
-          )}
-          {isAdmin && (
-            <Tooltip title="Change Password">
-              <Button
-                type="text"
-                icon={<Lock className="h-4 w-4" />}
-                onClick={() => handleChangePassword(record)}
-              />
-            </Tooltip>
-          )}
-          {isAdmin && record.id !== user?.id && (
-            <Popconfirm
-              title="Are you sure you want to delete this user?"
-              onConfirm={() => handleDelete(record.id)}
-              okText="Yes"
-              cancelText="No"
-            >
-              <Tooltip title="Delete User">
-                <Button
-                  type="text"
-                  danger
-                  icon={<Trash2 className="h-4 w-4" />}
-                />
-              </Tooltip>
-            </Popconfirm>
-          )}
+          <SecondaryButton
+            size="sm"
+            onClick={() => handleView(record)}
+          >
+            View
+          </SecondaryButton>
         </div>
       )
     }
-  ];
+  ], [isAdmin, user, handleView, handleToggleStatus]);
 
   const roleOptions = [
     { value: 'admin', label: 'Admin', icon: <Crown className="h-4 w-4" /> },
@@ -532,417 +509,279 @@ const Users = () => {
     { value: 'false', label: 'Inactive' }
   ];
 
+  const handleClearFilters = () => {
+    setFilters({
+      role: 'all',
+      isActive: 'all'
+    });
+    setPagination({ ...pagination, current: 1 });
+  };
+
+  const hasActiveFilters = filters.role !== 'all' || filters.isActive !== 'all';
+
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="m-0">Users Management</h1>
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <WelcomeSection
+          welcomeMessage="Users Management"
+          subText="Manage user accounts, roles, and permissions."
+        />
         {isAdmin && (
           <div className="flex items-center gap-2">
-            <Button
-              icon={<Link className="h-4 w-4" />}
-              onClick={handleInviteUser}
-            >
+            <SecondaryButton onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+              <Filter className="h-4 w-4" />
+              {!isMobile && <span className="ml-2">Filter</span>}
+            </SecondaryButton>
+            <SecondaryButton onClick={() => fetchUsers(true)} disabled={refreshingUsers} size={isMobile ? "icon" : "default"}>
+              {refreshingUsers ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4" />
+              )}
+              {!isMobile && <span className="ml-2">Refresh</span>}
+            </SecondaryButton>
+            <Button onClick={handleInviteUser}>
+              <Link className="h-4 w-4 mr-2" />
               Invite User
-            </Button>
-            <Button
-              type="primary"
-              icon={<Plus className="h-4 w-4" />}
-              onClick={handleCreate}
-            >
-              Add User
             </Button>
           </div>
         )}
       </div>
 
       {/* Statistics Cards */}
-      {stats && (
-        <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-          <Col xs={24} sm={12} lg={8}>
-            <Card>
-              <Statistic
-                title="Total Users"
-                value={stats.totalUsers || 0}
-                prefix={<UsersIcon className="h-4 w-4" />}
-                valueStyle={{ color: '#166534' }}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={8}>
-            <Card>
-              <Statistic
-                title="Admins"
-                value={stats.adminUsers || 0}
-                prefix={<Crown className="h-4 w-4" />}
-                valueStyle={{ color: '#ff4d4f' }}
-              />
-            </Card>
-          </Col>
-          <Col xs={24} sm={12} lg={8}>
-            <Card>
-              <Statistic
-                title="Managers"
-                value={stats.managerUsers || 0}
-                prefix={<Settings className="h-4 w-4" />}
-                valueStyle={{ color: '#722ed1' }}
-              />
-            </Card>
-          </Col>
-        </Row>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <DashboardStatsCard
+          title="Total Users"
+          value={calculatedStats?.totals?.totalUsers || 0}
+          icon={UsersIcon}
+          iconBgColor="rgba(22, 101, 52, 0.1)"
+          iconColor="#166534"
+        />
+        <DashboardStatsCard
+          title="Admins"
+          value={calculatedStats?.totals?.adminUsers || 0}
+          icon={Crown}
+          iconBgColor="rgba(239, 68, 68, 0.1)"
+          iconColor="#ef4444"
+        />
+        <DashboardStatsCard
+          title="Managers"
+          value={calculatedStats?.totals?.managerUsers || 0}
+          icon={Settings}
+          iconBgColor="rgba(139, 92, 246, 0.1)"
+          iconColor="#8b5cf6"
+        />
+        <DashboardStatsCard
+          title="Staff"
+          value={calculatedStats?.totals?.staffUsers || 0}
+          icon={Shield}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+        />
+      </div>
+
+      {/* Pending Invites – only show when there are invites or still loading */}
+      {isAdmin && (loadingInvites || pendingInvites.length > 0) && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Mail className="h-5 w-5" />
+              Pending Invites
+            </CardTitle>
+            <CardDescription>
+              People who have been invited but have not completed signup yet. Share the invite link or revoke.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loadingInvites ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50">
+                      <th className="text-left font-medium py-3 px-4">Email</th>
+                      <th className="text-left font-medium py-3 px-4">Role</th>
+                      <th className="text-left font-medium py-3 px-4">Invited</th>
+                      <th className="text-left font-medium py-3 px-4">Expires</th>
+                      <th className="text-right font-medium py-3 px-4">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingInvites.map((invite) => (
+                      <tr key={invite.id} className="border-b border-gray-100 last:border-0">
+                        <td className="py-3 px-4">{invite.email}</td>
+                        <td className="py-3 px-4">
+                          <Badge variant="outline" className={ROLE_CHIP_CLASSES[invite.role] ?? STATUS_CHIP_DEFAULT_CLASS}>
+                            {invite.role?.toUpperCase() ?? '—'}
+                          </Badge>
+                        </td>
+                        <td className="py-3 px-4 text-muted-foreground">
+                          {invite.createdAt ? dayjs(invite.createdAt).format('MMM DD, YYYY') : '—'}
+                        </td>
+                        <td className="py-3 px-4 text-muted-foreground">
+                          {invite.expiresAt ? dayjs(invite.expiresAt).format('MMM DD, YYYY') : '—'}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <SecondaryButton
+                              size="sm"
+                              onClick={() => handleCopyPendingInviteLink(invite)}
+                            >
+                              <Copy className="h-4 w-4 mr-1" />
+                              Copy link
+                            </SecondaryButton>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => handleRevokeInvite(invite.id)}
+                              disabled={revokingInviteId === invite.id}
+                            >
+                              {revokingInviteId === invite.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4 mr-1" />
+                              )}
+                              Revoke
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
-      {/* Filters */}
-      <Card style={{ marginBottom: 16 }}>
-        <Row gutter={[16, 16]}>
-          <Col xs={24} sm={6}>
-            <AntdInput.Search
-              placeholder="Search users..."
-              allowClear
-              style={{ width: '100%' }}
-              onSearch={(value) => handleFilterChange('search', value)}
-            />
-          </Col>
-          <Col xs={24} sm={6}>
-            <AntdSelect
-              placeholder="Filter by Role"
-              allowClear
-              style={{ width: '100%' }}
-              value={filters.role}
-              onChange={(value) => handleFilterChange('role', value)}
-            >
-              {roleOptions.map(option => (
-                <AntdSelect.Option key={option.value} value={option.value}>
-                  {option.icon} {option.label}
-                </AntdSelect.Option>
-              ))}
-            </AntdSelect>
-          </Col>
-          <Col xs={24} sm={6}>
-            <AntdSelect
-              placeholder="Filter by Status"
-              allowClear
-              style={{ width: '100%' }}
-              value={filters.isActive}
-              onChange={(value) => handleFilterChange('isActive', value)}
-            >
-              {statusOptions.map(option => (
-                <AntdSelect.Option key={option.value} value={option.value}>{option.label}</AntdSelect.Option>
-              ))}
-            </AntdSelect>
-          </Col>
-          <Col xs={24} sm={6}>
-            <Button
-              onClick={() => {
-                setFilters({ role: null, isActive: null, search: '' });
-                setPagination(prev => ({ ...prev, current: 1 }));
-              }}
-            >
-              Clear Filters
-            </Button>
-          </Col>
-        </Row>
-      </Card>
+      {/* Users Table */}
+      <DashboardTable
+        data={paginatedUsers}
+        columns={tableColumns}
+        loading={loading}
+        title={null}
+        emptyIcon={<UsersIcon className="h-12 w-12 text-muted-foreground" />}
+        emptyDescription="No users found"
+        pageSize={pagination.pageSize}
+        onPageChange={(newPagination) => {
+          setPagination(newPagination);
+        }}
+        externalPagination={{
+          current: pagination.current,
+          total: usersCount
+        }}
+      />
 
-      {/* Users Table with Tabs */}
-      <Card>
-        <Tabs 
-          activeKey={activeTab} 
-          onChange={setActiveTab}
-          items={[
-            {
-              key: 'all',
-              label: 'All Users',
-              children: (
-                <Table
-                  columns={columns}
-                  dataSource={users}
-                  rowKey="id"
-                  loading={loading}
-                  pagination={{
-                    current: pagination.current,
-                    pageSize: pagination.pageSize,
-                    total: pagination.total,
-                    showSizeChanger: true,
-                    showQuickJumper: true,
-                    showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} users`,
-                    onChange: (page, pageSize) => {
-                      setPagination(prev => ({
-                        ...prev,
-                        current: page,
-                        pageSize: pageSize || prev.pageSize
-                      }));
-                    }
-                  }}
-                  scroll={{ x: 1000 }}
-                />
-              )
-            },
-            {
-              key: 'active',
-              label: 'Active Users',
-              children: (
-                <Table
-                  columns={columns}
-                  dataSource={users?.filter(user => user.isActive) || []}
-                  rowKey="id"
-                  loading={loading}
-                  pagination={{
-                    current: pagination.current,
-                    pageSize: pagination.pageSize,
-                    total: pagination.total,
-                    showSizeChanger: true,
-                    showQuickJumper: true,
-                    showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} active users`,
-                    onChange: (page, pageSize) => {
-                      setPagination(prev => ({
-                        ...prev,
-                        current: page,
-                        pageSize: pageSize || prev.pageSize
-                      }));
-                    }
-                  }}
-                  scroll={{ x: 1000 }}
-                />
-              )
-            },
-            {
-              key: 'admins',
-              label: 'Admins',
-              children: (
-                <Table
-                  columns={columns}
-                  dataSource={users?.filter(user => user.role === 'admin') || []}
-                  rowKey="id"
-                  loading={loading}
-                  pagination={{
-                    current: pagination.current,
-                    pageSize: pagination.pageSize,
-                    total: pagination.total,
-                    showSizeChanger: true,
-                    showQuickJumper: true,
-                    showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} admins`,
-                    onChange: (page, pageSize) => {
-                      setPagination(prev => ({
-                        ...prev,
-                        current: page,
-                        pageSize: pageSize || prev.pageSize
-                      }));
-                    }
-                  }}
-                  scroll={{ x: 1000 }}
-                />
-              )
-            }
-          ]}
-        />
-      </Card>
-
-      {/* Add/Edit Dialog */}
-      <Dialog open={modalVisible} onOpenChange={(open) => {
-        if (!open) setModalVisible(false);
-      }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{editingUser ? 'Edit User' : 'Add New User'}</DialogTitle>
-            <DialogDescription>
-              {editingUser ? 'Update user information' : 'Create a new user account'}
-            </DialogDescription>
-          </DialogHeader>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                name="name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Full Name</FormLabel>
-                      <FormControl>
-                        <Input placeholder="Enter full name" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email</FormLabel>
-                      <FormControl>
-                        <Input type="email" placeholder="Enter email address" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                name="role"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Role</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select role" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
+      {/* Filter Drawer */}
+      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
+        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+          <SheetHeader className="pb-4 border-b">
+            <SheetTitle>Filter Users</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-6 mt-6">
+            <div className="space-y-2">
+              <Label>Role</Label>
+              <Select
+                value={filters.role}
+                onValueChange={(value) => setFilters({ ...filters, role: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Filter by role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Roles</SelectItem>
                   {roleOptions.map(option => (
-                            <SelectItem key={option.value} value={option.value}>
-                              <span className="flex items-center gap-2">
-                      {option.icon} {option.label}
-                              </span>
-                            </SelectItem>
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
                   ))}
-                        </SelectContent>
-                </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                name="isActive"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-col space-y-2 pt-7">
-                      <FormLabel>Status</FormLabel>
-                      <FormControl>
-                        <div className="flex items-center space-x-2">
-                <Switch 
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                          />
-                          <span className="text-sm text-muted-foreground">
-                            {field.value ? 'Active' : 'Inactive'}
-                          </span>
-                        </div>
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              {!editingUser && (
-                <Alert>
-                  <AlertTitle>Default Password</AlertTitle>
-                  <AlertDescription>
-                    New users will be created with default password 'default123'. They will be required to change it on first login.
-                  </AlertDescription>
-                </Alert>
-              )}
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setModalVisible(false)}>
-                Cancel
-              </Button>
-                <Button type="submit">
-                  {editingUser ? 'Update' : 'Create'} User
-                </Button>
-              </DialogFooter>
-            </form>
-        </Form>
-        </DialogContent>
-      </Dialog>
+                </SelectContent>
+              </Select>
+            </div>
 
-      {/* Change Password Dialog */}
-      <Dialog open={passwordModalVisible} onOpenChange={(open) => {
-        if (!open) setPasswordModalVisible(false);
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Change Password</DialogTitle>
-            <DialogDescription>
-              Update password for {viewingUser?.name || 'user'}
-            </DialogDescription>
-          </DialogHeader>
-          <Form {...passwordForm}>
-            <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className="space-y-4">
-              <FormField
-                control={passwordForm.control}
-            name="newPassword"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>New Password</FormLabel>
-                    <FormControl>
-                      <Input type="password" placeholder="Enter new password" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={passwordForm.control}
-            name="confirmPassword"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Confirm Password</FormLabel>
-                    <FormControl>
-                      <Input type="password" placeholder="Confirm new password" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setPasswordModalVisible(false)}>
-                Cancel
-              </Button>
-                <Button type="submit">
-                  Update Password
-                </Button>
-              </DialogFooter>
-            </form>
-        </Form>
-        </DialogContent>
-      </Dialog>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select
+                value={filters.isActive}
+                onValueChange={(value) => setFilters({ ...filters, isActive: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Filter by status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  {statusOptions.map(option => (
+                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {hasActiveFilters && (
+              <SecondaryButton onClick={handleClearFilters} className="w-full">
+                Clear Filters
+              </SecondaryButton>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete User</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this user? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => {
+              setDeleteDialogOpen(false);
+              setDeletingUserId(null);
+            }}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (deletingUserId) {
+                  handleDelete(deletingUserId);
+                  setDeleteDialogOpen(false);
+                  setDeletingUserId(null);
+                }
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              loading={deletingUser}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* User Details Drawer */}
       <DetailsDrawer
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="User Details"
-        width={800}
-        onEdit={isAdmin && viewingUser ? () => {
-          handleEdit(viewingUser);
-          setDrawerVisible(false);
-        } : null}
-        onDelete={isAdmin && viewingUser && viewingUser.id !== user?.id ? () => {
-          handleDelete(viewingUser.id);
-          setDrawerVisible(false);
-        } : null}
+        width={720}
+        onEdit={null}
+        onDelete={null}
         deleteConfirmText="Are you sure you want to delete this user?"
-        extraActions={[
-          isAdmin && viewingUser ? {
-            label: 'Change Password',
-            onClick: () => {
-              handleChangePassword(viewingUser);
-              setDrawerVisible(false);
-            },
-            icon: <Lock className="h-4 w-4" />
-          } : null,
-          isAdmin && viewingUser ? {
-            label: 'Update Profile',
-            onClick: () => {
-              handleProfileUpdate(viewingUser);
-              setDrawerVisible(false);
-            },
-            icon: <User className="h-4 w-4" />
-          } : null
-        ].filter(Boolean)}
+        extraActions={[]}
         fields={viewingUser ? [
           { 
             label: 'Avatar', 
             value: viewingUser.profilePicture,
             render: (picture) => (
-              <Avatar
-                size={80}
-                src={picture}
-                icon={<User className="h-4 w-4" />}
-              />
+              <ShadcnAvatar className="h-20 w-20">
+                <AvatarImage src={resolveImageUrl(picture || '') || undefined} />
+                <AvatarFallback>
+                  <User className="h-10 w-10" />
+                </AvatarFallback>
+              </ShadcnAvatar>
             )
           },
           { label: 'Full Name', value: viewingUser.name },
@@ -951,18 +790,22 @@ const Users = () => {
             label: 'Role', 
             value: viewingUser.role,
             render: (role) => {
-              const colors = { admin: 'red', manager: '#166534', staff: 'green' };
-              const icons = { admin: <Crown className="h-4 w-4" />, manager: <Settings className="h-4 w-4" />, staff: <User className="h-4 w-4" /> };
-              return <Tag color={colors[role]} icon={icons[role]}>{role.toUpperCase()}</Tag>;
+              const icons = { admin: <Crown className="h-3 w-3 mr-1" />, manager: <Settings className="h-3 w-3 mr-1" />, staff: <User className="h-3 w-3 mr-1" /> };
+              return (
+                <Badge variant="secondary" className="gap-1">
+                  {icons[role]}
+                  {role?.toUpperCase() || '—'}
+                </Badge>
+              );
             }
           },
           { 
             label: 'Status', 
             value: viewingUser.isActive,
             render: (isActive) => (
-              <Tag color={isActive ? 'green' : 'red'}>
+              <Badge variant={isActive ? 'default' : 'destructive'}>
                 {isActive ? 'ACTIVE' : 'INACTIVE'}
-              </Tag>
+              </Badge>
             )
           },
           { 
@@ -990,13 +833,14 @@ const Users = () => {
           setGeneratedInviteLink(null);
         }
       }}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="sm:w-[var(--modal-w-lg)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>Invite New User</DialogTitle>
             <DialogDescription>
               Generate an invite link to share with a new user
             </DialogDescription>
           </DialogHeader>
+          <DialogBody>
         {!generatedInviteLink ? (
             <Form {...inviteForm}>
               <form onSubmit={inviteForm.handleSubmit(onInviteSubmit)} className="space-y-4">
@@ -1054,13 +898,13 @@ const Users = () => {
                   </AlertDescription>
                 </Alert>
                 <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => {
+                  <SecondaryButton type="button" onClick={() => {
                   setInviteModalVisible(false);
                   setGeneratedInviteLink(null);
-                }}>
+                }} disabled={submittingInvite}>
                   Cancel
-                </Button>
-                  <Button type="submit">
+                </SecondaryButton>
+                  <Button type="submit" loading={submittingInvite}>
                     Generate Invite Link
                   </Button>
                 </DialogFooter>
@@ -1086,7 +930,7 @@ const Users = () => {
                 onClick={handleCopyInviteLink}
               >
                   <Copy className="h-4 w-4 mr-2" />
-                Copy
+                Copy invitation link
               </Button>
               </div>
               <DialogFooter>
@@ -1100,6 +944,7 @@ const Users = () => {
               </DialogFooter>
           </div>
         )}
+          </DialogBody>
         </DialogContent>
       </Dialog>
     </div>

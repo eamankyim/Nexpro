@@ -20,6 +20,10 @@ const InventoryItem = require('./InventoryItem');
 const InventoryMovement = require('./InventoryMovement');
 const Lead = require('./Lead');
 const LeadActivity = require('./LeadActivity');
+const CustomerActivity = require('./CustomerActivity');
+const QuoteActivity = require('./QuoteActivity');
+const SaleActivity = require('./SaleActivity');
+const ExpenseActivity = require('./ExpenseActivity');
 const Setting = require('./Setting');
 const Employee = require('./Employee');
 const EmployeeDocument = require('./EmployeeDocument');
@@ -40,6 +44,7 @@ const Sale = require('./Sale');
 const SaleItem = require('./SaleItem');
 const ProductVariant = require('./ProductVariant');
 const Barcode = require('./Barcode');
+const ProductCategory = require('./ProductCategory');
 // Pharmacy Management Models
 const Pharmacy = require('./Pharmacy');
 const Drug = require('./Drug');
@@ -47,6 +52,10 @@ const Prescription = require('./Prescription');
 const PrescriptionItem = require('./PrescriptionItem');
 const DrugInteraction = require('./DrugInteraction');
 const ExpiryAlert = require('./ExpiryAlert');
+// Retail Intelligence Models
+const FootTraffic = require('./FootTraffic');
+const StockCount = require('./StockCount');
+const StockCountItem = require('./StockCountItem');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -84,6 +93,15 @@ Lead.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
 Tenant.hasMany(LeadActivity, { foreignKey: 'tenantId', as: 'leadActivities' });
 LeadActivity.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+Tenant.hasMany(CustomerActivity, { foreignKey: 'tenantId', as: 'customerActivities' });
+CustomerActivity.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+Tenant.hasMany(QuoteActivity, { foreignKey: 'tenantId', as: 'quoteActivities' });
+QuoteActivity.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+Tenant.hasMany(SaleActivity, { foreignKey: 'tenantId', as: 'saleActivities' });
+SaleActivity.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
 Tenant.hasMany(Setting, { foreignKey: 'tenantId', as: 'settings' });
 Setting.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -230,10 +248,28 @@ InventoryMovement.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser'
 
 User.hasMany(Lead, { foreignKey: 'assignedTo', as: 'assignedLeads' });
 Lead.belongsTo(User, { foreignKey: 'assignedTo', as: 'assignee' });
+User.hasMany(Lead, { foreignKey: 'createdBy', as: 'createdLeads' });
+Lead.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
 
 Lead.hasMany(LeadActivity, { foreignKey: 'leadId', as: 'activities' });
 LeadActivity.belongsTo(Lead, { foreignKey: 'leadId', as: 'lead' });
 LeadActivity.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
+
+Customer.hasMany(CustomerActivity, { foreignKey: 'customerId', as: 'activities' });
+CustomerActivity.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
+CustomerActivity.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
+
+Quote.hasMany(QuoteActivity, { foreignKey: 'quoteId', as: 'activities' });
+QuoteActivity.belongsTo(Quote, { foreignKey: 'quoteId', as: 'quote' });
+QuoteActivity.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
+
+Sale.hasMany(SaleActivity, { foreignKey: 'saleId', as: 'activities' });
+SaleActivity.belongsTo(Sale, { foreignKey: 'saleId', as: 'sale' });
+SaleActivity.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
+
+Expense.hasMany(ExpenseActivity, { foreignKey: 'expenseId', as: 'activities' });
+ExpenseActivity.belongsTo(Expense, { foreignKey: 'expenseId', as: 'expense' });
+ExpenseActivity.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
 
 Customer.hasMany(Lead, { foreignKey: 'convertedCustomerId', as: 'relatedLeads' });
 Lead.belongsTo(Customer, { foreignKey: 'convertedCustomerId', as: 'convertedCustomer' });
@@ -306,12 +342,15 @@ Tenant.hasMany(SabitoTenantMapping, {
 Tenant.hasMany(Shop, { foreignKey: 'tenantId', as: 'shops' });
 Shop.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
+Tenant.hasMany(ProductCategory, { foreignKey: 'tenantId', as: 'productCategories' });
+ProductCategory.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
 Tenant.hasMany(Product, { foreignKey: 'tenantId', as: 'products' });
 Product.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 Product.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
 Shop.hasMany(Product, { foreignKey: 'shopId', as: 'products' });
-Product.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' });
-InventoryCategory.hasMany(Product, { foreignKey: 'categoryId', as: 'products' });
+Product.belongsTo(ProductCategory, { foreignKey: 'categoryId', as: 'category' });
+ProductCategory.hasMany(Product, { foreignKey: 'categoryId', as: 'products' });
 
 Product.hasMany(ProductVariant, { foreignKey: 'productId', as: 'variants' });
 ProductVariant.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
@@ -382,6 +421,14 @@ Drug.hasMany(ExpiryAlert, { foreignKey: 'drugId', as: 'expiryAlerts' });
 ExpiryAlert.belongsTo(User, { foreignKey: 'acknowledgedBy', as: 'acknowledger' });
 User.hasMany(ExpiryAlert, { foreignKey: 'acknowledgedBy', as: 'acknowledgedAlerts' });
 
+// Foot Traffic Relationships
+Tenant.hasMany(FootTraffic, { foreignKey: 'tenantId', as: 'footTraffic' });
+FootTraffic.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+FootTraffic.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Shop.hasMany(FootTraffic, { foreignKey: 'shopId', as: 'footTraffic' });
+FootTraffic.belongsTo(User, { foreignKey: 'recordedBy', as: 'recorder' });
+User.hasMany(FootTraffic, { foreignKey: 'recordedBy', as: 'recordedTraffic' });
+
 module.exports = {
   User,
   Customer,
@@ -403,6 +450,9 @@ module.exports = {
   InventoryMovement,
   Lead,
   LeadActivity,
+  CustomerActivity,
+  QuoteActivity,
+  SaleActivity,
   Setting,
   Employee,
   EmployeeDocument,
@@ -420,6 +470,7 @@ module.exports = {
   SabitoTenantMapping,
   // Shop Management
   Shop,
+  ProductCategory,
   Product,
   Sale,
   SaleItem,
@@ -431,7 +482,11 @@ module.exports = {
   Prescription,
   PrescriptionItem,
   DrugInteraction,
-  ExpiryAlert
+  ExpiryAlert,
+  // Retail Intelligence
+  FootTraffic,
+  StockCount,
+  StockCountItem
 };
 
 

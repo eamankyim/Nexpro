@@ -8,6 +8,7 @@ const {
 } = require('../models');
 const accountingService = require('../services/accountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { getPagination } = require('../utils/paginationUtils');
 
 const getPayrollSettings = async (tenantId) => {
   const payrollSetting = await Setting.findOne({
@@ -44,9 +45,7 @@ const computeEmployeePayroll = (employee, settings) => {
 
 exports.getPayrollRuns = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 20;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req, { defaultPageSize: 20 });
 
     const where = applyTenantFilter(req.tenantId, {});
     if (req.query.status && req.query.status !== 'all') {

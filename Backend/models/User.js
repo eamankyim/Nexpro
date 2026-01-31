@@ -54,6 +54,17 @@ const User = sequelize.define('User', {
     allowNull: true,
     unique: true,
     field: 'sabito_user_id'
+  },
+  failedLoginAttempts: {
+    type: DataTypes.INTEGER,
+    allowNull: false,
+    defaultValue: 0,
+    field: 'failed_login_attempts'
+  },
+  lockoutUntil: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'lockout_until'
   }
 }, {
   timestamps: true,
@@ -61,13 +72,15 @@ const User = sequelize.define('User', {
   hooks: {
     beforeCreate: async (user) => {
       if (user.password) {
-        const salt = await bcrypt.genSalt(10);
+        const rounds = parseInt(process.env.BCRYPT_ROUNDS, 10) || 10;
+        const salt = await bcrypt.genSalt(rounds);
         user.password = await bcrypt.hash(user.password, salt);
       }
     },
     beforeUpdate: async (user) => {
       if (user.changed('password')) {
-        const salt = await bcrypt.genSalt(10);
+        const rounds = parseInt(process.env.BCRYPT_ROUNDS, 10) || 10;
+        const salt = await bcrypt.genSalt(rounds);
         user.password = await bcrypt.hash(user.password, salt);
       }
     }
@@ -78,9 +91,63 @@ User.prototype.comparePassword = async function(candidatePassword) {
   return await bcrypt.compare(candidatePassword, this.password);
 };
 
+/**
+ * Check if the account is currently locked
+ * @returns {boolean}
+ */
+User.prototype.isLocked = function() {
+  if (!this.lockoutUntil) return false;
+  return new Date(this.lockoutUntil) > new Date();
+};
+
+/**
+ * Get remaining lockout time in seconds
+ * @returns {number}
+ */
+User.prototype.getLockoutRemainingSeconds = function() {
+  if (!this.lockoutUntil) return 0;
+  const remaining = new Date(this.lockoutUntil) - new Date();
+  return Math.max(0, Math.ceil(remaining / 1000));
+};
+
+/**
+ * Increment failed login attempts and lock account if threshold reached
+ * @param {number} maxAttempts - Maximum attempts before lockout (default: 5)
+ * @param {number} lockoutMinutes - Lockout duration in minutes (default: 15)
+ */
+User.prototype.incrementFailedAttempts = async function(maxAttempts = 5, lockoutMinutes = 15) {
+  const attempts = (this.failedLoginAttempts || 0) + 1;
+  
+  const updates = {
+    failedLoginAttempts: attempts,
+  };
+  
+  // Lock account if threshold reached
+  if (attempts >= maxAttempts) {
+    updates.lockoutUntil = new Date(Date.now() + lockoutMinutes * 60 * 1000);
+  }
+  
+  await this.update(updates);
+  return attempts;
+};
+
+/**
+ * Reset failed login attempts after successful login
+ */
+User.prototype.resetFailedAttempts = async function() {
+  await this.update({
+    failedLoginAttempts: 0,
+    lockoutUntil: null,
+    lastLogin: new Date(),
+  });
+};
+
 User.prototype.toJSON = function() {
   const values = { ...this.get() };
   delete values.password;
+  // Also hide lockout info from JSON output
+  delete values.failedLoginAttempts;
+  delete values.lockoutUntil;
   return values;
 };
 

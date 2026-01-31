@@ -1,6 +1,6 @@
 # Component Structure Template
 
-This document outlines the standard structure for React components in the Nexpro application.
+This document outlines the standard structure for React components in the ShopWISE application.
 
 ## Standard Component Structure
 

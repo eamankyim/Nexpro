@@ -89,6 +89,11 @@ const authService = {
     return await api.put('/auth/updatepassword', passwordData);
   },
 
+  // Set initial password (admin-created users; no current password when isFirstLogin)
+  setInitialPassword: async (newPassword) => {
+    return await api.put('/auth/set-initial-password', { newPassword });
+  },
+
   // Logout
   logout: () => {
     clearAuthStorage();

@@ -2,9 +2,10 @@ import { useMemo, useState } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
 // Removed Ant Design imports - using shadcn/ui only
-import { Plus, RefreshCw, Eye, Loader2, MinusCircle } from 'lucide-react';
+import { Plus, RefreshCw, Eye, Loader2, MinusCircle, BookOpen, FileText, Calculator, TrendingUp } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import accountingService from '../services/accountingService';
@@ -14,9 +15,13 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import StatusChip from '../components/StatusChip';
 import { Separator } from '@/components/ui/separator';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import TableSkeleton from '../components/TableSkeleton';
+import DashboardTable from '../components/DashboardTable';
+import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -29,6 +34,7 @@ import {
 } from '@/components/ui/select';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -98,6 +104,7 @@ const accountTypeLabels = {
 
 const Accounting = () => {
   const queryClient = useQueryClient();
+  const { isMobile } = useResponsive();
   const [accountModalVisible, setAccountModalVisible] = useState(false);
   const [journalModalVisible, setJournalModalVisible] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState(null);
@@ -171,10 +178,6 @@ const Accounting = () => {
     }
   });
 
-  const accounts = accountsQuery.data?.data || [];
-  const journalEntries = journalQuery.data?.data || [];
-  const trialBalance = trialBalanceQuery.data?.data || [];
-  const totals = trialBalanceQuery.data?.summary || { debit: 0, credit: 0 };
 
   const handleViewAccount = (account) => {
     setSelectedAccount(account);
@@ -199,55 +202,48 @@ const Accounting = () => {
     createJournalMutation.mutate(data);
   };
 
-  const accountColumns = useMemo(() => [
+  // Table columns for DashboardTable
+  const accountTableColumns = useMemo(() => [
     {
-      title: 'Code',
-      dataIndex: 'code',
       key: 'code',
-      width: 120
+      label: 'Code',
+      render: (_, record) => <span className="font-medium text-black">{record?.code || '—'}</span>
     },
     {
-      title: 'Name',
-      dataIndex: 'name',
-      key: 'name'
+      key: 'name',
+      label: 'Name',
+      render: (_, record) => <span className="text-black">{record?.name || '—'}</span>
     },
     {
-      title: 'Type',
-      dataIndex: 'type',
       key: 'type',
-      render: (value) => accountTypeLabels[value] || value
+      label: 'Type',
+      render: (_, record) => <span className="text-black">{accountTypeLabels[record?.type] || record?.type || '—'}</span>
     },
     {
-      title: 'Category',
-      dataIndex: 'category',
       key: 'category',
-      render: (value) => value || '—'
+      label: 'Category',
+      render: (_, record) => <span className="text-black">{record?.category || '—'}</span>
     },
     {
-      title: 'Active',
-      dataIndex: 'isActive',
       key: 'isActive',
-      render: (value) => <Badge className={value ? 'bg-green-600' : 'bg-red-600'}>{value ? 'Active' : 'Inactive'}</Badge>
+      label: 'Active',
+      render: (_, record) => <StatusChip status={record?.isActive ? 'active_flag' : 'inactive_flag'} />
     },
     {
-      title: 'Actions',
       key: 'actions',
-      width: 100,
+      label: 'Actions',
       render: (_, record) => (
         <Button
           variant="ghost"
           size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleViewAccount(record);
-          }}
+          onClick={() => handleViewAccount(record)}
         >
           <Eye className="h-4 w-4 mr-2" />
           View
         </Button>
       )
     }
-  ], []);
+  ], [handleViewAccount]);
 
   const handleViewJournalEntry = async (id) => {
     try {
@@ -328,110 +324,120 @@ const Accounting = () => {
     );
   };
 
-  const journalColumns = useMemo(() => [
+  const journalTableColumns = useMemo(() => [
     {
-      title: 'Date',
-      dataIndex: 'entryDate',
       key: 'entryDate',
-      render: (value) => dayjs(value).format('MMM DD, YYYY')
+      label: 'Date',
+      render: (_, record) => <span className="text-black">{record?.entryDate ? dayjs(record.entryDate).format('MMM DD, YYYY') : '—'}</span>
     },
     {
-      title: 'Reference',
-      dataIndex: 'reference',
-      key: 'reference'
+      key: 'reference',
+      label: 'Reference',
+      render: (_, record) => <span className="text-black">{record?.reference || '—'}</span>
     },
     {
-      title: 'Description',
-      dataIndex: 'description',
       key: 'description',
-      ellipsis: true
+      label: 'Description',
+      render: (_, record) => <span className="text-black">{record?.description || '—'}</span>
     },
     {
-      title: 'Status',
-      dataIndex: 'status',
       key: 'status',
-      render: (value) => <Badge className={value === 'posted' ? 'bg-green-600' : 'bg-gray-600'}>{value.toUpperCase()}</Badge>
+      label: 'Status',
+      render: (_, record) => <StatusChip status={record?.status || 'draft'} />
     },
     {
-      title: 'Lines',
-      dataIndex: 'lines',
       key: 'lines',
-      render: (lines) => (
-        <div>
-          {lines && lines.length > 0 ? (
-            <>
-              {lines.slice(0, 2).map((line) => (
-                <div key={line.id}>
-                  <strong>{line.account?.code}</strong> — {line.account?.name}{' '}
-                  <span className="text-muted-foreground">
-                    {line.debit > 0 ? `Debit GHS ${parseFloat(line.debit).toFixed(2)}` : `Credit GHS ${parseFloat(line.credit).toFixed(2)}`}
+      label: 'Lines',
+      render: (_, record) => {
+        const lines = record?.lines || [];
+        return (
+          <div>
+            {lines.length > 0 ? (
+              <>
+                {lines.slice(0, 2).map((line) => (
+                  <div key={line.id} className="text-sm">
+                    <strong className="text-black">{line.account?.code}</strong> — <span className="text-black">{line.account?.name}</span>{' '}
+                    <span className="text-muted-foreground">
+                      {line.debit > 0 ? `Debit GHS ${parseFloat(line.debit).toFixed(2)}` : `Credit GHS ${parseFloat(line.credit).toFixed(2)}`}
+                    </span>
+                  </div>
+                ))}
+                {lines.length > 2 && (
+                  <span className="text-muted-foreground text-xs">
+                    +{lines.length - 2} more line{lines.length - 2 > 1 ? 's' : ''}
                   </span>
-                </div>
-              ))}
-              {lines.length > 2 && (
-                <span className="text-muted-foreground text-xs">
-                  +{lines.length - 2} more line{lines.length - 2 > 1 ? 's' : ''}
-                </span>
-              )}
-            </>
-          ) : (
-            <span className="text-muted-foreground">No lines</span>
-          )}
-        </div>
-      )
+                )}
+              </>
+            ) : (
+              <span className="text-muted-foreground">No lines</span>
+            )}
+          </div>
+        );
+      }
     },
     {
-      title: 'Actions',
       key: 'actions',
-      width: 100,
+      label: 'Actions',
       render: (_, record) => (
         <Button
           variant="ghost"
           size="sm"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleViewJournalEntry(record.id);
-          }}
+          onClick={() => handleViewJournalEntry(record.id)}
         >
           <Eye className="h-4 w-4 mr-2" />
           View
         </Button>
       )
     }
-  ], []);
+  ], [handleViewJournalEntry]);
 
-  const trialColumns = useMemo(() => [
+  const trialTableColumns = useMemo(() => [
     {
-      title: 'Account',
       key: 'account',
+      label: 'Account',
       render: (_, record) => (
         <div>
-          <strong>{record.account?.code}</strong> — {record.account?.name}
+          <strong className="text-black">{record?.account?.code}</strong> — <span className="text-black">{record?.account?.name}</span>
         </div>
       )
     },
     {
-      title: 'Debit',
-      dataIndex: 'debit',
       key: 'debit',
-      align: 'right',
-      render: (value) => (value ? `GHS ${parseFloat(value).toFixed(2)}` : '—')
+      label: 'Debit',
+      render: (_, record) => <span className="text-black text-right">{record?.debit ? `GHS ${parseFloat(record.debit).toFixed(2)}` : '—'}</span>
     },
     {
-      title: 'Credit',
-      dataIndex: 'credit',
       key: 'credit',
-      align: 'right',
-      render: (value) => (value ? `GHS ${parseFloat(value).toFixed(2)}` : '—')
+      label: 'Credit',
+      render: (_, record) => <span className="text-black text-right">{record?.credit ? `GHS ${parseFloat(record.credit).toFixed(2)}` : '—'}</span>
     },
     {
-      title: 'Balance',
-      dataIndex: 'balance',
       key: 'balance',
-      align: 'right',
-      render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`
+      label: 'Balance',
+      render: (_, record) => <span className="text-black font-medium text-right">GHS {parseFloat(record?.balance || 0).toFixed(2)}</span>
     }
   ], []);
+
+  const accounts = accountsQuery.data?.data || [];
+  const journalEntries = journalQuery.data?.data || [];
+  const trialBalance = trialBalanceQuery.data?.data || [];
+
+  // Calculate summary stats
+  const summaryStats = useMemo(() => {
+    const totalAccounts = accounts.length;
+    const journalEntriesCount = journalEntries.length;
+    const activeAccounts = accounts.filter(a => a.isActive).length;
+    const postedEntries = journalEntries.filter(e => e.status === 'posted').length;
+    
+    return {
+      totals: {
+        totalAccounts,
+        journalEntries: journalEntriesCount,
+        activeAccounts,
+        postedEntries
+      }
+    };
+  }, [accounts, journalEntries]);
 
   const accountOptions = accounts.map((account) => ({
     label: `${account.code} — ${account.name}`,
@@ -439,23 +445,29 @@ const Accounting = () => {
   }));
 
 
+  const totals = useMemo(() => {
+    const debit = trialBalance.reduce((sum, item) => sum + parseFloat(item.debit || 0), 0);
+    const credit = trialBalance.reduce((sum, item) => sum + parseFloat(item.credit || 0), 0);
+    return { debit, credit };
+  }, [trialBalance]);
+
   return (
-    <div>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Accounting</h1>
-          <p className="text-muted-foreground">Manage your chart of accounts, journal entries, and trial balance.</p>
-        </div>
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <WelcomeSection
+          welcomeMessage="Accounting"
+          subText="Manage your chart of accounts, journal entries, and trial balance."
+        />
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => {
             queryClient.invalidateQueries({ queryKey: ['accounts'] });
             queryClient.invalidateQueries({ queryKey: ['journalEntries'] });
             queryClient.invalidateQueries({ queryKey: ['trialBalance'] });
-          }}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
+          }} size={isMobile ? "icon" : "default"}>
+            <RefreshCw className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Refresh</span>}
           </Button>
-          <Button onClick={handleOpenAccountModal}>
+          <Button variant="secondary" onClick={handleOpenAccountModal}>
             <Plus className="h-4 w-4 mr-2" />
             New Account
           </Button>
@@ -466,6 +478,37 @@ const Accounting = () => {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <DashboardStatsCard
+          title="Total Accounts"
+          value={summaryStats?.totals?.totalAccounts || 0}
+          icon={BookOpen}
+          iconBgColor="rgba(22, 101, 52, 0.1)"
+          iconColor="#166534"
+        />
+        <DashboardStatsCard
+          title="Journal Entries"
+          value={summaryStats?.totals?.journalEntries || 0}
+          icon={FileText}
+          iconBgColor="rgba(59, 130, 246, 0.1)"
+          iconColor="#3b82f6"
+        />
+        <DashboardStatsCard
+          title="Active Accounts"
+          value={summaryStats?.totals?.activeAccounts || 0}
+          icon={TrendingUp}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+        />
+        <DashboardStatsCard
+          title="Posted Entries"
+          value={summaryStats?.totals?.postedEntries || 0}
+          icon={Calculator}
+          iconBgColor="rgba(249, 115, 22, 0.1)"
+          iconColor="#f97316"
+        />
+      </div>
+
       <Tabs defaultValue="accounts">
         <TabsList>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
@@ -473,63 +516,70 @@ const Accounting = () => {
           <TabsTrigger value="trial">Trial Balance</TabsTrigger>
         </TabsList>
         <TabsContent value="accounts">
-          {accountsQuery.isLoading ? (
-            <Card>
-              <div className="p-4">
-                <TableSkeleton rows={8} cols={5} />
-              </div>
-            </Card>
-          ) : (
-            renderTable(accountColumns, accounts, 'id')
-          )}
+          <DashboardTable
+            data={accounts}
+            columns={accountTableColumns}
+            loading={accountsQuery.isLoading}
+            title={null}
+            emptyIcon={<BookOpen className="h-12 w-12 text-muted-foreground" />}
+            emptyDescription="No accounts found"
+            pageSize={10}
+            onPageChange={(newPagination) => {
+              // Handle pagination if needed
+            }}
+            externalPagination={{
+              current: 1,
+              total: accounts.length
+            }}
+          />
         </TabsContent>
         <TabsContent value="journal">
-          {journalQuery.isLoading ? (
-            <Card>
-              <div className="p-4">
-                <TableSkeleton rows={8} cols={5} />
-              </div>
-            </Card>
-          ) : (
-            renderTable(journalColumns, journalEntries, 'id')
-          )}
+          <DashboardTable
+            data={journalEntries}
+            columns={journalTableColumns}
+            loading={journalQuery.isLoading}
+            title={null}
+            emptyIcon={<FileText className="h-12 w-12 text-muted-foreground" />}
+            emptyDescription="No journal entries found"
+            pageSize={10}
+            onPageChange={(newPagination) => {
+              // Handle pagination if needed
+            }}
+            externalPagination={{
+              current: 1,
+              total: journalEntries.length
+            }}
+          />
         </TabsContent>
         <TabsContent value="trial">
-          {trialBalanceQuery.isLoading ? (
-            <Card>
-              <div className="p-4">
-                <TableSkeleton rows={8} cols={4} />
+          <Card>
+            <DashboardTable
+              data={trialBalance}
+              columns={trialTableColumns}
+              loading={trialBalanceQuery.isLoading}
+              title={null}
+              emptyIcon={<Calculator className="h-12 w-12 text-muted-foreground" />}
+              emptyDescription="No trial balance data"
+              pageSize={1000}
+              onPageChange={() => {}}
+              externalPagination={{
+                current: 1,
+                total: trialBalance.length
+              }}
+            />
+            {trialBalance.length > 0 && (
+              <div className="border-t p-4">
+                <div className="flex justify-between items-center">
+                  <strong className="text-black">Total</strong>
+                  <div className="flex gap-8">
+                    <strong className="text-black">GHS {parseFloat(totals.debit || 0).toFixed(2)}</strong>
+                    <strong className="text-black">GHS {parseFloat(totals.credit || 0).toFixed(2)}</strong>
+                    <span className="text-black">—</span>
+                  </div>
+                </div>
               </div>
-            </Card>
-          ) : (
-            <>
-              {renderTable(trialColumns, trialBalance, 'id', {
-                pagination: false,
-                summary: () => (
-                  <>
-                    <TableCell><strong>Total</strong></TableCell>
-                    <TableCell style={{ textAlign: 'right' }}>
-                      <strong>GHS {parseFloat(totals.debit || 0).toFixed(2)}</strong>
-                    </TableCell>
-                    <TableCell style={{ textAlign: 'right' }}>
-                      <strong>GHS {parseFloat(totals.credit || 0).toFixed(2)}</strong>
-                    </TableCell>
-                    <TableCell />
-                  </>
-                )
-              })}
-              <Separator className="my-6" />
-              <Descriptions column={2}>
-                <DescriptionItem label="Total Debit">GHS {parseFloat(totals.debit || 0).toFixed(2)}</DescriptionItem>
-                <DescriptionItem label="Total Credit">GHS {parseFloat(totals.credit || 0).toFixed(2)}</DescriptionItem>
-                <DescriptionItem label="Balanced?">
-                  <Badge className={Math.abs((totals.debit || 0) - (totals.credit || 0)) < 0.01 ? 'bg-green-600' : 'bg-red-600'}>
-                    {Math.abs((totals.debit || 0) - (totals.credit || 0)) < 0.01 ? 'Yes' : 'No'}
-                  </Badge>
-                </DescriptionItem>
-              </Descriptions>
-            </>
-          )}
+            )}
+          </Card>
         </TabsContent>
       </Tabs>
 
@@ -539,7 +589,7 @@ const Accounting = () => {
           setSelectedAccount(null);
         }
       }}>
-        <SheetContent className="w-full sm:max-w-[520px]">
+        <SheetContent className="w-full sm:w-[min(92vw,620px)] sm:max-w-[min(92vw,620px)]">
           <SheetHeader>
             <SheetTitle>
               {selectedAccount
@@ -578,7 +628,7 @@ const Accounting = () => {
           setSelectedJournalEntry(null);
         }
       }}>
-        <SheetContent className="w-full sm:max-w-[1000px]">
+        <SheetContent className="w-full sm:w-[min(92vw,1140px)] sm:max-w-[min(92vw,1140px)]">
           <SheetHeader>
             <SheetTitle>Journal Entry Details</SheetTitle>
           </SheetHeader>
@@ -592,9 +642,7 @@ const Accounting = () => {
                   {dayjs(selectedJournalEntry.entryDate).format('MMM DD, YYYY')}
                 </DescriptionItem>
                 <DescriptionItem label="Status">
-                  <Badge className={selectedJournalEntry.status === 'posted' ? 'bg-green-600' : 'bg-gray-600'}>
-                    {selectedJournalEntry.status?.toUpperCase() || 'DRAFT'}
-                  </Badge>
+                  <StatusChip status={selectedJournalEntry.status || 'draft'} />
                 </DescriptionItem>
                 <DescriptionItem label="Source">
                   {selectedJournalEntry.source || '—'}
@@ -706,13 +754,14 @@ const Accounting = () => {
       <Dialog open={accountModalVisible} onOpenChange={(open) => {
         if (!open) setAccountModalVisible(false);
       }}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="sm:w-[var(--modal-w-lg)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>New Account</DialogTitle>
             <DialogDescription>
               Create a new chart of accounts entry
             </DialogDescription>
           </DialogHeader>
+          <DialogBody>
           <Form {...accountForm}>
             <form onSubmit={accountForm.handleSubmit(onSubmitAccount)} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -773,7 +822,7 @@ const Accounting = () => {
                   name="category"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Category</FormLabel>
+                      <FormLabel>Category (optional)</FormLabel>
                       <FormControl>
                         <Input placeholder="Current Assets / Operating Expenses" {...field} />
                       </FormControl>
@@ -787,7 +836,7 @@ const Accounting = () => {
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Description</FormLabel>
+                    <FormLabel>Description (optional)</FormLabel>
                     <FormControl>
                       <Textarea rows={3} placeholder="Optional description of the account" {...field} />
                     </FormControl>
@@ -806,19 +855,21 @@ const Accounting = () => {
               </DialogFooter>
             </form>
           </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
 
       <Dialog open={journalModalVisible} onOpenChange={(open) => {
         if (!open) setJournalModalVisible(false);
       }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:w-[var(--modal-w-2xl)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>New Journal Entry</DialogTitle>
             <DialogDescription>
               Create a new journal entry with balanced debit and credit lines
             </DialogDescription>
           </DialogHeader>
+          <DialogBody>
           <Form {...journalForm}>
             <form onSubmit={journalForm.handleSubmit(onSubmitJournal)} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -827,7 +878,7 @@ const Accounting = () => {
                   name="reference"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Reference</FormLabel>
+                      <FormLabel>Reference (optional)</FormLabel>
                       <FormControl>
                         <Input placeholder="AUTOMATIC" {...field} />
                       </FormControl>
@@ -857,7 +908,7 @@ const Accounting = () => {
                 name="description"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Description</FormLabel>
+                    <FormLabel>Description (optional)</FormLabel>
                     <FormControl>
                       <Textarea rows={3} placeholder="Narration" {...field} />
                     </FormControl>
@@ -984,13 +1035,13 @@ const Accounting = () => {
                 <Button type="button" variant="outline" onClick={() => setJournalModalVisible(false)}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={createJournalMutation.isLoading}>
-                  {createJournalMutation.isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <Button type="submit" loading={createJournalMutation.isLoading}>
                   Create Journal Entry
                 </Button>
               </DialogFooter>
             </form>
           </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
     </div>

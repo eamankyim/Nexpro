@@ -1,4 +1,4 @@
-import { message } from 'antd';
+import { toast } from 'react-toastify';
 
 /**
  * Extracts a clear, user-friendly error message from an error object
@@ -76,51 +76,71 @@ export const getErrorMessage = (error, defaultMessage = 'An error occurred. Plea
 };
 
 /**
- * Shows a success toast message
+ * Shows a success toast (react-toastify, bottom-right, green icon + progress bar)
  * @param {string} msg - Success message
  * @param {number} duration - Duration in seconds (default: 3)
  */
 export const showSuccess = (msg, duration = 3) => {
-  message.success(msg, duration);
+  toast.success(msg, {
+    autoClose: duration > 0 ? duration * 1000 : 5000,
+    hideProgressBar: false,
+    closeButton: true,
+  });
 };
 
 /**
- * Shows an error toast message with clear error extraction
+ * Shows an error toast with clear error extraction (react-toastify, red icon + progress bar)
  * @param {Error|string} error - Error object or error message
  * @param {string} defaultMessage - Default message if error extraction fails
  * @param {number} duration - Duration in seconds (default: 5)
  */
 export const showError = (error, defaultMessage = 'An error occurred. Please try again.', duration = 5) => {
   const errorMessage = getErrorMessage(error, defaultMessage);
-  message.error(errorMessage, duration);
+  toast.error(errorMessage, {
+    autoClose: duration > 0 ? duration * 1000 : 5000,
+    hideProgressBar: false,
+    closeButton: true,
+  });
 };
 
 /**
- * Shows a warning toast message
+ * Shows a warning toast (react-toastify, yellow/amber icon + progress bar)
  * @param {string} msg - Warning message
  * @param {number} duration - Duration in seconds (default: 4)
  */
 export const showWarning = (msg, duration = 4) => {
-  message.warning(msg, duration);
+  toast.warn(msg, {
+    autoClose: duration > 0 ? duration * 1000 : 5000,
+    hideProgressBar: false,
+    closeButton: true,
+  });
 };
 
 /**
- * Shows an info toast message
+ * Shows an info toast (react-toastify, blue icon + progress bar)
  * @param {string} msg - Info message
  * @param {number} duration - Duration in seconds (default: 3)
  */
 export const showInfo = (msg, duration = 3) => {
-  message.info(msg, duration);
+  toast.info(msg, {
+    autoClose: duration > 0 ? duration * 1000 : 5000,
+    hideProgressBar: false,
+    closeButton: true,
+  });
 };
 
 /**
- * Shows a loading toast message
+ * Shows a loading toast (react-toastify). Returns a function to dismiss it.
  * @param {string} msg - Loading message
  * @param {number} duration - Duration in seconds (default: 0 = infinite)
- * @returns {Function} - Function to hide the loading message
+ * @returns {Function} - Function to hide the loading toast
  */
 export const showLoading = (msg = 'Loading...', duration = 0) => {
-  return message.loading(msg, duration);
+  const toastId = toast.loading(msg, { autoClose: false, closeButton: true });
+  if (duration > 0) {
+    setTimeout(() => toast.dismiss(toastId), duration * 1000);
+  }
+  return () => toast.dismiss(toastId);
 };
 
 /**

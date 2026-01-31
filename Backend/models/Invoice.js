@@ -48,8 +48,7 @@ const Invoice = sequelize.define('Invoice', {
   sourceType: {
     type: DataTypes.ENUM('job', 'sale', 'prescription'),
     allowNull: false,
-    defaultValue: 'job',
-    comment: 'Source type: job (printing press), sale (shop), prescription (pharmacy)'
+    defaultValue: 'job'
   },
   customerId: {
     type: DataTypes.UUID,
@@ -165,8 +164,7 @@ const Invoice = sequelize.define('Invoice', {
   paymentToken: {
     type: DataTypes.STRING,
     allowNull: true,
-    unique: true,
-    comment: 'Unique token for public payment link'
+    unique: true
   }
 }, {
   timestamps: true,

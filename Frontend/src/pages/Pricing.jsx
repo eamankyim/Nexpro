@@ -1,14 +1,17 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Table, InputNumber, Tag, List, Space } from 'antd';
-import { Plus, MinusCircle, Loader2 } from 'lucide-react';
+import { Plus, MinusCircle, Loader2, Filter, RefreshCw, DollarSign } from 'lucide-react';
 import pricingService from '../services/pricingService';
 import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
+import { useResponsive } from '../hooks/useResponsive';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import DashboardTable from '../components/DashboardTable';
+import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError, showWarning } from '../utils/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,6 +30,7 @@ import {
 } from '@/components/ui/select';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -41,6 +45,12 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 
 // Zod schemas
 const discountTierSchema = z.object({
@@ -93,7 +103,8 @@ const Pricing = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
-  const [filters, setFilters] = useState({ category: '', isActive: '' });
+  const [filters, setFilters] = useState({ category: 'all', isActive: 'all' });
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const { isManager, isAdmin } = useAuth();
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingTemplate, setViewingTemplate] = useState(null);
@@ -101,6 +112,9 @@ const Pricing = () => {
   const [customCategories, setCustomCategories] = useState([]);
   const [showCategoryOtherInput, setShowCategoryOtherInput] = useState(false);
   const [categoryOtherValue, setCategoryOtherValue] = useState('');
+  const [refreshingTemplates, setRefreshingTemplates] = useState(false);
+  const [savingCategory, setSavingCategory] = useState(false);
+  const [deletingTemplate, setDeletingTemplate] = useState(null);
 
   const form = useForm({
     resolver: zodResolver(pricingTemplateSchema),
@@ -137,27 +151,63 @@ const Pricing = () => {
   const fetchTemplates = useCallback(async () => {
     setLoading(true);
     try {
-      console.log('Fetching pricing templates...', { pagination, filters });
-      
-      const cleanFilters = {};
-      if (filters.category) cleanFilters.category = filters.category;
-      if (filters.isActive) cleanFilters.isActive = filters.isActive;
-      
-      const response = await pricingService.getAll({
+      const params = {
         page: pagination.current,
-        limit: pagination.pageSize,
-        ...cleanFilters,
-      });
-      console.log('Pricing templates response:', response);
-      setTemplates(response.data);
-      setPagination(prev => ({ ...prev, total: response.count }));
+        limit: 1000, // Fetch more for client-side filtering
+      };
+      
+      if (filters.category !== 'all') {
+        params.category = filters.category;
+      }
+      if (filters.isActive !== 'all') {
+        params.isActive = filters.isActive === 'true';
+      }
+      
+      const response = await pricingService.getAll(params);
+      setTemplates(response.data || []);
     } catch (error) {
       console.error('Error fetching pricing templates:', error);
       showError(error, 'Failed to load pricing templates');
+      setTemplates([]);
     } finally {
-      setLoading(false);
+      if (isRefresh) {
+        setRefreshingTemplates(false);
+      } else {
+        setLoading(false);
+      }
     }
-  }, [pagination.current, pagination.pageSize, filters]);
+  }, [filters]);
+
+  // Apply client-side filtering
+  const filteredTemplates = useMemo(() => {
+    return templates; // Backend already filters
+  }, [templates, filters]);
+
+  // Paginate filtered templates
+  const paginatedTemplates = useMemo(() => {
+    const start = (pagination.current - 1) * pagination.pageSize;
+    const end = start + pagination.pageSize;
+    return filteredTemplates.slice(start, end);
+  }, [filteredTemplates, pagination.current, pagination.pageSize]);
+
+  const templatesCount = filteredTemplates.length;
+
+  // Calculate summary stats
+  const summaryStats = useMemo(() => {
+    const totalTemplates = templates.length;
+    const activeTemplates = templates.filter(t => t.isActive).length;
+    const inactiveTemplates = templates.filter(t => !t.isActive).length;
+    const categoryCount = new Set(templates.map(t => t.category)).size;
+    
+    return {
+      totals: {
+        totalTemplates,
+        activeTemplates,
+        inactiveTemplates,
+        categoryCount
+      }
+    };
+  }, [templates]);
 
   useEffect(() => {
     fetchTemplates();
@@ -218,11 +268,14 @@ const Pricing = () => {
 
   const handleDelete = async (id) => {
     try {
+      setDeletingTemplate(id);
       await pricingService.delete(id);
       showSuccess('Pricing template deleted successfully');
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       showError(error, 'Failed to delete pricing template');
+    } finally {
+      setDeletingTemplate(null);
     }
   };
 
@@ -320,6 +373,7 @@ const Pricing = () => {
     }
 
     try {
+      setSavingCategory(true);
       const saved = await customDropdownService.saveCustomOption('job_category', categoryOtherValue.trim());
       if (saved) {
         setCustomCategories(prev => {
@@ -336,6 +390,8 @@ const Pricing = () => {
       }
     } catch (error) {
       showError(error, error.response?.data?.error || 'Failed to save custom category');
+    } finally {
+      setSavingCategory(false);
     }
   };
 
@@ -363,71 +419,70 @@ const Pricing = () => {
 
   const materialSizes = ['A4', 'A3', 'A5', 'Letter', 'Legal', 'Tabloid', 'Custom', 'N/A'];
 
-  const columns = [
+  // Table columns for DashboardTable
+  const tableColumns = useMemo(() => [
     {
-      title: 'Name',
-      dataIndex: 'name',
       key: 'name',
-      width: 200,
+      label: 'Name',
+      render: (_, record) => <span className="font-medium text-black">{record?.name || '—'}</span>
     },
     {
-      title: 'Category',
-      dataIndex: 'category',
       key: 'category',
-      render: (category) => <Badge variant="outline">{category}</Badge>,
+      label: 'Category',
+      render: (_, record) => <Badge variant="outline">{record?.category || '—'}</Badge>
     },
     {
-      title: 'Base Price',
-      dataIndex: 'basePrice',
       key: 'basePrice',
-      render: (price) => `GHS ${parseFloat(price || 0).toFixed(2)}`,
+      label: 'Base Price',
+      render: (_, record) => <span className="text-black">GHS {parseFloat(record?.basePrice || 0).toFixed(2)}</span>
     },
     {
-      title: 'Price/Unit',
-      dataIndex: 'pricePerUnit',
       key: 'pricePerUnit',
-      render: (price) => price ? `GHS ${parseFloat(price).toFixed(2)}` : '-',
+      label: 'Price/Unit',
+      render: (_, record) => <span className="text-black">{record?.pricePerUnit ? `GHS ${parseFloat(record.pricePerUnit).toFixed(2)}` : '—'}</span>
     },
     {
-      title: 'Setup Fee',
-      dataIndex: 'setupFee',
       key: 'setupFee',
-      render: (fee) => `GHS ${parseFloat(fee || 0).toFixed(2)}`,
+      label: 'Setup Fee',
+      render: (_, record) => <span className="text-black">GHS {parseFloat(record?.setupFee || 0).toFixed(2)}</span>
     },
     {
-      title: 'Color Type',
-      dataIndex: 'colorType',
       key: 'colorType',
-      render: (type) => {
-        const colors = {
-          black_white: 'default',
-          color: 'blue',
-          spot_color: 'purple'
-        };
+      label: 'Color Type',
+      render: (_, record) => {
         const labels = {
           black_white: 'B&W',
           color: 'Color',
           spot_color: 'Spot Color'
         };
-        return type ? <Badge variant="outline">{labels[type]}</Badge> : '-';
-      },
+        return record?.colorType ? <Badge variant="outline">{labels[record.colorType]}</Badge> : <span className="text-black">—</span>;
+      }
     },
     {
-      title: 'Status',
-      dataIndex: 'isActive',
       key: 'isActive',
-      render: (isActive) => (
-        <Badge variant={isActive ? 'default' : 'destructive'}>
-          {isActive ? 'Active' : 'Inactive'}
+      label: 'Status',
+      render: (_, record) => (
+        <Badge variant={record?.isActive ? 'default' : 'destructive'}>
+          {record?.isActive ? 'Active' : 'Inactive'}
         </Badge>
-      ),
+      )
     },
     {
-      title: 'Actions',
       key: 'actions',
-      render: (_, record) => <ActionColumn onView={handleView} record={record} />,
-    },
-  ];
+      label: 'Actions',
+      render: (_, record) => <ActionColumn onView={handleView} record={record} />
+    }
+  ], [handleView]);
+
+  const handleClearFilters = () => {
+    setFilters({
+      category: 'all',
+      isActive: 'all'
+    });
+    setPagination({ ...pagination, current: 1 });
+  };
+
+  const hasActiveFilters = filters.category !== 'all' || filters.isActive !== 'all';
 
   const isDesignService = category === 'Design Services';
   const isSquareFootPricing = pricingMethod === 'square_foot' || 
@@ -438,35 +493,30 @@ const Pricing = () => {
   );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Pricing Templates</h1>
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <WelcomeSection
+          welcomeMessage="Pricing Templates"
+          subText="Manage pricing templates for your products and services."
+        />
         <div className="flex items-center gap-2">
-          <Select
-            value={filters.category || undefined}
-            onValueChange={(value) => setFilters({ ...filters, category: value || '' })}
+          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+            <Filter className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Filter</span>}
+          </Button>
+          <Button 
+            variant="outline" 
+            onClick={() => fetchTemplates(true)}
+            disabled={refreshingTemplates}
+            size={isMobile ? "icon" : "default"}
           >
-            <SelectTrigger className="w-[200px]">
-              <SelectValue placeholder="Filter by category" />
-            </SelectTrigger>
-            <SelectContent>
-              {getMergedCategoryOptions().map(cat => (
-                <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={filters.isActive || undefined}
-            onValueChange={(value) => setFilters({ ...filters, isActive: value || '' })}
-          >
-            <SelectTrigger className="w-[150px]">
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="true">Active</SelectItem>
-              <SelectItem value="false">Inactive</SelectItem>
-            </SelectContent>
-          </Select>
+            {refreshingTemplates ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {!isMobile && <span className="ml-2">Refresh</span>}
+          </Button>
           {isManager && (
             <Button onClick={handleAdd}>
               <Plus className="h-4 w-4 mr-2" />
@@ -476,15 +526,105 @@ const Pricing = () => {
         </div>
       </div>
 
-      <Table
-        columns={columns}
-        dataSource={templates}
-        rowKey="id"
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <DashboardStatsCard
+          title="Total Templates"
+          value={summaryStats?.totals?.totalTemplates || 0}
+          icon={DollarSign}
+          iconBgColor="rgba(22, 101, 52, 0.1)"
+          iconColor="#166534"
+        />
+        <DashboardStatsCard
+          title="Active"
+          value={summaryStats?.totals?.activeTemplates || 0}
+          icon={DollarSign}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+        />
+        <DashboardStatsCard
+          title="Inactive"
+          value={summaryStats?.totals?.inactiveTemplates || 0}
+          icon={DollarSign}
+          iconBgColor="rgba(107, 114, 128, 0.1)"
+          iconColor="#6b7280"
+        />
+        <DashboardStatsCard
+          title="Categories"
+          value={summaryStats?.totals?.categoryCount || 0}
+          icon={DollarSign}
+          iconBgColor="rgba(59, 130, 246, 0.1)"
+          iconColor="#3b82f6"
+        />
+      </div>
+
+      {/* Main Content Area */}
+      <DashboardTable
+        data={paginatedTemplates}
+        columns={tableColumns}
         loading={loading}
-        pagination={pagination}
-        onChange={(newPagination) => setPagination(newPagination)}
-        scroll={{ x: 1000 }}
+        title={null}
+        emptyIcon={<DollarSign className="h-12 w-12 text-muted-foreground" />}
+        emptyDescription="No pricing templates found"
+        pageSize={pagination.pageSize}
+        onPageChange={(newPagination) => {
+          setPagination(newPagination);
+        }}
+        externalPagination={{
+          current: pagination.current,
+          total: templatesCount
+        }}
       />
+
+      {/* Filter Drawer */}
+      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
+        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+          <SheetHeader className="pb-4 border-b">
+            <SheetTitle>Filter Pricing Templates</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-6 mt-6">
+            <div className="space-y-2">
+              <Label>Category</Label>
+              <Select
+                value={filters.category}
+                onValueChange={(value) => setFilters({ ...filters, category: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Filter by category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {getMergedCategoryOptions().map(cat => (
+                    <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select
+                value={filters.isActive}
+                onValueChange={(value) => setFilters({ ...filters, isActive: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Filter by status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="true">Active</SelectItem>
+                  <SelectItem value="false">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={handleClearFilters} className="w-full">
+                Clear Filters
+              </Button>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <Dialog open={modalVisible} onOpenChange={(open) => {
         setModalVisible(open);
@@ -493,14 +633,14 @@ const Pricing = () => {
           setCategoryOtherValue('');
         }
       }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:w-[var(--modal-w-2xl)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>{editingTemplate ? 'Edit Pricing Template' : 'Add Pricing Template'}</DialogTitle>
             <DialogDescription>
               {editingTemplate ? 'Update the pricing template details' : 'Create a new pricing template'}
             </DialogDescription>
           </DialogHeader>
-          
+          <DialogBody>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
               <div className="grid grid-cols-2 gap-4">
@@ -573,7 +713,7 @@ const Pricing = () => {
                     name="materialType"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Material Type</FormLabel>
+                        <FormLabel>Material Type (optional)</FormLabel>
                         <Select
                           value={field.value}
                           onValueChange={(value) => {
@@ -609,7 +749,7 @@ const Pricing = () => {
                     name="materialSize"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Material Size</FormLabel>
+                        <FormLabel>Material Size (optional)</FormLabel>
                         <Select value={field.value} onValueChange={field.onChange}>
                           <FormControl>
                             <SelectTrigger>
@@ -663,15 +803,21 @@ const Pricing = () => {
                       <FormItem>
                         <FormLabel>Price Per Unit</FormLabel>
                         <FormControl>
-                          <InputNumber
-                            style={{ width: '100%' }}
-                            placeholder="0.00"
-                            prefix="GHS "
-                            min={0}
-                            precision={2}
-                            value={field.value}
-                            onChange={(value) => field.onChange(value)}
-                          />
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
+                            <Input
+                              type="number"
+                              placeholder="0.00"
+                              min={0}
+                              step={0.01}
+                              value={field.value || ''}
+                              onChange={(e) => {
+                                const value = parseFloat(e.target.value) || 0;
+                                field.onChange(value);
+                              }}
+                              className="pl-12"
+                            />
+                          </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -722,17 +868,23 @@ const Pricing = () => {
                     name="pricePerSquareFoot"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Price Per Square Foot</FormLabel>
+                        <FormLabel>Price Per Square Foot (optional)</FormLabel>
                         <FormControl>
-                          <InputNumber
-                            style={{ width: '100%' }}
-                            placeholder="0.00"
-                            prefix="GHS "
-                            min={0}
-                            precision={2}
-                            value={field.value}
-                            onChange={(value) => field.onChange(value)}
-                          />
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
+                            <Input
+                              type="number"
+                              placeholder="0.00"
+                              min={0}
+                              step={0.01}
+                              value={field.value || ''}
+                              onChange={(e) => {
+                                const value = parseFloat(e.target.value) || 0;
+                                field.onChange(value);
+                              }}
+                              className="pl-12"
+                            />
+                          </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -764,7 +916,7 @@ const Pricing = () => {
                       name="colorType"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Color Type</FormLabel>
+                          <FormLabel>Color Type (optional)</FormLabel>
                           <Select value={field.value} onValueChange={field.onChange}>
                             <FormControl>
                               <SelectTrigger>
@@ -809,15 +961,21 @@ const Pricing = () => {
                       <FormItem>
                         <FormLabel>Price Per Unit</FormLabel>
                         <FormControl>
-                          <InputNumber
-                            style={{ width: '100%' }}
-                            placeholder="0.00"
-                            prefix="GHS "
-                            min={0}
-                            precision={2}
-                            value={field.value}
-                            onChange={(value) => field.onChange(value)}
-                          />
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
+                            <Input
+                              type="number"
+                              placeholder="0.00"
+                              min={0}
+                              step={0.01}
+                              value={field.value || ''}
+                              onChange={(e) => {
+                                const value = parseFloat(e.target.value) || 0;
+                                field.onChange(value);
+                              }}
+                              className="pl-12"
+                            />
+                          </div>
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -850,7 +1008,7 @@ const Pricing = () => {
                       name="colorType"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Color Type</FormLabel>
+                          <FormLabel>Color Type (optional)</FormLabel>
                           <Select value={field.value} onValueChange={field.onChange}>
                             <FormControl>
                               <SelectTrigger>
@@ -919,12 +1077,15 @@ const Pricing = () => {
                           <FormItem>
                             <FormLabel>Min Quantity</FormLabel>
                             <FormControl>
-                              <InputNumber
-                                style={{ width: '100%' }}
+                              <Input
+                                type="number"
                                 placeholder="100"
                                 min={1}
-                                value={field.value}
-                                onChange={(value) => field.onChange(value)}
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = parseInt(e.target.value) || 1;
+                                  field.onChange(value);
+                                }}
                               />
                             </FormControl>
                             <FormMessage />
@@ -936,14 +1097,17 @@ const Pricing = () => {
                         name={`discountTiers.${index}.maxQuantity`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Max Quantity</FormLabel>
+                            <FormLabel>Max Quantity (optional)</FormLabel>
                             <FormControl>
-                              <InputNumber
-                                style={{ width: '100%' }}
+                              <Input
+                                type="number"
                                 placeholder="Optional"
                                 min={1}
-                                value={field.value}
-                                onChange={(value) => field.onChange(value)}
+                                value={field.value || ''}
+                                onChange={(e) => {
+                                  const value = e.target.value ? parseInt(e.target.value) : null;
+                                  field.onChange(value);
+                                }}
                               />
                             </FormControl>
                             <FormMessage />
@@ -957,15 +1121,21 @@ const Pricing = () => {
                           <FormItem>
                             <FormLabel>Discount %</FormLabel>
                             <FormControl>
-                              <InputNumber
-                                style={{ width: '100%' }}
-                                placeholder="10"
-                                min={0}
-                                max={100}
-                                value={field.value}
-                                onChange={(value) => field.onChange(value)}
-                                suffix="%"
-                              />
+                              <div className="relative">
+                                <Input
+                                  type="number"
+                                  placeholder="10"
+                                  min={0}
+                                  max={100}
+                                  value={field.value || ''}
+                                  onChange={(e) => {
+                                    const value = parseFloat(e.target.value) || 0;
+                                    field.onChange(value);
+                                  }}
+                                  className="pr-8"
+                                />
+                                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>
+                              </div>
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -1071,13 +1241,13 @@ const Pricing = () => {
                 >
                   Cancel
                 </Button>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
-                  {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Button type="submit" loading={form.formState.isSubmitting}>
                   {editingTemplate ? 'Update' : 'Create'}
                 </Button>
               </DialogFooter>
             </form>
           </Form>
+        </DialogBody>
         </DialogContent>
       </Dialog>
 
@@ -1085,7 +1255,7 @@ const Pricing = () => {
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Pricing Template Details"
-        width={800}
+        width={720}
         onEdit={isManager && viewingTemplate ? () => {
           handleEdit(viewingTemplate);
           setDrawerVisible(false);

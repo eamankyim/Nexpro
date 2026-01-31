@@ -1,21 +1,29 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useDebounce } from '../hooks/useDebounce';
+import { useResponsive } from '../hooks/useResponsive';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Table, Tag, List, Space, Spin, Empty } from 'antd';
-import { Plus, Search, Loader2 } from 'lucide-react';
+import { Plus, Loader2, RefreshCw, Filter, Users, Repeat, XCircle, CheckCircle, Phone, Mail, Briefcase, Pencil } from 'lucide-react';
 import customerService from '../services/customerService';
 import jobService from '../services/jobService';
 import invoiceService from '../services/invoiceService';
 import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
+import { useSmartSearch } from '../context/SmartSearchContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import DrawerSectionCard from '../components/DrawerSectionCard';
 import PhoneNumberInput from '../components/PhoneNumberInput';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
+import DashboardTable from '../components/DashboardTable';
+import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
+import FloatingActionButton from '../components/FloatingActionButton';
 import { showSuccess, showError, showWarning, handleApiError } from '../utils/toast';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
@@ -24,6 +32,9 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import {
   Select,
   SelectContent,
@@ -39,6 +50,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import MobileFormDialog from '../components/MobileFormDialog';
+import FormFieldGrid from '../components/FormFieldGrid';
 import {
   Form,
   FormControl,
@@ -47,48 +60,57 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 
 const customerSchema = z.object({
   name: z.string().min(1, 'Customer name is required'),
+  email: z.string().min(1, 'Email is required').email('Please enter a valid email'),
   company: z.string().optional(),
-  email: z.string().email('Please enter a valid email').optional().or(z.literal('')),
   phone: z.string().optional(),
   address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
-  howDidYouHear: z.string().min(1, 'Please select an option'),
+  howDidYouHear: z.string().optional().or(z.literal('')),
   referralName: z.string().optional(),
-}).refine((data) => {
-  if (data.howDidYouHear === 'Referral') {
-    return data.referralName && data.referralName.trim().length > 0;
-  }
-  return true;
-}, {
-  message: 'Referral name is required when Referral is selected',
-  path: ['referralName'],
 });
 
 const Customers = () => {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearchText = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+  const { isMobile } = useResponsive();
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
-  const [searchText, setSearchText] = useState('');
-  const debouncedSearchText = useDebounce(searchText, 500);
   const { isManager, user, activeTenant } = useAuth();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
   const [showReferralName, setShowReferralName] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingCustomer, setViewingCustomer] = useState(null);
-  const [customerJobs, setCustomerJobs] = useState([]);
-  const [loadingJobs, setLoadingJobs] = useState(false);
   const [customerInvoices, setCustomerInvoices] = useState([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
+  const [loadingCustomerDetails, setLoadingCustomerDetails] = useState(false);
   const [customCustomerSources, setCustomCustomerSources] = useState([]);
   const [showCustomerSourceOtherInput, setShowCustomerSourceOtherInput] = useState(false);
   const [customerSourceOtherValue, setCustomerSourceOtherValue] = useState('');
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [refreshingCustomers, setRefreshingCustomers] = useState(false);
+  const [savingCustomerSource, setSavingCustomerSource] = useState(false);
+  const [filters, setFilters] = useState({
+    isActive: 'true',
+    howDidYouHear: 'all',
+    customerType: 'all', // 'all', 'new', 'returning'
+  });
 
   const form = useForm({
     resolver: zodResolver(customerSchema),
@@ -108,8 +130,17 @@ const Customers = () => {
   const howDidYouHear = form.watch('howDidYouHear');
 
   useEffect(() => {
+    setPageSearchConfig({ scope: 'customers', placeholder: SEARCH_PLACEHOLDERS.CUSTOMERS });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig]);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [searchValue]);
+
+  useEffect(() => {
     fetchCustomers();
-  }, [pagination.current, pagination.pageSize, debouncedSearchText]);
+  }, [pagination.current, pagination.pageSize, debouncedSearchText, filters]);
 
   useEffect(() => {
     const loadCustomOptions = async () => {
@@ -133,29 +164,92 @@ const Customers = () => {
     }
   }, [howDidYouHear, form]);
 
-  const fetchCustomers = async () => {
-    setLoading(true);
+  useEffect(() => {
+    if (searchParams.get('add') === '1') {
+      setEditingCustomer(null);
+      form.reset({
+        name: '',
+        company: '',
+        email: '',
+        phone: '',
+        address: '',
+        howDidYouHear: '',
+        referralName: '',
+      });
+      setShowReferralName(false);
+      setShowCustomerSourceOtherInput(false);
+      setCustomerSourceOtherValue('');
+      setModalVisible(true);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('add');
+        return next;
+      }, { replace: true });
+    }
+  }, [searchParams, setSearchParams, form]);
+
+  // Pull-to-refresh hook
+  const { isRefreshing, pullDistance, containerProps } = usePullToRefresh(
+    () => fetchCustomers(true),
+    { enabled: isMobile }
+  );
+
+  const fetchCustomers = async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshingCustomers(true);
+    } else {
+      setLoading(true);
+    }
     try {
-      const response = await customerService.getAll({
+      const params = {
         page: pagination.current,
         limit: pagination.pageSize,
         search: debouncedSearchText,
-      });
+      };
+      
+      if (filters.isActive !== 'all') {
+        params.isActive = filters.isActive === 'true';
+      }
+      
+      if (filters.howDidYouHear !== 'all') {
+        params.howDidYouHear = filters.howDidYouHear;
+      }
+      
+      const response = await customerService.getAll(params);
       
       // Handle response structure (API interceptor returns response.data)
+      let customersData = [];
       if (response?.success !== false && response?.data) {
-        setCustomers(Array.isArray(response.data) ? response.data : []);
-        setPagination({ ...pagination, total: response.count || 0 });
+        customersData = Array.isArray(response.data) ? response.data : [];
       } else {
         // If response structure is unexpected, try to extract data
-        setCustomers(Array.isArray(response) ? response : []);
-        setPagination({ ...pagination, total: response?.count || 0 });
+        customersData = Array.isArray(response) ? response : [];
       }
+      
+      // Apply client-side filter for customer type (new vs returning)
+      if (filters.customerType !== 'all') {
+        customersData = customersData.filter(customer => {
+          const balance = parseFloat(customer.balance || 0);
+          if (filters.customerType === 'new') {
+            return balance === 0;
+          } else if (filters.customerType === 'returning') {
+            return balance > 0;
+          }
+          return true;
+        });
+      }
+      
+      setCustomers(customersData);
+      setPagination({ ...pagination, total: response?.count || customersData.length });
     } catch (error) {
       handleApiError(error, { context: 'load customers' });
       setCustomers([]);
     } finally {
-      setLoading(false);
+      if (isRefresh) {
+        setRefreshingCustomers(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -205,6 +299,7 @@ const Customers = () => {
     }
 
     try {
+      setSavingCustomerSource(true);
       const saved = await customDropdownService.saveCustomOption('customer_source', customerSourceOtherValue.trim());
       if (saved && saved.value) {
         setCustomCustomerSources(prev => {
@@ -230,23 +325,19 @@ const Customers = () => {
   const handleView = async (customer) => {
     setViewingCustomer(customer);
     setDrawerVisible(true);
+    setLoadingCustomerDetails(true);
     
-    if (isPrintingPress) {
-      setLoadingJobs(true);
-      try {
-        const response = await jobService.getAll({
-          customerId: customer.id,
-          limit: 50
-        });
-        setCustomerJobs(response.data || []);
-      } catch (error) {
-        console.error('Failed to load customer jobs:', error);
-        setCustomerJobs([]);
-      } finally {
-        setLoadingJobs(false);
+    try {
+      // Fetch full customer details with activities
+      const customerResponse = await customerService.getById(customer.id);
+      const fullCustomer = customerResponse?.data || customerResponse;
+      if (fullCustomer) {
+        setViewingCustomer(fullCustomer);
       }
-    } else {
-      setCustomerJobs([]);
+    } catch (error) {
+      console.error('Failed to load customer details:', error);
+    } finally {
+      setLoadingCustomerDetails(false);
     }
 
     setLoadingInvoices(true);
@@ -267,8 +358,14 @@ const Customers = () => {
   const handleCloseDrawer = () => {
     setDrawerVisible(false);
     setViewingCustomer(null);
-    setCustomerJobs([]);
     setCustomerInvoices([]);
+  };
+
+  const handleCreateJob = () => {
+    if (viewingCustomer) {
+      setDrawerVisible(false);
+      navigate(`/jobs?customerId=${viewingCustomer.id}`);
+    }
   };
 
   const handleDelete = async (id) => {
@@ -276,6 +373,7 @@ const Customers = () => {
       await customerService.delete(id);
       showSuccess('Customer deleted successfully');
       fetchCustomers();
+      fetchSummaryStats();
     } catch (error) {
       handleApiError(error, { context: 'delete customer' });
     }
@@ -313,6 +411,7 @@ const Customers = () => {
         setModalVisible(false);
         form.reset();
         fetchCustomers();
+        fetchSummaryStats();
       } else if (response && response.success === false) {
         // Explicit failure response
         const errorMessage = response.error || response.message || 'Operation failed';
@@ -324,6 +423,7 @@ const Customers = () => {
         setModalVisible(false);
         form.reset();
         fetchCustomers();
+        fetchSummaryStats();
       }
     } catch (error) {
       // Only show error if it's a real error (not a false positive from interceptor)
@@ -332,69 +432,107 @@ const Customers = () => {
     }
   };
 
-  const handleSearch = (value) => {
-    setSearchText(value);
-    setPagination({ ...pagination, current: 1 });
-  };
-
-  const columns = [
+  const tableColumns = useMemo(() => [
     {
-      title: 'Name',
-      dataIndex: 'name',
       key: 'name',
+      label: 'Name',
+      render: (_, record) => <span className="font-medium">{record?.name || '—'}</span>
     },
     {
-      title: 'Company',
-      dataIndex: 'company',
       key: 'company',
+      label: 'Company',
+      render: (_, record) => <span className="text-black">{record?.company || '—'}</span>
     },
     {
-      title: 'Email',
-      dataIndex: 'email',
       key: 'email',
+      label: 'Email',
+      render: (_, record) => record?.email ? (
+        <a href={`mailto:${record.email}`} className="text-black hover:underline flex items-center gap-1">
+          <Mail className="h-4 w-4" />
+          {record.email}
+        </a>
+      ) : <span className="text-black">—</span>
     },
     {
-      title: 'Phone',
-      dataIndex: 'phone',
       key: 'phone',
+      label: 'Phone',
+      render: (_, record) => record?.phone ? (
+        <a href={`tel:${record.phone}`} className="text-black hover:underline flex items-center gap-1">
+          <Phone className="h-4 w-4" />
+          {record.phone}
+        </a>
+      ) : <span className="text-black">—</span>
     },
     {
-      title: 'Source',
-      dataIndex: 'howDidYouHear',
-      key: 'howDidYouHear',
-      render: (source) => {
-        if (!source) return '-';
-        const colors = {
-          'Signboard': 'blue',
-          'Referral': 'green',
-          'Social Media': 'purple',
-          'Market Outreach': 'orange'
-        };
-        return <Badge variant="outline">{source}</Badge>;
-      }
+      key: 'source',
+      label: 'Source',
+      render: (_, record) => record?.howDidYouHear ? (
+        <Badge variant="outline">{record.howDidYouHear}</Badge>
+      ) : <span className="text-black">—</span>
     },
     {
-      title: 'Balance',
-      dataIndex: 'balance',
       key: 'balance',
-      render: (balance) => `GHS ${parseFloat(balance || 0).toFixed(2)}`,
+      label: 'Balance',
+      render: (_, record) => <span className="text-black">GHS {parseFloat(record?.balance || 0).toFixed(2)}</span>
     },
     {
-      title: 'Status',
-      dataIndex: 'isActive',
-      key: 'isActive',
-      render: (isActive) => (
-        <Badge variant={isActive ? 'default' : 'destructive'}>
-          {isActive ? 'Active' : 'Inactive'}
+      key: 'status',
+      label: 'Status',
+      render: (_, record) => (
+        <Badge variant={record?.isActive ? 'default' : 'destructive'}>
+          {record?.isActive ? 'Active' : 'Inactive'}
         </Badge>
-      ),
+      )
     },
     {
-      title: 'Actions',
       key: 'actions',
-      render: (_, record) => <ActionColumn onView={handleView} record={record} />,
-    },
-  ];
+      label: 'Actions',
+      render: (_, record) => <ActionColumn onView={handleView} record={record} />
+    }
+  ], [handleView]);
+  
+  // Summary stats state - fetched from backend
+  const [summaryStats, setSummaryStats] = useState({
+    totalCustomers: 0,
+    activeCustomers: 0,
+    inactiveCustomers: 0,
+    returningCustomers: 0,
+  });
+
+  // Fetch summary stats separately (all customers, not paginated)
+  const fetchSummaryStats = useCallback(async () => {
+    try {
+      // Fetch all customers for accurate stats (with high limit)
+      const response = await customerService.getCustomers({ limit: 10000 });
+      const allCustomers = response?.data || response?.customers || [];
+      
+      const totalCustomers = allCustomers.length;
+      const activeCustomers = allCustomers.filter(c => c.isActive).length;
+      const inactiveCustomers = allCustomers.filter(c => !c.isActive).length;
+      const returningCustomers = allCustomers.filter(c => c.isActive && parseFloat(c.balance || 0) > 0).length;
+      
+      setSummaryStats({
+        totalCustomers,
+        activeCustomers,
+        inactiveCustomers,
+        returningCustomers,
+      });
+    } catch (error) {
+      console.error('Failed to fetch summary stats:', error);
+    }
+  }, []);
+
+  // Fetch summary stats on mount
+  useEffect(() => {
+    fetchSummaryStats();
+  }, [fetchSummaryStats]);
+  
+  // Calculate summary for display
+  const summary = useMemo(() => {
+    return {
+      totals: summaryStats
+    };
+  }, [summaryStats]);
 
   const defaultSources = [
     { group: 'Social Media', items: ['Facebook', 'Instagram', 'Twitter', 'LinkedIn', 'TikTok', 'WhatsApp'] },
@@ -404,114 +542,214 @@ const Customers = () => {
     { group: 'Other', items: ['Radio', 'TV', 'Newspaper', 'Event/Trade Show'] },
   ];
 
+  const handleClearFilters = () => {
+    setFilters({
+      isActive: 'true',
+      howDidYouHear: 'all',
+      customerType: 'all',
+    });
+    setPagination({ ...pagination, current: 1 });
+  };
+
+  const hasActiveFilters = filters.isActive !== 'true' || filters.howDidYouHear !== 'all' || filters.customerType !== 'all';
+
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <h1 className="text-3xl font-bold">Customers</h1>
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-            placeholder="Search customers..."
-              value={searchText}
-              onChange={(e) => handleSearch(e.target.value)}
-              className="pl-10 w-full sm:w-[250px]"
-            />
-          </div>
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
+        <WelcomeSection
+          welcomeMessage="Customers"
+          subText="Manage your customer relationships and track interactions."
+        />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+            <Filter className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Filter</span>}
+          </Button>
+          <Button 
+            variant="outline" 
+            onClick={() => fetchCustomers(true)}
+            disabled={refreshingCustomers}
+            size={isMobile ? "icon" : "default"}
+          >
+            {refreshingCustomers ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {!isMobile && <span className="ml-2">Refresh</span>}
+          </Button>
           {(isManager || user?.role === 'staff') && (
-            <Button onClick={handleAdd} className="w-full sm:w-auto">
-              <Plus className="h-4 w-4 mr-2" />
-              Add Customer
+            <Button onClick={handleAdd} size={isMobile ? "icon" : "default"}>
+              <Plus className="h-4 w-4" />
+              {!isMobile && <span className="ml-2">New Customer</span>}
             </Button>
           )}
         </div>
       </div>
 
-      {loading ? (
-        <Card>
-          <div className="p-4">
-            <TableSkeleton rows={8} cols={6} />
-          </div>
-        </Card>
-      ) : (
-        <Table
-          columns={columns}
-          dataSource={customers}
-          rowKey="id"
-          pagination={pagination}
-          onChange={(newPagination) => setPagination(newPagination)}
-          scroll={{ x: 'max-content' }}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
+        {/* Total Customers Card */}
+        <DashboardStatsCard
+          title="Total Customers"
+          value={summary?.totals?.totalCustomers || 0}
+          icon={Users}
+          iconBgColor="rgba(22, 101, 52, 0.1)"
+          iconColor="#166534"
         />
-      )}
 
-      <Dialog open={modalVisible} onOpenChange={setModalVisible}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editingCustomer ? 'Edit Customer' : 'Add Customer'}</DialogTitle>
-            <DialogDescription>
-              {editingCustomer ? 'Update customer information' : 'Add a new customer to your system'}
-            </DialogDescription>
-          </DialogHeader>
-          
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
+        {/* Active Customers Card */}
+        <DashboardStatsCard
+          title="Active"
+          value={summary?.totals?.activeCustomers || 0}
+          icon={CheckCircle}
+          iconBgColor="rgba(59, 130, 246, 0.1)"
+          iconColor="#166534"
+        />
+
+        {/* Returning Customers Card */}
+        <DashboardStatsCard
+          title="Returning Customers"
+          value={summary?.totals?.returningCustomers || 0}
+          icon={Repeat}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+        />
+
+        {/* Inactive Customers Card */}
+        <DashboardStatsCard
+          title="Inactive"
+          value={summary?.totals?.inactiveCustomers || 0}
+          icon={XCircle}
+          iconBgColor="rgba(239, 68, 68, 0.1)"
+          iconColor="#ef4444"
+        />
+      </div>
+
+      {/* Main Content Area with Pull-to-Refresh */}
+      <div {...containerProps} className="relative">
+        {/* Pull-to-refresh indicator */}
+        {isMobile && pullDistance > 0 && (
+          <div 
+            className="absolute top-0 left-0 right-0 flex items-center justify-center z-10 transition-opacity"
+            style={{
+              height: `${Math.min(pullDistance, 80)}px`,
+              opacity: Math.min(pullDistance / 80, 1),
+            }}
+          >
+            {isRefreshing ? (
+              <Loader2 className="h-6 w-6 animate-spin text-[#166534]" />
+            ) : (
+              <RefreshCw className="h-6 w-6 text-[#166534]" />
+            )}
+          </div>
+        )}
+        
+        <DashboardTable
+          data={customers}
+          columns={tableColumns}
+          loading={loading || (isMobile && isRefreshing)}
+          title={null}
+          emptyIcon={<Users className="h-12 w-12 text-muted-foreground" />}
+          emptyDescription="No customers found"
+          pageSize={pagination.pageSize}
+          externalPagination={{ current: pagination.current, total: pagination.total }}
+          onPageChange={(newPagination) => {
+            setPagination(newPagination);
+          }}
+        />
+      </div>
+
+      {/* Floating Action Button for Mobile */}
+      <FloatingActionButton
+        onClick={handleAdd}
+        icon={Plus}
+        label="Add Customer"
+        show={isMobile}
+      />
+
+      <MobileFormDialog
+        open={modalVisible}
+        onOpenChange={setModalVisible}
+        title={editingCustomer ? 'Edit Customer' : 'Add Customer'}
+        description={editingCustomer ? 'Update customer information' : 'Add a new customer to your system'}
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setModalVisible(false);
+                setShowCustomerSourceOtherInput(false);
+                setCustomerSourceOtherValue('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" form="customer-form" loading={form.formState.isSubmitting}>
+              {editingCustomer ? 'Update' : 'Create'}
+            </Button>
+          </>
+        }
+      >
+        <Form {...form}>
+          <form id="customer-form" onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <FormFieldGrid columns={2}>
+              <FormField
+                control={form.control}
                 name="name"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Name</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="Enter customer name" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="company"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Company</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="Enter company name" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Name</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Enter customer name" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="company"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Company</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Enter company name" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </FormFieldGrid>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
+            <FormFieldGrid columns={2}>
+              <FormField
+                control={form.control}
                 name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email</FormLabel>
-                      <FormControl>
-                        <Input {...field} type="email" placeholder="email@example.com" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="phone"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Phone</FormLabel>
-                      <FormControl>
-                        <PhoneNumberInput {...field} placeholder="Enter phone number" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Email</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="email" placeholder="email@example.com" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name="phone"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Phone</FormLabel>
+                    <FormControl>
+                      <PhoneNumberInput {...field} placeholder="Enter phone number" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </FormFieldGrid>
 
               <FormField
                 control={form.control}
@@ -532,7 +770,7 @@ const Customers = () => {
                 name="howDidYouHear" 
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>How did you hear about us?</FormLabel>
+                    <FormLabel>How did you hear about us? (optional)</FormLabel>
                     <Select 
                       value={field.value} 
                       onValueChange={(value) => {
@@ -595,205 +833,396 @@ const Customers = () => {
                     }}
                     className="flex-1"
                   />
-                  <Button type="button" onClick={handleSaveCustomCustomerSource}>
-                      Save
-                    </Button>
+                  <Button 
+                    type="button" 
+                    onClick={handleSaveCustomCustomerSource}
+                    loading={savingCustomerSource}
+                  >
+                    Save
+                  </Button>
                 </div>
               )}
 
-          {showReferralName && (
-                <FormField
-                  control={form.control}
-                  name="referralName" 
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Referral Name</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="Enter referral name" />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              )}
-
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setModalVisible(false);
-                    setShowCustomerSourceOtherInput(false);
-                    setCustomerSourceOtherValue('');
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={form.formState.isSubmitting}>
-                  {form.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {editingCustomer ? 'Update' : 'Create'}
-                </Button>
-              </DialogFooter>
-            </form>
+            {showReferralName && (
+              <FormField
+                control={form.control}
+                name="referralName" 
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Referral Name</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="Enter referral name" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+          </form>
         </Form>
-        </DialogContent>
-      </Dialog>
+      </MobileFormDialog>
+
+      {/* Filter Drawer */}
+      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
+        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+          <SheetHeader className="pb-4 border-b">
+            <SheetTitle>Filter Customers</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-4 md:space-y-6 mt-4 md:mt-6">
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select
+                value={filters.isActive}
+                onValueChange={(value) => setFilters({ ...filters, isActive: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="true">Active</SelectItem>
+                  <SelectItem value="false">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Customer Type</Label>
+              <Select
+                value={filters.customerType}
+                onValueChange={(value) => setFilters({ ...filters, customerType: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All</SelectItem>
+                  <SelectItem value="new">New</SelectItem>
+                  <SelectItem value="returning">Returning</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Source</Label>
+              <Select
+                value={filters.howDidYouHear}
+                onValueChange={(value) => setFilters({ ...filters, howDidYouHear: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Sources</SelectItem>
+                  {defaultSources.map(group => (
+                    <div key={group.group}>
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                        {group.group}
+                      </div>
+                      {group.items.map(item => (
+                        <SelectItem key={item} value={item}>{item}</SelectItem>
+                      ))}
+                    </div>
+                  ))}
+                  {customCustomerSources.length > 0 && (
+                    <div>
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                        Custom Sources
+                      </div>
+                      {customCustomerSources.map(source => (
+                        <SelectItem key={source.value} value={source.value}>
+                          {source.label}
+                        </SelectItem>
+                      ))}
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={handleClearFilters} className="w-full">
+                Clear Filters
+              </Button>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <DetailsDrawer
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Customer Details"
-        width={800}
-        onEdit={isManager && viewingCustomer ? () => {
-          handleEdit(viewingCustomer);
-          setDrawerVisible(false);
-        } : null}
-        onDelete={isManager && viewingCustomer ? () => {
-          handleDelete(viewingCustomer.id);
-          setDrawerVisible(false);
-        } : null}
-        deleteConfirmText="Are you sure you want to delete this customer?"
+        width={720}
+        extraActions={viewingCustomer ? [
+          ...(isManager ? [{
+            key: 'edit',
+            label: 'Edit',
+            variant: 'secondary',
+            icon: <Pencil className="h-4 w-4" />,
+            onClick: () => {
+              handleEdit(viewingCustomer);
+              setDrawerVisible(false);
+            }
+          }] : []),
+          ...(isPrintingPress ? [{
+            key: 'createJob',
+            label: 'Create Job',
+            variant: 'default',
+            icon: <Briefcase className="h-4 w-4" />,
+            onClick: handleCreateJob
+          }] : [])
+        ] : []}
         tabs={viewingCustomer ? [
           {
-            key: 'details',
-            label: 'Details',
+            key: 'overview',
+            label: 'Overview',
             content: (
-              <div className="space-y-4">
-                <div className="grid grid-cols-1 gap-4">
-                  <div>
-                    <Label className="text-muted-foreground">Name</Label>
-                    <p className="font-medium">{viewingCustomer.name || '-'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">Company</Label>
-                    <p className="font-medium">{viewingCustomer.company || '-'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">Email</Label>
-                    <p className="font-medium">{viewingCustomer.email || '-'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">Phone</Label>
-                    <p className="font-medium">{viewingCustomer.phone || '-'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">Address</Label>
-                    <p className="font-medium">{viewingCustomer.address || '-'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">City</Label>
-                    <p className="font-medium">{viewingCustomer.city || '-'}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">How did you hear about us?</Label>
-                    <p className="font-medium">
-                  {viewingCustomer.howDidYouHear ? (
+              <div className="space-y-6">
+                <DrawerSectionCard title="Contact details">
+                  <Descriptions column={1} className="space-y-0">
+                    <DescriptionItem label="Name">
+                      <span className="text-gray-900">{viewingCustomer.name || '—'}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Company">
+                      <span className="text-gray-900">{viewingCustomer.company || '—'}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Email">
+                      <span className="text-gray-900">{viewingCustomer.email || '—'}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Phone">
+                      <span className="text-gray-900">{viewingCustomer.phone || '—'}</span>
+                    </DescriptionItem>
+                  </Descriptions>
+                </DrawerSectionCard>
+                <DrawerSectionCard title="Address & info">
+                  <Descriptions column={1} className="space-y-0">
+                    <DescriptionItem label="Address">
+                      <span className="text-gray-900">{viewingCustomer.address || '—'}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="City">
+                      <span className="text-gray-900">{viewingCustomer.city || '—'}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="State">
+                      <span className="text-gray-900">{viewingCustomer.state || '—'}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Source">
+                      {viewingCustomer.howDidYouHear ? (
                         <Badge variant="outline">{viewingCustomer.howDidYouHear}</Badge>
-                  ) : '-'}
-                    </p>
-                  </div>
-                {viewingCustomer.howDidYouHear === 'Referral' && (
-                    <div>
-                      <Label className="text-muted-foreground">Referral Name</Label>
-                      <p className="font-medium">{viewingCustomer.referralName || '-'}</p>
-                    </div>
-                  )}
-                  <div>
-                    <Label className="text-muted-foreground">Balance</Label>
-                    <p className="font-medium">GHS {parseFloat(viewingCustomer.balance || 0).toFixed(2)}</p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">Status</Label>
-                    <p className="font-medium">
+                      ) : <span className="text-gray-900">—</span>}
+                    </DescriptionItem>
+                    {viewingCustomer.howDidYouHear === 'Referral' && (
+                      <DescriptionItem label="Referral Name">
+                        <span className="text-gray-900">{viewingCustomer.referralName || '—'}</span>
+                      </DescriptionItem>
+                    )}
+                    <DescriptionItem label="Type">
+                      {parseFloat(viewingCustomer.balance || 0) > 0 ? (
+                        <Badge variant="default">Returning</Badge>
+                      ) : (
+                        <Badge variant="outline">New</Badge>
+                      )}
+                    </DescriptionItem>
+                    <DescriptionItem label="Balance">
+                      <span className="text-gray-900">GHS {parseFloat(viewingCustomer.balance || 0).toFixed(2)}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Status">
                       <Badge variant={viewingCustomer.isActive ? 'default' : 'destructive'}>
-                    {viewingCustomer.isActive ? 'Active' : 'Inactive'}
+                        {viewingCustomer.isActive ? 'Active' : 'Inactive'}
                       </Badge>
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">Created At</Label>
-                    <p className="font-medium">
-                  {viewingCustomer.createdAt ? new Date(viewingCustomer.createdAt).toLocaleString() : '-'}
-                    </p>
-                  </div>
-                  <div>
-                    <Label className="text-muted-foreground">Last Updated</Label>
-                    <p className="font-medium">
-                  {viewingCustomer.updatedAt ? new Date(viewingCustomer.updatedAt).toLocaleString() : '-'}
-                    </p>
-                  </div>
-                </div>
+                    </DescriptionItem>
+                    <DescriptionItem label="Created At">
+                      <span className="text-gray-900">
+                        {viewingCustomer.createdAt ? dayjs(viewingCustomer.createdAt).format('MMM DD, YYYY [at] h:mm A') : '—'}
+                      </span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Last Updated">
+                      <span className="text-gray-900">
+                        {viewingCustomer.updatedAt ? dayjs(viewingCustomer.updatedAt).format('MMM DD, YYYY [at] h:mm A') : '—'}
+                      </span>
+                    </DescriptionItem>
+                  </Descriptions>
+                </DrawerSectionCard>
               </div>
             )
           },
-          ...(isPrintingPress ? [{
+          {
             key: 'activities',
-            label: 'Activities',
-            content: (
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Jobs ({customerJobs.length})</h3>
-                {loadingJobs ? (
-                  <div className="flex items-center justify-center py-12">
-                    <Loader2 className="h-8 w-8 animate-spin" />
-                  </div>
-                ) : customerJobs.length > 0 ? (
-                  <div className="space-y-3">
-                    {customerJobs.map((job) => (
-                      <div key={job.id} className="flex items-center justify-between p-4 border rounded-lg">
-                        <div className="flex-1">
-                          <div className="font-semibold">{job.jobNumber} - {job.title}</div>
-                          <p className="text-sm text-muted-foreground mt-1">{job.description}</p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Due: {job.dueDate ? new Date(job.dueDate).toLocaleDateString() : 'N/A'}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <Badge variant="outline">
-                            {job.status?.replace('_', ' ').toUpperCase()}
-                          </Badge>
-                          <div className="font-bold">GHS {parseFloat(job.finalPrice || 0).toFixed(2)}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <Empty description="No jobs found for this customer" />
-                )}
-              </div>
-            )
-          }] : []),
+            label: 'Activity',
+            content: (() => {
+              if (!viewingCustomer) return null;
+              
+              const activities = viewingCustomer.activities || [];
+              
+              // Add creation activity
+              const creationActivity = {
+                id: 'creation',
+                type: 'creation',
+                createdAt: viewingCustomer.createdAt,
+                createdByUser: null // Customer model doesn't have createdBy field
+              };
+              
+              // Add invoice activities
+              const invoiceActivities = (customerInvoices || []).map(invoice => ({
+                id: `invoice-${invoice.id}`,
+                type: 'invoice',
+                subject: `Invoice ${invoice.invoiceNumber}`,
+                notes: `Amount: GHS ${parseFloat(invoice.totalAmount || 0).toFixed(2)} | Status: ${invoice.status}`,
+                createdAt: invoice.createdAt || invoice.invoiceDate,
+                metadata: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber }
+              }));
+              
+              // Add job activities (if printing press)
+              const jobActivities = isPrintingPress && viewingCustomer.jobs ? viewingCustomer.jobs.map(job => ({
+                id: `job-${job.id}`,
+                type: 'job',
+                subject: `Job ${job.jobNumber}`,
+                notes: `${job.title} | Status: ${job.status} | Amount: GHS ${parseFloat(job.finalPrice || 0).toFixed(2)}`,
+                createdAt: job.createdAt,
+                metadata: { jobId: job.id, jobNumber: job.jobNumber }
+              })) : [];
+              
+              // Combine all activities and sort by date
+              const allActivities = [
+                creationActivity,
+                ...activities,
+                ...invoiceActivities,
+                ...jobActivities
+              ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+              
+              const timelineItems = allActivities.map((activity, index) => {
+                const isLast = index === allActivities.length - 1;
+                
+                if (activity.type === 'creation') {
+                  return (
+                    <TimelineItem key={activity.id} isLast={isLast}>
+                      <TimelineIndicator />
+                      <TimelineContent>
+                        <TimelineTitle className="text-black">
+                          {activity.createdByUser 
+                            ? `${activity.createdByUser.name} added a new customer, ${viewingCustomer.name}`
+                            : `Added a new customer, ${viewingCustomer.name}`}
+                        </TimelineTitle>
+                        <TimelineTime className="text-black">
+                          {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
+                        </TimelineTime>
+                      </TimelineContent>
+                    </TimelineItem>
+                  );
+                }
+                
+                if (activity.type === 'invoice') {
+                  return (
+                    <TimelineItem key={activity.id} isLast={isLast}>
+                      <TimelineIndicator />
+                      <TimelineContent>
+                        <TimelineTitle className="text-black">
+                          Invoice Created - {activity.metadata?.invoiceNumber || 'N/A'}
+                        </TimelineTitle>
+                        <TimelineTime className="text-black">
+                          {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
+                        </TimelineTime>
+                        {activity.notes && (
+                          <TimelineDescription className="text-black">{activity.notes}</TimelineDescription>
+                        )}
+                      </TimelineContent>
+                    </TimelineItem>
+                  );
+                }
+                
+                if (activity.type === 'job') {
+                  return (
+                    <TimelineItem key={activity.id} isLast={isLast}>
+                      <TimelineIndicator />
+                      <TimelineContent>
+                        <TimelineTitle className="text-black">
+                          Job Created - {activity.metadata?.jobNumber || 'N/A'}
+                        </TimelineTitle>
+                        <TimelineTime className="text-black">
+                          {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
+                        </TimelineTime>
+                        {activity.notes && (
+                          <TimelineDescription className="text-black">{activity.notes}</TimelineDescription>
+                        )}
+                      </TimelineContent>
+                    </TimelineItem>
+                  );
+                }
+                
+                // Regular activity
+                return (
+                  <TimelineItem key={activity.id} isLast={isLast}>
+                    <TimelineIndicator />
+                    <TimelineContent>
+                      <TimelineTitle className="text-black">
+                        {activity.type.toUpperCase()} {activity.subject ? `- ${activity.subject}` : ''}
+                      </TimelineTitle>
+                      <TimelineTime className="text-black">
+                        {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
+                        {activity.createdByUser ? ` • ${activity.createdByUser.name}` : ''}
+                      </TimelineTime>
+                      {activity.notes && (
+                        <TimelineDescription className="text-black">{activity.notes}</TimelineDescription>
+                      )}
+                      {activity.nextStep && (
+                        <TimelineDescription className="text-black">Next Step: {activity.nextStep}</TimelineDescription>
+                      )}
+                      {activity.followUpDate && (
+                        <TimelineDescription className="text-black">
+                          Follow-up: {dayjs(activity.followUpDate).format('MMM DD, YYYY hh:mm A')}
+                        </TimelineDescription>
+                      )}
+                    </TimelineContent>
+                  </TimelineItem>
+                );
+              });
+              
+              return (
+                <DrawerSectionCard title="Activity">
+                  {timelineItems.length ? (
+                    <Timeline>
+                      {timelineItems}
+                    </Timeline>
+                  ) : (
+                    <Alert>
+                      <AlertTitle>No activity logged yet.</AlertTitle>
+                    </Alert>
+                  )}
+                </DrawerSectionCard>
+              );
+            })()
+          },
           {
             key: 'invoices',
             label: 'Invoices',
             content: (
-              <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Invoices ({customerInvoices.length})</h3>
+              <DrawerSectionCard title={`Invoices (${customerInvoices.length})`}>
                 {loadingInvoices ? (
-                  <div className="py-12">
+                  <div className="py-8">
                     <TableSkeleton rows={3} cols={4} />
                   </div>
                 ) : customerInvoices.length > 0 ? (
                   <div className="space-y-3">
                     {customerInvoices.map((invoice) => (
-                      <div key={invoice.id} className="flex items-center justify-between p-4 border rounded-lg">
-                        <div className="flex-1">
-                          <div className="font-semibold">{invoice.invoiceNumber}</div>
+                      <div key={invoice.id} className="flex items-center justify-between py-3 border-b border-gray-200 last:border-b-0">
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-gray-900">{invoice.invoiceNumber}</div>
                           {isPrintingPress && (
-                            <p className="text-sm text-muted-foreground mt-1">
+                            <p className="text-sm text-muted-foreground mt-0.5">
                               {invoice.job?.title || 'No job linked'}
                             </p>
                           )}
-                          <div className="text-xs text-muted-foreground mt-1 space-y-1">
+                          <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
                             <p>Due: {invoice.dueDate ? dayjs(invoice.dueDate).format('MMM DD, YYYY') : 'N/A'}</p>
                             <p>Balance: GHS {parseFloat(invoice.balance || 0).toFixed(2)}</p>
                           </div>
                         </div>
-                        <div className="flex flex-col items-end gap-2">
+                        <div className="flex flex-col items-end gap-1.5 shrink-0 ml-4">
                           <StatusChip status={invoice.status} />
                           <div className="text-right">
-                            <div className="font-bold text-lg">GHS {parseFloat(invoice.totalAmount || 0).toFixed(2)}</div>
+                            <div className="font-semibold text-gray-900">GHS {parseFloat(invoice.totalAmount || 0).toFixed(2)}</div>
                             <div className="text-sm text-green-600">
-                            Paid: GHS {parseFloat(invoice.amountPaid || 0).toFixed(2)}
+                              Paid: GHS {parseFloat(invoice.amountPaid || 0).toFixed(2)}
                             </div>
                           </div>
                         </div>
@@ -801,9 +1230,9 @@ const Customers = () => {
                     ))}
                   </div>
                 ) : (
-                  <Empty description="No invoices found for this customer" />
+                  <div className="text-center py-8 text-muted-foreground text-sm">No invoices found for this customer</div>
                 )}
-              </div>
+              </DrawerSectionCard>
             )
           }
         ] : null}

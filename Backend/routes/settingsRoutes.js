@@ -12,6 +12,12 @@ const {
   getWhatsAppSettings,
   updateWhatsAppSettings,
   testWhatsAppConnection,
+  getSMSSettings,
+  updateSMSSettings,
+  testSMSConnection,
+  getEmailSettings,
+  updateEmailSettings,
+  testEmailConnection,
   uploadProfilePicture,
   uploadOrganizationLogo
 } = require('../controllers/settingsController');
@@ -92,6 +98,28 @@ router.post(
   '/whatsapp/test',
   authorize('admin', 'manager'),
   testWhatsAppConnection
+);
+
+router
+  .route('/sms')
+  .get(getSMSSettings)
+  .put(authorize('admin', 'manager'), updateSMSSettings);
+
+router.post(
+  '/sms/test',
+  authorize('admin', 'manager'),
+  testSMSConnection
+);
+
+router
+  .route('/email')
+  .get(getEmailSettings)
+  .put(authorize('admin', 'manager'), updateEmailSettings);
+
+router.post(
+  '/email/test',
+  authorize('admin', 'manager'),
+  testEmailConnection
 );
 
 module.exports = router;

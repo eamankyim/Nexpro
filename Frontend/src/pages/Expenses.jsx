@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -6,8 +6,6 @@ import { z } from 'zod';
 import {
   Plus,
   Pencil,
-  Trash2,
-  Eye,
   Upload as UploadIcon,
   DollarSign,
   ShoppingCart,
@@ -18,17 +16,25 @@ import {
   XCircle,
   MinusCircle,
   Loader2,
-  Search
+  Filter,
+  RefreshCw,
+  Receipt,
+  Archive
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import expenseService from '../services/expenseService';
 import jobService from '../services/jobService';
 import vendorService from '../services/vendorService';
 import { useAuth } from '../context/AuthContext';
+import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError, showWarning } from '../utils/toast';
 import DetailsDrawer from '../components/DetailsDrawer';
+import DrawerSectionCard from '../components/DrawerSectionCard';
 import TableSkeleton from '../components/TableSkeleton';
 import StatusChip from '../components/StatusChip';
+import DashboardTable from '../components/DashboardTable';
+import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -36,10 +42,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { StatisticCard } from '@/components/ui/statistic-card';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Select,
   SelectContent,
@@ -49,12 +53,15 @@ import {
 } from '@/components/ui/select';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import MobileFormDialog from '../components/MobileFormDialog';
+import FormFieldGrid from '../components/FormFieldGrid';
 import {
   Form,
   FormControl,
@@ -64,19 +71,11 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -87,18 +86,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
 
-// Schema definitions
+// Coerce optional string fields from null/undefined to '' so form validation passes (Select "None" and API nulls)
+const optionalString = () => z.union([z.string(), z.null(), z.undefined()]).transform(v => v ?? '');
+
 const baseExpenseSchema = z.object({
   category: z.string().min(1, 'Category is required'),
   amount: z.number().min(0.01, 'Amount must be greater than 0'),
   expenseDate: z.date({ required_error: 'Expense date is required' }),
-  description: z.string().optional(),
+  description: optionalString(),
   vendorId: z.string().optional().nullable(),
-  paymentMethod: z.string().optional(),
-  status: z.string().optional(),
-  receiptUrl: z.string().optional(),
-  notes: z.string().optional(),
+  paymentMethod: optionalString(),
+  status: optionalString(),
+  receiptUrl: optionalString(),
+  notes: optionalString(),
 });
 
 const expenseSchema = baseExpenseSchema.extend({
@@ -126,8 +128,12 @@ const rejectionSchema = z.object({
   rejectionReason: z.string().min(1, 'Rejection reason is required'),
 });
 
+// Sentinel for optional Select "None" option (Radix Select forbids value="")
+const SELECT_NONE_VALUE = '__none__';
+
 const Expenses = () => {
-  const { isAdmin, activeTenant } = useAuth();
+  const { isAdmin, activeTenant, activeTenantId } = useAuth();
+  const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
   const [expenses, setExpenses] = useState([]);
@@ -137,23 +143,34 @@ const Expenses = () => {
   const [approvingExpense, setApprovingExpense] = useState(false);
   const [rejectingExpense, setRejectingExpense] = useState(null);
   const [rejectingExpenseLoading, setRejectingExpenseLoading] = useState(false);
+  const [markingPaid, setMarkingPaid] = useState(null);
+  const [archivingExpense, setArchivingExpense] = useState(null);
+  const [refreshingExpenses, setRefreshingExpenses] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [multipleMode, setMultipleMode] = useState(false);
+  const [isExpenseRequest, setIsExpenseRequest] = useState(false);
   const [jobs, setJobs] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [stats, setStats] = useState(null);
+
+  // Clear vendor and job lists when tenant changes so we don't show another tenant's data
+  useEffect(() => {
+    setVendors([]);
+    setJobs([]);
+  }, [activeTenantId]);
   const [pagination, setPagination] = useState({
     current: 1,
     pageSize: 10,
     total: 0
   });
   const [filters, setFilters] = useState({
-    category: null,
-    status: null,
-    jobId: null
+    category: 'all',
+    status: 'all',
+    jobId: 'all',
+    viewType: 'all'
   });
-  const [activeTab, setActiveTab] = useState('all');
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [rejectionModalVisible, setRejectionModalVisible] = useState(false);
 
   const form = useForm({
@@ -182,46 +199,105 @@ const Expenses = () => {
   });
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingExpense, setViewingExpense] = useState(null);
+  const [expenseActivities, setExpenseActivities] = useState([]);
+  const [loadingActivities, setLoadingActivities] = useState(false);
 
   useEffect(() => {
+    if (!activeTenantId) return;
     fetchExpenses();
     if (isPrintingPress) {
       fetchJobs();
     }
     fetchVendors();
     fetchStats();
-  }, [pagination.current, pagination.pageSize, filters, activeTab, isPrintingPress]);
+  }, [activeTenantId, pagination.current, pagination.pageSize, filters, isPrintingPress]);
 
-  const fetchExpenses = async () => {
+  const fetchExpenses = async (isRefresh = false) => {
     try {
-      setLoading(true);
+      if (isRefresh) {
+        setRefreshingExpenses(true);
+      } else {
+        setLoading(true);
+      }
       const params = {
         page: pagination.current,
-        limit: pagination.pageSize,
-        ...filters
+        limit: 1000, // Fetch more for client-side filtering
       };
       
-      // Filter by approvalStatus based on active tab
-      if (activeTab === 'approved') {
-        // Show only approved expenses
+      if (filters.category !== 'all') {
+        params.category = filters.category;
+      }
+      if (filters.status !== 'all') {
+        params.status = filters.status;
+      }
+      if (filters.jobId !== 'all') {
+        params.jobId = filters.jobId;
+      }
+      
+      // Filter by approvalStatus based on viewType
+      if (filters.viewType === 'approved') {
         params.approvalStatus = 'approved';
       }
-      // For 'all' and 'requests' tabs, don't filter by approvalStatus - show all
       
       const response = await expenseService.getAll(params);
-      
-      // Use the data and count from backend response
       setExpenses(response.data || []);
-      setPagination(prev => ({
-        ...prev,
-        total: response.count || 0
-      }));
     } catch (error) {
       showError(null, 'Failed to fetch expenses');
+      setExpenses([]);
     } finally {
       setLoading(false);
     }
   };
+
+  // Apply client-side filtering
+  const filteredExpenses = useMemo(() => {
+    let result = expenses;
+    
+    // Filter by viewType
+    if (filters.viewType === 'approved') {
+      result = result.filter(exp => exp.approvalStatus === 'approved');
+    } else if (filters.viewType === 'requests') {
+      // Show expense requests (pending approval)
+      result = result.filter(exp => exp.approvalStatus === 'pending' || exp.approvalStatus === 'pending_approval' || exp.approvalStatus === 'draft');
+    } else if (filters.viewType === 'job-specific') {
+      result = result.filter(exp => exp.jobId);
+    } else if (filters.viewType === 'general') {
+      result = result.filter(exp => !exp.jobId);
+    }
+    
+    return result;
+  }, [expenses, filters.viewType]);
+
+  // Paginate filtered expenses
+  const paginatedExpenses = useMemo(() => {
+    const start = (pagination.current - 1) * pagination.pageSize;
+    const end = start + pagination.pageSize;
+    return filteredExpenses.slice(start, end);
+  }, [filteredExpenses, pagination.current, pagination.pageSize]);
+
+  const expensesCount = filteredExpenses.length;
+
+  // Calculate summary stats
+  const summaryStats = useMemo(() => {
+    const totalExpenses = expenses.reduce((sum, exp) => sum + parseFloat(exp.amount || 0), 0);
+    const categoryCount = new Set(expenses.map(exp => exp.category)).size;
+    const thisMonth = expenses
+      .filter(exp => {
+        const expDate = dayjs(exp.expenseDate);
+        return expDate.month() === dayjs().month() && expDate.year() === dayjs().year();
+      })
+      .reduce((sum, exp) => sum + parseFloat(exp.amount || 0), 0);
+    const pendingRequests = expenses.filter(exp => exp.approvalStatus === 'pending').length;
+    
+    return {
+      totals: {
+        totalExpenses,
+        categoryCount,
+        thisMonth,
+        pendingRequests
+      }
+    };
+  }, [expenses]);
 
   const fetchJobs = async () => {
     try {
@@ -250,13 +326,11 @@ const Expenses = () => {
     }
   };
 
-  const handleCreate = () => {
+  const handleCreate = (isRequest = false) => {
     setEditingExpense(null);
     setMultipleMode(false);
-    form.reset(multipleMode ? {
-      expenseDate: new Date(),
-      expenses: [{ category: '', amount: 0, description: '' }],
-    } : {
+    setIsExpenseRequest(isRequest);
+    form.reset({
       category: '',
       amount: 0,
       expenseDate: new Date(),
@@ -265,39 +339,72 @@ const Expenses = () => {
     setModalVisible(true);
   };
 
+  const loadExpenseActivities = async (expenseId) => {
+    if (!expenseId) return;
+    try {
+      setLoadingActivities(true);
+      const response = await expenseService.getActivities(expenseId);
+      // API returns { success, data: activities }; axios interceptor returns response.data so we get { success, data }
+      const raw = response?.data ?? response;
+      const list = Array.isArray(raw) ? raw : (Array.isArray(response?.data?.data) ? response.data.data : []);
+      setExpenseActivities(list);
+    } catch (err) {
+      console.error('Failed to load expense activities:', err);
+      setExpenseActivities([]);
+    } finally {
+      setLoadingActivities(false);
+    }
+  };
+
   const handleView = (expense) => {
     setViewingExpense(expense);
     setDrawerVisible(true);
+    loadExpenseActivities(expense?.id);
   };
 
   const handleCloseDrawer = () => {
     setDrawerVisible(false);
     setViewingExpense(null);
+    setExpenseActivities([]);
   };
 
   const handleEdit = (expense) => {
     setEditingExpense(expense);
     setMultipleMode(false);
+    setIsExpenseRequest(false);
     form.reset({
       ...expense,
-      amount: expense.amount || 0,
+      amount: expense.amount != null ? Number(expense.amount) : 0,
       expenseDate: expense.expenseDate ? dayjs(expense.expenseDate).toDate() : new Date(),
+      description: expense.description ?? '',
+      paymentMethod: expense.paymentMethod ?? SELECT_NONE_VALUE,
+      status: expense.status ?? SELECT_NONE_VALUE,
+      receiptUrl: expense.receiptUrl ?? '',
+      notes: expense.notes ?? '',
+      vendorId: expense.vendorId ?? SELECT_NONE_VALUE,
+      jobId: expense.jobId ?? SELECT_NONE_VALUE,
     });
     setModalVisible(true);
-    // Close drawer if open
     if (drawerVisible) {
       setDrawerVisible(false);
     }
   };
 
-  const handleDelete = async (id) => {
+  const handleArchive = async (expense) => {
     try {
-      await expenseService.delete(id);
-      showSuccess('Expense deleted successfully');
+      setArchivingExpense(expense.id);
+      await expenseService.archive(expense.id);
+      showSuccess('Expense archived successfully');
       fetchExpenses();
       fetchStats();
+      if (drawerVisible && viewingExpense?.id === expense.id) {
+        setDrawerVisible(false);
+        setViewingExpense(null);
+      }
     } catch (error) {
-      showError(null, 'Failed to delete expense');
+      showError(null, 'Failed to archive expense');
+    } finally {
+      setArchivingExpense(null);
     }
   };
 
@@ -306,16 +413,31 @@ const Expenses = () => {
       setSubmittingExpense(true);
 
       if (editingExpense) {
-        // Single expense update
+        // Single expense update – normalize optional strings and Select sentinels for API
         const expenseData = {
-          ...values,
-          expenseDate: values.expenseDate ? dayjs(values.expenseDate).format('YYYY-MM-DD') : null
+          category: values.category,
+          amount: Number(values.amount),
+          expenseDate: values.expenseDate ? dayjs(values.expenseDate).format('YYYY-MM-DD') : null,
+          description: values.description ?? '',
+          paymentMethod: values.paymentMethod && values.paymentMethod !== SELECT_NONE_VALUE ? values.paymentMethod : null,
+          status: values.status && values.status !== SELECT_NONE_VALUE ? values.status : null,
+          vendorId: values.vendorId && values.vendorId !== SELECT_NONE_VALUE ? values.vendorId : null,
+          jobId: values.jobId && values.jobId !== SELECT_NONE_VALUE ? values.jobId : null,
+          receiptUrl: values.receiptUrl ?? '',
+          notes: values.notes ?? '',
         };
         await expenseService.update(editingExpense.id, expenseData);
         showSuccess('Expense updated successfully');
         setModalVisible(false);
+        setEditingExpense(null);
         fetchExpenses();
         fetchStats();
+        // Refetch details and activities when the drawer is open for this expense so "Expense Updated" shows
+        if (drawerVisible && viewingExpense?.id === editingExpense.id) {
+          const updated = await expenseService.getById(editingExpense.id);
+          setViewingExpense(updated?.data ?? updated);
+          await loadExpenseActivities(editingExpense.id);
+        }
       } else if (multipleMode && values.expenses && Array.isArray(values.expenses)) {
         // Multiple expenses creation using bulk endpoint
         const expensesToCreate = values.expenses
@@ -336,7 +458,8 @@ const Expenses = () => {
           jobId: values.jobId || null,
           vendorId: values.vendorId || null,
           paymentMethod: values.paymentMethod || null,
-          status: values.status || null,
+          status: isExpenseRequest ? 'pending' : (values.status || 'paid'),
+          approvalStatus: isExpenseRequest ? 'pending_approval' : 'approved',
           notes: values.notes || null
         };
 
@@ -344,22 +467,41 @@ const Expenses = () => {
         const response = await expenseService.createBulk(expensesToCreate, commonFields);
         showSuccess(`Successfully created ${response.data.count || expensesToCreate.length} expense(s)`);
         setModalVisible(false);
+        setIsExpenseRequest(false);
         fetchExpenses();
         fetchStats();
       } else {
-        // Single expense creation
+        // Single expense creation – normalize payload for API (description required, optional UUIDs as null)
         const expenseData = {
-          ...values,
-          expenseDate: values.expenseDate ? dayjs(values.expenseDate).format('YYYY-MM-DD') : null
+          category: values.category,
+          amount: Number(values.amount),
+          expenseDate: values.expenseDate ? dayjs(values.expenseDate).format('YYYY-MM-DD') : null,
+          description: values.description ?? '',
+          vendorId: values.vendorId && values.vendorId !== '' ? values.vendorId : null,
+          jobId: values.jobId && values.jobId !== '' ? values.jobId : null,
+          paymentMethod: values.paymentMethod && values.paymentMethod !== '' ? values.paymentMethod : null,
+          receiptUrl: values.receiptUrl || undefined,
+          notes: values.notes || undefined,
         };
+        
+        if (isExpenseRequest) {
+          expenseData.status = 'pending';
+          expenseData.approvalStatus = 'pending_approval';
+        } else {
+          expenseData.status = 'paid';
+          expenseData.approvalStatus = 'approved';
+        }
+        
         await expenseService.create(expenseData);
-        showSuccess('Expense created successfully');
+        showSuccess(isExpenseRequest ? 'Expense request created successfully' : 'Expense created successfully');
         setModalVisible(false);
+        setIsExpenseRequest(false);
         fetchExpenses();
         fetchStats();
       }
     } catch (error) {
-      showError(null, 'Failed to save expense(s)');
+      const message = error?.response?.data?.message || error?.response?.data?.error || 'Failed to save expense(s)';
+      showError(null, message);
     } finally {
       setSubmittingExpense(false);
     }
@@ -411,10 +553,34 @@ const Expenses = () => {
       showSuccess('Expense approved successfully');
       fetchExpenses();
       fetchStats();
+      if (drawerVisible && viewingExpense?.id === expenseId) {
+        // Refresh the viewing expense
+        const response = await expenseService.getById(expenseId);
+        setViewingExpense(response.data || response);
+      }
     } catch (error) {
       showError(null, 'Failed to approve expense');
     } finally {
       setApprovingExpense(false);
+    }
+  };
+
+  const handleMarkPaid = async (expenseId) => {
+    try {
+      setMarkingPaid(expenseId);
+      await expenseService.markPaid(expenseId);
+      showSuccess('Expense marked as paid successfully');
+      fetchExpenses();
+      fetchStats();
+      if (drawerVisible && viewingExpense?.id === expenseId) {
+        // Refresh the viewing expense
+        const response = await expenseService.getById(expenseId);
+        setViewingExpense(response.data || response);
+      }
+    } catch (error) {
+      showError(null, 'Failed to mark expense as paid');
+    } finally {
+      setMarkingPaid(null);
     }
   };
 
@@ -424,8 +590,8 @@ const Expenses = () => {
     setRejectionModalVisible(true);
   };
 
-  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [expenseToDelete, setExpenseToDelete] = useState(null);
+  const [archiveConfirmOpen, setArchiveConfirmOpen] = useState(false);
+  const [expenseToArchive, setExpenseToArchive] = useState(null);
 
   // Helper function to render table from columns and dataSource
   const renderTable = (columns, dataSource, rowKey = 'id') => {
@@ -503,287 +669,124 @@ const Expenses = () => {
   };
 
 
-  const columns = [
+  // Table columns for DashboardTable
+  const tableColumns = useMemo(() => [
     {
-      title: 'Expense #',
-      dataIndex: 'expenseNumber',
       key: 'expenseNumber',
-      width: 150
+      label: 'Expense #',
+      render: (_, record) => <span className="font-medium text-black">{record?.expenseNumber || '—'}</span>
     },
     {
-      title: 'Date',
-      dataIndex: 'expenseDate',
       key: 'expenseDate',
-      width: 140,
-      render: (date) => dayjs(date).format('MMM DD, YYYY')
+      label: 'Date',
+      render: (_, record) => <span className="text-black">{record?.expenseDate ? dayjs(record.expenseDate).format('MMM DD, YYYY') : '—'}</span>
     },
     {
-      title: 'Category',
-      dataIndex: 'category',
       key: 'category',
-      width: 150,
-      render: (category) => <Badge className="bg-green-700">{category}</Badge>
+      label: 'Category',
+      render: (_, record) => <Badge className="bg-green-700">{record?.category || '—'}</Badge>
     },
     {
-      title: 'Description',
-      dataIndex: 'description',
       key: 'description',
-      width: 240,
-      ellipsis: true
+      label: 'Description',
+      render: (_, record) => <span className="text-black">{record?.description || '—'}</span>
     },
     {
-      title: 'Amount',
-      dataIndex: 'amount',
       key: 'amount',
-      width: 140,
-      render: (amount) => `GHS ${parseFloat(amount).toFixed(2)}`,
-      sorter: (a, b) => parseFloat(a.amount) - parseFloat(b.amount)
+      label: 'Amount',
+      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.amount || 0).toFixed(2)}</span>
     },
-    {
-      title: 'Job',
-      dataIndex: ['job', 'jobNumber'],
+    ...(isPrintingPress ? [{
       key: 'job',
-      width: 150,
-      render: (jobNumber, record) => (
-        jobNumber ? (
-          <Badge className="bg-green-600">{jobNumber}</Badge>
+      label: 'Job',
+      render: (_, record) => (
+        record?.job?.jobNumber ? (
+          <Badge className="bg-green-600">{record.job.jobNumber}</Badge>
         ) : (
           <Badge variant="outline">General</Badge>
         )
       )
-    },
+    }] : []),
     {
-      title: 'Vendor',
-      dataIndex: ['vendor', 'name'],
       key: 'vendor',
-      width: 170,
-      ellipsis: true
+      label: 'Vendor',
+      render: (_, record) => <span className="text-black">{record?.vendor?.name || '—'}</span>
     },
     {
-      title: 'Status',
-      dataIndex: 'status',
       key: 'status',
-      width: 120,
-      render: (status) => {
-        return <StatusChip status={status} />;
-      }
+      label: 'Status',
+      render: (_, record) => <StatusChip status={record?.status} />
     },
     {
-      title: 'Actions',
       key: 'actions',
-      width: 180,
+      label: 'Actions',
       render: (_, record) => (
         <div className="flex items-center gap-2">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleView(record)}
-                >
-                  <Eye className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>View</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleEdit(record)}
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Edit</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    setExpenseToDelete(record);
-                    setDeleteConfirmOpen(true);
-                  }}
-                >
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Delete</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleView(record)}
+          >
+            View
+          </Button>
         </div>
       )
     }
-  ];
+  ], [isPrintingPress, handleView, handleEdit]);
 
-  // Columns for Expense Requests tab
-  const requestColumns = [
+  // Table columns for Expense Requests tab
+  const requestTableColumns = useMemo(() => [
     {
-      title: 'Request #',
-      dataIndex: 'expenseNumber',
       key: 'expenseNumber',
-      width: 150
+      label: 'Request #',
+      render: (_, record) => <span className="font-medium text-black">{record?.expenseNumber || '—'}</span>
     },
     {
-      title: 'Date',
-      dataIndex: 'expenseDate',
       key: 'expenseDate',
-      width: 120,
-      render: (date) => dayjs(date).format('MMM DD, YYYY')
+      label: 'Date',
+      render: (_, record) => <span className="text-black">{record?.expenseDate ? dayjs(record.expenseDate).format('MMM DD, YYYY') : '—'}</span>
     },
     {
-      title: 'Category',
-      dataIndex: 'category',
       key: 'category',
-      width: 130,
-      render: (category) => <Badge className="bg-green-700">{category}</Badge>
+      label: 'Category',
+      render: (_, record) => <Badge className="bg-green-700">{record?.category || '—'}</Badge>
     },
     {
-      title: 'Description',
-      dataIndex: 'description',
       key: 'description',
-      width: 200,
-      ellipsis: true
+      label: 'Description',
+      render: (_, record) => <span className="text-black">{record?.description || '—'}</span>
     },
     {
-      title: 'Amount',
-      dataIndex: 'amount',
       key: 'amount',
-      width: 120,
-      render: (amount) => `GHS ${parseFloat(amount).toFixed(2)}`
+      label: 'Amount',
+      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.amount || 0).toFixed(2)}</span>
     },
     {
-      title: 'Submitted By',
-      dataIndex: ['submitter', 'name'],
       key: 'submitter',
-      width: 150,
-      render: (name) => name || '-'
+      label: 'Submitted By',
+      render: (_, record) => <span className="text-black">{record?.submitter?.name || '—'}</span>
     },
     {
-      title: 'Approval Status',
-      dataIndex: 'approvalStatus',
       key: 'approvalStatus',
-      width: 150,
-      render: (status) => {
-        return <StatusChip status={status} />;
-      }
+      label: 'Approval Status',
+      render: (_, record) => <StatusChip status={record?.approvalStatus} />
     },
     {
-      title: 'Actions',
       key: 'actions',
-      width: 240,
-      fixed: 'right',
+      label: 'Actions',
       render: (_, record) => (
         <div className="flex items-center gap-2">
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleView(record)}
-                >
-                  <Eye className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>View</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-          {record.approvalStatus === 'draft' && !isAdmin && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    size="sm"
-                    onClick={() => handleSubmitForApproval(record.id)}
-                    disabled={submittingForApproval}
-                  >
-                    {submittingForApproval ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Send className="h-4 w-4 mr-2" />}
-                    Submit
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Submit for Approval</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          {record.approvalStatus === 'pending_approval' && isAdmin && (
-            <>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      size="sm"
-                      onClick={() => handleApprove(record.id)}
-                      disabled={approvingExpense}
-                    >
-                      {approvingExpense ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle className="h-4 w-4 mr-2" />}
-                      Approve
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Approve</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => handleRejectClick(record)}
-                      disabled={rejectingExpenseLoading}
-                    >
-                      {rejectingExpenseLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <XCircle className="h-4 w-4 mr-2" />}
-                      Reject
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Reject</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </>
-          )}
-          {(record.approvalStatus === 'draft' || record.approvalStatus === 'rejected') && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleEdit(record)}
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Edit</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          {record.approvalStatus === 'rejected' && record.rejectionReason && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                  >
-                    View Reason
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Rejection Reason: {record.rejectionReason}</TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => handleView(record)}
+          >
+            View
+          </Button>
         </div>
       )
     }
-  ];
+  ], [isAdmin, handleView, handleSubmitForApproval, handleApprove, handleRejectClick, handleEdit, submittingForApproval, approvingExpense, rejectingExpenseLoading]);
 
   const expenseCategories = [
     'Materials',
@@ -824,232 +827,253 @@ const Expenses = () => {
     'overdue'
   ];
 
+  const handleClearFilters = () => {
+    setFilters({
+      category: 'all',
+      status: 'all',
+      jobId: 'all',
+      viewType: 'all'
+    });
+    setPagination({ ...pagination, current: 1 });
+  };
+
+  const hasActiveFilters = filters.category !== 'all' || filters.status !== 'all' || filters.jobId !== 'all' || filters.viewType !== 'all';
+
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold m-0">Expenses {activeTab === 'requests' && '& Requests'}</h1>
-        <Button
-          onClick={handleCreate}
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          {activeTab === 'requests' ? 'New Request' : 'Add Expense'}
-        </Button>
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
+        <WelcomeSection
+          welcomeMessage="Expenses"
+          subText="Track and manage your business expenses and expense requests."
+        />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+            <Filter className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Filter</span>}
+          </Button>
+          <Button 
+            variant="outline" 
+            onClick={async () => { 
+              await fetchExpenses(true); 
+              fetchStats(); 
+            }}
+            disabled={refreshingExpenses}
+            size={isMobile ? "icon" : "default"}
+          >
+            {refreshingExpenses ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {!isMobile && <span className="ml-2">Refresh</span>}
+          </Button>
+          <Button 
+            variant="secondary" 
+            onClick={() => handleCreate(true)}
+            className="border-[#166534] border-2"
+            size={isMobile ? "icon" : "default"}
+          >
+            <Plus className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Expense Request</span>}
+          </Button>
+          <Button onClick={() => handleCreate(false)} size={isMobile ? "icon" : "default"}>
+            <Plus className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Add Expense</span>}
+          </Button>
+        </div>
       </div>
 
       {/* Statistics Cards */}
-      {stats && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Total Expenses</p>
-                  <p className="text-2xl font-bold text-red-600">
-                    GHS {parseFloat(stats.totalExpenses || 0).toFixed(2)}
-                  </p>
-                </div>
-                <ShoppingCart className="h-8 w-8 text-red-600" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Categories</p>
-                  <p className="text-2xl font-bold text-green-700">
-                    {stats.categoryStats ? stats.categoryStats.length : 0}
-                  </p>
-                </div>
-                <FileText className="h-8 w-8 text-green-700" />
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">This Month</p>
-                  <p className="text-2xl font-bold text-green-600">
-                    GHS {parseFloat(stats.thisMonthExpenses || 0).toFixed(2)}
-                  </p>
-                </div>
-                <Calendar className="h-8 w-8 text-green-600" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <DashboardStatsCard
+          title="Total Expenses"
+          value={summaryStats?.totals?.totalExpenses || 0}
+          icon={ShoppingCart}
+          iconBgColor="rgba(239, 68, 68, 0.1)"
+          iconColor="#ef4444"
+        />
+        <DashboardStatsCard
+          title="Categories"
+          value={summaryStats?.totals?.categoryCount || 0}
+          icon={FileText}
+          iconBgColor="rgba(22, 101, 52, 0.1)"
+          iconColor="#166534"
+        />
+        <DashboardStatsCard
+          title="This Month"
+          value={summaryStats?.totals?.thisMonth || 0}
+          icon={Calendar}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+        />
+        <DashboardStatsCard
+          title="Pending Requests"
+          value={summaryStats?.totals?.pendingRequests || 0}
+          icon={Send}
+          iconBgColor="rgba(249, 115, 22, 0.1)"
+          iconColor="#f97316"
+        />
+      </div>
 
-      {/* Filters */}
-      <Card className="mb-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-          <Select
-            value={filters.category || '__all__'}
-            onValueChange={(value) => handleFilterChange('category', value === '__all__' ? null : value)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Filter by Category" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">All Categories</SelectItem>
-              {expenseCategories.map(category => (
-                <SelectItem key={category} value={category}>{category}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={filters.status || '__all__'}
-            onValueChange={(value) => handleFilterChange('status', value === '__all__' ? null : value)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Filter by Status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__all__">All Statuses</SelectItem>
-              {statusOptions.map(status => (
-                <SelectItem key={status} value={status}>{status.toUpperCase()}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {isPrintingPress && (
-            <Select
-              value={filters.jobId || '__all__'}
-              onValueChange={(value) => handleFilterChange('jobId', value === '__all__' ? null : value)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Filter by Job" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">All Jobs</SelectItem>
-                {jobs.map(job => (
-                  <SelectItem key={job.id} value={job.id}>{job.jobNumber} - {job.title}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          <Button
-            variant="outline"
-            onClick={() => {
-              setFilters({ category: null, status: null, jobId: null });
-              setPagination(prev => ({ ...prev, current: 1 }));
-            }}
-          >
-            Clear Filters
-          </Button>
-        </div>
-      </Card>
-
-      {/* Expenses Table with Tabs */}
+      {/* Expenses Table */}
       <Card>
-        <Tabs value={activeTab} onValueChange={(key) => {
-          setActiveTab(key);
-          fetchExpenses();
-        }}>
-          <TabsList className={isPrintingPress ? "grid w-full grid-cols-5" : "grid w-full grid-cols-3"}>
-            <TabsTrigger value="all">All Expenses</TabsTrigger>
-            <TabsTrigger value="approved">Approved Expenses</TabsTrigger>
-            <TabsTrigger value="requests">Expense Requests</TabsTrigger>
-            {isPrintingPress && (
-              <>
-                <TabsTrigger value="job-specific">Job-Specific Expenses</TabsTrigger>
-                <TabsTrigger value="general">General Expenses</TabsTrigger>
-              </>
-            )}
-          </TabsList>
-          <TabsContent value="all">
-            {loading ? (
-              <div className="p-4">
-                <TableSkeleton rows={8} cols={7} />
-              </div>
-            ) : (
-              renderTable(columns, expenses, 'id')
-            )}
-          </TabsContent>
-          <TabsContent value="approved">
-            {loading ? (
-              <div className="p-4">
-                <TableSkeleton rows={8} cols={7} />
-              </div>
-            ) : (
-              renderTable(columns, expenses, 'id')
-            )}
-          </TabsContent>
-          <TabsContent value="requests">
-            {loading ? (
-              <div className="p-4">
-                <TableSkeleton rows={8} cols={7} />
-              </div>
-            ) : (
-              renderTable(requestColumns, expenses, 'id')
-            )}
-          </TabsContent>
-          {isPrintingPress && (
-            <>
-              <TabsContent value="job-specific">
-                <div className="space-y-4">
-                    <Select
-                      value={filters.jobId || '__all__'}
-                      onValueChange={(jobId) => {
-                        if (jobId && jobId !== '__all__') {
-                          setFilters(prev => ({ ...prev, jobId }));
-                        } else {
-                          setFilters(prev => ({ ...prev, jobId: null }));
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="w-[300px]">
-                        <SelectValue placeholder="Select a job to view its expenses" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__all__">All Jobs</SelectItem>
-                      {jobs.map(job => (
-                        <SelectItem key={job.id} value={job.id}>
-                          {job.jobNumber} - {job.title}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {loading ? (
-                    <div className="p-4">
-                      <TableSkeleton rows={8} cols={7} />
-                    </div>
-                  ) : (
-                    renderTable(columns, expenses?.filter(expense => expense.jobId) || [], 'id')
-                  )}
-                </div>
-              </TabsContent>
-              <TabsContent value="general">
-                {loading ? (
-                  <div className="p-4">
-                    <TableSkeleton rows={8} cols={7} />
-                  </div>
-                ) : (
-                  renderTable(columns, expenses?.filter(expense => !expense.jobId) || [], 'id')
-                )}
-              </TabsContent>
-            </>
-          )}
-        </Tabs>
+        <DashboardTable
+          data={paginatedExpenses}
+          columns={filters.viewType === 'requests' ? requestTableColumns : tableColumns}
+          loading={loading}
+          title={null}
+          emptyIcon={
+            filters.viewType === 'approved' ? <CheckCircle className="h-12 w-12 text-muted-foreground" /> :
+            filters.viewType === 'requests' ? <Send className="h-12 w-12 text-muted-foreground" /> :
+            <ShoppingCart className="h-12 w-12 text-muted-foreground" />
+          }
+          emptyDescription={
+            filters.viewType === 'approved' ? 'No approved expenses found' :
+            filters.viewType === 'requests' ? 'No expense requests found' :
+            filters.viewType === 'job-specific' ? 'No job-specific expenses found' :
+            filters.viewType === 'general' ? 'No general expenses found' :
+            'No expenses found'
+          }
+          pageSize={pagination.pageSize}
+          onPageChange={(newPagination) => {
+            setPagination(newPagination);
+          }}
+          externalPagination={{
+            current: pagination.current,
+            total: expensesCount
+          }}
+        />
       </Card>
+
+      {/* Filter Drawer */}
+      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
+        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+          <SheetHeader className="pb-4 border-b">
+            <SheetTitle>Filter Expenses</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-4 md:space-y-6 mt-4 md:mt-6">
+            <div className="space-y-2">
+              <Label className="text-base font-semibold">View Type</Label>
+              <Select
+                value={filters.viewType || 'all'}
+                onValueChange={(value) => {
+                  setFilters({ ...filters, viewType: value });
+                  setPagination({ ...pagination, current: 1 });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select view type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Expenses</SelectItem>
+                  <SelectItem value="approved">Approved Expenses</SelectItem>
+                  <SelectItem value="requests">Expense Requests</SelectItem>
+                  {isPrintingPress && (
+                    <>
+                      <SelectItem value="job-specific">Job-Specific Expenses</SelectItem>
+                      <SelectItem value="general">General Expenses</SelectItem>
+                    </>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Category</Label>
+              <Select
+                value={filters.category}
+                onValueChange={(value) => setFilters({ ...filters, category: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Categories</SelectItem>
+                  {expenseCategories.map(category => (
+                    <SelectItem key={category} value={category}>{category}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select
+                value={filters.status}
+                onValueChange={(value) => setFilters({ ...filters, status: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  {statusOptions.map(status => (
+                    <SelectItem key={status} value={status}>{status.toUpperCase()}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {isPrintingPress && (
+              <div className="space-y-2">
+                <Label>Job</Label>
+                <Select
+                  value={filters.jobId}
+                  onValueChange={(value) => setFilters({ ...filters, jobId: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Jobs</SelectItem>
+                    {jobs.map(job => (
+                      <SelectItem key={job.id} value={job.id}>{job.jobNumber} - {job.title}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={handleClearFilters} className="w-full">
+                Clear Filters
+              </Button>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       {/* Add/Edit Dialog */}
-      <Dialog open={modalVisible} onOpenChange={(open) => {
-        if (!open) {
-          setModalVisible(false);
-          setMultipleMode(false);
-          form.reset();
+      <MobileFormDialog
+        open={modalVisible}
+        onOpenChange={(open) => {
+          if (!open) {
+            setModalVisible(false);
+            setMultipleMode(false);
+            setIsExpenseRequest(false);
+            form.reset();
+          }
+        }}
+        title={editingExpense ? 'Edit Expense' : multipleMode ? 'Add Multiple Expenses' : isExpenseRequest ? 'Create Expense Request' : 'Add New Expense'}
+        description={editingExpense ? 'Update expense details' : multipleMode ? 'Create multiple expenses at once' : isExpenseRequest ? 'Create an expense request that requires approval' : 'Add a new expense (will be marked as paid and approved)'}
+        footer={
+          multipleMode && !editingExpense ? null : (
+            <>
+              <Button type="button" variant="outline" onClick={() => {
+                setModalVisible(false);
+                setMultipleMode(false);
+                form.reset();
+              }} disabled={submittingExpense}>
+                Cancel
+              </Button>
+              <Button type="submit" form="expense-form" loading={submittingExpense}>
+                {editingExpense ? 'Update' : 'Create'} Expense
+              </Button>
+            </>
+          )
         }
-      }}>
-        <DialogContent className={`max-w-[90vw] ${multipleMode ? 'max-w-6xl' : 'max-w-4xl'} max-h-[90vh] overflow-y-auto`}>
-          <DialogHeader>
-            <DialogTitle>
-              {editingExpense ? 'Edit Expense' : multipleMode ? 'Add Multiple Expenses' : 'Add New Expense'}
-            </DialogTitle>
-            <DialogDescription>
-              {editingExpense ? 'Update expense details' : multipleMode ? 'Create multiple expenses at once' : 'Add a new expense to track'}
-            </DialogDescription>
-          </DialogHeader>
+        className={multipleMode ? 'sm:w-[var(--modal-w-3xl)]' : 'sm:w-[var(--modal-w-2xl)]'}
+      >
         {!editingExpense && (
           <div className="mb-4 text-right">
             <Button
@@ -1064,15 +1088,15 @@ const Expenses = () => {
             </Button>
           </div>
         )}
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <Form {...form}>
+          <form id="expense-form" onSubmit={form.handleSubmit(onSubmit)} className="space-y-3 md:space-y-4">
               {multipleMode && !editingExpense ? (
             <>
               {/* Common fields for all expenses */}
               <Separator />
-              <div className="space-y-4">
+              <div className="space-y-3 md:space-y-4">
                 <h3 className="text-lg font-semibold">Common Fields (Applied to All Expenses)</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormFieldGrid columns={2}>
                   <FormField
                     control={form.control}
                     name="expenseDate"
@@ -1095,13 +1119,14 @@ const Expenses = () => {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Payment Method (Optional)</FormLabel>
-                        <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                        <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder="Select payment method (optional)" />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
+                            <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
                             {paymentMethods.map(method => (
                               <SelectItem key={method} value={method}>
                                 {formatPaymentMethod(method)}
@@ -1113,22 +1138,23 @@ const Expenses = () => {
                       </FormItem>
                     )}
                   />
-                </div>
+                </FormFieldGrid>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormFieldGrid columns={2}>
                   <FormField
                     control={form.control}
                     name="jobId"
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Associated Job (Optional)</FormLabel>
-                        <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                        <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder="Select job (leave empty for general expense)" />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
+                            <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
                             {jobs.map(job => (
                               <SelectItem key={job.id} value={job.id}>
                                 {job.jobNumber} - {job.title}
@@ -1146,13 +1172,14 @@ const Expenses = () => {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Vendor (Optional)</FormLabel>
-                        <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                        <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder="Select vendor" />
                             </SelectTrigger>
                           </FormControl>
                           <SelectContent>
+                            <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
                             {vendors.map(vendor => (
                               <SelectItem key={vendor.id} value={vendor.id}>
                                 {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
@@ -1164,7 +1191,7 @@ const Expenses = () => {
                       </FormItem>
                     )}
                   />
-                </div>
+                </FormFieldGrid>
 
                 <FormField
                   control={form.control}
@@ -1186,18 +1213,18 @@ const Expenses = () => {
               </div>
 
               <Separator />
-              <div className="space-y-4">
+              <div className="space-y-3 md:space-y-4">
                 <h3 className="text-lg font-semibold">Expense Items</h3>
                 {expenseFields.map((field, index) => (
                   <Card key={field.id} className="p-4 bg-muted">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 md:gap-4 mb-3 md:mb-4">
                       <FormField
                         control={form.control}
                         name={`expenses.${index}.category`}
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Category</FormLabel>
-                            <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                            <Select value={field.value ?? ''} onValueChange={field.onChange}>
                               <FormControl>
                                 <SelectTrigger>
                                   <SelectValue placeholder="Select category" />
@@ -1225,8 +1252,12 @@ const Expenses = () => {
                                 step="0.01"
                                 min="0"
                                 placeholder="0.00"
-                                value={field.value || undefined}
-                                onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                                value={field.value === undefined || field.value === null ? '' : field.value}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  if (raw === '') field.onChange(0);
+                                  else { const n = parseFloat(raw); field.onChange(Number.isNaN(n) ? 0 : n); }
+                                }}
                               />
                             </FormControl>
                             <FormMessage />
@@ -1255,7 +1286,7 @@ const Expenses = () => {
                       name={`expenses.${index}.description`}
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Description</FormLabel>
+                          <FormLabel>Description (optional)</FormLabel>
                           <FormControl>
                             <Textarea
                               rows={2}
@@ -1267,7 +1298,7 @@ const Expenses = () => {
                         </FormItem>
                       )}
                     />
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
+                    <FormFieldGrid columns={2} className="mt-4">
                       {isPrintingPress && (
                         <FormField
                           control={form.control}
@@ -1275,13 +1306,14 @@ const Expenses = () => {
                           render={({ field }) => (
                             <FormItem>
                               <FormLabel>Job (Optional)</FormLabel>
-                              <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                              <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
                                 <FormControl>
                                   <SelectTrigger>
                                     <SelectValue placeholder="Select job (optional)" />
                                   </SelectTrigger>
                                 </FormControl>
                                 <SelectContent>
+                                  <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
                                   {jobs.map(job => (
                                     <SelectItem key={job.id} value={job.id}>
                                       {job.jobNumber} - {job.title}
@@ -1300,13 +1332,14 @@ const Expenses = () => {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Vendor (Optional)</FormLabel>
-                            <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                            <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
                               <FormControl>
                                 <SelectTrigger>
                                   <SelectValue placeholder="Select vendor (optional)" />
                                 </SelectTrigger>
                               </FormControl>
                               <SelectContent>
+                                <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
                                 {vendors.map(vendor => (
                                   <SelectItem key={vendor.id} value={vendor.id}>
                                     {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
@@ -1318,7 +1351,7 @@ const Expenses = () => {
                           </FormItem>
                         )}
                       />
-                    </div>
+                    </FormFieldGrid>
                     <Button
                       type="button"
                       variant="destructive"
@@ -1362,14 +1395,14 @@ const Expenses = () => {
               ) : (
               <>
               {/* Single expense form */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormFieldGrid columns={2}>
                 <FormField
                   control={form.control}
                   name="category"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Category</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
+                      <Select value={field.value ?? ''} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Select category" />
@@ -1397,22 +1430,26 @@ const Expenses = () => {
                           step="0.01"
                           min="0"
                           placeholder="0.00"
-                          value={field.value || undefined}
-                          onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                          value={field.value === '' ? '' : field.value}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            if (raw === '') field.onChange('');
+                            else { const n = parseFloat(raw); field.onChange(Number.isNaN(n) ? '' : n); }
+                          }}
                         />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
-              </div>
+            </FormFieldGrid>
 
-              <FormField
-                control={form.control}
-                name="description"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Description</FormLabel>
+            <FormField
+              control={form.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Description (optional)</FormLabel>
                     <FormControl>
                       <Textarea
                         rows={3}
@@ -1425,7 +1462,7 @@ const Expenses = () => {
                 )}
               />
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:gap-4">
                 <FormField
                   control={form.control}
                   name="expenseDate"
@@ -1448,13 +1485,14 @@ const Expenses = () => {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Payment Method (Optional)</FormLabel>
-                      <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                      <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Select payment method (optional)" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
+                          <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
                           {paymentMethods.map(method => (
                             <SelectItem key={method} value={method}>
                               {formatPaymentMethod(method)}
@@ -1468,71 +1506,74 @@ const Expenses = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <FormField
-                  control={form.control}
-                  name="jobId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Associated Job (Optional)</FormLabel>
-                      <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select job (leave empty for general expense)" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {jobs.map(job => (
-                            <SelectItem key={job.id} value={job.id}>
-                              {job.jobNumber} - {job.title}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="vendorId"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Vendor (Optional)</FormLabel>
-                      <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select vendor" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {vendors.map(vendor => (
-                            <SelectItem key={vendor.id} value={vendor.id}>
-                              {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+                <FormFieldGrid columns={2}>
+                  <FormField
+                    control={form.control}
+                    name="jobId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Associated Job (Optional)</FormLabel>
+                        <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select job (leave empty for general expense)" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
+                            {jobs.map(job => (
+                              <SelectItem key={job.id} value={job.id}>
+                                {job.jobNumber} - {job.title}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="vendorId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Vendor (Optional)</FormLabel>
+                        <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select vendor" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
+                            {vendors.map(vendor => (
+                              <SelectItem key={vendor.id} value={vendor.id}>
+                                {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </FormFieldGrid>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <FormFieldGrid columns={2}>
                 <FormField
                   control={form.control}
                   name="status"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Status (Optional)</FormLabel>
-                      <Select value={field.value || undefined} onValueChange={(value) => field.onChange(value || null)}>
+                      <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Select status (optional)" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
+                          <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
                           {statusOptions.map(status => (
                             <SelectItem key={status} value={status}>
                               {status.toUpperCase()}
@@ -1557,14 +1598,14 @@ const Expenses = () => {
                     </FormItem>
                   )}
                 />
-              </div>
+            </FormFieldGrid>
 
-              <FormField
-                control={form.control}
-                name="notes"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Notes (Optional)</FormLabel>
+            <FormField
+              control={form.control}
+              name="notes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Notes (Optional)</FormLabel>
                     <FormControl>
                       <Textarea
                         rows={2}
@@ -1578,23 +1619,9 @@ const Expenses = () => {
               />
               </>
               )}
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => {
-                  setModalVisible(false);
-                  setMultipleMode(false);
-                  form.reset();
-                }} disabled={submittingExpense}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={submittingExpense}>
-                  {submittingExpense && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                  {editingExpense ? 'Update' : 'Create'} Expense
-                </Button>
-              </DialogFooter>
             </form>
           </Form>
-        </DialogContent>
-      </Dialog>
+      </MobileFormDialog>
 
       {/* Rejection Dialog */}
       <Dialog open={rejectionModalVisible} onOpenChange={(open) => {
@@ -1603,13 +1630,14 @@ const Expenses = () => {
           setRejectingExpense(null);
         }
       }}>
-        <DialogContent>
+        <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>Reject Expense Request</DialogTitle>
             <DialogDescription>
               Please provide a reason for rejecting this expense request
             </DialogDescription>
           </DialogHeader>
+          <DialogBody>
           {rejectingExpense && (
             <div className="mb-4 p-4 bg-muted rounded-md">
               <div><strong>Expense:</strong> {rejectingExpense.expenseNumber}</div>
@@ -1618,7 +1646,7 @@ const Expenses = () => {
             </div>
           )}
           <Form {...rejectionForm}>
-            <form onSubmit={rejectionForm.handleSubmit(onReject)} className="space-y-4">
+            <form onSubmit={rejectionForm.handleSubmit(onReject)} className="space-y-3 md:space-y-4">
               <FormField
                 control={rejectionForm.control}
                 name="rejectionReason"
@@ -1643,13 +1671,13 @@ const Expenses = () => {
                 }}>
                   Cancel
                 </Button>
-                <Button type="submit" variant="destructive" disabled={rejectingExpenseLoading}>
-                  {rejectingExpenseLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                <Button type="submit" variant="destructive" loading={rejectingExpenseLoading}>
                   Reject
                 </Button>
               </DialogFooter>
             </form>
           </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
 
@@ -1658,136 +1686,272 @@ const Expenses = () => {
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Expense Details"
-        width={700}
+        width={720}
         onEdit={viewingExpense ? () => handleEdit(viewingExpense) : null}
         onDelete={viewingExpense ? () => {
-          handleDelete(viewingExpense.id);
+          handleArchive(viewingExpense);
           setDrawerVisible(false);
         } : null}
-        deleteConfirmText="Are you sure you want to delete this expense?"
-        tabs={viewingExpense ? [
-          {
-            key: 'details',
-            label: 'Details',
-            content: (
-              <Descriptions column={1} bordered>
-                <DescriptionItem label="Expense Number">
-                  <strong>{viewingExpense.expenseNumber}</strong>
-                </DescriptionItem>
-                <DescriptionItem label="Date">
-                  {viewingExpense.expenseDate ? dayjs(viewingExpense.expenseDate).format('MMMM DD, YYYY') : '-'}
-                </DescriptionItem>
-                <DescriptionItem label="Category">
-                  <Badge className="bg-blue-600">{viewingExpense.category}</Badge>
-                </DescriptionItem>
-                <DescriptionItem label="Description">
-                  {viewingExpense.description || '-'}
-                </DescriptionItem>
-                <DescriptionItem label="Amount">
-                  <strong style={{ fontSize: '18px', color: '#166534' }}>
-                    GHS {parseFloat(viewingExpense.amount || 0).toFixed(2)}
-                  </strong>
-                </DescriptionItem>
-                <DescriptionItem label="Payment Method">
-                  {viewingExpense.paymentMethod ? formatPaymentMethod(viewingExpense.paymentMethod) : '-'}
-                </DescriptionItem>
-                <DescriptionItem label="Payment Status">
-                  {viewingExpense.status ? (
-                    <StatusChip status={viewingExpense.status} />
-                  ) : '-'}
-                </DescriptionItem>
-                <DescriptionItem label="Approval Status">
-                  {viewingExpense.approvalStatus ? (
-                    <StatusChip status={viewingExpense.approvalStatus} />
-                  ) : '-'}
-                </DescriptionItem>
-                <DescriptionItem label="Vendor">
-                  {viewingExpense.vendor ? (
-                    <span>{viewingExpense.vendor.name} {viewingExpense.vendor.company ? `(${viewingExpense.vendor.company})` : ''}</span>
-                  ) : '-'}
-                </DescriptionItem>
-                {isPrintingPress && (
-                  <DescriptionItem label="Job">
-                    {viewingExpense.job ? (
-                      <span>{viewingExpense.job.jobNumber} - {viewingExpense.job.title}</span>
-                    ) : 'General Expense'}
+        deleteConfirmText="Are you sure you want to archive this expense?"
+        tabs={viewingExpense ? (() => {
+          // Prepare activities for timeline
+          const activities = expenseActivities || [];
+          
+          // Add creation activity at the beginning
+          const creationActivity = {
+            id: 'creation',
+            type: 'creation',
+            createdAt: viewingExpense.createdAt,
+            createdByUser: viewingExpense.submitter || null
+          };
+
+          const allActivities = [creationActivity, ...activities];
+
+          const timelineItems = allActivities.map((activity, index) => {
+            const isLast = index === allActivities.length - 1;
+            
+            if (activity.type === 'creation') {
+              const byLine = activity.createdByUser ? ` by ${activity.createdByUser.name}` : '';
+              return (
+                <TimelineItem key={activity.id} isLast={isLast}>
+                  <TimelineIndicator />
+                  <TimelineContent>
+                    <TimelineTitle className="text-black">
+                      {activity.createdByUser
+                        ? `${activity.createdByUser.name} created expense ${viewingExpense.expenseNumber}`
+                        : `Expense ${viewingExpense.expenseNumber} was created`}
+                    </TimelineTitle>
+                    <TimelineTime className="text-black">
+                      {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
+                      {byLine}
+                    </TimelineTime>
+                  </TimelineContent>
+                </TimelineItem>
+              );
+            }
+
+            const typeLabels = {
+              'update': 'Expense Updated',
+              'submission': 'Submitted for Approval',
+              'approval': 'Approved',
+              'rejection': 'Rejected',
+              'status_change': 'Status Changed',
+              'payment': 'Payment Recorded',
+              'note': 'Note Added'
+            };
+            const actionTitle = activity.subject || typeLabels[activity.type] || activity.type;
+            const byWho = activity.createdByUser ? activity.createdByUser.name : null;
+
+            return (
+              <TimelineItem key={activity.id} isLast={isLast}>
+                <TimelineIndicator />
+                <TimelineContent>
+                  <TimelineTitle className="text-black">
+                    {byWho ? `${byWho} — ${actionTitle}` : actionTitle}
+                  </TimelineTitle>
+                  <TimelineTime className="text-black">
+                    {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
+                  </TimelineTime>
+                  {activity.notes && (
+                    <TimelineDescription className="text-black">{activity.notes}</TimelineDescription>
+                  )}
+                  {activity.metadata?.rejectionReason && (
+                    <TimelineDescription className="text-black" style={{ color: '#ff4d4f' }}>
+                      Rejection Reason: {activity.metadata.rejectionReason}
+                    </TimelineDescription>
+                  )}
+                </TimelineContent>
+              </TimelineItem>
+            );
+          });
+
+          return [
+            {
+              key: 'details',
+              label: 'Details',
+              content: (
+                <DrawerSectionCard title="Expense details">
+                  <Descriptions column={1} className="space-y-0">
+                  <DescriptionItem label="Expense Number">
+                    <strong>{viewingExpense.expenseNumber}</strong>
                   </DescriptionItem>
-                )}
-                <DescriptionItem label="Submitted By">
-                  {viewingExpense.submitter ? (
-                    <span>{viewingExpense.submitter.name} ({viewingExpense.submitter.email})</span>
-                  ) : '-'}
-                </DescriptionItem>
-                {viewingExpense.approver && (
-                  <DescriptionItem label="Approved By">
-                    <span>{viewingExpense.approver.name} ({viewingExpense.approver.email})</span>
+                  <DescriptionItem label="Date">
+                    {viewingExpense.expenseDate ? dayjs(viewingExpense.expenseDate).format('MMMM DD, YYYY') : '-'}
                   </DescriptionItem>
-                )}
-                {viewingExpense.approvedAt && (
-                  <DescriptionItem label="Approved At">
-                    {dayjs(viewingExpense.approvedAt).format('MMMM DD, YYYY [at] hh:mm A')}
+                  <DescriptionItem label="Category">
+                    <Badge className="bg-blue-600">{viewingExpense.category}</Badge>
                   </DescriptionItem>
-                )}
-                {viewingExpense.rejectionReason && (
-                  <DescriptionItem label="Rejection Reason">
-                    <span style={{ color: '#ff4d4f' }}>{viewingExpense.rejectionReason}</span>
+                  <DescriptionItem label="Description">
+                    {viewingExpense.description || '-'}
                   </DescriptionItem>
-                )}
-                {viewingExpense.receiptUrl && (
-                  <DescriptionItem label="Receipt">
-                    <a href={viewingExpense.receiptUrl} target="_blank" rel="noopener noreferrer">
-                      View Receipt
-                    </a>
+                  <DescriptionItem label="Amount">
+                    <strong style={{ fontSize: '18px', color: '#166534' }}>
+                      GHS {parseFloat(viewingExpense.amount || 0).toFixed(2)}
+                    </strong>
                   </DescriptionItem>
-                )}
-                {viewingExpense.isRecurring && (
-                  <DescriptionItem label="Recurring">
-                    <Badge className="bg-purple-600">Yes</Badge>
-                    {viewingExpense.recurringFrequency && (
-                      <Badge variant="outline" className="ml-2">
-                        {viewingExpense.recurringFrequency.charAt(0).toUpperCase() + 
-                         viewingExpense.recurringFrequency.slice(1)}
-                      </Badge>
-                    )}
+                  <DescriptionItem label="Payment Method">
+                    {viewingExpense.paymentMethod ? formatPaymentMethod(viewingExpense.paymentMethod) : '-'}
                   </DescriptionItem>
-                )}
-                <DescriptionItem label="Notes">
-                  {viewingExpense.notes || '-'}
-                </DescriptionItem>
-                <DescriptionItem label="Created At">
-                  {viewingExpense.createdAt ? dayjs(viewingExpense.createdAt).format('MMMM DD, YYYY [at] hh:mm A') : '-'}
-                </DescriptionItem>
-                <DescriptionItem label="Last Updated">
-                  {viewingExpense.updatedAt ? dayjs(viewingExpense.updatedAt).format('MMMM DD, YYYY [at] hh:mm A') : '-'}
-                </DescriptionItem>
-              </Descriptions>
-            )
-          }
-        ] : null}
+                  <DescriptionItem label="Payment Status" className="relative">
+                    <div className="flex items-center justify-end w-full gap-2">
+                      {viewingExpense.status !== 'paid' && (
+                        <Button
+                          variant="link"
+                          size="sm"
+                          onClick={() => handleMarkPaid(viewingExpense.id)}
+                          disabled={markingPaid === viewingExpense.id}
+                          className="text-[#166534] hover:text-[#166534] hover:underline font-medium h-auto p-0 flex-shrink-0 order-first"
+                        >
+                          {markingPaid === viewingExpense.id && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                          Mark as Paid
+                        </Button>
+                      )}
+                      <div className="flex-shrink-0">
+                        {viewingExpense.status ? (
+                          <StatusChip status={viewingExpense.status} />
+                        ) : '-'}
+                      </div>
+                    </div>
+                  </DescriptionItem>
+                  <DescriptionItem label="Approval Status" className="relative">
+                    <div className="flex items-center justify-end w-full gap-2">
+                      {viewingExpense.approvalStatus !== 'approved' && viewingExpense.approvalStatus !== 'rejected' && (
+                        <Button
+                          variant="link"
+                          size="sm"
+                          onClick={() => handleApprove(viewingExpense.id)}
+                          disabled={approvingExpense}
+                          className="text-[#166534] hover:text-[#166534] hover:underline font-medium h-auto p-0 flex-shrink-0 order-first"
+                        >
+                          {approvingExpense && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
+                          {approvingExpense ? (
+                            <>
+                              <Loader2 className="h-3 w-3 mr-1 animate-spin inline" />
+                              Approving...
+                            </>
+                          ) : (
+                            'Approve'
+                          )}
+                        </Button>
+                      )}
+                      <div className="flex-shrink-0">
+                        {viewingExpense.approvalStatus ? (
+                          <StatusChip status={viewingExpense.approvalStatus} />
+                        ) : '-'}
+                      </div>
+                    </div>
+                  </DescriptionItem>
+                  <DescriptionItem label="Vendor">
+                    {viewingExpense.vendor ? (
+                      <span>{viewingExpense.vendor.name} {viewingExpense.vendor.company ? `(${viewingExpense.vendor.company})` : ''}</span>
+                    ) : '-'}
+                  </DescriptionItem>
+                  {isPrintingPress && (
+                    <DescriptionItem label="Job">
+                      {viewingExpense.job ? (
+                        <span>{viewingExpense.job.jobNumber} - {viewingExpense.job.title}</span>
+                      ) : 'General Expense'}
+                    </DescriptionItem>
+                  )}
+                  <DescriptionItem label="Submitted By">
+                    {viewingExpense.submitter ? (
+                      <span>{viewingExpense.submitter.name} ({viewingExpense.submitter.email})</span>
+                    ) : '-'}
+                  </DescriptionItem>
+                  {viewingExpense.approver && (
+                    <DescriptionItem label="Approved By">
+                      <span>{viewingExpense.approver.name} ({viewingExpense.approver.email})</span>
+                    </DescriptionItem>
+                  )}
+                  {viewingExpense.approvedAt && (
+                    <DescriptionItem label="Approved At">
+                      {dayjs(viewingExpense.approvedAt).format('MMMM DD, YYYY [at] hh:mm A')}
+                    </DescriptionItem>
+                  )}
+                  {viewingExpense.rejectionReason && (
+                    <DescriptionItem label="Rejection Reason">
+                      <span style={{ color: '#ff4d4f' }}>{viewingExpense.rejectionReason}</span>
+                    </DescriptionItem>
+                  )}
+                  {viewingExpense.receiptUrl && (
+                    <DescriptionItem label="Receipt">
+                      <a href={viewingExpense.receiptUrl} target="_blank" rel="noopener noreferrer">
+                        View Receipt
+                      </a>
+                    </DescriptionItem>
+                  )}
+                  {viewingExpense.isRecurring && (
+                    <DescriptionItem label="Recurring">
+                      <Badge className="bg-purple-600">Yes</Badge>
+                      {viewingExpense.recurringFrequency && (
+                        <Badge variant="outline" className="ml-2">
+                          {viewingExpense.recurringFrequency.charAt(0).toUpperCase() + 
+                           viewingExpense.recurringFrequency.slice(1)}
+                        </Badge>
+                      )}
+                    </DescriptionItem>
+                  )}
+                  <DescriptionItem label="Notes">
+                    {viewingExpense.notes || '-'}
+                  </DescriptionItem>
+                  <DescriptionItem label="Created At">
+                    {viewingExpense.createdAt ? dayjs(viewingExpense.createdAt).format('MMMM DD, YYYY [at] hh:mm A') : '-'}
+                  </DescriptionItem>
+                  <DescriptionItem label="Last Updated">
+                    {viewingExpense.updatedAt ? dayjs(viewingExpense.updatedAt).format('MMMM DD, YYYY [at] hh:mm A') : '-'}
+                  </DescriptionItem>
+                </Descriptions>
+                </DrawerSectionCard>
+              )
+            },
+            {
+              key: 'activities',
+              label: 'Activity',
+              content: (
+                <DrawerSectionCard title="Activity">
+                  {loadingActivities ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : timelineItems.length ? (
+                    <Timeline>
+                      {timelineItems}
+                    </Timeline>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground text-sm">
+                      No activities found
+                    </div>
+                  )}
+                </DrawerSectionCard>
+              )
+            }
+          ];
+        })() : null}
       />
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+      {/* Archive Confirmation Dialog */}
+      <AlertDialog open={archiveConfirmOpen} onOpenChange={setArchiveConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+            <AlertDialogTitle>Archive Expense?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete the expense.
+              This will archive the expense. Archived expenses are hidden from the main list but can be viewed by including archived items in filters.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                if (expenseToDelete) {
-                  handleDelete(expenseToDelete.id);
-                  setExpenseToDelete(null);
+                if (expenseToArchive) {
+                  handleArchive(expenseToArchive);
+                  setExpenseToArchive(null);
                 }
-                setDeleteConfirmOpen(false);
+                setArchiveConfirmOpen(false);
               }}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-orange-600 text-white hover:bg-orange-700"
+              loading={archivingExpense === expenseToArchive?.id}
             >
-              Delete
+              Archive
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

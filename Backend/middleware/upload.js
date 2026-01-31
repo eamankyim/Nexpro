@@ -56,6 +56,22 @@ const createUploader = (subDirResolver) => {
 
 const upload = createUploader((req) => path.join('jobs', req.params.id || 'general'));
 
+// Shared image-only multer config (memory storage)
+const imageOnlyMulter = () =>
+  multer({
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: parseInt(process.env.UPLOAD_MAX_SIZE_MB || '10', 10) * 1024 * 1024
+    },
+    fileFilter: (req, file, cb) => {
+      if (file.mimetype.startsWith('image/')) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only image files are allowed'), false);
+      }
+    },
+  });
+
 // Uploader for vendor price list images - use memory storage since we store in DB
 const vendorPriceListUploader = multer({
   storage: multer.memoryStorage(),
@@ -85,6 +101,9 @@ const vendorPriceListUploader = multer({
     next(err);
   }
 });
+
+// Product image uploader (memory storage; controller writes to disk)
+const productImageUploader = imageOnlyMulter();
 
 /**
  * Middleware to check storage limits before upload
@@ -136,6 +155,7 @@ const checkStorageLimit = async (req, res, next) => {
 module.exports = {
   upload,
   vendorPriceListUploader,
+  productImageUploader,
   baseUploadDir,
   ensureDirExists,
   createUploader,

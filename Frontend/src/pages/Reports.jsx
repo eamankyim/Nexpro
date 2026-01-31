@@ -1,4 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useSmartSearch } from '../context/SmartSearchContext';
 import {
   Select,
   DatePicker,
@@ -21,12 +23,18 @@ import {
   Dropdown
 } from 'antd';
 import { Card as AntdCard } from 'antd';
-import { showSuccess, showError, showWarning } from '../utils/toast';
+import { showSuccess, showError, showWarning, showLoading } from '../utils/toast';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
 import { Skeleton } from '../components/ui/skeleton';
-import { Card, CardContent } from '../components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Table as ShadcnTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
+import { Button as ShadcnButton } from '../components/ui/button';
+import { Select as ShadcnSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Badge } from '../components/ui/badge';
+import { Input as ShadcnInput } from '../components/ui/input';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 
 const { RangePicker } = DatePicker;
 import {
@@ -43,7 +51,10 @@ import {
   XCircle,
   CheckCircle,
   Plus,
-  ChevronDown
+  ChevronDown,
+  Search,
+  SlidersHorizontal,
+  MoreVertical
 } from 'lucide-react';
 import {
   LineChart,
@@ -61,7 +72,10 @@ import {
   ResponsiveContainer
 } from 'recharts';
 import reportService from '../services/reportService';
+import inventoryService from '../services/inventoryService';
 import { useAuth } from '../context/AuthContext';
+import { SEARCH_PLACEHOLDERS } from '../constants';
+import { getPreviousPeriod } from '../utils/periodComparison';
 import dayjs from 'dayjs';
 
 const { Option } = Select;
@@ -71,12 +85,58 @@ const { CheckableTag } = Tag;
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
 
+// Business type terminology helper
+const getBusinessTerminology = (businessType) => {
+  const terms = {
+    printing_press: {
+      analytics: 'Service Analytics',
+      items: 'Services',
+      sales: 'Jobs',
+      categories: 'Service Categories',
+      units: 'Units',
+      revenue: 'Service Revenue',
+      analyticsTitle: 'Service Analytics Summary',
+      analyticsDescription: 'An overview of the performance of your services and their revenue.'
+    },
+    shop: {
+      analytics: 'Product Analytics',
+      items: 'Products',
+      sales: 'Sales',
+      categories: 'Product Categories',
+      units: 'Units Sold',
+      revenue: 'Product Revenue',
+      analyticsTitle: 'Product Analytics Summary',
+      analyticsDescription: 'A detailed summary of all products and their sales status.'
+    },
+    pharmacy: {
+      analytics: 'Drug Analytics',
+      items: 'Drugs',
+      sales: 'Prescriptions',
+      categories: 'Drug Categories',
+      units: 'Dispensed',
+      revenue: 'Prescription Revenue',
+      analyticsTitle: 'Drug Analytics Summary',
+      analyticsDescription: 'A detailed summary of all drugs and their prescription status.'
+    }
+  };
+  return terms[businessType] || terms.printing_press;
+};
+
 const Reports = () => {
-  const { activeTenant } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { activeTenant, user } = useAuth();
+  const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
-  
-  const [activeTab, setActiveTab] = useState('overview');
+  const isShop = businessType === 'shop';
+  const isPharmacy = businessType === 'pharmacy';
+  const terminology = useMemo(() => getBusinessTerminology(businessType), [businessType]);
+
+  // Determine which view to show based on route
+  const isSmartReport = location.pathname === '/reports/smart-report';
+  const isGeneratedReports = location.pathname === '/reports/generated-reports';
   const [loading, setLoading] = useState(false);
   const [reportType, setReportType] = useState('revenue');
   const [dateFilter, setDateFilter] = useState('thisMonth'); // 'today', 'yesterday', 'thisWeek', etc.
@@ -86,7 +146,7 @@ const Reports = () => {
   ]);
   const [reportData, setReportData] = useState(null);
   const [groupBy, setGroupBy] = useState('day');
-  
+
   // AI Report Generator states
   const [aiPrompt, setAiPrompt] = useState('');
   const [generatedReport, setGeneratedReport] = useState(null);
@@ -95,6 +155,12 @@ const Reports = () => {
   const [createReportModalVisible, setCreateReportModalVisible] = useState(false);
   const [reportConfigForm] = Form.useForm();
   const [selectedReportTypes, setSelectedReportTypes] = useState(['cashflow']);
+  const [reportDateFilter, setReportDateFilter] = useState('last6months');
+
+  useEffect(() => {
+    setPageSearchConfig({ scope: 'reports', placeholder: SEARCH_PLACEHOLDERS.REPORTS });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig]);
 
   // Calculate date range based on filter type
   const calculateDateRange = (filterType, customDate = null) => {
@@ -163,14 +229,66 @@ const Reports = () => {
     }
   }, [dateFilter]);
 
+  const [savedReports, setSavedReports] = useState([]);
+
+  // Load saved reports from localStorage on mount
   useEffect(() => {
-    if (activeTab === 'overview') {
-      fetchOverviewStats();
-    } else {
-      fetchReport();
+    try {
+      const saved = localStorage.getItem('shopwise_saved_reports');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setSavedReports(parsed);
+      }
+    } catch (e) {
+      console.warn('Failed to load saved reports from localStorage:', e);
+    }
+  }, []);
+
+  // Filter reports based on header search - moved to top level to avoid hook order issues
+  const filteredReports = useMemo(() => {
+    if (!isGeneratedReports) return [];
+    return savedReports.filter(report => {
+      const matchesSearch = !searchValue ||
+        report.title?.toLowerCase().includes(searchValue.toLowerCase()) ||
+        report.generatedBy?.toLowerCase().includes(searchValue.toLowerCase());
+      return matchesSearch;
+    });
+  }, [savedReports, searchValue, isGeneratedReports]);
+
+  // Auto-generate monthly smart report when Smart Report page loads
+  useEffect(() => {
+    if (isSmartReport && !generatedReport && !aiLoading) {
+      // Auto-generate monthly report for current month
+      const autoGenerateReport = async () => {
+        setAiLoading(true);
+        try {
+          const defaultConfig = {
+            reportTitle: `Monthly Report for ${dayjs().format('MMMM YYYY')}`,
+            durationType: 'monthly',
+            year: dayjs().year(),
+            month: dayjs().format('MMMM'),
+            reportTypes: ['cashflow', 'service-analytics'],
+            generatedBy: 'System'
+          };
+          await generateSmartReport(defaultConfig);
+        } catch (error) {
+          console.error('Error auto-generating report:', error);
+          showError(null, 'Failed to generate monthly report');
+        } finally {
+          setAiLoading(false);
+        }
+      };
+      autoGenerateReport();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reportType, dateRange, groupBy, activeTab, dateFilter]);
+  }, [isSmartReport]);
+
+  useEffect(() => {
+    if (!isSmartReport && !isGeneratedReports) {
+      fetchOverviewStats();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reportType, dateRange, groupBy, isSmartReport, isGeneratedReports, dateFilter]);
 
   const handleFilterChange = (filterType) => {
     setDateFilter(filterType);
@@ -233,7 +351,7 @@ const Reports = () => {
       
       // Fetch all report types for overview from real API
       console.log('[Reports] Fetching overview stats for date range:', { startDate, endDate, groupBy, dateFilter });
-      const [revenue, expenses, outstanding, sales, serviceAnalytics] = await Promise.all([
+      const [revenue, expenses, outstanding, sales, serviceAnalytics, inventorySummary, inventoryMovements, fastestMovingItems, revenueByChannel] = await Promise.all([
         reportService.getRevenueReport(startDate, endDate, groupBy).catch((err) => {
           console.error('[Reports] Error fetching revenue report:', err);
           return { data: { totalRevenue: 0, byPeriod: [], byCustomer: [] } };
@@ -253,6 +371,22 @@ const Reports = () => {
         reportService.getServiceAnalyticsReport(startDate, endDate).catch((err) => {
           console.error('[Reports] Error fetching service analytics report:', err);
           return { data: { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] } };
+        }),
+        reportService.getInventorySummary().catch((err) => {
+          console.error('[Reports] Error fetching inventory summary:', err);
+          return { data: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 } };
+        }),
+        reportService.getInventoryMovements(startDate, endDate).catch((err) => {
+          console.error('[Reports] Error fetching inventory movements:', err);
+          return { data: [] };
+        }),
+        reportService.getFastestMovingItems(startDate, endDate, 5).catch((err) => {
+          console.error('[Reports] Error fetching fastest moving items:', err);
+          return { data: [] };
+        }),
+        reportService.getRevenueByChannel(startDate, endDate).catch((err) => {
+          console.error('[Reports] Error fetching revenue by channel:', err);
+          return { data: [] };
         })
       ]);
 
@@ -289,52 +423,30 @@ const Reports = () => {
         periodLengthDays
       });
       
-      // Calculate previous period dates based on period type
-      let previousPeriodStart, previousPeriodEnd;
-      
-      if (dateFilter === 'thisMonth' || dateFilter === 'lastMonth') {
-        // For months, use proper month boundaries - go back one full month
-        const prevMonth = currentPeriodStart.subtract(1, 'month');
-        previousPeriodStart = prevMonth.startOf('month');
-        previousPeriodEnd = prevMonth.endOf('month');
-      } else if (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') {
-        // For weeks, subtract one week
-        previousPeriodEnd = currentPeriodStart.subtract(1, 'day');
-        previousPeriodStart = previousPeriodEnd.subtract(periodLengthDays - 1, 'day');
-      } else if (dateFilter === 'thisQuarter' || dateFilter === 'lastQuarter') {
-        // For quarters, use proper quarter boundaries - go back one full quarter
-        const prevQuarter = currentPeriodStart.subtract(1, 'quarter');
-        previousPeriodStart = prevQuarter.startOf('quarter');
-        previousPeriodEnd = prevQuarter.endOf('quarter');
-      } else if (dateFilter === 'thisYear' || dateFilter === 'lastYear') {
-        // For years, use proper year boundaries - go back one full year
-        const prevYear = currentPeriodStart.subtract(1, 'year');
-        previousPeriodStart = prevYear.startOf('year');
-        previousPeriodEnd = prevYear.endOf('year');
-      } else {
-        // For custom ranges or days, calculate by subtracting the period length
-        previousPeriodEnd = currentPeriodStart.subtract(1, 'day');
-        previousPeriodStart = previousPeriodEnd.subtract(periodLengthDays - 1, 'day');
-      }
+      // Calculate previous period dates using utility function
+      const previousPeriod = getPreviousPeriod(dateFilter || 'custom', [currentPeriodStart, currentPeriodEnd]);
       
       console.log('[Revenue Growth] Previous period calculation:', {
         dateFilter,
-        previousPeriodStart: previousPeriodStart.format('YYYY-MM-DD'),
-        previousPeriodEnd: previousPeriodEnd.format('YYYY-MM-DD'),
-        calculation: `Based on ${dateFilter}, calculated previous period from ${previousPeriodStart.format('YYYY-MM-DD')} to ${previousPeriodEnd.format('YYYY-MM-DD')}`
+        previousPeriodStart: previousPeriod.startDate,
+        previousPeriodEnd: previousPeriod.endDate,
+        label: previousPeriod.label,
+        calculation: `Based on ${dateFilter}, calculated previous period from ${previousPeriod.startDate} to ${previousPeriod.endDate}`
       });
       
-      // Determine period type label for display
-      let periodTypeLabel = 'Period';
-      if (dateFilter === 'today' || dateFilter === 'yesterday') {
+      // Determine period type label for display based on comparison label
+      let periodTypeLabel = previousPeriod.label || 'vs previous period';
+      
+      // Map labels to short format for display
+      if (periodTypeLabel.includes('yesterday')) {
         periodTypeLabel = 'D/D';
-      } else if (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') {
+      } else if (periodTypeLabel.includes('week')) {
         periodTypeLabel = 'W/W';
-      } else if (dateFilter === 'thisMonth' || dateFilter === 'lastMonth') {
+      } else if (periodTypeLabel.includes('month')) {
         periodTypeLabel = 'M/M';
-      } else if (dateFilter === 'thisQuarter' || dateFilter === 'lastQuarter') {
+      } else if (periodTypeLabel.includes('quarter')) {
         periodTypeLabel = 'Q/Q';
-      } else if (dateFilter === 'thisYear' || dateFilter === 'lastYear') {
+      } else if (periodTypeLabel.includes('year')) {
         periodTypeLabel = 'Y/Y';
       } else {
         // For custom ranges, determine based on length
@@ -391,14 +503,15 @@ const Reports = () => {
         });
         
         console.log('[Revenue Growth] Fetching previous period revenue...', {
-          start: previousPeriodStart.format('YYYY-MM-DD'),
-          end: previousPeriodEnd.format('YYYY-MM-DD')
+          start: previousPeriod.startDate,
+          end: previousPeriod.endDate,
+          label: previousPeriod.label
         });
         
-        // Fetch revenue for previous period (same length, shifted back)
+        // Fetch revenue for previous period using utility-calculated dates
         const previousPeriodRevenueData = await reportService.getRevenueReport(
-          previousPeriodStart.format('YYYY-MM-DD'),
-          previousPeriodEnd.format('YYYY-MM-DD'),
+          previousPeriod.startDate,
+          previousPeriod.endDate,
           'day'
         ).catch((err) => {
           console.error('[Revenue Growth] ❌ Error fetching previous period revenue:', err);
@@ -510,13 +623,18 @@ const Reports = () => {
         outstanding: outstanding?.data || { totalOutstanding: 0 },
         sales: sales?.data || { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [], jobsTrendByDate: [] },
         serviceAnalytics: serviceAnalytics?.data || { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] },
+        inventorySummary: inventorySummary?.data || { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+        inventoryMovements: inventoryMovements?.data || [],
+        fastestMovingItems: fastestMovingItems?.data || [],
+        revenueByChannel: revenueByChannel?.data || [],
         profitLoss: {
           revenue: totalRevenue,
           expenses: totalExpenses,
           grossProfit: grossProfit,
           profitMargin: profitMargin
         },
-        revenueGrowth: revenueGrowth
+        revenueGrowth: revenueGrowth,
+        periodTypeLabel: periodTypeLabel
       });
     } catch (error) {
       console.error('Error fetching overview stats:', error);
@@ -549,10 +667,15 @@ const Reports = () => {
       const reportConfig = {
         ...values,
         reportTypes: selectedReportTypes,
-        generatedBy: 'Current User' // Replace with actual user
+        generatedBy: user?.name || user?.first_name || 'System User'
       };
 
+      // Generate the report
       await generateSmartReport(reportConfig);
+      
+      // After generating, navigate to Smart Report to view it
+      // The report will be saved automatically in generateSmartReport
+      navigate('/reports/smart-report');
     } catch (error) {
       console.error('Error creating report:', error);
       showError(null, 'Failed to create report');
@@ -565,14 +688,26 @@ const Reports = () => {
       const startDate = dateRange[0].format('YYYY-MM-DD');
       const endDate = dateRange[1].format('YYYY-MM-DD');
 
-      // Fetch real data for the report
-      const [revenueData, expenseData, salesData, outstandingData, serviceAnalyticsData] = await Promise.all([
+      // Fetch real data for the report - conditionally fetch product/inventory data for shop/pharmacy
+      const fetchPromises = [
         reportService.getRevenueReport(startDate, endDate, 'day').catch(() => ({ data: { totalRevenue: 0, byPeriod: [] } })),
         reportService.getExpenseReport(startDate, endDate).catch(() => ({ data: { totalExpenses: 0, byCategory: [] } })),
         reportService.getSalesReport(startDate, endDate, 'day').catch(() => ({ data: { totalSales: 0, byJobType: [], byCustomer: [], byDate: [], byStatus: [] } })),
         reportService.getOutstandingPaymentsReport(startDate, endDate).catch(() => ({ data: { totalOutstanding: 0, invoices: [] } })),
         reportService.getServiceAnalyticsReport(startDate, endDate).catch(() => ({ data: { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] } }))
-      ]);
+      ];
+
+      // Add product sales and inventory data for shop/pharmacy
+      if (isShop || isPharmacy) {
+        fetchPromises.push(
+          reportService.getProductSalesReport(startDate, endDate).catch(() => ({ data: { products: [], totalProducts: 0, totalRevenue: 0, totalQuantitySold: 0 } })),
+          inventoryService.getItems().catch(() => ({ data: { data: [] } }))
+        );
+      } else {
+        fetchPromises.push(Promise.resolve(null), Promise.resolve(null));
+      }
+
+      const [revenueData, expenseData, salesData, outstandingData, serviceAnalyticsData, productSalesData, inventoryData] = await Promise.all(fetchPromises);
 
       const revenue = revenueData.data?.totalRevenue || 0;
       const expenses = expenseData.data?.totalExpenses || 0;
@@ -581,13 +716,15 @@ const Reports = () => {
       const profit = revenue - expenses;
       const profitMargin = revenue > 0 ? ((profit / revenue) * 100) : 0;
 
-      // Calculate previous period for comparison (assuming monthly comparison)
-      const prevStartDate = dayjs(startDate).subtract(1, 'month').startOf('month').format('YYYY-MM-DD');
-      const prevEndDate = dayjs(startDate).subtract(1, 'month').endOf('month').format('YYYY-MM-DD');
+      // Calculate previous period for comparison using utility
+      const previousPeriodForComparison = getPreviousPeriod(dateFilter || 'custom', [
+        dayjs(startDate),
+        dayjs(endDate)
+      ]);
       
       const [prevRevenueData, prevExpenseData] = await Promise.all([
-        reportService.getRevenueReport(prevStartDate, prevEndDate, 'day').catch(() => ({ data: { totalRevenue: 0 } })),
-        reportService.getExpenseReport(prevStartDate, prevEndDate).catch(() => ({ data: { totalExpenses: 0 } }))
+        reportService.getRevenueReport(previousPeriodForComparison.startDate, previousPeriodForComparison.endDate, 'day').catch(() => ({ data: { totalRevenue: 0 } })),
+        reportService.getExpenseReport(previousPeriodForComparison.startDate, previousPeriodForComparison.endDate).catch(() => ({ data: { totalExpenses: 0 } }))
       ]);
 
       const prevRevenue = prevRevenueData.data?.totalRevenue || 0;
@@ -598,6 +735,54 @@ const Reports = () => {
       const expenseChange = prevExpenses > 0 ? ((expenses - prevExpenses) / prevExpenses * 100) : 0;
       const profitChange = prevProfit > 0 ? ((profit - prevProfit) / prevProfit * 100) : 0;
 
+      // Prepare report data for AI analysis
+      const reportDataForAI = {
+        revenue,
+        expenses,
+        profit,
+        profitMargin,
+        revenueChange,
+        expenseChange,
+        profitChange,
+        topItems: (() => {
+          if (isShop || isPharmacy) {
+            return (productSalesData?.data?.products || []).slice(0, 5).map(item => ({
+              name: item.productName,
+              revenue: parseFloat(item.revenue || 0),
+              quantity: parseFloat(item.quantitySold || 0)
+            }));
+          }
+          return (serviceAnalyticsData.data?.byCategory || salesData.data?.byJobType || []).slice(0, 5).map(item => ({
+            name: item.category || item.jobType,
+            revenue: parseFloat(item.totalRevenue || item.totalSales || 0),
+            quantity: parseFloat(item.totalQuantity || 0)
+          }));
+        })(),
+        expenseBreakdown: (expenseData.data?.byCategory || []).map(cat => ({
+          category: cat.category,
+          amount: parseFloat(cat.totalExpenses || 0)
+        })),
+        inventory: inventoryData?.data?.data ? {
+          totalStocks: inventoryData.data.data.length,
+          stockAvailabilityRate: inventoryData.data.data.filter(item => parseFloat(item.quantity || 0) > 0).length / inventoryData.data.data.length * 100
+        } : null,
+        outstandingPayments: outstandingData.data?.totalOutstanding || 0
+      };
+
+      // Fetch AI analysis
+      let aiAnalysis = null;
+      try {
+        const aiResponse = await reportService.generateAIAnalysis(reportDataForAI, {
+          businessType: activeTenant?.businessType || 'printing_press',
+          period: config.durationType || 'monthly',
+          startDate,
+          endDate
+        });
+        aiAnalysis = aiResponse.data?.data || null;
+      } catch (aiError) {
+        console.warn('AI analysis failed, using fallback insights:', aiError);
+      }
+
       // Generate comprehensive smart report with real data
       const mockReport = {
         title: config.reportTitle,
@@ -606,48 +791,118 @@ const Reports = () => {
         month: config.month,
         generatedAt: new Date().toISOString(),
         generatedBy: config.generatedBy,
+        reportTypes: config.reportTypes || selectedReportTypes,
         period: `${dayjs(startDate).format('MMM DD, YYYY')} to ${dayjs(endDate).format('MMM DD, YYYY')}`,
-        greeting: `Hello, here is a summary of the performance of your business operations for ${config.month} ${config.year}.`,
+        greeting: `Hello${user?.first_name ? ` ${user.first_name}` : ''}, here is a summary of the performance of your business operations for ${config.month} ${config.year}.`,
         sections: [],
         insights: [
           {
             type: 'performance',
             title: 'Performance Summary',
+            prevRevenue,
+            prevExpenses,
+            prevProfit,
             metrics: [
-              { label: 'Total Revenue', value: revenue, change: Math.abs(revenueChange), trend: revenueChange >= 0 ? 'up' : 'down', color: '#006d32' },
-              { label: 'Total Expenses', value: expenses, change: Math.abs(expenseChange), trend: expenseChange <= 0 ? 'down' : 'up', color: expenseChange <= 0 ? '#006d32' : '#cf1322' },
-              { label: 'Net Profit', value: profit, change: Math.abs(profitChange), trend: profitChange >= 0 ? 'up' : 'down', color: '#006d32' }
+              { label: 'Total Revenue', value: revenue, prevValue: prevRevenue, change: Math.abs(revenueChange), trend: revenueChange >= 0 ? 'up' : 'down', color: '#006d32' },
+              { label: 'Total Expenses', value: expenses, prevValue: prevExpenses, change: Math.abs(expenseChange), trend: expenseChange <= 0 ? 'down' : 'up', color: expenseChange <= 0 ? '#006d32' : '#cf1322' },
+              { label: 'Net Profit', value: profit, prevValue: prevProfit, change: Math.abs(profitChange), trend: profitChange >= 0 ? 'up' : 'down', color: '#006d32' }
             ],
             note: revenueChange > 0 
               ? `Your revenue is up ${revenueChange.toFixed(1)}% (GHS ${(revenue - prevRevenue).toLocaleString()}) from the previous period.`
               : `Your revenue is down ${Math.abs(revenueChange).toFixed(1)}% (GHS ${(prevRevenue - revenue).toLocaleString()}) from the previous period.`
           },
-          // Conditionally add sections based on selected report types
+          // Conditionally add sections based on selected report types and business type
           ...(selectedReportTypes.includes('cashflow') || selectedReportTypes.includes('service-analytics') ? [{
-            type: 'service-analytics',
-            title: 'Service Analytics Summary',
-            description: 'An overview of the performance of your services and their revenue.',
-            data: (serviceAnalyticsData.data?.byCategory || salesData.data?.byJobType || []).map(item => {
-              // Use service analytics data if available, fallback to sales data
-              const totalRevenue = parseFloat(item.totalRevenue || item.totalSales || 0);
-              const quantitySold = parseFloat(item.totalQuantity || item.jobCount || 0);
-              const avgRevenue = parseFloat(item.averagePrice || 0);
-              let demand = 'Low';
-              if (totalRevenue > revenue * 0.3) demand = 'High';
-              else if (totalRevenue > revenue * 0.15) demand = 'Medium';
-              
-              return {
-                service: item.category || item.jobType || 'Unknown',
-                quantitySold: quantitySold,
-                revenue: totalRevenue,
-                averagePrice: avgRevenue,
-                demand
-              };
-            }).slice(0, 5),
+            type: isShop || isPharmacy ? 'product-analytics' : 'service-analytics',
+            title: terminology.analyticsTitle,
+            description: terminology.analyticsDescription,
+            data: (() => {
+              // For shop/pharmacy, use product sales data
+              if (isShop || isPharmacy) {
+                return (productSalesData?.data?.products || []).map(item => ({
+                  productName: item.productName || 'Unknown',
+                  quantitySold: parseFloat(item.quantitySold || 0),
+                  revenue: parseFloat(item.revenue || 0),
+                  currentStock: parseFloat(item.currentStock || 0),
+                  safetyStock: parseFloat(item.safetyStock || 0),
+                  unit: item.unit || 'pcs',
+                  sku: item.sku,
+                  isLowStock: item.isLowStock,
+                  isHighRisk: item.isHighRisk,
+                  stockPercentage: parseFloat(item.stockPercentage || 0)
+                })).slice(0, 10);
+              }
+              // For printing press, use service analytics data
+              return (serviceAnalyticsData.data?.byCategory || salesData.data?.byJobType || []).map(item => {
+                const totalRevenue = parseFloat(item.totalRevenue || item.totalSales || 0);
+                const quantitySold = parseFloat(item.totalQuantity || item.jobCount || 0);
+                const avgRevenue = parseFloat(item.averagePrice || 0);
+                let demand = 'Low';
+                if (totalRevenue > revenue * 0.3) demand = 'High';
+                else if (totalRevenue > revenue * 0.15) demand = 'Medium';
+                
+                return {
+                  service: item.category || item.jobType || 'Unknown',
+                  quantitySold: quantitySold,
+                  revenue: totalRevenue,
+                  averagePrice: avgRevenue,
+                  demand
+                };
+              }).slice(0, 5);
+            })(),
             recommendations: (() => {
               const recommendations = [];
               
-              // Use service analytics data if available, fallback to sales data
+              // For shop/pharmacy, generate product-based recommendations
+              if (isShop || isPharmacy) {
+                const products = productSalesData?.data?.products || [];
+                if (products.length === 0) {
+                  return recommendations;
+                }
+                
+                const topProduct = products[0];
+                if (topProduct && revenue > 0) {
+                  const topRevenue = parseFloat(topProduct.revenue || 0);
+                  const topPercentage = (topRevenue / revenue) * 100;
+                  
+                  if (topPercentage > 30) {
+                    recommendations.push({
+                      finding: `${topProduct.productName} dominates sales with ${topPercentage.toFixed(1)}% of total revenue (GHS ${topRevenue.toLocaleString()}).`,
+                      recommendation: 'Consider maintaining higher stock levels for this top-performing product.'
+                    });
+                  }
+                }
+                
+                // Check for low stock items
+                const lowStockProducts = products.filter(p => p.isLowStock);
+                if (lowStockProducts.length > 0) {
+                  const criticalProduct = lowStockProducts.find(p => p.currentStock < (p.safetyStock * 0.5));
+                  if (criticalProduct) {
+                    recommendations.push({
+                      finding: `${criticalProduct.productName} stock is critically low (${criticalProduct.currentStock} ${criticalProduct.unit} remaining, safety level: ${criticalProduct.safetyStock} ${criticalProduct.unit}).`,
+                      recommendation: 'Consider an urgent reorder to avoid stockout.'
+                    });
+                  } else {
+                    recommendations.push({
+                      finding: `${lowStockProducts.length} product(s) are below safety stock levels.`,
+                      recommendation: 'Review and reorder low stock items to maintain inventory levels.'
+                    });
+                  }
+                }
+                
+                // Check for high inventory risk (overstocked)
+                const highRiskProducts = products.filter(p => p.isHighRisk);
+                if (highRiskProducts.length > 0) {
+                  recommendations.push({
+                    finding: `${highRiskProducts[0].productName} is in high inventory risk, currently ${highRiskProducts[0].currentStock} ${highRiskProducts[0].unit} in stock (safety level: ${highRiskProducts[0].safetyStock} ${highRiskProducts[0].unit}).`,
+                    recommendation: 'Consider re-ordering or moving into an archive/sale to free up capital.'
+                  });
+                }
+                
+                return recommendations;
+              }
+              
+              // For printing press, use service analytics data
               const serviceData = serviceAnalyticsData.data?.byCategory || salesData.data?.byJobType || [];
               
               // Only generate recommendations if we have actual data
@@ -783,7 +1038,9 @@ const Reports = () => {
                 : 'Revenue remains stable compared to the previous period.',
               ...(isPrintingPress && salesData.data?.byJobType?.length > 0
                 ? [`Your top service category (${salesData.data.byJobType[0]?.jobType || 'N/A'}) accounts for ${revenue > 0 ? ((parseFloat(salesData.data.byJobType[0]?.totalSales || 0) / revenue) * 100).toFixed(1) : 0}% of total revenue.`]
-                : ['Service performance data is being analyzed.']),
+                : (isShop || isPharmacy) && productSalesData?.data?.products?.length > 0
+                ? [`Your top ${terminology.items.toLowerCase()} (${productSalesData.data.products[0]?.productName || 'N/A'}) accounts for ${revenue > 0 ? ((parseFloat(productSalesData.data.products[0]?.revenue || 0) / revenue) * 100).toFixed(1) : 0}% of total revenue.`]
+                : [`${terminology.analytics} data is being analyzed.`]),
               outstandingData.data?.totalOutstanding > 0
                 ? `Outstanding payments total GHS ${outstandingData.data.totalOutstanding.toLocaleString()}. Consider implementing automated payment reminders.`
                 : 'All payments are up to date.',
@@ -796,38 +1053,55 @@ const Reports = () => {
           {
             type: 'recommendation',
             title: 'Strategic Recommendations',
-            recommendations: (() => {
-              const recommendations = [];
-              const outstanding = outstandingData.data?.totalOutstanding || 0;
-              
-              if (outstanding > 0) {
-                recommendations.push({
-                  priority: 'High',
-                  action: 'Implement automated follow-ups for overdue invoices',
-                  impact: `Could recover GHS ${(outstanding * 0.4).toLocaleString()} in outstanding payments`
-                });
-              }
-              
-              if (revenueChange < 0 && prevRevenue > 0) {
-                recommendations.push({
-                  priority: 'High',
-                  action: 'Focus on revenue growth strategies',
-                  impact: 'Address declining revenue trends'
-                });
-              }
-              
-              if (expenseChange > 10 && prevExpenses > 0) {
-                recommendations.push({
-                  priority: 'Medium',
-                  action: 'Review and optimize expense categories',
-                  impact: 'Reduce cost growth and improve margins'
-                });
-              }
-              
-              // No hardcoded fallback - only return recommendations when there's actual actionable data
-              return recommendations;
-            })()
+            recommendations: aiAnalysis?.recommendations?.length > 0
+              ? aiAnalysis.recommendations
+              : (() => {
+                  const recommendations = [];
+                  const outstanding = outstandingData.data?.totalOutstanding || 0;
+                  
+                  if (outstanding > 0) {
+                    recommendations.push({
+                      priority: 'High',
+                      action: 'Implement automated follow-ups for overdue invoices',
+                      impact: `Could recover GHS ${(outstanding * 0.4).toLocaleString()} in outstanding payments`
+                    });
+                  }
+                  
+                  if (revenueChange < 0 && prevRevenue > 0) {
+                    recommendations.push({
+                      priority: 'High',
+                      action: 'Focus on revenue growth strategies',
+                      impact: 'Address declining revenue trends'
+                    });
+                  }
+                  
+                  if (expenseChange > 10 && prevExpenses > 0) {
+                    recommendations.push({
+                      priority: 'Medium',
+                      action: 'Review and optimize expense categories',
+                      impact: 'Reduce cost growth and improve margins'
+                    });
+                  }
+                  
+                  // No hardcoded fallback - only return recommendations when there's actual actionable data
+                  return recommendations;
+                })()
           },
+          ...(aiAnalysis?.riskAssessment?.length > 0 ? [{
+            type: 'risk',
+            title: 'Risk Assessment',
+            risks: aiAnalysis.riskAssessment
+          }] : []),
+          ...(aiAnalysis?.growthOpportunities?.length > 0 ? [{
+            type: 'opportunity',
+            title: 'Growth Opportunities',
+            opportunities: aiAnalysis.growthOpportunities
+          }] : []),
+          ...(aiAnalysis?.strategicSuggestions?.length > 0 ? [{
+            type: 'strategy',
+            title: 'Strategic Suggestions',
+            suggestions: aiAnalysis.strategicSuggestions
+          }] : []),
           {
             type: 'forecast',
             title: 'Predictive Analysis',
@@ -839,7 +1113,21 @@ const Reports = () => {
       };
 
       setGeneratedReport(mockReport);
-      showSuccess('Smart report generated successfully!');
+      
+      // If this is a user-created report (not auto-generated), save it
+      if (config.generatedBy && config.generatedBy !== 'System') {
+        const updatedReports = [...savedReports, mockReport];
+        setSavedReports(updatedReports);
+        // Save to localStorage for persistence
+        try {
+          localStorage.setItem('shopwise_saved_reports', JSON.stringify(updatedReports));
+        } catch (e) {
+          console.warn('Failed to save reports to localStorage:', e);
+        }
+        showSuccess('Report created and saved successfully!');
+      } else {
+        showSuccess('Smart report generated successfully!');
+      }
     } catch (error) {
       console.error('Error generating report:', error);
       showError(null, 'Failed to generate report');
@@ -892,14 +1180,14 @@ const Reports = () => {
       return;
     }
 
+    const dismissLoading = showLoading('Generating PDF...', 0);
     try {
-      message.loading({ content: 'Generating PDF...', key: 'pdf', duration: 0 });
-      
       // Import html2pdf dynamically
       const html2pdf = (await import('html2pdf.js')).default;
       
       const reportElement = document.getElementById('report-content');
       if (!reportElement) {
+        dismissLoading();
         showError(null, 'Report content not found');
         return;
       }
@@ -914,36 +1202,44 @@ const Reports = () => {
 
       await html2pdf().set(opt).from(reportElement).save();
       
-      message.destroy('pdf');
+      dismissLoading();
       showSuccess('PDF downloaded successfully!');
     } catch (error) {
       console.error('Error generating PDF:', error);
+      dismissLoading();
       showError(null, 'Failed to generate PDF');
     }
   };
 
+  // Memoize chart data transformations for revenue report
+  const revenueChartData = useMemo(() => {
+    if (!reportData || reportType !== 'revenue') return { periodChartData: [], customerChartData: [], methodChartData: [] };
+    
+    const { byPeriod, byCustomer, byMethod } = reportData;
+
+    return {
+      periodChartData: byPeriod?.map(item => ({
+        name: groupBy === 'day' 
+          ? dayjs(item.date || item.date).format('MMM DD')
+          : `Month ${item.month}`,
+        revenue: parseFloat(item.totalRevenue || 0)
+      })) || [],
+      customerChartData: byCustomer?.slice(0, 10).map(item => ({
+        name: item.customer?.name || 'Unknown',
+        revenue: parseFloat(item.totalRevenue || 0)
+      })) || [],
+      methodChartData: byMethod?.map(item => ({
+        name: item.paymentMethod || 'Unknown',
+        value: parseFloat(item.totalRevenue || 0)
+      })) || []
+    };
+  }, [reportData, reportType, groupBy]);
+
   const renderRevenueReport = () => {
     if (!reportData) return null;
 
-    const { totalRevenue, byPeriod, byCustomer, byMethod } = reportData;
-
-    // Format data for charts
-    const periodChartData = byPeriod?.map(item => ({
-      name: groupBy === 'day' 
-        ? dayjs(item.date || item.date).format('MMM DD')
-        : `Month ${item.month}`,
-      revenue: parseFloat(item.totalRevenue || 0)
-    })) || [];
-
-    const customerChartData = byCustomer?.slice(0, 10).map(item => ({
-      name: item.customer?.name || 'Unknown',
-      revenue: parseFloat(item.totalRevenue || 0)
-    })) || [];
-
-    const methodChartData = byMethod?.map(item => ({
-      name: item.paymentMethod || 'Unknown',
-      value: parseFloat(item.totalRevenue || 0)
-    })) || [];
+    const { totalRevenue } = reportData;
+    const { periodChartData, customerChartData, methodChartData } = revenueChartData;
 
     return (
       <div id="report-content">
@@ -1473,16 +1769,23 @@ const Reports = () => {
     );
   };
 
-  const renderProfitLossReport = () => {
-    if (!reportData) return null;
-
-    const { revenue, expenses, grossProfit, profitMargin } = reportData;
-
-    const profitData = [
+  // Memoize profit/loss chart data
+  const profitLossChartData = useMemo(() => {
+    if (!reportData || reportType !== 'profit-loss') return [];
+    
+    const { revenue, expenses, grossProfit } = reportData;
+    return [
       { name: 'Revenue', value: revenue, color: '#3f8600' },
       { name: 'Expenses', value: expenses, color: '#cf1322' },
       { name: 'Profit', value: grossProfit, color: grossProfit >= 0 ? '#3f8600' : '#cf1322' },
     ];
+  }, [reportData, reportType]);
+
+  const renderProfitLossReport = () => {
+    if (!reportData) return null;
+
+    const { revenue, expenses, grossProfit, profitMargin } = reportData;
+    const profitData = profitLossChartData;
 
     return (
       <div id="report-content">
@@ -1592,13 +1895,27 @@ const Reports = () => {
   const renderOverviewDashboard = () => {
     if (!overviewStats) {
       return (
-        <div style={{ textAlign: 'center', padding: '60px 0' }}>
-          <Text type="secondary">Loading overview statistics...</Text>
+        <div className="flex items-center justify-center p-12">
+          <div className="text-center">
+            <Skeleton className="h-4 w-48 mx-auto mb-2" />
+            <Skeleton className="h-4 w-32 mx-auto" />
+          </div>
         </div>
       );
     }
 
-    const { revenue, expenses, sales, serviceAnalytics, profitLoss } = overviewStats;
+    const { 
+      revenue, 
+      expenses, 
+      profitLoss, 
+      revenueGrowth,
+      periodTypeLabel,
+      inventorySummary,
+      inventoryMovements,
+      fastestMovingItems,
+      serviceAnalytics,
+      sales
+    } = overviewStats;
 
     // Calculate growth metrics from real data
     const totalRevenue = revenue?.totalRevenue || 0;
@@ -1608,9 +1925,6 @@ const Reports = () => {
     const netIncome = totalRevenue - totalExpenses;
     const profitMargin = totalRevenue > 0 ? ((netIncome / totalRevenue) * 100) : 0;
     
-    // Get revenue growth from state (calculated in fetchOverviewStats)
-    const revenueGrowth = overviewStats?.revenueGrowth ?? 0;
-
     // Expense breakdown for donut chart
     const expenseData = expenses?.byCategory?.map((item, index) => ({
       name: item.category,
@@ -1991,44 +2305,72 @@ const Reports = () => {
             </AntdCard>
           </Col>
 
-          {/* Card 3: Jobs Summary */}
+          {/* Card 3: Jobs/Sales Summary */}
           <Col xs={24} md={8}>
             <AntdCard style={cardStyle} bodyStyle={{ padding: '24px' }}>
               <Space direction="vertical" size={16} style={{ width: '100%' }}>
                 <div>
-                  <Text style={{ fontSize: 13, color: '#8c8c8c', fontWeight: 400 }}>Total Jobs</Text>
+                  <Text style={{ fontSize: 13, color: '#8c8c8c', fontWeight: 400 }}>
+                    {isShop ? 'Total Sales' : 'Total Jobs'}
+                  </Text>
                   <Title level={2} style={{ margin: '8px 0 0 0', fontSize: 32, fontWeight: 700, color: '#262626' }}>
-                    {sales?.totalJobs || 0}
+                    {isShop ? (sales?.totalSales || sales?.totalJobs || 0) : (sales?.totalJobs || 0)}
                   </Title>
                 </div>
                 <Divider style={{ margin: '16px 0 12px 0', borderColor: '#f0f0f0' }} />
                 <div>
-                  <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 4 }}>Total Job Value</Text>
+                  <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 4 }}>
+                    {isShop ? 'Total Sales Value' : 'Total Job Value'}
+                  </Text>
                   <Text style={{ fontSize: 20, fontWeight: 600, color: '#262626' }}>
                     GHS {(totalRevenue / 1000).toFixed(3)}K
                   </Text>
                 </div>
                 <div style={{ marginTop: 8 }}>
-                  <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 8 }}>Completion Rate</Text>
+                  <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 8 }}>
+                    {isShop ? 'Cash Sales Rate' : 'Completion Rate'}
+                  </Text>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     {(() => {
-                      const totalJobs = sales?.totalJobs || 0;
-                      const completedJobs = sales?.byStatus?.find(s => s.status === 'completed')?.jobCount || 0;
-                      const completionRate = totalJobs > 0 ? Math.round((completedJobs / totalJobs) * 100) : 0;
-                      
-                      return (
-                        <>
-                          <Progress 
-                            type="circle" 
-                            percent={completionRate} 
-                            width={60} 
-                            strokeColor="#006d32"
-                            strokeWidth={8}
-                            trailColor="#f0f0f0"
-                          />
-                          <Text style={{ fontSize: 24, fontWeight: 600, color: '#262626' }}>{completionRate}%</Text>
-                        </>
-                      );
+                      if (isShop) {
+                        // For shop: show cash sales percentage
+                        const totalSalesCount = sales?.totalSales || sales?.totalJobs || 0;
+                        const cashSales = sales?.byPaymentMethod?.find(p => p.paymentMethod === 'cash')?.count || 0;
+                        const cashRate = totalSalesCount > 0 ? Math.round((cashSales / totalSalesCount) * 100) : 0;
+                        
+                        return (
+                          <>
+                            <Progress 
+                              type="circle" 
+                              percent={cashRate} 
+                              width={60} 
+                              strokeColor="#006d32"
+                              strokeWidth={8}
+                              trailColor="#f0f0f0"
+                            />
+                            <Text style={{ fontSize: 24, fontWeight: 600, color: '#262626' }}>{cashRate}%</Text>
+                          </>
+                        );
+                      } else {
+                        // For printing press: show completion rate
+                        const totalJobs = sales?.totalJobs || 0;
+                        const completedJobs = sales?.byStatus?.find(s => s.status === 'completed')?.jobCount || 0;
+                        const completionRate = totalJobs > 0 ? Math.round((completedJobs / totalJobs) * 100) : 0;
+                        
+                        return (
+                          <>
+                            <Progress 
+                              type="circle" 
+                              percent={completionRate} 
+                              width={60} 
+                              strokeColor="#006d32"
+                              strokeWidth={8}
+                              trailColor="#f0f0f0"
+                            />
+                            <Text style={{ fontSize: 24, fontWeight: 600, color: '#262626' }}>{completionRate}%</Text>
+                          </>
+                        );
+                      }
                     })()}
                   </div>
                 </div>
@@ -2093,43 +2435,101 @@ const Reports = () => {
             </AntdCard>
           </Col>
 
-          {/* Card 5: Jobs Trend */}
+          {/* Card 5: Jobs/Sales Trend */}
           <Col xs={24} md={8}>
             <AntdCard 
-              title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>Jobs Trend</span>}
+              title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>{isShop ? 'Sales Trend' : 'Jobs Trend'}</span>}
               style={cardStyle}
               bodyStyle={{ padding: '20px 24px' }}
             >
-              {jobsTrend.length > 0 ? (
-                <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={jobsTrend} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                    <XAxis 
-                      dataKey="day" 
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: '#8c8c8c', fontSize: 11 }}
-                    />
-                    <YAxis 
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: '#8c8c8c', fontSize: 11 }}
-                    />
-                    <Tooltip 
-                      contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
-                    />
-                    <Legend 
-                      wrapperStyle={{ fontSize: 12, paddingTop: 10 }}
-                      iconType="circle"
-                    />
-                    <Bar dataKey="incoming" fill="#006d32" name="Incoming jobs" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="completed" fill="#91d5ff" name="Completed jobs" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+              {isShop ? (
+                // For shop: show payment method breakdown or sales by day
+                (() => {
+                  const paymentMethodData = sales?.byPaymentMethod || [];
+                  if (paymentMethodData.length > 0) {
+                    const chartData = paymentMethodData.map(item => ({
+                      name: item.paymentMethod === 'cash' ? 'Cash' :
+                            item.paymentMethod === 'credit' ? 'Credit' :
+                            item.paymentMethod === 'card' ? 'Card' :
+                            item.paymentMethod === 'mobile_money' ? 'Mobile' :
+                            item.paymentMethod === 'bank_transfer' ? 'Bank' : 'Other',
+                      value: parseFloat(item.totalAmount || item.count || 0),
+                      count: parseInt(item.count || 0)
+                    }));
+                    
+                    const PAYMENT_COLORS = ['#006d32', '#91d5ff', '#ffc658', '#ff8042', '#8884d8', '#82ca9d'];
+                    
+                    return (
+                      <ResponsiveContainer width="100%" height={220}>
+                        <PieChart>
+                          <Pie
+                            data={chartData}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={50}
+                            outerRadius={80}
+                            paddingAngle={2}
+                            dataKey="count"
+                            nameKey="name"
+                            label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                            labelLine={false}
+                          >
+                            {chartData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={PAYMENT_COLORS[index % PAYMENT_COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip 
+                            formatter={(value, name) => [`${value} sales`, name]}
+                            contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
+                          />
+                          <Legend 
+                            wrapperStyle={{ fontSize: 11, paddingTop: 10 }}
+                            iconType="circle"
+                          />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    );
+                  }
+                  // Fallback to daily sales trend if no payment method data
+                  return (
+                    <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
+                      <Text type="secondary">No sales data available for this period</Text>
+                    </div>
+                  );
+                })()
               ) : (
-                <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
-                  <Text type="secondary">No jobs data available for this period</Text>
-                </div>
+                // For printing press: show jobs trend
+                jobsTrend.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={jobsTrend} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                      <XAxis 
+                        dataKey="day" 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#8c8c8c', fontSize: 11 }}
+                      />
+                      <YAxis 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#8c8c8c', fontSize: 11 }}
+                      />
+                      <Tooltip 
+                        contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
+                      />
+                      <Legend 
+                        wrapperStyle={{ fontSize: 12, paddingTop: 10 }}
+                        iconType="circle"
+                      />
+                      <Bar dataKey="incoming" fill="#006d32" name="Incoming jobs" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="completed" fill="#91d5ff" name="Completed jobs" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
+                    <Text type="secondary">No jobs data available for this period</Text>
+                  </div>
+                )
               )}
             </AntdCard>
           </Col>
@@ -2312,27 +2712,278 @@ const Reports = () => {
     }
   ];
 
+  const renderGeneratedReports = () => {
+    // Map report types to display names and icons
+    const getReportTypeDisplay = (reportType) => {
+      const typeMap = {
+        'cost-analysis': { label: 'Cost analysis', icon: BarChart3 },
+        'service-analytics': { label: 'Service overview', icon: Zap },
+        'cashflow': { label: 'Cashflow overview', icon: DollarSign },
+        'invoice-summary': { label: 'Invoice overview', icon: FileText },
+        'product-analytics': { label: 'Inventory overview', icon: Zap },
+        'inventory': { label: 'Inventory overview', icon: Zap },
+        'fleet': { label: 'Fleet overview', icon: Zap }
+      };
+      return typeMap[reportType] || { label: reportType, icon: FileText };
+    };
+
+    // Get report types from insights or default
+    const getReportTypes = (report) => {
+      if (report.reportTypes && Array.isArray(report.reportTypes)) {
+        return report.reportTypes;
+      }
+      // Extract types from insights
+      const types = [];
+      if (report.insights) {
+        report.insights.forEach(insight => {
+          if (insight.type === 'cost-analysis') types.push('cost-analysis');
+          else if (insight.type === 'service-analytics' || insight.type === 'product-analytics') {
+            types.push(insight.type === 'product-analytics' ? 'inventory' : 'service-analytics');
+          }
+          else if (insight.type === 'invoice-summary') types.push('invoice-summary');
+        });
+      }
+      // Default if no types found
+      return types.length > 0 ? types : ['cost-analysis'];
+    };
+
+    // Determine status (default to Ready, or Processing if recently created)
+    const getReportStatus = (report) => {
+      const createdAt = dayjs(report.generatedAt);
+      const hoursSinceCreation = dayjs().diff(createdAt, 'hour');
+      // If created less than 1 hour ago, show as Processing
+      return hoursSinceCreation < 1 ? 'processing' : 'ready';
+    };
+
+    return (
+      <div className="space-y-6">
+        {/* Loading State */}
+        {aiLoading && (
+          <Card>
+            <CardContent className="p-12">
+              <div className="space-y-6">
+                <div className="text-center">
+                  <Skeleton className="h-12 w-12 mx-auto mb-4 rounded-full" />
+                  <Skeleton className="h-6 w-64 mx-auto mb-2" />
+                  <Skeleton className="h-4 w-48 mx-auto" />
+                </div>
+                <Skeleton className="h-2 w-full" />
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Empty State */}
+        {savedReports.length === 0 && !aiLoading && (
+          <Card>
+            <CardContent className="p-20">
+              <div className="text-center">
+                <FileText className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                <Title level={4}>No Reports Created Yet</Title>
+                <Paragraph type="secondary" style={{ maxWidth: 480, margin: '16px auto 24px' }}>
+                  Create custom reports with specific date ranges, report types, and configurations. These reports will be saved for future reference.
+                </Paragraph>
+                <ShadcnButton
+                  onClick={handleOpenCreateReportModal}
+                  className="bg-[#166534] hover:bg-[#14502a] text-white"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create Your First Report
+                </ShadcnButton>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Reports Table - table on desktop, cards on mobile */}
+        {filteredReports.length > 0 && !aiLoading && (
+          <Card className="border border-gray-200 rounded-lg overflow-hidden">
+            <CardContent className="p-0">
+              {isMobile ? (
+                <div className="p-4 space-y-3">
+                  {filteredReports.map((report, index) => {
+                    const reportTypesList = getReportTypes(report);
+                    const status = getReportStatus(report);
+                    return (
+                      <Card key={index} className="border">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium text-sm truncate">{report.title}</p>
+                              <p className="text-muted-foreground text-xs mt-0.5">{dayjs(report.generatedAt).format('D/MM/YYYY')}</p>
+                            </div>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <ShadcnButton
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 shrink-0 min-h-[44px] min-w-[44px]"
+                                >
+                                  <MoreVertical className="h-4 w-4 text-gray-600" />
+                                </ShadcnButton>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setGeneratedReport(report);
+                                    navigate('/reports/smart-report');
+                                  }}
+                                >
+                                  <Eye className="h-4 w-4 mr-2" />
+                                  View
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    showSuccess('Download feature coming soon');
+                                  }}
+                                >
+                                  <Download className="h-4 w-4 mr-2" />
+                                  Download
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {reportTypesList.slice(0, 2).map((type, idx) => {
+                              const typeDisplay = getReportTypeDisplay(type);
+                              const Icon = typeDisplay.icon;
+                              return (
+                                <Badge
+                                  key={idx}
+                                  variant="secondary"
+                                  className="bg-gray-100 text-gray-700 border-0 flex items-center gap-1 px-2 py-1"
+                                >
+                                  <Icon className="h-3 w-3" />
+                                  {typeDisplay.label}
+                                </Badge>
+                              );
+                            })}
+                          </div>
+                          <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+                            <span className="text-xs text-muted-foreground">{report.generatedBy}</span>
+                            <Badge
+                              className={
+                                status === 'ready'
+                                  ? 'bg-green-100 text-green-700 border-0 px-2 py-1'
+                                  : 'bg-orange-100 text-orange-700 border-0 px-2 py-1'
+                              }
+                            >
+                              {status === 'ready' ? 'Ready' : 'Processing'}
+                            </Badge>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              ) : (
+                <ShadcnTable>
+                  <TableHeader>
+                    <TableRow className="border-b border-gray-200 bg-gray-50">
+                      <TableHead className="font-semibold text-gray-700 py-4 px-6">Report name</TableHead>
+                      <TableHead className="font-semibold text-gray-700 py-4 px-6">Date created</TableHead>
+                      <TableHead className="font-semibold text-gray-700 py-4 px-6">Type</TableHead>
+                      <TableHead className="font-semibold text-gray-700 py-4 px-6">Created by</TableHead>
+                      <TableHead className="font-semibold text-gray-700 py-4 px-6">Status</TableHead>
+                      <TableHead className="font-semibold text-gray-700 py-4 px-6 w-[50px]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredReports.map((report, index) => {
+                      const reportTypesList = getReportTypes(report);
+                      const status = getReportStatus(report);
+                      return (
+                        <TableRow key={index} className="border-b border-gray-100 hover:bg-gray-50">
+                          <TableCell className="font-medium py-4 px-6">{report.title}</TableCell>
+                          <TableCell className="text-gray-600 py-4 px-6">
+                            {dayjs(report.generatedAt).format('D/MM/YYYY')}
+                          </TableCell>
+                          <TableCell className="py-4 px-6">
+                            <div className="flex flex-wrap gap-2">
+                              {reportTypesList.slice(0, 2).map((type, idx) => {
+                                const typeDisplay = getReportTypeDisplay(type);
+                                const Icon = typeDisplay.icon;
+                                return (
+                                  <Badge
+                                    key={idx}
+                                    variant="secondary"
+                                    className="bg-gray-100 text-gray-700 border-0 flex items-center gap-1 px-2 py-1"
+                                  >
+                                    <Icon className="h-3 w-3" />
+                                    {typeDisplay.label}
+                                  </Badge>
+                                );
+                              })}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-gray-600 py-4 px-6">{report.generatedBy}</TableCell>
+                          <TableCell className="py-4 px-6">
+                            <Badge
+                              className={
+                                status === 'ready'
+                                  ? 'bg-green-100 text-green-700 border-0 px-2 py-1'
+                                  : 'bg-orange-100 text-orange-700 border-0 px-2 py-1'
+                              }
+                            >
+                              {status === 'ready' ? 'Ready' : 'Processing'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-4 px-6">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <ShadcnButton
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 w-8 p-0 hover:bg-gray-100"
+                                >
+                                  <MoreVertical className="h-4 w-4 text-gray-600" />
+                                </ShadcnButton>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    setGeneratedReport(report);
+                                    navigate('/reports/smart-report');
+                                  }}
+                                >
+                                  <Eye className="h-4 w-4 mr-2" />
+                                  View
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => {
+                                    showSuccess('Download feature coming soon');
+                                  }}
+                                >
+                                  <Download className="h-4 w-4 mr-2" />
+                                  Download
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </ShadcnTable>
+              )}
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    );
+  };
+
   const renderAIReportGenerator = () => {
     return (
       <div>
-        {/* Header with Create Button */}
-        <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div>
-            <Title level={4} style={{ margin: 0 }}>
-              <Bot className="h-4 w-4" /> Smart Report Generator
-            </Title>
-            <Text type="secondary">
-              Configure and generate comprehensive business intelligence reports with AI-powered insights
-            </Text>
-          </div>
-          <Button
-            type="primary"
-            size="large"
-            icon={<Plus className="h-4 w-4" />}
-            onClick={handleOpenCreateReportModal}
-          >
-            Create Report
-          </Button>
+        {/* Header */}
+        <div style={{ marginBottom: 24 }}>
+          <Title level={4} style={{ margin: 0 }}>
+            <Bot className="h-4 w-4" /> Smart Report
+          </Title>
+          <Text type="secondary">
+            Auto-generated monthly business intelligence report with AI-powered insights
+          </Text>
         </div>
 
         {/* Loading State */}
@@ -2349,27 +3000,7 @@ const Reports = () => {
           </AntdCard>
         )}
 
-        {/* Empty State */}
-        {!generatedReport && !aiLoading && (
-          <AntdCard style={cardStyle}>
-            <div style={{ textAlign: 'center', padding: '80px 40px' }}>
-              <FileText className="h-16 w-16" style={{ fontSize: 64, color: '#d9d9d9', marginBottom: 16 }} />
-              <Title level={4}>No Report Generated Yet</Title>
-              <Paragraph type="secondary" style={{ maxWidth: 480, margin: '0 auto 24px' }}>
-                Click "Create Report" to configure and generate a comprehensive business intelligence report with AI-powered insights and recommendations.
-              </Paragraph>
-              <Button
-                type="primary"
-                size="large"
-                icon={<Plus className="h-4 w-4" />}
-                onClick={handleOpenCreateReportModal}
-              >
-                Create Your First Report
-              </Button>
-            </div>
-          </AntdCard>
-        )}
-
+        {/* Report Content */}
         {generatedReport && !aiLoading && (
           <div id="generated-report-content">
             {/* Report Header */}
@@ -2400,25 +3031,44 @@ const Reports = () => {
               <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
                 {(() => {
                   const perfSection = generatedReport.insights.find(i => i.type === 'performance');
+                  
                   return (
                     <>
                       <Title level={4} style={{ marginBottom: 16 }}>{perfSection.title}</Title>
                       <Row gutter={[24, 16]}>
-                        {perfSection.metrics.map((metric, idx) => (
-                          <Col xs={24} sm={8} key={idx}>
-                            <div style={{ padding: '20px', background: '#fafafa', borderRadius: 8 }}>
-                              <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-                                {metric.label}
-                              </Text>
-                              <Title level={3} style={{ margin: '0 0 4px 0', fontSize: 28, fontWeight: 700, color: metric.color }}>
-                                GHS {(metric.value / 1000).toFixed(1)}K
-                              </Title>
-                              <Text style={{ color: metric.color, fontSize: 13 }}>
-                                {metric.trend === 'up' ? '↑' : '↓'} {metric.change}% from last month
-                              </Text>
-                            </div>
-                          </Col>
-                        ))}
+                        {perfSection.metrics.map((metric, idx) => {
+                          const prevValue = metric.prevValue || 0;
+                          const changeAmount = Math.abs(metric.value - prevValue);
+                          
+                          return (
+                            <Col xs={24} sm={8} key={idx}>
+                              <Tooltip
+                                title={
+                                  <div style={{ fontSize: 13 }}>
+                                    <div style={{ marginBottom: 8 }}><strong>Full Amount:</strong> GHS {metric.value.toLocaleString()}</div>
+                                    <div style={{ marginBottom: 8 }}><strong>Previous Period:</strong> GHS {prevValue.toLocaleString()}</div>
+                                    <div style={{ marginBottom: 8 }}><strong>Change Amount:</strong> GHS {changeAmount.toLocaleString()}</div>
+                                    <div style={{ marginBottom: 8 }}><strong>Change %:</strong> {metric.trend === 'up' ? '+' : '-'}{metric.change.toFixed(2)}%</div>
+                                    <div><strong>Period:</strong> {generatedReport.period}</div>
+                                  </div>
+                                }
+                                placement="top"
+                              >
+                                <div style={{ padding: '20px', background: '#fafafa', borderRadius: 8, cursor: 'help' }}>
+                                  <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
+                                    {metric.label}
+                                  </Text>
+                                  <Title level={3} style={{ margin: '0 0 4px 0', fontSize: 28, fontWeight: 700, color: metric.color }}>
+                                    GHS {(metric.value / 1000).toFixed(1)}K
+                                  </Title>
+                                  <Text style={{ color: metric.color, fontSize: 13 }}>
+                                    {metric.trend === 'up' ? '↑' : '↓'} {metric.change.toFixed(2)}% from last month
+                                  </Text>
+                                </div>
+                              </Tooltip>
+                            </Col>
+                          );
+                        })}
                       </Row>
                       {perfSection.note && (
                         <Alert
@@ -2434,11 +3084,13 @@ const Reports = () => {
               </AntdCard>
             )}
 
-            {/* Service Analytics Section */}
-            {generatedReport.insights.find(i => i.type === 'service-analytics') && (
+            {/* Service/Product Analytics Section */}
+            {(generatedReport.insights.find(i => i.type === 'service-analytics') || generatedReport.insights.find(i => i.type === 'product-analytics')) && (
               <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
                 {(() => {
-                  const section = generatedReport.insights.find(i => i.type === 'service-analytics');
+                  const section = generatedReport.insights.find(i => i.type === 'service-analytics' || i.type === 'product-analytics');
+                  const isProductAnalytics = section.type === 'product-analytics';
+                  
                   return (
                     <>
                       <Title level={4}>{section.title}</Title>
@@ -2449,13 +3101,130 @@ const Reports = () => {
                         pagination={false}
                         size="small"
                         style={{ marginBottom: 24 }}
-                        columns={[
-                          { title: 'Service', dataIndex: 'service', key: 'service' },
+                        columns={isProductAnalytics ? [
+                          { 
+                            title: 'Product Name', 
+                            dataIndex: 'productName', 
+                            key: 'productName',
+                            render: (text, record) => (
+                              <Tooltip title={
+                                <div>
+                                  <div><strong>SKU:</strong> {record.sku || 'N/A'}</div>
+                                  <div><strong>Unit:</strong> {record.unit}</div>
+                                  <div><strong>Current Stock:</strong> {record.currentStock} {record.unit}</div>
+                                  <div><strong>Safety Stock:</strong> {record.safetyStock} {record.unit}</div>
+                                  <div><strong>Stock Status:</strong> {record.isLowStock ? 'Low Stock' : record.isHighRisk ? 'Overstocked' : 'Normal'}</div>
+                                </div>
+                              }>
+                                <span style={{ cursor: 'help' }}>{text}</span>
+                              </Tooltip>
+                            )
+                          },
+                          { title: 'Quantity Sold', dataIndex: 'quantitySold', key: 'quantitySold', align: 'right', render: (val, record) => `${val.toLocaleString()} ${record.unit || ''}` },
+                          { title: 'Revenue (GHS)', dataIndex: 'revenue', key: 'revenue', align: 'right', render: (val) => val.toLocaleString() },
+                          { 
+                            title: 'Stock', 
+                            dataIndex: 'currentStock', 
+                            key: 'stock', 
+                            align: 'right',
+                            render: (val, record) => (
+                              <Tooltip title={
+                                <div>
+                                  <div><strong>Current Stock:</strong> {val} {record.unit}</div>
+                                  <div><strong>Safety Level:</strong> {record.safetyStock} {record.unit}</div>
+                                  <div><strong>Stock %:</strong> {record.stockPercentage}%</div>
+                                  <div><strong>Status:</strong> {record.isLowStock ? '⚠️ Low Stock' : record.isHighRisk ? '⚠️ Overstocked' : '✓ Normal'}</div>
+                                </div>
+                              }>
+                                <span style={{ cursor: 'help', color: record.isLowStock ? '#cf1322' : record.isHighRisk ? '#faad14' : '#52c41a' }}>
+                                  {val} {record.unit}
+                                </span>
+                              </Tooltip>
+                            )
+                          }
+                        ] : [
+                          { 
+                            title: 'Service', 
+                            dataIndex: 'service', 
+                            key: 'service',
+                            render: (text, record) => (
+                              <Tooltip title={
+                                <div>
+                                  <div><strong>Service:</strong> {text}</div>
+                                  <div><strong>Units Sold:</strong> {record.quantitySold}</div>
+                                  <div><strong>Revenue:</strong> GHS {record.revenue.toLocaleString()}</div>
+                                  <div><strong>Average Price:</strong> GHS {record.averagePrice?.toLocaleString() || 'N/A'}</div>
+                                  <div><strong>Demand Level:</strong> {record.demand}</div>
+                                </div>
+                              }>
+                                <span style={{ cursor: 'help' }}>{text}</span>
+                              </Tooltip>
+                            )
+                          },
                           { title: 'Units Sold', dataIndex: 'quantitySold', key: 'quantitySold', align: 'right' },
                           { title: 'Revenue (GHS)', dataIndex: 'revenue', key: 'revenue', align: 'right', render: (val) => val.toLocaleString() },
-                          { title: 'Demand', dataIndex: 'demand', key: 'demand', render: (val) => <Tag color={val === 'High' ? 'green' : val === 'Medium' ? 'orange' : 'default'}>{val}</Tag> }
+                          { 
+                            title: 'Demand', 
+                            dataIndex: 'demand', 
+                            key: 'demand', 
+                            render: (val) => (
+                              <Tooltip title={`Demand level: ${val}`}>
+                                <Tag color={val === 'High' ? 'green' : val === 'Medium' ? 'orange' : 'default'}>{val}</Tag>
+                              </Tooltip>
+                            )
+                          }
                         ]}
+                        onRow={(record) => ({
+                          style: { cursor: 'pointer' },
+                          onMouseEnter: (e) => {
+                            // Enhanced hover will be handled by tooltips in columns
+                          }
+                        })}
                       />
+                      
+                      {/* Inventory Bar Chart for Shop/Pharmacy */}
+                      {isProductAnalytics && section.data && section.data.length > 0 && (
+                        <div style={{ marginTop: 24, marginBottom: 24 }}>
+                          <Title level={5} style={{ marginBottom: 16 }}>Inventory Status</Title>
+                          <ResponsiveContainer width="100%" height={300}>
+                            <BarChart data={section.data.slice(0, 10)}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis 
+                                dataKey="productName" 
+                                angle={-45} 
+                                textAnchor="end" 
+                                height={100}
+                                interval={0}
+                              />
+                              <YAxis />
+                              <Tooltip 
+                                content={({ active, payload }) => {
+                                  if (active && payload && payload.length) {
+                                    const data = payload[0].payload;
+                                    return (
+                                      <div style={{ background: 'white', padding: '12px', border: '1px solid #ccc', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                                        <p style={{ margin: 0, fontWeight: 'bold', marginBottom: '8px' }}>{data.productName}</p>
+                                        <p style={{ margin: '4px 0' }}><strong>Current Stock:</strong> {data.currentStock} {data.unit}</p>
+                                        <p style={{ margin: '4px 0' }}><strong>Safety Level:</strong> {data.safetyStock} {data.unit}</p>
+                                        <p style={{ margin: '4px 0' }}><strong>Stock %:</strong> {data.stockPercentage}%</p>
+                                        <p style={{ margin: '4px 0' }}><strong>Quantity Sold:</strong> {data.quantitySold} {data.unit}</p>
+                                        <p style={{ margin: '4px 0' }}><strong>Revenue:</strong> GHS {data.revenue.toLocaleString()}</p>
+                                        <p style={{ margin: '4px 0', color: data.isLowStock ? '#cf1322' : data.isHighRisk ? '#faad14' : '#52c41a' }}>
+                                          <strong>Status:</strong> {data.isLowStock ? '⚠️ Low Stock' : data.isHighRisk ? '⚠️ Overstocked' : '✓ Normal'}
+                                        </p>
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                }}
+                              />
+                              <Legend />
+                              <Bar dataKey="currentStock" fill="#52c41a" name="Current Stock" />
+                              <Bar dataKey="safetyStock" fill="#faad14" name="Safety Quantity" />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
 
                       {section.recommendations && section.recommendations.length > 0 && (
                         <>
@@ -2504,10 +3273,54 @@ const Reports = () => {
                             pagination={false}
                             size="small"
                             columns={[
-                              { title: 'Category', dataIndex: 'category', key: 'category', render: (text, record) => <Text strong={record.isTotal}>{text}</Text> },
-                              { title: 'Amount', dataIndex: 'amount', key: 'amount', align: 'right', render: (val, record) => <Text strong={record.isTotal}>GHS {val.toLocaleString()}</Text> },
-                              { title: 'Percentage', dataIndex: 'percentage', key: 'percentage', align: 'right', render: (val, record) => <Text strong={record.isTotal}>{val}%</Text> }
+                              { 
+                                title: 'Category', 
+                                dataIndex: 'category', 
+                                key: 'category', 
+                                render: (text, record) => (
+                                  <Tooltip title={
+                                    !record.isTotal ? (
+                                      <div>
+                                        <div><strong>Category:</strong> {text}</div>
+                                        <div><strong>Amount:</strong> GHS {record.amount.toLocaleString()}</div>
+                                        <div><strong>Percentage:</strong> {record.percentage.toFixed(1)}%</div>
+                                        <div><strong>Total Expenses:</strong> GHS {section.totalCost.toLocaleString()}</div>
+                                      </div>
+                                    ) : null
+                                  }>
+                                    <Text strong={record.isTotal} style={!record.isTotal ? { cursor: 'help' } : {}}>{text}</Text>
+                                  </Tooltip>
+                                )
+                              },
+                              { 
+                                title: 'Amount', 
+                                dataIndex: 'amount', 
+                                key: 'amount', 
+                                align: 'right', 
+                                render: (val, record) => (
+                                  <Tooltip title={!record.isTotal ? `Full amount: GHS ${val.toLocaleString()}` : null}>
+                                    <Text strong={record.isTotal} style={!record.isTotal ? { cursor: 'help' } : {}}>GHS {val.toLocaleString()}</Text>
+                                  </Tooltip>
+                                )
+                              },
+                              { 
+                                title: 'Percentage', 
+                                dataIndex: 'percentage', 
+                                key: 'percentage', 
+                                align: 'right', 
+                                render: (val, record) => (
+                                  <Tooltip title={!record.isTotal ? `Represents ${val.toFixed(1)}% of total expenses` : null}>
+                                    <Text strong={record.isTotal} style={!record.isTotal ? { cursor: 'help' } : {}}>{val.toFixed(1)}%</Text>
+                                  </Tooltip>
+                                )
+                              }
                             ]}
+                            onRow={(record) => ({
+                              style: { cursor: record.isTotal ? 'default' : 'pointer' },
+                              onMouseEnter: (e) => {
+                                // Tooltip handled in column renderers
+                              }
+                            })}
                           />
                         </Col>
                         <Col xs={24} md={10}>
@@ -2520,13 +3333,30 @@ const Reports = () => {
                                 innerRadius={70}
                                 outerRadius={100}
                                 dataKey="amount"
-                                label={({ percentage }) => `${percentage}%`}
+                                label={({ percentage }) => `${percentage.toFixed(1)}%`}
                               >
                                 {chartData.map((entry, index) => (
                                   <Cell key={`cell-${index}`} fill={entry.color} />
                                 ))}
                               </Pie>
-                              <Tooltip formatter={(value) => `GHS ${value.toLocaleString()}`} />
+                              <Tooltip 
+                                content={({ active, payload }) => {
+                                  if (active && payload && payload.length) {
+                                    const data = payload[0].payload;
+                                    const total = section.totalCost;
+                                    const percentage = total > 0 ? ((data.amount / total) * 100).toFixed(1) : 0;
+                                    return (
+                                      <div style={{ background: 'white', padding: '12px', border: '1px solid #ccc', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
+                                        <p style={{ margin: 0, fontWeight: 'bold', marginBottom: '8px' }}>{data.category}</p>
+                                        <p style={{ margin: '4px 0' }}><strong>Amount:</strong> GHS {data.amount.toLocaleString()}</p>
+                                        <p style={{ margin: '4px 0' }}><strong>Percentage:</strong> {percentage}%</p>
+                                        <p style={{ margin: '4px 0' }}><strong>Total Cost:</strong> GHS {total.toLocaleString()}</p>
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                }}
+                              />
                               <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 18, fontWeight: 700 }}>
                                 GHS {(section.totalCost / 1000).toFixed(1)}K
                               </text>
@@ -2611,7 +3441,7 @@ const Reports = () => {
             {/* Footer */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 0', borderTop: '1px solid #f0f0f0' }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                Powered by <Text strong style={{ color: '#166534' }}>NEXpro Intelligence Systems</Text>
+                Powered by <Text strong style={{ color: '#166534' }}>ShopWISE Intelligence Systems</Text>
               </Text>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 Copyright © {dayjs().year()} Nexus Creative Studio. Confidential and proprietary information.
@@ -2758,6 +3588,8 @@ const Reports = () => {
                 type="primary" 
                 size="large" 
                 htmlType="submit"
+                loading={aiLoading}
+                disabled={aiLoading}
               >
                 Create
               </Button>
@@ -2780,40 +3612,49 @@ const Reports = () => {
         border: '1px solid #f4f4f4'
       }}>
         <Title level={2} style={{ margin: 0, fontSize: 24, fontWeight: 600 }}>Reports & Analytics</Title>
-        <Space size={12}>
-          <Select
-            value={dateFilter}
-            onChange={handleFilterChange}
-            size="large"
-            style={{ width: 180, borderRadius: 8 }}
-            suffixIcon={<Calendar className="h-4 w-4" />}
-          >
-            <Option value="today">Today</Option>
-            <Option value="yesterday">Yesterday</Option>
-            <Option value="thisWeek">This Week</Option>
-            <Option value="lastWeek">Last Week</Option>
-            <Option value="thisMonth">This Month</Option>
-            <Option value="lastMonth">Last Month</Option>
-            <Option value="thisQuarter">This Quarter</Option>
-            <Option value="lastQuarter">Last Quarter</Option>
-            <Option value="thisYear">This Year</Option>
-            <Option value="lastYear">Last Year</Option>
-            <Option value="custom">Custom Range</Option>
-          </Select>
-          {dateFilter === 'custom' && (
-            <RangePicker
-              value={dateRange}
-              onChange={(dates) => {
-                if (dates && dates[0] && dates[1]) {
-                  setDateRange([dates[0], dates[1]]);
-                }
+        {isGeneratedReports && (
+          <div className="flex items-center gap-3">
+            {/* Date Filter */}
+            <ShadcnButton
+              variant="outline"
+              className="border border-gray-300 bg-white"
+              onClick={() => {
+                // Date filter handler
               }}
-              size="large"
-              format="MMM DD, YYYY"
-              style={{ borderRadius: 8 }}
-            />
-          )}
-        </Space>
+            >
+              <Calendar className="h-4 w-4 mr-2" />
+              Last 6 months
+            </ShadcnButton>
+
+            {/* Filter/Sort Button */}
+            <ShadcnButton
+              variant="outline"
+              className="border border-gray-300 bg-white"
+              onClick={() => {
+                // Filter/sort handler
+              }}
+            >
+              <SlidersHorizontal className="h-4 w-4" />
+            </ShadcnButton>
+
+            {/* All Badge with Count */}
+            <div className="flex items-center gap-2 border border-gray-300 rounded-md px-3 py-2 bg-white">
+              <span className="text-sm text-gray-700">All</span>
+              <Badge variant="secondary" className="bg-gray-100 text-gray-700">
+                {savedReports.length}
+              </Badge>
+            </div>
+
+            {/* Create Report Button */}
+            <ShadcnButton
+              onClick={handleOpenCreateReportModal}
+              className="bg-[#166534] hover:bg-[#14502a] text-white"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Create report
+            </ShadcnButton>
+          </div>
+        )}
       </div>
 
       <AntdCard 
@@ -2823,61 +3664,40 @@ const Reports = () => {
         }}
         bodyStyle={{ padding: '0' }}
       >
-        <Tabs
-          activeKey={activeTab}
-          onChange={setActiveTab}
-          size="large"
-          style={{ padding: '0 24px' }}
-          items={[
-            {
-              key: 'overview',
-              label: (
-                <span style={{ fontSize: 15, fontWeight: 500 }}>
-                  <BarChart3 className="h-4 w-4" /> Overview
-                </span>
-              ),
-              children: (
-                <div style={{ padding: '24px' }}>
-                  {loading ? (
-                    <div className="space-y-6">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                        {Array.from({ length: 4 }).map((_, i) => (
-                          <Card key={i}>
-                            <CardContent className="pt-6">
-                              <Skeleton className="h-4 w-24 mb-2" />
-                              <Skeleton className="h-8 w-32" />
-                            </CardContent>
-                          </Card>
-                        ))}
-                      </div>
-                      <Card>
-                        <CardContent className="pt-6">
-                          <TableSkeleton rows={8} cols={5} />
-                        </CardContent>
-                      </Card>
-                    </div>
-                  ) : (
-                    renderOverviewDashboard()
-                  )}
+        {isSmartReport ? (
+          <div style={{ padding: '24px' }}>
+            {renderAIReportGenerator()}
+          </div>
+        ) : isGeneratedReports ? (
+          <div style={{ padding: '24px' }}>
+            {renderGeneratedReports()}
+          </div>
+        ) : (
+          <div style={{ padding: '24px' }}>
+            {loading ? (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Card key={i}>
+                      <CardContent className="pt-6">
+                        <Skeleton className="h-4 w-24 mb-2" />
+                        <Skeleton className="h-8 w-32" />
+                      </CardContent>
+                    </Card>
+                  ))}
                 </div>
-              )
-            },
-            {
-              key: 'generated',
-              label: (
-                <span style={{ fontSize: 15, fontWeight: 500 }}>
-                  <Bot className="h-4 w-4" /> Generated Report
-                </span>
-              ),
-              children: (
-                <div style={{ padding: '24px' }}>
-                  {renderAIReportGenerator()}
-                </div>
-              )
-            }
-        ]}
-      />
-    </AntdCard>
+                <Card>
+                  <CardContent className="pt-6">
+                    <TableSkeleton rows={8} cols={5} />
+                  </CardContent>
+                </Card>
+              </div>
+            ) : (
+              renderOverviewDashboard()
+            )}
+          </div>
+        )}
+      </AntdCard>
     </div>
     </>
   );

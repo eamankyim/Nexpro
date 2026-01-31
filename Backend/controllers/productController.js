@@ -1,16 +1,18 @@
-const { Product, ProductVariant, Shop, InventoryCategory, Barcode } = require('../models');
+const fs = require('fs');
+const path = require('path');
+const { Product, ProductVariant, Shop, ProductCategory, Barcode } = require('../models');
 const { Op } = require('sequelize');
-const config = require('../config/config');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { getPagination } = require('../utils/paginationUtils');
+const { baseUploadDir, ensureDirExists } = require('../middleware/upload');
+const { invalidateProductListCache } = require('../middleware/cache');
 
 // @desc    Get all products
 // @route   GET /api/products
 // @access  Private
 exports.getProducts = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const search = req.query.search || '';
     const shopId = req.query.shopId;
     const categoryId = req.query.categoryId;
@@ -37,7 +39,7 @@ exports.getProducts = async (req, res, next) => {
       offset,
       include: [
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
-        { model: InventoryCategory, as: 'category', attributes: ['id', 'name'] }
+        { model: ProductCategory, as: 'category', attributes: ['id', 'name'] }
       ],
       order: [['createdAt', 'DESC']]
     });
@@ -66,7 +68,7 @@ exports.getProduct = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
-        { model: InventoryCategory, as: 'category', attributes: ['id', 'name'] },
+        { model: ProductCategory, as: 'category', attributes: ['id', 'name'] },
         { model: ProductVariant, as: 'variants' },
         { model: Barcode, as: 'barcodes' }
       ]
@@ -88,6 +90,95 @@ exports.getProduct = async (req, res, next) => {
   }
 };
 
+// @desc    Upload product image
+// @route   POST /api/products/upload-image
+// @access  Private
+exports.uploadProductImage = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+    const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+    if (isServerless) {
+      // Serverless (Vercel/Lambda): no writable filesystem; store as base64 in DB
+      const mime = req.file.mimetype || 'image/jpeg';
+      const base64 = req.file.buffer.toString('base64');
+      const imageUrl = `data:${mime};base64,${base64}`;
+      return res.status(200).json({ success: true, imageUrl });
+    }
+
+    // Node.js with disk: write to uploads/products/<tenantId>/
+    const tenantId = req.tenantId;
+    const subDir = path.join('products', tenantId);
+    const uploadPath = path.join(baseUploadDir, subDir);
+    ensureDirExists(uploadPath);
+    const ext = path.extname(req.file.originalname) || '.jpg';
+    const sanitized = req.file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_').replace(/\.[^.]+$/, '') || 'image';
+    const filename = `${Date.now()}-${sanitized}${ext}`;
+    const filePath = path.join(uploadPath, filename);
+    fs.writeFileSync(filePath, req.file.buffer);
+    const imageUrl = `/uploads/products/${tenantId}/${filename}`;
+    res.status(200).json({ success: true, imageUrl });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get product categories
+// @route   GET /api/products/categories
+// @access  Private
+exports.getProductCategories = async (req, res, next) => {
+  const tenantId = req.tenantId;
+  const tenant = req.tenant;
+  const businessType = tenant?.businessType || 'unknown';
+  const shopType = tenant?.metadata?.shopType || null;
+  try {
+    console.log('[getProductCategories] tenantId=%s businessType=%s shopType=%s', tenantId || 'missing', businessType, shopType || 'none');
+    if (!tenantId) {
+      console.warn('[getProductCategories] No tenantId on request – categories may be empty');
+    }
+    const whereClause = applyTenantFilter(tenantId, { isActive: true });
+    const categories = await ProductCategory.findAll({
+      where: whereClause,
+      order: [['name', 'ASC']]
+    });
+    console.log('[getProductCategories] tenantId=%s count=%d', tenantId || 'missing', categories.length);
+    if (categories.length === 0) {
+      console.log('[getProductCategories] No product_categories for this tenant – run onboarding with shop type or create categories manually');
+    }
+    res.status(200).json({ success: true, data: categories });
+  } catch (error) {
+    console.error('[getProductCategories] Error loading categories:', {
+      tenantId,
+      message: error?.message,
+      name: error?.name
+    });
+    next(error);
+  }
+};
+
+// @desc    Create product category
+// @route   POST /api/products/categories
+// @access  Private
+exports.createProductCategory = async (req, res, next) => {
+  try {
+    const { name, description, metadata } = sanitizePayload(req.body || {});
+    if (!name) {
+      return res.status(400).json({ success: false, message: 'Category name is required' });
+    }
+    const category = await ProductCategory.create({
+      name,
+      description: description || null,
+      metadata: metadata || {},
+      tenantId: req.tenantId
+    });
+    res.status(201).json({ success: true, data: category });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Create new product
 // @route   POST /api/products
 // @access  Private
@@ -99,6 +190,7 @@ exports.createProduct = async (req, res, next) => {
       tenantId: req.tenantId
     });
 
+    invalidateProductListCache(req.tenantId);
     res.status(201).json({
       success: true,
       data: product
@@ -130,12 +222,13 @@ exports.updateProduct = async (req, res, next) => {
     const reorderLevel = parseFloat(product.reorderLevel || 0);
     
     await product.update(payload);
+    invalidateProductListCache(req.tenantId);
 
     const updatedProduct = await Product.findOne({
       where: applyTenantFilter(req.tenantId, { id: product.id }),
       include: [
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
-        { model: InventoryCategory, as: 'category', attributes: ['id', 'name'] }
+        { model: ProductCategory, as: 'category', attributes: ['id', 'name'] }
       ]
     });
 
@@ -209,6 +302,7 @@ exports.deleteProduct = async (req, res, next) => {
     }
 
     await product.destroy();
+    invalidateProductListCache(req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -258,6 +352,372 @@ exports.getProductByBarcode = async (req, res, next) => {
       data: product
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+// =============================================
+// PRODUCT VARIANT OPERATIONS
+// =============================================
+
+// @desc    Get variants for a product
+// @route   GET /api/products/:id/variants
+// @access  Private
+exports.getProductVariants = async (req, res, next) => {
+  try {
+    // First verify the product exists and belongs to tenant
+    const product = await Product.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    const variants = await ProductVariant.findAll({
+      where: { productId: req.params.id },
+      order: [['createdAt', 'ASC']]
+    });
+
+    res.status(200).json({
+      success: true,
+      count: variants.length,
+      data: variants
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Create product variant
+// @route   POST /api/products/:id/variants
+// @access  Private
+exports.createProductVariant = async (req, res, next) => {
+  try {
+    // First verify the product exists and belongs to tenant
+    const product = await Product.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    const payload = sanitizePayload(req.body);
+    
+    // Create the variant
+    const variant = await ProductVariant.create({
+      ...payload,
+      productId: product.id
+    });
+
+    // Update product to indicate it has variants
+    if (!product.hasVariants) {
+      await product.update({ hasVariants: true });
+    }
+
+    res.status(201).json({
+      success: true,
+      data: variant
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update product variant
+// @route   PUT /api/products/variants/:variantId
+// @access  Private
+exports.updateProductVariant = async (req, res, next) => {
+  try {
+    const variant = await ProductVariant.findByPk(req.params.variantId, {
+      include: [{ model: Product, as: 'product' }]
+    });
+
+    if (!variant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Variant not found'
+      });
+    }
+
+    // Verify the variant's product belongs to the tenant
+    if (variant.product.tenantId !== req.tenantId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to update this variant'
+      });
+    }
+
+    const payload = sanitizePayload(req.body);
+    await variant.update(payload);
+
+    res.status(200).json({
+      success: true,
+      data: variant
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete product variant
+// @route   DELETE /api/products/variants/:variantId
+// @access  Private
+exports.deleteProductVariant = async (req, res, next) => {
+  try {
+    const variant = await ProductVariant.findByPk(req.params.variantId, {
+      include: [{ model: Product, as: 'product' }]
+    });
+
+    if (!variant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Variant not found'
+      });
+    }
+
+    // Verify the variant's product belongs to the tenant
+    if (variant.product.tenantId !== req.tenantId) {
+      return res.status(403).json({
+        success: false,
+        message: 'Not authorized to delete this variant'
+      });
+    }
+
+    const productId = variant.productId;
+    await variant.destroy();
+
+    // Check if product still has variants
+    const remainingVariants = await ProductVariant.count({
+      where: { productId }
+    });
+
+    if (remainingVariants === 0) {
+      await Product.update(
+        { hasVariants: false },
+        { where: { id: productId } }
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Variant deleted successfully'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Bulk create products
+// @route   POST /api/products/bulk
+// @access  Private (admin, manager)
+exports.bulkCreateProducts = async (req, res, next) => {
+  try {
+    const { products } = req.body;
+    const { bulkCreate } = require('../utils/bulkOperations');
+
+    if (!Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of products'
+      });
+    }
+
+    const result = await bulkCreate(Product, products, {
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      continueOnError: true,
+      maxBatchSize: 100,
+    });
+
+    invalidateProductListCache(req.tenantId);
+    res.status(result.success ? 201 : 207).json({
+      success: result.success,
+      ...result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Bulk update products
+// @route   PUT /api/products/bulk
+// @access  Private (admin, manager)
+exports.bulkUpdateProducts = async (req, res, next) => {
+  try {
+    const { products } = req.body;
+    const { bulkUpdate } = require('../utils/bulkOperations');
+
+    if (!Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of product updates'
+      });
+    }
+
+    const result = await bulkUpdate(Product, products, {
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      continueOnError: true,
+      maxBatchSize: 100,
+    });
+
+    invalidateProductListCache(req.tenantId);
+    res.status(result.success ? 200 : 207).json({
+      success: result.success,
+      ...result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Bulk delete products
+// @route   DELETE /api/products/bulk
+// @access  Private (admin only)
+exports.bulkDeleteProducts = async (req, res, next) => {
+  try {
+    const { ids } = req.body;
+    const { bulkDelete } = require('../utils/bulkOperations');
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of product IDs'
+      });
+    }
+
+    const result = await bulkDelete(Product, ids, {
+      tenantId: req.tenantId,
+      continueOnError: true,
+      maxBatchSize: 100,
+    });
+
+    invalidateProductListCache(req.tenantId);
+    res.status(result.success ? 200 : 207).json({
+      success: result.success,
+      ...result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Export products to CSV/Excel
+// @route   GET /api/products/export
+// @access  Private (admin, manager)
+exports.exportProducts = async (req, res, next) => {
+  try {
+    const { format = 'csv', categoryId, isActive } = req.query;
+    const { sendCSV, sendExcel, COLUMN_DEFINITIONS } = require('../utils/dataExport');
+
+    const where = applyTenantFilter(req.tenantId, {});
+    if (categoryId) where.categoryId = categoryId;
+    if (isActive !== undefined) where.isActive = isActive === 'true';
+
+    const products = await Product.findAll({
+      where,
+      include: [
+        { model: ProductCategory, as: 'category', attributes: ['id', 'name'] }
+      ],
+      order: [['name', 'ASC']],
+      raw: true,
+      nest: true
+    });
+
+    if (products.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: 'No products to export'
+      });
+    }
+
+    const filename = `products_${new Date().toISOString().split('T')[0]}`;
+    const columns = COLUMN_DEFINITIONS.products;
+
+    if (format === 'excel') {
+      await sendExcel(res, products, `${filename}.xlsx`, {
+        columns,
+        sheetName: 'Products',
+        title: 'Product Inventory'
+      });
+    } else {
+      sendCSV(res, products, `${filename}.csv`, columns);
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Bulk update product stock
+// @route   PUT /api/products/bulk/stock
+// @access  Private (admin, manager, staff)
+exports.bulkUpdateStock = async (req, res, next) => {
+  const transaction = await require('../config/database').sequelize.transaction();
+  
+  try {
+    const { items } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of stock updates'
+      });
+    }
+
+    if (items.length > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'Maximum batch size is 100 items'
+      });
+    }
+
+    const updated = [];
+    const errors = [];
+
+    for (const item of items) {
+      try {
+        const { productId, adjustment, type = 'adjustment' } = item;
+        
+        const product = await Product.findOne({
+          where: applyTenantFilter(req.tenantId, { id: productId }),
+          transaction
+        });
+
+        if (!product) {
+          errors.push({ productId, error: 'Product not found' });
+          continue;
+        }
+
+        const oldQuantity = parseFloat(product.quantityOnHand) || 0;
+        const newQuantity = oldQuantity + parseFloat(adjustment);
+
+        await product.update({ quantityOnHand: newQuantity }, { transaction });
+        updated.push({ productId, oldQuantity, newQuantity, adjustment });
+      } catch (error) {
+        errors.push({ productId: item.productId, error: error.message });
+      }
+    }
+
+    await transaction.commit();
+
+    res.status(errors.length === 0 ? 200 : 207).json({
+      success: errors.length === 0,
+      totalProcessed: items.length,
+      successCount: updated.length,
+      errorCount: errors.length,
+      updated,
+      errors
+    });
+  } catch (error) {
+    await transaction.rollback();
     next(error);
   }
 };

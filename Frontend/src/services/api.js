@@ -1,42 +1,49 @@
 import axios from 'axios';
 
 const deriveApiBaseUrl = () => {
-  const envUrl = import.meta.env.VITE_API_URL;
-  if (envUrl) {
-    let url = envUrl.trim().replace(/\/$/, '');
-    // Ensure URL has a protocol (http:// or https://)
-    if (url && !url.match(/^https?:\/\//i)) {
-      // Default to https for production URLs
-      url = `https://${url}`;
-      console.warn(`VITE_API_URL missing protocol, auto-added https://. Original: ${envUrl}, Fixed: ${url}`);
-    }
-    console.log(`[API] Using base URL: ${url}`);
-    return url;
-  }
-
-  // In production (Vercel, etc.), don't use frontend domain with port
   if (typeof window !== 'undefined') {
-    const { hostname } = window.location;
+    const { hostname, origin } = window.location;
     const isProduction = hostname.includes('vercel.app') || 
                         hostname.includes('netlify.app') || 
-                        (hostname !== 'localhost' && !hostname.startsWith('127.0.0.1') && !hostname.startsWith('192.168.'));
-    
-    if (isProduction) {
-      // In production without VITE_API_URL, show clear error
-      const errorMsg = '❌ VITE_API_URL environment variable is not set! Please configure it in your Vercel project settings.';
-      console.error(errorMsg);
-      // Show user-facing error
-      if (typeof document !== 'undefined') {
-        const errorDiv = document.createElement('div');
-        errorDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff4444;color:white;padding:1rem;text-align:center;z-index:9999;font-weight:bold;';
-        errorDiv.textContent = errorMsg;
-        document.body.appendChild(errorDiv);
-      }
-      // Return empty to prevent incorrect API calls
-      return '';
+                        (hostname !== 'localhost' && !hostname.startsWith('127.0.0.1') && !hostname.startsWith('192.168.') && !hostname.startsWith('10.'));
+    const isLan = hostname.startsWith('192.168.') || hostname.startsWith('10.');
+
+    // When on LAN (phone testing), always use same origin so Vite proxy works
+    if (isLan) {
+      console.log(`[API] Using base URL (LAN): ${origin}`);
+      return origin;
     }
 
-    // Development fallback: use localhost
+    if (isProduction) {
+      const envUrl = import.meta.env.VITE_API_URL;
+      if (!envUrl) {
+        const errorMsg = '❌ VITE_API_URL environment variable is not set! Please configure it in your Vercel project settings.';
+        console.error(errorMsg);
+        if (typeof document !== 'undefined') {
+          const errorDiv = document.createElement('div');
+          errorDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff4444;color:white;padding:1rem;text-align:center;z-index:9999;font-weight:bold;';
+          errorDiv.textContent = errorMsg;
+          document.body.appendChild(errorDiv);
+        }
+        return '';
+      }
+      let url = envUrl.trim().replace(/\/$/, '');
+      if (url && !url.match(/^https?:\/\//i)) {
+        url = `https://${url}`;
+        console.warn(`VITE_API_URL missing protocol, auto-added https://. Original: ${envUrl}, Fixed: ${url}`);
+      }
+      console.log(`[API] Using base URL: ${url}`);
+      return url;
+    }
+
+    // Localhost dev: use VITE_API_URL or fallback to backend port
+    const envUrl = import.meta.env.VITE_API_URL;
+    if (envUrl) {
+      let url = envUrl.trim().replace(/\/$/, '');
+      if (url && !url.match(/^https?:\/\//i)) url = `https://${url}`;
+      console.log(`[API] Using base URL: ${url}`);
+      return url;
+    }
     const fallbackPort = import.meta.env.VITE_API_PORT ?? '5001';
     return `http://localhost:${fallbackPort}`;
   }

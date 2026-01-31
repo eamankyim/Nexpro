@@ -22,28 +22,18 @@ const slugify = (value = '') => {
     .substring(0, 150) || `tenant-${Date.now()}`;
 };
 
-const generateUniqueSlug = async (name, transaction) => {
+/**
+ * Generate a unique slug for a new tenant.
+ * Uses random suffix to avoid DB round-trip – critical for remote DB latency (~100–300ms saved).
+ */
+const generateUniqueSlug = (name) => {
   const base = slugify(name);
-  let candidate = base;
-  let counter = 1;
-
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const existing = await Tenant.findOne({
-      where: { slug: candidate },
-      transaction,
-      attributes: ['id'],
-    });
-
-    if (!existing) {
-      return candidate;
-    }
-
-    candidate = `${base}-${counter++}`;
-  }
+  const suffix = Math.random().toString(36).slice(2, 8);
+  return `${base}-${suffix}`;
 };
 
 exports.signupTenant = async (req, res, next) => {
+  const t0 = Date.now();
   const {
     companyName,
     companyEmail,
@@ -72,9 +62,13 @@ exports.signupTenant = async (req, res, next) => {
     const trimmedCompanyName = (companyName?.trim() || 'My Workspace');
     const trimmedAdminName = adminName.trim();
 
+    const t1 = Date.now();
     const existingUser = await User.findOne({
       where: { email: normalizedEmail },
     });
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[signup] User.findOne:', Date.now() - t1, 'ms');
+    }
 
     if (existingUser) {
       return res.status(400).json({
@@ -87,7 +81,7 @@ exports.signupTenant = async (req, res, next) => {
     const transaction = await sequelize.transaction();
 
     try {
-      const slug = await generateUniqueSlug(trimmedCompanyName, transaction);
+      const slug = generateUniqueSlug(trimmedCompanyName);
 
       const trialEndDate =
         plan === 'trial' ? dayjs().add(1, 'month').toDate() : null;
@@ -103,6 +97,11 @@ exports.signupTenant = async (req, res, next) => {
       // Add shopType to metadata if provided (only for shop business type)
       if (businessType === 'shop' && shopType) {
         metadata.shopType = shopType;
+        console.log('[tenant] createTenant businessType=shop shopType=%s (stored in metadata)', shopType);
+      } else if (businessType === 'shop' && !shopType) {
+        console.log('[tenant] createTenant businessType=shop shopType=missing (no type-specific categories)');
+      } else {
+        console.log('[tenant] createTenant businessType=%s shopType=n/a', businessType || 'printing_press');
       }
 
       // Add businessInfo to metadata if provided
@@ -126,14 +125,7 @@ exports.signupTenant = async (req, res, next) => {
         { transaction }
       );
 
-      // Seed default inventory categories based on business type and shop type
-      try {
-        await seedDefaultCategories(tenant.id, finalBusinessType, shopType || null);
-        console.log(`✅ Seeded default categories for business type: ${finalBusinessType}`);
-      } catch (categoryError) {
-        console.error('Error seeding default categories:', categoryError);
-        // Don't fail the signup if category seeding fails
-      }
+      // Category seeding moved to after response – runs in background so signup returns quickly
 
       const user = await User.create(
         {
@@ -145,7 +137,7 @@ exports.signupTenant = async (req, res, next) => {
         { transaction }
       );
 
-      await UserTenant.create(
+      const membershipRecord = await UserTenant.create(
         {
           tenantId: tenant.id,
           userId: user.id,
@@ -215,22 +207,25 @@ exports.signupTenant = async (req, res, next) => {
 
       await transaction.commit();
 
+      // Seed default categories in background so signup responds quickly (~2–3s faster)
+      seedDefaultCategories(tenant.id, finalBusinessType, shopType || null)
+        .then(() => console.log(`✅ Seeded default categories for business type: ${finalBusinessType}`))
+        .catch((err) => console.error('Error seeding default categories (non-blocking):', err.message));
+
       const token = generateToken(user.id);
 
-      const memberships = await UserTenant.findAll({
-        where: { userId: user.id },
-        include: [{ model: Tenant, as: 'tenant' }],
-        order: [
-          ['isDefault', 'DESC'],
-          ['createdAt', 'ASC'],
-        ],
-      });
-
+      // Build memberships from in-memory data – saves 1 remote DB round-trip (~100–300ms)
+      const safeMemberships = [
+        {
+          ...membershipRecord.toJSON(),
+          tenant: tenant.toJSON(),
+        },
+      ];
       const safeUser = user.toJSON();
-      const safeMemberships = memberships.map((membership) =>
-        membership.toJSON()
-      );
 
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[signup] total:', Date.now() - t0, 'ms');
+      }
       return res.status(201).json({
         success: true,
         data: {
@@ -269,16 +264,24 @@ exports.completeOnboarding = async (req, res, next) => {
         success: false,
         message: 'Tenant not found'
       });
-    }    // Update tenant with onboarding data
+    }
+
+    const trimmedCompanyName = typeof companyName === 'string' ? companyName.trim() : '';
+    if (!trimmedCompanyName) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company name is required'
+      });
+    }
+
+    // Update tenant with onboarding data
     const updates = {};
     
     if (businessType) {
       updates.businessType = businessType;
     }
 
-    if (companyName) {
-      updates.name = companyName;
-    }
+    updates.name = trimmedCompanyName;
 
     // Store onboarding data in metadata
     // Create a new metadata object to ensure Sequelize detects the change
@@ -288,6 +291,16 @@ exports.completeOnboarding = async (req, res, next) => {
       completedAt: new Date().toISOString()
     };
     
+    // Store shop type in metadata (for shop business type)
+    if (businessType === 'shop' && shopType) {
+      metadata.shopType = shopType;
+      console.log('[tenant] completeOnboarding tenantId=%s businessType=shop shopType=%s (stored in metadata)', tenantId, shopType);
+    } else if (businessType === 'shop' && !shopType) {
+      console.log('[tenant] completeOnboarding tenantId=%s businessType=shop shopType=missing', tenantId);
+    } else if (businessType) {
+      console.log('[tenant] completeOnboarding tenantId=%s businessType=%s shopType=n/a', tenantId, businessType);
+    }
+
     // Store business contact information in metadata
     if (companyEmail) metadata.email = companyEmail;
     if (companyPhone) metadata.phone = companyPhone;
@@ -306,9 +319,7 @@ exports.completeOnboarding = async (req, res, next) => {
     if (businessType) {
       tenant.businessType = businessType;
     }
-    if (companyName) {
-      tenant.name = companyName;
-    }
+    tenant.name = trimmedCompanyName;
     
     // Directly assign metadata and save to ensure JSONB changes are persisted
     tenant.metadata = metadata;
@@ -317,10 +328,18 @@ exports.completeOnboarding = async (req, res, next) => {
     // Reload to get the latest data
     await tenant.reload();
 
-    // If business type changed, reseed categories
-    if (businessType && businessType !== tenant.businessType) {
+    // Seed default categories based on business type and shop type
+    // This runs if business type is set/changed, or if shop type is provided
+    const shouldSeedCategories = businessType && (
+      !tenant.businessType || // First time setting business type
+      tenant.businessType !== businessType || // Business type changed
+      (businessType === 'shop' && shopType) // Shop type provided
+    );
+    
+    if (shouldSeedCategories) {
       try {
-        await seedDefaultCategories(tenantId, businessType);
+        await seedDefaultCategories(tenantId, businessType, shopType || null);
+        console.log(`✅ Seeded default categories for ${businessType}${shopType ? ` (${shopType})` : ''}`);
       } catch (error) {
         console.error('Failed to seed categories during onboarding:', error);
         // Don't fail onboarding if category seeding fails

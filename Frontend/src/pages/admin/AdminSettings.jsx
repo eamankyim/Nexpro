@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import {
   Card,
   Form,
@@ -9,7 +9,6 @@ import {
   Typography,
   Table,
   Modal,
-  Upload,
   Space,
   Row,
   Col,
@@ -24,8 +23,24 @@ import {
 import { Upload as UploadIcon, Pencil, Trash2, Plus } from 'lucide-react';
 import { showSuccess, showError } from '../../utils/toast';
 import adminService from '../../services/adminService';
+import { API_BASE_URL } from '../../services/api';
+import FileUpload from '../../components/FileUpload';
+import FilePreview from '../../components/FilePreview';
 
 const { Text } = Typography;
+
+// Helper function to resolve file URLs (handles base64, relative paths, and absolute URLs)
+const resolveFileUrl = (url) => {
+  if (!url) return '';
+  // Base64 data URLs (data:image/png;base64,...)
+  if (url.startsWith('data:')) return url;
+  // Absolute URLs (http:// or https://)
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  // Relative paths - prepend API base URL
+  if (url.startsWith('/')) return `${API_BASE_URL}${url}`;
+  // Return as-is for other cases
+  return url;
+};
 
 const defaultFormValues = {
   branding: {},
@@ -34,6 +49,7 @@ const defaultFormValues = {
 };
 
 const AdminSettings = () => {
+  const { isMobile } = useResponsive();
   const [form] = Form.useForm();
   const [adminForm] = Form.useForm();
   const [saving, setSaving] = useState(false);
@@ -43,6 +59,8 @@ const AdminSettings = () => {
   const [editingAdmin, setEditingAdmin] = useState(null);
   const [adminSaving, setAdminSaving] = useState(false);
   const [brandingLogoPreview, setBrandingLogoPreview] = useState('');
+  const [brandingLogoPreviewVisible, setBrandingLogoPreviewVisible] = useState(false);
+  const [brandingLogoUploading, setBrandingLogoUploading] = useState(false);
   
   // Subscription Plans state
   const [plans, setPlans] = useState([]);
@@ -123,16 +141,18 @@ const AdminSettings = () => {
     }
   };
 
-  const handleLogoBeforeUpload = async (file) => {
-    const toBase64 = (f) =>
-      new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = (error) => reject(error);
-        reader.readAsDataURL(f);
-      });
-
+  const handleLogoUpload = async ({ file }) => {
+    if (!file) return;
+    setBrandingLogoUploading(true);
     try {
+      const toBase64 = (f) =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = (error) => reject(error);
+          reader.readAsDataURL(f);
+        });
+
       const base64 = await toBase64(file);
       const currentBranding = form.getFieldValue('branding') || {};
       form.setFieldsValue({
@@ -146,9 +166,9 @@ const AdminSettings = () => {
     } catch (error) {
       console.error('Failed to read file', error);
       showError(null, 'Failed to upload logo');
+    } finally {
+      setBrandingLogoUploading(false);
     }
-
-    return false; // prevent default upload
   };
 
   const openCreateAdminModal = () => {
@@ -157,7 +177,7 @@ const AdminSettings = () => {
     setAdminModalVisible(true);
   };
 
-  const openEditAdminModal = (record) => {
+  const openEditAdminModal = useCallback((record) => {
     setEditingAdmin(record);
     adminForm.setFieldsValue({
       name: record.name,
@@ -166,7 +186,7 @@ const AdminSettings = () => {
       password: '',
     });
     setAdminModalVisible(true);
-  };
+  }, [adminForm]);
 
   const handleAdminSubmit = async () => {
     try {
@@ -203,7 +223,7 @@ const AdminSettings = () => {
     }
   };
 
-  const adminColumns = [
+  const adminColumns = useMemo(() => [
     {
       title: 'Name',
       dataIndex: 'name',
@@ -237,7 +257,7 @@ const AdminSettings = () => {
         </Button>
       ),
     },
-  ];
+  ], [openEditAdminModal]);
 
   // ============================================================
   // Subscription Plans Handlers
@@ -430,7 +450,7 @@ const AdminSettings = () => {
     }
   };
 
-  const handleDeletePlan = async (planId) => {
+  const handleDeletePlan = useCallback(async (planId) => {
     try {
       await adminService.deleteSubscriptionPlan(planId);
       showSuccess('Subscription plan deleted successfully');
@@ -439,9 +459,9 @@ const AdminSettings = () => {
       console.error('Failed to delete subscription plan', error);
       showError(null, 'Failed to delete subscription plan');
     }
-  };
+  }, [loadSubscriptionPlans]);
 
-  const planColumns = [
+  const planColumns = useMemo(() => [
     {
       title: 'Order',
       dataIndex: 'order',
@@ -558,7 +578,7 @@ const AdminSettings = () => {
         </Space>
       ),
     },
-  ];
+  ], [handleDeletePlan]);
 
   return (
     <>
@@ -580,7 +600,7 @@ const AdminSettings = () => {
                     <Row gutter={16}>
                       <Col span={12}>
                         <Form.Item label="Application name" name={['branding', 'appName']}>
-                          <Input placeholder="NexPRO" size="large" />
+                          <Input placeholder="ShopWISE" size="large" />
                         </Form.Item>
                       </Col>
                       <Col span={12}>
@@ -603,6 +623,7 @@ const AdminSettings = () => {
                               <img
                                 src={brandingLogoPreview}
                                 alt="Brand logo"
+                                loading="lazy"
                                 style={{ width: 120, height: 120, objectFit: 'contain', borderRadius: 8, border: '1px solid #d9d9d9', padding: 8, background: '#fafafa' }}
                               />
                             ) : (
@@ -624,32 +645,35 @@ const AdminSettings = () => {
                             <Text type="secondary" style={{ fontSize: 12 }}>
                               This logo is displayed on invoices and quotes.
                             </Text>
-                            <Space>
-                              <Upload
+                            <div style={{ marginTop: 8 }}>
+                              <FileUpload
+                                onFileSelect={handleLogoUpload}
+                                disabled={false}
+                                uploading={brandingLogoUploading}
                                 accept="image/png,image/jpeg,image/svg+xml"
-                                showUploadList={false}
-                                beforeUpload={handleLogoBeforeUpload}
-                              >
-                                <Button icon={<UploadIcon className="h-4 w-4" />} size="small">Upload logo</Button>
-                              </Upload>
-                              {brandingLogoPreview && (
-                                <Button
-                                  size="small"
-                                  onClick={() => {
-                                    const currentBranding = form.getFieldValue('branding') || {};
-                                    form.setFieldsValue({
-                                      branding: {
-                                        ...currentBranding,
-                                        logoUrl: '',
-                                      },
-                                    });
-                                    setBrandingLogoPreview('');
-                                  }}
-                                >
-                                  Remove
-                                </Button>
-                              )}
-                            </Space>
+                                maxSizeMB={5}
+                                uploadedFiles={brandingLogoPreview ? [{
+                                  id: 'branding-logo',
+                                  fileUrl: brandingLogoPreview,
+                                  originalName: 'Brand Logo',
+                                  name: 'Brand Logo',
+                                  url: resolveFileUrl(brandingLogoPreview)
+                                }] : []}
+                                onFilePreview={() => setBrandingLogoPreviewVisible(true)}
+                                onFileRemove={() => {
+                                  const currentBranding = form.getFieldValue('branding') || {};
+                                  form.setFieldsValue({
+                                    branding: {
+                                      ...currentBranding,
+                                      logoUrl: '',
+                                    },
+                                  });
+                                  setBrandingLogoPreview('');
+                                }}
+                                showFileList={true}
+                                emptyMessage="No logo uploaded yet."
+                              />
+                            </div>
                           </Space>
                         </Form.Item>
                       </Col>
@@ -662,7 +686,7 @@ const AdminSettings = () => {
                           name={['branding', 'emailFooter']}
                           extra="Appears at the bottom of all system emails."
                         >
-                          <Input.TextArea rows={3} placeholder="Thank you for using NexPRO." />
+                          <Input.TextArea rows={3} placeholder="Thank you for using ShopWISE." />
                         </Form.Item>
                       </Col>
                     </Row>
@@ -711,21 +735,21 @@ const AdminSettings = () => {
                       name={['communications', 'supportEmail']}
                       rules={[{ type: 'email', message: 'Enter a valid email' }]}
                     >
-                      <Input placeholder="support@nexpro.app" />
+                      <Input placeholder="support@shopwise.app" />
                     </Form.Item>
                     <Form.Item
                       label="Marketing email"
                       name={['communications', 'marketingEmail']}
                       rules={[{ type: 'email', message: 'Enter a valid email' }]}
                     >
-                      <Input placeholder="marketing@nexpro.app" />
+                      <Input placeholder="marketing@shopwise.app" />
                     </Form.Item>
                     <Form.Item
                       label="SMS sender ID"
                       name={['communications', 'smsSender']}
                       extra="ID used for SMS notifications, if configured."
                     >
-                      <Input placeholder="NEXPRO" />
+                      <Input placeholder="SHOPWISE" />
                     </Form.Item>
                   </>
                 ),
@@ -778,12 +802,34 @@ const AdminSettings = () => {
         }
         style={{ marginTop: 24 }}
       >
-        <Table
-          rowKey="id"
-          columns={adminColumns}
-          dataSource={admins}
-          pagination={false}
-        />
+        {isMobile ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {admins.length === 0 ? (
+              <div style={{ padding: 24, textAlign: 'center' }}><Text type="secondary">No admins</Text></div>
+            ) : (
+              admins.map((admin) => (
+                <Card key={admin.id} size="small" style={{ border: '1px solid #f0f0f0' }}>
+                  <div><Text strong>{admin.name || '—'}</Text></div>
+                  <div style={{ marginTop: 4 }}><Text type="secondary" style={{ fontSize: 12 }}>{admin.email}</Text></div>
+                  <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+                    {admin.isActive ? <Text type="success">Active</Text> : <Text type="secondary">Inactive</Text>}
+                    {admin.lastLogin && <Text type="secondary" style={{ fontSize: 12, marginLeft: 8 }}>Last login: {new Date(admin.lastLogin).toLocaleDateString()}</Text>}
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <Button type="link" size="small" onClick={() => openEditAdminModal(admin)}>Edit</Button>
+                  </div>
+                </Card>
+              ))
+            )}
+          </div>
+        ) : (
+          <Table
+            rowKey="id"
+            columns={adminColumns}
+            dataSource={admins}
+            pagination={false}
+          />
+        )}
       </Card>
 
       <Modal
@@ -1150,6 +1196,16 @@ const AdminSettings = () => {
           </Row>
         </Form>
       </Modal>
+
+      <FilePreview
+        open={brandingLogoPreviewVisible}
+        onClose={() => setBrandingLogoPreviewVisible(false)}
+        file={brandingLogoPreview ? {
+          fileUrl: brandingLogoPreview,
+          title: 'Brand Logo',
+          metadata: {}
+        } : null}
+      />
     </>
   );
 };

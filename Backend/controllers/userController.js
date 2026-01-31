@@ -1,15 +1,14 @@
 const { User, UserTenant } = require('../models');
 const { Op } = require('sequelize');
-const config = require('../config/config');
+const { getPagination } = require('../utils/paginationUtils');
+const { invalidateUserCache } = require('../middleware/cache');
 
 // @desc    Get all users for the current tenant
 // @route   GET /api/users
 // @access  Private/Admin
 exports.getUsers = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const search = req.query.search || '';
     const role = req.query.role;
     const isActive = req.query.isActive;
@@ -283,6 +282,7 @@ exports.toggleUserStatus = async (req, res, next) => {
     }
 
     await user.update({ isActive: !user.isActive });
+    invalidateUserCache(user.id);
 
     res.status(200).json({
       success: true,

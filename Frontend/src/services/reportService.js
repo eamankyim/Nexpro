@@ -67,6 +67,92 @@ const reportService = {
     const queryString = params.toString();
     const url = queryString ? `/reports/service-analytics?${queryString}` : '/reports/service-analytics';
     return await api.get(url);
+  },
+
+  // Get product sales report (for shop/pharmacy)
+  getProductSalesReport: async (startDate = null, endDate = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    
+    const queryString = params.toString();
+    const url = queryString ? `/reports/product-sales?${queryString}` : '/reports/product-sales';
+    return await api.get(url);
+  },
+
+  // Get inventory summary
+  getInventorySummary: async () => {
+    return await api.get('/reports/inventory-summary');
+  },
+
+  // Get inventory movements
+  getInventoryMovements: async (startDate = null, endDate = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    
+    const queryString = params.toString();
+    const url = queryString ? `/reports/inventory-movements?${queryString}` : '/reports/inventory-movements';
+    return await api.get(url);
+  },
+
+  // Get fastest moving items
+  getFastestMovingItems: async (startDate = null, endDate = null, limit = 5) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    params.append('limit', limit);
+    
+    const queryString = params.toString();
+    const url = `/reports/fastest-moving-items?${queryString}`;
+    return await api.get(url);
+  },
+
+  // Get revenue by channel
+  getRevenueByChannel: async (startDate = null, endDate = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    
+    const queryString = params.toString();
+    const url = queryString ? `/reports/revenue-by-channel?${queryString}` : '/reports/revenue-by-channel';
+    return await api.get(url);
+  },
+
+  // Generate AI-powered report analysis
+  generateAIAnalysis: async (reportData, options = {}) => {
+    return await api.post('/reports/ai-analysis', {
+      reportData,
+      options
+    });
+  },
+
+  // Get KPI summary
+  getKpiSummary: async (startDate = null, endDate = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    
+    const queryString = params.toString();
+    const url = queryString ? `/reports/kpi-summary?${queryString}` : '/reports/kpi-summary';
+    return await api.get(url);
+  },
+
+  // Get top customers
+  getTopCustomers: async (startDate = null, endDate = null, limit = 5) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    params.append('limit', limit);
+    
+    const queryString = params.toString();
+    const url = `/reports/top-customers?${queryString}`;
+    return await api.get(url);
+  },
+
+  // Get pipeline summary
+  getPipelineSummary: async () => {
+    return await api.get('/reports/pipeline-summary');
   }
 };
 

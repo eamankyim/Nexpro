@@ -149,7 +149,7 @@ exports.handleSabitoCustomerWebhook = async (req, res) => {
       });
     }
 
-    // 2. Map Sabito business ID to NEXPro tenant ID
+    // 2. Map Sabito business ID to ShopWISE tenant ID
     if (!businessId) {
       console.error('[Sabito Webhook] Missing businessId in webhook data');
       return res.status(400).json({

@@ -4,12 +4,17 @@ const {
   getSale,
   createSale,
   updateSale,
+  deleteSale,
   cancelSale,
   generateInvoice,
-  printReceipt
+  printReceipt,
+  sendReceipt,
+  addSaleActivity,
+  getSaleActivities
 } = require('../controllers/saleController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { cacheMiddleware, generateSaleListKey } = require('../middleware/cache');
 
 const router = express.Router();
 
@@ -17,12 +22,13 @@ router.use(protect);
 router.use(tenantContext);
 
 router.route('/')
-  .get(getSales)
+  .get(cacheMiddleware(60, generateSaleListKey), getSales)
   .post(authorize('admin', 'manager', 'staff'), createSale);
 
 router.route('/:id')
   .get(getSale)
-  .put(authorize('admin', 'manager', 'staff'), updateSale);
+  .put(authorize('admin', 'manager', 'staff'), updateSale)
+  .delete(authorize('admin'), deleteSale);
 
 router.route('/:id/cancel')
   .post(authorize('admin', 'manager', 'staff'), cancelSale);
@@ -32,5 +38,12 @@ router.route('/:id/generate-invoice')
 
 router.route('/:id/receipt')
   .get(authorize('admin', 'manager', 'staff'), printReceipt);
+
+router.route('/:id/send-receipt')
+  .post(authorize('admin', 'manager', 'staff'), sendReceipt);
+
+router.route('/:id/activities')
+  .get(getSaleActivities)
+  .post(authorize('admin', 'manager', 'staff'), addSaleActivity);
 
 module.exports = router;

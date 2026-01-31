@@ -1,6 +1,6 @@
 const { Prescription, PrescriptionItem, Drug, Customer, Pharmacy, Invoice, User, DrugInteraction } = require('../models');
 const { Op } = require('sequelize');
-const config = require('../config/config');
+const { getPagination } = require('../utils/paginationUtils');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { sequelize } = require('../config/database');
 const crypto = require('crypto');
@@ -32,9 +32,7 @@ const generatePrescriptionNumber = async (tenantId) => {
 // @access  Private
 exports.getPrescriptions = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const pharmacyId = req.query.pharmacyId;
     const customerId = req.query.customerId;
     const status = req.query.status;
@@ -594,6 +592,77 @@ exports.printLabel = async (req, res, next) => {
       }
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete prescription (admin only)
+// @route   DELETE /api/prescriptions/:id
+// @access  Private (admin only)
+exports.deletePrescription = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+  
+  try {
+    const prescription = await Prescription.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      include: [
+        { model: PrescriptionItem, as: 'items' },
+        { model: Invoice, as: 'invoice' }
+      ]
+    }, { transaction });
+
+    if (!prescription) {
+      await transaction.rollback();
+      return res.status(404).json({
+        success: false,
+        message: 'Prescription not found'
+      });
+    }
+
+    // Prevent deletion of prescriptions with paid invoices
+    if (prescription.invoice && prescription.invoice.status === 'paid') {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete prescription with paid invoice. Void the prescription instead.'
+      });
+    }
+
+    // If prescription was filled, restore drug stock
+    if (prescription.status === 'filled' || prescription.status === 'dispensed') {
+      for (const item of prescription.items) {
+        if (item.drugId) {
+          const drug = await Drug.findByPk(item.drugId, { transaction });
+          if (drug) {
+            const newQuantity = parseFloat(drug.quantityOnHand || 0) + parseFloat(item.quantity);
+            await drug.update({ quantityOnHand: newQuantity }, { transaction });
+          }
+        }
+      }
+    }
+
+    // Delete related invoice if exists and not paid
+    if (prescription.invoice && prescription.invoice.status !== 'paid') {
+      await prescription.invoice.destroy({ transaction });
+    }
+
+    // Delete prescription items
+    await PrescriptionItem.destroy({
+      where: { prescriptionId: prescription.id },
+      transaction
+    });
+
+    // Delete the prescription
+    await prescription.destroy({ transaction });
+
+    await transaction.commit();
+
+    res.status(200).json({
+      success: true,
+      message: 'Prescription deleted successfully'
+    });
+  } catch (error) {
+    await transaction.rollback();
     next(error);
   }
 };

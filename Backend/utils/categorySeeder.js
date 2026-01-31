@@ -1,11 +1,12 @@
 /**
  * Category Seeder Utility
  * 
- * Seeds default inventory categories based on business type and shop type.
- * Used during tenant onboarding to set up initial categories.
+ * Seeds default inventory categories and product categories based on business type and shop type.
+ * Used during tenant onboarding so both Inventory (InventoryCategory) and Products (ProductCategory) have defaults.
  */
 
-const { InventoryCategory } = require('../models');
+const { Op } = require('sequelize');
+const { InventoryCategory, ProductCategory } = require('../models');
 const { getDefaultCategoriesForShopType } = require('../config/shopTypes');
 
 /**
@@ -50,19 +51,41 @@ async function seedDefaultCategories(tenantId, businessType, shopType = null) {
   if (businessType === 'printing_press') {
     categories = PRINTING_PRESS_CATEGORIES;
   } else if (businessType === 'shop' && shopType) {
-    // Get categories from shop type configuration
     categories = getDefaultCategoriesForShopType(shopType);
   } else if (businessType === 'pharmacy') {
     categories = PHARMACY_CATEGORIES;
   } else {
-    // Default fallback - general categories
     categories = [
       { name: 'General Merchandise', description: 'General store items' },
       { name: 'Miscellaneous', description: 'Other products and items' }
     ];
   }
 
-  // Create categories for tenant
+  console.log('[seedDefaultCategories] tenantId=%s businessType=%s shopType=%s categoryCount=%d', tenantId, businessType, shopType || 'n/a', categories.length);
+  if (businessType === 'shop' && !shopType) {
+    console.warn('[seedDefaultCategories] Shop business type but no shopType – using fallback categories only. Set shopType (e.g. supermarket, hardware) for type-specific categories.');
+  }
+
+  const FALLBACK_CATEGORY_NAMES = ['General Merchandise', 'Miscellaneous'];
+
+  // When seeding a specific shop type, deactivate the fallback categories so they don't appear in dropdowns
+  if (businessType === 'shop' && shopType) {
+    try {
+      await ProductCategory.update(
+        { isActive: false },
+        { where: { tenantId, name: { [Op.in]: FALLBACK_CATEGORY_NAMES } } }
+      );
+      await InventoryCategory.update(
+        { isActive: false },
+        { where: { tenantId, name: { [Op.in]: FALLBACK_CATEGORY_NAMES } } }
+      );
+      console.log('[seedDefaultCategories] Deactivated fallback categories for tenant %s', tenantId);
+    } catch (err) {
+      console.error('[seedDefaultCategories] Error deactivating fallback categories:', err.message);
+    }
+  }
+
+  // Create inventory categories for tenant (Inventory page)
   const createdCategories = [];
   for (const category of categories) {
     try {
@@ -78,16 +101,41 @@ async function seedDefaultCategories(tenantId, businessType, shopType = null) {
           isActive: true
         }
       });
-      
+
       if (created) {
         createdCategories.push(createdCategory);
-        console.log(`✅ Created category: ${category.name} for tenant ${tenantId}`);
+        console.log(`✅ Created inventory category: ${category.name} for tenant ${tenantId}`);
       } else {
-        console.log(`ℹ️  Category already exists: ${category.name} for tenant ${tenantId}`);
+        console.log(`ℹ️  Inventory category already exists: ${category.name} for tenant ${tenantId}`);
       }
     } catch (error) {
-      console.error(`❌ Error creating category ${category.name}:`, error.message);
-      // Continue with other categories even if one fails
+      console.error(`❌ Error creating inventory category ${category.name}:`, error.message);
+    }
+  }
+
+  // Create product categories for tenant (Products page dropdown)
+  for (const category of categories) {
+    try {
+      const [productCategory, created] = await ProductCategory.findOrCreate({
+        where: {
+          tenantId,
+          name: category.name
+        },
+        defaults: {
+          tenantId,
+          name: category.name,
+          description: category.description || null,
+          isActive: true
+        }
+      });
+
+      if (created) {
+        console.log(`✅ Created product category: ${category.name} for tenant ${tenantId}`);
+      } else {
+        console.log(`ℹ️  Product category already exists: ${category.name} for tenant ${tenantId}`);
+      }
+    } catch (error) {
+      console.error(`❌ Error creating product category ${category.name}:`, error.message);
     }
   }
 

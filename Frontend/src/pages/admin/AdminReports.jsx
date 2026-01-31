@@ -26,6 +26,7 @@ import {
   Bar,
 } from 'recharts';
 import dayjs from 'dayjs';
+import { useResponsive } from '../../hooks/useResponsive';
 import adminService from '../../services/adminService';
 
 const { Title, Text } = Typography;
@@ -37,6 +38,7 @@ const defaultRange = [
 ];
 
 const AdminReports = () => {
+  const { isMobile } = useResponsive();
   const [loading, setLoading] = useState(true);
   const [revenueLoading, setRevenueLoading] = useState(false);
   const [expenseLoading, setExpenseLoading] = useState(false);
@@ -295,36 +297,56 @@ const AdminReports = () => {
         </Col>
         <Col xs={24} lg={16}>
           <Card title="Top customers">
-            <Table
-              rowKey={(record) => record.customer?.id || record.customerId}
-              dataSource={topCustomers}
-              pagination={false}
-              columns={[
-                {
-                  title: 'Customer',
-                  dataIndex: ['customer', 'name'],
-                  key: 'customer',
-                  render: (_, record) => (
-                    <div>
+            {isMobile ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {topCustomers.length === 0 ? (
+                  <Text type="secondary">No customers</Text>
+                ) : (
+                  topCustomers.map((record) => (
+                    <Card key={record.customer?.id || record.customerId} size="small" style={{ border: '1px solid #f0f0f0' }}>
                       <Text strong>{record.customer?.name || '—'}</Text>
                       <br />
-                      <Text type="secondary">{record.customer?.company || '—'}</Text>
-                    </div>
-                  ),
-                },
-                {
-                  title: 'Revenue',
-                  dataIndex: 'totalRevenue',
-                  key: 'revenue',
-                  render: (value) => `GHS ${Number(value || 0).toLocaleString()}`,
-                },
-                {
-                  title: 'Payments',
-                  dataIndex: 'paymentCount',
-                  key: 'payments',
-                },
-              ]}
-            />
+                      <Text type="secondary" style={{ fontSize: 12 }}>{record.customer?.company || '—'}</Text>
+                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
+                        <Text>GHS {Number(record.totalRevenue || 0).toLocaleString()}</Text>
+                        <Text type="secondary" style={{ marginLeft: 8 }}>{record.paymentCount} payments</Text>
+                      </div>
+                    </Card>
+                  ))
+                )}
+              </div>
+            ) : (
+              <Table
+                rowKey={(record) => record.customer?.id || record.customerId}
+                dataSource={topCustomers}
+                pagination={false}
+                columns={[
+                  {
+                    title: 'Customer',
+                    dataIndex: ['customer', 'name'],
+                    key: 'customer',
+                    render: (_, record) => (
+                      <div>
+                        <Text strong>{record.customer?.name || '—'}</Text>
+                        <br />
+                        <Text type="secondary">{record.customer?.company || '—'}</Text>
+                      </div>
+                    ),
+                  },
+                  {
+                    title: 'Revenue',
+                    dataIndex: 'totalRevenue',
+                    key: 'revenue',
+                    render: (value) => `GHS ${Number(value || 0).toLocaleString()}`,
+                  },
+                  {
+                    title: 'Payments',
+                    dataIndex: 'paymentCount',
+                    key: 'payments',
+                  },
+                ]}
+              />
+            )}
           </Card>
         </Col>
       </Row>
@@ -335,9 +357,24 @@ const AdminReports = () => {
             {
               key: 'revenue',
               label: 'Revenue by customer',
-              children: (
+              children: isMobile ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {revenueSeries.filter((item) => item.revenue > 0).length === 0 ? (
+                    <Text type="secondary">Select a shorter range to view daily revenue entries.</Text>
+                  ) : (
+                    revenueSeries.filter((item) => item.revenue > 0).map((item) => (
+                      <Card key={item.date} size="small" style={{ border: '1px solid #f0f0f0' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text>{dayjs(item.date).format('MMM D, YYYY')}</Text>
+                          <Text strong>GHS {Number(item.revenue || 0).toLocaleString()}</Text>
+                        </div>
+                      </Card>
+                    ))
+                  )}
+                </div>
+              ) : (
                 <Table
-                  rowKey={(record) => record.customer?.id || record.customerId}
+                  rowKey="date"
                   size="small"
                   dataSource={revenueSeries.filter((item) => item.revenue > 0)}
                   columns={[
@@ -360,7 +397,22 @@ const AdminReports = () => {
             {
               key: 'expenses',
               label: 'Expenses by date',
-              children: (
+              children: isMobile ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {expenseSeries.length === 0 ? (
+                    <Text type="secondary">No expense data</Text>
+                  ) : (
+                    expenseSeries.map((item) => (
+                      <Card key={item.date} size="small" style={{ border: '1px solid #f0f0f0' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Text>{dayjs(item.date).format('MMM D, YYYY')}</Text>
+                          <Text strong>GHS {Number(item.expenses || 0).toLocaleString()}</Text>
+                        </div>
+                      </Card>
+                    ))
+                  )}
+                </div>
+              ) : (
                 <Table
                   rowKey="date"
                   size="small"

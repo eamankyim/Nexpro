@@ -197,7 +197,8 @@ const getShopTypeOptions = () => {
  * @returns {array} Array of category objects with name and description
  */
 const getDefaultCategoriesForShopType = (shopType) => {
-  const config = getShopTypeConfig(shopType);
+  const normalized = shopType === 'groceries' ? 'supermarket' : shopType;
+  const config = getShopTypeConfig(normalized);
   return config ? config.defaultCategories : [];
 };
 

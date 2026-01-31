@@ -1,16 +1,14 @@
 const { Vendor, Expense } = require('../models');
 const { Op } = require('sequelize');
-const config = require('../config/config');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { getPagination } = require('../utils/paginationUtils');
 
 // @desc    Get all vendors
 // @route   GET /api/vendors
 // @access  Private
 exports.getVendors = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const search = req.query.search || '';
 
     const where = applyTenantFilter(req.tenantId, {});

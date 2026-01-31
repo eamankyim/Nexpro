@@ -1,12 +1,16 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useDebounce } from '../hooks/useDebounce';
+import { useResponsive } from '../hooks/useResponsive';
+import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, XCircle, Loader2, Search, Trash2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, DollarSign, Eye, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, XCircle, Loader2, Trash2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, DollarSign, Eye, ChevronLeft, ChevronRight, Filter, RefreshCw, Briefcase, AlertCircle } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import jobService from '../services/jobService';
+import { useSmartSearch } from '../context/SmartSearchContext';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, PRIORITY_CHIP_CLASSES, STATUS_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS } from '../constants';
 import customerService from '../services/customerService';
 import invoiceService from '../services/invoiceService';
 import pricingService from '../services/pricingService';
@@ -15,10 +19,17 @@ import customDropdownService from '../services/customDropdownService';
 import dayjs from 'dayjs';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import DrawerSectionCard from '../components/DrawerSectionCard';
+import FileUpload from '../components/FileUpload';
+import FilePreview from '../components/FilePreview';
 import PhoneNumberInput from '../components/PhoneNumberInput';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
+import DashboardTable from '../components/DashboardTable';
+import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
+import FloatingActionButton from '../components/FloatingActionButton';
 import { showSuccess, showError, showWarning, showInfo } from '../utils/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,13 +48,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
 import {
   Dialog,
   DialogContent,
@@ -51,6 +60,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogBody,
 } from '@/components/ui/dialog';
 import {
   Form,
@@ -134,10 +144,20 @@ const uploadMaxSizeMb = Number.parseFloat(import.meta.env.VITE_UPLOAD_MAX_SIZE_M
 const Jobs = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { isMobile } = useResponsive();
   const queryClient = useQueryClient();
+  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
-  const [filters, setFilters] = useState({ search: '', status: '' });
-  const debouncedSearch = useDebounce(filters.search, 500);
+  const [filters, setFilters] = useState({ 
+    status: 'all',
+    priority: 'all',
+    customerId: 'all',
+    dueDate: 'all'
+  });
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [summary, setSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingJob, setViewingJob] = useState(null);
   const [jobDetailsLoading, setJobDetailsLoading] = useState(false);
@@ -168,6 +188,8 @@ const Jobs = () => {
   const [selectedTemplates, setSelectedTemplates] = useState({});
   const [customJobType, setCustomJobType] = useState('');
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [attachmentPreview, setAttachmentPreview] = useState(null);
+  const [attachmentPreviewVisible, setAttachmentPreviewVisible] = useState(false);
   const [assignModalVisible, setAssignModalVisible] = useState(false);
   const [jobBeingAssigned, setJobBeingAssigned] = useState(null);
   const assignmentForm = useForm({
@@ -201,6 +223,7 @@ const Jobs = () => {
     },
   });
   const [submittingJob, setSubmittingJob] = useState(false);
+  const [refreshingJobs, setRefreshingJobs] = useState(false);
   const [submittingCustomer, setSubmittingCustomer] = useState(false);
   const [updatingAssignment, setUpdatingAssignment] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
@@ -212,6 +235,11 @@ const Jobs = () => {
   const [showRegionOtherInput, setShowRegionOtherInput] = useState(false);
   const [regionOtherValue, setRegionOtherValue] = useState('');
   const [editingJobId, setEditingJobId] = useState(null);
+
+  // Invalidate jobs query - defined early to avoid temporal dead zone
+  const invalidateJobs = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['jobs'] });
+  }, [queryClient]);
 
   // Job type configurations
   const jobTypeConfig = {
@@ -266,23 +294,66 @@ const Jobs = () => {
     return jobTypeConfig['Standard Printing']; // default
   };
 
+  // Pull-to-refresh hook
+  const { isRefreshing, pullDistance, containerProps } = usePullToRefresh(
+    () => {
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      setRefreshingJobs(true);
+      setTimeout(() => setRefreshingJobs(false), 500);
+    },
+    { enabled: isMobile }
+  );
+
+  useEffect(() => {
+    setPageSearchConfig({ scope: 'jobs', placeholder: SEARCH_PLACEHOLDERS.JOBS });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig]);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [searchValue]);
+
+  // Fetch summary stats
+  useEffect(() => {
+    const fetchSummary = async () => {
+      setSummaryLoading(true);
+      try {
+        const response = await jobService.getStats();
+        setSummary(response?.data || {});
+      } catch (error) {
+        console.error('Failed to load job summary', error);
+      } finally {
+        setSummaryLoading(false);
+      }
+    };
+    fetchSummary();
+  }, []);
+
   const {
     data: jobsQueryResult,
     isLoading: isJobsLoading,
     isFetching: isJobsFetching,
     error: jobsError,
   } = useQuery({
-    queryKey: ['jobs', pagination.current, pagination.pageSize, debouncedSearch || '', filters.status || ''],
+    queryKey: ['jobs', pagination.current, pagination.pageSize, filters.status, filters.customerId, debouncedSearch],
     queryFn: async () => {
       try {
-        const response = await jobService.getAll({
-        page: pagination.current,
-        limit: pagination.pageSize,
-        search: debouncedSearch,
-        status: filters.status,
-        });
-        console.log('Jobs API response:', response);
-        // The API interceptor already returns response.data, so response is the actual data object
+        const params = {
+          page: pagination.current,
+          limit: 1000, // Fetch more to allow client-side filtering
+        };
+
+        if (filters.status !== 'all') {
+          params.status = filters.status;
+        }
+
+        if (filters.customerId !== 'all') {
+          params.customerId = filters.customerId;
+        }
+
+        if (debouncedSearch) params.search = debouncedSearch;
+
+        const response = await jobService.getAll(params);
         return response;
       } catch (error) {
         console.error('Error in queryFn:', error);
@@ -294,8 +365,55 @@ const Jobs = () => {
     refetchOnWindowFocus: false,
   });
 
-  const jobs = jobsQueryResult?.data || [];
-  const jobsCount = jobsQueryResult?.count || 0;
+  // Apply client-side filters for priority and due date
+  const filteredJobs = useMemo(() => {
+    let allJobs = jobsQueryResult?.data || [];
+    
+    // Filter by priority
+    if (filters.priority !== 'all') {
+      allJobs = allJobs.filter(job => job.priority === filters.priority);
+    }
+    
+    // Filter by due date
+    if (filters.dueDate !== 'all') {
+      const today = dayjs().startOf('day');
+      const tomorrow = dayjs().add(1, 'day').startOf('day');
+      const endOfWeek = dayjs().endOf('week');
+      const startOfNextWeek = dayjs().add(1, 'week').startOf('week');
+      const endOfNextWeek = dayjs().add(1, 'week').endOf('week');
+      
+      allJobs = allJobs.filter(job => {
+        if (!job.dueDate) return false;
+        const dueDate = dayjs(job.dueDate);
+        
+        switch (filters.dueDate) {
+          case 'today':
+            return dueDate.isSame(today, 'day');
+          case 'tomorrow':
+            return dueDate.isSame(tomorrow, 'day');
+          case 'this_week':
+            return dueDate.isAfter(today.subtract(1, 'day')) && dueDate.isBefore(endOfWeek.add(1, 'day'));
+          case 'next_week':
+            return dueDate.isAfter(startOfNextWeek.subtract(1, 'day')) && dueDate.isBefore(endOfNextWeek.add(1, 'day'));
+          case 'overdue':
+            return dueDate.isBefore(today) && job.status !== 'completed';
+          default:
+            return true;
+        }
+      });
+    }
+    
+    return allJobs;
+  }, [jobsQueryResult?.data, filters.priority, filters.dueDate]);
+
+  // Paginate filtered jobs
+  const jobs = useMemo(() => {
+    const start = (pagination.current - 1) * pagination.pageSize;
+    const end = start + pagination.pageSize;
+    return filteredJobs.slice(start, end);
+  }, [filteredJobs, pagination.current, pagination.pageSize]);
+
+  const jobsCount = filteredJobs.length;
   
   useEffect(() => {
     console.log('Jobs Query Result:', jobsQueryResult);
@@ -318,7 +436,7 @@ const Jobs = () => {
   const { data: customersData = [], isLoading: customersLoading } = useQuery({
     queryKey: ['customers', 'all'],
     queryFn: async () => {
-      const response = await customerService.getAll({ limit: 100 });
+      const response = await customerService.getAll({ limit: 1000 });
       return response.data || [];
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
@@ -375,14 +493,25 @@ useEffect(() => {
 
   const refreshJobDetails = async (jobId) => {
     const response = await jobService.getById(jobId);
-    const jobDetails = unwrapResponse(response);
+    // API interceptor already returns response.data, so response is the data directly
+    // Handle both wrapped and unwrapped responses
+    const jobDetails = response?.data || response;
+    if (!jobDetails) {
+      throw new Error('Failed to fetch job details');
+    }
     jobDetails.attachments = Array.isArray(jobDetails.attachments) ? jobDetails.attachments : [];
-    await checkJobInvoice(jobId);
+    // Check invoice in background, don't fail if it errors
+    try {
+      await checkJobInvoice(jobId);
+    } catch (error) {
+      console.error('Failed to check job invoice:', error);
+      // Don't throw - invoice check is optional
+    }
     setViewingJob(jobDetails);
     return jobDetails;
   };
 
-  const handleView = async (job) => {
+  const handleView = useCallback(async (job) => {
     // Set viewing job immediately with data from table row
     setViewingJob(job);
     // Open drawer immediately
@@ -392,12 +521,16 @@ useEffect(() => {
     try {
       await refreshJobDetails(job.id);
     } catch (error) {
-      showError('Failed to load job details');
+      console.error('Failed to load job details:', error);
+      // Only show error if we don't have basic job data
+      if (!job || !job.id) {
+        showError('Failed to load job details');
+      }
       // Keep the job data from table row if loading fails
     } finally {
       setJobDetailsLoading(false);
     }
-  };
+  }, []);
 
   // Check if coming from dashboard with openModal flag
   useEffect(() => {
@@ -411,13 +544,36 @@ useEffect(() => {
     }
   }, [location.state]);
 
-  const handleCloseDrawer = () => {
+  // Check if coming from customer page with customerId query parameter
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const customerId = searchParams.get('customerId');
+    if (customerId && customersData.length > 0 && !modalVisible) {
+      // Clear the query parameter to prevent reopening on refresh
+      navigate(location.pathname, { replace: true });
+      // Open the job modal first
+      handleAddJob();
+      // Set customer after modal opens and form is reset
+      // Use a longer delay to ensure form reset is complete
+      setTimeout(() => {
+        const customer = customersData.find(c => c.id === customerId);
+        if (customer) {
+          form.setValue('customerId', customerId);
+          setSelectedCustomer(customer);
+          // Trigger form validation/update
+          form.trigger('customerId');
+        }
+      }, 300);
+    }
+  }, [location.search, customersData, modalVisible]);
+
+  const handleCloseDrawer = useCallback(() => {
     setDrawerVisible(false);
     setViewingJob(null);
     setJobDetailsLoading(false);
-  };
+  }, []);
 
-  const handleMarkAsPaid = async (job) => {
+  const handleMarkAsPaid = useCallback(async (job) => {
     try {
       setMarkingAsPaid(true);
       // Find the invoice for this job
@@ -450,7 +606,7 @@ useEffect(() => {
     } finally {
       setMarkingAsPaid(false);
     }
-  };
+  }, [navigate, queryClient, jobInvoices, drawerVisible, viewingJob]);
 
   const checkJobInvoice = async (jobId) => {
     try {
@@ -477,7 +633,7 @@ useEffect(() => {
     assignmentForm.reset();
   };
 
-  const handleAssignmentSubmit = async (values) => {
+  const handleAssignmentSubmit = useCallback(async (values) => {
     if (!jobBeingAssigned) {
       return;
     }
@@ -504,9 +660,9 @@ useEffect(() => {
     } finally {
       setUpdatingAssignment(false);
     }
-  };
+  }, [queryClient, jobBeingAssigned, drawerVisible, viewingJob, closeAssignModal, invalidateJobs]);
 
-  const handleAttachmentUpload = async ({ file, onSuccess, onError }) => {
+  const handleAttachmentUpload = useCallback(async ({ file, onSuccess, onError }) => {
     if (!viewingJob) {
       onError && onError(new Error('No job selected'));
       return;
@@ -526,9 +682,9 @@ useEffect(() => {
     } finally {
       setUploadingAttachment(false);
     }
-  };
+  }, [viewingJob]);
 
-  const handleAttachmentRemove = async (attachment) => {
+  const handleAttachmentRemove = useCallback(async (attachment) => {
     if (!viewingJob) return;
     try {
       await jobService.deleteAttachment(viewingJob.id, attachment.id);
@@ -539,7 +695,17 @@ useEffect(() => {
       const errMsg = error?.response?.data?.message || 'Failed to remove attachment';
       showError(errMsg);
     }
-  };
+  }, [viewingJob]);
+
+  const handleAttachmentPreview = useCallback((attachment) => {
+    setAttachmentPreview(attachment);
+    setAttachmentPreviewVisible(true);
+  }, []);
+
+  const handleCloseAttachmentPreview = useCallback(() => {
+    setAttachmentPreviewVisible(false);
+    setAttachmentPreview(null);
+  }, []);
 
   const attachmentList = Array.isArray(viewingJob?.attachments) ? viewingJob.attachments : [];
 
@@ -554,7 +720,7 @@ useEffect(() => {
     statusForm.reset();
   };
 
-  const handleStatusSubmit = async ({ status, statusComment }) => {
+  const handleStatusSubmit = useCallback(async ({ status, statusComment }) => {
     if (!jobBeingUpdated) {
       return;
     }
@@ -583,11 +749,11 @@ useEffect(() => {
     } finally {
       setUpdatingStatus(false);
     }
-  };
+  }, [queryClient, jobBeingUpdated, drawerVisible, viewingJob, closeStatusModal, invalidateJobs]);
 
 
 
-  const handleAddJob = async () => {
+  const handleAddJob = useCallback(async () => {
     setEditingJobId(null);
     form.reset({
       customerId: '',
@@ -622,9 +788,35 @@ useEffect(() => {
         return response.data || [];
       },
     });
-  };
+  }, [queryClient, form]);
 
-  const handleEdit = async (job) => {
+  // Update job title and description based on job type and customer
+  // Defined early to avoid temporal dead zone (used in handleEdit)
+  const updateJobTitleAndDescription = useCallback((jobType, customer, customLabel) => {
+    if (!jobType || !customer) return;
+
+    const effectiveLabel = (customLabel && customLabel.trim().length > 0) ? customLabel.trim() : jobType;
+    if (!effectiveLabel) return;
+
+    const configKey = jobType === 'Other' ? 'Other' : jobType;
+    const config = getJobTypeCategory(configKey);
+    const title = config.titleFormat(effectiveLabel, customer);
+    const description = config.descriptionFormat(effectiveLabel, customer);
+
+    form.setValue('title', title);
+    form.setValue('description', description);
+  }, [form]);
+
+  // Handle customer change - defined early to avoid temporal dead zone (used in handleEdit)
+  const handleCustomerChange = useCallback((customerId) => {
+    const customer = customersData.find(c => c.id === customerId);
+    setSelectedCustomer(customer);
+    const baseJobType = selectedJobType === 'Other' ? 'Other' : selectedJobType;
+    const labelOverride = selectedJobType === 'Other' ? customJobType : undefined;
+    updateJobTitleAndDescription(baseJobType, customer, labelOverride);
+  }, [customersData, selectedJobType, customJobType, updateJobTitleAndDescription]);
+
+  const handleEdit = useCallback(async (job) => {
     try {
       setEditingJobId(job.id);
       
@@ -718,7 +910,7 @@ useEffect(() => {
       console.error('Error loading job:', error);
       setEditingJobId(null);
     }
-  };
+  }, [queryClient, navigate, customersData, pricingTemplates, handleCustomerChange]);
 
 
   // Load custom customer sources and regions on mount (categories already loaded via React Query)
@@ -787,7 +979,7 @@ useEffect(() => {
     }
   };
 
-  const handleAddNewCustomer = () => {
+  const handleAddNewCustomer = useCallback(() => {
     customerForm.reset();
     setShowReferralName(false);
     setShowCustomerSourceOtherInput(false);
@@ -795,9 +987,9 @@ useEffect(() => {
     setShowRegionOtherInput(false);
     setRegionOtherValue('');
     setCustomerModalVisible(true);
-  };
+  }, [customerForm]);
 
-  const handleHowDidYouHearChange = (value) => {
+  const handleHowDidYouHearChange = useCallback((value) => {
     if (value === '__OTHER__') {
       setShowCustomerSourceOtherInput(true);
       setShowReferralName(false);
@@ -809,7 +1001,7 @@ useEffect(() => {
         customerForm.setValue('referralName', undefined);
       }
     }
-  };
+  }, [customerForm]);
 
   // Save custom customer source
   const handleSaveCustomCustomerSource = async () => {
@@ -890,7 +1082,7 @@ useEffect(() => {
     return merged;
   };
 
-  const handleCustomerSubmit = async (values) => {
+  const handleCustomerSubmit = useCallback(async (values) => {
     try {
       setSubmittingCustomer(true);
       
@@ -944,15 +1136,7 @@ useEffect(() => {
     } finally {
       setSubmittingCustomer(false);
     }
-  };
-
-  const handleCustomerChange = (customerId) => {
-    const customer = customersData.find(c => c.id === customerId);
-    setSelectedCustomer(customer);
-    const baseJobType = selectedJobType === 'Other' ? 'Other' : selectedJobType;
-    const labelOverride = selectedJobType === 'Other' ? customJobType : undefined;
-    updateJobTitleAndDescription(baseJobType, customer, labelOverride);
-  };
+  }, [queryClient, customerForm, customerSourceOtherValue, regionOtherValue, form, handleCustomerChange]);
 
   const handleJobTypeChange = (jobType) => {
     setSelectedJobType(jobType);
@@ -981,21 +1165,6 @@ useEffect(() => {
     const value = event.target.value;
     setCustomJobType(value);
     updateJobTitleAndDescription('Other', selectedCustomer, value);
-  };
-
-  const updateJobTitleAndDescription = (jobType, customer, customLabel) => {
-    if (!jobType || !customer) return;
-
-    const effectiveLabel = (customLabel && customLabel.trim().length > 0) ? customLabel.trim() : jobType;
-    if (!effectiveLabel) return;
-
-    const configKey = jobType === 'Other' ? 'Other' : jobType;
-    const config = getJobTypeCategory(configKey);
-    const title = config.titleFormat(effectiveLabel, customer);
-    const description = config.descriptionFormat(effectiveLabel, customer);
-
-    form.setValue('title', title);
-    form.setValue('description', description);
   };
 
   const resolveTemplateUnitPrice = (template) => {
@@ -1340,242 +1509,344 @@ useEffect(() => {
     { value: 'completed', label: 'Completed' }
   ];
 
-  const priorityColors = {
-    low: 'default',
-    medium: 'blue',
-    high: 'orange',
-    urgent: 'red',
+  // Calculate summary stats from all jobs (not filtered)
+  const calculatedSummary = useMemo(() => {
+    const allJobs = jobsQueryResult?.data || [];
+    const totalJobs = allJobs.length;
+    const inProgressJobs = allJobs.filter(j => j.status === 'in_progress').length;
+    const completedJobs = allJobs.filter(j => j.status === 'completed').length;
+    const overdueJobs = allJobs.filter(j => {
+      if (!j.dueDate) return false;
+      return dayjs(j.dueDate).isBefore(dayjs(), 'day') && j.status !== 'completed';
+    }).length;
+    
+    return {
+      totals: {
+        totalJobs,
+        inProgressJobs,
+        completedJobs,
+        overdueJobs
+      }
+    };
+  }, [jobsQueryResult?.data]);
+
+  // Table columns for DashboardTable
+  const tableColumns = useMemo(() => [
+    {
+      key: 'jobNumber',
+      label: 'Job Number',
+      render: (_, record) => <span className="font-medium">{record?.jobNumber || '—'}</span>
+    },
+    {
+      key: 'title',
+      label: 'Title',
+      render: (_, record) => <span className="text-black">{record?.title || '—'}</span>
+    },
+    {
+      key: 'customer',
+      label: 'Customer',
+      render: (_, record) => <span className="text-black">{record?.customer?.name || '—'}</span>
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      render: (_, record) => <StatusChip status={record?.status} />
+    },
+    {
+      key: 'priority',
+      label: 'Priority',
+      render: (_, record) => {
+        const priority = record?.priority || 'medium';
+        return (
+          <Badge
+            variant="outline"
+            className={PRIORITY_CHIP_CLASSES[priority] ?? STATUS_CHIP_DEFAULT_CLASS}
+          >
+            {priority?.toUpperCase()}
+          </Badge>
+        );
+      }
+    },
+    {
+      key: 'price',
+      label: 'Price',
+      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.finalPrice || 0).toFixed(2)}</span>
+    },
+    {
+      key: 'dueDate',
+      label: 'Due Date',
+      render: (_, record) => <span className="text-black">{record?.dueDate ? dayjs(record.dueDate).format('MMM DD, YYYY') : '—'}</span>
+    },
+    {
+      key: 'actions',
+      label: 'Actions',
+      render: (_, record) => <ActionColumn onView={handleView} record={record} />
+    }
+  ], [handleView]);
+
+  const handleClearFilters = () => {
+    setFilters({
+      status: 'all',
+      priority: 'all',
+      customerId: 'all',
+      dueDate: 'all'
+    });
+    setPagination({ ...pagination, current: 1 });
   };
 
-  const invalidateJobs = () => {
-    queryClient.invalidateQueries({ queryKey: ['jobs'] });
-  };
-
-  const unwrapResponse = (response) => (response && Object.prototype.hasOwnProperty.call(response, 'data') ? response.data : response);
-
-  // Pagination helpers
-  const totalPages = Math.ceil(jobsCount / pagination.pageSize);
-  const startIndex = (pagination.current - 1) * pagination.pageSize + 1;
-  const endIndex = Math.min(pagination.current * pagination.pageSize, jobsCount);
+  const hasActiveFilters = filters.status !== 'all' || filters.priority !== 'all' || filters.customerId !== 'all' || filters.dueDate !== 'all';
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-        <h1 style={{ margin: 0, fontSize: window.innerWidth < 768 ? '20px' : '24px' }}>Jobs</h1>
-        <div className="flex flex-wrap gap-2" style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
-          <div className="relative" style={{ width: window.innerWidth < 768 ? '100%' : 200 }}>
-            <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Search jobs..."
-              value={filters.search}
-              onChange={(e) => {
-                const value = e.target.value;
-                setPagination((prev) => ({ ...prev, current: 1 }));
-                setFilters((prev) => ({ ...prev, search: value }));
-              }}
-              className="pl-8"
-              style={{ width: '100%' }}
-            />
-          </div>
-          <Select
-            value={filters.status || undefined}
-            onValueChange={(value) => {
-              setPagination((prev) => ({ ...prev, current: 1 }));
-              setFilters((prev) => ({ ...prev, status: value || '' }));
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
+        <WelcomeSection
+          welcomeMessage="Jobs"
+          subText="Manage and track all your printing jobs and orders."
+        />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+            <Filter className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Filter</span>}
+          </Button>
+          <Button 
+            variant="outline" 
+            onClick={async () => {
+              setRefreshingJobs(true);
+              await queryClient.invalidateQueries({ queryKey: ['jobs'] });
+              setRefreshingJobs(false);
             }}
+            disabled={refreshingJobs}
+            size={isMobile ? "icon" : "default"}
           >
-            <SelectTrigger style={{ width: window.innerWidth < 768 ? '100%' : 150 }}>
-              <SelectValue placeholder="Filter by status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="new">New</SelectItem>
-              <SelectItem value="in_progress">In Progress</SelectItem>
-              <SelectItem value="completed">Completed</SelectItem>
-              <SelectItem value="on_hold">On Hold</SelectItem>
-              <SelectItem value="cancelled">Cancelled</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button onClick={handleAddJob} style={{ width: window.innerWidth < 768 ? '100%' : 'auto' }}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add Job
+            {refreshingJobs ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {!isMobile && <span className="ml-2">Refresh</span>}
+          </Button>
+          <Button onClick={handleAddJob} size={isMobile ? "icon" : "default"}>
+            <Plus className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">New Job</span>}
           </Button>
         </div>
       </div>
 
-      {/* Jobs Table */}
-      <Card className="shadow-none border-0 p-0">
-        <div className="border rounded-t-md">
-          {(isJobsLoading || isJobsFetching) ? (
-            <div className="p-4">
-              <TableSkeleton rows={8} cols={8} />
-            </div>
-          ) : jobs.length === 0 ? (
-            <div className="flex items-center justify-center p-8 text-muted-foreground">
-              No jobs found
-            </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[150px]">Job Number</TableHead>
-                  <TableHead>Title</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Priority</TableHead>
-                  <TableHead>Price</TableHead>
-                  <TableHead>Due Date</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {jobs.map((job) => (
-                  <TableRow key={job.id} className="last:border-b-0">
-                    <TableCell className="font-medium">{job.jobNumber}</TableCell>
-                    <TableCell>{job.title || 'N/A'}</TableCell>
-                    <TableCell>{job.customer?.name || 'N/A'}</TableCell>
-                    <TableCell>
-                      <StatusChip status={job.status} />
-                    </TableCell>
-                    <TableCell>
-                      <Badge 
-                        variant="outline" 
-                        className={
-                          priorityColors[job.priority] === 'red' ? 'bg-red-100 text-red-800' : 
-                          priorityColors[job.priority] === 'orange' ? 'bg-orange-100 text-orange-800' : 
-                          priorityColors[job.priority] === 'blue' ? 'bg-blue-100 text-blue-800' : 
-                          ''
-                        }
-                      >
-                        {job.priority?.toUpperCase()}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="font-medium">
-                      GHS {parseFloat(job.finalPrice || 0).toFixed(2)}
-                    </TableCell>
-                    <TableCell>
-                      {job.dueDate ? dayjs(job.dueDate).format('MMM DD, YYYY') : 'N/A'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <ActionColumn 
-                        onView={handleView} 
-                        record={job}
-                        extraActions={[
-                          {
-                            label: 'Edit Job',
-                            onClick: () => handleEdit(job),
-                            icon: <Edit className="h-4 w-4" />
-                          },
-                          {
-                            label: job.assignedUser ? 'Reassign Job' : 'Assign Job',
-                            onClick: () => openAssignModal(job),
-                            icon: <User className="h-4 w-4" />
-                          },
-                          {
-                            label: 'Update Status',
-                            onClick: () => openStatusModal(job),
-                            icon: <Clock className="h-4 w-4" />
-                          },
-                          jobInvoices[job.id] && {
-                            label: 'View Invoice',
-                            onClick: () => navigate('/invoices', { state: { openInvoiceId: jobInvoices[job.id].id } }),
-                            icon: <FileText className="h-4 w-4" />
-                          },
-                          jobInvoices[job.id] && jobInvoices[job.id].status !== 'paid' && {
-                            label: 'Mark as Paid',
-                            onClick: () => handleMarkAsPaid(job),
-                            icon: <DollarSign className="h-4 w-4" />
-                          }
-                        ].filter(Boolean)}
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </div>
-        
-        {/* Pagination */}
-        {jobsCount > 0 && (
-          <div className="flex items-center justify-between px-4 py-3 border border-t-0 rounded-b-md">
-            <div className="text-sm text-muted-foreground">
-              Showing {startIndex} to {endIndex} of {jobsCount} jobs
-            </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPagination(prev => ({ ...prev, current: prev.current - 1 }))}
-                disabled={pagination.current === 1 || isJobsLoading}
-              >
-                <ChevronLeft className="h-4 w-4" />
-                Previous
-              </Button>
-              <div className="text-sm">
-                Page {pagination.current} of {totalPages}
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setPagination(prev => ({ ...prev, current: prev.current + 1 }))}
-                disabled={pagination.current === totalPages || isJobsLoading}
-              >
-                Next
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-            </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
+        {/* Total Jobs Card */}
+        <DashboardStatsCard
+          title="Total Jobs"
+          value={calculatedSummary?.totals?.totalJobs || 0}
+          icon={Briefcase}
+          iconBgColor="rgba(22, 101, 52, 0.1)"
+          iconColor="#166534"
+        />
+
+        {/* In Progress Card */}
+        <DashboardStatsCard
+          title="In Progress"
+          value={calculatedSummary?.totals?.inProgressJobs || 0}
+          icon={Clock}
+          iconBgColor="rgba(59, 130, 246, 0.1)"
+          iconColor="#166534"
+        />
+
+        {/* Completed Card */}
+        <DashboardStatsCard
+          title="Completed"
+          value={calculatedSummary?.totals?.completedJobs || 0}
+          icon={CheckCircle}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+        />
+
+        {/* Overdue Card */}
+        <DashboardStatsCard
+          title="Overdue"
+          value={calculatedSummary?.totals?.overdueJobs || 0}
+          icon={AlertCircle}
+          iconBgColor="rgba(239, 68, 68, 0.1)"
+          iconColor="#ef4444"
+        />
+      </div>
+
+      {/* Main Content Area with Pull-to-Refresh */}
+      <div {...containerProps} className="relative">
+        {/* Pull-to-refresh indicator */}
+        {isMobile && pullDistance > 0 && (
+          <div 
+            className="absolute top-0 left-0 right-0 flex items-center justify-center z-10 transition-opacity"
+            style={{
+              height: `${Math.min(pullDistance, 80)}px`,
+              opacity: Math.min(pullDistance / 80, 1),
+            }}
+          >
+            {isRefreshing ? (
+              <Loader2 className="h-6 w-6 animate-spin text-[#166534]" />
+            ) : (
+              <RefreshCw className="h-6 w-6 text-[#166534]" />
+            )}
           </div>
         )}
-      </Card>
+        
+        <DashboardTable
+          data={jobs}
+          columns={tableColumns}
+          loading={isJobsLoading || isJobsFetching || (isMobile && isRefreshing)}
+          title={null}
+          emptyIcon={<Briefcase className="h-12 w-12 text-muted-foreground" />}
+          emptyDescription="No jobs found"
+          pageSize={pagination.pageSize}
+          onPageChange={(newPagination) => {
+            setPagination(newPagination);
+          }}
+          externalPagination={{
+            current: pagination.current,
+            total: jobsCount
+          }}
+        />
+      </div>
+
+      {/* Floating Action Button for Mobile */}
+      <FloatingActionButton
+        onClick={handleAddJob}
+        icon={Plus}
+        label="Add Job"
+        show={isMobile}
+      />
+
+      {/* Filter Drawer */}
+      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
+        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+          <SheetHeader className="pb-4 border-b">
+            <SheetTitle>Filter Jobs</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-4 md:space-y-6 mt-4 md:mt-6">
+            <div className="space-y-2">
+              <Label>Customer</Label>
+              <Select
+                value={filters.customerId}
+                onValueChange={(value) => setFilters({ ...filters, customerId: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Customers</SelectItem>
+                  {customersData.map(customer => (
+                    <SelectItem key={customer.id} value={customer.id}>
+                      {customer.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select
+                value={filters.status}
+                onValueChange={(value) => setFilters({ ...filters, status: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="new">New</SelectItem>
+                  <SelectItem value="in_progress">In Progress</SelectItem>
+                  <SelectItem value="completed">Completed</SelectItem>
+                  <SelectItem value="on_hold">On Hold</SelectItem>
+                  <SelectItem value="cancelled">Cancelled</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Priority</Label>
+              <Select
+                value={filters.priority}
+                onValueChange={(value) => setFilters({ ...filters, priority: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Priorities</SelectItem>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                  <SelectItem value="urgent">Urgent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Due Date</Label>
+              <Select
+                value={filters.dueDate}
+                onValueChange={(value) => setFilters({ ...filters, dueDate: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Dates</SelectItem>
+                  <SelectItem value="today">Today</SelectItem>
+                  <SelectItem value="tomorrow">Tomorrow</SelectItem>
+                  <SelectItem value="this_week">This Week</SelectItem>
+                  <SelectItem value="next_week">Next Week</SelectItem>
+                  <SelectItem value="overdue">Overdue</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={handleClearFilters} className="w-full">
+                Clear Filters
+              </Button>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <DetailsDrawer
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Job Details"
-        width={window.innerWidth < 768 ? '100%' : 700}
-        showActions={false}
-        extra={viewingJob && (
-          <div className="flex flex-wrap gap-2">
-            <Button 
-              onClick={() => openAssignModal(viewingJob)}
-            >
-              <User className="h-4 w-4 mr-2" />
-              {viewingJob.assignedUser ? 'Reassign' : 'Assign'}
-            </Button>
-            <Button 
-              onClick={() => openStatusModal(viewingJob)}
-            >
-              <Clock className="h-4 w-4 mr-2" />
-              Update Status
-            </Button>
-            {jobInvoices[viewingJob.id] && (
-              <Button 
-                onClick={() => navigate('/invoices', { state: { openInvoiceId: jobInvoices[viewingJob.id].id } })}
-              >
-                <FileText className="h-4 w-4 mr-2" />
-                View Invoice
-              </Button>
-            )}
-            {jobInvoices[viewingJob.id] && jobInvoices[viewingJob.id].status !== 'paid' && (
-              <Button 
-                onClick={() => handleMarkAsPaid(viewingJob)}
-                disabled={markingAsPaid}
-              >
-                {markingAsPaid ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Marking...
-                  </>
-                ) : (
-                  <>
-                    <DollarSign className="h-4 w-4 mr-2" />
-                Mark as Paid
-                  </>
-                )}
-              </Button>
-            )}
-          </div>
-        )}
+        width={window.innerWidth < 768 ? '100%' : 720}
+        showActions={true}
+        extraActions={viewingJob ? [
+          {
+            key: 'edit',
+            label: 'Edit',
+            variant: 'secondary',
+            icon: <Edit className="h-4 w-4" />,
+            onClick: () => handleEdit(viewingJob)
+          },
+          {
+            key: 'updateStatus',
+            label: 'Update Status',
+            variant: 'default',
+            icon: <Clock className="h-4 w-4" />,
+            onClick: () => openStatusModal(viewingJob)
+          },
+          ...(jobInvoices[viewingJob.id] ? [{
+            key: 'viewInvoice',
+            label: 'View Invoice',
+            variant: 'secondary',
+            icon: <FileText className="h-4 w-4" />,
+            onClick: () => navigate('/invoices', { state: { openInvoiceId: jobInvoices[viewingJob.id].id } })
+          }] : []),
+          ...(jobInvoices[viewingJob.id] && jobInvoices[viewingJob.id].status !== 'paid' ? [{
+            key: 'markAsPaid',
+            label: markingAsPaid ? 'Marking...' : 'Mark as Paid',
+            variant: 'secondary',
+            icon: markingAsPaid ? <Loader2 className="h-4 w-4 animate-spin" /> : <DollarSign className="h-4 w-4" />,
+            onClick: () => handleMarkAsPaid(viewingJob),
+            disabled: markingAsPaid
+          }] : [])
+        ] : []}
         tabs={viewingJob ? [
           {
             key: 'details',
@@ -1614,17 +1885,12 @@ useEffect(() => {
                   </div>
                       </DescriptionItem>
                       <DescriptionItem label="Priority">
-                        <Badge 
-                          variant="outline" 
-                          className={
-                            viewingJob.priority === 'urgent' ? 'bg-red-100 text-red-800 border-red-300' :
-                            viewingJob.priority === 'high' ? 'bg-orange-100 text-orange-800 border-orange-300' :
-                            viewingJob.priority === 'medium' ? 'bg-blue-100 text-blue-800 border-blue-300' :
-                            ''
-                          }
+                        <Badge
+                          variant="outline"
+                          className={PRIORITY_CHIP_CLASSES[viewingJob.priority] ?? STATUS_CHIP_DEFAULT_CLASS}
                         >
-                    {viewingJob.priority?.toUpperCase()}
-              </Badge>
+                          {viewingJob.priority?.toUpperCase()}
+                        </Badge>
                       </DescriptionItem>
                       </Descriptions>
                     </div>
@@ -1713,9 +1979,9 @@ useEffect(() => {
                               <Badge 
                                 variant="outline" 
                                 className={
-                                  invoice.status === 'paid' ? 'bg-green-100 text-green-800 border-green-300' :
-                                  invoice.status === 'overdue' ? 'bg-red-100 text-red-800 border-red-300' :
-                                  'bg-orange-100 text-orange-800 border-orange-300'
+                                  invoice.status === 'paid' ? STATUS_CHIP_CLASSES.paid :
+                                  invoice.status === 'overdue' ? STATUS_CHIP_CLASSES.overdue :
+                                  STATUS_CHIP_CLASSES.sent ?? STATUS_CHIP_CLASSES.pending
                                 }
                               >
                           {invoice.invoiceNumber} - {invoice.status?.toUpperCase()}
@@ -1750,57 +2016,53 @@ useEffect(() => {
               jobDetailsLoading ? (
                 <DetailSkeleton />
               ) : (
-                <div>
+                <DrawerSectionCard title="Items">
                   {(!viewingJob.items || viewingJob.items.length === 0) ? (
-                  <div style={{ padding: '24px', textAlign: 'center', color: '#999' }}>
-                    No services/items added to this job
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {viewingJob.items.map((item, idx) => (
-                      <div key={idx} className="border rounded-lg p-4">
-                        <div className="grid grid-cols-12 gap-4">
-                          <div className="col-span-6">
-                            <div className="mb-2">
-                              <strong className="text-sm font-semibold">{item.category}</strong>
+                    <div className="py-8 text-center text-muted-foreground">
+                      No services/items added to this job
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {viewingJob.items.map((item, idx) => (
+                        <div key={idx} className="border border-border/50 rounded-md p-4">
+                          <div className="grid grid-cols-12 gap-2 md:gap-4">
+                            <div className="col-span-6">
+                              <div className="mb-2">
+                                <strong className="text-sm font-semibold">{item.category}</strong>
+                              </div>
+                              {item.paperSize && item.paperSize !== 'N/A' && (
+                                <div className="text-xs text-muted-foreground mb-1">Paper Size: {item.paperSize}</div>
+                              )}
+                              {item.description && (
+                                <div className="text-sm text-foreground">{item.description}</div>
+                              )}
                             </div>
-                            {item.paperSize && item.paperSize !== 'N/A' && (
-                              <div className="text-xs text-muted-foreground mb-1">
-                                Paper Size: {item.paperSize}
+                            <div className="col-span-2 text-right">
+                              <div className="text-xs text-muted-foreground mb-1">Quantity</div>
+                              <div className="font-semibold text-sm">{item.quantity}</div>
+                            </div>
+                            <div className="col-span-2 text-right">
+                              <div className="text-xs text-muted-foreground mb-1">Unit Price</div>
+                              <div className="text-sm font-medium">GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
+                            </div>
+                            <div className="col-span-2 text-right">
+                              <div className="text-xs text-muted-foreground mb-1">Total</div>
+                              <div className="font-bold text-sm" style={{ color: '#166534' }}>
+                                GHS {(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
                               </div>
-                            )}
-                            {item.description && (
-                              <div className="text-sm text-foreground">
-                                {item.description}
-                              </div>
-                            )}
-                          </div>
-                          <div className="col-span-2 text-right">
-                            <div className="text-xs text-muted-foreground mb-1">Quantity</div>
-                            <div className="font-semibold text-sm">{item.quantity}</div>
-                          </div>
-                          <div className="col-span-2 text-right">
-                            <div className="text-xs text-muted-foreground mb-1">Unit Price</div>
-                            <div className="text-sm font-medium">GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
-                          </div>
-                          <div className="col-span-2 text-right">
-                            <div className="text-xs text-muted-foreground mb-1">Total</div>
-                            <div className="font-bold text-sm" style={{ color: '#166534' }}>
-                              GHS {(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
                             </div>
                           </div>
                         </div>
+                      ))}
+                      <div className="border border-border/50 rounded-md p-4 flex justify-between items-center bg-muted/30">
+                        <strong className="text-base font-semibold">Total:</strong>
+                        <strong className="text-lg font-bold" style={{ color: '#166534' }}>
+                          GHS {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
+                        </strong>
                       </div>
-                    ))}
-                    <div className="border rounded-lg p-4 flex justify-between items-center bg-muted/30">
-                      <strong className="text-base font-semibold">Total:</strong>
-                      <strong className="text-lg font-bold" style={{ color: '#166534' }}>
-                        GHS {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
-                      </strong>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
+                </DrawerSectionCard>
               )
             )
           },
@@ -1808,226 +2070,142 @@ useEffect(() => {
             key: 'attachments',
             label: 'Attachments',
             content: (
-              <div className="py-4">
-                <div className="flex flex-col gap-4 w-full">
-                  <div>
-                    <input
-                      type="file"
-                      id="file-upload"
-                      className="hidden"
-                      accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.txt"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          handleAttachmentUpload({ file, onSuccess: () => {}, onError: () => {} });
-                        }
-                      }}
-                      disabled={uploadingAttachment}
-                    />
-                    <label
-                      htmlFor="file-upload"
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        if (uploadingAttachment) return;
-                        const file = e.dataTransfer.files?.[0];
-                        if (file) {
-                          handleAttachmentUpload({ file, onSuccess: () => {}, onError: () => {} });
-                        }
-                      }}
-                      onDragOver={(e) => {
-                        e.preventDefault();
-                      }}
-                      className={`
-                        flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer
-                        ${uploadingAttachment ? 'opacity-50 cursor-not-allowed' : 'hover:bg-muted/50 transition-colors'}
-                        border-gray-300 bg-white
-                      `}
-                    >
-                      {uploadingAttachment ? (
-                        <div className="flex flex-col items-center gap-2">
-                          <Loader2 className="h-8 w-8 animate-spin" style={{ color: '#166534' }} />
-                          <span className="text-sm text-muted-foreground">Uploading...</span>
-                        </div>
-                      ) : (
-                        <>
-                          <Upload className="h-8 w-8 mb-2" style={{ color: '#166534' }} />
-                          <div className="text-sm text-center">
-                            <span style={{ color: '#166534' }} className="font-medium">Click to upload</span>
-                            <span className="text-muted-foreground"> or drag and drop</span>
-                          </div>
-                          <div className="text-xs text-muted-foreground mt-1">
-                            PNG, JPG, WEBP, JPEG, PDF, DOC, DOCX, XLS, XLSX, ZIP (Max. {uploadMaxSizeMb}MB)
-                          </div>
-                        </>
-                      )}
-                    </label>
-                  </div>
-
-                  <TooltipProvider>
-                    <div className="space-y-2">
-                      {attachmentList.length === 0 ? (
-                        <div className="text-sm text-gray-500 py-4 text-center">No attachments uploaded yet.</div>
-                      ) : (
-                        attachmentList.map((item) => (
-                          <div key={item.id} className="flex items-center justify-between p-3 border border-gray-200 rounded-md">
-                            <div className="flex items-center gap-3 flex-1">
-                              <Paperclip className="h-5 w-5 text-gray-500" />
-                              <div className="flex-1">
-                                <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium hover:underline">
-                                {item.originalName || item.filename}
-                              </a>
-                                <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
-                                <span>
-                                  {item.uploadedAt ? dayjs(item.uploadedAt).format('MMM DD, YYYY HH:mm') : ''}
-                                </span>
-                                <span>{formatFileSize(item.size)}</span>
-                                {item.uploadedBy?.name && (
-                                    <span>by {item.uploadedBy.name}</span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button
-                                    size="sm"
-                                    variant="ghost"
-                                    onClick={() => window.open(item.url, '_blank', 'noopener')}
-                                  >
-                                    <Download className="h-4 w-4" />
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>Open file</TooltipContent>
-                              </Tooltip>
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button size="sm" variant="ghost">
-                                    <Trash2 className="h-4 w-4 text-red-600" />
-                                  </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>Remove attachment?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                      Are you sure you want to remove this attachment? This action cannot be undone.
-                                    </AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => handleAttachmentRemove(item)} className="bg-red-600 hover:bg-red-700">
-                                      Remove
-                                    </AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </TooltipProvider>
-                </div>
-              </div>
+              <DrawerSectionCard title="Attachments">
+                <FileUpload
+                  onFileSelect={({ file }) => handleAttachmentUpload({ file, onSuccess: () => {}, onError: () => {} })}
+                  disabled={uploadingAttachment}
+                  uploading={uploadingAttachment}
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.txt"
+                  maxSizeMB={uploadMaxSizeMb}
+                  uploadedFiles={attachmentList}
+                  onFilePreview={handleAttachmentPreview}
+                  onFileRemove={handleAttachmentRemove}
+                />
+              </DrawerSectionCard>
             )
           },
           {
             key: 'activities',
             label: 'Activities',
             content: (
-              <div style={{ padding: '16px 0' }}>
-                {(() => {
-                  const historyEntries = (viewingJob?.statusHistory || [])
-                    .slice()
-                    .sort((a, b) => dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf());
-
-                  // If no status history but job exists, create a "Job created" entry
-                  const allActivities = [];
-                  
-                  // Add job creation activity if job exists
-                  if (viewingJob?.createdAt && (historyEntries.length === 0 || dayjs(viewingJob.createdAt).isBefore(dayjs(historyEntries[0]?.createdAt)))) {
-                    allActivities.push({
-                      id: 'created',
-                      type: 'created',
-                      status: viewingJob.status || 'new',
-                      createdAt: viewingJob.createdAt,
-                      comment: 'Job created',
-                      changedByUser: viewingJob.creator || null,
-                      isCreated: true
-                    });
-                  }
-                  
-                  // Add all status history entries
-                  allActivities.push(...historyEntries);
-                  
-                  // Sort all activities by date
-                  allActivities.sort((a, b) => dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf());
-
-                  const timelineItems = allActivities.length ? allActivities.map((entry) => {
-                    const color = statusColors[entry.status] || 'blue';
-                    let icon = <Clock style={{ fontSize: '16px' }} />;
-                    if (entry.status === 'completed') {
-                      icon = <CheckCircle style={{ fontSize: '16px' }} />;
-                    } else if (entry.status === 'on_hold') {
-                      icon = <PauseCircle style={{ fontSize: '16px' }} />;
-                    } else if (entry.status === 'cancelled') {
-                      icon = <XCircle style={{ fontSize: '16px' }} />;
-                    } else if (entry.isCreated) {
-                      icon = <Plus style={{ fontSize: '16px' }} />;
+              jobDetailsLoading ? (
+                <DetailSkeleton />
+              ) : (
+                <DrawerSectionCard title="Activity">
+                  {(() => {
+                    const statusHistory = (viewingJob?.statusHistory || []).slice();
+                    const allActivities = [];
+                    if (viewingJob?.createdAt) {
+                      allActivities.push({
+                        id: 'created',
+                        type: 'created',
+                        status: viewingJob.status || 'new',
+                        createdAt: viewingJob.createdAt,
+                        changedByUser: viewingJob.creator || null,
+                        isCreated: true
+                      });
                     }
-
-                    return {
-                      color,
-                      dot: icon,
-                      children: (
-                        <div>
-                          <div style={{ fontWeight: 'bold', marginBottom: 4 }}>
-                            {entry.isCreated ? (
-                              <>
-                                Job created with status{' '}
-                                <Badge variant="outline" className={color === 'green' ? 'bg-green-100 text-green-800' : color === 'blue' ? 'bg-blue-100 text-blue-800' : color === 'orange' ? 'bg-orange-100 text-orange-800' : color === 'red' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'} style={{ marginLeft: 4 }}>
-                                  {entry.status.replace('_', ' ').toUpperCase()}
-                                </Badge>
-                              </>
-                            ) : (
-                              <>
-                                Status changed to{' '}
-                                <Badge variant="outline" className={color === 'green' ? 'bg-green-100 text-green-800' : color === 'blue' ? 'bg-blue-100 text-blue-800' : color === 'orange' ? 'bg-orange-100 text-orange-800' : color === 'red' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'} style={{ marginLeft: 4 }}>
-                                  {entry.status.replace('_', ' ').toUpperCase()}
-                                </Badge>
-                              </>
-                            )}
-                          </div>
-                          <div style={{ color: '#666', fontSize: 12, marginBottom: 4 }}>
-                            {dayjs(entry.createdAt).format('MMM DD, YYYY [at] h:mm A')}
-                          </div>
-                          <div style={{ color: '#888', fontSize: 12, marginBottom: entry.comment ? 8 : 0 }}>
-                            {entry.isCreated ? (
-                              <>Created by: {entry.changedByUser?.name || viewingJob?.creator?.name || 'System'}</>
-                            ) : (
-                              <>Updated by: {entry.changedByUser?.name || 'System'}</>
-                            )}
-                            {entry.changedByUser?.email ? ` (${entry.changedByUser.email})` : viewingJob?.creator?.email ? ` (${viewingJob.creator.email})` : ''}
-                          </div>
-                          {entry.comment && (
-                            <Alert className="mt-2">
-                              <AlertDescription>{entry.comment}</AlertDescription>
-                            </Alert>
-                          )}
+                    if (viewingJob?.updatedAt && viewingJob?.createdAt && 
+                        dayjs(viewingJob.updatedAt).isAfter(dayjs(viewingJob.createdAt).add(1, 'second'))) {
+                      const hasUpdateInHistory = statusHistory.some(h => 
+                        dayjs(h.createdAt).isSame(dayjs(viewingJob.updatedAt), 'minute')
+                      );
+                      if (!hasUpdateInHistory) {
+                        allActivities.push({
+                          id: 'updated',
+                          type: 'updated',
+                          createdAt: viewingJob.updatedAt,
+                          changedByUser: viewingJob.creator || null,
+                          isUpdated: true
+                        });
+                      }
+                    }
+                    statusHistory.forEach(entry => {
+                      allActivities.push({
+                        id: entry.id,
+                        type: 'status_change',
+                        status: entry.status,
+                        createdAt: entry.createdAt,
+                        comment: entry.comment,
+                        changedByUser: entry.changedByUser || null
+                      });
+                    });
+                    allActivities.sort((a, b) => dayjs(a.createdAt).valueOf() - dayjs(b.createdAt).valueOf());
+                    if (allActivities.length === 0) {
+                      return (
+                        <div className="flex items-center justify-center p-8 text-muted-foreground">
+                          No activities recorded yet.
                         </div>
-                      )
-                    };
-                  }) : [{
-                    color: 'gray',
-                    children: <div style={{ color: '#888' }}>No activity recorded yet.</div>
-                  }];
-
-                  return <Timeline items={timelineItems} />;
-                })()}
-              </div>
+                      );
+                    }
+                    return (
+                      <Timeline>
+                        {allActivities.map((activity, index) => {
+                          const isLast = index === allActivities.length - 1;
+                          return (
+                            <TimelineItem key={activity.id} isLast={isLast}>
+                              <TimelineIndicator />
+                              <TimelineContent>
+                                <TimelineTitle className="text-black">
+                                  {activity.isCreated ? (
+                                    <>
+                                      {activity.changedByUser?.name || viewingJob?.creator?.name || 'System'} created job {viewingJob?.jobNumber}
+                                      {activity.status && (
+                                        <StatusChip status={activity.status} className="ml-2" />
+                                      )}
+                                    </>
+                                  ) : activity.isUpdated ? (
+                                    <>Job {viewingJob?.jobNumber} was updated</>
+                                  ) : (
+                                    <>Status changed to <StatusChip status={activity.status} className="ml-2" /></>
+                                  )}
+                                </TimelineTitle>
+                                <TimelineTime className="text-black">
+                                  {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
+                                  {activity.changedByUser && !activity.isCreated && (
+                                    <> • {activity.changedByUser.name}</>
+                                  )}
+                                </TimelineTime>
+                                {activity.comment && (
+                                  <TimelineDescription className="text-black">{activity.comment}</TimelineDescription>
+                                )}
+                                {(activity.isCreated || activity.isUpdated) && (
+                                  <TimelineDescription className="text-black">
+                                    {activity.isCreated ? (
+                                      <>Created by: {activity.changedByUser?.name || viewingJob?.creator?.name || 'System'}</>
+                                    ) : (
+                                      <>Updated by: {activity.changedByUser?.name || viewingJob?.creator?.name || 'System'}</>
+                                    )}
+                                    {(activity.changedByUser?.email || (activity.isCreated && viewingJob?.creator?.email)) && (
+                                      <span className="ml-1">
+                                        ({activity.changedByUser?.email || viewingJob?.creator?.email})
+                                      </span>
+                                    )}
+                                  </TimelineDescription>
+                                )}
+                              </TimelineContent>
+                            </TimelineItem>
+                          );
+                        })}
+                      </Timeline>
+                    );
+                  })()}
+                </DrawerSectionCard>
+              )
             )
           }
         ] : []}
+      />
+
+      <FilePreview
+        open={attachmentPreviewVisible}
+        onClose={handleCloseAttachmentPreview}
+        file={attachmentPreview ? {
+          fileUrl: attachmentPreview.fileUrl || attachmentPreview.url,
+          title: attachmentPreview.originalName || attachmentPreview.filename || attachmentPreview.name || 'Attachment',
+          type: attachmentPreview.type,
+          metadata: attachmentPreview.metadata || {}
+        } : null}
       />
 
       <Dialog open={modalVisible} onOpenChange={(open) => {
@@ -2037,16 +2215,17 @@ useEffect(() => {
           setCategoryOtherInputs({}); // Clear category "Other" inputs
         }
       }}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:w-[var(--modal-w-2xl)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>{editingJobId ? "Edit Job" : "Add New Job"}</DialogTitle>
             <DialogDescription>
               {editingJobId ? "Update the job details below." : "Fill in the details to create a new job."}
             </DialogDescription>
           </DialogHeader>
+          <DialogBody>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-2 md:gap-4">
                 {!customerModalVisible && (
                 <FormField
                   control={form.control}
@@ -2093,7 +2272,7 @@ useEffect(() => {
                 name="title"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Job Title (Auto-generated from items, editable)</FormLabel>
+                      <FormLabel>Job Title (optional, auto-generated from items)</FormLabel>
                       <FormControl>
                         <Input placeholder="Will auto-generate based on items added" {...field} />
                       </FormControl>
@@ -2103,7 +2282,7 @@ useEffect(() => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-2 md:gap-4">
                 <FormField
                   control={form.control}
                 name="status"
@@ -2153,13 +2332,13 @@ useEffect(() => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-2 md:gap-4">
                 <FormField
                   control={form.control}
                 name="startDate"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Start Date</FormLabel>
+                      <FormLabel>Start Date (optional)</FormLabel>
                       <FormControl>
                 <DatePicker 
                           date={field.value}
@@ -2175,7 +2354,7 @@ useEffect(() => {
                 name="dueDate"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Due Date</FormLabel>
+                      <FormLabel>Due Date (optional)</FormLabel>
                       <FormControl>
                 <DatePicker 
                           date={field.value}
@@ -2193,7 +2372,7 @@ useEffect(() => {
                 name="assignedTo"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Assign To</FormLabel>
+                    <FormLabel>Assign To (optional)</FormLabel>
                     <Select onValueChange={(value) => field.onChange(value === "__NONE__" ? null : value)} value={field.value ? String(field.value) : "__NONE__"}>
                       <FormControl>
                         <SelectTrigger>
@@ -2397,7 +2576,7 @@ useEffect(() => {
                     />
 
                     {/* Only show the 4 essential fields + discount */}
-                    <div className="grid grid-cols-4 gap-4">
+                    <div className="grid grid-cols-4 gap-2 md:gap-4">
                       <FormField
                         control={form.control}
                         name={`items.${index}.quantity`}
@@ -2586,30 +2765,25 @@ useEffect(() => {
                 }}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={submittingJob}>
-                  {submittingJob ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      {editingJobId ? 'Updating...' : 'Creating...'}
-                    </>
-                  ) : (
-                    editingJobId ? 'Update Job' : 'Create Job'
-                  )}
+                <Button type="submit" loading={submittingJob}>
+                  {editingJobId ? 'Update Job' : 'Create Job'}
                 </Button>
               </DialogFooter>
             </form>
           </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
 
       <Dialog open={assignModalVisible} onOpenChange={(open) => !open && closeAssignModal()}>
-        <DialogContent>
+        <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>{jobBeingAssigned ? `Assign ${jobBeingAssigned.jobNumber}` : 'Assign Job'}</DialogTitle>
             <DialogDescription>
               Select a team member to assign this job to, or leave it unassigned.
             </DialogDescription>
           </DialogHeader>
+          <DialogBody>
           <Form {...assignmentForm}>
             <form onSubmit={assignmentForm.handleSubmit(handleAssignmentSubmit)} className="space-y-4">
               <FormField
@@ -2641,30 +2815,25 @@ useEffect(() => {
                 <Button type="button" variant="outline" onClick={closeAssignModal}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={updatingAssignment}>
-                  {updatingAssignment ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Saving...
-                    </>
-                  ) : (
-                    'Save'
-                  )}
+                <Button type="submit" loading={updatingAssignment}>
+                  Save
                 </Button>
               </DialogFooter>
             </form>
           </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
 
       <Dialog open={statusModalVisible} onOpenChange={(open) => !open && closeStatusModal()}>
-        <DialogContent>
+        <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>{jobBeingUpdated ? `Update Status - ${jobBeingUpdated.jobNumber}` : 'Update Status'}</DialogTitle>
             <DialogDescription>
               Update the status of this job and optionally add a comment.
             </DialogDescription>
           </DialogHeader>
+          <DialogBody>
           <Form {...statusForm}>
             <form onSubmit={statusForm.handleSubmit(handleStatusSubmit)} className="space-y-4">
               <FormField
@@ -2696,7 +2865,7 @@ useEffect(() => {
             name="statusComment"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Comment</FormLabel>
+                    <FormLabel>Comment (optional)</FormLabel>
                     <FormControl>
                       <Textarea rows={3} placeholder="Add an optional comment for this status update" {...field} />
                     </FormControl>
@@ -2708,19 +2877,13 @@ useEffect(() => {
                 <Button type="button" variant="outline" onClick={closeStatusModal}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={updatingStatus}>
-                  {updatingStatus ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Updating...
-                    </>
-                  ) : (
-                    'Update Status'
-                  )}
+                <Button type="submit" loading={updatingStatus}>
+                  Update Status
                 </Button>
               </DialogFooter>
             </form>
           </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
 
@@ -2734,16 +2897,17 @@ useEffect(() => {
           setRegionOtherValue('');
         }
       }}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:w-[var(--modal-w-lg)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>Add New Customer</DialogTitle>
             <DialogDescription>
               Enter the customer information below to add them to your system.
             </DialogDescription>
           </DialogHeader>
+          <DialogBody>
           <Form {...customerForm}>
             <form onSubmit={customerForm.handleSubmit(handleCustomerSubmit)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-2 md:gap-4">
                 <FormField
                   control={customerForm.control}
                 name="name"
@@ -2762,7 +2926,7 @@ useEffect(() => {
                   name="company"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Company</FormLabel>
+                      <FormLabel>Company (optional)</FormLabel>
                       <FormControl>
                         <Input placeholder="Enter company name" {...field} />
                       </FormControl>
@@ -2772,13 +2936,13 @@ useEffect(() => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-2 md:gap-4">
                 <FormField
                   control={customerForm.control}
                 name="email"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Email</FormLabel>
+                      <FormLabel>Email (optional)</FormLabel>
                       <FormControl>
                         <Input type="email" placeholder="Enter email" {...field} />
                       </FormControl>
@@ -2791,7 +2955,7 @@ useEffect(() => {
                   name="phone"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Phone</FormLabel>
+                      <FormLabel>Phone (optional)</FormLabel>
                       <FormControl>
                         <PhoneNumberInput placeholder="Enter phone number" {...field} />
                       </FormControl>
@@ -2806,7 +2970,7 @@ useEffect(() => {
                 name="address"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Address</FormLabel>
+                    <FormLabel>Address (optional)</FormLabel>
                     <FormControl>
                       <Input placeholder="Enter address" {...field} />
                     </FormControl>
@@ -2815,13 +2979,13 @@ useEffect(() => {
                 )}
               />
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 gap-2 md:gap-4">
                 <FormField
                   control={customerForm.control}
                   name="city"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Town</FormLabel>
+                      <FormLabel>Town (optional)</FormLabel>
                       <FormControl>
                         <Input placeholder="e.g., Accra, Kumasi, Takoradi" {...field} />
                       </FormControl>
@@ -2834,7 +2998,7 @@ useEffect(() => {
                   name="state"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Region</FormLabel>
+                      <FormLabel>Region (optional)</FormLabel>
                       <Select onValueChange={(value) => {
                         field.onChange(value);
                         handleRegionChange(value);
@@ -2956,7 +3120,7 @@ useEffect(() => {
                   name="referralName" 
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Referral Name</FormLabel>
+                      <FormLabel>Referral Name (optional)</FormLabel>
                       <FormControl>
                         <Input placeholder="Enter referral name" {...field} />
                       </FormControl>
@@ -2975,19 +3139,13 @@ useEffect(() => {
                 }}>
                   Cancel
                 </Button>
-                <Button type="submit" disabled={submittingCustomer}>
-                  {submittingCustomer ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Creating...
-                    </>
-                  ) : (
-                    'Create Customer'
-                  )}
+                <Button type="submit" loading={submittingCustomer}>
+                  Create Customer
                 </Button>
               </DialogFooter>
             </form>
           </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
     </div>

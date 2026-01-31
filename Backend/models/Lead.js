@@ -50,6 +50,13 @@ const Lead = sequelize.define('Lead', {
       key: 'id'
     }
   },
+  createdBy: {
+    type: DataTypes.UUID,
+    references: {
+      model: 'users',
+      key: 'id'
+    }
+  },
   nextFollowUp: {
     type: DataTypes.DATE
   },

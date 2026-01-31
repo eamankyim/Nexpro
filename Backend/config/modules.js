@@ -42,14 +42,14 @@ const MODULES = [
     description: 'Quote generation, pricing, and sales tracking',
     icon: 'dollar',
     category: 'core',
-    businessTypes: ['printing_press'], // Only available for printing press
+    businessTypes: ['printing_press', 'shop'], // Available for printing press and shops
     features: [
       {
         key: 'quoteBuilder',
         name: 'Quote Builder',
         description: 'Create and manage quotes',
         routes: ['/quotes'],
-        businessTypes: ['printing_press'],
+        businessTypes: ['printing_press', 'shop'],
         marketingCopy: {
           highlight: 'Professional quote generation',
           perk: 'Unlimited quotes'

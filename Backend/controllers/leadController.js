@@ -8,6 +8,7 @@ const {
 } = require('../models');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
+const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
@@ -24,6 +25,11 @@ const buildLeadInclude = () => ([
     attributes: ['id', 'name', 'email']
   },
   {
+    model: User,
+    as: 'createdByUser',
+    attributes: ['id', 'name', 'email']
+  },
+  {
     model: Customer,
     as: 'convertedCustomer',
     attributes: ['id', 'name', 'company']
@@ -37,9 +43,7 @@ const buildLeadInclude = () => ([
 
 exports.getLeads = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
 
     const search = req.query.search;
     const status = req.query.status;
@@ -150,7 +154,8 @@ exports.createLead = async (req, res, next) => {
       source: payload.source || 'unknown',
       status: payload.status || 'new',
       priority: payload.priority || 'medium',
-      tags: payload.tags || []
+      tags: payload.tags || [],
+      createdBy: req.user?.id || null
     });
 
     const createdLead = await Lead.findOne({
@@ -173,11 +178,15 @@ exports.createLead = async (req, res, next) => {
 };
 
 exports.updateLead = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+  
   try {
     const lead = await Lead.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      transaction
     });
     if (!lead) {
+      await transaction.rollback();
       return res.status(404).json({ success: false, message: 'Lead not found' });
     }
 
@@ -198,36 +207,181 @@ exports.updateLead = async (req, res, next) => {
 
     const sanitized = sanitizePayload(updates);
 
+    // Validate incremental status progression
+    if (sanitized.status && sanitized.status !== previousStatus) {
+      // Define status progression order (incremental only)
+      const statusOrder = {
+        'new': 1,
+        'contacted': 2,
+        'qualified': 3,
+        'converted': 4,
+        'lost': 4  // converted and lost are both terminal states at same level
+      };
+
+      const previousOrder = statusOrder[previousStatus];
+      const newOrder = statusOrder[sanitized.status];
+
+      // Terminal states cannot be changed from
+      if (previousStatus === 'converted' || previousStatus === 'lost') {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Cannot change status from '${previousStatus}'. Once a lead is ${previousStatus}, the status cannot be changed.`
+        });
+      }
+
+      // Validate that status change is forward/incremental only
+      if (newOrder < previousOrder) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: `Cannot change status from '${previousStatus}' to '${sanitized.status}'. Status changes must be incremental (forward progression only).`
+        });
+      }
+    }
+
     if (sanitized.convertedCustomerId) {
       const customer = await Customer.findOne({
-        where: applyTenantFilter(req.tenantId, { id: sanitized.convertedCustomerId })
+        where: applyTenantFilter(req.tenantId, { id: sanitized.convertedCustomerId }),
+        transaction
       });
       if (!customer) {
+        await transaction.rollback();
         return res.status(400).json({ success: false, message: 'Customer not found for this tenant' });
       }
     }
 
     if (sanitized.convertedJobId) {
       const job = await Job.findOne({
-        where: applyTenantFilter(req.tenantId, { id: sanitized.convertedJobId })
+        where: applyTenantFilter(req.tenantId, { id: sanitized.convertedJobId }),
+        transaction
       });
       if (!job) {
+        await transaction.rollback();
         return res.status(400).json({ success: false, message: 'Job not found for this tenant' });
       }
     }
 
-    await lead.update(sanitized);
+    // Auto-convert to customer if status is changed to 'converted' and no customer exists
+    let autoCreatedCustomer = null;
+    if (sanitized.status === 'converted' && sanitized.status !== previousStatus) {
+      if (!lead.convertedCustomerId && !sanitized.convertedCustomerId) {
+        // Create customer from lead data
+        const customerPayload = {
+          name: lead.name || lead.company || 'New Customer',
+          company: lead.company || null,
+          email: lead.email || null,
+          phone: lead.phone || null,
+          notes: lead.notes || null
+        };
+
+        autoCreatedCustomer = await Customer.create(
+          { ...customerPayload, tenantId: req.tenantId },
+          { transaction }
+        );
+
+        // Set the convertedCustomerId
+        sanitized.convertedCustomerId = autoCreatedCustomer.id;
+        sanitized.isActive = false;
+
+        // Create activity for conversion
+        await LeadActivity.create(
+          {
+            leadId: lead.id,
+            tenantId: req.tenantId,
+            type: 'note',
+            subject: 'Lead Converted',
+            notes: `Lead automatically converted to customer ${autoCreatedCustomer.name}`,
+            createdBy: req.user?.id || null,
+            metadata: {
+              customerId: autoCreatedCustomer.id,
+              autoConverted: true
+            }
+          },
+          { transaction }
+        );
+      }
+    }
+
+    await lead.update(sanitized, { transaction });
+
+    let activityCreated = false;
+    if (sanitized.status && sanitized.status !== previousStatus) {
+      // Log status change notification
+      await activityLogger.logLeadStatusChanged(lead, previousStatus, sanitized.status, req.user?.id || null);
+      if (!autoCreatedCustomer) {
+        const statusLabels = {
+          new: 'New',
+          contacted: 'Contacted',
+          qualified: 'Qualified',
+          converted: 'Converted',
+          lost: 'Lost'
+        };
+        const oldStatusLabel = statusLabels[previousStatus] || previousStatus;
+        const newStatusLabel = statusLabels[sanitized.status] || sanitized.status;
+        const statusComment = req.body.statusComment || '';
+        const notesText = statusComment
+          ? `Status changed from ${oldStatusLabel} to ${newStatusLabel}. ${statusComment}`
+          : `Status changed from ${oldStatusLabel} to ${newStatusLabel}`;
+        await LeadActivity.create({
+          leadId: lead.id,
+          tenantId: req.tenantId,
+          type: 'note',
+          subject: 'Status Updated',
+          notes: notesText,
+          createdBy: req.user?.id || null,
+          metadata: {
+            statusChange: true,
+            oldStatus: previousStatus,
+            newStatus: sanitized.status,
+            comment: statusComment || null
+          }
+        }, { transaction });
+        activityCreated = true;
+      }
+    }
+    if (!activityCreated) {
+      await LeadActivity.create({
+        leadId: lead.id,
+        tenantId: req.tenantId,
+        type: 'note',
+        subject: 'Lead Updated',
+        notes: 'Details were updated',
+        createdBy: req.user?.id || null,
+        metadata: {}
+      }, { transaction });
+    }
+
+    await transaction.commit();
+
+    // Fetch updated lead with all includes including activities
     const updatedLead = await Lead.findOne({
       where: applyTenantFilter(req.tenantId, { id: lead.id }),
-      include: buildLeadInclude()
+      include: [
+        ...buildLeadInclude(),
+        {
+          model: LeadActivity,
+          as: 'activities',
+          include: [{ model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] }],
+          order: [['createdAt', 'DESC']]
+        }
+      ]
     });
 
-    if (sanitized.status && sanitized.status !== previousStatus) {
-      await activityLogger.logLeadStatusChanged(updatedLead, previousStatus, sanitized.status, req.user?.id || null);
+    // If customer was auto-created, log the conversion activity
+    if (autoCreatedCustomer && updatedLead.convertedCustomer) {
+      try {
+        await activityLogger.logLeadConverted(updatedLead, updatedLead.convertedCustomer, req.user?.id || null);
+      } catch (error) {
+        console.error('[LeadController] Failed to log lead conversion activity:', error);
+      }
     }
 
     res.status(200).json({ success: true, data: updatedLead });
   } catch (error) {
+    if (transaction && !transaction.finished) {
+      await transaction.rollback();
+    }
     next(error);
   }
 };

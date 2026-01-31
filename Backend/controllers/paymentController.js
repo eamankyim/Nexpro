@@ -1,6 +1,6 @@
 const { Payment, Customer, Vendor, Job } = require('../models');
 const { Op } = require('sequelize');
-const config = require('../config/config');
+const { getPagination } = require('../utils/paginationUtils');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 // Generate unique payment number
@@ -34,9 +34,7 @@ const generatePaymentNumber = async (tenantId, type) => {
 // @access  Private
 exports.getPayments = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const type = req.query.type;
     const status = req.query.status;
     const paymentMethod = req.query.paymentMethod;

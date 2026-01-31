@@ -1,6 +1,6 @@
-# NEXPro End-to-End Tests
+# ShopWISE End-to-End Tests
 
-Comprehensive end-to-end testing suite for the NEXPro application using Playwright.
+Comprehensive end-to-end testing suite for the ShopWISE application using Playwright.
 
 ## Setup
 

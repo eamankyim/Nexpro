@@ -1,15 +1,13 @@
 const { PricingTemplate } = require('../models');
 const { Op } = require('sequelize');
-const config = require('../config/config');
+const { getPagination } = require('../utils/paginationUtils');
 
 // @desc    Get all pricing templates
 // @route   GET /api/pricing
 // @access  Private
 exports.getPricingTemplates = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const category = req.query.category;
     const isActive = req.query.isActive;
 

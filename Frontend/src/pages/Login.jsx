@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Eye, EyeOff, Loader2, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,6 +29,7 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
   const { login } = useAuth();
+  const { isMobile } = useResponsive();
 
   const form = useForm({
     resolver: zodResolver(loginSchema),
@@ -57,31 +59,31 @@ const Login = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center p-8">
+    <div className="min-h-screen bg-white flex items-center justify-center p-0 md:p-8">
       {/* Main Content */}
-      <div className="w-full max-w-6xl bg-white rounded-2xl overflow-hidden flex">
+      <div className={`w-full ${isMobile ? 'h-screen' : 'max-w-6xl bg-white'} ${isMobile ? '' : 'rounded-2xl'} overflow-hidden flex flex-col ${isMobile ? '' : 'lg:flex-row'}`}>
           {/* Left Section - Form */}
-          <div className="flex-1 p-12 flex flex-col justify-center">
-            <div className="max-w-md mx-auto w-full">
+          <div className={`flex-1 ${isMobile ? 'px-6 py-4' : 'p-12'} flex flex-col justify-center ${isMobile ? 'min-h-screen' : ''}`}>
+            <div className={`${isMobile ? 'w-full' : 'max-w-md'} mx-auto w-full`}>
               {/* Logo */}
-              <h1 className="text-3xl font-bold text-[#166534] mb-8">nexpro</h1>
+              <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-[#166534]`}>ShopWISE</h1>
               
               {/* Heading */}
-              <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome back</h2>
-              <p className="text-gray-600 mb-8">Sign in to manage your workspace and keep every job on track.</p>
+              <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-gray-900`}>Welcome back</h2>
+              <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-gray-600`}>Sign in to manage your workspace and keep every job on track.</p>
 
               <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+                <form onSubmit={form.handleSubmit(onSubmit)} className={isMobile ? "space-y-4" : "space-y-6"}>
                   <FormField
                     control={form.control}
                     name="email"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-gray-700">Email</FormLabel>
+                        <FormLabel className={`${isMobile ? 'text-sm' : ''} text-gray-700`}>Email</FormLabel>
                         <FormControl>
                           <Input
-                            placeholder="you@company.com"
-                            className="h-12 border-gray-300 rounded-lg bg-green-50 text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border"
+                            placeholder="example@mail.com"
+                            className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-white border text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
                             {...field}
                           />
                         </FormControl>
@@ -95,19 +97,19 @@ const Login = () => {
                     name="password"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel className="text-gray-700">Password</FormLabel>
+                        <FormLabel className={`${isMobile ? 'text-sm' : ''} text-gray-700`}>Password</FormLabel>
                         <FormControl>
                           <div className="relative">
                             <Input
                               type={showPassword ? 'text' : 'password'}
                               placeholder="Enter password"
-                              className="h-12 border-gray-300 rounded-lg pr-10 bg-green-50 text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border"
+                              className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-white border text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
                               {...field}
                             />
                             <button
                               type="button"
                               onClick={() => setShowPassword(!showPassword)}
-                              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                              className={`absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 ${isMobile ? 'min-h-[44px] min-w-[44px] flex items-center justify-center' : ''}`}
                             >
                               {showPassword ? (
                                 <EyeOff className="h-5 w-5" />
@@ -124,27 +126,20 @@ const Login = () => {
 
                   <Button
                     type="submit"
-                    className="w-full h-12 bg-[#166534] hover:bg-[#14532d] text-white rounded-lg font-medium transition-all duration-200 hover:scale-[1.02]"
-                    disabled={loading}
+                    className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
+                    loading={loading}
                   >
-                    {loading ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Logging in...
-                      </>
-                    ) : (
-                      'Log in'
-                    )}
+                    Log in
                   </Button>
                 </form>
               </Form>
 
-              <div className="relative my-6">
+              <div className={`relative ${isMobile ? 'my-4' : 'my-6'}`}>
                 <div className="absolute inset-0 flex items-center">
                   <span className="w-full border-t border-gray-300"></span>
                 </div>
                 <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-white px-2 text-gray-500">Or</span>
+                  <span className={`${isMobile ? 'bg-white px-2' : 'bg-white px-2'} text-gray-500`}>Or</span>
                 </div>
               </div>
 
@@ -152,7 +147,7 @@ const Login = () => {
               <Button
                 type="button"
                 variant="outline"
-                className="w-full h-12 border-gray-300 rounded-lg font-medium flex items-center justify-center gap-3 bg-white text-gray-900 hover:!bg-green-50 hover:!border-[#166534] hover:!text-gray-900 transition-all duration-200 hover:scale-[1.02]"
+                className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium flex items-center justify-center gap-3 bg-white text-gray-900 hover:!bg-gray-50 hover:!border-[#166534] hover:!text-gray-900 transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
                 onClick={() => {
                   // TODO: Implement Google OAuth signin
                   showError('Google signin is coming soon!');
@@ -179,8 +174,8 @@ const Login = () => {
                 Sign in with Google
               </Button>
 
-              <div className="text-center mt-6">
-                <p className="text-sm text-gray-500">
+              <div className={`text-center ${isMobile ? 'mt-4' : 'mt-6'}`}>
+                <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-500`}>
                   Don't have an account yet?{' '}
                   <a href="/signup" className="text-[#166534] hover:underline font-medium">
                     Sign up here
@@ -190,43 +185,45 @@ const Login = () => {
             </div>
           </div>
 
-          {/* Right Section - Promotional */}
-          <div className="flex-1 bg-white relative hidden lg:flex items-center justify-center p-12">
-            {/* Image Area - positioned relative to white container, ignoring padding */}
-            <div className="absolute top-2 left-2 right-2 bottom-2 bg-gray-50 rounded-xl flex items-center justify-center overflow-hidden">
-              <img 
-                src={africanWomanImage} 
-                alt="Business professional" 
-                className="w-full h-full object-cover"
-              />
-            </div>
-
-            <div className="relative w-full h-full z-10">
-              {/* Integration Cards Overlay */}
-              <div className="absolute top-8 right-8 space-y-3">
-                <div className="bg-white rounded-lg shadow-lg p-4 w-48">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 bg-[#166534] rounded flex items-center justify-center text-white font-bold text-sm">io</div>
-                    <div className="flex-1 h-px bg-gray-200"></div>
-                  </div>
-                  <div className="text-2xl font-semibold text-gray-900">$1,200.00</div>
-                </div>
-                <div className="bg-white rounded-lg shadow-lg p-4 w-48">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 bg-[#a3e635] rounded flex items-center justify-center text-[#166534] font-bold text-sm">qb</div>
-                    <div className="flex-1 h-px bg-gray-200"></div>
-                  </div>
-                  <div className="text-2xl font-semibold text-gray-900">$1,200.00</div>
-                </div>
-                <div className="flex justify-center mt-2">
-                  <div className="w-8 h-8 bg-white rounded-full shadow-md flex items-center justify-center">
-                    <RefreshCw className="h-4 w-4 text-gray-600" />
-                  </div>
-                </div>
+          {/* Right Section - Promotional - Hidden on mobile */}
+          {!isMobile && (
+            <div className="flex-1 bg-white relative hidden lg:flex items-center justify-center p-12">
+              {/* Image Area - positioned relative to white container, ignoring padding */}
+              <div className="absolute top-2 left-2 right-2 bottom-2 bg-gray-50 rounded-xl flex items-center justify-center overflow-hidden">
+                <img 
+                  src={africanWomanImage} 
+                  alt="Business professional" 
+                  className="w-full h-full object-cover"
+                />
               </div>
 
+              <div className="relative w-full h-full z-10">
+                {/* Integration Cards Overlay */}
+                <div className="absolute top-8 right-8 space-y-3">
+                  <div className="bg-white border border-gray-200 p-4 w-48">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-8 h-8 bg-[#166534] rounded flex items-center justify-center text-white font-bold text-sm">io</div>
+                      <div className="flex-1 h-px bg-gray-200"></div>
+                    </div>
+                    <div className="text-2xl font-semibold text-gray-900">$1,200.00</div>
+                  </div>
+                  <div className="bg-white border border-gray-200 p-4 w-48">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="w-8 h-8 bg-[#a3e635] rounded flex items-center justify-center text-[#166534] font-bold text-sm">qb</div>
+                      <div className="flex-1 h-px bg-gray-200"></div>
+                    </div>
+                    <div className="text-2xl font-semibold text-gray-900">$1,200.00</div>
+                  </div>
+                  <div className="flex justify-center mt-2">
+                    <div className="w-8 h-8 bg-white border border-gray-200 rounded-full flex items-center justify-center">
+                      <RefreshCw className="h-4 w-4 text-gray-600" />
+                    </div>
+                  </div>
+                </div>
+
+              </div>
             </div>
-          </div>
+          )}
         </div>
     </div>
   );

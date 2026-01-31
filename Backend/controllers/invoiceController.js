@@ -1,8 +1,9 @@
-const { Invoice, Job, Customer, JobItem, Payment, Sale, Prescription } = require('../models');
+const { Invoice, Job, Customer, JobItem, Payment, Sale, Prescription, SaleActivity } = require('../models');
 const { Op } = require('sequelize');
-const config = require('../config/config');
+const { getPagination } = require('../utils/paginationUtils');
 const { createInvoicePaymentJournal } = require('../services/invoiceAccountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { invalidateInvoiceListCache } = require('../middleware/cache');
 const activityLogger = require('../services/activityLogger');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
 const sabitoWebhookService = require('../services/sabitoWebhookService');
@@ -37,9 +38,7 @@ const generateInvoiceNumber = async (tenantId) => {
 // @access  Private
 exports.getInvoices = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const search = req.query.search;
     const status = req.query.status;
     const customerId = req.query.customerId;
@@ -67,21 +66,36 @@ exports.getInvoices = async (req, res, next) => {
         where.sourceType = 'prescription';
       }
     }
-    
-    if (search) {
-      // Build search condition
-      const searchCondition = { invoiceNumber: { [Op.iLike]: `%${search}%` } };
-      
-      // If we already have Op.or from businessType filter, use Op.and to combine
-      if (where[Op.or]) {
-        where[Op.and] = [
-          { [Op.or]: where[Op.or] },
-          searchCondition
-        ];
-        delete where[Op.or];
+
+    // Staff see only invoices from their sales or their jobs; admin/manager see all
+    const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
+    if (effectiveRole === 'staff') {
+      const [mySales, myJobs] = await Promise.all([
+        Sale.findAll({ where: applyTenantFilter(req.tenantId, { soldBy: req.user.id }), attributes: ['id'] }),
+        Job.findAll({ where: applyTenantFilter(req.tenantId, { createdBy: req.user.id }), attributes: ['id'] })
+      ]);
+      const saleIds = mySales.map((s) => s.id);
+      const jobIds = myJobs.map((j) => j.id);
+      const ownOr = [];
+      if (saleIds.length) ownOr.push({ saleId: { [Op.in]: saleIds } });
+      if (jobIds.length) ownOr.push({ jobId: { [Op.in]: jobIds } });
+      if (ownOr.length) {
+        where[Op.and] = where[Op.and] || [];
+        where[Op.and].push({ [Op.or]: ownOr });
       } else {
-        where[Op.or] = [searchCondition];
+        where.id = { [Op.in]: [] };
       }
+    }
+
+    if (search) {
+      // Build search condition; preserve existing where[Op.and] (e.g. staff "own" filter)
+      const searchCondition = { invoiceNumber: { [Op.iLike]: `%${search}%` } };
+      where[Op.and] = Array.isArray(where[Op.and]) ? [...where[Op.and]] : (where[Op.and] ? [where[Op.and]] : []);
+      if (where[Op.or]) {
+        where[Op.and].push({ [Op.or]: where[Op.or] });
+        delete where[Op.or];
+      }
+      where[Op.and].push(searchCondition);
     }
     
     if (status && status !== '') where.status = status;
@@ -160,26 +174,35 @@ exports.getInvoices = async (req, res, next) => {
 // @access  Private
 exports.getInvoice = async (req, res, next) => {
   try {
+    const include = [
+      {
+        model: Customer,
+        as: 'customer',
+        attributes: ['id', 'name', 'company', 'email', 'phone', 'address', 'city']
+      },
+      {
+        model: Job,
+        as: 'job',
+        attributes: ['id', 'jobNumber', 'title', 'description', 'status', 'createdBy'],
+        include: [
+          {
+            model: JobItem,
+            as: 'items'
+          }
+        ]
+      }
+    ];
+    if (Sale) {
+      include.push({
+        model: Sale,
+        as: 'sale',
+        attributes: ['id', 'saleNumber', 'soldBy', 'createdAt', 'total'],
+        required: false
+      });
+    }
     const invoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
-      include: [
-        {
-          model: Customer,
-          as: 'customer',
-          attributes: ['id', 'name', 'company', 'email', 'phone', 'address', 'city']
-        },
-        {
-          model: Job,
-          as: 'job',
-          attributes: ['id', 'jobNumber', 'title', 'description', 'status'],
-          include: [
-            {
-              model: JobItem,
-              as: 'items'
-            }
-          ]
-        }
-      ]
+      include
     });
 
     if (!invoice) {
@@ -187,6 +210,20 @@ exports.getInvoice = async (req, res, next) => {
         success: false,
         message: 'Invoice not found'
       });
+    }
+
+    // Staff may only view invoices from their sales or their jobs (prescription invoices allowed)
+    const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
+    if (effectiveRole === 'staff') {
+      const fromMySale = invoice.saleId && invoice.sale?.soldBy === req.user.id;
+      const fromMyJob = invoice.jobId && invoice.job?.createdBy === req.user.id;
+      const fromPrescription = !!invoice.prescriptionId;
+      if (!fromMySale && !fromMyJob && !fromPrescription) {
+        return res.status(403).json({
+          success: false,
+          message: 'Not authorized to view this invoice'
+        });
+      }
     }
 
     res.status(200).json({
@@ -357,6 +394,10 @@ exports.createInvoice = async (req, res, next) => {
       console.error('Error sending Sabito webhook:', error);
     }
 
+    // Invalidate cache after creating invoice
+    invalidateAfterMutation(req.tenantId);
+
+    invalidateInvoiceListCache(req.tenantId);
     res.status(201).json({
       success: true,
       data: createdInvoice
@@ -416,6 +457,7 @@ exports.updateInvoice = async (req, res, next) => {
       }
     }
 
+    invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
       data: updatedInvoice
@@ -459,6 +501,10 @@ exports.deleteInvoice = async (req, res, next) => {
       console.error('Failed to update customer balance:', error);
     }
 
+    // Invalidate cache after deleting invoice
+    invalidateAfterMutation(req.tenantId);
+
+    invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
       data: {}
@@ -551,6 +597,34 @@ exports.recordPayment = async (req, res, next) => {
       ]
     });
 
+    // Update sale status if invoice is linked to a sale and payment covers the full amount
+    if (invoice.saleId && newAmountPaid >= parseFloat(invoice.totalAmount)) {
+      try {
+        const sale = await Sale.findByPk(invoice.saleId);
+        if (sale && sale.status === 'pending') {
+          await sale.update({ status: 'completed' });
+          
+          // Create sale activity for payment received
+          await SaleActivity.create({
+            saleId: sale.id,
+            tenantId: req.tenantId,
+            type: 'payment',
+            subject: 'Payment Received',
+            notes: `Full payment received for invoice ${invoice.invoiceNumber}`,
+            createdBy: req.user?.id || null,
+            metadata: {
+              invoiceId: invoice.id,
+              invoiceNumber: invoice.invoiceNumber,
+              paymentAmount: paymentAmount
+            }
+          });
+        }
+      } catch (saleError) {
+        console.error('Error updating sale status from payment:', saleError);
+        // Don't fail the payment if sale update fails
+      }
+    }
+
     try {
       await createInvoicePaymentJournal({
         invoice: updatedInvoice,
@@ -613,6 +687,7 @@ exports.recordPayment = async (req, res, next) => {
       console.error('Failed to update customer balance:', error);
     }
 
+    invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
       data: updatedInvoice
@@ -740,6 +815,7 @@ exports.markInvoicePaid = async (req, res, next) => {
       console.error('Failed to update customer balance:', error);
     }
 
+    invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
       message: 'Invoice marked as paid successfully',
@@ -845,17 +921,75 @@ exports.sendInvoice = async (req, res, next) => {
       console.error('Failed to log invoice sent activity:', error);
     }
 
-    // TODO: Implement email sending functionality here
-    // For now, return the payment link so it can be sent manually or via email service
-    // Example email content:
-    // Subject: Invoice ${invoice.invoiceNumber} - Payment Required
-    // Body: Dear ${customer.name}, Please find attached your invoice. You can pay online at: ${paymentLink}
+    // Send email notification
+    let emailSent = false;
+    let emailError = null;
+    
+    try {
+      const emailService = require('../services/emailService');
+      const emailTemplates = require('../services/emailTemplates');
+      const { Tenant } = require('../models');
+      
+      // Check if customer has email
+      if (updatedInvoice.customer && updatedInvoice.customer.email) {
+        // Get tenant/company info for email template
+        const tenant = await Tenant.findByPk(req.tenantId);
+        const company = {
+          name: tenant?.name || 'ShopWISE',
+          logo: tenant?.logo || '',
+          primaryColor: tenant?.metadata?.primaryColor || '#166534'
+        };
+        
+        // Prepare invoice items for email
+        const invoiceItems = updatedInvoice.items || [];
+        const invoiceForEmail = {
+          ...updatedInvoice.toJSON(),
+          items: invoiceItems
+        };
+        
+        // Generate email content
+        const { subject, html, text } = emailTemplates.invoiceNotification(
+          invoiceForEmail,
+          updatedInvoice.customer,
+          paymentLink,
+          company
+        );
+        
+        // Send the email
+        const emailResult = await emailService.sendMessage(
+          req.tenantId,
+          updatedInvoice.customer.email,
+          subject,
+          html,
+          text
+        );
+        
+        if (emailResult.success) {
+          emailSent = true;
+          console.log('[Invoice] Email sent successfully to:', updatedInvoice.customer.email);
+        } else {
+          emailError = emailResult.error;
+          console.log('[Invoice] Email not sent:', emailResult.error);
+        }
+      } else {
+        emailError = 'Customer email address not available';
+        console.log('[Invoice] No customer email available');
+      }
+    } catch (error) {
+      emailError = error.message;
+      console.error('[Invoice] Email sending error:', error);
+      // Don't fail the request if email fails
+    }
 
     res.status(200).json({
       success: true,
-      message: 'Invoice marked as sent',
+      message: emailSent 
+        ? 'Invoice sent successfully via email and marked as sent' 
+        : 'Invoice marked as sent (email not sent: ' + (emailError || 'unknown error') + ')',
       data: updatedInvoice,
-      paymentLink
+      paymentLink,
+      emailSent,
+      emailError: emailSent ? null : emailError
     });
   } catch (error) {
     next(error);
@@ -1052,6 +1186,35 @@ exports.processPublicPayment = async (req, res, next) => {
     if (invoice.saleId) paymentData.saleId = invoice.saleId;
     if (invoice.prescriptionId) paymentData.prescriptionId = invoice.prescriptionId;
 
+    // Update sale status if invoice is linked to a sale and payment covers the full amount
+    if (invoice.saleId && newAmountPaid >= parseFloat(invoice.totalAmount)) {
+      try {
+        const sale = await Sale.findByPk(invoice.saleId);
+        if (sale && sale.status === 'pending') {
+          await sale.update({ status: 'completed' });
+          
+          // Create sale activity for payment received
+          await SaleActivity.create({
+            saleId: sale.id,
+            tenantId: invoice.tenantId,
+            type: 'payment',
+            subject: 'Payment Received',
+            notes: `Full payment received for invoice ${invoice.invoiceNumber}`,
+            createdBy: null, // Public payment, no user
+            metadata: {
+              invoiceId: invoice.id,
+              invoiceNumber: invoice.invoiceNumber,
+              paymentAmount: paymentAmount,
+              publicPayment: true
+            }
+          });
+        }
+      } catch (saleError) {
+        console.error('Error updating sale status from public payment:', saleError);
+        // Don't fail the payment if sale update fails
+      }
+    }
+
     // Add metadata if Payment model supports it
     try {
       paymentData.metadata = {
@@ -1149,6 +1312,7 @@ exports.cancelInvoice = async (req, res, next) => {
       ]
     });
 
+    invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
       data: updatedInvoice

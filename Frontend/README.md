@@ -1,11 +1,11 @@
-# NEXPro - Printing Press Management System - Frontend
+# ShopWISE - Business Management System - Frontend
 
-React + Ant Design frontend application for NEXPro - Printing Press Management System.
+React + Ant Design frontend application for ShopWISE - Business Management System.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js (v14 or higher)
+- Node.js (v18 or higher; v20 recommended — see `.nvmrc`)
 - Backend API running on `http://localhost:5000`
 
 ### Installation
@@ -127,6 +127,24 @@ All API calls are centralized in the `services/` directory:
 - Responsive tables
 - Adaptive forms
 
+## 📱 Testing on your phone (same Wi‑Fi)
+
+1. **Backend** must be running on your machine (e.g. `npm run dev` in `Backend/` on port 5001).
+2. **Frontend** dev server listens on all interfaces (`host: true` in Vite). Start it:
+   ```bash
+   npm run dev
+   ```
+3. **Find your computer’s IP** (same Wi‑Fi as the phone):
+   ```bash
+   npm run show-ip
+   ```
+   Or manually: macOS/Linux `ifconfig | grep "inet "`, Windows `ipconfig` → use `192.168.x.x` or `10.x.x.x`.
+4. On your **phone**, open: `http://<your-IP>:3000`  
+   Example: `http://192.168.1.42:3000`
+5. **API and uploads** go through the Vite proxy when on LAN, so no extra config.
+
+Ensure phone and computer are on the same network. If the app doesn’t load, check firewall (allow port 3000).
+
 ## 🎨 Customization
 
 ### Theme
@@ -158,6 +176,12 @@ Preview production build:
 ```bash
 npm run preview
 ```
+
+### Vercel deployment
+
+- **Root Directory:** In Vercel project settings, set **Root Directory** to `Frontend` (capital F). On Linux (Vercel) the path is case-sensitive; `frontend` will not match the repo folder.
+- **Node:** Vercel uses `.nvmrc` (Node 20) and `engines` in `package.json`. Build uses extra memory (`NODE_OPTIONS=--max-old-space-size=4096`) for the large bundle.
+- If the build still fails, open the **Inspect** URL from the deploy log and check the build logs for the exact error.
 
 ## 📦 Technologies Used
 

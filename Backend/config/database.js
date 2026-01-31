@@ -9,8 +9,8 @@ const sequelize = new Sequelize(process.env.DATABASE_URL, {
   dialect: 'postgres',
   logging: process.env.NODE_ENV === 'development' ? console.log : false,
   pool: {
-    max: 5,
-    min: 0,
+    max: 10, // Increased from 5 to 10 for better concurrency
+    min: 2, // Increased from 0 to 2 to maintain warm connections
     acquire: 60000, // Increased timeout for connection acquisition
     idle: 10000
   },

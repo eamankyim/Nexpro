@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Nexpro backend is built with a modular architecture that supports multiple business types (Printing Press, Shop, Pharmacy) while maximizing code reuse.
+The ShopWISE backend is built with a modular architecture that supports multiple business types (Printing Press, Shop, Pharmacy) while maximizing code reuse.
 
 ## Module Classification
 

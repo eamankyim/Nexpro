@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const { User, InviteToken, UserTenant, Tenant } = require('../models');
 const config = require('../config/config');
+const { invalidateUserCache } = require('../middleware/cache');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 
@@ -181,6 +182,12 @@ exports.register = async (req, res, next) => {
 // @desc    Login user
 // @route   POST /api/auth/login
 // @access  Public
+// Account lockout configuration
+const LOCKOUT_CONFIG = {
+  maxAttempts: 5,        // Lock after 5 failed attempts
+  lockoutMinutes: 15,    // Lock for 15 minutes
+};
+
 exports.login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
@@ -203,13 +210,50 @@ exports.login = async (req, res, next) => {
       });
     }
 
+    // Check if account is locked
+    if (user.isLocked && user.isLocked()) {
+      const remainingSeconds = user.getLockoutRemainingSeconds();
+      const remainingMinutes = Math.ceil(remainingSeconds / 60);
+      
+      console.log(`[Auth] Account locked for ${email}. Remaining: ${remainingMinutes} minutes`);
+      
+      return res.status(423).json({
+        success: false,
+        message: `Account is temporarily locked due to too many failed login attempts. Please try again in ${remainingMinutes} minute${remainingMinutes !== 1 ? 's' : ''}.`,
+        lockedUntil: user.lockoutUntil,
+        remainingSeconds,
+      });
+    }
+
     // Check if password matches
     const isMatch = await user.comparePassword(password);
 
     if (!isMatch) {
+      // Increment failed attempts
+      const attempts = await user.incrementFailedAttempts(
+        LOCKOUT_CONFIG.maxAttempts,
+        LOCKOUT_CONFIG.lockoutMinutes
+      );
+      
+      const remainingAttempts = LOCKOUT_CONFIG.maxAttempts - attempts;
+      
+      // If account is now locked
+      if (attempts >= LOCKOUT_CONFIG.maxAttempts) {
+        console.log(`[Auth] Account locked for ${email} after ${attempts} failed attempts`);
+        return res.status(423).json({
+          success: false,
+          message: `Account has been locked due to too many failed login attempts. Please try again in ${LOCKOUT_CONFIG.lockoutMinutes} minutes.`,
+          lockedUntil: user.lockoutUntil,
+        });
+      }
+      
+      console.log(`[Auth] Failed login for ${email}. Attempts: ${attempts}/${LOCKOUT_CONFIG.maxAttempts}`);
+      
       return res.status(401).json({
         success: false,
-        message: 'Invalid email or password'
+        message: remainingAttempts > 0 
+          ? `Invalid email or password. ${remainingAttempts} attempt${remainingAttempts !== 1 ? 's' : ''} remaining before account lockout.`
+          : 'Invalid email or password'
       });
     }
 
@@ -219,6 +263,9 @@ exports.login = async (req, res, next) => {
         message: 'Account is inactive'
       });
     }
+
+    // Reset failed attempts on successful login
+    await user.resetFailedAttempts();
 
     const token = generateToken(user.id);
 
@@ -234,6 +281,15 @@ exports.login = async (req, res, next) => {
         ['isDefault', 'DESC'],
         ['createdAt', 'ASC']
       ]
+    });
+
+    const invitedByList = memberships.map((m) => ({ tenantId: m.tenantId, role: m.role, invitedBy: m.invitedBy }));
+    console.log('[ProfileCompletion] login auth data:', {
+      userId: user?.id,
+      email: user?.email,
+      isFirstLogin: user?.isFirstLogin,
+      isPlatformAdmin: user?.isPlatformAdmin,
+      membershipsInvitedBy: invitedByList,
     });
 
     res.status(200).json({
@@ -267,6 +323,16 @@ exports.getMe = async (req, res, next) => {
     const firstMembership = user?.tenantMemberships?.[0];
     const firstTenant = firstMembership?.tenant;
     console.log('[getMe] userId=%s, memberships=%s, first tenant id=%s, first tenant.metadata.onboarding=%j', req.user.id, user?.tenantMemberships?.length, firstTenant?.id, firstTenant?.metadata?.onboarding);
+
+    const memberships = user?.tenantMemberships || [];
+    const invitedByList = memberships.map((m) => ({ tenantId: m.tenantId, role: m.role, invitedBy: m.invitedBy }));
+    console.log('[ProfileCompletion] getMe auth data:', {
+      userId: user?.id,
+      email: user?.email,
+      isFirstLogin: user?.isFirstLogin,
+      isPlatformAdmin: user?.isPlatformAdmin,
+      membershipsInvitedBy: invitedByList,
+    });
 
     res.status(200).json({
       success: true,
@@ -316,6 +382,7 @@ exports.updatePassword = async (req, res, next) => {
 
     user.password = req.body.newPassword;
     await user.save();
+    invalidateUserCache(user.id);
 
     const token = generateToken(user.id);
 
@@ -331,10 +398,46 @@ exports.updatePassword = async (req, res, next) => {
   }
 };
 
-// @desc    Verify NEXPro token for Sabito SSO (called by Sabito)
+// @desc    Set initial password (admin-created users: no current password required when isFirstLogin)
+// @route   PUT /api/auth/set-initial-password
+// @access  Private
+exports.setInitialPassword = async (req, res, next) => {
+  try {
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    if (!user.isFirstLogin) {
+      return res.status(400).json({
+        success: false,
+        message: 'Initial password already set. Use change password instead.'
+      });
+    }
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'New password must be at least 6 characters'
+      });
+    }
+    user.password = newPassword;
+    user.isFirstLogin = false;
+    await user.save();
+
+    const token = generateToken(user.id);
+    res.status(200).json({
+      success: true,
+      data: { user, token }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Verify ShopWISE token for Sabito SSO (called by Sabito)
 // @route   GET /api/auth/verify-token
 // @access  Public (but requires API key from Sabito)
-// This endpoint allows Sabito to verify NEXPro JWT tokens and get user info for auto-login
+// This endpoint allows Sabito to verify ShopWISE JWT tokens and get user info for auto-login
 exports.verifyNexproToken = async (req, res, next) => {
   try {
     // Get token from query parameter or Authorization header
@@ -402,7 +505,7 @@ exports.verifyNexproToken = async (req, res, next) => {
   }
 };
 
-// @desc    SSO login from Sabito (Sabito → NEXPro)
+// @desc    SSO login from Sabito (Sabito → ShopWISE)
 // @route   POST /api/auth/sso/sabito
 // @access  Public
 exports.sabitoSSO = async (req, res, next) => {
@@ -519,7 +622,7 @@ exports.sabitoSSO = async (req, res, next) => {
         });
       }
 
-      // Find or create user in NEXPro
+      // Find or create user in ShopWISE
       let user = await User.findOne({
         where: {
           [Op.or]: [
@@ -630,7 +733,7 @@ exports.sabitoSSO = async (req, res, next) => {
         });
       }
 
-      // Generate NEXPro JWT token
+      // Generate ShopWISE JWT token
       const token = generateToken(user.id);
 
       // Get user memberships
@@ -982,7 +1085,7 @@ exports.sabitoSSO = async (req, res, next) => {
                 }
               );
               
-              console.log('[SSO] ✅ Stored Nexpro tenant ID in Sabito installation:', {
+              console.log('[SSO] ✅ Stored ShopWISE tenant ID in Sabito installation:', {
                 installationId: installation.id,
                 nexproTenantId,
                 businessId: sabitoUser.businessId
@@ -996,7 +1099,7 @@ exports.sabitoSSO = async (req, res, next) => {
             });
           }
           
-          // Step 2: Auto-create tenant mapping in Nexpro database
+          // Step 2: Auto-create tenant mapping in ShopWISE database
           try {
             const { SabitoTenantMapping } = require('../models');
             
@@ -1075,7 +1178,7 @@ exports.sabitoSSO = async (req, res, next) => {
   }
 };
 
-// @desc    SSO login from Sabito via GET (Sabito → NEXPro)
+// @desc    SSO login from Sabito via GET (Sabito → ShopWISE)
 // @route   GET /sso?token=xxx&appName=nexpro
 // @access  Public
 exports.sabitoSSOGet = async (req, res, next) => {
@@ -1202,7 +1305,7 @@ exports.sabitoSSOGet = async (req, res, next) => {
         return res.redirect(`${frontendUrl}/login?error=invalid_token`);
       }
 
-      // Find or create user in NEXPro
+      // Find or create user in ShopWISE
       let user = await User.findOne({
         where: {
           [Op.or]: [
@@ -1282,7 +1385,7 @@ exports.sabitoSSOGet = async (req, res, next) => {
         return res.redirect(`${frontendUrl}/login?error=account_inactive`);
       }
 
-      // Generate NEXPro JWT token
+      // Generate ShopWISE JWT token
       const nexproToken = generateToken(user.id);
 
       // Get user memberships
@@ -1547,7 +1650,7 @@ exports.sabitoSSOGet = async (req, res, next) => {
               }
             );
             
-            console.log('[SSO GET] ✅ Stored Nexpro tenant ID in Sabito installation:', {
+            console.log('[SSO GET] ✅ Stored ShopWISE tenant ID in Sabito installation:', {
               installationId: installation.id,
               nexproTenantId,
               businessId: sabitoUser.businessId
@@ -1559,7 +1662,7 @@ exports.sabitoSSOGet = async (req, res, next) => {
             });
           }
           
-          // Auto-create tenant mapping in Nexpro database
+          // Auto-create tenant mapping in ShopWISE database
           try {
             const { SabitoTenantMapping } = require('../models');
             

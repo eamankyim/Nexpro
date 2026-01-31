@@ -5,22 +5,26 @@ const {
   getMe,
   updateDetails,
   updatePassword,
+  setInitialPassword,
   sabitoSSO,
   verifyNexproToken
 } = require('../controllers/authController');
 const { protect } = require('../middleware/auth');
+const { authLimiter, registrationLimiter } = require('../middleware/rateLimiter');
 
 const router = express.Router();
 
-router.post('/register', register);
-router.post('/login', login);
-router.post('/sso/sabito', sabitoSSO);
+// Apply stricter rate limiting to auth endpoints
+router.post('/register', registrationLimiter, register);
+router.post('/login', authLimiter, login);
+router.post('/sso/sabito', authLimiter, sabitoSSO);
 console.log('[AUTH ROUTES] ✅ POST /api/auth/sso/sabito route registered');
-// Endpoint for Sabito to verify NEXPro tokens (for reverse SSO)
+// Endpoint for Sabito to verify ShopWISE tokens (for reverse SSO)
 router.get('/verify-token', verifyNexproToken);
 router.get('/me', protect, getMe);
 router.put('/updatedetails', protect, updateDetails);
 router.put('/updatepassword', protect, updatePassword);
+router.put('/set-initial-password', protect, setInitialPassword);
 
 module.exports = router;
 

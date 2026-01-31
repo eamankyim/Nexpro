@@ -84,7 +84,7 @@ const AdminOverview = () => {
           Platform Overview
         </Title>
         <Text type="secondary">
-          Monitor adoption, health, and upcoming events across the entire NexPRO platform.
+          Monitor adoption, health, and upcoming events across the entire ShopWISE platform.
         </Text>
       </div>
 

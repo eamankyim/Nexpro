@@ -48,6 +48,21 @@ const saleService = {
     if (startDate) params.append('startDate', startDate);
     if (endDate) params.append('endDate', endDate);
     return api.get(`/sales/top-products?${params.toString()}`);
+  },
+
+  // Get sale activities
+  getActivities: async (saleId) => {
+    return api.get(`/sales/${saleId}/activities`);
+  },
+
+  // Add sale activity
+  addActivity: async (saleId, activityData) => {
+    return api.post(`/sales/${saleId}/activities`, activityData);
+  },
+
+  // Send receipt via SMS/WhatsApp/Email
+  sendReceipt: async (saleId, { channels, phone, email }) => {
+    return api.post(`/sales/${saleId}/send-receipt`, { channels, phone, email });
   }
 };
 

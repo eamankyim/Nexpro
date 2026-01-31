@@ -36,7 +36,7 @@ export function Step({
       <div className="flex flex-col items-center">
         <div
           className={cn(
-            "flex h-10 w-10 items-center justify-center rounded-full border-2 transition-colors",
+            "flex h-10 w-10 items-center justify-center rounded-full border transition-colors",
             isCompleted && "bg-primary border-primary text-primary-foreground",
             isActive && !isCompleted && "border-primary text-primary",
             !isActive && !isCompleted && "border-muted text-muted-foreground"

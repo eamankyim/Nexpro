@@ -1,7 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import { useDebounce } from '../hooks/useDebounce';
+import { useResponsive } from '../hooks/useResponsive';
+import { useSmartSearch } from '../context/SmartSearchContext';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 // Removed Ant Design imports - using shadcn/ui only
 import PhoneNumberInput from '../components/PhoneNumberInput';
 import {
@@ -16,18 +20,28 @@ import {
   Mail,
   Phone,
   Loader2,
-  Search
+  Filter,
+  RefreshCw,
+  UserCheck,
+  Pencil
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import employeeService from '../services/employeeService';
 import customDropdownService from '../services/customDropdownService';
-import { API_BASE_URL } from '../services/api';
 import { showSuccess, showError, showWarning } from '../utils/toast';
 import ActionColumn from '../components/ActionColumn';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
+import DashboardTable from '../components/DashboardTable';
+import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
+import DetailsDrawer from '../components/DetailsDrawer';
+import DrawerSectionCard from '../components/DrawerSectionCard';
+import FileUpload from '../components/FileUpload';
+import FilePreview from '../components/FilePreview';
+import { API_BASE_URL } from '../services/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -38,10 +52,9 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import { DatePicker } from '@/components/ui/date-picker';
-import { Timeline as CustomTimeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
+import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
 import { Steps, Step } from '@/components/ui/steps';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
   Select,
   SelectContent,
@@ -51,6 +64,7 @@ import {
 } from '@/components/ui/select';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -85,16 +99,6 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-const resolveFileUrl = (path = '') => {
-  if (!path) return '';
-  if (/^https?:\/\//i.test(path)) {
-    return path;
-  }
-  if (path.startsWith('/')) {
-    return `${API_BASE_URL}${path}`;
-  }
-  return `${API_BASE_URL}/${path}`;
-};
 
 
 const employmentTypes = [
@@ -111,6 +115,20 @@ const statusOptions = [
   { value: 'on_leave', label: 'On Leave' },
   { value: 'probation', label: 'Probation' },
   { value: 'terminated', label: 'Terminated' }
+];
+
+const historyChangeTypes = [
+  { value: 'leave', label: 'Leave' },
+  { value: 'sick_leave', label: 'Sick Leave' },
+  { value: 'absent', label: 'Absent' },
+  { value: 'bad_behaviour', label: 'Bad Behaviour' },
+  { value: 'promotion', label: 'Promotion' },
+  { value: 'demotion', label: 'Demotion' },
+  { value: 'transfer', label: 'Transfer' },
+  { value: 'warning', label: 'Warning' },
+  { value: 'commendation', label: 'Commendation' },
+  { value: 'training', label: 'Training' },
+  { value: 'note', label: 'General Note' }
 ];
 
 const ghanaBanks = [
@@ -148,6 +166,19 @@ const relationshipOptions = [
   'Friend',
   'Guardian'
 ];
+
+// Helper function to resolve file URLs (handles base64, relative paths, and absolute URLs)
+const resolveFileUrl = (url) => {
+  if (!url) return '';
+  // Base64 data URLs (data:image/png;base64,...)
+  if (url.startsWith('data:')) return url;
+  // Absolute URLs (http:// or https://)
+  if (url.startsWith('http://') || url.startsWith('https://')) return url;
+  // Relative paths - prepend API base URL
+  if (url.startsWith('/')) return `${API_BASE_URL}${url}`;
+  // Return as-is for other cases
+  return url;
+};
 
 const EmployeeForm = ({ currentStep, form }) => {
   const [customRelationships, setCustomRelationships] = useState([]);
@@ -275,6 +306,7 @@ const EmployeeForm = ({ currentStep, form }) => {
     }
 
     try {
+      setSavingDepartment(true);
       const saved = await customDropdownService.saveCustomOption('department', newDepartmentValue.trim());
       if (saved) {
         // Add to departments
@@ -316,6 +348,7 @@ const EmployeeForm = ({ currentStep, form }) => {
     }
 
     try {
+      setSavingJobTitle(true);
       const saved = await customDropdownService.saveCustomOption('job_title', newJobTitleValue.trim());
       if (saved) {
         setJobTitles(prev => {
@@ -332,6 +365,8 @@ const EmployeeForm = ({ currentStep, form }) => {
       }
     } catch (error) {
       showError(error, error.response?.data?.error || 'Failed to save job title');
+    } finally {
+      setSavingJobTitle(false);
     }
   };
 
@@ -352,6 +387,7 @@ const EmployeeForm = ({ currentStep, form }) => {
     }
 
     try {
+      setSavingBank(true);
       const saved = await customDropdownService.saveCustomOption('employee_bank', customValue.trim());
       if (saved) {
         setCustomBanks(prev => {
@@ -411,7 +447,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             name="email"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Email</FormLabel>
+                <FormLabel>Email (optional)</FormLabel>
                 <FormControl>
                   <Input type="email" placeholder="email@company.com" {...field} />
                 </FormControl>
@@ -424,7 +460,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             name="phone"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Phone</FormLabel>
+                <FormLabel>Phone (optional)</FormLabel>
                 <FormControl>
                   <PhoneNumberInput placeholder="Enter phone number" {...field} />
                 </FormControl>
@@ -442,7 +478,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             name="department"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Department</FormLabel>
+                <FormLabel>Department (optional)</FormLabel>
                 <Select value={field.value} onValueChange={(value) => {
                   if (value === '__CREATE__') {
                     handleDepartmentChange('__CREATE__');
@@ -486,7 +522,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             name="jobTitle"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Job Title</FormLabel>
+                <FormLabel>Job Title (optional)</FormLabel>
                 <Select value={field.value} onValueChange={(value) => {
                   if (value === '__CREATE__') {
                     handleJobTitleChange('__CREATE__');
@@ -564,7 +600,7 @@ const EmployeeForm = ({ currentStep, form }) => {
                 autoFocus
                 className="flex-1"
               />
-              <Button type="button" onClick={handleSaveCustomJobTitle}>
+              <Button type="button" onClick={handleSaveCustomJobTitle} loading={savingJobTitle}>
                 Save
               </Button>
             </div>
@@ -626,7 +662,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             name="hireDate"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Hire Date</FormLabel>
+                <FormLabel>Hire Date (optional)</FormLabel>
                 <FormControl>
                   <DatePicker
                     date={field.value ? (dayjs.isDayjs(field.value) ? field.value.toDate() : new Date(field.value)) : undefined}
@@ -722,7 +758,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             name="bankName"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Bank / Wallet</FormLabel>
+                <FormLabel>Bank / Wallet (optional)</FormLabel>
                 <Select 
                   value={field.value} 
                   onValueChange={(value) => {
@@ -766,7 +802,7 @@ const EmployeeForm = ({ currentStep, form }) => {
                 }}
                 className="flex-1"
               />
-              <Button onClick={() => handleSaveCustomBank(form.getValues('customBankName'))}>
+              <Button onClick={() => handleSaveCustomBank(form.getValues('customBankName'))} loading={savingBank}>
                 Save
               </Button>
             </div>
@@ -778,7 +814,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             name="bankAccountName"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Account Name</FormLabel>
+                <FormLabel>Account Name (optional)</FormLabel>
                 <FormControl>
                   <Input placeholder="Account Name" {...field} />
                 </FormControl>
@@ -791,7 +827,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             name="bankAccountNumber"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Account / Momo Number</FormLabel>
+                <FormLabel>Account / Momo Number (optional)</FormLabel>
                 <FormControl>
                   <Input placeholder="Account or Mobile Money Number" {...field} />
                 </FormControl>
@@ -806,14 +842,14 @@ const EmployeeForm = ({ currentStep, form }) => {
     {currentStep === 1 && (
       <>
         <Separator className="my-4" />
-        <h3 className="text-lg font-semibold mb-4">Emergency Contact</h3>
+        <h3 className="text-lg font-semibold mb-4">Emergency & Next of Kin</h3>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="emergencyContact.name"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Contact Name</FormLabel>
+                <FormLabel>Emergency Contact Name (optional)</FormLabel>
                 <FormControl>
                   <Input placeholder="Full Name" {...field} />
                 </FormControl>
@@ -823,92 +859,25 @@ const EmployeeForm = ({ currentStep, form }) => {
           />
           <FormField
             control={form.control}
-            name="emergencyContact.relationship"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Relationship</FormLabel>
-                <Select 
-                  value={field.value} 
-                  onValueChange={(value) => {
-                    handleRelationshipChange(value, 'emergencyContact.relationship');
-                    field.onChange(value);
-                  }}
-                >
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select relationship" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    {getMergedRelationshipOptions().map((rel) => (
-                      <SelectItem key={rel} value={rel}>{rel}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-                {showRelationshipOtherInputs['emergencyContact.relationship'] && (
-                  <div className="mt-2">
-                    <Label>Enter Relationship</Label>
-                    <div className="flex gap-2 mt-2">
-                      <Input
-                        placeholder="e.g., Step-sister, In-law"
-                        value={relationshipOtherValues['emergencyContact.relationship'] || ''}
-                        onChange={(e) => setRelationshipOtherValues(prev => ({ ...prev, 'emergencyContact.relationship': e.target.value }))}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleSaveCustomRelationship(relationshipOtherValues['emergencyContact.relationship'], 'emergencyContact.relationship');
-                          }
-                        }}
-                        className="flex-1"
-                      />
-                      <Button onClick={() => handleSaveCustomRelationship(relationshipOtherValues['emergencyContact.relationship'], 'emergencyContact.relationship')}>
-                        Save
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </FormItem>
-            )}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <FormField
-            control={form.control}
             name="emergencyContact.phone"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Phone</FormLabel>
+                <FormLabel>Emergency Contact Phone (optional)</FormLabel>
                 <FormControl>
-                  <PhoneNumberInput placeholder="Enter contact phone" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="emergencyContact.email"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Email</FormLabel>
-                <FormControl>
-                  <Input type="email" placeholder="Contact Email" {...field} />
+                  <PhoneNumberInput placeholder="Enter phone" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
         </div>
-
-        <Separator className="my-4" />
-        <h3 className="text-lg font-semibold mb-4">Next of Kin</h3>
         <div className="grid grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="nextOfKin.name"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Name</FormLabel>
+                <FormLabel>Next of Kin Name (optional)</FormLabel>
                 <FormControl>
                   <Input placeholder="Full Name" {...field} />
                 </FormControl>
@@ -918,95 +887,18 @@ const EmployeeForm = ({ currentStep, form }) => {
           />
           <FormField
             control={form.control}
-            name="nextOfKin.relationship"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Relationship</FormLabel>
-                <Select 
-                  value={field.value} 
-                  onValueChange={(value) => {
-                    handleRelationshipChange(value, 'nextOfKin.relationship');
-                    field.onChange(value);
-                  }}
-                >
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select relationship" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent>
-                    {getMergedRelationshipOptions().map((rel) => (
-                      <SelectItem key={rel} value={rel}>{rel}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-                {showRelationshipOtherInputs['nextOfKin.relationship'] && (
-                  <div className="mt-2">
-                    <Label>Enter Relationship</Label>
-                    <div className="flex gap-2 mt-2">
-                      <Input
-                        placeholder="e.g., Step-sister, In-law"
-                        value={relationshipOtherValues['nextOfKin.relationship'] || ''}
-                        onChange={(e) => setRelationshipOtherValues(prev => ({ ...prev, 'nextOfKin.relationship': e.target.value }))}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleSaveCustomRelationship(relationshipOtherValues['nextOfKin.relationship'], 'nextOfKin.relationship');
-                          }
-                        }}
-                        className="flex-1"
-                      />
-                      <Button onClick={() => handleSaveCustomRelationship(relationshipOtherValues['nextOfKin.relationship'], 'nextOfKin.relationship')}>
-                        Save
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </FormItem>
-            )}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <FormField
-            control={form.control}
             name="nextOfKin.phone"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Phone</FormLabel>
+                <FormLabel>Next of Kin Phone (optional)</FormLabel>
                 <FormControl>
-                  <PhoneNumberInput placeholder="Enter phone number" {...field} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={form.control}
-            name="nextOfKin.email"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>Email</FormLabel>
-                <FormControl>
-                  <Input type="email" placeholder="Email" {...field} />
+                  <PhoneNumberInput placeholder="Enter phone" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
             )}
           />
         </div>
-        <FormField
-          control={form.control}
-          name="notes"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>Notes</FormLabel>
-              <FormControl>
-                <Textarea rows={3} placeholder="Internal notes" {...field} />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
       </>
     )}
   </>
@@ -1015,11 +907,14 @@ const EmployeeForm = ({ currentStep, form }) => {
 
 const Employees = () => {
   const queryClient = useQueryClient();
+  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+  const { isMobile } = useResponsive();
   const [filters, setFilters] = useState({
-    search: '',
     status: 'all',
     employmentType: 'all'
   });
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [pagination, setPagination] = useState({
     current: 1,
     pageSize: 10
@@ -1073,17 +968,35 @@ const Employees = () => {
       salaryAmount: 0,
     },
   });
+
+  // History form schema and form
+  const historySchema = z.object({
+    changeType: z.string().min(1, 'Change type is required'),
+    effectiveDate: z.date({ required_error: 'Effective date is required' }),
+    notes: z.string().optional(),
+  });
+
+  const historyForm = useForm({
+    resolver: zodResolver(historySchema),
+    defaultValues: {
+      changeType: '',
+      effectiveDate: new Date(),
+      notes: '',
+    },
+  });
   
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
   const [documentPreview, setDocumentPreview] = useState(null);
   const [documentPreviewVisible, setDocumentPreviewVisible] = useState(false);
-  const [documentPreviewUrl, setDocumentPreviewUrl] = useState(null);
-  const [documentPreviewLoading, setDocumentPreviewLoading] = useState(false);
-  const [documentPreviewMimeType, setDocumentPreviewMimeType] = useState(null);
+  const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
+  const [refreshingEmployees, setRefreshingEmployees] = useState(false);
+  const [savingDepartment, setSavingDepartment] = useState(false);
+  const [savingJobTitle, setSavingJobTitle] = useState(false);
+  const [savingBank, setSavingBank] = useState(false);
 
   const formSteps = [
-    { key: 'basic', title: 'Employment Details' },
+    { key: 'basic', title: 'Edit Employee' },
     { key: 'emergency', title: 'Emergency & Next of Kin' }
   ];
 
@@ -1094,14 +1007,22 @@ const Employees = () => {
     payFrequency: 'monthly'
   };
 
+  useEffect(() => {
+    setPageSearchConfig({ scope: 'employees', placeholder: SEARCH_PLACEHOLDERS.EMPLOYEES });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig]);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [searchValue]);
+
   const employeeQuery = useQuery({
-    queryKey: ['employees', pagination.current, pagination.pageSize, filters],
-    queryFn: () =>
-      employeeService.getEmployees({
-        page: pagination.current,
-        limit: pagination.pageSize,
-        ...filters
-      })
+    queryKey: ['employees', pagination.current, pagination.pageSize, filters, debouncedSearch],
+    queryFn: () => {
+      const params = { page: pagination.current, limit: pagination.pageSize, ...filters };
+      if (debouncedSearch) params.search = debouncedSearch;
+      return employeeService.getEmployees(params);
+    },
   });
 
   const resetFormState = () => {
@@ -1239,6 +1160,12 @@ const Employees = () => {
     // Note: drawerLoading is set to false in fetchEmployeeDetails finally block
   };
 
+  const handleCloseDrawer = () => {
+    setDrawerVisible(false);
+    setViewingEmployee(null);
+    setDrawerLoading(false);
+  };
+
   const handleModalCancel = () => {
     setModalVisible(false);
     resetFormState();
@@ -1247,8 +1174,7 @@ const Employees = () => {
   const handleNextStep = async () => {
     // Validate only fields on the current step
     if (formStep === 0) {
-      // Validate all step 1 fields before proceeding to step 2
-      // Required fields: firstName, lastName, salaryAmount
+      // Validate step 0 required fields: firstName, lastName, salaryAmount
       const fieldsToValidate = ['firstName', 'lastName', 'salaryAmount'];
       
       // If email is provided, validate its format
@@ -1261,13 +1187,8 @@ const Employees = () => {
       if (!isValid) {
         return;
       }
-    } else {
-      // Validate all fields if on other steps
-      const isValid = await form.trigger();
-      if (!isValid) {
-        return;
-      }
     }
+    // Step 1 has no required fields, so no validation needed
     setFormStep((prev) => Math.min(prev + 1, formSteps.length - 1));
   };
 
@@ -1293,38 +1214,13 @@ const Employees = () => {
     }
   };
 
-  const handleOpenDocumentPreview = async (doc) => {
-    revokePreviewUrl();
+  const handleOpenDocumentPreview = (doc) => {
     setDocumentPreview(doc);
     setDocumentPreviewVisible(true);
-    setDocumentPreviewLoading(true);
-
-    try {
-      const resolvedUrl = resolveFileUrl(doc.fileUrl);
-      const token = localStorage.getItem('token');
-      const response = await fetch(resolvedUrl, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to fetch document');
-      }
-
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      setDocumentPreviewUrl(objectUrl);
-      setDocumentPreviewMimeType(blob.type || null);
-    } catch (error) {
-      console.error('Failed to load document preview', error);
-      showError(null, 'Unable to load document preview.');
-    } finally {
-      setDocumentPreviewLoading(false);
-    }
   };
 
   const handleCloseDocumentPreview = () => {
     setDocumentPreviewVisible(false);
-    revokePreviewUrl();
     setDocumentPreview(null);
   };
 
@@ -1352,68 +1248,75 @@ const Employees = () => {
         history: [history, ...(prev.history || [])]
       }));
       showSuccess('History entry added');
+      setHistoryDialogOpen(false);
+      historyForm.reset();
     } catch (error) {
       showError(null, 'Failed to add history entry');
     }
   };
 
-  const columns = useMemo(() => [
+  const onSubmitHistory = async (values) => {
+    await handleAddHistory({
+      changeType: values.changeType,
+      effectiveDate: dayjs(values.effectiveDate).format('YYYY-MM-DD'),
+      notes: values.notes || null,
+    });
+  };
+
+  // Table columns for DashboardTable
+  const tableColumns = useMemo(() => [
     {
-      title: 'Name',
-      dataIndex: 'firstName',
       key: 'name',
+      label: 'Name',
       render: (_, record) => (
         <div>
-          <div style={{ fontWeight: 600 }}>{`${record.firstName} ${record.lastName}`}</div>
-          <div style={{ color: '#888', fontSize: 12 }}>{record.jobTitle || '—'}</div>
+          <div className="font-semibold text-black">{`${record?.firstName || ''} ${record?.lastName || ''}`}</div>
+          <div className="text-muted-foreground text-xs">{record?.jobTitle || '—'}</div>
         </div>
       )
     },
     {
-      title: 'Department',
-      dataIndex: 'department',
       key: 'department',
-      render: (value) => value || '—'
+      label: 'Department',
+      render: (_, record) => <span className="text-black">{record?.department || '—'}</span>
     },
     {
-      title: 'Employment Type',
-      dataIndex: 'employmentType',
       key: 'employmentType',
-      render: (value) => value?.replace('_', ' ').toUpperCase()
+      label: 'Employment Type',
+      render: (_, record) => <span className="text-black">{record?.employmentType?.replace('_', ' ').toUpperCase() || '—'}</span>
     },
     {
-      title: 'Status',
-      dataIndex: 'status',
       key: 'status',
-      render: (status) => (
-        <StatusChip status={status} />
-      )
+      label: 'Status',
+      render: (_, record) => <StatusChip status={record?.status} />
     },
     {
-      title: 'Hire Date',
-      dataIndex: 'hireDate',
       key: 'hireDate',
-      render: (date) => (date ? dayjs(date).format('MMM DD, YYYY') : '—')
+      label: 'Hire Date',
+      render: (_, record) => <span className="text-black">{record?.hireDate ? dayjs(record.hireDate).format('MMM DD, YYYY') : '—'}</span>
     },
     {
-      title: 'Actions',
       key: 'actions',
-      width: 180,
+      label: 'Actions',
       render: (_, record) => (
         <ActionColumn
           record={record}
           onView={handleView}
           extraActions={[
             {
+              key: 'edit',
               label: 'Edit',
-              onClick: () => handleOpenEdit(record),
-              icon: <FilePlus className="h-4 w-4" />
+              variant: 'secondary',
+              icon: <FilePlus className="h-4 w-4" />,
+              onClick: () => handleOpenEdit(record)
             },
             {
-              label: 'Archive',
+              key: 'archive',
+              label: archiveMutation.isLoading ? 'Archiving...' : 'Archive',
+              variant: 'destructive',
+              icon: archiveMutation.isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />,
               onClick: () => archiveMutation.mutate({ id: record.id, payload: {} }),
-              icon: <Trash2 className="h-4 w-4" />,
-              danger: true
+              disabled: archiveMutation.isLoading
             }
           ]}
         />
@@ -1423,6 +1326,23 @@ const Employees = () => {
 
   const employees = employeeQuery.data?.data || [];
   const total = employeeQuery.data?.count || 0;
+
+  // Calculate summary stats
+  const summaryStats = useMemo(() => {
+    const totalEmployees = employees.length;
+    const activeEmployees = employees.filter(e => e.status === 'active').length;
+    const inactiveEmployees = employees.filter(e => e.status === 'inactive').length;
+    const departments = new Set(employees.map(e => e.department).filter(Boolean)).size;
+    
+    return {
+      totals: {
+        totalEmployees,
+        activeEmployees,
+        inactiveEmployees,
+        departments
+      }
+    };
+  }, [employees]);
 
   const organization = employeeQuery.data?.organization || {};
 
@@ -1516,166 +1436,369 @@ const Employees = () => {
     );
   };
 
-  const renderDocumentPreviewContent = () => {
-    if (!documentPreview) {
-      return null;
-    }
 
-    const originalPath = documentPreview.fileUrl || '';
-    const mimeType = documentPreviewMimeType || '';
-    const url = documentPreviewUrl;
-
-    const isImage = mimeType.startsWith('image/') || /\.(png|jpe?g|gif|bmp|webp|svg)$/i.test(originalPath);
-    const isPdf = mimeType === 'application/pdf' || /\.pdf$/i.test(originalPath);
-
-    if (documentPreviewLoading || !url) {
-      return (
-        <div className="text-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto" />
-        </div>
-      );
-    }
-
-    if (isImage) {
-      return (
-        <div className="text-center">
-          <img
-            src={url}
-            alt={documentPreview.title || 'Document image'}
-            className="max-h-[60vh] object-contain mx-auto"
-          />
-        </div>
-      );
-    }
-
-    if (isPdf) {
-      return (
-        <iframe
-          title={documentPreview.title || 'Document PDF'}
-          src={`${url}#toolbar=1`}
-          className="w-full h-[70vh] border-0"
-        />
-      );
-    }
-
-    return (
-      <div className="flex flex-col">
-        <p className="text-muted-foreground">Preview not available. You can download the file instead.</p>
-      </div>
-    );
+  const handleClearFilters = () => {
+    setFilters({
+      status: 'all',
+      employmentType: 'all'
+    });
+    setPagination({ ...pagination, current: 1 });
   };
 
-  const revokePreviewUrl = () => {
-    if (documentPreviewUrl && documentPreviewUrl.startsWith('blob:')) {
-      URL.revokeObjectURL(documentPreviewUrl);
-    }
-    setDocumentPreviewUrl(null);
-    setDocumentPreviewMimeType(null);
-  };
+  const hasActiveFilters = filters.status !== 'all' || filters.employmentType !== 'all';
 
-  useEffect(() => {
-    return () => {
-      revokePreviewUrl();
-    };
-  }, []);
+  // Apply client-side filtering
+  const filteredEmployees = useMemo(() => {
+    let result = employees;
+    
+    if (filters.status !== 'all') {
+      result = result.filter(e => e.status === filters.status);
+    }
+    if (filters.employmentType !== 'all') {
+      result = result.filter(e => e.employmentType === filters.employmentType);
+    }
+    
+    return result;
+  }, [employees, filters]);
+
+  // Paginate filtered employees
+  const paginatedEmployees = useMemo(() => {
+    const start = (pagination.current - 1) * pagination.pageSize;
+    const end = start + pagination.pageSize;
+    return filteredEmployees.slice(start, end);
+  }, [filteredEmployees, pagination.current, pagination.pageSize]);
+
+  const employeesCount = filteredEmployees.length;
+
+  // Drawer tabs for employee details
+  const drawerTabs = useMemo(() => {
+    if (!viewingEmployee) return [];
+
+    return [
+      {
+        key: 'overview',
+        label: 'Overview',
+        content: (
+          <div className="space-y-6">
+            <DrawerSectionCard title="Employee information">
+              <Descriptions column={1} className="space-y-0">
+                <DescriptionItem label="Name">
+                  {viewingEmployee.firstName} {viewingEmployee.lastName}
+                </DescriptionItem>
+                <DescriptionItem label="Email">
+                  <div className="flex items-center gap-2">
+                    <Mail className="h-4 w-4" />
+                    {viewingEmployee.email || '—'}
+                  </div>
+                </DescriptionItem>
+                <DescriptionItem label="Phone">
+                  <div className="flex items-center gap-2">
+                    <Phone className="h-4 w-4" />
+                    {viewingEmployee.phone || '—'}
+                  </div>
+                </DescriptionItem>
+                <DescriptionItem label="Department">{viewingEmployee.department || '—'}</DescriptionItem>
+                <DescriptionItem label="Job Title">{viewingEmployee.jobTitle || '—'}</DescriptionItem>
+                <DescriptionItem label="Employment Type">
+                  {viewingEmployee.employmentType?.replace('_', ' ').toUpperCase()}
+                </DescriptionItem>
+                <DescriptionItem label="Status">
+                  <StatusChip status={viewingEmployee.status} />
+                </DescriptionItem>
+                <DescriptionItem label="Hire Date">
+                  {viewingEmployee.hireDate ? dayjs(viewingEmployee.hireDate).format('MMM DD, YYYY') : '—'}
+                </DescriptionItem>
+                <DescriptionItem label="End Date">
+                  {viewingEmployee.endDate ? dayjs(viewingEmployee.endDate).format('MMM DD, YYYY') : '—'}
+                </DescriptionItem>
+              </Descriptions>
+            </DrawerSectionCard>
+            <DrawerSectionCard title="Compensation">
+              <Descriptions column={1} className="space-y-0">
+                <DescriptionItem label="Salary Type">{viewingEmployee.salaryType?.toUpperCase()}</DescriptionItem>
+                <DescriptionItem label="Base Amount">
+                  GHS {Number(viewingEmployee.salaryAmount || 0).toFixed(2)}
+                </DescriptionItem>
+                <DescriptionItem label="Pay Frequency">{viewingEmployee.payFrequency?.toUpperCase()}</DescriptionItem>
+                <DescriptionItem label="Bank / Wallet">{viewingEmployee.bankName || '—'}</DescriptionItem>
+                <DescriptionItem label="Account Name">{viewingEmployee.bankAccountName || '—'}</DescriptionItem>
+                <DescriptionItem label="Account / Momo Number">{viewingEmployee.bankAccountNumber || '—'}</DescriptionItem>
+              </Descriptions>
+            </DrawerSectionCard>
+            <DrawerSectionCard title="Emergency contact">
+              <Descriptions column={1} className="space-y-0">
+                <DescriptionItem label="Name">{viewingEmployee.emergencyContact?.name || '—'}</DescriptionItem>
+                <DescriptionItem label="Relationship">{viewingEmployee.emergencyContact?.relationship || '—'}</DescriptionItem>
+                <DescriptionItem label="Phone">{viewingEmployee.emergencyContact?.phone || '—'}</DescriptionItem>
+                <DescriptionItem label="Email">{viewingEmployee.emergencyContact?.email || '—'}</DescriptionItem>
+              </Descriptions>
+            </DrawerSectionCard>
+            <DrawerSectionCard title="Next of kin">
+              <Descriptions column={1} className="space-y-0">
+                <DescriptionItem label="Name">{viewingEmployee.nextOfKin?.name || '—'}</DescriptionItem>
+                <DescriptionItem label="Relationship">{viewingEmployee.nextOfKin?.relationship || '—'}</DescriptionItem>
+                <DescriptionItem label="Phone">{viewingEmployee.nextOfKin?.phone || '—'}</DescriptionItem>
+                <DescriptionItem label="Email">{viewingEmployee.nextOfKin?.email || '—'}</DescriptionItem>
+              </Descriptions>
+            </DrawerSectionCard>
+            {viewingEmployee.notes && (
+              <DrawerSectionCard title="Notes">
+                <p className="text-sm">{viewingEmployee.notes}</p>
+              </DrawerSectionCard>
+            )}
+          </div>
+        )
+      },
+      {
+        key: 'documents',
+        label: 'Documents',
+        content: (
+          <DrawerSectionCard title="Documents">
+            <FileUpload
+              onFileSelect={handleUploadDocument}
+              disabled={documentUploading}
+              uploading={documentUploading}
+              uploadedFiles={viewingEmployee.documents || []}
+              onFilePreview={handleOpenDocumentPreview}
+              onFileRemove={(doc) => handleDeleteDocument(doc.id)}
+              showFileList={true}
+              emptyMessage="No documents uploaded yet."
+            />
+          </DrawerSectionCard>
+        )
+      },
+      {
+        key: 'history',
+        label: 'History',
+        content: (
+          <DrawerSectionCard title="History">
+            <div className="space-y-4">
+              <Button onClick={() => setHistoryDialogOpen(true)}>
+                <History className="h-4 w-4 mr-2" />
+                Add History Note
+              </Button>
+              <Timeline>
+                {(viewingEmployee.history || []).map((item, index) => {
+                  const isLast = index === (viewingEmployee.history || []).length - 1;
+                  const formatChangeType = (changeType) => {
+                    return changeType
+                      .split('_')
+                      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                      .join(' ');
+                  };
+                  return (
+                    <TimelineItem key={index} isLast={isLast}>
+                      <TimelineIndicator />
+                      <TimelineContent>
+                        <TimelineTitle className="text-black">{formatChangeType(item.changeType)}</TimelineTitle>
+                        <TimelineTime className="text-black">{dayjs(item.effectiveDate).format('MMM DD, YYYY [at] h:mm A')}</TimelineTime>
+                        {item.notes && <TimelineDescription className="text-black">{item.notes}</TimelineDescription>}
+                      </TimelineContent>
+                    </TimelineItem>
+                  );
+                })}
+              </Timeline>
+            </div>
+          </DrawerSectionCard>
+        )
+      },
+      {
+        key: 'payroll',
+        label: 'Payroll',
+        content: (
+          <DrawerSectionCard title="Payroll">
+            {viewingEmployee.payrollEntries?.length ? (
+              <div className="space-y-4">
+                {viewingEmployee.payrollEntries.map((entry) => (
+                  <Card key={entry.id}>
+                    <CardContent className="pt-6">
+                      <div className="flex flex-col gap-1">
+                        <strong>
+                          {entry.run?.periodStart
+                            ? `${dayjs(entry.run.periodStart).format('MMM DD')} - ${dayjs(entry.run.periodEnd).format('MMM DD, YYYY')}`
+                            : 'Payroll Entry'}
+                        </strong>
+                        <p className="text-muted-foreground text-sm">
+                          Pay Date: {entry.run?.payDate ? dayjs(entry.run.payDate).format('MMM DD, YYYY') : '—'} • Status:{' '}
+                          {entry.run?.status ? (
+                            <StatusChip status={entry.run.status} />
+                          ) : (
+                            <span>—</span>
+                          )}
+                        </p>
+                        <p>
+                          Gross: GHS {parseFloat(entry.grossPay || 0).toFixed(2)} • Net:{' '}
+                          <strong>GHS {parseFloat(entry.netPay || 0).toFixed(2)}</strong>
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <p className="text-muted-foreground">No payroll history yet.</p>
+            )}
+          </DrawerSectionCard>
+        )
+      }
+    ];
+  }, [viewingEmployee, documentUploading]);
 
   return (
-    <div>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Employees</h1>
-          <p className="text-muted-foreground">Manage your team, payroll readiness, and HR records.</p>
-        </div>
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
+        <WelcomeSection
+          welcomeMessage="Employees"
+          subText="Manage your team, payroll readiness, and HR records."
+        />
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => queryClient.invalidateQueries({ queryKey: ['employees'] })}>
-            <Users className="h-4 w-4 mr-2" />
-            Refresh
+          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+            <Filter className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Filter</span>}
           </Button>
-          <Button onClick={handleOpenCreate}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Employee
+          <Button 
+            variant="outline" 
+            onClick={async () => {
+              setRefreshingEmployees(true);
+              await queryClient.invalidateQueries({ queryKey: ['employees'] });
+              setRefreshingEmployees(false);
+            }}
+            disabled={refreshingEmployees}
+            size={isMobile ? "icon" : "default"}
+          >
+            {refreshingEmployees ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {!isMobile && <span className="ml-2">Refresh</span>}
+          </Button>
+          <Button onClick={handleOpenCreate} size={isMobile ? "icon" : "default"}>
+            <Plus className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">New Employee</span>}
           </Button>
         </div>
       </div>
 
-      <Card className="mb-4 shadow-none">
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search name, department, email"
-                value={filters.search}
-                onChange={(e) => {
-                  setPagination((prev) => ({ ...prev, current: 1 }));
-                  setFilters((prev) => ({ ...prev, search: e.target.value }));
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    setPagination((prev) => ({ ...prev, current: 1 }));
-                  }
-                }}
-                className="pl-10"
-              />
-            </div>
-            <Select
-              value={filters.status}
-              onValueChange={(value) => {
-                setPagination((prev) => ({ ...prev, current: 1 }));
-                setFilters((prev) => ({ ...prev, status: value }));
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Statuses</SelectItem>
-                {statusOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select
-              value={filters.employmentType}
-              onValueChange={(value) => {
-                setPagination((prev) => ({ ...prev, current: 1 }));
-                setFilters((prev) => ({ ...prev, employmentType: value }));
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Employment Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                {employmentTypes.map((type) => (
-                  <SelectItem key={type.value} value={type.value}>
-                    {type.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
+        <DashboardStatsCard
+          title="Total Employees"
+          value={summaryStats?.totals?.totalEmployees || 0}
+          icon={Users}
+          iconBgColor="rgba(22, 101, 52, 0.1)"
+          iconColor="#166534"
+        />
+        <DashboardStatsCard
+          title="Active"
+          value={summaryStats?.totals?.activeEmployees || 0}
+          icon={UserCheck}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+        />
+        <DashboardStatsCard
+          title="Inactive"
+          value={summaryStats?.totals?.inactiveEmployees || 0}
+          icon={Users}
+          iconBgColor="rgba(107, 114, 128, 0.1)"
+          iconColor="#6b7280"
+        />
+        <DashboardStatsCard
+          title="Departments"
+          value={summaryStats?.totals?.departments || 0}
+          icon={Building2}
+          iconBgColor="rgba(59, 130, 246, 0.1)"
+          iconColor="#3b82f6"
+        />
+      </div>
 
-      {renderTable(columns, employees, 'id', {
-        pagination: {
-          ...pagination,
-          total,
-        },
-        loading: employeeQuery.isLoading,
-        onChange: (pag) => setPagination(pag)
-      })}
+      {/* Main Content Area */}
+      <DashboardTable
+        data={paginatedEmployees}
+        columns={tableColumns}
+        loading={employeeQuery.isLoading}
+        title={null}
+        emptyIcon={<Users className="h-12 w-12 text-muted-foreground" />}
+        emptyDescription="No employees found"
+        pageSize={pagination.pageSize}
+        onPageChange={(newPagination) => {
+          setPagination(newPagination);
+        }}
+        externalPagination={{
+          current: pagination.current,
+          total: employeesCount
+        }}
+      />
+
+      {/* Filter Drawer */}
+      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
+        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+          <SheetHeader className="pb-4 border-b">
+            <SheetTitle>Filter Employees</SheetTitle>
+          </SheetHeader>
+          <div className="space-y-6 mt-6">
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select
+                value={filters.status}
+                onValueChange={(value) => {
+                  setFilters({ ...filters, status: value });
+                  setPagination({ ...pagination, current: 1 });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  {statusOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Employment Type</Label>
+              <Select
+                value={filters.employmentType}
+                onValueChange={(value) => {
+                  setFilters({ ...filters, employmentType: value });
+                  setPagination({ ...pagination, current: 1 });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Employment Type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Types</SelectItem>
+                  {employmentTypes.map((type) => (
+                    <SelectItem key={type.value} value={type.value}>
+                      {type.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {hasActiveFilters && (
+              <Button variant="outline" onClick={handleClearFilters} className="w-full">
+                Clear Filters
+              </Button>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
       <Dialog open={modalVisible} onOpenChange={(open) => {
         if (!open) handleModalCancel();
       }}>
-        <DialogContent className="max-w-[720px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:w-[min(92vw,860px)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>{editingEmployee ? 'Edit Employee' : 'New Employee'}</DialogTitle>
           </DialogHeader>
+          <DialogBody>
           <Steps current={formStep} className="mb-6">
             {formSteps.map((step, index) => (
               <Step key={index} title={step.title} />
@@ -1686,6 +1809,7 @@ const Employees = () => {
               <EmployeeForm currentStep={formStep} form={form} />
             </form>
           </Form>
+          </DialogBody>
           <DialogFooter>
             {formStep > 0 && (
               <Button variant="outline" onClick={handlePrevStep}>
@@ -1699,335 +1823,142 @@ const Employees = () => {
             )}
             {formStep === formSteps.length - 1 && (
               <Button
-                disabled={createMutation.isLoading || updateMutation.isLoading}
+                loading={createMutation.isLoading || updateMutation.isLoading}
                 onClick={form.handleSubmit(onSubmit)}
               >
-                {createMutation.isLoading || updateMutation.isLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    {editingEmployee ? 'Saving...' : 'Creating...'}
-                  </>
-                ) : (
-                  editingEmployee ? 'Save Changes' : 'Create Employee'
-                )}
+                {editingEmployee ? 'Update' : 'Create'} Employee
               </Button>
             )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Sheet open={drawerVisible} onOpenChange={(open) => {
-        if (!open) {
-          setDrawerVisible(false);
-          setViewingEmployee(null);
-          setDrawerLoading(false);
-        }
-      }}>
-        <SheetContent className="w-full sm:max-w-[900px] overflow-y-auto">
-          <SheetHeader>
-            <SheetTitle>
-              {viewingEmployee
-                ? `${viewingEmployee.firstName} ${viewingEmployee.lastName}`
-                : 'Employee'}
-            </SheetTitle>
-          </SheetHeader>
-        {(() => {
-          if (drawerLoading) {
-            return <DetailSkeleton />;
-          }
-          if (!viewingEmployee) {
-            return null;
-          }
-          return (
-            <Tabs defaultValue="overview" className="mt-6">
-              <TabsList>
-                <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="documents">Documents</TabsTrigger>
-                <TabsTrigger value="history">History</TabsTrigger>
-                <TabsTrigger value="payroll">Payroll</TabsTrigger>
-              </TabsList>
-              <TabsContent value="overview" className="mt-6">
-                <Descriptions column={1}>
-                  <DescriptionItem label="Name">
-                    {viewingEmployee.firstName} {viewingEmployee.lastName}
-                  </DescriptionItem>
-                  <DescriptionItem label="Email">
-                    <div className="flex items-center gap-2">
-                      <Mail className="h-4 w-4" />
-                      {viewingEmployee.email || '—'}
-                    </div>
-                  </DescriptionItem>
-                  <DescriptionItem label="Phone">
-                    <div className="flex items-center gap-2">
-                      <Phone className="h-4 w-4" />
-                      {viewingEmployee.phone || '—'}
-                    </div>
-                  </DescriptionItem>
-                  <DescriptionItem label="Department">
-                    {viewingEmployee.department || '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="Job Title">
-                    {viewingEmployee.jobTitle || '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="Employment Type">
-                    {viewingEmployee.employmentType?.replace('_', ' ').toUpperCase()}
-                  </DescriptionItem>
-                  <DescriptionItem label="Status">
-                    <StatusChip status={viewingEmployee.status} />
-                  </DescriptionItem>
-                  <DescriptionItem label="Hire Date">
-                    {viewingEmployee.hireDate ? dayjs(viewingEmployee.hireDate).format('MMM DD, YYYY') : '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="End Date">
-                    {viewingEmployee.endDate ? dayjs(viewingEmployee.endDate).format('MMM DD, YYYY') : '—'}
-                  </DescriptionItem>
-                </Descriptions>
+      {drawerVisible && (
+        <DetailsDrawer
+          open={drawerVisible}
+          onClose={handleCloseDrawer}
+          title={viewingEmployee ? `${viewingEmployee.firstName} ${viewingEmployee.lastName}` : 'Employee Details'}
+          width={900}
+          tabs={drawerLoading ? [
+            {
+              key: 'loading',
+              label: 'Overview',
+              content: <DetailSkeleton />
+            }
+          ] : drawerTabs}
+          onEdit={viewingEmployee && !drawerLoading ? () => {
+            handleOpenEdit(viewingEmployee);
+            setDrawerVisible(false);
+          } : null}
+          onDelete={viewingEmployee && !drawerLoading ? () => {
+            archiveMutation.mutate({ id: viewingEmployee.id, payload: {} });
+          } : null}
+          deleteConfirmText="Are you sure you want to archive this employee?"
+        />
+      )}
 
-                <Separator className="my-6">
-                  <span className="text-sm font-medium">Compensation</span>
-                </Separator>
-                <Descriptions column={1}>
-                  <DescriptionItem label="Salary Type">
-                    {viewingEmployee.salaryType?.toUpperCase()}
-                  </DescriptionItem>
-                  <DescriptionItem label="Base Amount">
-                    GHS {Number(viewingEmployee.salaryAmount || 0).toFixed(2)}
-                  </DescriptionItem>
-                  <DescriptionItem label="Pay Frequency">
-                    {viewingEmployee.payFrequency?.toUpperCase()}
-                  </DescriptionItem>
-                  <DescriptionItem label="Bank / Wallet">
-                    {viewingEmployee.bankName || '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="Account Name">
-                    {viewingEmployee.bankAccountName || '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="Account / Momo Number">
-                    {viewingEmployee.bankAccountNumber || '—'}
-                  </DescriptionItem>
-                </Descriptions>
-
-                <Separator className="my-6">
-                  <span className="text-sm font-medium">Emergency Contact</span>
-                </Separator>
-                <Descriptions column={1}>
-                  <DescriptionItem label="Name">
-                    {viewingEmployee.emergencyContact?.name || '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="Relationship">
-                    {viewingEmployee.emergencyContact?.relationship || '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="Phone">
-                    {viewingEmployee.emergencyContact?.phone || '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="Email">
-                    {viewingEmployee.emergencyContact?.email || '—'}
-                  </DescriptionItem>
-                </Descriptions>
-
-                <Separator className="my-6">
-                  <span className="text-sm font-medium">Next of Kin</span>
-                </Separator>
-                <Descriptions column={1}>
-                  <DescriptionItem label="Name">
-                    {viewingEmployee.nextOfKin?.name || '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="Relationship">
-                    {viewingEmployee.nextOfKin?.relationship || '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="Phone">
-                    {viewingEmployee.nextOfKin?.phone || '—'}
-                  </DescriptionItem>
-                  <DescriptionItem label="Email">
-                    {viewingEmployee.nextOfKin?.email || '—'}
-                  </DescriptionItem>
-                </Descriptions>
-
-                {viewingEmployee.notes && (
-                  <>
-                    <Separator className="my-6">
-                      <span className="text-sm font-medium">Notes</span>
-                    </Separator>
-                    <Card>
-                      <CardContent className="pt-6">
-                        <p>{viewingEmployee.notes}</p>
-                      </CardContent>
-                    </Card>
-                  </>
+      {/* History Note Dialog */}
+      <Dialog open={historyDialogOpen} onOpenChange={setHistoryDialogOpen}>
+        <DialogContent className="sm:w-[min(92vw,620px)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
+          <DialogHeader>
+            <DialogTitle>Add History Note</DialogTitle>
+            <DialogDescription>
+              Record an event or note for this employee's history.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+          <Form {...historyForm}>
+            <form onSubmit={historyForm.handleSubmit(onSubmitHistory)} className="space-y-4">
+              <FormField
+                control={historyForm.control}
+                name="changeType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Type</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {historyChangeTypes.map((type) => (
+                          <SelectItem key={type.value} value={type.value}>
+                            {type.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
                 )}
-              </TabsContent>
-              <TabsContent value="documents" className="mt-6">
-                <div className="mb-4">
-                  <input
-                    type="file"
-                    id="document-upload"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        handleUploadDocument({ file });
-                      }
-                    }}
-                    disabled={documentUploading}
-                  />
-                  <Button
-                    onClick={() => document.getElementById('document-upload')?.click()}
-                    disabled={documentUploading}
-                  >
-                    {documentUploading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        Uploading...
-                      </>
-                    ) : (
-                      <>
-                        <UploadIcon className="h-4 w-4 mr-2" />
-                        Upload Document
-                      </>
-                    )}
-                  </Button>
-                </div>
-                <Separator className="my-4" />
-                {(viewingEmployee.documents || []).length === 0 ? (
-                  <p className="text-muted-foreground">No documents uploaded yet.</p>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {(viewingEmployee.documents || []).map((doc) => (
-                      <Card key={doc.id}>
-                        <CardContent className="pt-6">
-                          <div className="flex flex-col gap-2">
-                            <div className="flex items-baseline gap-2">
-                              <strong>{doc.title || doc.type || 'Document'}</strong>
-                              <Badge className="bg-purple-600">{doc.type || 'File'}</Badge>
-                            </div>
-                            <p className="text-muted-foreground text-sm">
-                              Uploaded {doc.createdAt ? dayjs(doc.createdAt).format('MMM DD, YYYY') : '—'}
-                            </p>
-                            <div className="flex gap-2">
-                              <Button size="sm" onClick={() => handleOpenDocumentPreview(doc)}>
-                                View
-                              </Button>
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button size="sm" variant="destructive">
-                                    <Trash2 className="h-4 w-4 mr-2" />
-                                    Delete
-                                  </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>Delete document?</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                      This action cannot be undone. This will permanently delete the document.
-                                    </AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction
-                                      onClick={() => handleDeleteDocument(doc.id)}
-                                      className="bg-red-600 hover:bg-red-700"
-                                    >
-                                      Delete
-                                    </AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
+              />
+              <FormField
+                control={historyForm.control}
+                name="effectiveDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Effective Date</FormLabel>
+                    <FormControl>
+                      <DatePicker
+                        date={field.value ? (dayjs.isDayjs(field.value) ? field.value.toDate() : new Date(field.value)) : new Date()}
+                        onDateChange={(date) => {
+                          field.onChange(date ? dayjs(date) : null);
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
                 )}
-              </TabsContent>
-              <TabsContent value="history" className="mt-6">
+              />
+              <FormField
+                control={historyForm.control}
+                name="notes"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Notes (optional)</FormLabel>
+                    <FormControl>
+                      <Textarea
+                        placeholder="Enter additional details..."
+                        rows={4}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <DialogFooter>
                 <Button
-                  className="mb-4"
-                  onClick={() =>
-                    handleAddHistory({
-                      changeType: 'note',
-                      notes: 'Manual entry',
-                      effectiveDate: new Date()
-                    })
-                  }
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setHistoryDialogOpen(false);
+                    historyForm.reset();
+                  }}
                 >
-                  <History className="h-4 w-4 mr-2" />
+                  Cancel
+                </Button>
+                <Button type="submit">
                   Add History Note
                 </Button>
-                <CustomTimeline>
-                  {(viewingEmployee.history || []).map((item, index) => (
-                    <TimelineItem key={index}>
-                      <TimelineIndicator className={item.changeType === 'termination' ? 'bg-red-600' : 'bg-blue-600'}>
-                        <History className="h-4 w-4" />
-                      </TimelineIndicator>
-                      <TimelineContent>
-                        <TimelineTitle>{item.changeType.toUpperCase()}</TimelineTitle>
-                        <TimelineTime>{dayjs(item.effectiveDate).format('MMM DD, YYYY')}</TimelineTime>
-                        {item.notes && <TimelineDescription>{item.notes}</TimelineDescription>}
-                      </TimelineContent>
-                    </TimelineItem>
-                  ))}
-                </CustomTimeline>
-              </TabsContent>
-              <TabsContent value="payroll" className="mt-6">
-                {viewingEmployee.payrollEntries?.length ? (
-                  viewingEmployee.payrollEntries.map((entry) => (
-                    <Card key={entry.id} className="mb-3">
-                      <CardContent className="pt-6">
-                        <div className="flex flex-col gap-1">
-                          <strong>
-                            {entry.run?.periodStart
-                              ? `${dayjs(entry.run.periodStart).format('MMM DD')} - ${dayjs(entry.run.periodEnd).format('MMM DD, YYYY')}`
-                              : 'Payroll Entry'}
-                          </strong>
-                          <p className="text-muted-foreground text-sm">
-                            Pay Date: {entry.run?.payDate ? dayjs(entry.run.payDate).format('MMM DD, YYYY') : '—'} • Status:{' '}
-                            <Badge className={entry.run?.status === 'paid' ? 'bg-green-600' : 'bg-gray-600'}>
-                              {entry.run?.status?.toUpperCase() || '—'}
-                            </Badge>
-                          </p>
-                          <p>
-                            Gross: GHS {parseFloat(entry.grossPay || 0).toFixed(2)} • Net:{' '}
-                            <strong>GHS {parseFloat(entry.netPay || 0).toFixed(2)}</strong>
-                          </p>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))
-                ) : (
-                  <p className="text-muted-foreground">No payroll history yet.</p>
-                )}
-              </TabsContent>
-            </Tabs>
-          );
-        })()}
-        </SheetContent>
-      </Sheet>
-
-      <Dialog open={documentPreviewVisible} onOpenChange={(open) => {
-        if (!open) handleCloseDocumentPreview();
-      }}>
-        <DialogContent className="max-w-[900px] max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{documentPreview?.title || documentPreview?.type || 'Document Preview'}</DialogTitle>
-          </DialogHeader>
-          {renderDocumentPreviewContent()}
-          <DialogFooter>
-            {documentPreview && (documentPreviewUrl || resolveFileUrl(documentPreview.fileUrl)) && (
-              <Button
-                asChild
-                href={documentPreviewUrl || resolveFileUrl(documentPreview.fileUrl)}
-                download
-              >
-                <a>Download</a>
-              </Button>
-            )}
-            <Button variant="outline" onClick={handleCloseDocumentPreview}>
-              Close
-            </Button>
-          </DialogFooter>
+              </DialogFooter>
+            </form>
+          </Form>
+          </DialogBody>
         </DialogContent>
       </Dialog>
+
+      <FilePreview
+        open={documentPreviewVisible}
+        onClose={handleCloseDocumentPreview}
+        file={documentPreview ? {
+          fileUrl: documentPreview.fileUrl,
+          title: documentPreview.title || documentPreview.type || 'Document',
+          type: documentPreview.type,
+          metadata: documentPreview.metadata || {}
+        } : null}
+      />
     </div>
   );
 };

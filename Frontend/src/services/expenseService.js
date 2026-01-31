@@ -27,9 +27,14 @@ const expenseService = {
     return await api.put(`/expenses/${id}`, expenseData);
   },
 
-  // Delete expense
-  delete: async (id) => {
-    return await api.delete(`/expenses/${id}`);
+  // Archive expense
+  archive: async (id) => {
+    return await api.put(`/expenses/${id}/archive`);
+  },
+
+  // Mark expense as paid
+  markPaid: async (id) => {
+    return await api.put(`/expenses/${id}`, { status: 'paid' });
   },
 
   // Get expense statistics
@@ -57,6 +62,16 @@ const expenseService = {
   // Reject expense
   reject: async (id, rejectionReason) => {
     return await api.post(`/expenses/${id}/reject`, { rejectionReason });
+  },
+
+  // Get expense activities
+  getActivities: async (id) => {
+    return await api.get(`/expenses/${id}/activities`);
+  },
+
+  // Add expense activity
+  addActivity: async (id, activityData) => {
+    return await api.post(`/expenses/${id}/activities`, activityData);
   }
 };
 

@@ -1,16 +1,14 @@
 const { Pharmacy } = require('../models');
 const { Op } = require('sequelize');
-const config = require('../config/config');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { getPagination } = require('../utils/paginationUtils');
 
 // @desc    Get all pharmacies
 // @route   GET /api/pharmacies
 // @access  Private
 exports.getPharmacies = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const search = req.query.search || '';
 
     const where = applyTenantFilter(req.tenantId, {});
@@ -70,12 +68,21 @@ exports.getPharmacy = async (req, res, next) => {
   }
 };
 
+// Normalize optional string fields: empty string -> null so validators skip them
+const normalizeOptionalStrings = (obj) => {
+  const out = { ...obj };
+  ['email', 'code', 'phone', 'address', 'city', 'state', 'postalCode', 'pharmacistName', 'licenseNumber'].forEach((key) => {
+    if (out[key] === '') out[key] = null;
+  });
+  return out;
+};
+
 // @desc    Create new pharmacy
 // @route   POST /api/pharmacies
 // @access  Private
 exports.createPharmacy = async (req, res, next) => {
   try {
-    const payload = sanitizePayload(req.body);
+    const payload = normalizeOptionalStrings(sanitizePayload(req.body));
     const pharmacy = await Pharmacy.create({
       ...payload,
       tenantId: req.tenantId
@@ -106,7 +113,7 @@ exports.updatePharmacy = async (req, res, next) => {
       });
     }
 
-    const payload = sanitizePayload(req.body);
+    const payload = normalizeOptionalStrings(sanitizePayload(req.body));
     await pharmacy.update(payload);
 
     res.status(200).json({

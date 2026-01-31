@@ -429,22 +429,117 @@ const logActivity = async ({
       console.log(`${logPrefix} Created ${created.length} in-app notifications for ${activityType}`);
     }
 
-    // TODO: Implement EMAIL channel
+    // Implement EMAIL channel
     if (channels.includes(CHANNELS.EMAIL)) {
-      console.log(`${logPrefix} EMAIL notification for ${activityType} (not yet implemented)`, {
-        recipients: recipients.length,
-        subject: title
-      });
-      // await sendEmail({ recipients, subject: title, body: message, context });
+      try {
+        const emailService = require('./emailService');
+        const emailTemplates = require('./emailTemplates');
+        const { User, Tenant } = require('../models');
+        
+        // Get tenant info for email template
+        const tenant = await Tenant.findByPk(tenantId);
+        const company = {
+          name: tenant?.name || 'ShopWISE',
+          logo: tenant?.logo || '',
+          primaryColor: tenant?.metadata?.primaryColor || '#166534'
+        };
+        
+        // Get user email addresses for recipients
+        const users = await User.findAll({
+          where: { id: recipients },
+          attributes: ['id', 'email', 'name']
+        });
+        
+        console.log(`${logPrefix} Sending EMAIL notifications for ${activityType}`, {
+          recipients: users.length,
+          subject: title
+        });
+        
+        for (const user of users) {
+          if (user.email) {
+            try {
+              // Create simple notification email
+              const htmlContent = emailTemplates.baseTemplate(`
+                <h2 style="margin-top: 0;">${title}</h2>
+                <p>${message}</p>
+                ${link ? `<div style="text-align: center; margin: 24px 0;">
+                  <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}${link}" class="button">View Details</a>
+                </div>` : ''}
+                <p style="color: #666; font-size: 12px;">
+                  This is an automated notification from ${company.name}.
+                </p>
+              `, { companyName: company.name, primaryColor: company.primaryColor });
+              
+              await emailService.sendMessage(
+                tenantId,
+                user.email,
+                title,
+                htmlContent,
+                message
+              );
+              
+              console.log(`${logPrefix} Email sent to ${user.email.substring(0, 5)}***`);
+            } catch (emailError) {
+              console.error(`${logPrefix} Failed to send email to user ${user.id}:`, emailError.message);
+              // Continue sending to other users even if one fails
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`${logPrefix} EMAIL notification error for ${activityType}:`, error.message);
+        // Don't fail the whole activity if email fails
+      }
     }
 
-    // TODO: Implement SMS channel
+    // Implement SMS channel
     if (channels.includes(CHANNELS.SMS)) {
-      console.log(`${logPrefix} SMS notification for ${activityType} (not yet implemented)`, {
-        recipients: recipients.length,
-        message: message.substring(0, 160)
-      });
-      // await sendSMS({ recipients, message, context });
+      try {
+        const smsService = require('./smsService');
+        const { User } = require('../models');
+        
+        // Get user phone numbers for recipients
+        const users = await User.findAll({
+          where: { id: recipients },
+          attributes: ['id', 'name'],
+          include: [{
+            model: UserTenant,
+            as: 'tenantMemberships',
+            where: { tenantId },
+            attributes: ['role']
+          }]
+        });
+        
+        // Get phone numbers from context or user settings
+        // For now, we'll check if phoneNumbers are provided in context
+        const phoneNumbers = context.phoneNumbers || [];
+        
+        console.log(`${logPrefix} Sending SMS notifications for ${activityType}`, {
+          phoneNumbers: phoneNumbers.length,
+          message: message.substring(0, 50) + '...'
+        });
+        
+        // SMS message (limited to 160 characters)
+        const smsMessage = `${title}\n${message}`.substring(0, 160);
+        
+        for (const phoneNumber of phoneNumbers) {
+          if (phoneNumber) {
+            try {
+              const result = await smsService.sendMessage(tenantId, phoneNumber, smsMessage);
+              if (result.success) {
+                console.log(`${logPrefix} SMS sent to ${phoneNumber.substring(0, 7)}***`);
+              } else {
+                console.log(`${logPrefix} SMS send failed: ${result.error}`);
+              }
+            } catch (smsError) {
+              console.error(`${logPrefix} Failed to send SMS:`, smsError.message);
+              // Continue sending to other numbers even if one fails
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`${logPrefix} SMS notification error for ${activityType}:`, error.message);
+        // Don't fail the whole activity if SMS fails
+      }
     }
 
     // Implement WHATSAPP channel

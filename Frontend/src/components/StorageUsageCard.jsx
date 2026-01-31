@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Card, Progress, Statistic, Row, Col, Alert, Button, Tag, Tooltip, Space } from 'antd';
-import { Cloud, Info, Rocket, Database } from 'lucide-react';
+import { Cloud, Info, Rocket, Database, Loader2 } from 'lucide-react';
 import inviteService from '../services/inviteService';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { StatisticCard } from '@/components/ui/statistic-card';
 
 /**
  * Reusable component to display storage usage and limits
@@ -30,8 +35,18 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
 
   if (loading) {
     return (
-      <Card style={style} loading>
-        <Statistic title="Storage Used" value={0} prefix={<DatabaseOutlined />} suffix="GB" />
+      <Card style={style}>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Cloud className="h-4 w-4" />
+            Storage Usage
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin" />
+          </div>
+        </CardContent>
       </Card>
     );
   }
@@ -54,147 +69,144 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
   } = storageUsage;
 
   // Determine progress bar color
-  const getProgressStatus = () => {
-    if (isUnlimited) return 'normal';
-    if (isAtLimit) return 'exception';
-    if (isNearLimit) return 'warning';
-    return 'success';
+  const getProgressColor = () => {
+    if (isUnlimited) return '#22c55e';
+    if (isAtLimit) return '#ef4444';
+    if (isNearLimit) return '#eab308';
+    return '#22c55e';
   };
 
   return (
-    <Card 
-      title={
-        <Space>
-          <Cloud className="h-4 w-4" />
-          <span>Storage Usage</span>
-          {planName && (
-            <Tag color="#166534" style={{ marginLeft: 8 }}>
-              {planName} Plan
-            </Tag>
+    <Card style={style}>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2">
+            <Cloud className="h-4 w-4" />
+            Storage Usage
+            {planName && (
+              <Badge className="ml-2" style={{ backgroundColor: '#166534' }}>
+                {planName} Plan
+              </Badge>
+            )}
+          </CardTitle>
+          {isUnlimited && (
+            <Badge variant="outline" className="flex items-center gap-1">
+              <Info className="h-3 w-3" />
+              Unlimited
+            </Badge>
           )}
-        </Space>
-      }
-      style={style}
-      extra={
-        isUnlimited ? (
-          <Tag color="green" icon={<Info className="h-4 w-4" />}>
-            Unlimited
-          </Tag>
-        ) : null
-      }
-    >
-      {isUnlimited ? (
-        <Alert
-          message="Unlimited Storage"
-          description={`Your ${planName} plan includes unlimited file storage.`}
-          type="success"
-          showIcon
-          icon={<Cloud className="h-4 w-4" />}
-        />
-      ) : (
-        <>
-          <Row gutter={16} style={{ marginBottom: 24 }}>
-            <Col span={8}>
-              <Statistic
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isUnlimited ? (
+          <Alert>
+            <Cloud className="h-4 w-4" />
+            <AlertTitle>Unlimited Storage</AlertTitle>
+            <AlertDescription>
+              Your {planName} plan includes unlimited file storage.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <>
+            <div className="grid grid-cols-3 gap-4 mb-6">
+              <StatisticCard
                 title="Used"
-                value={currentGB}
-                suffix="GB"
-                prefix={<Database className="h-4 w-4" />}
-                valueStyle={{ color: isAtLimit ? '#cf1322' : '#3f8600' }}
-                precision={2}
+                value={parseFloat(currentGB || 0).toFixed(2)}
+                suffix=" GB"
+                prefix={<Database className="h-4 w-4 inline mr-1" />}
+                className={isAtLimit ? 'text-red-600' : 'text-green-600'}
               />
-            </Col>
-            <Col span={8}>
-              <Statistic
+              <StatisticCard
                 title="Total Limit"
                 value={limitGB}
-                suffix="GB"
+                suffix=" GB"
               />
-            </Col>
-            <Col span={8}>
-              <Statistic
+              <StatisticCard
                 title="Available"
-                value={remainingGB}
-                suffix="GB"
-                valueStyle={{ color: parseFloat(remainingGB) > 0 ? '#3f8600' : '#cf1322' }}
-                precision={2}
+                value={parseFloat(remainingGB || 0).toFixed(2)}
+                suffix=" GB"
+                className={parseFloat(remainingGB || 0) > 0 ? 'text-green-600' : 'text-red-600'}
               />
-            </Col>
-          </Row>
-
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-              <span>Storage Usage</span>
-              <span>
-                <strong>{currentGB} GB</strong> of <strong>{limitGB} GB</strong> ({percentageUsed}%)
-              </span>
             </div>
-            <Progress 
-              percent={percentageUsed} 
-              status={getProgressStatus()}
-              showInfo={false}
-            />
-          </div>
 
-          {isAtLimit && (
-            <Alert
-              message="Storage Limit Reached"
-              description={
-                price100GB ? (
-                  <span>
-                    You've used {currentGB} GB of your {limitGB} GB limit. 
-                    Add more storage for <strong>GHS {price100GB} per 100GB</strong> or upgrade your plan.
-                  </span>
-                ) : (
-                  <span>
-                    You've used {currentGB} GB of your {limitGB} GB limit. 
-                    Please upgrade your plan for more storage.
-                  </span>
-                )
-              }
-              type="error"
-              showIcon
-              style={{ marginBottom: 16 }}
-              action={
-                showUpgradeButton && (
-                  <Button size="small" type="primary" icon={<Rocket className="h-4 w-4" />}>
-                    Upgrade Plan
-                  </Button>
-                )
-              }
-            />
-          )}
-
-          {isNearLimit && !isAtLimit && (
-            <Alert
-              message="Storage Running Low"
-              description={`Only ${remainingGB} GB remaining (${100 - percentageUsed}% available). Consider upgrading soon.`}
-              type="warning"
-              showIcon
-              style={{ marginBottom: 16 }}
-            />
-          )}
-
-          {price100GB && canUploadMore && (
-            <div style={{ 
-              padding: 12, 
-              background: '#f0f5ff', 
-              borderRadius: 6,
-              marginTop: 12 
-            }}>
-              <Tooltip title="Add storage beyond your base limit">
-                <Info className="h-4 w-4" style={{ marginRight: 8, color: '#166534' }} />
-                <span style={{ fontSize: 13 }}>
-                  Need more storage? Add 100GB for <strong>GHS {price100GB}</strong>
+            <div className="mb-4">
+              <div className="flex justify-between mb-2 text-sm">
+                <span>Storage Usage</span>
+                <span>
+                  <strong>{currentGB} GB</strong> of <strong>{limitGB} GB</strong> ({percentageUsed}%)
                 </span>
-              </Tooltip>
+              </div>
+              <div className="relative h-4 w-full overflow-hidden rounded-full bg-secondary">
+                <div
+                  className="h-full w-full flex-1 transition-all"
+                  style={{ 
+                    transform: `translateX(-${100 - (parseFloat(percentageUsed) || 0)}%)`,
+                    backgroundColor: getProgressColor()
+                  }}
+                />
+              </div>
             </div>
-          )}
-        </>
-      )}
+
+            {isAtLimit && (
+              <Alert variant="destructive" className="mb-4">
+                <AlertTitle>Storage Limit Reached</AlertTitle>
+                <AlertDescription>
+                  {price100GB ? (
+                    <span>
+                      You've used {currentGB} GB of your {limitGB} GB limit. 
+                      Add more storage for <strong>GHS {price100GB} per 100GB</strong> or upgrade your plan.
+                    </span>
+                  ) : (
+                    <span>
+                      You've used {currentGB} GB of your {limitGB} GB limit. 
+                      Please upgrade your plan for more storage.
+                    </span>
+                  )}
+                </AlertDescription>
+                {showUpgradeButton && (
+                  <div className="mt-4">
+                    <Button size="sm">
+                      <Rocket className="h-4 w-4 mr-2" />
+                      Upgrade Plan
+                    </Button>
+                  </div>
+                )}
+              </Alert>
+            )}
+
+            {isNearLimit && !isAtLimit && (
+              <Alert className="mb-4">
+                <AlertTitle>Storage Running Low</AlertTitle>
+                <AlertDescription>
+                  Only {remainingGB} GB remaining ({100 - (parseFloat(percentageUsed) || 0)}% available). Consider upgrading soon.
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {price100GB && canUploadMore && (
+              <div className="p-3 bg-blue-50 rounded-md mt-3">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-2 text-sm">
+                        <Info className="h-4 w-4 text-[#166534]" />
+                        <span>
+                          Need more storage? Add 100GB for <strong>GHS {price100GB}</strong>
+                        </span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Add storage beyond your base limit</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              </div>
+            )}
+          </>
+        )}
+      </CardContent>
     </Card>
   );
 }
 
 export default StorageUsageCard;
-

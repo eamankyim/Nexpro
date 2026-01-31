@@ -2,57 +2,67 @@ import React from 'react';
 import dayjs from 'dayjs';
 import { MapPin, Phone, Globe, Mail } from 'lucide-react';
 import logoImage from '../assets/nexus logo for dark bg.png';
+import { API_BASE_URL } from '../services/api';
+
+const formatAddress = (address) => {
+  if (!address) return '';
+  const parts = [
+    address.line1,
+    address.line2,
+    [address.city, address.state, address.postalCode].filter(Boolean).join(', '),
+    address.country
+  ].filter(Boolean);
+  return parts.join('\n');
+};
 
 const PrintableInvoice = ({
   invoice,
   documentTitle = 'INVOICE',
-  documentSubtitle
+  documentSubtitle,
+  organization = {}
 }) => {
   if (!invoice) return null;
 
   const titleText = documentTitle || 'INVOICE';
 
+  // Format logo URL - data URLs (base64) and absolute URLs use as-is; relative paths get API base URL
+  const logoSource = organization?.logoUrl
+    ? (organization.logoUrl.startsWith('data:') || organization.logoUrl.startsWith('http')
+        ? organization.logoUrl
+        : (API_BASE_URL
+            ? `${API_BASE_URL}${organization.logoUrl.startsWith('/') ? '' : '/'}${organization.logoUrl}`
+            : organization.logoUrl))
+    : logoImage;
+
   const companyInfo = {
-    name: 'Nexus Creative Studio',
-    phone: '0591403367',
-    website: 'www.nexuscreativestudio.com',
-    email: 'info@nexuscreativestudios.com',
-    location: 'Oyarifa School Junction, Adenta Municipal'
+    name: organization.name || 'Company Name',
+    phone: organization.phone || '',
+    website: organization.website || '',
+    email: organization.email || '',
+    location: formatAddress(organization.address),
+    invoiceFooter: organization.invoiceFooter || ''
   };
 
   return (
     <>
       <style>{`
         @media print {
-          body * {
-            visibility: hidden;
-          }
-          .printable-invoice, .printable-invoice * {
-            visibility: visible;
-          }
-          .printable-invoice {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
-            padding: 0;
-            margin: 0;
-          }
-          .no-print {
-            display: none !important;
-          }
           @page {
             size: A4;
-            margin: 15mm 20mm;
+            margin: 10mm;
           }
+          
           .printable-invoice {
-            width: 210mm;
-            max-height: 594mm;
-            padding: 0;
-            margin: 0 auto;
-            background: white;
-            page-break-after: auto;
+            width: 100% !important;
+            max-width: 210mm !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: white !important;
+            box-shadow: none !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
+          
           .invoice-header {
             page-break-after: avoid;
             page-break-inside: avoid;
@@ -73,16 +83,30 @@ const PrintableInvoice = ({
             page-break-inside: avoid;
           }
         }
+        
+        /* Screen styles */
         .printable-invoice {
-          width: 210mm;
-          max-height: 594mm;
-          padding: 20mm;
+          width: 100%;
+          max-width: 210mm;
+          padding: 15mm;
           margin: 0 auto;
           background: white;
           font-family: Arial, sans-serif;
           color: #000;
           box-sizing: border-box;
         }
+        
+        /* Ensure content stays together */
+        .invoice-header,
+        .billing-section,
+        .items-table,
+        .totals-section,
+        .notes-section,
+        .footer {
+          page-break-inside: avoid;
+          break-inside: avoid;
+        }
+        
         .invoice-header {
           display: flex;
           justify-content: space-between;
@@ -94,10 +118,10 @@ const PrintableInvoice = ({
           flex: 1;
         }
         .company-logo {
-          max-width: 570px;
-          max-height: 225px;
-          margin-top: -80px;
-          margin-bottom: -55px;
+          max-width: 200px;
+          max-height: 80px;
+          margin-bottom: 10px;
+          object-fit: contain;
         }
         .company-details {
           font-size: 12px;
@@ -229,24 +253,32 @@ const PrintableInvoice = ({
         {/* Header */}
         <div className="invoice-header">
           <div className="company-info">
-            <img src={logoImage} alt="Nexus Creative Studio" className="company-logo" />
+            <img src={logoSource} alt={companyInfo.name} className="company-logo" />
             <div className="company-details">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                <MapPin className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
-                <span>{companyInfo.location}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                <Phone className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
-                <span>{companyInfo.phone}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                <Globe className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
-                <span>{companyInfo.website}</span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Mail className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
-                <span>{companyInfo.email}</span>
-              </div>
+              {companyInfo.location && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <MapPin className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
+                  <span style={{ whiteSpace: 'pre-line' }}>{companyInfo.location}</span>
+                </div>
+              )}
+              {companyInfo.phone && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <Phone className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
+                  <span>{companyInfo.phone}</span>
+                </div>
+              )}
+              {companyInfo.website && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <Globe className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
+                  <span>{companyInfo.website}</span>
+                </div>
+              )}
+              {companyInfo.email && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Mail className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
+                  <span>{companyInfo.email}</span>
+                </div>
+              )}
             </div>
           </div>
           <div className="invoice-info">
@@ -396,10 +428,18 @@ const PrintableInvoice = ({
 
         {/* Footer */}
         <div className="footer">
-          <div>Thank you for your business!</div>
-          <div style={{ marginTop: 5 }}>
-            {companyInfo.name} | {companyInfo.phone} | {companyInfo.email}
-          </div>
+          {companyInfo.invoiceFooter ? (
+            <div>{companyInfo.invoiceFooter}</div>
+          ) : (
+            <>
+              <div>Thank you for your business!</div>
+              <div style={{ marginTop: 5 }}>
+                {companyInfo.name}
+                {companyInfo.phone && ` | ${companyInfo.phone}`}
+                {companyInfo.email && ` | ${companyInfo.email}`}
+              </div>
+            </>
+          )}
         </div>
       </div>
 

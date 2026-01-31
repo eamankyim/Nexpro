@@ -1,33 +1,92 @@
 const { Expense, Vendor, Job, User } = require('../models');
+const ExpenseActivity = require('../models/ExpenseActivity');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
-const config = require('../config/config');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
+const { invalidateAfterMutation } = require('../middleware/cache');
 
-// Generate unique expense number
-const generateExpenseNumber = async (tenantId) => {
+/**
+ * Generate unique expense number with optional transaction for advisory lock (prevents race conditions).
+ * @param {string} tenantId - Tenant UUID
+ * @param {Object} [transaction] - Sequelize transaction (when provided, uses advisory lock and sees uncommitted rows)
+ * @returns {Promise<string>} - e.g. EXP-202601-0001
+ */
+const generateExpenseNumber = async (tenantId, transaction = null) => {
   const date = new Date();
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
-  
-  const lastExpense = await Expense.findOne({
-    where: {
-      tenantId,
-      expenseNumber: {
-        [Op.like]: `EXP-${year}${month}%`
+  const pattern = `EXP-${year}${month}-%`;
+
+  try {
+    if (transaction) {
+      const lockId = `expense_number_${tenantId}_${year}${month}`.replace(/-/g, '_').substring(0, 63);
+      const [lockHash] = await sequelize.query(
+        'SELECT hashtext(:lockId) AS lock_hash',
+        {
+          replacements: { lockId },
+          type: sequelize.QueryTypes.SELECT,
+          transaction
+        }
+      );
+      const lockKey = Math.abs(lockHash?.lock_hash || 0);
+      await sequelize.query('SELECT pg_advisory_xact_lock(:lockKey)', {
+        replacements: { lockKey },
+        type: sequelize.QueryTypes.SELECT,
+        transaction
+      });
+    }
+
+    const queryResults = await sequelize.query(
+      `SELECT "expenseNumber",
+              CAST(SPLIT_PART("expenseNumber", '-', 3) AS INTEGER) AS sequence
+       FROM expenses
+       WHERE "tenantId" = :tenantId
+         AND "expenseNumber" LIKE :pattern
+         AND SPLIT_PART("expenseNumber", '-', 3) ~ '^[0-9]+$'
+       ORDER BY CAST(SPLIT_PART("expenseNumber", '-', 3) AS INTEGER) DESC
+       LIMIT 1`,
+      {
+        replacements: { tenantId, pattern },
+        type: sequelize.QueryTypes.SELECT,
+        transaction: transaction || undefined
       }
-    },
-    order: [['createdAt', 'DESC']]
-  });
+    );
 
-  let sequence = 1;
-  if (lastExpense) {
-    const lastSequence = parseInt(lastExpense.expenseNumber.split('-')[2]);
-    sequence = lastSequence + 1;
+    let sequence = 1;
+    const result = Array.isArray(queryResults) && queryResults.length > 0 ? queryResults[0] : null;
+    if (result && result.sequence != null) {
+      const maxSeq = parseInt(result.sequence, 10);
+      if (!Number.isNaN(maxSeq) && maxSeq >= 1) {
+        sequence = maxSeq + 1;
+      }
+    }
+
+    return `EXP-${year}${month}-${String(sequence).padStart(4, '0')}`;
+  } catch (err) {
+    console.error('[ExpenseNumber] Error with advisory lock/query, using fallback:', err.message);
+    const fallbackResults = await sequelize.query(
+      `SELECT MAX(CAST(SPLIT_PART("expenseNumber", '-', 3) AS INTEGER)) AS max_sequence
+       FROM expenses
+       WHERE "tenantId" = :tenantId
+         AND "expenseNumber" LIKE :pattern
+         AND SPLIT_PART("expenseNumber", '-', 3) ~ '^[0-9]+$'`,
+      {
+        replacements: { tenantId, pattern },
+        type: sequelize.QueryTypes.SELECT
+      }
+    );
+    let sequence = 1;
+    const row = Array.isArray(fallbackResults) && fallbackResults.length > 0 ? fallbackResults[0] : null;
+    if (row?.max_sequence != null) {
+      const maxSeq = parseInt(row.max_sequence, 10);
+      if (!Number.isNaN(maxSeq) && maxSeq >= 1) {
+        sequence = maxSeq + 1;
+      }
+    }
+    return `EXP-${year}${month}-${String(sequence).padStart(4, '0')}`;
   }
-
-  return `EXP-${year}${month}-${String(sequence).padStart(4, '0')}`;
 };
 
 // @desc    Get all expenses for the tenant (all users)
@@ -36,13 +95,12 @@ const generateExpenseNumber = async (tenantId) => {
 // @note    Returns expenses from all users in the tenant, not filtered by current user
 exports.getExpenses = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const category = req.query.category;
     const status = req.query.status;
     const jobId = req.query.jobId;
     const approvalStatus = req.query.approvalStatus;
+    const includeArchived = req.query.includeArchived === 'true';
 
     // Filter by tenant only - returns expenses from all users in the tenant
     const where = applyTenantFilter(req.tenantId, {});
@@ -50,6 +108,10 @@ exports.getExpenses = async (req, res, next) => {
     if (status && status !== 'null') where.status = status;
     if (jobId && jobId !== 'null') where.jobId = jobId;
     if (approvalStatus && approvalStatus !== 'null') where.approvalStatus = approvalStatus;
+    // Exclude archived expenses by default
+    if (!includeArchived) {
+      where.isArchived = false;
+    }
 
     const { count, rows } = await Expense.findAndCountAll({
       where,
@@ -90,7 +152,14 @@ exports.getExpense = async (req, res, next) => {
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job' },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
-        { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
+        { model: User, as: 'approver', attributes: ['id', 'name', 'email'] },
+        { 
+          model: ExpenseActivity, 
+          as: 'activities',
+          include: [{ model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] }],
+          order: [['createdAt', 'DESC']],
+          limit: 50
+        }
       ]
     });
 
@@ -114,62 +183,104 @@ exports.getExpense = async (req, res, next) => {
 // @route   POST /api/expenses
 // @access  Private
 exports.createExpense = async (req, res, next) => {
-  try {
-    const payload = sanitizePayload(req.body);
-    const expenseNumber = await generateExpenseNumber(req.tenantId);
+  const maxRetries = 3;
+  let lastError;
 
-    if (payload.vendorId) {
-      const vendor = await Vendor.findOne({
-        where: applyTenantFilter(req.tenantId, { id: payload.vendorId })
-      });
-      if (!vendor) {
-        return res.status(400).json({
-          success: false,
-          message: 'Vendor not found for this tenant'
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const transaction = await sequelize.transaction();
+    try {
+      const payload = sanitizePayload(req.body);
+      const expenseNumber = await generateExpenseNumber(req.tenantId, transaction);
+
+      if (payload.vendorId) {
+        const vendor = await Vendor.findOne({
+          where: applyTenantFilter(req.tenantId, { id: payload.vendorId }),
+          transaction
         });
+        if (!vendor) {
+          await transaction.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Vendor not found for this tenant'
+          });
+        }
       }
-    }
 
-    if (payload.jobId) {
-      const job = await Job.findOne({
-        where: applyTenantFilter(req.tenantId, { id: payload.jobId })
-      });
-      if (!job) {
-        return res.status(400).json({
-          success: false,
-          message: 'Job not found for this tenant'
+      if (payload.jobId) {
+        const job = await Job.findOne({
+          where: applyTenantFilter(req.tenantId, { id: payload.jobId }),
+          transaction
         });
+        if (!job) {
+          await transaction.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Job not found for this tenant'
+          });
+        }
       }
+
+      const isAdmin = req.user?.role === 'admin';
+      const expense = await Expense.create({
+        ...payload,
+        tenantId: req.tenantId,
+        expenseNumber,
+        submittedBy: req.userId,
+        approvalStatus: isAdmin ? 'approved' : 'draft',
+        approvedBy: isAdmin ? req.userId : null,
+        approvedAt: isAdmin ? new Date() : null
+      }, { transaction });
+
+      const expenseWithDetails = await Expense.findOne({
+        where: applyTenantFilter(req.tenantId, { id: expense.id }),
+        include: [
+          { model: Vendor, as: 'vendor' },
+          { model: Job, as: 'job' },
+          { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
+          { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
+        ],
+        transaction
+      });
+
+      try {
+        await ExpenseActivity.create({
+          expenseId: expense.id,
+          tenantId: req.tenantId,
+          type: 'creation',
+          subject: 'Expense Created',
+          notes: `Expense ${expense.expenseNumber} was created${isAdmin ? ' and auto-approved' : ' as draft'}`,
+          createdBy: req.userId,
+          metadata: {
+            amount: expense.amount,
+            category: expense.category,
+            autoApproved: isAdmin
+          }
+        }, { transaction });
+      } catch (activityErr) {
+        console.error('Failed to create expense activity:', activityErr);
+      }
+
+      await transaction.commit();
+      invalidateAfterMutation(req.tenantId);
+
+      return res.status(201).json({
+        success: true,
+        data: expenseWithDetails
+      });
+    } catch (error) {
+      await transaction.rollback();
+      lastError = error;
+      const isDuplicateExpenseNumber = error.name === 'SequelizeUniqueConstraintError' &&
+        error.errors?.some(e => e.path === 'expenseNumber');
+      if (isDuplicateExpenseNumber && attempt < maxRetries) {
+        continue;
+      }
+      next(error);
+      return;
     }
-    // Auto-approve expenses created by admins
-    const isAdmin = req.user?.role === 'admin';
-    const expense = await Expense.create({
-      ...payload,
-      tenantId: req.tenantId,
-      expenseNumber,
-      submittedBy: req.userId,
-      approvalStatus: isAdmin ? 'approved' : 'draft',
-      approvedBy: isAdmin ? req.userId : null,
-      approvedAt: isAdmin ? new Date() : null
-    });
-
-    const expenseWithDetails = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: expense.id }),
-      include: [
-        { model: Vendor, as: 'vendor' },
-        { model: Job, as: 'job' },
-        { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
-        { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
-      ]
-    });
-
-    res.status(201).json({
-      success: true,
-      data: expenseWithDetails
-    });
-  } catch (error) {
-    next(error);
   }
+
+  next(lastError);
 };
 
 // @desc    Create multiple expenses (bulk)
@@ -283,8 +394,8 @@ exports.createBulkExpenses = async (req, res, next) => {
         }
       }
 
-      const expenseNumber = await generateExpenseNumber(req.tenantId);
-      
+      const expenseNumber = await generateExpenseNumber(req.tenantId, transaction);
+
       const expense = await Expense.create({
         ...finalExpenseData,
         tenantId: req.tenantId,
@@ -321,6 +432,27 @@ exports.createBulkExpenses = async (req, res, next) => {
       ],
       order: [['createdAt', 'DESC']]
     });
+
+    // Create creation activities for all expenses
+    try {
+      for (const expense of createdExpenses) {
+        await ExpenseActivity.create({
+          expenseId: expense.id,
+          tenantId: req.tenantId,
+          type: 'creation',
+          subject: 'Expense Created',
+          notes: `Expense ${expense.expenseNumber} was created${isAdmin ? ' and auto-approved' : ' as draft'}`,
+          createdBy: req.userId,
+          metadata: {
+            amount: expense.amount,
+            category: expense.category,
+            autoApproved: isAdmin
+          }
+        });
+      }
+    } catch (error) {
+      console.error('Failed to create expense activities:', error);
+    }
 
     res.status(201).json({
       success: true,
@@ -375,15 +507,92 @@ exports.updateExpense = async (req, res, next) => {
       }
     }
 
+    const previousStatus = expense.approvalStatus;
+    const previousAmount = expense.amount;
+    const previousCategory = expense.category;
+    const previousStatusVal = expense.status;
+    const previousDescription = expense.description;
+    const previousPaymentMethod = expense.paymentMethod;
+    const previousVendorId = expense.vendorId;
+    const previousJobId = expense.jobId;
+
     await expense.update(updatePayload);
 
     const updatedExpense = await Expense.findOne({
       where: applyTenantFilter(req.tenantId, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
-        { model: Job, as: 'job' }
+        { model: Job, as: 'job' },
+        { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
+        { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
       ]
     });
+
+    try {
+      const changes = [];
+      if (updatePayload.amount != null && String(updatePayload.amount) !== String(previousAmount)) {
+        changes.push(`Amount: ${previousAmount} → ${updatePayload.amount}`);
+      }
+      if (updatePayload.category != null && updatePayload.category !== previousCategory) {
+        changes.push(`Category: ${previousCategory || '—'} → ${updatePayload.category}`);
+      }
+      if (updatePayload.status != null && updatePayload.status !== previousStatusVal) {
+        changes.push(`Status: ${previousStatusVal || '—'} → ${updatePayload.status}`);
+      }
+      if (updatePayload.approvalStatus != null && updatePayload.approvalStatus !== previousStatus) {
+        changes.push(`Approval Status: ${previousStatus || '—'} → ${updatePayload.approvalStatus}`);
+      }
+      if (updatePayload.description !== undefined && String(updatePayload.description || '') !== String(previousDescription || '')) {
+        changes.push('Description updated');
+      }
+      if (updatePayload.paymentMethod !== undefined && (updatePayload.paymentMethod || null) !== (previousPaymentMethod || null)) {
+        changes.push(`Payment method: ${previousPaymentMethod || '—'} → ${updatePayload.paymentMethod || '—'}`);
+      }
+      if (updatePayload.vendorId !== undefined && (updatePayload.vendorId || null) !== (previousVendorId || null)) {
+        changes.push('Vendor updated');
+      }
+      if (updatePayload.jobId !== undefined && (updatePayload.jobId || null) !== (previousJobId || null)) {
+        changes.push('Job updated');
+      }
+
+      const metadata = {
+        previousData: {
+          amount: previousAmount,
+          category: previousCategory,
+          status: previousStatusVal,
+          approvalStatus: previousStatus,
+          description: previousDescription,
+          paymentMethod: previousPaymentMethod,
+          vendorId: previousVendorId,
+          jobId: previousJobId
+        },
+        newData: {
+          amount: updatePayload.amount,
+          category: updatePayload.category,
+          status: updatePayload.status,
+          approvalStatus: updatePayload.approvalStatus,
+          description: updatePayload.description,
+          paymentMethod: updatePayload.paymentMethod,
+          vendorId: updatePayload.vendorId,
+          jobId: updatePayload.jobId
+        }
+      };
+
+      await ExpenseActivity.create({
+        expenseId: expense.id,
+        tenantId: req.tenantId,
+        type: 'update',
+        subject: 'Expense Updated',
+        notes: changes.length > 0 ? changes.join(', ') : 'Expense details were updated',
+        createdBy: req.user?.id ?? null,
+        metadata
+      });
+    } catch (error) {
+      console.error('Failed to create expense activity:', error);
+    }
+
+    // Invalidate cache after updating expense
+    invalidateAfterMutation(req.tenantId);
 
     res.status(200).json({
       success: true,
@@ -397,7 +606,10 @@ exports.updateExpense = async (req, res, next) => {
 // @desc    Delete expense
 // @route   DELETE /api/expenses/:id
 // @access  Private
-exports.deleteExpense = async (req, res, next) => {
+// @desc    Archive expense (soft delete)
+// @route   PUT /api/expenses/:id/archive
+// @access  Private
+exports.archiveExpense = async (req, res, next) => {
   try {
     const expense = await Expense.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id })
@@ -410,11 +622,46 @@ exports.deleteExpense = async (req, res, next) => {
       });
     }
 
-    await expense.destroy();
+    if (expense.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Expense is already archived'
+      });
+    }
+
+    await expense.update({ isArchived: true });
+
+    // Create archive activity
+    try {
+      await ExpenseActivity.create({
+        expenseId: expense.id,
+        tenantId: req.tenantId,
+        type: 'note',
+        subject: 'Expense Archived',
+        notes: `Expense ${expense.expenseNumber} was archived`,
+        createdBy: req.userId,
+        metadata: {
+          archived: true
+        }
+      });
+    } catch (error) {
+      console.error('Failed to create archive activity:', error);
+    }
+
+    const updatedExpense = await Expense.findOne({
+      where: applyTenantFilter(req.tenantId, { id: expense.id }),
+      include: [
+        { model: Vendor, as: 'vendor' },
+        { model: Job, as: 'job' },
+        { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
+        { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
+      ]
+    });
 
     res.status(200).json({
       success: true,
-      data: {}
+      message: 'Expense archived successfully',
+      data: updatedExpense
     });
   } catch (error) {
     next(error);
@@ -437,8 +684,12 @@ exports.getExpenseStats = async (req, res, next) => {
 
     const dateFilters = {};
     if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
       dateFilters.expenseDate = {
-        [Op.between]: [new Date(startDate), new Date(endDate)]
+        [Op.between]: [start, end]
       };
     }
 
@@ -510,9 +761,7 @@ exports.getExpenseStats = async (req, res, next) => {
 exports.getExpensesByJob = async (req, res, next) => {
   try {
     const { jobId } = req.params;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req, { defaultPageSize: 10 });
 
     const job = await Job.findOne({
       where: applyTenantFilter(req.tenantId, { id: jobId })
@@ -597,6 +846,20 @@ exports.submitExpense = async (req, res, next) => {
     // Log activity
     try {
       await activityLogger.logExpenseSubmitted(updatedExpense, req.user?.id || null);
+      
+      // Create ExpenseActivity record
+      await ExpenseActivity.create({
+        expenseId: expense.id,
+        tenantId: req.tenantId,
+        type: 'submission',
+        subject: 'Expense Submitted for Approval',
+        notes: `Expense ${expense.expenseNumber} was submitted for approval`,
+        createdBy: req.userId,
+        metadata: {
+          previousStatus: 'draft',
+          newStatus: 'pending_approval'
+        }
+      });
     } catch (error) {
       console.error('Failed to log expense submission activity:', error);
     }
@@ -653,6 +916,21 @@ exports.approveExpense = async (req, res, next) => {
     // Log activity
     try {
       await activityLogger.logExpenseApproved(updatedExpense, req.user?.id || null);
+      
+      // Create ExpenseActivity record
+      await ExpenseActivity.create({
+        expenseId: expense.id,
+        tenantId: req.tenantId,
+        type: 'approval',
+        subject: 'Expense Approved',
+        notes: `Expense ${expense.expenseNumber} was approved`,
+        createdBy: req.userId,
+        metadata: {
+          previousStatus: 'pending_approval',
+          newStatus: 'approved',
+          approvedBy: req.user?.name || req.user?.email || 'Unknown'
+        }
+      });
     } catch (error) {
       console.error('Failed to log expense approval activity:', error);
     }
@@ -712,6 +990,22 @@ exports.rejectExpense = async (req, res, next) => {
     // Log activity
     try {
       await activityLogger.logExpenseRejected(updatedExpense, rejectionReason, req.user?.id || null);
+      
+      // Create ExpenseActivity record
+      await ExpenseActivity.create({
+        expenseId: expense.id,
+        tenantId: req.tenantId,
+        type: 'rejection',
+        subject: 'Expense Rejected',
+        notes: `Expense ${expense.expenseNumber} was rejected${rejectionReason ? `: ${rejectionReason}` : ''}`,
+        createdBy: req.userId,
+        metadata: {
+          previousStatus: 'pending_approval',
+          newStatus: 'rejected',
+          rejectionReason: rejectionReason || 'No reason provided',
+          rejectedBy: req.user?.name || req.user?.email || 'Unknown'
+        }
+      });
     } catch (error) {
       console.error('Failed to log expense rejection activity:', error);
     }
@@ -721,6 +1015,65 @@ exports.rejectExpense = async (req, res, next) => {
       message: 'Expense rejected',
       data: updatedExpense
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get expense activities
+// @route   GET /api/expenses/:id/activities
+// @access  Private
+exports.getExpenseActivities = async (req, res, next) => {
+  try {
+    const expense = await Expense.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
+    if (!expense) {
+      return res.status(404).json({ success: false, message: 'Expense not found' });
+    }
+
+    const activities = await ExpenseActivity.findAll({
+      where: applyTenantFilter(req.tenantId, { expenseId: expense.id }),
+      order: [['createdAt', 'DESC']],
+      include: [{ model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] }]
+    });
+
+    res.status(200).json({ success: true, data: activities });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Add expense activity
+// @route   POST /api/expenses/:id/activities
+// @access  Private
+exports.addExpenseActivity = async (req, res, next) => {
+  try {
+    const expense = await Expense.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
+    if (!expense) {
+      return res.status(404).json({ success: false, message: 'Expense not found' });
+    }
+
+    const payload = sanitizePayload(req.body);
+
+    const activity = await ExpenseActivity.create({
+      expenseId: expense.id,
+      tenantId: req.tenantId,
+      type: payload.type || 'note',
+      subject: payload.subject || null,
+      notes: payload.notes || null,
+      createdBy: req.userId,
+      metadata: payload.metadata || {}
+    });
+
+    const populatedActivity = await ExpenseActivity.findOne({
+      where: applyTenantFilter(req.tenantId, { id: activity.id }),
+      include: [{ model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] }]
+    });
+
+    res.status(201).json({ success: true, data: populatedActivity });
   } catch (error) {
     next(error);
   }

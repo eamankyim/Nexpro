@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, Empty, List, Popover, Space, Spin, Tag, Typography } from 'antd';
 import { Bell, CheckCircle, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -6,6 +7,12 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import notificationService from '../services/notificationService';
 import { useAuth } from '../context/AuthContext';
+import { Button as ShadcnButton } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+
+const NOTIFICATION_SUMMARY_KEY = ['notifications', 'summary'];
+const SUMMARY_STALE_MS = 60 * 1000;
+const SUMMARY_REFETCH_MS = 60 * 1000;
 
 dayjs.extend(relativeTime);
 
@@ -14,15 +21,42 @@ const PAGE_SIZE = 10;
 
 const NotificationBell = () => {
   const [open, setOpen] = useState(false);
-  const [summary, setSummary] = useState({ total: 0, unread: 0, recent: 0 });
   const [notifications, setNotifications] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalPages: 1 });
-  const [loadingSummary, setLoadingSummary] = useState(false);
   const [loadingList, setLoadingList] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const { activeTenantId } = useAuth();
+  const queryClient = useQueryClient();
 
   const navigate = useNavigate();
+
+  const {
+    data: summaryResponse,
+    isLoading: loadingSummary,
+    isError: summaryError,
+  } = useQuery({
+    queryKey: [...NOTIFICATION_SUMMARY_KEY, activeTenantId],
+    queryFn: () => notificationService.getSummary(),
+    enabled: !!activeTenantId,
+    staleTime: SUMMARY_STALE_MS,
+    refetchInterval: SUMMARY_REFETCH_MS,
+    retry: (failureCount, error) => {
+      const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
+      return !isNetworkError && failureCount < 2;
+    },
+  });
+
+  const summary = useMemo(() => {
+    if (!activeTenantId || summaryError) {
+      return { total: 0, unread: 0, recent: 0 };
+    }
+    const d = summaryResponse?.data;
+    return {
+      total: d?.total ?? 0,
+      unread: d?.unread ?? 0,
+      recent: d?.recent ?? 0,
+    };
+  }, [activeTenantId, summaryError, summaryResponse?.data]);
 
   const hasUnread = Boolean(summary?.unread);
   const hasMore = useMemo(() => {
@@ -30,36 +64,6 @@ const NotificationBell = () => {
     const currentPage = pagination?.page ?? 1;
     return currentPage < totalPages;
   }, [pagination]);
-
-  const fetchSummary = useCallback(async () => {
-    if (!activeTenantId) {
-      setSummary({ total: 0, unread: 0, recent: 0 });
-      return;
-    }
-
-    setLoadingSummary(true);
-    try {
-      const response = await notificationService.getSummary();
-      if (response?.success && response?.data) {
-        setSummary({
-          total: response.data.total ?? 0,
-          unread: response.data.unread ?? 0,
-          recent: response.data.recent ?? 0,
-        });
-      } else {
-        setSummary({ total: 0, unread: 0, recent: 0 });
-      }
-    } catch (error) {
-      // Silently handle network errors (backend unavailable)
-      const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
-      if (!isNetworkError) {
-        console.error('Failed to load notification summary', error);
-      }
-      setSummary({ total: 0, unread: 0, recent: 0 });
-    } finally {
-      setLoadingSummary(false);
-    }
-  }, [activeTenantId]);
 
   const fetchNotifications = useCallback(
     async (pageToLoad = 1, append = false) => {
@@ -124,20 +128,16 @@ const NotificationBell = () => {
                 : item
             )
           );
-          setSummary((prev) => ({
-            ...prev,
-            unread: Math.max(0, (prev.unread ?? 0) - 1)
-          }));
+          queryClient.invalidateQueries({ queryKey: NOTIFICATION_SUMMARY_KEY });
         }
       } catch (error) {
-        // Silently handle network errors (backend unavailable)
         const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
         if (!isNetworkError) {
           console.error('Failed to mark notification as read', error);
         }
       }
     },
-    []
+    [queryClient]
   );
 
   const markAllRead = useCallback(async () => {
@@ -189,16 +189,6 @@ const NotificationBell = () => {
     const nextPage = (pagination?.page ?? 1) + 1;
     fetchNotifications(nextPage, true);
   }, [fetchNotifications, pagination]);
-
-  useEffect(() => {
-    fetchSummary();
-    const interval = activeTenantId ? setInterval(fetchSummary, 60000) : null;
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
-  }, [fetchSummary, activeTenantId]);
 
   useEffect(() => {
     setNotifications([]);
@@ -307,13 +297,26 @@ const NotificationBell = () => {
         overflowCount={99}
         offset={[-2, 6]}
       >
-        <Button
-          type="text"
-          icon={<Bell className="h-5 w-5" />}
-          loading={loadingSummary}
-          className="bg-gray-100 hover:bg-gray-200"
-          style={{ padding: '0 8px' }}
-        />
+        <ShadcnButton
+          variant="ghost"
+          size="icon"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleOpenChange(!open);
+          }}
+          disabled={loadingSummary}
+          className={cn(
+            "relative bg-gray-100 hover:bg-gray-200 rounded-full",
+            "h-11 w-11 min-h-[44px] min-w-[44px]",
+            "flex items-center justify-center"
+          )}
+        >
+          {loadingSummary ? (
+            <div className="h-5 w-5 border-2 border-gray-400 border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <Bell className="h-5 w-5" />
+          )}
+        </ShadcnButton>
       </Badge>
     </Popover>
   );

@@ -1,4 +1,4 @@
-# NEXPro - Printing Press Management System - Setup Guide
+# ShopWISE - Business Management System - Setup Guide
 
 ## 📋 Prerequisites
 

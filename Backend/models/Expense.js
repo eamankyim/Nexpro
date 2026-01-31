@@ -17,7 +17,6 @@ const Expense = sequelize.define('Expense', {
   },
   expenseNumber: {
     type: DataTypes.STRING,
-    unique: true,
     allowNull: false
   },
   vendorId: {
@@ -61,8 +60,7 @@ const Expense = sequelize.define('Expense', {
   approvalStatus: {
     type: DataTypes.ENUM('draft', 'pending_approval', 'approved', 'rejected'),
     defaultValue: 'draft',
-    allowNull: false,
-    comment: 'Approval status for expense request'
+    allowNull: false
   },
   submittedBy: {
     type: DataTypes.UUID,
@@ -96,10 +94,17 @@ const Expense = sequelize.define('Expense', {
   },
   notes: {
     type: DataTypes.TEXT
+  },
+  isArchived: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
   }
 }, {
   timestamps: true,
-  tableName: 'expenses'
+  tableName: 'expenses',
+  indexes: [
+    { unique: true, fields: ['tenantId', 'expenseNumber'], name: 'expenses_tenantId_expenseNumber_key' }
+  ]
 });
 
 module.exports = Expense;

@@ -5,9 +5,7 @@ const { applyTenantFilter } = require('../utils/tenantUtils');
 
 exports.getNotifications = async (req, res, next) => {
   try {
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || config.pagination.defaultPageSize;
-    const offset = (page - 1) * limit;
+    const { page, limit, offset } = getPagination(req);
     const type = req.query.type;
     const unreadOnly = req.query.unread === 'true';
 
@@ -143,13 +141,6 @@ exports.getNotificationSummary = async (req, res, next) => {
     });
 
     const summary = totals[0]?.toJSON() || { total: 0, unread: 0 };
-
-    console.log('[Notifications] getNotificationSummary', {
-      userId: req.user.id,
-      total: summary.total,
-      unread: summary.unread,
-      recent
-    });
 
     res.status(200).json({
       success: true,
