@@ -1,5 +1,5 @@
 const { sequelize } = require('../config/database');
-const { Job, Expense, Customer, Vendor, Invoice, JobItem, Lead } = require('../models');
+const { Job, Expense, Customer, Vendor, Invoice, JobItem, Lead, Sale, SaleItem, Product, Prescription, PrescriptionItem, Drug, InventoryMovement, InventoryItem, Payment } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const config = require('../config/config');
@@ -44,156 +44,37 @@ exports.getRevenueReport = async (req, res, next) => {
       logReport('[Revenue Report] No date filter - fetching all data');
     }
 
-    // Revenue by time period - using Invoice.amountPaid and Invoice.paidDate (same as Dashboard)
-    // Support multiple grouping: hour (2-hour intervals), day, week, month
-    let revenueByPeriod = [];
-    logReport('[Revenue Report] Fetching revenue by period, groupBy:', groupBy);
-    
-    if (groupBy === 'hour') {
-      // Group by 2-hour intervals (0-2, 2-4, 4-6, ..., 22-24)
-      try {
-        revenueByPeriod = await sequelize.query(`
-          SELECT 
-            FLOOR(EXTRACT(HOUR FROM "paidDate") / 2) * 2 as "hour",
-            SUM("amountPaid") as "totalRevenue",
-            COUNT("id") as "count"
-          FROM "invoices"
-          WHERE "tenantId" = :tenantId
-            AND "status" = 'paid'
-            ${hasDateFilter(dateFilter) ? `AND "paidDate" BETWEEN :startDate AND :endDate` : ''}
-          GROUP BY FLOOR(EXTRACT(HOUR FROM "paidDate") / 2) * 2
-          ORDER BY FLOOR(EXTRACT(HOUR FROM "paidDate") / 2) * 2 ASC
-        `, {
-          replacements: {
-            tenantId: req.tenantId,
-            ...(hasDateFilter(dateFilter) && {
-              startDate: dateFilter[Op.between][0],
-              endDate: dateFilter[Op.between][1]
-            })
-          },
-          type: sequelize.QueryTypes.SELECT
-        });
-        logReport('[Revenue Report] Revenue by period (hour - 2hr intervals) fetched:', revenueByPeriod.length, 'records');
-      } catch (periodError) {
-        logReportError('[Revenue Report] Error fetching revenue by period (hour):', periodError);
-        throw periodError;
-      }
-    } else if (groupBy === 'day') {
-      try {
-        revenueByPeriod = await Invoice.findAll({
-        attributes: [
-          [sequelize.literal(`CAST("paidDate" AS DATE)`), 'date'],
-          [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'],
-          [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']
-        ],
-          where: applyTenantFilter(req.tenantId, {
-            status: 'paid',
-            ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
-          }),
-          group: [sequelize.literal(`CAST("paidDate" AS DATE)`)],
-          order: [[sequelize.literal(`CAST("paidDate" AS DATE)`), 'ASC']],
-          raw: true
-        });
-        logReport('[Revenue Report] Revenue by period (day) fetched:', revenueByPeriod.length, 'records');
-      } catch (periodError) {
-        logReportError('[Revenue Report] Error fetching revenue by period (day):', periodError);
-        throw periodError;
-      }
-    } else if (groupBy === 'week') {
-      // Group by week number within the month
-      try {
-        revenueByPeriod = await sequelize.query(`
-          SELECT 
-            EXTRACT(WEEK FROM "paidDate") - EXTRACT(WEEK FROM DATE_TRUNC('month', "paidDate")) + 1 as "week",
-            DATE_TRUNC('month', "paidDate") as "month",
-            SUM("amountPaid") as "totalRevenue",
-            COUNT("id") as "count"
-          FROM "invoices"
-          WHERE "tenantId" = :tenantId
-            AND "status" = 'paid'
-            ${hasDateFilter(dateFilter) ? `AND "paidDate" BETWEEN :startDate AND :endDate` : ''}
-          GROUP BY EXTRACT(WEEK FROM "paidDate") - EXTRACT(WEEK FROM DATE_TRUNC('month', "paidDate")) + 1, DATE_TRUNC('month', "paidDate")
-          ORDER BY DATE_TRUNC('month', "paidDate") ASC, "week" ASC
-        `, {
-          replacements: {
-            tenantId: req.tenantId,
-            ...(hasDateFilter(dateFilter) && {
-              startDate: dateFilter[Op.between][0],
-              endDate: dateFilter[Op.between][1]
-            })
-          },
-          type: sequelize.QueryTypes.SELECT
-        });
-        logReport('[Revenue Report] Revenue by period (week) fetched:', revenueByPeriod.length, 'records');
-      } catch (periodError) {
-        logReportError('[Revenue Report] Error fetching revenue by period (week):', periodError);
-        throw periodError;
-      }
-    } else if (groupBy === 'month') {
-      try {
-        revenueByPeriod = await Invoice.findAll({
-        attributes: [
-          [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"')), 'month'],
-          [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paidDate"')), 'year'],
-          [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'],
-          [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']
-        ],
-          where: applyTenantFilter(req.tenantId, {
-            status: 'paid',
-            ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
-          }),
-          group: [
-            sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paidDate"')),
-            sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"'))
-          ],
-          order: [
-            [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paidDate"')), 'ASC'],
-            [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"')), 'ASC']
-          ],
-          raw: true
-        });
-        logReport('[Revenue Report] Revenue by period (month) fetched:', revenueByPeriod.length, 'records');
-      } catch (periodError) {
-        logReportError('[Revenue Report] Error fetching revenue by period (month):', periodError);
-        throw periodError;
-      }
-    }
+    const hasDateFilterValue = hasDateFilter(dateFilter);
+    const revWhere = applyTenantFilter(req.tenantId, {
+      status: 'paid',
+      ...(hasDateFilterValue && { paidDate: dateFilter })
+    });
 
-    // Revenue by customer
-    logReport('[Revenue Report] Fetching revenue by customer');
-    let revenueByCustomer = [];
-    try {
-      revenueByCustomer = await Invoice.findAll({
-        attributes: [
-          'customerId',
-          [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'],
-          [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'paymentCount']
-        ],
-        where: applyTenantFilter(req.tenantId, {
-          status: 'paid',
-          ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
-        }),
-        include: [{
-          model: Customer,
-          as: 'customer',
-          attributes: ['id', 'name', 'company', 'email']
-        }],
-        group: ['customerId', 'customer.id'],
-        order: [[sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'DESC']],
-        limit: 20
+    const getRevenueByPeriod = () => {
+      if (groupBy === 'hour') {
+        return sequelize.query(
+          `SELECT FLOOR(EXTRACT(HOUR FROM "paidDate")/2)*2 as "hour", SUM("amountPaid") as "totalRevenue", COUNT("id") as "count" FROM "invoices" WHERE "tenantId"=:tenantId AND status='paid' ${hasDateFilterValue ? 'AND "paidDate" BETWEEN :startDate AND :endDate' : ''} GROUP BY 1 ORDER BY 1`,
+          { replacements: { tenantId: req.tenantId, ...(hasDateFilterValue && { startDate: dateFilter[Op.between][0], endDate: dateFilter[Op.between][1] }) }, type: sequelize.QueryTypes.SELECT }
+        );
+      }
+      if (groupBy === 'week') {
+        return sequelize.query(
+          `SELECT EXTRACT(WEEK FROM "paidDate")-EXTRACT(WEEK FROM DATE_TRUNC('month',"paidDate"))+1 as "week", DATE_TRUNC('month',"paidDate") as "month", SUM("amountPaid") as "totalRevenue", COUNT("id") as "count" FROM "invoices" WHERE "tenantId"=:tenantId AND status='paid' ${hasDateFilterValue ? 'AND "paidDate" BETWEEN :startDate AND :endDate' : ''} GROUP BY 1,2 ORDER BY 2,1`,
+          { replacements: { tenantId: req.tenantId, ...(hasDateFilterValue && { startDate: dateFilter[Op.between][0], endDate: dateFilter[Op.between][1] }) }, type: sequelize.QueryTypes.SELECT }
+        );
+      }
+      return Invoice.findAll({
+        attributes: groupBy === 'month'
+          ? [[sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"')), 'month'], [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paidDate"')), 'year'], [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']]
+          : [[sequelize.literal(`CAST("paidDate" AS DATE)`), 'date'], [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']],
+        where: revWhere,
+        group: groupBy === 'month' ? [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paidDate"')), sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"'))] : [sequelize.literal(`CAST("paidDate" AS DATE)`)],
+        order: groupBy === 'month' ? [[sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paidDate"')), 'ASC'], [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"')), 'ASC']] : [[sequelize.literal(`CAST("paidDate" AS DATE)`), 'ASC']],
+        raw: true
       });
-      logReport('[Revenue Report] Revenue by customer fetched:', revenueByCustomer.length, 'customers');
-      } catch (customerError) {
-      logReportError('[Revenue Report] Error fetching revenue by customer:', customerError);
-      throw customerError;
-    }
+    };
 
-    // Revenue by payment method - using Invoice.paymentMethod if available, otherwise skip
-    logReport('[Revenue Report] Fetching revenue by payment method');
-    // Revenue by payment method - Note: Invoice model doesn't have paymentMethod column
-    // This is disabled until the column is added to the Invoice model
     let revenueByMethod = [];
-    // Commented out because paymentMethod column doesn't exist in invoices table
     // try {
     //   revenueByMethod = await Invoice.findAll({
     //     attributes: [
@@ -215,43 +96,18 @@ exports.getRevenueReport = async (req, res, next) => {
     //   revenueByMethod = [];
     // }
 
-    // Total revenue - using Invoice.sum('amountPaid') where status = 'paid' (same method as Dashboard)
-    logReport('[Revenue Report] Calculating total revenue (same method as Dashboard)');
-    
-    // Check if dateFilter has content - Op.between is a Symbol, so Object.keys() won't include it
-    const hasDateFilterValue = hasDateFilter(dateFilter);
-    logReport('[Revenue Report] Has date filter?', hasDateFilterValue);
-    logReport('[Revenue Report] Date filter object:', dateFilter);
-    logReport('[Revenue Report] Date filter keys:', Object.keys(dateFilter));
-    logReport('[Revenue Report] Date filter Op.between:', dateFilter[Op.between]);
-    
-    const whereClause = applyTenantFilter(req.tenantId, {
-      status: 'paid',
-      ...(hasDateFilterValue && { paidDate: dateFilter })
-    });
-    logReport('[Revenue Report] Where clause for total revenue (paidDate included?):', whereClause.paidDate ? 'YES' : 'NO');
-    
-    // Also check how many invoices match this filter
-    const invoiceCount = await Invoice.count({
-      where: whereClause
-    });
-    logReport('[Revenue Report] Number of invoices matching filter:', invoiceCount);
-    
-    // Check a sample of invoice dates to debug
-    const sampleInvoices = await Invoice.findAll({
-      attributes: ['id', 'amountPaid', 'paidDate', 'status'],
-      where: applyTenantFilter(req.tenantId, {
-        status: 'paid'
+    const [revenueByPeriod, revenueByCustomer, totalRevenue] = await Promise.all([
+      getRevenueByPeriod(),
+      Invoice.findAll({
+        attributes: ['customerId', [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'paymentCount']],
+        where: revWhere,
+        include: [{ model: Customer, as: 'customer', attributes: ['id', 'name', 'company'] }],
+        group: ['customerId', 'customer.id'],
+        order: [[sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'DESC']],
+        limit: 20
       }),
-      limit: 5,
-      order: [['paidDate', 'DESC']],
-      raw: true
-    });
-    logReport('[Revenue Report] Sample invoices (first 5 paid invoices):', sampleInvoices);
-    
-    const totalRevenue = await Invoice.sum('amountPaid', {
-      where: whereClause
-    }) || 0;
+      Invoice.sum('amountPaid', { where: revWhere })
+    ]);
     logReport('[Revenue Report] Total revenue:', totalRevenue, '(from Invoice.amountPaid where status = paid)');
 
     const responseData = {
@@ -296,80 +152,61 @@ exports.getExpenseReport = async (req, res, next) => {
       };
     }
 
-    // Expenses by category
-    const expensesByCategory = await Expense.findAll({
-      attributes: [
-        'category',
-        [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
-        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
-      ],
-      where: applyTenantFilter(req.tenantId, {
-        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
-      }),
-      group: ['category'],
-      order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
+    const expenseWhere = applyTenantFilter(req.tenantId, {
+      ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
     });
 
-    // Expenses by vendor
-    const expensesByVendor = await Expense.findAll({
-      attributes: [
-        'vendorId',
-        [sequelize.fn('SUM', sequelize.literal('"Expense"."amount"')), 'totalAmount'],
-        [sequelize.fn('COUNT', sequelize.literal('"Expense"."id"')), 'count']
-      ],
-      where: applyTenantFilter(req.tenantId, {
-        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
+    const [expensesByCategory, expensesByVendor, expensesByMethod, expensesByDate, totalExpenses] = await Promise.all([
+      Expense.findAll({
+        attributes: [
+          'category',
+          [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: expenseWhere,
+        group: ['category'],
+        order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
       }),
-      include: [{
-        model: Vendor,
-        as: 'vendor',
-        attributes: ['id', 'name', 'company', 'email']
-      }],
-      group: ['vendorId', 'vendor.id'],
-      order: [[sequelize.fn('SUM', sequelize.literal('"Expense"."amount"')), 'DESC']],
-      limit: 20
-    });
-
-    // Expenses by payment method
-    const expensesByMethod = await Expense.findAll({
-      attributes: [
-        'paymentMethod',
-        [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
-        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
-      ],
-      where: applyTenantFilter(req.tenantId, {
-        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
+      Expense.findAll({
+        attributes: [
+          'vendorId',
+          [sequelize.fn('SUM', sequelize.literal('"Expense"."amount"')), 'totalAmount'],
+          [sequelize.fn('COUNT', sequelize.literal('"Expense"."id"')), 'count']
+        ],
+        where: expenseWhere,
+        include: [{ model: Vendor, as: 'vendor', attributes: ['id', 'name', 'company'] }],
+        group: ['vendorId', 'vendor.id'],
+        order: [[sequelize.fn('SUM', sequelize.literal('"Expense"."amount"')), 'DESC']],
+        limit: 20
       }),
-      group: ['paymentMethod'],
-      order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
-    });
-
-    // Expenses by date
-    const expensesByDate = await Expense.findAll({
-      attributes: [
-        [sequelize.literal(`CAST("expenseDate" AS DATE)`), 'date'],
-        [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
-        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
-      ],
-      where: applyTenantFilter(req.tenantId, {
-        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
+      Expense.findAll({
+        attributes: [
+          'paymentMethod',
+          [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: expenseWhere,
+        group: ['paymentMethod'],
+        order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
       }),
-      group: [sequelize.literal(`CAST("expenseDate" AS DATE)`)],
-      order: [[sequelize.literal(`CAST("expenseDate" AS DATE)`), 'ASC']],
-      raw: true
-    });
-
-    // Total expenses
-    const totalExpenses = await Expense.sum('amount', {
-      where: applyTenantFilter(req.tenantId, {
-        ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
-      })
-    }) || 0;
+      Expense.findAll({
+        attributes: [
+          [sequelize.literal(`CAST("expenseDate" AS DATE)`), 'date'],
+          [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: expenseWhere,
+        group: [sequelize.literal(`CAST("expenseDate" AS DATE)`)],
+        order: [[sequelize.literal(`CAST("expenseDate" AS DATE)`), 'ASC']],
+        raw: true
+      }),
+      Expense.sum('amount', { where: expenseWhere })
+    ]);
 
     res.status(200).json({
       success: true,
       data: {
-        totalExpenses: parseFloat(totalExpenses),
+        totalExpenses: parseFloat(totalExpenses || 0),
         byCategory: expensesByCategory,
         byVendor: expensesByVendor,
         byMethod: expensesByMethod,
@@ -795,6 +632,33 @@ exports.getSalesReport = async (req, res, next) => {
       })
     }) || 0;
 
+    // Sales by payment method (from Sale model – shop/pharmacy; used for Revenue by Channel fallback)
+    let salesByPaymentMethod = [];
+    try {
+      const saleWhere = applyTenantFilter(req.tenantId, {
+        status: 'completed',
+        ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
+      });
+      salesByPaymentMethod = await Sale.findAll({
+        attributes: [
+          'paymentMethod',
+          [sequelize.fn('SUM', sequelize.col('total')), 'totalAmount'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: saleWhere,
+        group: ['paymentMethod'],
+        order: [[sequelize.fn('SUM', sequelize.col('total')), 'DESC']],
+        raw: true
+      });
+      salesByPaymentMethod = (salesByPaymentMethod || []).map((row) => ({
+        paymentMethod: row.paymentMethod || 'other',
+        totalAmount: parseFloat(row.totalAmount || 0),
+        count: parseInt(row.count || 0, 10)
+      }));
+    } catch (e) {
+      logReportError('Sales by payment method (Sale model):', e);
+    }
+
     res.status(200).json({
       success: true,
       data: {
@@ -804,6 +668,7 @@ exports.getSalesReport = async (req, res, next) => {
         byCustomer: salesByCustomer,
         byDate: salesByDate,
         byStatus: salesByStatus,
+        byPaymentMethod: salesByPaymentMethod,
         byPeriod: salesByDate, // Add byPeriod alias for frontend compatibility
         jobsTrendByDate: jobsTrendByDate // Jobs trend with incoming and completed by date
       }
@@ -972,25 +837,42 @@ exports.getTopCustomers = async (req, res, next) => {
 
 exports.getPipelineSummary = async (req, res, next) => {
   try {
-    const activeJobs = await Job.count({
-      where: applyTenantFilter(req.tenantId, {
-        status: { [Op.notIn]: ['completed', 'cancelled'] },
-      })
-    });
+    let activeJobs = 0;
+    let openLeads = 0;
+    let pendingInvoices = 0;
 
-    const openLeads = await Lead.count({
-      where: applyTenantFilter(req.tenantId, {
-        status: { [Op.notIn]: ['closed_won', 'closed_lost'] },
-        isActive: true
-      })
-    });
+    try {
+      activeJobs = await Job.count({
+        where: applyTenantFilter(req.tenantId, {
+          status: { [Op.notIn]: ['completed', 'cancelled'] },
+        })
+      });
+    } catch (e) {
+      logReportError('getPipelineSummary activeJobs:', e);
+    }
 
-    const pendingInvoices = await Invoice.count({
-      where: applyTenantFilter(req.tenantId, {
-        status: { [Op.in]: ['sent', 'partial'] },
-        balance: { [Op.gt]: 0 }
-      })
-    });
+    try {
+      // Lead model uses status: new, contacted, qualified, lost, converted (not closed_won/closed_lost)
+      openLeads = await Lead.count({
+        where: applyTenantFilter(req.tenantId, {
+          status: { [Op.notIn]: ['lost', 'converted'] },
+          isActive: true
+        })
+      });
+    } catch (e) {
+      logReportError('getPipelineSummary openLeads:', e);
+    }
+
+    try {
+      pendingInvoices = await Invoice.count({
+        where: applyTenantFilter(req.tenantId, {
+          status: { [Op.in]: ['sent', 'partial'] },
+          balance: { [Op.gt]: 0 }
+        })
+      });
+    } catch (e) {
+      logReportError('getPipelineSummary pendingInvoices:', e);
+    }
 
     res.status(200).json({
       success: true,
@@ -1001,7 +883,7 @@ exports.getPipelineSummary = async (req, res, next) => {
       }
     });
   } catch (error) {
-    logReportError('Error in getRevenueReport:', error);
+    logReportError('Error in getPipelineSummary:', error);
     next(error);
   }
 };
@@ -1368,14 +1250,98 @@ exports.generateAIAnalysis = async (req, res, next) => {
 exports.getProductSalesReport = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
-    // TODO: Implement product sales report
+
+    let saleDateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      saleDateFilter = { [Op.between]: [start, end] };
+    }
+
+    const saleWhere = applyTenantFilter(req.tenantId, {
+      status: 'completed',
+      ...(saleDateFilter[Op.between] && { createdAt: saleDateFilter })
+    });
+
+    // Aggregate sales by product: quantity sold and revenue per product
+    const salesByProduct = await SaleItem.findAll({
+      attributes: [
+        'productId',
+        [sequelize.fn('SUM', sequelize.col('SaleItem.quantity')), 'quantitySold'],
+        [sequelize.fn('SUM', sequelize.col('SaleItem.total')), 'revenue']
+      ],
+      include: [{
+        model: Sale,
+        as: 'sale',
+        attributes: [],
+        required: true,
+        where: saleWhere
+      }],
+      group: ['SaleItem.productId'],
+      raw: true
+    });
+
+    if (!salesByProduct || salesByProduct.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data: {
+          products: [],
+          totalProducts: 0,
+          totalRevenue: 0,
+          totalQuantitySold: 0
+        }
+      });
+    }
+
+    const productIds = [...new Set(salesByProduct.map((r) => r.productId || r.productid).filter(Boolean))];
+    const products = await Product.findAll({
+      where: applyTenantFilter(req.tenantId, { id: { [Op.in]: productIds } }),
+      attributes: ['id', 'name', 'sku', 'unit', 'quantityOnHand', 'reorderLevel'],
+      raw: true
+    });
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    let totalRevenue = 0;
+    let totalQuantitySold = 0;
+    const productsList = salesByProduct.map((row) => {
+      const pid = row.productId || row.productid;
+      const product = productMap.get(pid);
+      const quantitySold = Number(parseFloat(row.quantitySold || 0)) || 0;
+      const revenue = Number(parseFloat(row.revenue || 0)) || 0;
+      totalRevenue += revenue;
+      totalQuantitySold += quantitySold;
+
+      const currentStock = Number(parseFloat(product?.quantityOnHand || 0)) || 0;
+      const safetyStock = Number(parseFloat(product?.reorderLevel || 0)) || 0;
+      const stockPercentage = safetyStock > 0 ? Math.min(100, (currentStock / safetyStock) * 100) : 100;
+      const isLowStock = safetyStock > 0 && currentStock <= safetyStock;
+      const isHighRisk = safetyStock > 0 && currentStock > safetyStock * 3;
+
+      return {
+        productName: product?.name || 'Unknown',
+        quantitySold,
+        revenue,
+        currentStock,
+        safetyStock,
+        unit: product?.unit || 'pcs',
+        sku: product?.sku || null,
+        isLowStock: Boolean(isLowStock),
+        isHighRisk: Boolean(isHighRisk),
+        stockPercentage: Math.round(stockPercentage * 10) / 10
+      };
+    });
+
+    // Sort by revenue descending
+    productsList.sort((a, b) => b.revenue - a.revenue);
+
     res.status(200).json({
       success: true,
       data: {
-        products: [],
-        totalProducts: 0,
-        totalRevenue: 0,
-        totalQuantitySold: 0
+        products: productsList,
+        totalProducts: productsList.length,
+        totalRevenue,
+        totalQuantitySold
       }
     });
   } catch (error) {
@@ -1387,15 +1353,147 @@ exports.getProductSalesReport = async (req, res, next) => {
   }
 };
 
+// @desc    Get prescription report (pharmacy)
+// @route   GET /api/reports/prescription-report
+// @access  Private
+exports.getPrescriptionReport = async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { [Op.between]: [start, end] };
+    }
+
+    const prescWhere = applyTenantFilter(req.tenantId, {
+      ...(hasDateFilter(dateFilter) && { prescriptionDate: dateFilter })
+    });
+
+    // Count by status
+    const byStatus = await Prescription.findAll({
+      attributes: [
+        'status',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+      ],
+      where: prescWhere,
+      group: ['status'],
+      raw: true
+    });
+
+    const statusCounts = { pending: 0, filled: 0, partially_filled: 0, cancelled: 0, expired: 0 };
+    byStatus.forEach((row) => {
+      const status = (row.status || '').replace(/-/g, '_');
+      if (statusCounts.hasOwnProperty(status)) {
+        statusCounts[status] = parseInt(row.count, 10) || 0;
+      }
+    });
+
+    const totalPrescriptions = Object.values(statusCounts).reduce((sum, n) => sum + n, 0);
+
+    // Revenue from prescription invoices (paid invoices with sourceType prescription)
+    const prescriptionRevenue = await Invoice.sum('amountPaid', {
+      where: applyTenantFilter(req.tenantId, {
+        sourceType: 'prescription',
+        status: 'paid',
+        ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
+      })
+    }) || 0;
+
+    // Fulfillment rate: filled / (filled + partially_filled + pending)
+    const filled = statusCounts.filled;
+    const partial = statusCounts.partially_filled;
+    const pending = statusCounts.pending;
+    const fulfillDenom = filled + partial + pending;
+    const fulfillmentRate = fulfillDenom > 0 ? ((filled + partial * 0.5) / fulfillDenom) * 100 : 0;
+
+    // Top drugs by quantity filled (PrescriptionItem.quantityFilled)
+    let topDrugs = [];
+    if (hasDateFilter(dateFilter)) {
+      const items = await PrescriptionItem.findAll({
+        attributes: [
+          'drugId',
+          [sequelize.fn('SUM', sequelize.col('quantityFilled')), 'quantityFilled'],
+          [sequelize.fn('COUNT', sequelize.col('prescriptionId')), 'prescriptionCount']
+        ],
+        include: [{
+          model: Prescription,
+          as: 'prescription',
+          attributes: [],
+          required: true,
+          where: prescWhere
+        }],
+        group: ['drugId'],
+        order: [[sequelize.fn('SUM', sequelize.col('quantityFilled')), 'DESC']],
+        limit: 10,
+        raw: true
+      });
+
+      const drugIds = [...new Set(items.map((i) => i.drugId).filter(Boolean))];
+      const drugs = await Drug.findAll({
+        where: applyTenantFilter(req.tenantId, { id: { [Op.in]: drugIds } }),
+        attributes: ['id', 'name', 'genericName'],
+        raw: true
+      });
+      const drugMap = new Map(drugs.map((d) => [d.id, d]));
+
+      topDrugs = items.map((row) => ({
+        drugId: row.drugId,
+        drugName: drugMap.get(row.drugId)?.name || 'Unknown',
+        quantityFilled: parseFloat(row.quantityFilled || 0),
+        prescriptionCount: parseInt(row.prescriptionCount, 10) || 0
+      }));
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        byStatus: statusCounts,
+        totalPrescriptions,
+        prescriptionRevenue: parseFloat(prescriptionRevenue),
+        fulfillmentRate: Math.round(fulfillmentRate * 10) / 10,
+        topDrugs
+      }
+    });
+  } catch (error) {
+    logReportError('Error getting prescription report:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get prescription report'
+    });
+  }
+};
+
 // @desc    Get inventory summary
 // @route   GET /api/reports/inventory-summary
 // @access  Private
 exports.getInventorySummary = async (req, res, next) => {
   try {
-    // TODO: Implement inventory summary
+    const productWhere = applyTenantFilter(req.tenantId, {});
+    const totalProducts = await Product.count({ where: productWhere });
+    const inStockCount = await Product.count({
+      where: { ...productWhere, quantityOnHand: { [Op.gt]: 0 } }
+    });
+    const stockValueResult = await Product.findAll({
+      attributes: [
+        [sequelize.literal('COALESCE(SUM("Product"."quantityOnHand" * "Product"."costPrice"), 0)'), 'totalStockValue']
+      ],
+      where: productWhere,
+      raw: true
+    });
+    const totalStockValue = parseFloat(stockValueResult[0]?.totalStockValue || 0);
+    const stockAvailabilityRate = totalProducts > 0 ? Math.round((inStockCount / totalProducts) * 1000) / 10 : 0;
+
     res.status(200).json({
       success: true,
-      data: {}
+      data: {
+        totalStocks: totalProducts,
+        totalStockValue,
+        stockAvailabilityRate,
+        inStockCount
+      }
     });
   } catch (error) {
     logReportError('Error getting inventory summary:', error);
@@ -1412,10 +1510,46 @@ exports.getInventorySummary = async (req, res, next) => {
 exports.getInventoryMovements = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
-    // TODO: Implement inventory movements
+
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { [Op.between]: [start, end] };
+    }
+
+    const movementWhere = applyTenantFilter(req.tenantId, {
+      ...(hasDateFilter(dateFilter) && { occurredAt: dateFilter })
+    });
+
+    const movements = await InventoryMovement.findAll({
+      where: movementWhere,
+      include: [{
+        model: InventoryItem,
+        as: 'item',
+        attributes: ['id', 'name', 'sku', 'unit']
+      }],
+      order: [['occurredAt', 'DESC']],
+      limit: 100,
+      raw: false
+    });
+
+    const data = movements.map((m) => ({
+      id: m.id,
+      type: m.type,
+      quantityDelta: parseFloat(m.quantityDelta),
+      previousQuantity: parseFloat(m.previousQuantity),
+      newQuantity: parseFloat(m.newQuantity),
+      occurredAt: m.occurredAt,
+      itemName: m.item?.name || 'Unknown',
+      itemSku: m.item?.sku,
+      unit: m.item?.unit || 'pcs'
+    }));
+
     res.status(200).json({
       success: true,
-      data: []
+      data
     });
   } catch (error) {
     logReportError('Error getting inventory movements:', error);
@@ -1426,16 +1560,70 @@ exports.getInventoryMovements = async (req, res, next) => {
   }
 };
 
-// @desc    Get fastest moving items
+// @desc    Get fastest moving items (by quantity sold in date range)
 // @route   GET /api/reports/fastest-moving-items
 // @access  Private
 exports.getFastestMovingItems = async (req, res, next) => {
   try {
     const { startDate, endDate, limit = 5 } = req.query;
-    // TODO: Implement fastest moving items
+
+    let saleDateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      saleDateFilter = { [Op.between]: [start, end] };
+    }
+
+    const saleWhere = applyTenantFilter(req.tenantId, {
+      status: 'completed',
+      ...(saleDateFilter[Op.between] && { createdAt: saleDateFilter })
+    });
+
+    const items = await SaleItem.findAll({
+      attributes: [
+        'productId',
+        [sequelize.fn('SUM', sequelize.col('SaleItem.quantity')), 'quantitySold']
+      ],
+      include: [{
+        model: Sale,
+        as: 'sale',
+        attributes: [],
+        required: true,
+        where: saleWhere
+      }],
+      group: ['SaleItem.productId'],
+      order: [[sequelize.literal('SUM("SaleItem"."quantity")'), 'DESC']],
+      limit: Math.min(Number(limit) || 5, 50),
+      raw: true
+    });
+
+    if (!items || items.length === 0) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const productIds = [...new Set(items.map((r) => r.productId || r.productid).filter(Boolean))];
+    const products = await Product.findAll({
+      where: applyTenantFilter(req.tenantId, { id: { [Op.in]: productIds } }),
+      attributes: ['id', 'name', 'sku', 'unit'],
+      raw: true
+    });
+    const productMap = new Map(products.map((p) => [p.id, p]));
+
+    const data = items.map((row) => {
+      const pid = row.productId || row.productid;
+      const product = productMap.get(pid);
+      return {
+        productId: pid,
+        productName: product?.name || 'Unknown',
+        quantitySold: parseFloat(row.quantitySold || 0),
+        unit: product?.unit || 'pcs'
+      };
+    });
+
     res.status(200).json({
       success: true,
-      data: []
+      data
     });
   } catch (error) {
     logReportError('Error getting fastest moving items:', error);
@@ -1446,16 +1634,73 @@ exports.getFastestMovingItems = async (req, res, next) => {
   }
 };
 
-// @desc    Get revenue by channel
+// @desc    Get revenue by channel (payment method)
 // @route   GET /api/reports/revenue-by-channel
 // @access  Private
 exports.getRevenueByChannel = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
-    // TODO: Implement revenue by channel
+
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { [Op.between]: [start, end] };
+    }
+
+    const channelMap = new Map();
+
+    // Income payments (invoice/job payments) by payment method
+    const paymentWhere = applyTenantFilter(req.tenantId, {
+      type: 'income',
+      status: 'completed',
+      ...(hasDateFilter(dateFilter) && { paymentDate: dateFilter })
+    });
+    const byPayment = await Payment.findAll({
+      attributes: [
+        'paymentMethod',
+        [sequelize.fn('SUM', sequelize.col('amount')), 'total']
+      ],
+      where: paymentWhere,
+      group: ['paymentMethod'],
+      raw: true
+    });
+    byPayment.forEach((row) => {
+      const method = (row.paymentMethod || 'other').toString();
+      const rev = parseFloat(row.total || 0);
+      channelMap.set(method, (channelMap.get(method) || 0) + rev);
+    });
+
+    // Completed sales by payment method (shop/pharmacy)
+    const saleWhere = applyTenantFilter(req.tenantId, {
+      status: 'completed',
+      ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
+    });
+    const bySale = await Sale.findAll({
+      attributes: [
+        'paymentMethod',
+        [sequelize.fn('SUM', sequelize.col('total')), 'total']
+      ],
+      where: saleWhere,
+      group: ['paymentMethod'],
+      raw: true
+    });
+    bySale.forEach((row) => {
+      const method = (row.paymentMethod || 'other').toString();
+      const rev = parseFloat(row.total || 0);
+      channelMap.set(method, (channelMap.get(method) || 0) + rev);
+    });
+
+    const labels = { cash: 'Cash', mobile_money: 'MoMo', card: 'Card', credit_card: 'Card', check: 'Check', bank_transfer: 'Bank Transfer', credit: 'Credit', other: 'Other' };
+    const data = [...channelMap.entries()]
+      .map(([channel, revenue]) => ({ channel: labels[channel] || channel, revenue }))
+      .filter((d) => d.revenue > 0)
+      .sort((a, b) => b.revenue - a.revenue);
+
     res.status(200).json({
       success: true,
-      data: []
+      data
     });
   } catch (error) {
     logReportError('Error getting revenue by channel:', error);
@@ -1463,5 +1708,120 @@ exports.getRevenueByChannel = async (req, res, next) => {
       success: false,
       error: 'Failed to get revenue by channel'
     });
+  }
+};
+
+// --- Batched overview endpoints (fewer round trips for Reports page) ---
+
+/**
+ * Run a report handler with a mock res that captures the JSON body.
+ * @param {Function} handler - getRevenueReport, getExpenseReport, etc.
+ * @param {object} req - Express req (tenantId, query)
+ * @returns {Promise<{ success: boolean, data?: any }>} Resolves with the body the handler passed to res.json()
+ */
+function runReportHandler(handler, req) {
+  return new Promise((resolve, reject) => {
+    const noop = () => {};
+    const res = {
+      status(code) {
+        return { json: (body) => { resolve(body); return res; } };
+      },
+      json(body) {
+        resolve(body);
+      }
+    };
+    const next = (err) => { if (err) reject(err); };
+    Promise.resolve(handler(req, res, next)).catch(reject);
+  });
+}
+
+/**
+ * @desc    Batched overview phase 1 (revenue, expenses, outstanding, sales, serviceAnalytics, productSales)
+ * @route   GET /api/reports/overview/phase1
+ * @access  Private
+ */
+exports.getOverviewPhase1 = async (req, res, next) => {
+  try {
+    const includeProductSales = req.query.includeProductSales === 'true';
+    const handlers = [
+      exports.getRevenueReport,
+      exports.getExpenseReport,
+      exports.getOutstandingPaymentsReport,
+      exports.getSalesReport,
+      exports.getServiceAnalyticsReport
+    ];
+    if (includeProductSales) {
+      handlers.push(exports.getProductSalesReport);
+    }
+    const results = await Promise.all(
+      handlers.map((handler) =>
+        runReportHandler(handler, req).catch((err) => {
+          logReportError('[Overview Phase1] Handler error:', err?.message || err);
+          return { success: false, data: null };
+        })
+      )
+    );
+    const [revenue, expenses, outstanding, sales, serviceAnalytics, productSalesData] = results;
+    const data = {
+      revenue: revenue?.success ? revenue.data : { totalRevenue: 0, byPeriod: [], byCustomer: [] },
+      expenses: expenses?.success ? expenses.data : { totalExpenses: 0, byCategory: [] },
+      outstanding: outstanding?.success ? outstanding.data : { totalOutstanding: 0 },
+      sales: sales?.success ? sales.data : { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [] },
+      serviceAnalytics: serviceAnalytics?.success ? serviceAnalytics.data : { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] },
+      productSales: productSalesData?.success ? productSalesData.data : { products: [], totalRevenue: 0, totalQuantitySold: 0 }
+    };
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    logReportError('Error in getOverviewPhase1:', error);
+    next(error);
+  }
+};
+
+/**
+ * @desc    Batched overview phase 2 (inventory, KPI, top customers, pipeline, revenue by channel)
+ * @route   GET /api/reports/overview/phase2
+ * @access  Private
+ */
+exports.getOverviewPhase2 = async (req, res, next) => {
+  try {
+    const handlers = [
+      exports.getInventorySummary,
+      exports.getInventoryMovements,
+      exports.getFastestMovingItems,
+      exports.getRevenueByChannel,
+      exports.getKpiSummary,
+      exports.getTopCustomers,
+      exports.getPipelineSummary
+    ];
+    const results = await Promise.all(
+      handlers.map((handler) =>
+        runReportHandler(handler, req).catch((err) => {
+          logReportError('[Overview Phase2] Handler error:', err?.message || err);
+          return { success: false, data: null };
+        })
+      )
+    );
+    const [
+      inventorySummary,
+      inventoryMovements,
+      fastestMovingItems,
+      revenueByChannel,
+      kpiSummary,
+      topCustomers,
+      pipelineSummary
+    ] = results;
+    const data = {
+      inventorySummary: inventorySummary?.success ? inventorySummary.data : { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+      inventoryMovements: inventoryMovements?.success ? inventoryMovements.data : [],
+      fastestMovingItems: fastestMovingItems?.success ? fastestMovingItems.data : [],
+      revenueByChannel: revenueByChannel?.success ? revenueByChannel.data : [],
+      kpiSummary: kpiSummary?.success ? kpiSummary.data : { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },
+      topCustomers: topCustomers?.success ? topCustomers.data : [],
+      pipelineSummary: pipelineSummary?.success ? pipelineSummary.data : { activeJobs: 0, openLeads: 0, pendingInvoices: 0 }
+    };
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    logReportError('Error in getOverviewPhase2:', error);
+    next(error);
   }
 };

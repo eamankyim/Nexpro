@@ -10,11 +10,14 @@ const {
   getPipelineSummary,
   getServiceAnalyticsReport,
   getProductSalesReport,
+  getPrescriptionReport,
   getInventorySummary,
   getInventoryMovements,
   getFastestMovingItems,
   getRevenueByChannel,
-  generateAIAnalysis
+  generateAIAnalysis,
+  getOverviewPhase1,
+  getOverviewPhase2
 } = require('../controllers/reportController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
@@ -31,6 +34,10 @@ const reportCache = cacheMiddleware(300, (req) => {
   return generateReportCacheKey(req.tenantId, req.path.replace('/api/reports/', ''), req.query);
 });
 
+// Batched overview (fewer round trips for Reports page)
+router.get('/overview/phase1', reportCache, getOverviewPhase1);
+router.get('/overview/phase2', reportCache, getOverviewPhase2);
+
 router.get('/revenue', reportCache, getRevenueReport);
 router.get('/expenses', reportCache, getExpenseReport);
 router.get('/outstanding-payments', reportCache, getOutstandingPaymentsReport);
@@ -41,6 +48,7 @@ router.get('/top-customers', reportCache, getTopCustomers);
 router.get('/pipeline-summary', reportCache, getPipelineSummary);
 router.get('/service-analytics', reportCache, getServiceAnalyticsReport);
 router.get('/product-sales', reportCache, getProductSalesReport);
+router.get('/prescription-report', reportCache, getPrescriptionReport);
 router.get('/inventory-summary', reportCache, getInventorySummary);
 router.get('/inventory-movements', reportCache, getInventoryMovements);
 router.get('/fastest-moving-items', reportCache, getFastestMovingItems);

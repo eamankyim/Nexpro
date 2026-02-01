@@ -1,5 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import {
   Select,
@@ -18,8 +21,6 @@ import {
   Typography,
   Alert,
   Progress,
-  Modal,
-  Form,
   Dropdown
 } from 'antd';
 import { Card as AntdCard } from 'antd';
@@ -34,6 +35,22 @@ import { Button as ShadcnButton } from '../components/ui/button';
 import { Select as ShadcnSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Badge } from '../components/ui/badge';
 import { Input as ShadcnInput } from '../components/ui/input';
+import { Label } from '../components/ui/label';
+import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '../components/ui/form';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '../components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
 
 const { RangePicker } = DatePicker;
@@ -54,7 +71,8 @@ import {
   ChevronDown,
   Search,
   SlidersHorizontal,
-  MoreVertical
+  MoreVertical,
+  ArrowLeft
 } from 'lucide-react';
 import {
   LineChart,
@@ -74,6 +92,7 @@ import {
 import reportService from '../services/reportService';
 import inventoryService from '../services/inventoryService';
 import { useAuth } from '../context/AuthContext';
+import { useResponsive } from '../hooks/useResponsive';
 import { SEARCH_PLACEHOLDERS } from '../constants';
 import { getPreviousPeriod } from '../utils/periodComparison';
 import dayjs from 'dayjs';
@@ -84,6 +103,13 @@ const { Title, Text, Paragraph } = Typography;
 const { CheckableTag } = Tag;
 
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
+
+const createReportSchema = z.object({
+  reportTitle: z.string().min(1, 'Please enter report title'),
+  durationType: z.string().min(1, 'Please select duration type'),
+  year: z.number({ required_error: 'Please select year' }),
+  month: z.string().min(1, 'Please select month'),
+});
 
 // Business type terminology helper
 const getBusinessTerminology = (businessType) => {
@@ -128,15 +154,20 @@ const Reports = () => {
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const { activeTenant, user } = useAuth();
   const { isMobile } = useResponsive();
+
+  // Declare first so it's never in TDZ when used below
+  const [generatedReport, setGeneratedReport] = useState(null);
+
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
   const isShop = businessType === 'shop';
   const isPharmacy = businessType === 'pharmacy';
   const terminology = useMemo(() => getBusinessTerminology(businessType), [businessType]);
 
-  // Determine which view to show based on route
+  // Determine which view to show based on route (two tabs: Overview, Smart Report)
   const isSmartReport = location.pathname === '/reports/smart-report';
-  const isGeneratedReports = location.pathname === '/reports/generated-reports';
+  const showSmartReportList = isSmartReport && !generatedReport;
+
   const [loading, setLoading] = useState(false);
   const [reportType, setReportType] = useState('revenue');
   const [dateFilter, setDateFilter] = useState('thisMonth'); // 'today', 'yesterday', 'thisWeek', etc.
@@ -149,11 +180,18 @@ const Reports = () => {
 
   // AI Report Generator states
   const [aiPrompt, setAiPrompt] = useState('');
-  const [generatedReport, setGeneratedReport] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [overviewStats, setOverviewStats] = useState(null);
   const [createReportModalVisible, setCreateReportModalVisible] = useState(false);
-  const [reportConfigForm] = Form.useForm();
+  const reportConfigForm = useForm({
+    resolver: zodResolver(createReportSchema),
+    defaultValues: {
+      reportTitle: `End of month report for ${dayjs().format('MMMM YYYY')}`,
+      durationType: 'monthly',
+      year: dayjs().year(),
+      month: dayjs().format('MMMM'),
+    },
+  });
   const [selectedReportTypes, setSelectedReportTypes] = useState(['cashflow']);
   const [reportDateFilter, setReportDateFilter] = useState('last6months');
 
@@ -231,64 +269,72 @@ const Reports = () => {
 
   const [savedReports, setSavedReports] = useState([]);
 
-  // Load saved reports from localStorage on mount
+  // Storage key for saved reports (scoped by tenant)
+  const reportsStorageKey = useMemo(
+    () => (activeTenant?.id ? `shopwise_saved_reports_${activeTenant.id}` : null),
+    [activeTenant?.id]
+  );
+
+  // Load saved reports from localStorage for current tenant (migrate from legacy key if needed)
   useEffect(() => {
+    if (!reportsStorageKey || !activeTenant?.id) {
+      setSavedReports([]);
+      return;
+    }
     try {
-      const saved = localStorage.getItem('shopwise_saved_reports');
+      let saved = localStorage.getItem(reportsStorageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
-        setSavedReports(parsed);
+        const forTenant = Array.isArray(parsed)
+          ? parsed.filter((r) => r.tenantId === activeTenant?.id || !r.tenantId)
+          : [];
+        setSavedReports(forTenant);
+        return;
       }
+      // One-time migration from legacy key so existing reports show up
+      const legacyKey = 'shopwise_saved_reports';
+      const legacySaved = localStorage.getItem(legacyKey);
+      if (legacySaved) {
+        const parsed = JSON.parse(legacySaved);
+        const list = Array.isArray(parsed) ? parsed : [];
+        if (list.length > 0) {
+          const migrated = list.map((r) => ({
+            ...r,
+            tenantId: activeTenant.id,
+            businessType: r.businessType || activeTenant?.businessType || 'printing_press'
+          }));
+          setSavedReports(migrated);
+          localStorage.setItem(reportsStorageKey, JSON.stringify(migrated));
+          try {
+            localStorage.removeItem(legacyKey);
+          } catch (_) {}
+          return;
+        }
+      }
+      setSavedReports([]);
     } catch (e) {
       console.warn('Failed to load saved reports from localStorage:', e);
+      setSavedReports([]);
     }
-  }, []);
+  }, [reportsStorageKey, activeTenant?.id, activeTenant?.businessType]);
 
-  // Filter reports based on header search - moved to top level to avoid hook order issues
+  // Filter reports based on header search (when on Smart Report list view)
   const filteredReports = useMemo(() => {
-    if (!isGeneratedReports) return [];
+    if (!showSmartReportList) return [];
     return savedReports.filter(report => {
       const matchesSearch = !searchValue ||
         report.title?.toLowerCase().includes(searchValue.toLowerCase()) ||
         report.generatedBy?.toLowerCase().includes(searchValue.toLowerCase());
       return matchesSearch;
     });
-  }, [savedReports, searchValue, isGeneratedReports]);
-
-  // Auto-generate monthly smart report when Smart Report page loads
-  useEffect(() => {
-    if (isSmartReport && !generatedReport && !aiLoading) {
-      // Auto-generate monthly report for current month
-      const autoGenerateReport = async () => {
-        setAiLoading(true);
-        try {
-          const defaultConfig = {
-            reportTitle: `Monthly Report for ${dayjs().format('MMMM YYYY')}`,
-            durationType: 'monthly',
-            year: dayjs().year(),
-            month: dayjs().format('MMMM'),
-            reportTypes: ['cashflow', 'service-analytics'],
-            generatedBy: 'System'
-          };
-          await generateSmartReport(defaultConfig);
-        } catch (error) {
-          console.error('Error auto-generating report:', error);
-          showError(null, 'Failed to generate monthly report');
-        } finally {
-          setAiLoading(false);
-        }
-      };
-      autoGenerateReport();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSmartReport]);
+  }, [savedReports, searchValue, showSmartReportList]);
 
   useEffect(() => {
-    if (!isSmartReport && !isGeneratedReports) {
+    if (!isSmartReport) {
       fetchOverviewStats();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reportType, dateRange, groupBy, isSmartReport, isGeneratedReports, dateFilter]);
+  }, [reportType, dateRange, groupBy, isSmartReport, dateFilter]);
 
   const handleFilterChange = (filterType) => {
     setDateFilter(filterType);
@@ -349,46 +395,58 @@ const Reports = () => {
         endDateObj: dateRange[1].format('YYYY-MM-DD HH:mm:ss')
       });
       
-      // Fetch all report types for overview from real API
-      console.log('[Reports] Fetching overview stats for date range:', { startDate, endDate, groupBy, dateFilter });
-      const [revenue, expenses, outstanding, sales, serviceAnalytics, inventorySummary, inventoryMovements, fastestMovingItems, revenueByChannel] = await Promise.all([
-        reportService.getRevenueReport(startDate, endDate, groupBy).catch((err) => {
-          console.error('[Reports] Error fetching revenue report:', err);
-          return { data: { totalRevenue: 0, byPeriod: [], byCustomer: [] } };
-        }),
-        reportService.getExpenseReport(startDate, endDate).catch((err) => {
-          console.error('[Reports] Error fetching expense report:', err);
-          return { data: { totalExpenses: 0, byCategory: [] } };
-        }),
-        reportService.getOutstandingPaymentsReport(startDate, endDate).catch((err) => {
-          console.error('[Reports] Error fetching outstanding payments report:', err);
-          return { data: { totalOutstanding: 0 } };
-        }),
-        reportService.getSalesReport(startDate, endDate, 'day').catch((err) => {
-          console.error('[Reports] Error fetching sales report:', err);
-          return { data: { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [] } };
-        }),
-        reportService.getServiceAnalyticsReport(startDate, endDate).catch((err) => {
-          console.error('[Reports] Error fetching service analytics report:', err);
-          return { data: { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] } };
-        }),
-        reportService.getInventorySummary().catch((err) => {
-          console.error('[Reports] Error fetching inventory summary:', err);
-          return { data: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 } };
-        }),
-        reportService.getInventoryMovements(startDate, endDate).catch((err) => {
-          console.error('[Reports] Error fetching inventory movements:', err);
-          return { data: [] };
-        }),
-        reportService.getFastestMovingItems(startDate, endDate, 5).catch((err) => {
-          console.error('[Reports] Error fetching fastest moving items:', err);
-          return { data: [] };
-        }),
-        reportService.getRevenueByChannel(startDate, endDate).catch((err) => {
-          console.error('[Reports] Error fetching revenue by channel:', err);
-          return { data: [] };
-        })
-      ]);
+      // Batched overview: 2 requests instead of 13 for faster loading
+      const businessType = activeTenant?.businessType || 'printing_press';
+      const isShopOrPharmacy = businessType === 'shop' || businessType === 'pharmacy';
+
+      // Phase 1: Single batched request (revenue, expenses, outstanding, sales, serviceAnalytics, productSales)
+      const phase1Res = await reportService.getOverviewPhase1(startDate, endDate, groupBy, isShopOrPharmacy).catch((err) => {
+        console.error('[Reports] Error fetching overview phase1:', err);
+        return { data: null };
+      });
+      const phase1 = phase1Res?.data || {};
+      const revenue = { data: phase1.revenue ?? { totalRevenue: 0, byPeriod: [], byCustomer: [] } };
+      const expenses = { data: phase1.expenses ?? { totalExpenses: 0, byCategory: [] } };
+      const outstanding = { data: phase1.outstanding ?? { totalOutstanding: 0 } };
+      const sales = { data: phase1.sales ?? { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [], jobsTrendByDate: [] } };
+      const serviceAnalytics = { data: phase1.serviceAnalytics ?? { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] } };
+      const productSalesData = { data: phase1.productSales ?? { products: [], totalRevenue: 0, totalQuantitySold: 0 } };
+
+      const totalRevenuePhase1 = revenue?.data?.totalRevenue || 0;
+      const totalExpensesPhase1 = expenses?.data?.totalExpenses || 0;
+      setOverviewStats({
+        revenue: revenue?.data || { totalRevenue: 0, byPeriod: [], byCustomer: [] },
+        expenses: expenses?.data || { totalExpenses: 0, byCategory: [] },
+        outstanding: outstanding?.data || { totalOutstanding: 0 },
+        sales: sales?.data || { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [], jobsTrendByDate: [] },
+        serviceAnalytics: serviceAnalytics?.data || { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] },
+        productSales: productSalesData?.data || { products: [], totalRevenue: 0, totalQuantitySold: 0 },
+        inventorySummary: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+        inventoryMovements: [],
+        fastestMovingItems: [],
+        revenueByChannel: [],
+        kpiSummary: { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },
+        topCustomers: [],
+        pipelineSummary: { activeJobs: 0, openLeads: 0, pendingInvoices: 0 },
+        profitLoss: { revenue: totalRevenuePhase1, expenses: totalExpensesPhase1, grossProfit: totalRevenuePhase1 - totalExpensesPhase1, profitMargin: totalRevenuePhase1 > 0 ? ((totalRevenuePhase1 - totalExpensesPhase1) / totalRevenuePhase1 * 100) : 0 },
+        revenueGrowth: 0,
+        periodTypeLabel: '—'
+      });
+      setLoading(false);
+
+      // Phase 2: Single batched request (inventory, KPI, top customers, pipeline, revenue by channel)
+      const phase2Res = await reportService.getOverviewPhase2(startDate, endDate, 5).catch((err) => {
+        console.error('[Reports] Error fetching overview phase2:', err);
+        return { data: null };
+      });
+      const phase2 = phase2Res?.data || {};
+      const inventorySummary = { data: phase2.inventorySummary ?? { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 } };
+      const inventoryMovements = { data: phase2.inventoryMovements ?? [] };
+      const fastestMovingItems = { data: phase2.fastestMovingItems ?? [] };
+      const revenueByChannel = { data: phase2.revenueByChannel ?? [] };
+      const kpiSummary = { data: phase2.kpiSummary ?? { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 } };
+      const topCustomers = { data: phase2.topCustomers ?? [] };
+      const pipelineSummary = { data: phase2.pipelineSummary ?? { activeJobs: 0, openLeads: 0, pendingInvoices: 0 } };
 
       console.log('[Reports] All reports fetched successfully');
       console.log('[Reports] Revenue data:', revenue?.data ? 'Present' : 'Missing');
@@ -627,6 +685,10 @@ const Reports = () => {
         inventoryMovements: inventoryMovements?.data || [],
         fastestMovingItems: fastestMovingItems?.data || [],
         revenueByChannel: revenueByChannel?.data || [],
+        kpiSummary: kpiSummary?.data || { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },
+        topCustomers: topCustomers?.data || [],
+        pipelineSummary: pipelineSummary?.data || { activeJobs: 0, openLeads: 0, pendingInvoices: 0 },
+        productSales: productSalesData?.data || { products: [], totalRevenue: 0, totalQuantitySold: 0 },
         profitLoss: {
           revenue: totalRevenue,
           expenses: totalExpenses,
@@ -645,24 +707,35 @@ const Reports = () => {
   };
 
   const handleOpenCreateReportModal = () => {
-    reportConfigForm.resetFields();
-    reportConfigForm.setFieldsValue({
+    reportConfigForm.reset({
       reportTitle: `End of month report for ${dayjs().format('MMMM YYYY')}`,
       durationType: 'monthly',
       year: dayjs().year(),
-      month: dayjs().format('MMMM')
+      month: dayjs().format('MMMM'),
     });
     setSelectedReportTypes(['cashflow']);
     setCreateReportModalVisible(true);
   };
 
   const handleCreateReport = async (values) => {
+    // End-of-month reports: only allow on the last day of that month or after
+    if (values.durationType === 'monthly') {
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+      const monthIndex = monthNames.indexOf(values.month);
+      if (monthIndex === -1 || values.year == null) {
+        showError(null, 'Please select a valid month and year.');
+        return;
+      }
+      const lastDayOfReportMonth = dayjs().year(values.year).month(monthIndex).endOf('month');
+      const today = dayjs().startOf('day');
+      if (today.isBefore(lastDayOfReportMonth, 'day')) {
+        showError(null, 'End of month reports can only be generated on the last day of the month or after the month has ended.');
+        return;
+      }
+    }
+
     try {
       setCreateReportModalVisible(false);
-      setAiLoading(true);
-
-      // Simulated AI report generation
-      await new Promise(resolve => setTimeout(resolve, 3000));
 
       const reportConfig = {
         ...values,
@@ -670,16 +743,70 @@ const Reports = () => {
         generatedBy: user?.name || user?.first_name || 'System User'
       };
 
-      // Generate the report
-      await generateSmartReport(reportConfig);
-      
-      // After generating, navigate to Smart Report to view it
-      // The report will be saved automatically in generateSmartReport
+      // Create a temporary report entry with "processing" status (scoped to tenant and business type)
+      const tenantId = activeTenant?.id;
+      const tempReport = {
+        title: reportConfig.reportTitle,
+        generatedAt: new Date().toISOString(),
+        generatedBy: reportConfig.generatedBy,
+        reportTypes: reportConfig.reportTypes,
+        status: 'processing',
+        id: Date.now().toString(),
+        tenantId,
+        businessType
+      };
+
+      // Add to saved reports immediately with processing status
+      const updatedReports = [tempReport, ...savedReports];
+      setSavedReports(updatedReports);
+      if (reportsStorageKey) {
+        localStorage.setItem(reportsStorageKey, JSON.stringify(updatedReports));
+      }
+
+      // Navigate to Smart Report list view
       navigate('/reports/smart-report');
+
+      // Show success message
+      showSuccess('Report generation started in the background');
+
+      // Generate the report in the background
+      generateSmartReportInBackground(reportConfig, tempReport.id, tenantId);
     } catch (error) {
       console.error('Error creating report:', error);
       showError(null, 'Failed to create report');
-      setAiLoading(false);
+    }
+  };
+
+  const generateSmartReportInBackground = async (config, reportId, tenantId) => {
+    const storageKey = tenantId ? `shopwise_saved_reports_${tenantId}` : null;
+    try {
+      // Generate the report (this will take time)
+      const report = await generateSmartReport(config);
+
+      // Update the report status to 'ready' and add the full report data
+      setSavedReports((prevReports) => {
+        const updatedReports = prevReports.map((r) =>
+          r.id === reportId ? { ...r, ...report, status: 'ready', tenantId, businessType } : r
+        );
+        if (storageKey) {
+          localStorage.setItem(storageKey, JSON.stringify(updatedReports));
+        }
+        return updatedReports;
+      });
+
+      showSuccess('Report generated successfully!');
+    } catch (error) {
+      console.error('Error generating report:', error);
+      setSavedReports((prevReports) => {
+        const updatedReports = prevReports.map((r) =>
+          r.id === reportId ? { ...r, status: 'failed' } : r
+        );
+        if (storageKey) {
+          localStorage.setItem(storageKey, JSON.stringify(updatedReports));
+        }
+        return updatedReports;
+      });
+      showError(null, 'Report generation failed');
     }
   };
 
@@ -706,8 +833,16 @@ const Reports = () => {
       } else {
         fetchPromises.push(Promise.resolve(null), Promise.resolve(null));
       }
+      // Add prescription report for pharmacy
+      if (isPharmacy) {
+        fetchPromises.push(
+          reportService.getPrescriptionReport(startDate, endDate).catch(() => ({ data: { byStatus: {}, totalPrescriptions: 0, prescriptionRevenue: 0, fulfillmentRate: 0, topDrugs: [] } }))
+        );
+      } else {
+        fetchPromises.push(Promise.resolve(null));
+      }
 
-      const [revenueData, expenseData, salesData, outstandingData, serviceAnalyticsData, productSalesData, inventoryData] = await Promise.all(fetchPromises);
+      const [revenueData, expenseData, salesData, outstandingData, serviceAnalyticsData, productSalesData, inventoryData, prescriptionData] = await Promise.all(fetchPromises);
 
       const revenue = revenueData.data?.totalRevenue || 0;
       const expenses = expenseData.data?.totalExpenses || 0;
@@ -812,7 +947,7 @@ const Reports = () => {
               : `Your revenue is down ${Math.abs(revenueChange).toFixed(1)}% (GHS ${(prevRevenue - revenue).toLocaleString()}) from the previous period.`
           },
           // Conditionally add sections based on selected report types and business type
-          ...(selectedReportTypes.includes('cashflow') || selectedReportTypes.includes('service-analytics') ? [{
+          ...(selectedReportTypes.includes('cashflow') || selectedReportTypes.includes('service-analytics') || selectedReportTypes.includes('product-analytics') ? [{
             type: isShop || isPharmacy ? 'product-analytics' : 'service-analytics',
             title: terminology.analyticsTitle,
             description: terminology.analyticsDescription,
@@ -1029,6 +1164,45 @@ const Reports = () => {
               return recommendations;
             })()
           }] : []),
+          ...(isPharmacy && selectedReportTypes.includes('prescription-summary') && prescriptionData?.data ? [{
+            type: 'prescription-summary',
+            title: 'Prescription Summary',
+            description: 'Prescription volume, status, and revenue.',
+            data: (() => {
+              const d = prescriptionData.data;
+              const byStatus = d.byStatus || {};
+              return [
+                { status: 'Pending', count: byStatus.pending || 0 },
+                { status: 'Filled', count: byStatus.filled || 0 },
+                { status: 'Partially filled', count: byStatus.partially_filled || 0 },
+                { status: 'Cancelled', count: byStatus.cancelled || 0 },
+                { status: 'Expired', count: byStatus.expired || 0 }
+              ];
+            })(),
+            totalPrescriptions: prescriptionData.data.totalPrescriptions || 0,
+            prescriptionRevenue: prescriptionData.data.prescriptionRevenue || 0,
+            fulfillmentRate: prescriptionData.data.fulfillmentRate || 0,
+            topDrugs: prescriptionData.data.topDrugs || [],
+            recommendations: (() => {
+              const recommendations = [];
+              const rate = prescriptionData.data.fulfillmentRate || 0;
+              if (rate < 80 && prescriptionData.data.totalPrescriptions > 0) {
+                recommendations.push({
+                  finding: `Prescription fulfillment rate is ${rate.toFixed(1)}%.`,
+                  recommendation: 'Review stock levels and ordering to improve fill rate.'
+                });
+              }
+              const rev = prescriptionData.data.prescriptionRevenue || 0;
+              if (revenue > 0 && rev > 0) {
+                const pct = (rev / revenue) * 100;
+                recommendations.push({
+                  finding: `Prescription revenue is GHS ${rev.toLocaleString()} (${pct.toFixed(1)}% of total revenue).`,
+                  recommendation: 'Continue tracking prescription vs OTC mix.'
+                });
+              }
+              return recommendations;
+            })()
+          }] : []),
           {
             type: 'insight',
             title: 'AI-Powered Insights',
@@ -1112,27 +1286,13 @@ const Reports = () => {
         ]
       };
 
-      setGeneratedReport(mockReport);
-      
-      // If this is a user-created report (not auto-generated), save it
-      if (config.generatedBy && config.generatedBy !== 'System') {
-        const updatedReports = [...savedReports, mockReport];
-        setSavedReports(updatedReports);
-        // Save to localStorage for persistence
-        try {
-          localStorage.setItem('shopwise_saved_reports', JSON.stringify(updatedReports));
-        } catch (e) {
-          console.warn('Failed to save reports to localStorage:', e);
-        }
-        showSuccess('Report created and saved successfully!');
-      } else {
-        showSuccess('Smart report generated successfully!');
-      }
+      // Return the report data instead of saving it
+      setAiLoading(false);
+      return mockReport;
     } catch (error) {
       console.error('Error generating report:', error);
-      showError(null, 'Failed to generate report');
-    } finally {
       setAiLoading(false);
+      throw error;
     }
   };
 
@@ -1913,8 +2073,13 @@ const Reports = () => {
       inventorySummary,
       inventoryMovements,
       fastestMovingItems,
+      revenueByChannel: revenueByChannelFromApi,
       serviceAnalytics,
-      sales
+      sales,
+      productSales,
+      kpiSummary,
+      topCustomers,
+      pipelineSummary
     } = overviewStats;
 
     // Calculate growth metrics from real data
@@ -2175,9 +2340,14 @@ const Reports = () => {
         }))
       : [];
 
-    // Revenue by channel - use service analytics (from JobItems) for accurate category-based revenue
-    // This shows revenue by service category, which is more accurate than job-level data
-    const revenueByChannel = serviceAnalytics?.byCategory?.length > 0
+    // Revenue by channel - prefer API (payment method), then service analytics / job type / sales by payment method
+    const paymentMethodLabel = (method) =>
+      method === 'cash' ? 'Cash' : method === 'mobile_money' ? 'MoMo' : method === 'card' ? 'Card'
+        : method === 'credit' ? 'Credit' : method === 'bank_transfer' ? 'Bank' : (method || 'Other');
+    const channelFromPaymentMethod = sales?.byPaymentMethod?.length > 0 && !serviceAnalytics?.byCategory?.length && !sales?.byJobType?.length;
+    const revenueByChannel = (revenueByChannelFromApi?.length > 0)
+      ? revenueByChannelFromApi.map((item) => ({ channel: item.channel || 'Other', revenue: parseFloat(item.revenue || 0) }))
+      : serviceAnalytics?.byCategory?.length > 0
       ? serviceAnalytics.byCategory.slice(0, 4).map(item => ({
           channel: item.category || 'Other',
           revenue: parseFloat(item.totalRevenue || 0)
@@ -2187,7 +2357,21 @@ const Reports = () => {
           channel: item.jobType || item.category || 'Other',
           revenue: parseFloat(item.totalSales || 0)
         }))
+      : sales?.byPaymentMethod?.length > 0
+      ? sales.byPaymentMethod.slice(0, 6).map(item => ({
+          channel: paymentMethodLabel(item.paymentMethod),
+          revenue: parseFloat(item.totalAmount || 0)
+        }))
       : [];
+
+    // When no channel data: for shop/pharmacy show Revenue by Product (top performing products)
+    const revenueByProduct = (revenueByChannel.length === 0 && (isShop || isPharmacy) && (productSales?.products || []).length > 0)
+      ? (productSales.products || []).slice(0, 8).map(item => ({
+          channel: item.productName || 'Unknown',
+          revenue: parseFloat(item.revenue || 0)
+        }))
+      : [];
+    const showRevenueByProduct = revenueByProduct.length > 0;
     
     // Use service analytics total revenue if available, otherwise use sales total
     const totalSales = serviceAnalytics?.totalRevenue || sales?.totalSales || 0;
@@ -2373,6 +2557,70 @@ const Reports = () => {
                       }
                     })()}
                   </div>
+                </div>
+              </Space>
+            </AntdCard>
+          </Col>
+        </Row>
+
+        {/* KPI, Top Customers, Pipeline Row */}
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          {/* KPI Summary */}
+          <Col xs={24} md={8}>
+            <AntdCard title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>KPI Summary</span>} style={cardStyle} bodyStyle={{ padding: '20px 24px' }}>
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 13, color: '#8c8c8c' }}>Active customers</Text>
+                  <Text strong style={{ fontSize: 18, color: '#262626' }}>{kpiSummary?.activeCustomers ?? 0}</Text>
+                </div>
+                <Divider style={{ margin: '8px 0', borderColor: '#f0f0f0' }} />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 13, color: '#8c8c8c' }}>Pending invoices</Text>
+                  <Text strong style={{ fontSize: 18, color: '#262626' }}>GHS {(kpiSummary?.pendingInvoices ?? 0).toLocaleString()}</Text>
+                </div>
+              </Space>
+            </AntdCard>
+          </Col>
+          {/* Top Customers */}
+          <Col xs={24} md={8}>
+            <AntdCard title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>Top Customers by Revenue</span>} style={cardStyle} bodyStyle={{ padding: '20px 24px' }}>
+              {(topCustomers && topCustomers.length > 0) ? (
+                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                  {topCustomers.slice(0, 5).map((item, idx) => (
+                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: idx < 4 ? '1px solid #f5f5f5' : 'none' }}>
+                      <Text style={{ fontSize: 13, color: '#262626', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.customer?.name || item.customer?.company || 'Unknown'}</Text>
+                      <Text style={{ fontSize: 13, fontWeight: 600, color: '#006d32', marginLeft: 8 }}>GHS {parseFloat(item.totalRevenue || 0).toLocaleString()}</Text>
+                    </div>
+                  ))}
+                </Space>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '24px 0', color: '#8c8c8c' }}>
+                  <Text type="secondary">No customer data for this period</Text>
+                </div>
+              )}
+            </AntdCard>
+          </Col>
+          {/* Pipeline Summary (printing press: jobs/leads; shop/pharmacy: pending invoices only) */}
+          <Col xs={24} md={8}>
+            <AntdCard title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>{isPrintingPress ? 'Pipeline Summary' : 'Outstanding'}</span>} style={cardStyle} bodyStyle={{ padding: '20px 24px' }}>
+              <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                {isPrintingPress && (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 13, color: '#8c8c8c' }}>Active jobs</Text>
+                      <Text strong style={{ fontSize: 18, color: '#262626' }}>{pipelineSummary?.activeJobs ?? 0}</Text>
+                    </div>
+                    <Divider style={{ margin: '8px 0', borderColor: '#f0f0f0' }} />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={{ fontSize: 13, color: '#8c8c8c' }}>Open leads</Text>
+                      <Text strong style={{ fontSize: 18, color: '#262626' }}>{pipelineSummary?.openLeads ?? 0}</Text>
+                    </div>
+                    <Divider style={{ margin: '8px 0', borderColor: '#f0f0f0' }} />
+                  </>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ fontSize: 13, color: '#8c8c8c' }}>Pending invoices (count)</Text>
+                  <Text strong style={{ fontSize: 18, color: '#262626' }}>{pipelineSummary?.pendingInvoices ?? 0}</Text>
                 </div>
               </Space>
             </AntdCard>
@@ -2609,77 +2857,89 @@ const Reports = () => {
             </AntdCard>
           </Col>
 
-          {/* Card 7: Revenue by Channel */}
+          {/* Card 7: Revenue by Channel, or by payment method, or Revenue by Product (top products) when no channel data */}
           <Col xs={24} md={12}>
             <AntdCard 
-              title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>Revenue by Channel</span>}
+              title={
+                <span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>
+                  {showRevenueByProduct ? 'Revenue by Product' : 'Revenue by Channel'}
+                  {revenueByChannel.length > 0 && channelFromPaymentMethod && (
+                    <Text type="secondary" style={{ fontSize: 12, fontWeight: 400, marginLeft: 6 }}>(by payment method)</Text>
+                  )}
+                </span>
+              }
               style={cardStyle}
               bodyStyle={{ padding: '20px 24px' }}
             >
-              {revenueByChannel.length > 0 ? (
-                <>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart
-                      data={revenueByChannel.map(item => ({
-                        name: item.channel,
-                        value: item.revenue,
-                        percentage: totalSales > 0 ? ((item.revenue / totalSales) * 100) : 0
-                      }))}
-                      layout="vertical"
-                      margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
-                      <XAxis type="number" hide />
-                      <YAxis 
-                        type="category" 
-                        dataKey="name" 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: '#262626', fontSize: 12 }}
-                        width={75}
-                      />
-                      <Tooltip 
-                        formatter={(value) => `GHS ${(value / 1000).toFixed(2)}K`}
-                        contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
-                      />
-                      <Bar 
-                        dataKey="value" 
-                        fill="#166534" 
-                        radius={[0, 4, 4, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                  <Space direction="vertical" size={0} style={{ width: '100%', marginTop: 16 }}>
-                    {revenueByChannel.map((item, idx) => {
-                      // Use totalSales for percentage calculation (service analytics or job sales total)
-                      const percentage = totalSales > 0 ? ((item.revenue / totalSales) * 100) : 0;
-                      return (
-                        <div key={idx} style={{ 
-                          display: 'flex', 
-                          justifyContent: 'space-between', 
-                          alignItems: 'center', 
-                          padding: '10px 0', 
-                          borderBottom: idx < revenueByChannel.length - 1 ? '1px solid #f5f5f5' : 'none' 
-                        }}>
-                          <div style={{ flex: 1 }}>
-                            <Text style={{ fontSize: 14, fontWeight: 500, color: '#262626', display: 'block', marginBottom: 4 }}>
-                              {item.channel}
-                            </Text>
-                            <Text style={{ fontSize: 12, color: '#8c8c8c' }}>
-                              {percentage.toFixed(1)}% of total
-                            </Text>
-                          </div>
-                          <Text style={{ color: '#166534', fontSize: 16, fontWeight: 700, marginLeft: 16 }}>
-                            GHS {(item.revenue / 1000).toFixed(2)}K
-                          </Text>
-                        </div>
-                      );
-                    })}
-                  </Space>
-                </>
+              {(revenueByChannel.length > 0 || showRevenueByProduct) ? (
+                (() => {
+                  const chartData = revenueByChannel.length > 0 ? revenueByChannel : revenueByProduct;
+                  const totalForPct = revenueByChannel.length > 0 ? totalSales : (productSales?.totalRevenue || 0);
+                  return (
+                    <>
+                      <ResponsiveContainer width="100%" height={220}>
+                        <BarChart
+                          data={chartData.map(item => ({
+                            name: item.channel,
+                            value: item.revenue,
+                            percentage: totalForPct > 0 ? ((item.revenue / totalForPct) * 100) : 0
+                          }))}
+                          layout="vertical"
+                          margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
+                          <XAxis type="number" hide />
+                          <YAxis 
+                            type="category" 
+                            dataKey="name" 
+                            axisLine={false}
+                            tickLine={false}
+                            tick={{ fill: '#262626', fontSize: 12 }}
+                            width={75}
+                          />
+                          <Tooltip 
+                            formatter={(value) => `GHS ${(value / 1000).toFixed(2)}K`}
+                            contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
+                          />
+                          <Bar 
+                            dataKey="value" 
+                            fill="#166534" 
+                            radius={[0, 4, 4, 0]}
+                          />
+                        </BarChart>
+                      </ResponsiveContainer>
+                      <Space direction="vertical" size={0} style={{ width: '100%', marginTop: 16 }}>
+                        {chartData.map((item, idx) => {
+                          const percentage = totalForPct > 0 ? ((item.revenue / totalForPct) * 100) : 0;
+                          return (
+                            <div key={idx} style={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'center', 
+                              padding: '10px 0', 
+                              borderBottom: idx < chartData.length - 1 ? '1px solid #f5f5f5' : 'none' 
+                            }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <Text style={{ fontSize: 14, fontWeight: 500, color: '#262626', display: 'block', marginBottom: 4 }} className="truncate">
+                                  {item.channel}
+                                </Text>
+                                <Text style={{ fontSize: 12, color: '#8c8c8c' }}>
+                                  {percentage.toFixed(1)}% of total
+                                </Text>
+                              </div>
+                              <Text style={{ color: '#166534', fontSize: 16, fontWeight: 700, marginLeft: 16 }}>
+                                GHS {(item.revenue / 1000).toFixed(2)}K
+                              </Text>
+                            </div>
+                          );
+                        })}
+                      </Space>
+                    </>
+                  );
+                })()
               ) : (
                 <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
-                  <Text type="secondary">No channel data available</Text>
+                  <Text type="secondary">No data available for this period</Text>
                 </div>
               )}
             </AntdCard>
@@ -2689,38 +2949,48 @@ const Reports = () => {
     );
   };
 
-  const reportTypeOptions = [
-    {
-      value: 'cashflow',
-      label: 'Cashflow Report',
-      description: 'Overall business health and financial performance'
-    },
-    {
-      value: 'cost-analysis',
-      label: 'Cost Analysis',
-      description: 'Detailed view of expenses and cost-saving opportunities'
-    },
-    {
-      value: 'service-analytics',
-      label: 'Service Analytics',
-      description: 'Comprehensive analysis of service performance metrics'
-    },
-    {
-      value: 'invoice-summary',
-      label: 'Invoice Summary',
-      description: 'Overview of invoice statuses and payment trends'
+  // Report type options filtered by business type (printing_press: service analytics; shop/pharmacy: product analytics)
+  const reportTypeOptions = useMemo(() => {
+    const base = [
+      { value: 'cashflow', label: 'Cashflow overview', description: 'Overall business health and financial performance' },
+      { value: 'cost-analysis', label: 'Cost analysis', description: 'Detailed view of expenses and cost-saving opportunities' },
+      { value: 'invoice-summary', label: 'Invoice summary', description: 'Overview of invoice statuses and payment trends' }
+    ];
+    if (isPrintingPress) {
+      return [
+        ...base.slice(0, 2),
+        { value: 'service-analytics', label: 'Service Analytics', description: 'Comprehensive analysis of service performance metrics' },
+        ...base.slice(2)
+      ];
     }
-  ];
+    if (isPharmacy) {
+      return [
+        ...base.slice(0, 2),
+        { value: 'product-analytics', label: 'Drug Analytics', description: 'Drug and prescription performance' },
+        ...(base.slice(2)),
+        { value: 'prescription-summary', label: 'Prescription summary', description: 'Prescription volume, status, and revenue' }
+      ];
+    }
+    // Shop
+    return [
+      ...base.slice(0, 2),
+      { value: 'product-analytics', label: 'Product Analytics', description: 'Product sales and inventory performance' },
+      ...base.slice(2)
+    ];
+  }, [isPrintingPress, isPharmacy]);
 
   const renderGeneratedReports = () => {
     // Map report types to display names and icons
-    const getReportTypeDisplay = (reportType) => {
+    const getReportTypeDisplay = (reportType, report = null) => {
+      const businessType = report?.businessType || activeTenant?.businessType || 'printing_press';
+      const productLabel = businessType === 'pharmacy' ? 'Drug overview' : 'Product overview';
       const typeMap = {
         'cost-analysis': { label: 'Cost analysis', icon: BarChart3 },
         'service-analytics': { label: 'Service overview', icon: Zap },
         'cashflow': { label: 'Cashflow overview', icon: DollarSign },
         'invoice-summary': { label: 'Invoice overview', icon: FileText },
-        'product-analytics': { label: 'Inventory overview', icon: Zap },
+        'product-analytics': { label: productLabel, icon: Zap },
+        'prescription-summary': { label: 'Prescription summary', icon: FileText },
         'inventory': { label: 'Inventory overview', icon: Zap },
         'fleet': { label: 'Fleet overview', icon: Zap }
       };
@@ -2738,21 +3008,19 @@ const Reports = () => {
         report.insights.forEach(insight => {
           if (insight.type === 'cost-analysis') types.push('cost-analysis');
           else if (insight.type === 'service-analytics' || insight.type === 'product-analytics') {
-            types.push(insight.type === 'product-analytics' ? 'inventory' : 'service-analytics');
+            types.push(insight.type === 'product-analytics' ? 'product-analytics' : 'service-analytics');
           }
           else if (insight.type === 'invoice-summary') types.push('invoice-summary');
+          else if (insight.type === 'prescription-summary') types.push('prescription-summary');
         });
       }
       // Default if no types found
       return types.length > 0 ? types : ['cost-analysis'];
     };
 
-    // Determine status (default to Ready, or Processing if recently created)
+    // Determine status from actual status field (default to 'ready' if not set for backward compatibility)
     const getReportStatus = (report) => {
-      const createdAt = dayjs(report.generatedAt);
-      const hoursSinceCreation = dayjs().diff(createdAt, 'hour');
-      // If created less than 1 hour ago, show as Processing
-      return hoursSinceCreation < 1 ? 'processing' : 'ready';
+      return report.status || 'ready';
     };
 
     return (
@@ -2824,10 +3092,9 @@ const Reports = () => {
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 <DropdownMenuItem
-                                  onClick={() => {
-                                    setGeneratedReport(report);
-                                    navigate('/reports/smart-report');
-                                  }}
+                                  onClick={() => status === 'ready' && setGeneratedReport(report)}
+                                  disabled={status !== 'ready'}
+                                  className={status !== 'ready' ? 'opacity-50 cursor-not-allowed' : ''}
                                 >
                                   <Eye className="h-4 w-4 mr-2" />
                                   View
@@ -2836,6 +3103,8 @@ const Reports = () => {
                                   onClick={() => {
                                     showSuccess('Download feature coming soon');
                                   }}
+                                  disabled={status !== 'ready'}
+                                  className={status !== 'ready' ? 'opacity-50 cursor-not-allowed' : ''}
                                 >
                                   <Download className="h-4 w-4 mr-2" />
                                   Download
@@ -2845,7 +3114,7 @@ const Reports = () => {
                           </div>
                           <div className="flex flex-wrap gap-2 mt-2">
                             {reportTypesList.slice(0, 2).map((type, idx) => {
-                              const typeDisplay = getReportTypeDisplay(type);
+                              const typeDisplay = getReportTypeDisplay(type, report);
                               const Icon = typeDisplay.icon;
                               return (
                                 <Badge
@@ -2864,11 +3133,13 @@ const Reports = () => {
                             <Badge
                               className={
                                 status === 'ready'
-                                  ? 'bg-green-100 text-green-700 border-0 px-2 py-1'
-                                  : 'bg-orange-100 text-orange-700 border-0 px-2 py-1'
+                                  ? 'bg-green-100 text-green-700 border-0 px-2 py-1 hover:bg-green-100 cursor-default'
+                                  : status === 'processing'
+                                  ? 'bg-orange-100 text-orange-700 border-0 px-2 py-1 hover:bg-orange-100 cursor-default'
+                                  : 'bg-red-100 text-red-700 border-0 px-2 py-1 hover:bg-red-100 cursor-default'
                               }
                             >
-                              {status === 'ready' ? 'Ready' : 'Processing'}
+                              {status === 'ready' ? 'Ready' : status === 'processing' ? 'Processing' : 'Failed'}
                             </Badge>
                           </div>
                         </CardContent>
@@ -2901,7 +3172,7 @@ const Reports = () => {
                           <TableCell className="py-4 px-6">
                             <div className="flex flex-wrap gap-2">
                               {reportTypesList.slice(0, 2).map((type, idx) => {
-                                const typeDisplay = getReportTypeDisplay(type);
+                                const typeDisplay = getReportTypeDisplay(type, report);
                                 const Icon = typeDisplay.icon;
                                 return (
                                   <Badge
@@ -2921,11 +3192,13 @@ const Reports = () => {
                             <Badge
                               className={
                                 status === 'ready'
-                                  ? 'bg-green-100 text-green-700 border-0 px-2 py-1'
-                                  : 'bg-orange-100 text-orange-700 border-0 px-2 py-1'
+                                  ? 'bg-green-100 text-green-700 border-0 px-2 py-1 hover:bg-green-100 cursor-default'
+                                  : status === 'processing'
+                                  ? 'bg-orange-100 text-orange-700 border-0 px-2 py-1 hover:bg-orange-100 cursor-default'
+                                  : 'bg-red-100 text-red-700 border-0 px-2 py-1 hover:bg-red-100 cursor-default'
                               }
                             >
-                              {status === 'ready' ? 'Ready' : 'Processing'}
+                              {status === 'ready' ? 'Ready' : status === 'processing' ? 'Processing' : 'Failed'}
                             </Badge>
                           </TableCell>
                           <TableCell className="py-4 px-6">
@@ -2941,10 +3214,9 @@ const Reports = () => {
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
                                 <DropdownMenuItem
-                                  onClick={() => {
-                                    setGeneratedReport(report);
-                                    navigate('/reports/smart-report');
-                                  }}
+                                  onClick={() => status === 'ready' && setGeneratedReport(report)}
+                                  disabled={status !== 'ready'}
+                                  className={status !== 'ready' ? 'opacity-50 cursor-not-allowed' : ''}
                                 >
                                   <Eye className="h-4 w-4 mr-2" />
                                   View
@@ -2953,6 +3225,8 @@ const Reports = () => {
                                   onClick={() => {
                                     showSuccess('Download feature coming soon');
                                   }}
+                                  disabled={status !== 'ready'}
+                                  className={status !== 'ready' ? 'opacity-50 cursor-not-allowed' : ''}
                                 >
                                   <Download className="h-4 w-4 mr-2" />
                                   Download
@@ -3003,6 +3277,18 @@ const Reports = () => {
         {/* Report Content */}
         {generatedReport && !aiLoading && (
           <div id="generated-report-content">
+            {/* Back to list */}
+            <div style={{ marginBottom: 16 }}>
+              <ShadcnButton
+                variant="outline"
+                size="sm"
+                onClick={() => setGeneratedReport(null)}
+                className="gap-2"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                Back to list
+              </ShadcnButton>
+            </div>
             {/* Report Header */}
             <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
               <Space direction="vertical" size={8} style={{ width: '100%' }}>
@@ -3438,6 +3724,80 @@ const Reports = () => {
               </AntdCard>
             )}
 
+            {/* Prescription Summary Section (pharmacy) */}
+            {generatedReport.insights.find(i => i.type === 'prescription-summary') && (
+              <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
+                {(() => {
+                  const section = generatedReport.insights.find(i => i.type === 'prescription-summary');
+                  const data = section.data || [];
+                  return (
+                    <>
+                      <Title level={4}>{section.title}</Title>
+                      <Text type="secondary" style={{ display: 'block', marginBottom: 20 }}>{section.description}</Text>
+                      <Row gutter={24} style={{ marginBottom: 24 }}>
+                        <Col span={6}>
+                          <Statistic title="Total prescriptions" value={section.totalPrescriptions || 0} />
+                        </Col>
+                        <Col span={6}>
+                          <Statistic title="Prescription revenue" value={section.prescriptionRevenue || 0} formatter={(v) => `GHS ${Number(v).toLocaleString()}`} />
+                        </Col>
+                        <Col span={6}>
+                          <Statistic title="Fulfillment rate" value={section.fulfillmentRate || 0} suffix="%" />
+                        </Col>
+                      </Row>
+                      {data.length > 0 && (
+                        <Table
+                          dataSource={data}
+                          pagination={false}
+                          size="small"
+                          style={{ marginBottom: 24 }}
+                          columns={[
+                            { title: 'Status', dataIndex: 'status', key: 'status' },
+                            { title: 'Count', dataIndex: 'count', key: 'count', align: 'right' }
+                          ]}
+                        />
+                      )}
+                      {section.topDrugs && section.topDrugs.length > 0 && (
+                        <>
+                          <Title level={5} style={{ marginBottom: 12 }}>Top drugs by quantity filled</Title>
+                          <Table
+                            dataSource={section.topDrugs}
+                            pagination={false}
+                            size="small"
+                            style={{ marginBottom: 24 }}
+                            columns={[
+                              { title: 'Drug', dataIndex: 'drugName', key: 'drugName' },
+                              { title: 'Quantity filled', dataIndex: 'quantityFilled', key: 'quantityFilled', align: 'right' },
+                              { title: 'Prescriptions', dataIndex: 'prescriptionCount', key: 'prescriptionCount', align: 'right' }
+                            ]}
+                          />
+                        </>
+                      )}
+                      {section.recommendations && section.recommendations.length > 0 && (
+                        <>
+                          <Divider />
+                          <Title level={5} style={{ marginBottom: 16 }}>Recommendations</Title>
+                          {section.recommendations.map((rec, idx) => (
+                            <div key={idx} style={{ marginBottom: 20 }}>
+                              <Paragraph style={{ margin: 0, marginBottom: 8, fontSize: 14, lineHeight: 1.6 }}>
+                                <Text strong style={{ fontSize: 14 }}>{idx + 1}. </Text>
+                                <Text style={{ fontSize: 14 }}>{rec.finding}</Text>
+                              </Paragraph>
+                              <Paragraph style={{ margin: 0, paddingLeft: 16, fontSize: 14, lineHeight: 1.6 }}>
+                                <Text style={{ color: '#595959', fontSize: 14 }}>
+                                  <Text strong>Recommendation:</Text> {rec.recommendation}
+                                </Text>
+                              </Paragraph>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
+              </AntdCard>
+            )}
+
             {/* Footer */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 0', borderTop: '1px solid #f0f0f0' }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
@@ -3462,141 +3822,155 @@ const Reports = () => {
 
   return (
     <>
-      {/* Create Report Modal */}
-      <Modal
-        title={<span style={{ fontSize: 18, fontWeight: 600 }}>Create report</span>}
-        open={createReportModalVisible}
-        onCancel={() => setCreateReportModalVisible(false)}
-        footer={null}
-        width={600}
-        closeIcon={<XCircle className="h-4 w-4" />}
-      >
-        <Form
-          form={reportConfigForm}
-          layout="vertical"
-          onFinish={handleCreateReport}
-        >
-          <Form.Item
-            name="reportTitle"
-            label="Report title"
-            rules={[{ required: true, message: 'Please enter report title' }]}
-          >
-            <Input size="large" placeholder="Add title" />
-          </Form.Item>
-
-          <Form.Item
-            name="durationType"
-            label="Duration type"
-            rules={[{ required: true, message: 'Please select duration type' }]}
-          >
-            <Select size="large" placeholder="Select duration type">
-              <Option value="daily">Daily</Option>
-              <Option value="weekly">Weekly</Option>
-              <Option value="monthly">Monthly</Option>
-              <Option value="quarterly">Quarterly</Option>
-              <Option value="yearly">Yearly</Option>
-            </Select>
-          </Form.Item>
-
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
-                name="year"
-                label="Year"
-                rules={[{ required: true, message: 'Please select year' }]}
-              >
-                <Select size="large" placeholder="Select year" suffixIcon={<Calendar className="h-4 w-4" />}>
-                  {years.map(year => (
-                    <Option key={year} value={year}>{year}</Option>
+      {/* Create Report Modal - shadcn Dialog + Form */}
+      <Dialog open={createReportModalVisible} onOpenChange={setCreateReportModalVisible}>
+        <DialogContent className="sm:max-w-[600px] p-0 gap-0">
+          <DialogHeader className="px-6 pt-6 pb-4">
+            <DialogTitle className="text-lg font-semibold">Create report</DialogTitle>
+          </DialogHeader>
+          <Form {...reportConfigForm}>
+            <form onSubmit={reportConfigForm.handleSubmit(handleCreateReport)} className="px-6 space-y-5">
+              <FormField
+                control={reportConfigForm.control}
+                name="reportTitle"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Report title</FormLabel>
+                    <FormControl>
+                      <ShadcnInput placeholder="Add title" className="h-11" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={reportConfigForm.control}
+                name="durationType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Duration type</FormLabel>
+                    <ShadcnSelect value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger className="h-11">
+                          <SelectValue placeholder="Select duration type" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="daily">Daily</SelectItem>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                        <SelectItem value="quarterly">Quarterly</SelectItem>
+                        <SelectItem value="yearly">Yearly</SelectItem>
+                      </SelectContent>
+                    </ShadcnSelect>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={reportConfigForm.control}
+                  name="year"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Year</FormLabel>
+                      <ShadcnSelect
+                        value={field.value != null ? String(field.value) : undefined}
+                        onValueChange={(v) => field.onChange(v ? parseInt(v, 10) : undefined)}
+                      >
+                        <FormControl>
+                          <SelectTrigger className="h-11">
+                            <SelectValue placeholder="Select year" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {years.map((y) => (
+                            <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </ShadcnSelect>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={reportConfigForm.control}
+                  name="month"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Month</FormLabel>
+                      <ShadcnSelect value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger className="h-11">
+                            <SelectValue placeholder="Select month" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {months.map((m) => (
+                            <SelectItem key={m} value={m}>{m}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </ShadcnSelect>
+                      {reportConfigForm.watch('durationType') === 'monthly' && (
+                        <p className="text-xs text-muted-foreground mt-1.5">
+                          End of month reports can only be generated on the last day of the month or after.
+                        </p>
+                      )}
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <div className="space-y-3 pt-1">
+                <Label className="text-sm font-medium">Report type</Label>
+                <div className="space-y-3">
+                  {reportTypeOptions.map((type) => (
+                    <div
+                      key={type.value}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        if (selectedReportTypes.includes(type.value)) {
+                          setSelectedReportTypes(selectedReportTypes.filter((t) => t !== type.value));
+                        } else {
+                          setSelectedReportTypes([...selectedReportTypes, type.value]);
+                        }
+                      }}
+                      onKeyDown={(e) => e.key === 'Enter' && (document.activeElement === e.currentTarget ? (selectedReportTypes.includes(type.value) ? setSelectedReportTypes(selectedReportTypes.filter((t) => t !== type.value)) : setSelectedReportTypes([...selectedReportTypes, type.value])) : null)}
+                      className="flex items-center justify-between rounded-lg border border-gray-200 p-4 cursor-pointer transition-colors hover:bg-gray-50"
+                      style={{ background: selectedReportTypes.includes(type.value) ? '#dcfce7' : undefined }}
+                    >
+                      <div>
+                        <p className="font-medium text-sm">{type.label}</p>
+                        <p className="text-xs text-muted-foreground">{type.description}</p>
+                      </div>
+                      <div
+                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded border-2"
+                        style={{
+                          borderColor: selectedReportTypes.includes(type.value) ? '#166534' : '#d9d9d9',
+                          background: selectedReportTypes.includes(type.value) ? '#166534' : undefined,
+                        }}
+                      >
+                        {selectedReportTypes.includes(type.value) && (
+                          <CheckCircle className="h-3 w-3 text-white" />
+                        )}
+                      </div>
+                    </div>
                   ))}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                name="month"
-                label="Month"
-                rules={[{ required: true, message: 'Please select month' }]}
-              >
-                <Select size="large" placeholder="Select month" suffixIcon={<Calendar className="h-4 w-4" />}>
-                  {months.map(month => (
-                    <Option key={month} value={month}>{month}</Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Form.Item label="Report type">
-            <div style={{ marginTop: 8 }}>
-              {reportTypeOptions.map(type => (
-                <div
-                  key={type.value}
-                  onClick={() => {
-                    if (selectedReportTypes.includes(type.value)) {
-                      setSelectedReportTypes(selectedReportTypes.filter(t => t !== type.value));
-                    } else {
-                      setSelectedReportTypes([...selectedReportTypes, type.value]);
-                    }
-                  }}
-                  style={{
-                    padding: '16px',
-                    marginBottom: 12,
-                    borderRadius: 8,
-                    border: '1px solid #f4f4f4',
-                    background: selectedReportTypes.includes(type.value) ? '#e6f7ff' : '#fff',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                  }}
-                >
-                  <div>
-                    <Text strong style={{ display: 'block', marginBottom: 4, fontSize: 14 }}>
-                      {type.label}
-                    </Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {type.description}
-                    </Text>
-                  </div>
-                  <div style={{
-                    width: 20,
-                    height: 20,
-                    borderRadius: 4,
-                    border: selectedReportTypes.includes(type.value) ? '2px solid #166534' : '2px solid #d9d9d9',
-                    background: selectedReportTypes.includes(type.value) ? '#166534' : '#fff',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    {selectedReportTypes.includes(type.value) && (
-                      <CheckCircle className="h-3 w-3" style={{ color: '#fff', fontSize: 12 }} />
-                    )}
-                  </div>
                 </div>
-              ))}
-            </div>
-          </Form.Item>
-
-          <Form.Item style={{ marginBottom: 0, marginTop: 24 }}>
-            <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
-              <Button size="large" onClick={() => setCreateReportModalVisible(false)}>
-                Cancel
-              </Button>
-              <Button 
-                type="primary" 
-                size="large" 
-                htmlType="submit"
-                loading={aiLoading}
-                disabled={aiLoading}
-              >
-                Create
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
-      </Modal>
+              </div>
+              <DialogFooter className="gap-2 pt-0 pb-0 -mx-6">
+                <ShadcnButton type="button" variant="outline" size="lg" onClick={() => setCreateReportModalVisible(false)}>
+                  Cancel
+                </ShadcnButton>
+                <ShadcnButton type="submit" size="lg" disabled={aiLoading} className="bg-[#166534] hover:bg-[#14502a]">
+                  {aiLoading ? 'Creating…' : 'Create'}
+                </ShadcnButton>
+              </DialogFooter>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
 
     <div style={{ background: '#fafafa', minHeight: '100vh', margin: '-24px', padding: '24px' }}>
       <div style={{ 
@@ -3612,7 +3986,7 @@ const Reports = () => {
         border: '1px solid #f4f4f4'
       }}>
         <Title level={2} style={{ margin: 0, fontSize: 24, fontWeight: 600 }}>Reports & Analytics</Title>
-        {isGeneratedReports && (
+        {showSmartReportList && (
           <div className="flex items-center gap-3">
             {/* Date Filter */}
             <ShadcnButton
@@ -3664,11 +4038,11 @@ const Reports = () => {
         }}
         bodyStyle={{ padding: '0' }}
       >
-        {isSmartReport ? (
+        {isSmartReport && generatedReport ? (
           <div style={{ padding: '24px' }}>
             {renderAIReportGenerator()}
           </div>
-        ) : isGeneratedReports ? (
+        ) : showSmartReportList ? (
           <div style={{ padding: '24px' }}>
             {renderGeneratedReports()}
           </div>

@@ -28,18 +28,14 @@ import {
   Share2,
   WifiOff,
   Wifi,
-  ChevronDown,
-  ChevronUp,
   X,
   Calendar,
   Hash,
-  Layers,
   Tag,
   ImagePlus,
   ScanLine,
   PackagePlus,
   QrCode,
-  Download,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useDebounce } from '../hooks/useDebounce';
@@ -49,13 +45,12 @@ import DrawerSectionCard from '../components/DrawerSectionCard';
 import ActionColumn from '../components/ActionColumn';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
-import DetailSkeleton from '../components/DetailSkeleton';
 import DashboardTable from '../components/DashboardTable';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import productService from '../services/productService';
 import vendorService from '../services/vendorService';
-import { API_BASE_URL } from '../services/api';
+import { resolveImageUrl } from '../utils/fileUtils';
 import { useAuth } from '../context/AuthContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { showSuccess, showError } from '../utils/toast';
@@ -112,11 +107,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   SEARCH_PLACEHOLDERS,
@@ -132,8 +122,6 @@ import {
   getMarginColor,
   getStockStatus,
 } from '../constants';
-import { PRODUCT_TEMPLATES, getTemplatesForShopType, getCategoriesFromTemplates } from '../constants/productTemplates';
-
 // =============================================
 // HELPER FUNCTIONS
 // =============================================
@@ -165,13 +153,8 @@ const handleNumberChange = (e, onChange) => {
 const numberInputValue = (v) => (v === '' ? '' : v);
 
 const resolveProductImageUrl = (url) => {
-  if (!url) return null;
-  if (url.startsWith('data:') || url.startsWith('http')) return url;
-  if (API_BASE_URL) {
-    const path = url.startsWith('/') ? url : `/${url}`;
-    return `${API_BASE_URL}${path}`;
-  }
-  return url;
+  if (!url || typeof url !== 'string') return '';
+  return resolveImageUrl(url) || '';
 };
 
 // =============================================
@@ -254,7 +237,6 @@ const Products = () => {
   // Get shop type from tenant metadata
   const shopType = activeTenant?.metadata?.shopType || SHOP_TYPES.CONVENIENCE;
   const shopTypeFields = SHOP_TYPE_FIELDS[shopType] || [];
-  const templates = getTemplatesForShopType(shopType);
 
   // =============================================
   // STATE
@@ -265,7 +247,6 @@ const Products = () => {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [statsLoading, setStatsLoading] = useState(true);
-  const [detailLoading, setDetailLoading] = useState(false);
 
   // Pagination
   const [pagination, setPagination] = useState({
@@ -290,7 +271,6 @@ const Products = () => {
   const [adjustStockOpen, setAdjustStockOpen] = useState(false);
   const [productToAdjust, setProductToAdjust] = useState(null);
   const [submitting, setSubmitting] = useState(false);
-  const [templateSectionOpen, setTemplateSectionOpen] = useState(false);
   const [variantFormOpen, setVariantFormOpen] = useState(false);
   const [editingVariant, setEditingVariant] = useState(null);
   const [productImageUploading, setProductImageUploading] = useState(false);
@@ -305,7 +285,7 @@ const Products = () => {
   const [receiveStockOpen, setReceiveStockOpen] = useState(false);
   const [qrGenerateOpen, setQrGenerateOpen] = useState(false);
   const [productForQR, setProductForQR] = useState(null);
-  const [exportLoading, setExportLoading] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
 
   // Offline state
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -438,11 +418,17 @@ const Products = () => {
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded border border-gray-200 bg-gray-50 overflow-hidden flex-shrink-0 flex items-center justify-center">
             {record.imageUrl ? (
-              <img
-                src={resolveProductImageUrl(record.imageUrl) || ''}
-                alt=""
-                className="w-full h-full object-cover"
-              />
+              <button
+                type="button"
+                onClick={() => setImagePreviewUrl(resolveProductImageUrl(record.imageUrl))}
+                className="w-full h-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset"
+              >
+                <img
+                  src={resolveProductImageUrl(record.imageUrl)}
+                  alt={record.name || 'Product'}
+                  className="w-full h-full object-cover"
+                />
+              </button>
             ) : (
               <Package className="h-5 w-5 text-gray-400" />
             )}
@@ -679,7 +665,7 @@ const Products = () => {
     setStatsLoading(true);
     try {
       // Fetch all products for stats calculation
-      const response = await productService.getProducts({ limit: 1000 });
+      const response = await productService.getProducts({ limit: 100 });
       const body = response && typeof response === 'object' ? response : {};
       const allProducts = Array.isArray(body.data) ? body.data : (Array.isArray(body.products) ? body.products : []);
 
@@ -774,19 +760,15 @@ const Products = () => {
   // HANDLERS
   // =============================================
 
-  const handleViewProduct = async (product) => {
+  const handleViewProduct = (product) => {
     setSelectedProduct(product);
     setDrawerOpen(true);
-    setDetailLoading(true);
-    
-    try {
-      const response = await productService.getProductById(product.id);
-      setSelectedProduct(response.data || response);
-    } catch (error) {
-      console.error('Failed to fetch product details:', error);
-    } finally {
-      setDetailLoading(false);
-    }
+    productService.getProductById(product.id)
+      .then((response) => {
+        const data = response?.data || response;
+        setSelectedProduct((prev) => (prev?.id === product.id ? data : prev));
+      })
+      .catch((error) => console.error('Failed to fetch product details:', error));
   };
 
   const handleEditProduct = (product) => {
@@ -937,27 +919,6 @@ const Products = () => {
     }
   };
 
-  const handleExport = async (format = 'csv') => {
-    setExportLoading(true);
-    try {
-      const response = await productService.exportProducts({ format });
-      const blob = response?.data ?? response;
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', `products_${new Date().toISOString().split('T')[0]}.${format === 'excel' ? 'xlsx' : 'csv'}`);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(url);
-      showSuccess('Export downloaded');
-    } catch (error) {
-      showError(error, 'Failed to export products');
-    } finally {
-      setExportLoading(false);
-    }
-  };
-
   const handleFormSubmit = async (values) => {
     setSubmitting(true);
     try {
@@ -1013,22 +974,6 @@ const Products = () => {
     } finally {
       setSubmitting(false);
     }
-  };
-
-  const handleUseTemplate = (template) => {
-    form.setValue('name', template.name);
-    form.setValue('unit', template.unit);
-    form.setValue('costPrice', template.suggestedCost || 0);
-    form.setValue('sellingPrice', template.suggestedPrice || 0);
-    
-    if (template.hasWarranty) {
-      form.setValue('warrantyPeriod', template.warrantyPeriod || 12);
-    }
-    if (template.hasVariants) {
-      form.setValue('hasVariants', true);
-    }
-    
-    setTemplateSectionOpen(false);
   };
 
   const handleProductImageSelect = useCallback(async (e) => {
@@ -1551,22 +1496,6 @@ const Products = () => {
             <RefreshCw className="h-4 w-4" />
             {!isMobile && <span className="ml-2">Refresh</span>}
           </Button>
-          {(isAdmin || isManager) && (
-            <Button
-              variant="outline"
-              size={isMobile ? 'icon' : 'default'}
-              onClick={() => handleExport('csv')}
-              disabled={exportLoading}
-              title="Export products (admin/manager only)"
-            >
-              {exportLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Download className="h-4 w-4" />
-              )}
-              {!isMobile && <span className="ml-2">Export</span>}
-            </Button>
-          )}
           <Button
             variant="outline"
             size={isMobile ? 'icon' : 'default'}
@@ -1710,46 +1639,6 @@ const Products = () => {
           <DialogBody>
           <Form {...form}>
             <form onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-6">
-              {/* Quick Add Template Section (only for new products) */}
-              {!editingProduct && templates.length > 0 && (
-                <Collapsible open={templateSectionOpen} onOpenChange={setTemplateSectionOpen}>
-                  <CollapsibleTrigger asChild>
-                    <Button variant="outline" className="w-full justify-between">
-                      <span className="flex items-center gap-2">
-                        <Layers className="h-4 w-4" />
-                        Quick Add from Template
-                      </span>
-                      {templateSectionOpen ? (
-                        <ChevronUp className="h-4 w-4" />
-                      ) : (
-                        <ChevronDown className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="pt-4">
-                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
-                      {templates.slice(0, 12).map((template, index) => (
-                        <Button
-                          key={index}
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="justify-start text-left h-auto py-2"
-                          onClick={() => handleUseTemplate(template)}
-                        >
-                          <div className="truncate">
-                            <div className="font-medium truncate">{template.name}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {valueFormatter(template.suggestedPrice)}
-                            </div>
-                          </div>
-                        </Button>
-                      ))}
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              )}
-
               {!editingProduct && (
                 <Button
                   type="button"
@@ -2362,19 +2251,23 @@ const Products = () => {
         title="Product Details"
         width={isMobile ? '100%' : 480}
       >
-        {detailLoading ? (
-          <DetailSkeleton />
-        ) : selectedProduct ? (
+        {selectedProduct ? (
           <div className="space-y-6">
             {/* Header */}
             <div className="flex items-start gap-4">
               <div className="w-20 h-20 rounded-lg border border-gray-200 bg-gray-50 overflow-hidden flex-shrink-0 flex items-center justify-center">
                 {selectedProduct.imageUrl ? (
-                  <img
-                    src={resolveProductImageUrl(selectedProduct.imageUrl) || ''}
-                    alt=""
-                    className="w-full h-full object-cover"
-                  />
+                  <button
+                    type="button"
+                    onClick={() => setImagePreviewUrl(resolveProductImageUrl(selectedProduct.imageUrl))}
+                    className="w-full h-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset rounded-lg"
+                  >
+                    <img
+                      src={resolveProductImageUrl(selectedProduct.imageUrl)}
+                      alt={selectedProduct.name || 'Product'}
+                      className="w-full h-full object-cover"
+                    />
+                  </button>
                 ) : (
                   <Package className="h-10 w-10 text-gray-400" />
                 )}
@@ -2395,7 +2288,7 @@ const Products = () => {
             {/* Quick Actions */}
             <div className="flex flex-wrap gap-2">
               <Button
-                variant="outline"
+                variant="secondaryStroke"
                 size="sm"
                 onClick={() => {
                   setDrawerOpen(false);
@@ -2630,6 +2523,24 @@ const Products = () => {
               Create Category
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Image preview modal */}
+      <Dialog open={!!imagePreviewUrl} onOpenChange={(open) => !open && setImagePreviewUrl(null)}>
+        <DialogContent className="max-w-[95vw] max-h-[95vh] w-auto p-0 overflow-hidden rounded-2xl">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Image preview</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="p-0">
+            {imagePreviewUrl && (
+              <img
+                src={imagePreviewUrl}
+                alt="Product preview"
+                className="w-full h-auto max-h-[85vh] object-contain"
+              />
+            )}
+          </DialogBody>
         </DialogContent>
       </Dialog>
     </div>

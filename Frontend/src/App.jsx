@@ -170,7 +170,6 @@ function AppContent() {
               <Route index element={<Navigate to="/reports/overview" replace />} />
               <Route path="overview" element={<Reports />} />
               <Route path="smart-report" element={<Reports />} />
-              <Route path="generated-reports" element={<Reports />} />
             </Route>
             <Route path="inventory" element={<Inventory />} />
             <Route path="employees" element={<Employees />} />

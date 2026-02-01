@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   LayoutDashboard, 
@@ -80,7 +80,6 @@ const getMenuItems = (businessType, isAdmin) => {
   const reportsChildren = [
     { key: '/reports/overview', label: 'Overview' },
     { key: '/reports/smart-report', label: 'Smart Report' },
-    { key: '/reports/generated-reports', label: 'Generated Reports' },
   ];
 
   baseItems.push(
@@ -137,6 +136,21 @@ export function Sidebar({ collapsed, onCollapse }) {
   const businessType = activeTenant?.businessType || null;
   const menuItems = useMemo(() => getMenuItems(businessType, isAdmin), [businessType, isAdmin]);
   const quickActions = useMemo(() => getQuickActions(businessType), [businessType]);
+
+  // Open the group that contains the current route by default
+  useEffect(() => {
+    const pathname = location.pathname;
+    const parent = menuItems.find(
+      (item) =>
+        item.children &&
+        item.children.some(
+          (c) => pathname === c.key || pathname.startsWith(c.key + '/')
+        )
+    );
+    if (parent && !openKeys.includes(parent.key)) {
+      setOpenKeys((prev) => [...prev, parent.key]);
+    }
+  }, [location.pathname, menuItems, openKeys]);
 
   // Route prefetching map - maps routes to their lazy import functions
   const routePrefetchMap = useMemo(() => ({
@@ -402,6 +416,21 @@ export function MobileSidebar() {
   const menuItems = useMemo(() => getMenuItems(businessType, isAdmin), [businessType, isAdmin]);
   const quickActions = useMemo(() => getQuickActions(businessType), [businessType]);
 
+  // Open the group that contains the current route when sheet opens or location changes
+  useEffect(() => {
+    const pathname = location.pathname;
+    const parent = menuItems.find(
+      (item) =>
+        item.children &&
+        item.children.some(
+          (c) => pathname === c.key || pathname.startsWith(c.key + '/')
+        )
+    );
+    if (parent && !openKeys.includes(parent.key)) {
+      setOpenKeys((prev) => [...prev, parent.key]);
+    }
+  }, [location.pathname, menuItems, openKeys]);
+
   const routePrefetchMap = useMemo(() => ({
     '/dashboard': () => import('../../pages/Dashboard'),
     '/customers': () => import('../../pages/Customers'),
@@ -414,7 +443,6 @@ export function MobileSidebar() {
     '/pricing': () => import('../../pages/Pricing'),
     '/reports/overview': () => import('../../pages/Reports'),
     '/reports/smart-report': () => import('../../pages/Reports'),
-    '/reports/generated-reports': () => import('../../pages/Reports'),
     '/inventory': () => import('../../pages/Inventory'),
     '/leads': () => import('../../pages/Leads'),
     '/users': () => import('../../pages/Users'),

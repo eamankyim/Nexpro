@@ -80,6 +80,17 @@ const reportService = {
     return await api.get(url);
   },
 
+  // Get prescription report (pharmacy)
+  getPrescriptionReport: async (startDate = null, endDate = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    
+    const queryString = params.toString();
+    const url = queryString ? `/reports/prescription-report?${queryString}` : '/reports/prescription-report';
+    return await api.get(url);
+  },
+
   // Get inventory summary
   getInventorySummary: async () => {
     return await api.get('/reports/inventory-summary');
@@ -153,6 +164,34 @@ const reportService = {
   // Get pipeline summary
   getPipelineSummary: async () => {
     return await api.get('/reports/pipeline-summary');
+  },
+
+  /**
+   * Batched overview phase 1 (revenue, expenses, outstanding, sales, serviceAnalytics, productSales).
+   * Reduces round trips when loading the Reports page.
+   */
+  getOverviewPhase1: async (startDate, endDate, groupBy = 'day', includeProductSales = false) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (groupBy) params.append('groupBy', groupBy);
+    if (includeProductSales) params.append('includeProductSales', 'true');
+    const queryString = params.toString();
+    const url = queryString ? `/reports/overview/phase1?${queryString}` : '/reports/overview/phase1';
+    return await api.get(url);
+  },
+
+  /**
+   * Batched overview phase 2 (inventory, KPI, top customers, pipeline, revenue by channel).
+   */
+  getOverviewPhase2: async (startDate, endDate, limit = 5) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    params.append('limit', limit);
+    const queryString = params.toString();
+    const url = `/reports/overview/phase2?${queryString}`;
+    return await api.get(url);
   }
 };
 

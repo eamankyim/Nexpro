@@ -46,10 +46,11 @@ import { showSuccess, showError } from '../../utils/toast';
 import customerService from '../../services/customerService';
 
 /**
- * Format currency value
+ * Format currency value (handles string/number from API or form)
  */
 const formatCurrency = (amount) => {
-  return `${CURRENCY.SYMBOL} ${(amount || 0).toFixed(CURRENCY.DECIMAL_PLACES)}`;
+  const num = Number(amount);
+  return `${CURRENCY.SYMBOL} ${(Number.isNaN(num) ? 0 : num).toFixed(CURRENCY.DECIMAL_PLACES)}`;
 };
 
 /**
