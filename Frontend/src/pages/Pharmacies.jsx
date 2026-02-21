@@ -10,6 +10,7 @@ import {
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
@@ -214,18 +215,23 @@ const Pharmacies = () => {
     <div className="p-4 md:p-6 space-y-4 md:space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Pharmacies</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-foreground">Pharmacies</h1>
           <p className="text-gray-600 mt-1">Manage your pharmacy locations</p>
         </div>
-        <Button onClick={handleCreate} className="bg-[#166534] hover:bg-[#14532d] text-white">
-          <Plus className="h-4 w-4 mr-2" />Add Pharmacy
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button onClick={handleCreate} className="bg-[#166534] hover:bg-[#14532d] text-white">
+              <Plus className="h-4 w-4 mr-2" />Add Pharmacy
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Add a new pharmacy</TooltipContent>
+        </Tooltip>
       </div>
       
-      <div className="grid grid-cols-3 gap-4">
-        <DashboardStatsCard title="Total" value={stats.total} subtitle={`${stats.total} pharmacies`} icon={Building2} />
-        <DashboardStatsCard title="Active" value={stats.active} subtitle={`${stats.active} operational`} icon={Building2} />
-        <DashboardStatsCard title="Inactive" value={stats.inactive} subtitle={`${stats.inactive} closed`} icon={Building2} />
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <DashboardStatsCard tooltip="Total number of pharmacies" title="Total" value={stats.total} subtitle={`${stats.total} pharmacies`} icon={Building2} />
+        <DashboardStatsCard tooltip="Operational pharmacies" title="Active" value={stats.active} subtitle={`${stats.active} operational`} icon={Building2} />
+        <DashboardStatsCard tooltip="Closed pharmacies" title="Inactive" value={stats.inactive} subtitle={`${stats.inactive} closed`} icon={Building2} />
       </div>
       
       <Card className="border border-gray-200">
@@ -235,9 +241,14 @@ const Pharmacies = () => {
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
               <Input placeholder="Search..." value={searchText} onChange={(e) => setSearchText(e.target.value)} className="pl-10" />
             </div>
-            <SecondaryButton onClick={fetchPharmacies} size={isMobile ? 'icon' : 'default'}>
-              <RefreshCw className="h-4 w-4" />{!isMobile && <span className="ml-2">Refresh</span>}
-            </SecondaryButton>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SecondaryButton onClick={fetchPharmacies} size={isMobile ? 'icon' : 'default'}>
+                  <RefreshCw className="h-4 w-4" />
+                </SecondaryButton>
+              </TooltipTrigger>
+              <TooltipContent>Refresh pharmacies list</TooltipContent>
+            </Tooltip>
           </div>
         </CardContent>
       </Card>
@@ -334,12 +345,16 @@ const Pharmacies = () => {
               </div>
               
               <FormField control={form.control} name="isActive" render={({ field }) => (
-                <FormItem className="flex items-center justify-between rounded-lg border p-4">
-                  <div>
+                <FormItem className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 rounded-lg border p-4">
+                  <div className="space-y-0.5 min-w-0 flex-1">
                     <FormLabel className="text-base">Active</FormLabel>
                     <p className="text-sm text-gray-500">Is this pharmacy operational?</p>
                   </div>
-                  <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} /></FormControl>
+                  <FormControl>
+                    <div className="min-h-[44px] min-w-[44px] flex items-center justify-end shrink-0">
+                      <Switch checked={field.value} onCheckedChange={field.onChange} />
+                    </div>
+                  </FormControl>
                 </FormItem>
               )} />
               

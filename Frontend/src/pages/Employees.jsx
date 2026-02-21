@@ -12,10 +12,9 @@ import {
   Plus,
   Users,
   FilePlus,
-  Trash2,
   Upload as UploadIcon,
   Building2,
-  DollarSign,
+  Currency,
   History,
   Mail,
   Phone,
@@ -33,15 +32,16 @@ import { showSuccess, showError, showWarning } from '../utils/toast';
 import ActionColumn from '../components/ActionColumn';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
-import DetailSkeleton from '../components/DetailSkeleton';
 import DashboardTable from '../components/DashboardTable';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import DetailsDrawer from '../components/DetailsDrawer';
+import MobileFormDialog from '../components/MobileFormDialog';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import FileUpload from '../components/FileUpload';
 import FilePreview from '../components/FilePreview';
 import { API_BASE_URL } from '../services/api';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -62,15 +62,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -180,7 +171,7 @@ const resolveFileUrl = (url) => {
   return url;
 };
 
-const EmployeeForm = ({ currentStep, form }) => {
+const EmployeeForm = ({ currentStep, form, savingDepartment, setSavingDepartment, savingJobTitle, setSavingJobTitle, savingBank, setSavingBank, isModalOpen }) => {
   const [customRelationships, setCustomRelationships] = useState([]);
   const [showRelationshipOtherInputs, setShowRelationshipOtherInputs] = useState({});
   const [relationshipOtherValues, setRelationshipOtherValues] = useState({});
@@ -193,7 +184,7 @@ const EmployeeForm = ({ currentStep, form }) => {
   const [showJobTitleCreateInput, setShowJobTitleCreateInput] = useState(false);
   const [newJobTitleValue, setNewJobTitleValue] = useState('');
 
-  // Load custom relationships, banks, departments, and job titles on mount
+  // Load custom relationships, banks, departments, and job titles on mount and when modal opens
   useEffect(() => {
     const loadCustomOptions = async () => {
       try {
@@ -212,7 +203,7 @@ const EmployeeForm = ({ currentStep, form }) => {
       }
     };
     loadCustomOptions();
-  }, []);
+  }, [isModalOpen]);
 
   // Handle relationship change (including "Other")
   const handleRelationshipChange = (value, fieldPath) => {
@@ -306,28 +297,23 @@ const EmployeeForm = ({ currentStep, form }) => {
     }
 
     try {
-      setSavingDepartment(true);
+      setSavingDepartment?.(true);
       const saved = await customDropdownService.saveCustomOption('department', newDepartmentValue.trim());
       if (saved) {
-        // Add to departments
-        setDepartments(prev => {
-          if (prev.find(d => d.value === saved.value)) {
-            return prev;
-          }
-          return [...prev, saved];
+        // Add new department to dropdown immediately so user can select it
+        setDepartments((prev) => {
+          if (prev.find((d) => d.value === saved.value)) return prev;
+          return [...prev, { value: saved.value, label: saved.label || saved.value }];
         });
-        
-        // Set the value in the form
         form.setValue('department', saved.value);
-        
-        // Clear the input
         setShowDepartmentCreateInput(false);
         setNewDepartmentValue('');
-        
         showSuccess(`"${saved.label}" department added`);
       }
     } catch (error) {
       showError(error, error.response?.data?.error || 'Failed to save department');
+    } finally {
+      setSavingDepartment?.(false);
     }
   };
 
@@ -413,7 +399,7 @@ const EmployeeForm = ({ currentStep, form }) => {
       <>
         <Separator className="my-4" />
         <h3 className="text-lg font-semibold mb-4">Personal Information</h3>
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="firstName"
@@ -441,7 +427,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             )}
           />
         </div>
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="email"
@@ -472,13 +458,28 @@ const EmployeeForm = ({ currentStep, form }) => {
 
         <Separator className="my-4" />
         <h3 className="text-lg font-semibold mb-4">Employment Details</h3>
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="department"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Department (optional)</FormLabel>
+                <div className="flex items-center justify-between">
+                  <FormLabel>Department (optional)</FormLabel>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-auto py-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={() => {
+                      setShowDepartmentCreateInput(true);
+                      setShowJobTitleCreateInput(false);
+                    }}
+                  >
+                    <Plus className="h-3 w-3 mr-1" />
+                    Add department
+                  </Button>
+                </div>
                 <Select value={field.value} onValueChange={(value) => {
                   if (value === '__CREATE__') {
                     handleDepartmentChange('__CREATE__');
@@ -503,13 +504,10 @@ const EmployeeForm = ({ currentStep, form }) => {
                       e.preventDefault();
                       setShowDepartmentCreateInput(true);
                     }}>
-                      <Button variant="ghost" className="w-full justify-start" onClick={(e) => {
-                        e.preventDefault();
-                        setShowDepartmentCreateInput(true);
-                      }}>
+                      <span className="flex items-center">
                         <Plus className="h-4 w-4 mr-2" />
                         Create Department
-                      </Button>
+                      </span>
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -578,7 +576,7 @@ const EmployeeForm = ({ currentStep, form }) => {
                 autoFocus
                 className="flex-1"
               />
-              <Button type="button" onClick={handleSaveCustomDepartment}>
+              <Button type="button" onClick={handleSaveCustomDepartment} loading={savingDepartment}>
                 Save
               </Button>
             </div>
@@ -606,7 +604,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             </div>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="employmentType"
@@ -656,7 +654,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             )}
           />
         </div>
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="hireDate"
@@ -678,7 +676,7 @@ const EmployeeForm = ({ currentStep, form }) => {
         </div>
         <Separator className="my-4" />
         <h3 className="text-lg font-semibold mb-4">Compensation</h3>
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="salaryType"
@@ -729,7 +727,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             )}
           />
         </div>
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="payFrequency"
@@ -808,7 +806,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             </div>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="bankAccountName"
@@ -843,7 +841,7 @@ const EmployeeForm = ({ currentStep, form }) => {
       <>
         <Separator className="my-4" />
         <h3 className="text-lg font-semibold mb-4">Emergency & Next of Kin</h3>
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="emergencyContact.name"
@@ -871,7 +869,7 @@ const EmployeeForm = ({ currentStep, form }) => {
             )}
           />
         </div>
-        <div className="grid grid-cols-2 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <FormField
             control={form.control}
             name="nextOfKin.name"
@@ -994,9 +992,10 @@ const Employees = () => {
   const [savingDepartment, setSavingDepartment] = useState(false);
   const [savingJobTitle, setSavingJobTitle] = useState(false);
   const [savingBank, setSavingBank] = useState(false);
+  const [departmentOptions, setDepartmentOptions] = useState([]);
 
   const formSteps = [
-    { key: 'basic', title: 'Edit Employee' },
+    { key: 'basic', title: 'Employee Information' },
     { key: 'emergency', title: 'Emergency & Next of Kin' }
   ];
 
@@ -1011,6 +1010,19 @@ const Employees = () => {
     setPageSearchConfig({ scope: 'employees', placeholder: SEARCH_PLACEHOLDERS.EMPLOYEES });
     return () => setPageSearchConfig(null);
   }, [setPageSearchConfig]);
+
+  // Load department options for table column labels (and refetch when modal opens/closes)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const depts = await customDropdownService.getCustomOptions('department');
+        setDepartmentOptions(depts || []);
+      } catch (error) {
+        console.error('Failed to load departments:', error);
+      }
+    };
+    load();
+  }, [modalVisible]);
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, current: 1 }));
@@ -1035,7 +1047,8 @@ const Employees = () => {
     setDrawerLoading(true);
     try {
       const response = await employeeService.getEmployee(id);
-      setViewingEmployee(response.data || response);
+      const data = response?.data || response;
+      setViewingEmployee((prev) => (prev?.id === id ? data : prev));
     } catch (error) {
       showError(null, 'Failed to load employee details');
     } finally {
@@ -1095,9 +1108,26 @@ const Employees = () => {
     setFormStep(0);
     setEditingEmployee(record);
     form.reset({
-      ...record,
+      firstName: record.firstName,
+      lastName: record.lastName,
+      email: record.email || '',
+      phone: record.phone || '',
+      department: record.department || '',
+      jobTitle: record.jobTitle || '',
+      employmentType: record.employmentType || 'full_time',
+      status: record.status || 'active',
       hireDate: record.hireDate ? dayjs(record.hireDate) : null,
-      endDate: record.endDate ? dayjs(record.endDate) : null
+      endDate: record.endDate ? dayjs(record.endDate) : null,
+      salaryType: record.salaryType || 'salary',
+      salaryAmount: Number(record.salaryAmount) || 0,
+      payFrequency: record.payFrequency || 'monthly',
+      bankName: record.bankName || '',
+      customBankName: record.customBankName || '',
+      bankAccountName: record.bankAccountName || '',
+      bankAccountNumber: record.bankAccountNumber || '',
+      emergencyContact: record.emergencyContact && typeof record.emergencyContact === 'object' ? record.emergencyContact : {},
+      nextOfKin: record.nextOfKin && typeof record.nextOfKin === 'object' ? record.nextOfKin : {},
+      notes: record.notes || ''
     });
     setModalVisible(true);
   };
@@ -1145,19 +1175,10 @@ const Employees = () => {
     }
   };
 
-  const handleView = async (record) => {
-    // Set viewing employee immediately with data from table row
+  const handleView = (record) => {
     setViewingEmployee(record);
-    // Open drawer immediately
     setDrawerVisible(true);
-    // Load full details asynchronously
-    setDrawerLoading(true);
-    try {
-      await fetchEmployeeDetails(record.id);
-    } catch (error) {
-      // Error handling is already in fetchEmployeeDetails
-    }
-    // Note: drawerLoading is set to false in fetchEmployeeDetails finally block
+    fetchEmployeeDetails(record.id);
   };
 
   const handleCloseDrawer = () => {
@@ -1270,7 +1291,7 @@ const Employees = () => {
       label: 'Name',
       render: (_, record) => (
         <div>
-          <div className="font-semibold text-black">{`${record?.firstName || ''} ${record?.lastName || ''}`}</div>
+          <div className="font-semibold text-foreground">{`${record?.firstName || ''} ${record?.lastName || ''}`}</div>
           <div className="text-muted-foreground text-xs">{record?.jobTitle || '—'}</div>
         </div>
       )
@@ -1278,12 +1299,16 @@ const Employees = () => {
     {
       key: 'department',
       label: 'Department',
-      render: (_, record) => <span className="text-black">{record?.department || '—'}</span>
+      render: (_, record) => {
+        const val = record?.department;
+        const label = val && departmentOptions.find((d) => d.value === val)?.label;
+        return <span className="text-foreground">{label || val || '—'}</span>;
+      }
     },
     {
       key: 'employmentType',
       label: 'Employment Type',
-      render: (_, record) => <span className="text-black">{record?.employmentType?.replace('_', ' ').toUpperCase() || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.employmentType?.replace('_', ' ').toUpperCase() || '—'}</span>
     },
     {
       key: 'status',
@@ -1293,7 +1318,7 @@ const Employees = () => {
     {
       key: 'hireDate',
       label: 'Hire Date',
-      render: (_, record) => <span className="text-black">{record?.hireDate ? dayjs(record.hireDate).format('MMM DD, YYYY') : '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.hireDate ? dayjs(record.hireDate).format('MMM DD, YYYY') : '—'}</span>
     },
     {
       key: 'actions',
@@ -1309,37 +1334,40 @@ const Employees = () => {
               variant: 'secondary',
               icon: <FilePlus className="h-4 w-4" />,
               onClick: () => handleOpenEdit(record)
-            },
-            {
-              key: 'archive',
-              label: archiveMutation.isLoading ? 'Archiving...' : 'Archive',
-              variant: 'destructive',
-              icon: archiveMutation.isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />,
-              onClick: () => archiveMutation.mutate({ id: record.id, payload: {} }),
-              disabled: archiveMutation.isLoading
             }
           ]}
         />
       )
     }
-  ], [handleView, archiveMutation]);
+  ], [handleView, departmentOptions]);
 
-  const employees = employeeQuery.data?.data || [];
-  const total = employeeQuery.data?.count || 0;
+  const employees = Array.isArray(employeeQuery.data?.data) ? employeeQuery.data.data : [];
+  const total = Number(employeeQuery.data?.count) || 0;
 
   // Calculate summary stats
   const summaryStats = useMemo(() => {
-    const totalEmployees = employees.length;
-    const activeEmployees = employees.filter(e => e.status === 'active').length;
-    const inactiveEmployees = employees.filter(e => e.status === 'inactive').length;
-    const departments = new Set(employees.map(e => e.department).filter(Boolean)).size;
+    if (!Array.isArray(employees)) {
+      return {
+        totals: {
+          totalEmployees: 0,
+          activeEmployees: 0,
+          inactiveEmployees: 0,
+          departments: 0
+        }
+      };
+    }
+    
+    const totalEmployees = employees.length || 0;
+    const activeEmployees = employees.filter(e => e?.status === 'active').length || 0;
+    const inactiveEmployees = employees.filter(e => e?.status === 'inactive').length || 0;
+    const departments = new Set(employees.map(e => e?.department).filter(Boolean)).size || 0;
     
     return {
       totals: {
-        totalEmployees,
-        activeEmployees,
-        inactiveEmployees,
-        departments
+        totalEmployees: Number(totalEmployees) || 0,
+        activeEmployees: Number(activeEmployees) || 0,
+        inactiveEmployees: Number(inactiveEmployees) || 0,
+        departments: Number(departments) || 0
       }
     };
   }, [employees]);
@@ -1449,13 +1477,15 @@ const Employees = () => {
 
   // Apply client-side filtering
   const filteredEmployees = useMemo(() => {
+    if (!Array.isArray(employees)) return [];
+    
     let result = employees;
     
     if (filters.status !== 'all') {
-      result = result.filter(e => e.status === filters.status);
+      result = result.filter(e => e?.status === filters.status);
     }
     if (filters.employmentType !== 'all') {
-      result = result.filter(e => e.employmentType === filters.employmentType);
+      result = result.filter(e => e?.employmentType === filters.employmentType);
     }
     
     return result;
@@ -1517,7 +1547,7 @@ const Employees = () => {
               <Descriptions column={1} className="space-y-0">
                 <DescriptionItem label="Salary Type">{viewingEmployee.salaryType?.toUpperCase()}</DescriptionItem>
                 <DescriptionItem label="Base Amount">
-                  GHS {Number(viewingEmployee.salaryAmount || 0).toFixed(2)}
+                  ₵ {Number(viewingEmployee.salaryAmount || 0).toFixed(2)}
                 </DescriptionItem>
                 <DescriptionItem label="Pay Frequency">{viewingEmployee.payFrequency?.toUpperCase()}</DescriptionItem>
                 <DescriptionItem label="Bank / Wallet">{viewingEmployee.bankName || '—'}</DescriptionItem>
@@ -1590,9 +1620,9 @@ const Employees = () => {
                     <TimelineItem key={index} isLast={isLast}>
                       <TimelineIndicator />
                       <TimelineContent>
-                        <TimelineTitle className="text-black">{formatChangeType(item.changeType)}</TimelineTitle>
-                        <TimelineTime className="text-black">{dayjs(item.effectiveDate).format('MMM DD, YYYY [at] h:mm A')}</TimelineTime>
-                        {item.notes && <TimelineDescription className="text-black">{item.notes}</TimelineDescription>}
+                        <TimelineTitle className="text-foreground">{formatChangeType(item.changeType)}</TimelineTitle>
+                        <TimelineTime className="text-foreground">{dayjs(item.effectiveDate).format('MMM DD, YYYY [at] h:mm A')}</TimelineTime>
+                        {item.notes && <TimelineDescription className="text-foreground">{item.notes}</TimelineDescription>}
                       </TimelineContent>
                     </TimelineItem>
                   );
@@ -1627,8 +1657,8 @@ const Employees = () => {
                           )}
                         </p>
                         <p>
-                          Gross: GHS {parseFloat(entry.grossPay || 0).toFixed(2)} • Net:{' '}
-                          <strong>GHS {parseFloat(entry.netPay || 0).toFixed(2)}</strong>
+                          Gross: ₵ {parseFloat(entry.grossPay || 0).toFixed(2)} • Net:{' '}
+                          <strong>₵ {parseFloat(entry.netPay || 0).toFixed(2)}</strong>
                         </p>
                       </div>
                     </CardContent>
@@ -1652,36 +1682,51 @@ const Employees = () => {
           subText="Manage your team, payroll readiness, and HR records."
         />
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-            <Filter className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Filter</span>}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={async () => {
-              setRefreshingEmployees(true);
-              await queryClient.invalidateQueries({ queryKey: ['employees'] });
-              setRefreshingEmployees(false);
-            }}
-            disabled={refreshingEmployees}
-            size={isMobile ? "icon" : "default"}
-          >
-            {refreshingEmployees ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
-          <Button onClick={handleOpenCreate} size={isMobile ? "icon" : "default"}>
-            <Plus className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">New Employee</span>}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+                <Filter className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Filter</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Filter employees by status or employment type</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                onClick={async () => {
+                  setRefreshingEmployees(true);
+                  await queryClient.invalidateQueries({ queryKey: ['employees'] });
+                  setRefreshingEmployees(false);
+                }}
+                disabled={refreshingEmployees}
+                size={isMobile ? "icon" : "default"}
+              >
+                {refreshingEmployees ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh employees list</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={handleOpenCreate} size={isMobile ? "icon" : "default"}>
+                <Plus className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">New Employee</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add a new employee</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
         <DashboardStatsCard
+          tooltip="Total number of employees"
           title="Total Employees"
           value={summaryStats?.totals?.totalEmployees || 0}
           icon={Users}
@@ -1689,6 +1734,7 @@ const Employees = () => {
           iconColor="#166534"
         />
         <DashboardStatsCard
+          tooltip="Currently active employees"
           title="Active"
           value={summaryStats?.totals?.activeEmployees || 0}
           icon={UserCheck}
@@ -1696,6 +1742,7 @@ const Employees = () => {
           iconColor="#84cc16"
         />
         <DashboardStatsCard
+          tooltip="Employees no longer active"
           title="Inactive"
           value={summaryStats?.totals?.inactiveEmployees || 0}
           icon={Users}
@@ -1703,6 +1750,7 @@ const Employees = () => {
           iconColor="#6b7280"
         />
         <DashboardStatsCard
+          tooltip="Number of departments"
           title="Departments"
           value={summaryStats?.totals?.departments || 0}
           icon={Building2}
@@ -1718,7 +1766,13 @@ const Employees = () => {
         loading={employeeQuery.isLoading}
         title={null}
         emptyIcon={<Users className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No employees found"
+        emptyDescription="No employees yet. Add your team members to manage payroll and schedules."
+        emptyAction={
+          <Button onClick={handleOpenCreate}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add First Employee
+          </Button>
+        }
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);
@@ -1731,7 +1785,7 @@ const Employees = () => {
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Employees</SheetTitle>
           </SheetHeader>
@@ -1791,37 +1845,25 @@ const Employees = () => {
         </SheetContent>
       </Sheet>
 
-      <Dialog open={modalVisible} onOpenChange={(open) => {
-        if (!open) handleModalCancel();
-      }}>
-        <DialogContent className="sm:w-[min(92vw,860px)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
-          <DialogHeader>
-            <DialogTitle>{editingEmployee ? 'Edit Employee' : 'New Employee'}</DialogTitle>
-          </DialogHeader>
-          <DialogBody>
-          <Steps current={formStep} className="mb-6">
-            {formSteps.map((step, index) => (
-              <Step key={index} title={step.title} />
-            ))}
-          </Steps>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)}>
-              <EmployeeForm currentStep={formStep} form={form} />
-            </form>
-          </Form>
-          </DialogBody>
-          <DialogFooter>
+      <MobileFormDialog
+        open={modalVisible}
+        onOpenChange={(open) => {
+          if (!open) handleModalCancel();
+        }}
+        title={editingEmployee ? 'Edit Employee' : 'New Employee'}
+        footer={
+          <>
             {formStep > 0 && (
               <Button variant="outline" onClick={handlePrevStep}>
                 Previous
               </Button>
             )}
-            {formStep < formSteps.length - 1 && (
+            {formStep < formSteps.length - 1 && !editingEmployee && (
               <Button onClick={handleNextStep}>
                 Next
               </Button>
             )}
-            {formStep === formSteps.length - 1 && (
+            {(formStep === formSteps.length - 1 || editingEmployee) && (
               <Button
                 loading={createMutation.isLoading || updateMutation.isLoading}
                 onClick={form.handleSubmit(onSubmit)}
@@ -1829,9 +1871,20 @@ const Employees = () => {
                 {editingEmployee ? 'Update' : 'Create'} Employee
               </Button>
             )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </>
+        }
+      >
+        <Steps current={formStep} className="mb-6">
+          {formSteps.map((step, index) => (
+            <Step key={index} index={index} current={formStep} title={step.title} />
+          ))}
+        </Steps>
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(onSubmit)}>
+            <EmployeeForm currentStep={formStep} form={form} savingDepartment={savingDepartment} setSavingDepartment={setSavingDepartment} savingJobTitle={savingJobTitle} setSavingJobTitle={setSavingJobTitle} savingBank={savingBank} setSavingBank={setSavingBank} isModalOpen={modalVisible} />
+          </form>
+        </Form>
+      </MobileFormDialog>
 
       {drawerVisible && (
         <DetailsDrawer
@@ -1839,18 +1892,12 @@ const Employees = () => {
           onClose={handleCloseDrawer}
           title={viewingEmployee ? `${viewingEmployee.firstName} ${viewingEmployee.lastName}` : 'Employee Details'}
           width={900}
-          tabs={drawerLoading ? [
-            {
-              key: 'loading',
-              label: 'Overview',
-              content: <DetailSkeleton />
-            }
-          ] : drawerTabs}
-          onEdit={viewingEmployee && !drawerLoading ? () => {
+          tabs={drawerTabs}
+          onEdit={viewingEmployee ? () => {
             handleOpenEdit(viewingEmployee);
             setDrawerVisible(false);
           } : null}
-          onDelete={viewingEmployee && !drawerLoading ? () => {
+          onDelete={viewingEmployee ? () => {
             archiveMutation.mutate({ id: viewingEmployee.id, payload: {} });
           } : null}
           deleteConfirmText="Are you sure you want to archive this employee?"
@@ -1858,96 +1905,93 @@ const Employees = () => {
       )}
 
       {/* History Note Dialog */}
-      <Dialog open={historyDialogOpen} onOpenChange={setHistoryDialogOpen}>
-        <DialogContent className="sm:w-[min(92vw,620px)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
-          <DialogHeader>
-            <DialogTitle>Add History Note</DialogTitle>
-            <DialogDescription>
-              Record an event or note for this employee's history.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-          <Form {...historyForm}>
-            <form onSubmit={historyForm.handleSubmit(onSubmitHistory)} className="space-y-4">
-              <FormField
-                control={historyForm.control}
-                name="changeType"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Type</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select type" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        {historyChangeTypes.map((type) => (
-                          <SelectItem key={type.value} value={type.value}>
-                            {type.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={historyForm.control}
-                name="effectiveDate"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Effective Date</FormLabel>
+      <MobileFormDialog
+        open={historyDialogOpen}
+        onOpenChange={setHistoryDialogOpen}
+        title="Add History Note"
+        description="Record an event or note for this employee's history."
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setHistoryDialogOpen(false);
+                historyForm.reset();
+              }}
+            >
+              Cancel
+            </Button>
+            <Button form="history-form" type="submit">
+              Add History Note
+            </Button>
+          </>
+        }
+      >
+        <Form {...historyForm}>
+          <form id="history-form" onSubmit={historyForm.handleSubmit(onSubmitHistory)} className="space-y-4">
+            <FormField
+              control={historyForm.control}
+              name="changeType"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Type</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
-                      <DatePicker
-                        date={field.value ? (dayjs.isDayjs(field.value) ? field.value.toDate() : new Date(field.value)) : new Date()}
-                        onDateChange={(date) => {
-                          field.onChange(date ? dayjs(date) : null);
-                        }}
-                      />
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select type" />
+                      </SelectTrigger>
                     </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={historyForm.control}
-                name="notes"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Notes (optional)</FormLabel>
-                    <FormControl>
-                      <Textarea
-                        placeholder="Enter additional details..."
-                        rows={4}
-                        {...field}
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setHistoryDialogOpen(false);
-                    historyForm.reset();
-                  }}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit">
-                  Add History Note
-                </Button>
-              </DialogFooter>
-            </form>
-          </Form>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
+                    <SelectContent>
+                      {historyChangeTypes.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={historyForm.control}
+              name="effectiveDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Effective Date</FormLabel>
+                  <FormControl>
+                    <DatePicker
+                      date={field.value ? (dayjs.isDayjs(field.value) ? field.value.toDate() : new Date(field.value)) : new Date()}
+                      onDateChange={(date) => {
+                        field.onChange(date ? dayjs(date) : null);
+                      }}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={historyForm.control}
+              name="notes"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Notes (optional)</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      placeholder="Enter additional details..."
+                      rows={4}
+                      {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </form>
+        </Form>
+      </MobileFormDialog>
 
       <FilePreview
         open={documentPreviewVisible}

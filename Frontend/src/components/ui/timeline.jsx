@@ -14,7 +14,7 @@ export function TimelineItem({ children, className, isLast, ...props }) {
     <div className={cn("relative flex gap-4 pb-8 last:pb-0", className)} {...props}>
       {/* Connecting line - vertical line from indicator to next item */}
       {!isLast && (
-        <div className="absolute left-[5px] top-4 bottom-0 w-[1px] bg-gray-300" />
+        <div className="absolute left-[5px] top-4 bottom-0 w-[1px] bg-border" />
       )}
       {children}
     </div>

@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Row, Col, Statistic, Tag, Spin, DatePicker, Space, Button, Divider, Tooltip, Alert, Modal } from 'antd';
 import { useResponsive } from '../hooks/useResponsive';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import StatusChip from '../components/StatusChip';
@@ -10,8 +9,9 @@ import DateFilterButtons from '../components/DateFilterButtons';
 import DashboardStatsCards from '../components/DashboardStatsCards';
 import DashboardJobsTable from '../components/DashboardJobsTable';
 import { showSuccess, showError, showWarning } from '../utils/toast';
+import { getCachedDashboard, cacheDashboard } from '../utils/posDb';
 import {
-  DollarSign,
+  Currency,
   ShoppingCart,
   FileText,
   Users,
@@ -47,16 +47,16 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import dashboardService from '../services/dashboardService';
 import productService from '../services/productService';
 import notificationService from '../services/notificationService';
+import { NOTIFICATION_LIST_QUERY_KEY } from '../components/NotificationBell';
 import settingsService from '../services/settingsService';
-import reportService from '../services/reportService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
-import { getPreviousPeriod, calculateComparison, formatComparisonText } from '../utils/periodComparison';
-import { CURRENCY } from '../constants';
+import { CURRENCY, DEFAULT_TENANT_NAMES, getWorkspaceDisplayName } from '../constants';
 import {
   LineChart,
   Line,
@@ -77,83 +77,70 @@ dayjs.extend(weekOfYear);
 dayjs.extend(isoWeek);
 dayjs.extend(relativeTime);
 
-const { RangePicker } = DatePicker;
-
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, activeTenant, activeTenantId, tenantRole } = useAuth();
+  const { user, activeTenant, activeTenantId, tenantRole, wasInvited } = useAuth();
   const [loading, setLoading] = useState(true);
   const [isRefetching, setIsRefetching] = useState(false);
   const { isMobile } = useResponsive();
   const [overview, setOverview] = useState(null);
-  const todayRange = useMemo(() => {
-    const today = dayjs();
-    return [today, today];
-  }, []);
-  const [dateRange, setDateRange] = useState(todayRange);
-  const [activeFilter, setActiveFilter] = useState('today');
+  const initialMonthRange = useMemo(() => [dayjs().startOf('month'), dayjs().endOf('month')], []);
+  const [dateRange, setDateRange] = useState(initialMonthRange);
+  const [activeFilter, setActiveFilter] = useState('month');
   const [jobsPagination, setJobsPagination] = useState({ current: 1, pageSize: 5 });
-  const [notifications, setNotifications] = useState([]);
-  const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [overviewParams, setOverviewParams] = useState(() => {
+    const start = dayjs().startOf('month');
+    const end = dayjs().endOf('month');
+    return {
+      startDate: start.format('YYYY-MM-DD'),
+      endDate: end.format('YYYY-MM-DD'),
+      filterType: 'thisMonth',
+    };
+  });
+
+  const { data: overviewResponse, isLoading: overviewLoading, isError: overviewError, refetch: refetchOverview, isFetched: overviewFetched } = useQuery({
+    queryKey: ['dashboard', 'overview', activeTenantId, overviewParams.startDate, overviewParams.endDate, overviewParams.filterType],
+    queryFn: () => dashboardService.getOverview(overviewParams.startDate, overviewParams.endDate, overviewParams.filterType),
+    enabled: !!activeTenantId,
+    staleTime: 2 * 60 * 1000, // 2 min cache
+    refetchOnWindowFocus: false,
+  });
+
+  // Deferred until after overview has been fetched so initial dashboard load is faster.
+  const { data: notificationsData, isLoading: loadingNotifications } = useQuery({
+    queryKey: [...NOTIFICATION_LIST_QUERY_KEY, activeTenantId, 1],
+    queryFn: () => notificationService.getNotifications({ page: 1, limit: 10 }),
+    enabled: !!activeTenantId && overviewFetched,
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+  const notifications = useMemo(
+    () => (notificationsData?.success && Array.isArray(notificationsData?.data) ? notificationsData.data : []),
+    [notificationsData]
+  );
   const [comparisonData, setComparisonData] = useState(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   const queryClient = useQueryClient();
 
-  // Fetch organization settings to check for logo (when onboarding not yet completed)
+  // Fetch organization settings (for display name, logo, etc.)
   const { data: organizationData } = useQuery({
     queryKey: ['settings', 'organization'],
     queryFn: () => settingsService.getOrganizationSettings(),
-    enabled: !activeTenant?.metadata?.onboarding?.completedAt,
+    enabled: !!activeTenantId,
   });
 
-  // Define fetchDashboardData BEFORE useEffect that uses it
-  const fetchDashboardData = useCallback(async (startDate = null, endDate = null, filterType = null) => {
-    try {
-      const response = await dashboardService.getOverview(startDate, endDate);
-      setOverview(response.data);
+  useEffect(() => {
+    if (overviewError) showError(null, 'Failed to load dashboard. Please try again.');
+  }, [overviewError]);
 
-      // Fetch comparison data if we have a filter type and date range
-      if (filterType && startDate && endDate) {
-        try {
-          const previousPeriod = getPreviousPeriod(filterType, [
-            dayjs(startDate),
-            dayjs(endDate)
-          ]);
-
-          // Fetch previous period data
-          const [prevRevenue, prevExpenses] = await Promise.all([
-            reportService.getRevenueReport(previousPeriod.startDate, previousPeriod.endDate, 'day')
-              .catch(() => ({ data: { totalRevenue: 0 } })),
-            reportService.getExpenseReport(previousPeriod.startDate, previousPeriod.endDate)
-              .catch(() => ({ data: { totalExpenses: 0 } }))
-          ]);
-
-          const prevRevenueValue = prevRevenue?.data?.totalRevenue || 0;
-          const prevExpenseValue = prevExpenses?.data?.totalExpenses || 0;
-          const currentRevenueValue = response.data?.thisMonth?.revenue || 0;
-          const currentExpenseValue = response.data?.thisMonth?.expenses || 0;
-          const currentProfitValue = currentRevenueValue - currentExpenseValue;
-          const prevProfitValue = prevRevenueValue - prevExpenseValue;
-
-          setComparisonData({
-            revenue: calculateComparison(currentRevenueValue, prevRevenueValue),
-            expenses: calculateComparison(currentExpenseValue, prevExpenseValue),
-            profit: calculateComparison(currentProfitValue, prevProfitValue),
-            label: previousPeriod.label,
-            periodLabel: previousPeriod.label
-          });
-        } catch (error) {
-          console.error('Failed to fetch comparison data:', error);
-          setComparisonData(null);
-        }
-      } else {
-        setComparisonData(null);
-      }
-    } catch (error) {
-      showError(null, 'Failed to load dashboard data');
-    } finally {
-      setLoading(false);
-      setIsRefetching(false);
-    }
+  const fetchDashboardData = useCallback((startDate = null, endDate = null, filterType = null) => {
+    const today = dayjs();
+    const sd = startDate || today.format('YYYY-MM-DD');
+    const ed = endDate || today.format('YYYY-MM-DD');
+    const ft = filterType || 'today';
+    setOverviewParams({ startDate: sd, endDate: ed, filterType: ft });
+    setLoading(true);
+    setIsRefetching(true);
   }, []);
 
   // Keep current filter in ref so pull-to-refresh uses it
@@ -162,9 +149,10 @@ const Dashboard = () => {
   const refreshWithCurrentFilter = useCallback(() => {
     const { dateRange: range, activeFilter: filter } = dateFilterRef.current;
     if (range && range[0] && range[1] && filter) {
-      return fetchDashboardData(range[0].format('YYYY-MM-DD'), range[1].format('YYYY-MM-DD'), filter);
+      fetchDashboardData(range[0].format('YYYY-MM-DD'), range[1].format('YYYY-MM-DD'), filter);
+    } else {
+      fetchDashboardData();
     }
-    return fetchDashboardData();
   }, [fetchDashboardData]);
 
   // Pull-to-refresh hook for dashboard (refetches with current date filter)
@@ -174,95 +162,116 @@ const Dashboard = () => {
   );
 
   useEffect(() => {
-    // Fetch today's data by default and notifications in parallel
-    const loadInitialData = async () => {
-      setLoading(true);
-      setLoadingNotifications(true);
-      const today = dayjs();
-      const startDate = today.format('YYYY-MM-DD');
-      const endDate = today.format('YYYY-MM-DD');
+    const start = dayjs().startOf('month');
+    const end = dayjs().endOf('month');
+    setOverviewParams({ startDate: start.format('YYYY-MM-DD'), endDate: end.format('YYYY-MM-DD'), filterType: 'thisMonth' });
+  }, []);
 
-      await Promise.all([
-        fetchDashboardData(startDate, endDate, 'today'),
-        (async () => {
-          try {
-            const response = await notificationService.getNotifications({ page: 1, limit: 5 });
-            if (response?.success && Array.isArray(response.data)) {
-              setNotifications(response.data);
-            }
-          } catch (error) {
-            console.error('Failed to load notifications', error);
-          } finally {
-            setLoadingNotifications(false);
-          }
-        })()
-      ]);
+  // Load cached dashboard data immediately on mount for instant display
+  useEffect(() => {
+    if (!activeTenantId) return;
+    
+    const loadCachedData = async () => {
+      try {
+        const cached = await getCachedDashboard(activeTenantId, overviewParams.filterType);
+        if (cached && !overview) {
+          setOverview(cached);
+          setLoading(false);
+          // If stale, the fresh data will replace it when React Query completes
+        }
+      } catch (err) {
+        console.error('[Dashboard] Failed to load cached data:', err);
+      }
     };
-    loadInitialData();
-  }, [fetchDashboardData]);
+    loadCachedData();
+  }, [activeTenantId, overviewParams.filterType]);
 
-  const handleDateRangeChange = useCallback(async (dates) => {
+  useEffect(() => {
+    if (!overviewResponse) return;
+    const data = overviewResponse?.data || overviewResponse;
+    setOverview(data);
+    setComparisonLoading(true);
+    setComparisonData(null);
+    const comparison = data?.comparison || null;
+    const id = setTimeout(() => {
+      setComparisonData(comparison);
+      setComparisonLoading(false);
+    }, 80);
+    
+    // Cache the fresh data for next time
+    if (activeTenantId && data) {
+      cacheDashboard(activeTenantId, overviewParams.filterType, data).catch(err => {
+        console.error('[Dashboard] Failed to cache data:', err);
+      });
+    }
+    
+    return () => clearTimeout(id);
+  }, [overviewResponse, activeTenantId, overviewParams.filterType]);
+
+  useEffect(() => {
+    setLoading(overviewLoading);
+    if (!overviewLoading) setIsRefetching(false);
+  }, [overviewLoading]);
+
+  const handleDateRangeChange = useCallback((dates) => {
     setIsRefetching(true);
     setDateRange(dates);
-    setActiveFilter(null); // Clear active filter when custom date range is used
+    setActiveFilter(null);
     if (dates && dates[0] && dates[1]) {
-      const startDate = dates[0].format('YYYY-MM-DD');
-      const endDate = dates[1].format('YYYY-MM-DD');
-      await fetchDashboardData(startDate, endDate, 'custom');
+      fetchDashboardData(dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD'), 'custom');
     } else {
-      // If no date range selected, fetch all data
-      await fetchDashboardData();
+      fetchDashboardData();
     }
   }, [fetchDashboardData]);
 
-  const clearFilters = useCallback(async () => {
+  const clearFilters = useCallback(() => {
     setIsRefetching(true);
     setDateRange(null);
     setActiveFilter(null);
     setComparisonData(null);
-    await fetchDashboardData();
+    fetchDashboardData();
   }, [fetchDashboardData]);
 
   // Quick date filter functions
-  const setTodayFilter = useCallback(async () => {
+  const setTodayFilter = useCallback(() => {
     setIsRefetching(true);
     const today = dayjs();
     const range = [today, today];
     setDateRange(range);
     setActiveFilter('today');
-    await fetchDashboardData(today.format('YYYY-MM-DD'), today.format('YYYY-MM-DD'), 'today');
+    fetchDashboardData(today.format('YYYY-MM-DD'), today.format('YYYY-MM-DD'), 'today');
   }, [fetchDashboardData]);
 
-  const setYesterdayFilter = useCallback(async () => {
+  const setYesterdayFilter = useCallback(() => {
     setIsRefetching(true);
     const yesterday = dayjs().subtract(1, 'day');
     const range = [yesterday, yesterday];
     setDateRange(range);
     setActiveFilter('yesterday');
-    await fetchDashboardData(yesterday.format('YYYY-MM-DD'), yesterday.format('YYYY-MM-DD'), 'yesterday');
+    fetchDashboardData(yesterday.format('YYYY-MM-DD'), yesterday.format('YYYY-MM-DD'), 'yesterday');
   }, [fetchDashboardData]);
 
-  const setThisWeekFilter = useCallback(async () => {
+  const setThisWeekFilter = useCallback(() => {
     setIsRefetching(true);
     const startOfWeek = dayjs().startOf('isoWeek');
     const endOfWeek = dayjs().endOf('isoWeek');
     const range = [startOfWeek, endOfWeek];
     setDateRange(range);
     setActiveFilter('week');
-    await fetchDashboardData(startOfWeek.format('YYYY-MM-DD'), endOfWeek.format('YYYY-MM-DD'), 'thisWeek');
+    fetchDashboardData(startOfWeek.format('YYYY-MM-DD'), endOfWeek.format('YYYY-MM-DD'), 'thisWeek');
   }, [fetchDashboardData]);
 
-  const setThisMonthFilter = useCallback(async () => {
+  const setThisMonthFilter = useCallback(() => {
     setIsRefetching(true);
     const startOfMonth = dayjs().startOf('month');
     const endOfMonth = dayjs().endOf('month');
     const range = [startOfMonth, endOfMonth];
     setDateRange(range);
     setActiveFilter('month');
-    await fetchDashboardData(startOfMonth.format('YYYY-MM-DD'), endOfMonth.format('YYYY-MM-DD'), 'thisMonth');
+    fetchDashboardData(startOfMonth.format('YYYY-MM-DD'), endOfMonth.format('YYYY-MM-DD'), 'thisMonth');
   }, [fetchDashboardData]);
 
-  const setThisQuarterFilter = useCallback(async () => {
+  const setThisQuarterFilter = useCallback(() => {
     setIsRefetching(true);
     const currentQuarter = Math.floor(dayjs().month() / 3);
     const startOfQuarter = dayjs().startOf('year').add(currentQuarter * 3, 'months');
@@ -270,17 +279,17 @@ const Dashboard = () => {
     const range = [startOfQuarter, endOfQuarter];
     setDateRange(range);
     setActiveFilter('quarter');
-    await fetchDashboardData(startOfQuarter.format('YYYY-MM-DD'), endOfQuarter.format('YYYY-MM-DD'), 'thisQuarter');
+    fetchDashboardData(startOfQuarter.format('YYYY-MM-DD'), endOfQuarter.format('YYYY-MM-DD'), 'thisQuarter');
   }, [fetchDashboardData]);
 
-  const setThisYearFilter = useCallback(async () => {
+  const setThisYearFilter = useCallback(() => {
     setIsRefetching(true);
     const startOfYear = dayjs().startOf('year');
     const endOfYear = dayjs().endOf('year');
     const range = [startOfYear, endOfYear];
     setDateRange(range);
     setActiveFilter('year');
-    await fetchDashboardData(startOfYear.format('YYYY-MM-DD'), endOfYear.format('YYYY-MM-DD'), 'thisYear');
+    fetchDashboardData(startOfYear.format('YYYY-MM-DD'), endOfYear.format('YYYY-MM-DD'), 'thisYear');
   }, [fetchDashboardData]);
 
 
@@ -352,7 +361,7 @@ const Dashboard = () => {
       return recentSales.map(sale => ({
         id: sale.id,
         jobNumber: sale.saleNumber,
-        title: `GHS ${sale.total?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        title: `₵ ${sale.total?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
         customer: sale.customer ? { name: sale.customer.name } : null,
         status: 'completed',
         createdAt: sale.createdAt,
@@ -394,39 +403,48 @@ const Dashboard = () => {
   const { data: staffProductsRaw, isLoading: staffProductsLoading } = useQuery({
     queryKey: ['products', 'active', activeTenantId],
     queryFn: () => productService.getAllActiveProducts(),
-    enabled: isStaffShopOrPharmacy,
+    enabled: isShop || isPharmacy,
     staleTime: 60 * 1000,
   });
   const staffProducts = useMemo(
     () => (Array.isArray(staffProductsRaw) ? staffProductsRaw : (staffProductsRaw?.products ?? [])),
     [staffProductsRaw]
   );
+  const hasProducts = useMemo(() => staffProducts.length > 0, [staffProducts]);
 
   const organization = useMemo(() => organizationData?.data || {}, [organizationData]);
-
-  // Check for tax settings
-  const hasTaxSettings = useMemo(() => !!(organization?.tax?.vatNumber || organization?.tax?.tin), [organization?.tax]);
   
-  // Check if tenant has a name (not default)
+  // Check if tenant has a name (not default placeholder)
   const hasBusinessName = useMemo(() => {
     const name = activeTenant?.name;
-    return !!(name && name.trim() && name !== 'My Workspace');
+    return !!(name && name.trim() && !DEFAULT_TENANT_NAMES.includes(name));
   }, [activeTenant?.name]);
+
+  // Check if tenant has a phone number (required in onboarding)
+  const hasCompanyPhone = useMemo(() => {
+    return !!(organization?.phone && organization.phone.trim());
+  }, [organization?.phone]);
+
+  // Display name: business name when set up, "Workspace" when not
+  const displayName = useMemo(
+    () => getWorkspaceDisplayName(activeTenant?.name, organization?.name),
+    [activeTenant?.name, organization?.name]
+  );
 
   // Check if onboarding is incomplete
   // Onboarding is considered complete if:
   // 1. completedAt exists in metadata, OR
-  // 2. All required items are present (name, tax settings). Logo is optional.
+  // 2. Required onboarding fields are present (company name and phone)
   const onboardingCompleted = useMemo(() => {
     // Explicitly marked as complete
     if (activeTenant?.metadata?.onboarding?.completedAt) {
       return true;
     }
-    // Implicitly complete if required setup items are present (logo is optional)
-    return hasBusinessName && hasTaxSettings;
-  }, [activeTenant?.metadata?.onboarding?.completedAt, hasBusinessName, hasTaxSettings]);
+    // Implicitly complete if required onboarding fields are present
+    return hasBusinessName && hasCompanyPhone;
+  }, [activeTenant?.metadata?.onboarding?.completedAt, hasBusinessName, hasCompanyPhone]);
   
-  const showSetupBanner = useMemo(() => !onboardingCompleted, [onboardingCompleted]);
+  const showSetupBanner = useMemo(() => !onboardingCompleted && !wasInvited, [onboardingCompleted, wasInvited]);
 
   // Welcome messages based on mode
   const welcomeMessages = useMemo(() => ({
@@ -457,6 +475,28 @@ const Dashboard = () => {
           </CardContent>
         </Card>
       </div>
+    );
+  }
+
+  // Actual failure (request failed) — show error state with retry, not empty dashboard
+  if (overviewError && !overview) {
+    return (
+      <Card className="border-border">
+        <CardContent className="flex flex-col items-center justify-center py-12 px-6 text-center">
+          <AlertTriangle className="h-12 w-12 text-amber-500 mb-4" />
+          <h3 className="text-lg font-semibold text-foreground mb-1">Couldn&apos;t load dashboard</h3>
+          <p className="text-sm text-muted-foreground mb-6 max-w-md">
+            Something went wrong loading your dashboard. This is different from having no data yet — you can try again.
+          </p>
+          <Button
+            onClick={() => refetchOverview()}
+            className="bg-[#166534] hover:bg-[#14532d] text-white"
+          >
+            <RefreshCw className="h-4 w-4 mr-2" />
+            Try again
+          </Button>
+        </CardContent>
+      </Card>
     );
   }
 
@@ -493,12 +533,12 @@ const Dashboard = () => {
                 <Sparkles className="h-5 w-5 text-[#166534]" />
               </div>
               <div className="flex-1 min-w-0">
-              <h3 className="text-lg font-semibold text-white mb-1">Finish setting up your workspace</h3>
+              <h3 className="text-lg font-semibold text-white mb-1">Finish setting up your business</h3>
               <p className="text-base text-gray-300">Complete your business profile to get the most out of ShopWISE.</p>
             </div>
             <Button
               onClick={() => navigate('/onboarding')}
-              className="shrink-0 text-black"
+              className="shrink-0 text-foreground"
               style={{
                 backgroundColor: '#a3e635',
                 borderColor: '#a3e635',
@@ -521,10 +561,12 @@ const Dashboard = () => {
         </div>
       )}
 
+      {/* Main dashboard content: greeting, filters, stats cards, recent activity, notice board */}
+      <div className="space-y-6" data-tour="dashboard-main">
       {/* Greeting Section */}
       <WelcomeSection
         welcomeMessage={welcomeMessage}
-        subText={`Here is the summary of what is happening presently at ${activeTenant?.name || 'your business'}.`}
+        subText={`Here is the summary of what is happening presently at ${displayName}.`}
       />
 
       {/* Date Filter Buttons */}
@@ -536,7 +578,7 @@ const Dashboard = () => {
         onYearClick={setThisYearFilter}
         onDateRangeChange={handleDateRangeChange}
         dateRange={dateRange}
-        onAddClick={() => navigate(isShop || isPharmacy ? '/pos' : '/jobs', { state: { openModal: true } })}
+        onAddClick={() => navigate(isShop || isPharmacy ? '/sales?openPOS=1' : '/jobs', { state: { openModal: true } })}
         addButtonLabel={isShop || isPharmacy ? 'Add sale' : 'Add job'}
       />
 
@@ -544,7 +586,7 @@ const Dashboard = () => {
       {isRefetching && (
         <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
           <Loader2 className="h-4 w-4 animate-spin text-[#166534]" />
-          <span>Updating…</span>
+          <span>Updating...</span>
         </div>
       )}
 
@@ -557,12 +599,13 @@ const Dashboard = () => {
         isShop={isShop}
         isPharmacy={isPharmacy}
         comparisonData={comparisonData}
+        comparisonLoading={comparisonLoading}
         activeFilter={activeFilter}
       />
 
       {isStaffShopOrPharmacy ? (
         <div className="mt-8">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Quick sale – tap a product to sell</h2>
+          <h2 className="text-lg font-semibold text-foreground mb-4">Quick sale – tap a product to sell</h2>
           {staffProductsLoading ? (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
               {Array.from({ length: 8 }).map((_, i) => (
@@ -591,10 +634,10 @@ const Dashboard = () => {
                   onClick={() => navigate('/pos', { state: { addProductId: product.id } })}
                 >
                   <CardContent className="p-4 flex flex-col items-center justify-center min-h-[100px]">
-                    <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center mb-2">
+                    <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center mb-2">
                       <Package className="h-5 w-5 text-gray-500" />
                     </div>
-                    <p className="font-medium text-gray-900 text-center line-clamp-2 text-sm">{product.name}</p>
+                    <p className="font-medium text-foreground text-center line-clamp-2 text-sm">{product.name}</p>
                     <p className="text-green-700 font-semibold text-sm mt-1">
                       {CURRENCY.SYMBOL} {Number(product.sellingPrice ?? 0).toFixed(CURRENCY.DECIMAL_PLACES)}
                     </p>
@@ -605,8 +648,8 @@ const Dashboard = () => {
           )}
         </div>
       ) : (
-      <Row gutter={[16, 16]} style={{ marginTop: 32 }}>
-        <Col span={16}>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
+        <div className="lg:col-span-2 min-w-0" data-tour="recent-activity">
           <DashboardJobsTable
             jobs={recentJobs}
             loading={loading}
@@ -614,24 +657,27 @@ const Dashboard = () => {
             getDueDateStatus={getDueDateStatus}
             pageSize={jobsPagination.pageSize}
             isSalesTable={isShop || isPharmacy}
+            hasProducts={hasProducts}
+            onAddProduct={(isShop || isPharmacy) ? () => navigate('/products?add=1') : undefined}
           />
-        </Col>
-        <Col span={8}>
-          <Card style={{ height: '100%' }}>
-            <CardHeader>
-              <CardTitle>Notice board</CardTitle>
+        </div>
+        {!isMobile && (
+        <div className="lg:col-span-1 min-w-0" data-tour="notice-board">
+          <Card className="h-full min-h-0">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base sm:text-lg truncate">Notice board</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="pt-0 min-w-0 overflow-hidden">
               {loadingNotifications ? (
-                <div style={{ display: 'flex', justifyContent: 'center', padding: '20px' }}>
+                <div className="flex justify-center py-5 sm:py-8">
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
               ) : notifications.length === 0 ? (
-                <div style={{ padding: '20px', textAlign: 'center', color: '#888' }}>
+                <div className="py-5 sm:py-8 text-center text-muted-foreground">
                   No notifications
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div className="flex flex-col gap-3 sm:gap-4 min-w-0">
                   {notifications.map((notification) => {
                     // Parse notification text to bold numbers, percentages, status terms, and key phrases
                     let text = notification.message || notification.title || '';
@@ -682,21 +728,11 @@ const Dashboard = () => {
                     return (
                       <div
                         key={notification.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'flex-start',
-                          gap: 8,
-                        }}
+                        className="flex items-start gap-2 sm:gap-3 min-h-[44px] py-1 min-w-0"
                       >
-                        <ChevronRight className="h-4 w-4" style={{ color: '#4CAF50', marginTop: 2, flexShrink: 0 }} />
+                        <ChevronRight className="h-4 w-4 text-[#166534] mt-0.5 shrink-0" aria-hidden />
                         <div 
-                          style={{ 
-                            flex: 1, 
-                            fontSize: 14, 
-                            color: '#666', 
-                            lineHeight: 1.6,
-                            fontWeight: 400
-                          }}
+                          className="flex-1 min-w-0 text-sm text-muted-foreground leading-relaxed font-normal break-words overflow-hidden"
                           dangerouslySetInnerHTML={{ __html: text }}
                         />
                       </div>
@@ -706,9 +742,11 @@ const Dashboard = () => {
               )}
             </CardContent>
           </Card>
-        </Col>
-      </Row>
+        </div>
+        )}
+      </div>
       )}
+      </div>
       </>
     </div>
   );

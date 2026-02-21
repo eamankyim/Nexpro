@@ -2,6 +2,7 @@ const express = require('express');
 const {
   getJobs,
   getJob,
+  getJobCategories,
   createJob,
   updateJob,
   deleteJob,
@@ -18,6 +19,7 @@ const router = express.Router();
 router.use(protect);
 router.use(tenantContext);
 
+router.get('/categories', getJobCategories);
 router.get('/stats/overview', getJobStats);
 
 router.route('/')

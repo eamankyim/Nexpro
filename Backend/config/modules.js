@@ -12,7 +12,7 @@ const MODULES = [
     description: 'Customer and vendor relationship management',
     icon: 'contacts',
     category: 'core',
-    businessTypes: ['printing_press', 'shop', 'pharmacy'], // Available for all business types
+    businessTypes: ['shop', 'studio', 'pharmacy'],
     features: [
       {
         key: 'crm',
@@ -42,14 +42,14 @@ const MODULES = [
     description: 'Quote generation, pricing, and sales tracking',
     icon: 'dollar',
     category: 'core',
-    businessTypes: ['printing_press', 'shop'], // Available for printing press and shops
+    businessTypes: ['shop', 'studio', 'pharmacy'],
     features: [
       {
         key: 'quoteBuilder',
         name: 'Quote Builder',
         description: 'Create and manage quotes',
         routes: ['/quotes'],
-        businessTypes: ['printing_press', 'shop'],
+        businessTypes: ['shop', 'studio', 'pharmacy'],
         marketingCopy: {
           highlight: 'Professional quote generation',
           perk: 'Unlimited quotes'
@@ -94,14 +94,14 @@ const MODULES = [
     description: 'Job workflow, tracking, and execution',
     icon: 'setting',
     category: 'core',
-    businessTypes: ['printing_press'], // Only available for printing press
+    businessTypes: ['studio'],
     features: [
       {
         key: 'jobWorkflow',
         name: 'Job Workflow & Tracking',
         description: 'Complete job management system',
         routes: ['/jobs'],
-        businessTypes: ['printing_press'],
+        businessTypes: ['studio'],
         marketingCopy: {
           highlight: 'End-to-end job workflow management',
           perk: 'Unlimited jobs & tracking'
@@ -130,21 +130,31 @@ const MODULES = [
     ]
   },
   {
-    key: 'inventory',
-    name: 'Inventory & Vendors',
-    description: 'Inventory tracking and vendor management',
+    key: 'materials',
+    name: 'Materials & Vendors',
+    description: 'Materials tracking, equipment, and vendor management',
     icon: 'appstore',
     category: 'operations',
-    businessTypes: ['printing_press', 'shop', 'pharmacy'], // Available for all business types
+    businessTypes: ['shop', 'studio', 'pharmacy'],
     features: [
       {
-        key: 'inventoryTracking',
-        name: 'Inventory Tracking',
-        description: 'Track stock levels and movements',
-        routes: ['/inventory'],
+        key: 'materialsTracking',
+        name: 'Materials',
+        description: 'Track consumable materials, stock levels and movements',
+        routes: ['/materials'],
         marketingCopy: {
-          highlight: 'Real-time inventory tracking',
-          perk: 'Inventory management system'
+          highlight: 'Real-time materials tracking',
+          perk: 'Materials management system'
+        }
+      },
+      {
+        key: 'equipment',
+        name: 'Equipment',
+        description: 'Track fixed assets (laptops, furniture, vehicles)',
+        routes: ['/equipment'],
+        marketingCopy: {
+          highlight: 'Equipment and fixed assets',
+          perk: 'Track laptops, furniture, vehicles'
         }
       },
       {
@@ -284,7 +294,7 @@ const MODULES = [
     description: 'Payments, expenses, and invoicing',
     icon: 'dollar-circle',
     category: 'finance',
-    businessTypes: ['printing_press', 'shop', 'pharmacy'], // Available for all business types
+    businessTypes: ['shop', 'studio', 'pharmacy'],
     features: [
       {
         key: 'payments',

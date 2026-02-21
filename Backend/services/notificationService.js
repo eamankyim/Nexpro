@@ -50,6 +50,21 @@ const createNotification = async ({
       type
     });
 
+    // Emit to websocket for real-time UI updates
+    try {
+      const { emitNotification } = require('./websocketService');
+      emitNotification(tenantId, userId, {
+        id: notification.id,
+        title: notification.title,
+        message: notification.message,
+        type: notification.type,
+        link: notification.link,
+        createdAt: notification.createdAt
+      });
+    } catch (wsErr) {
+      if (process.env.NODE_ENV === 'development') console.warn(`${logPrefix} WebSocket emit failed:`, wsErr?.message);
+    }
+
     return notification;
   } catch (error) {
     console.error(`${logPrefix} Failed to create notification`, {
@@ -95,6 +110,22 @@ const notifyUsers = async ({ tenantId, userIds, payload = {}, transaction = null
       userIds: uniqueUserIds,
       title: payload.title
     });
+    // Emit to websocket for real-time UI updates (fire-and-forget)
+    try {
+      const { emitNotification } = require('./websocketService');
+      created.forEach((n) => {
+        emitNotification(tenantId, n.userId, {
+          id: n.id,
+          title: n.title,
+          message: n.message,
+          type: n.type,
+          link: payload.link,
+          createdAt: n.createdAt
+        });
+      });
+    } catch (wsErr) {
+      if (process.env.NODE_ENV === 'development') console.warn(`${logPrefix} WebSocket emit failed:`, wsErr?.message);
+    }
     return created;
   } catch (error) {
     console.error(`${logPrefix} Failed bulkCreate`, {
@@ -630,6 +661,131 @@ const notifyInvoicePaid = async ({ invoice, triggeredBy = null }) => {
   });
 };
 
+/**
+ * Notify relevant users when a new order (restaurant sale) is created.
+ */
+const notifyNewOrder = async ({ sale, triggeredBy = null }) => {
+  if (!sale || !sale.orderStatus) {
+    return [];
+  }
+  const tenantId = sale.tenantId;
+  if (!tenantId) return [];
+
+  const recipientSet = new Set();
+  if (triggeredBy) recipientSet.add(triggeredBy);
+  try {
+    const { UserTenant } = require('../models');
+    const { Op } = require('sequelize');
+    const memberUsers = await UserTenant.findAll({
+      where: { tenantId, role: { [Op.in]: ['admin', 'manager', 'staff'] } },
+      attributes: ['userId']
+    });
+    memberUsers.forEach((ut) => { if (ut.userId) recipientSet.add(ut.userId); });
+  } catch (error) {
+    console.error(`${logPrefix} notifyNewOrder - failed to fetch users`, error.message);
+  }
+  const recipients = Array.from(recipientSet).filter(Boolean);
+  if (recipients.length === 0) return [];
+
+  const saleNumber = sale.saleNumber || `Order #${sale.id}`;
+  const payload = {
+    title: 'New Order Received',
+    message: `${saleNumber} has been placed and is ready for the kitchen.`,
+    type: 'order',
+    priority: 'high',
+    metadata: { saleId: sale.id, saleNumber, orderStatus: sale.orderStatus },
+    icon: 'utensils',
+    link: '/orders',
+    triggeredBy
+  };
+  return notifyUsers({ tenantId, userIds: recipients, payload });
+};
+
+/**
+ * Notify relevant users when an order (restaurant sale) status changes.
+ * Notifies all admins, managers, and staff in the tenant who may use the Orders/Kitchen page.
+ */
+const notifyOrderStatusChanged = async ({ sale, oldStatus, newStatus, triggeredBy = null }) => {
+  if (!sale || !newStatus || oldStatus === newStatus) {
+    console.warn(`${logPrefix} notifyOrderStatusChanged skipped`, {
+      saleId: sale?.id,
+      oldStatus,
+      newStatus
+    });
+    return [];
+  }
+
+  const tenantId = sale.tenantId;
+  if (!tenantId) {
+    console.warn(`${logPrefix} notifyOrderStatusChanged missing tenantId`, { saleId: sale.id });
+    return [];
+  }
+
+  const recipientSet = new Set();
+  if (sale.soldBy) recipientSet.add(sale.soldBy);
+  if (triggeredBy) recipientSet.add(triggeredBy);
+
+  // Notify all admins, managers, and staff who use the kitchen
+  try {
+    const { UserTenant } = require('../models');
+    const { Op } = require('sequelize');
+    const memberUsers = await UserTenant.findAll({
+      where: {
+        tenantId,
+        role: { [Op.in]: ['admin', 'manager', 'staff'] }
+      },
+      attributes: ['userId']
+    });
+    memberUsers.forEach((ut) => {
+      if (ut.userId) recipientSet.add(ut.userId);
+    });
+  } catch (error) {
+    console.error(`${logPrefix} notifyOrderStatusChanged - failed to fetch users`, error.message);
+  }
+
+  const recipients = Array.from(recipientSet).filter(Boolean);
+  if (recipients.length === 0) {
+    console.warn(`${logPrefix} notifyOrderStatusChanged no recipients`, { saleId: sale.id });
+    return [];
+  }
+
+  const saleNumber = sale.saleNumber || `Order #${sale.id}`;
+  const oldLabel = (oldStatus || 'unknown').replace('_', ' ');
+  const newLabel = newStatus.replace('_', ' ');
+  const link = '/orders';
+
+  const payload = {
+    title: 'Order Status Updated',
+    message: `${saleNumber} moved from ${oldLabel} to ${newLabel}.`,
+    type: 'order',
+    priority: newStatus === 'ready' ? 'high' : 'normal',
+    metadata: {
+      saleId: sale.id,
+      saleNumber,
+      oldStatus,
+      newStatus
+    },
+    icon: 'utensils',
+    link,
+    triggeredBy
+  };
+
+  console.log(`${logPrefix} notifyOrderStatusChanged`, {
+    saleId: sale.id,
+    saleNumber,
+    recipients: recipients.length,
+    oldStatus,
+    newStatus,
+    triggeredBy
+  });
+
+  return notifyUsers({
+    tenantId,
+    userIds: recipients,
+    payload
+  });
+};
+
 module.exports = {
   createNotification,
   notifyUsers,
@@ -639,7 +795,9 @@ module.exports = {
   notifyLeadStatusChanged,
   notifyLeadActivityLogged,
   notifyInvoiceSent,
-  notifyInvoicePaid
+  notifyInvoicePaid,
+  notifyNewOrder,
+  notifyOrderStatusChanged
 };
 
 

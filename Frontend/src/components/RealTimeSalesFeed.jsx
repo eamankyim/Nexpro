@@ -120,7 +120,9 @@ const RealTimeSalesFeed = ({ shopId = null }) => {
       color: 'text-blue-600',
       bgColor: 'bg-blue-50'
     });
-  }, [addFeedItem]);
+    // Invalidate so NotificationBell and Dashboard notice board show the new notification
+    queryClient.invalidateQueries({ queryKey: ['notifications'] });
+  }, [addFeedItem, queryClient]);
 
   // Initialize WebSocket
   const { isConnected, reconnect } = useWebSocket({
@@ -151,7 +153,7 @@ const RealTimeSalesFeed = ({ shopId = null }) => {
           <Icon className={`h-4 w-4 ${item.color}`} />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">{item.title}</p>
+          <p className="text-sm font-medium text-foreground truncate">{item.title}</p>
           <p className="text-xs text-gray-500 truncate">{item.description}</p>
           <p className="text-xs text-gray-400 mt-1">{timeAgo}</p>
         </div>

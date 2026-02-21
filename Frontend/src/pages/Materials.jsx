@@ -8,7 +8,7 @@ import {
   RefreshCw,
   Inbox,
   AlertTriangle,
-  DollarSign,
+  Currency,
   PlusCircle,
   Pencil,
   ArrowUp,
@@ -27,9 +27,10 @@ import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
 import DashboardTable from '../components/DashboardTable';
+import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
-import inventoryService from '../services/inventoryService';
+import materialsService from '../services/materialsService';
 import vendorService from '../services/vendorService';
 import { useAuth } from '../context/AuthContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
@@ -45,10 +46,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
@@ -86,7 +89,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, getStockStatus } from '../constants';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, getStockStatus, PRODUCT_UNITS, RESTAURANT_UNITS, SHOP_TYPES } from '../constants';
 
 const sortCategories = (list = []) =>
   [...list].sort((a, b) => a.name.localeCompare(b.name));
@@ -105,7 +108,7 @@ const stockStatus = (item) => {
 };
 
 const valueFormatter = (value) =>
-  `GHS ${parseFloat(value || 0).toLocaleString(undefined, {
+  `₵ ${parseFloat(value || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   })}`;
@@ -128,6 +131,12 @@ const itemSchema = z.object({
 const categorySchema = z.object({
   name: z.string().min(1, 'Category name is required'),
   description: z.string().optional(),
+});
+
+const quickVendorSchema = z.object({
+  name: z.string().min(1, 'Vendor name is required'),
+  company: z.string().optional(),
+  phone: z.string().optional()
 });
 
 const restockSchema = z.object({
@@ -153,18 +162,26 @@ const adjustSchema = z.object({
   path: ['newQuantity'],
 });
 
-const Inventory = () => {
+const Materials = () => {
   const { activeTenant, activeTenantId } = useAuth();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
+  const shopType = activeTenant?.metadata?.shopType;
   const isPrintingPress = businessType === 'printing_press';
+
+  const unitOptions = useMemo(() => {
+    if (shopType === SHOP_TYPES?.RESTAURANT) {
+      return [...PRODUCT_UNITS, ...RESTAURANT_UNITS];
+    }
+    return PRODUCT_UNITS;
+  }, [shopType]);
 
   const [items, setItems] = useState([]);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [loading, setLoading] = useState(false);
-  const [refreshingInventory, setRefreshingInventory] = useState(false);
+  const [refreshingMaterials, setRefreshingMaterials] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summary, setSummary] = useState(null);
   const [categories, setCategories] = useState([]);
@@ -183,12 +200,16 @@ const Inventory = () => {
   const [filters, setFilters] = useState({
     categoryId: 'all',
     status: 'all',
-    lowStock: false
+    lowStock: false,
+    outOfStock: false
   });
+  const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [vendorAddModalOpen, setVendorAddModalOpen] = useState(false);
+  const [addingVendor, setAddingVendor] = useState(false);
 
   useEffect(() => {
-    setPageSearchConfig({ scope: 'inventory', placeholder: SEARCH_PLACEHOLDERS.INVENTORY });
+    setPageSearchConfig({ scope: 'materials', placeholder: SEARCH_PLACEHOLDERS.MATERIALS });
     return () => setPageSearchConfig(null);
   }, [setPageSearchConfig]);
 
@@ -247,6 +268,11 @@ const Inventory = () => {
     },
   });
 
+  const vendorForm = useForm({
+    resolver: zodResolver(quickVendorSchema),
+    defaultValues: { name: '', company: '', phone: '' },
+  });
+
   const adjustmentMode = adjustForm.watch('adjustmentMode');
 
   useEffect(() => {
@@ -256,11 +282,11 @@ const Inventory = () => {
 
   useEffect(() => {
     fetchItems();
-  }, [pagination.current, pagination.pageSize, filters.categoryId, filters.status, filters.lowStock, debouncedSearch]);
+  }, [pagination.current, pagination.pageSize, filters.categoryId, filters.status, filters.lowStock, filters.outOfStock, debouncedSearch]);
 
   const fetchCategories = async () => {
     try {
-      const response = await inventoryService.getCategories();
+      const response = await materialsService.getCategories();
       const data = response?.data || [];
       setCategories(sortCategories(data));
     } catch (error) {
@@ -272,11 +298,11 @@ const Inventory = () => {
   const fetchSummary = async () => {
     setSummaryLoading(true);
     try {
-      const response = await inventoryService.getSummary();
+      const response = await materialsService.getSummary();
       setSummary(response?.data || {});
     } catch (error) {
-      console.error('Failed to load inventory summary', error);
-      showError(error, 'Failed to load inventory summary');
+      console.error('Failed to load materials summary', error);
+      showError(error, 'Failed to load materials summary');
     } finally {
       setSummaryLoading(false);
     }
@@ -284,75 +310,51 @@ const Inventory = () => {
 
   const fetchItems = async (isRefresh = false) => {
     if (isRefresh) {
-      setRefreshingInventory(true);
+      setRefreshingMaterials(true);
     } else {
       setLoading(true);
     }
     try {
       const params = {
         page: pagination.current,
-        limit: 1000,
+        limit: pagination.pageSize,
         categoryId: filters.categoryId !== 'all' ? filters.categoryId : undefined,
         status: filters.status !== 'all' ? filters.status : undefined,
         lowStock: filters.lowStock,
+        outOfStock: filters.outOfStock,
       };
       if (debouncedSearch) params.search = debouncedSearch;
-      const response = await inventoryService.getItems(params);
+      const response = await materialsService.getItems(params);
 
       const payload = response || {};
       const rows = Array.isArray(payload.data) ? payload.data : [];
       setItems(rows);
+      const total = payload.count ?? payload.pagination?.total ?? rows.length;
+      setPagination((prev) => ({ ...prev, total }));
     } catch (error) {
-      console.error('Failed to load inventory items', error);
-      showError(error, 'Failed to load inventory items');
+      console.error('Failed to load materials', error);
+      showError(error, 'Failed to load materials');
       setItems([]);
     } finally {
       if (isRefresh) {
-        setRefreshingInventory(false);
+        setRefreshingMaterials(false);
       } else {
         setLoading(false);
       }
     }
   };
 
-  // Apply client-side filtering
-  const filteredItems = useMemo(() => {
-    return items; // Backend already filters
-  }, [items, filters]);
+  // Backend returns paginated data; items is already the current page
+  const paginatedItems = items;
+  const itemsCount = pagination.total ?? items.length;
 
-  // Paginate filtered items
-  const paginatedItems = useMemo(() => {
-    const start = (pagination.current - 1) * pagination.pageSize;
-    const end = start + pagination.pageSize;
-    return filteredItems.slice(start, end);
-  }, [filteredItems, pagination.current, pagination.pageSize]);
-
-  const itemsCount = filteredItems.length;
-
-  // Calculate summary stats
-  const calculatedStats = useMemo(() => {
-    const totalItems = items.length;
-    const inStock = items.filter(item => {
-      const qty = parseFloat(item.quantityOnHand || 0);
-      const reorder = parseFloat(item.reorderLevel || 0);
-      return qty > reorder && qty > 0;
-    }).length;
-    const lowStock = items.filter(item => {
-      const qty = parseFloat(item.quantityOnHand || 0);
-      const reorder = parseFloat(item.reorderLevel || 0);
-      return qty > 0 && qty <= reorder;
-    }).length;
-    const outOfStock = items.filter(item => parseFloat(item.quantityOnHand || 0) <= 0).length;
-    
-    return {
-      totals: {
-        totalItems,
-        inStock,
-        lowStock,
-        outOfStock
-      }
-    };
-  }, [items]);
+  // Use summary from API (accurate) when available; fallback to 0
+  const displayStats = useMemo(() => ({
+    totalItems: summary?.totals?.totalItems ?? 0,
+    inStock: summary?.totals?.inStockCount ?? 0,
+    lowStock: summary?.totals?.lowStockCount ?? 0,
+    outOfStock: summary?.totals?.outOfStockCount ?? 0,
+  }), [summary?.totals]);
 
   const loadVendors = async () => {
     try {
@@ -369,9 +371,27 @@ const Inventory = () => {
     setCategoryModalVisible(true);
   };
 
+  const handleAddVendorSubmit = async (values) => {
+    setAddingVendor(true);
+    try {
+      const response = await vendorService.create({ name: values.name, company: values.company || undefined, phone: values.phone || undefined });
+      const newVendor = response?.data ?? response;
+      if (!newVendor?.id) throw new Error('Invalid vendor response');
+      await loadVendors();
+      setVendorAddModalOpen(false);
+      vendorForm.reset({ name: '', company: '', phone: '' });
+      showSuccess('Vendor created successfully');
+      itemForm.setValue('preferredVendorId', newVendor.id);
+    } catch (error) {
+      showError(error, error?.response?.data?.message || 'Failed to create vendor');
+    } finally {
+      setAddingVendor(false);
+    }
+  };
+
   const onCategorySubmit = async (values) => {
     try {
-      const payload = await inventoryService.createCategory(values);
+      const payload = await materialsService.createCategory(values);
       const newCategory = payload?.data || payload;
       if (!newCategory?.id) {
         throw new Error('Invalid category response');
@@ -418,17 +438,18 @@ const Inventory = () => {
     setFilters((prev) => ({ ...prev, lowStock: checked }));
   }, []);
 
-  const handleViewItem = useCallback(async (record) => {
+  const handleViewItem = useCallback((record) => {
     setViewingItem(record);
     setDrawerVisible(true);
-    try {
-      const response = await inventoryService.getById(record.id);
-      const data = response?.data || response;
-      setViewingItem(data);
-    } catch (error) {
-      console.error('Failed to fetch inventory item', error);
-      showError(error, 'Failed to load inventory details');
-    }
+    materialsService.getById(record.id)
+      .then((response) => {
+        const data = response?.data || response;
+        setViewingItem((prev) => (prev?.id === record.id ? data : prev));
+      })
+      .catch((error) => {
+        console.error('Failed to fetch material', error);
+        showError(error, 'Failed to load material details');
+      });
   }, []);
 
   const openItemModal = useCallback(async (item = null) => {
@@ -473,18 +494,18 @@ const Inventory = () => {
   const onItemSubmit = useCallback(async (values) => {
     try {
       if (editingItem) {
-        await inventoryService.updateItem(editingItem.id, values);
-        showSuccess('Inventory item updated successfully');
+        await materialsService.updateItem(editingItem.id, values);
+        showSuccess('Material updated successfully');
       } else {
-        await inventoryService.createItem(values);
-        showSuccess('Inventory item created successfully');
+        await materialsService.createItem(values);
+        showSuccess('Material created successfully');
       }
       setItemModalVisible(false);
       fetchItems();
       fetchSummary();
     } catch (error) {
-      console.error('Failed to save inventory item', error);
-      showError(error, error?.response?.data?.message || 'Failed to save inventory item');
+      console.error('Failed to save material', error);
+      showError(error, error?.response?.data?.message || 'Failed to save material');
     }
   }, [editingItem, itemForm, fetchItems, fetchSummary]);
 
@@ -501,8 +522,8 @@ const Inventory = () => {
 
   const onRestockSubmit = useCallback(async (values) => {
     try {
-      await inventoryService.restock(editingItem.id, values);
-      showSuccess('Inventory restocked successfully');
+      await materialsService.restock(editingItem.id, values);
+      showSuccess('Material restocked successfully');
       setRestockModalVisible(false);
       fetchItems();
       fetchSummary();
@@ -510,8 +531,8 @@ const Inventory = () => {
         handleViewItem(editingItem);
       }
     } catch (error) {
-      console.error('Failed to restock inventory', error);
-      showError(error, error?.response?.data?.message || 'Failed to restock inventory');
+      console.error('Failed to restock material', error);
+      showError(error, error?.response?.data?.message || 'Failed to restock material');
     }
   }, [editingItem, drawerVisible, fetchItems, fetchSummary, handleViewItem]);
 
@@ -533,8 +554,8 @@ const Inventory = () => {
         ? { quantityDelta: values.quantityDelta, reason: values.reason, notes: values.notes }
         : { newQuantity: values.newQuantity, reason: values.reason, notes: values.notes };
 
-      await inventoryService.adjust(editingItem.id, payload);
-      showSuccess('Inventory adjustment recorded');
+      await materialsService.adjust(editingItem.id, payload);
+      showSuccess('Material adjustment recorded');
       setAdjustModalVisible(false);
       fetchItems();
       fetchSummary();
@@ -542,8 +563,8 @@ const Inventory = () => {
         handleViewItem(editingItem);
       }
     } catch (error) {
-      console.error('Failed to adjust inventory', error);
-      showError(error, error?.response?.data?.message || 'Failed to adjust inventory');
+      console.error('Failed to adjust material', error);
+      showError(error, error?.response?.data?.message || 'Failed to adjust material');
     }
   }, [editingItem, drawerVisible, fetchItems, fetchSummary, handleViewItem]);
 
@@ -553,13 +574,13 @@ const Inventory = () => {
       setDeactivateDialogOpen(true);
     } else {
       try {
-        await inventoryService.updateItem(record.id, { isActive: true });
-        showSuccess('Inventory item reactivated');
+        await materialsService.updateItem(record.id, { isActive: true });
+        showSuccess('Material reactivated');
             fetchItems();
             fetchSummary();
           } catch (error) {
-        console.error('Failed to activate inventory item', error);
-        showError(error, error?.response?.data?.message || 'Failed to activate inventory item');
+        console.error('Failed to activate material', error);
+        showError(error, error?.response?.data?.message || 'Failed to activate material');
       }
     }
   }, [fetchItems, fetchSummary]);
@@ -568,15 +589,15 @@ const Inventory = () => {
     if (!deactivateItemId) return;
     try {
       setDeactivatingItem(true);
-      await inventoryService.deleteItem(deactivateItemId);
-      showSuccess('Inventory item deactivated');
+      await materialsService.deleteItem(deactivateItemId);
+      showSuccess('Material deactivated');
         await fetchItems();
         fetchSummary();
       setDeactivateDialogOpen(false);
       setDeactivateItemId(null);
       } catch (error) {
-      console.error('Failed to deactivate inventory item', error);
-      showError(error, error?.response?.data?.message || 'Failed to deactivate inventory item');
+      console.error('Failed to deactivate material', error);
+      showError(error, error?.response?.data?.message || 'Failed to deactivate material');
     } finally {
       setDeactivatingItem(false);
     }
@@ -589,7 +610,7 @@ const Inventory = () => {
       label: 'Item',
       render: (_, record) => (
         <div>
-          <div className="font-semibold text-black">{record?.name || '—'}</div>
+          <div className="font-semibold text-foreground">{record?.name || '—'}</div>
           <div className="text-muted-foreground text-sm">{record?.sku || '—'}</div>
         </div>
       )
@@ -597,14 +618,14 @@ const Inventory = () => {
     {
       key: 'category',
       label: 'Category',
-      render: (_, record) => <span className="text-black">{record?.category?.name || 'Uncategorized'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.category?.name || 'Uncategorized'}</span>
     },
     {
       key: 'quantityOnHand',
       label: 'Quantity',
       render: (_, record) => (
         <div>
-          <div className="font-semibold text-black">{parseFloat(record?.quantityOnHand || 0).toFixed(2)} {record?.unit || ''}</div>
+          <div className="font-semibold text-foreground">{parseFloat(record?.quantityOnHand || 0).toFixed(2)} {record?.unit || ''}</div>
           <div className="text-muted-foreground text-xs">Reorder at {parseFloat(record?.reorderLevel || 0).toFixed(2)}</div>
         </div>
       )
@@ -620,17 +641,17 @@ const Inventory = () => {
     {
       key: 'unitCost',
       label: 'Unit Cost',
-      render: (_, record) => <span className="text-black">{valueFormatter(record?.unitCost)}</span>
+      render: (_, record) => <span className="text-foreground">{valueFormatter(record?.unitCost)}</span>
     },
     {
       key: 'location',
       label: 'Location',
-      render: (_, record) => <span className="text-black">{record?.location || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.location || '—'}</span>
     },
     {
       key: 'vendor',
       label: 'Vendor',
-      render: (_, record) => <span className="text-black">{record?.preferredVendor?.name || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.preferredVendor?.name || '—'}</span>
     },
     {
       key: 'actions',
@@ -671,12 +692,13 @@ const Inventory = () => {
     setFilters({
       categoryId: 'all',
       status: 'all',
-      lowStock: false
+      lowStock: false,
+      outOfStock: false
     });
     setPagination({ ...pagination, current: 1 });
   };
 
-  const hasActiveFilters = filters.categoryId !== 'all' || filters.status !== 'all' || filters.lowStock;
+  const hasActiveFilters = filters.categoryId !== 'all' || filters.status !== 'all' || filters.lowStock || filters.outOfStock;
 
   const summaryCards = [
     {
@@ -690,9 +712,9 @@ const Inventory = () => {
       prefix: <Inbox className="h-4 w-4 text-green-500" />
     },
     {
-      title: 'Inventory Value',
+      title: 'Materials Value',
       value: valueFormatter(summary?.totals?.inventoryValue || 0),
-      prefix: <DollarSign className="h-4 w-4 text-yellow-500" />
+      prefix: <Currency className="h-4 w-4 text-yellow-500" />
     },
     {
       title: 'Low Stock Items',
@@ -725,30 +747,30 @@ const Inventory = () => {
           <TimelineItem key={movement.id} isLast={isLast}>
             <TimelineIndicator />
             <TimelineContent>
-              <TimelineTitle className="text-black">
+              <TimelineTitle className="text-foreground">
                 {isCreation 
                   ? `ITEM WAS CREATED ${parseFloat(movement.quantityDelta).toFixed(2)} ${viewingItem.unit} IN STOCK`
                   : `${movement.type.toUpperCase()} ${movement.quantityDelta > 0 ? '+' : ''}${parseFloat(movement.quantityDelta).toFixed(2)} ${viewingItem.unit}`
                 }
               </TimelineTitle>
-              <TimelineTime className="text-black">
+              <TimelineTime className="text-foreground">
                 {dayjs(movement.occurredAt).format('MMM DD, YYYY [at] h:mm A')} • New Qty: {parseFloat(movement.newQuantity).toFixed(2)}
               </TimelineTime>
             {!isCreation && movement.reference && (
-                <TimelineDescription className="text-black">Reference: {movement.reference}</TimelineDescription>
+                <TimelineDescription className="text-foreground">Reference: {movement.reference}</TimelineDescription>
             )}
             {movement.createdByUser && (
-                <TimelineDescription className="text-black">
+                <TimelineDescription className="text-foreground">
                 By: {movement.createdByUser.name} ({movement.createdByUser.email})
                 </TimelineDescription>
             )}
             {movement.job && isPrintingPress && (
-                <TimelineDescription className="text-black">
+                <TimelineDescription className="text-foreground">
                 Job: {movement.job.jobNumber} — {movement.job.title}
                 </TimelineDescription>
             )}
             {!isCreation && movement.notes && (
-                <TimelineDescription className="text-black italic">
+                <TimelineDescription className="text-foreground italic">
                 Notes: {movement.notes}
                 </TimelineDescription>
             )}
@@ -812,65 +834,84 @@ const Inventory = () => {
   }, [viewingItem]);
 
   return (
-    <div className="space-y-4 md:space-y-6">
+    <div className="space-y-4 md:space-y-6" data-tour="materials-items">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <WelcomeSection
-          welcomeMessage="Inventory"
+          welcomeMessage="Materials"
           subText="Track and manage materials, stock levels, and movements."
         />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-            <Filter className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Filter</span>}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={async () => { 
-              await fetchItems(true); 
-              fetchSummary(); 
-            }}
-            disabled={refreshingInventory}
-            size={isMobile ? "icon" : "default"}
-          >
-            {refreshingInventory ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
-          <Button onClick={() => openItemModal()} size={isMobile ? "icon" : "default"}>
-            <Plus className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">New Item</span>}
-          </Button>
+          <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+                <Filter className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Filter</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Filter materials by category, status, or stock level</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                onClick={async () => { 
+                  await fetchItems(true); 
+                  fetchSummary(); 
+                }}
+                disabled={refreshingMaterials}
+                size={isMobile ? "icon" : "default"}
+              >
+                {refreshingMaterials ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh materials list</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={() => openItemModal()} size={isMobile ? "icon" : "default"}>
+                <Plus className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">New Item</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add a new material</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <DashboardStatsCard
+          tooltip="Total number of materials"
           title="Total Items"
-          value={calculatedStats?.totals?.totalItems || 0}
+          value={displayStats.totalItems}
           icon={AppWindow}
           iconBgColor="rgba(22, 101, 52, 0.1)"
           iconColor="#166534"
         />
         <DashboardStatsCard
+          tooltip="Items with sufficient stock"
           title="In Stock"
-          value={calculatedStats?.totals?.inStock || 0}
+          value={displayStats.inStock}
           icon={Inbox}
           iconBgColor="rgba(132, 204, 22, 0.1)"
           iconColor="#84cc16"
         />
         <DashboardStatsCard
+          tooltip="Items below minimum stock level"
           title="Low Stock"
-          value={calculatedStats?.totals?.lowStock || 0}
+          value={displayStats.lowStock}
           icon={AlertTriangle}
           iconBgColor="rgba(249, 115, 22, 0.1)"
           iconColor="#f97316"
         />
         <DashboardStatsCard
+          tooltip="Items with zero stock"
           title="Out of Stock"
-          value={calculatedStats?.totals?.outOfStock || 0}
+          value={displayStats.outOfStock}
           icon={Package}
           iconBgColor="rgba(239, 68, 68, 0.1)"
           iconColor="#ef4444"
@@ -884,22 +925,30 @@ const Inventory = () => {
         loading={loading}
         title={null}
         emptyIcon={<Package className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No inventory items found"
+        emptyDescription="No materials yet. Add raw materials to track inventory for jobs."
+        emptyAction={
+          <Button onClick={() => openItemModal()}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add First Material
+          </Button>
+        }
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
-          setPagination(newPagination);
+          setPagination((prev) => ({ ...prev, ...newPagination }));
         }}
         externalPagination={{
           current: pagination.current,
           total: itemsCount
         }}
+        viewMode={tableViewMode}
+        onViewModeChange={setTableViewMode}
       />
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
           <SheetHeader className="pb-4 border-b">
-            <SheetTitle>Filter Inventory</SheetTitle>
+            <SheetTitle>Filter Materials</SheetTitle>
           </SheetHeader>
           <div className="space-y-6 mt-6">
             <div className="space-y-2">
@@ -943,8 +992,13 @@ const Inventory = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              <Switch checked={filters.lowStock} onCheckedChange={(checked) => setFilters({ ...filters, lowStock: checked })} />
+              <Switch checked={filters.lowStock} onCheckedChange={(checked) => setFilters({ ...filters, lowStock: checked, outOfStock: checked ? false : filters.outOfStock })} />
               <Label>Show low stock only</Label>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Switch checked={filters.outOfStock} onCheckedChange={(checked) => setFilters({ ...filters, outOfStock: checked, lowStock: checked ? false : filters.lowStock })} />
+              <Label>Show out of stock only</Label>
             </div>
 
             {hasActiveFilters && (
@@ -965,7 +1019,7 @@ const Inventory = () => {
         extra={
           viewingItem ? (
             <Button
-              variant="secondary"
+              variant="secondaryStroke"
               size="sm"
               onClick={() => openItemModal(viewingItem)}
             >
@@ -1008,9 +1062,9 @@ const Inventory = () => {
       <Dialog open={itemModalVisible} onOpenChange={setItemModalVisible}>
         <DialogContent className="sm:w-[var(--modal-w-lg)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
-            <DialogTitle>{editingItem ? `Edit ${editingItem.name}` : 'New Inventory Item'}</DialogTitle>
+            <DialogTitle>{editingItem ? `Edit ${editingItem.name}` : 'New Material'}</DialogTitle>
             <DialogDescription>
-              {editingItem ? 'Update inventory item details' : 'Add a new item to your inventory'}
+              {editingItem ? 'Update material details' : 'Add a new material'}
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
@@ -1081,13 +1135,24 @@ const Inventory = () => {
                 />
                 <FormField
                   control={itemForm.control}
-                name="unit"
+                  name="unit"
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Unit</FormLabel>
-                      <FormControl>
-                        <Input {...field} placeholder="e.g. pcs, box, roll" />
-                      </FormControl>
+                      <Select value={field.value || undefined} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select unit" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {unitOptions.map((u) => (
+                            <SelectItem key={u.value} value={u.value}>
+                              {u.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -1178,6 +1243,13 @@ const Inventory = () => {
                       {vendor.name || vendor.company || vendor.email}
                             </SelectItem>
                   ))}
+                  <SelectSeparator className="my-2" />
+                  <div className="px-2 py-1.5" onPointerDown={(e) => e.preventDefault()}>
+                    <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setVendorAddModalOpen(true)}>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Create vendor
+                    </Button>
+                  </div>
                         </SelectContent>
                 </Select>
                       <FormMessage />
@@ -1254,8 +1326,8 @@ const Inventory = () => {
       <Dialog open={categoryModalVisible} onOpenChange={setCategoryModalVisible}>
         <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
-            <DialogTitle>Add Inventory Category</DialogTitle>
-            <DialogDescription>Create a new category for organizing inventory items</DialogDescription>
+            <DialogTitle>Add Material Category</DialogTitle>
+            <DialogDescription>Create a new category for organizing materials</DialogDescription>
           </DialogHeader>
           <DialogBody>
           
@@ -1309,11 +1381,73 @@ const Inventory = () => {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={vendorAddModalOpen} onOpenChange={setVendorAddModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Vendor</DialogTitle>
+            <DialogDescription>Add a new vendor without leaving the form.</DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <Form {...vendorForm}>
+              <form onSubmit={vendorForm.handleSubmit(handleAddVendorSubmit)} className="space-y-4">
+                <FormField
+                  control={vendorForm.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Vendor Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="e.g. Acme Supplies" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={vendorForm.control}
+                  name="company"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Company (optional)</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Company name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={vendorForm.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone (optional)</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Phone number" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => { setVendorAddModalOpen(false); vendorForm.reset({ name: '', company: '', phone: '' }); }}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={addingVendor}>
+                    {addingVendor ? 'Creating...' : 'Create Vendor'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={restockModalVisible} onOpenChange={setRestockModalVisible}>
         <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
             <DialogTitle>{editingItem ? `Restock ${editingItem.name}` : 'Restock'}</DialogTitle>
-            <DialogDescription>Add inventory to this item</DialogDescription>
+            <DialogDescription>Add stock to this item</DialogDescription>
           </DialogHeader>
           <DialogBody>
           <Form {...restockForm}>
@@ -1407,8 +1541,8 @@ const Inventory = () => {
       <Dialog open={adjustModalVisible} onOpenChange={setAdjustModalVisible}>
         <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
           <DialogHeader>
-            <DialogTitle>{editingItem ? `Adjust ${editingItem.name}` : 'Adjust Inventory'}</DialogTitle>
-            <DialogDescription>Record an inventory adjustment</DialogDescription>
+            <DialogTitle>{editingItem ? `Adjust ${editingItem.name}` : 'Adjust Material'}</DialogTitle>
+            <DialogDescription>Record a material adjustment</DialogDescription>
           </DialogHeader>
           <DialogBody>
           <Form {...adjustForm}>
@@ -1524,7 +1658,7 @@ const Inventory = () => {
       <AlertDialog open={deactivateDialogOpen} onOpenChange={setDeactivateDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Deactivate Inventory Item</AlertDialogTitle>
+            <AlertDialogTitle>Deactivate Material</AlertDialogTitle>
             <AlertDialogDescription>
               Are you sure you want to deactivate this item? This action can be reversed later.
             </AlertDialogDescription>
@@ -1545,4 +1679,4 @@ const Inventory = () => {
   );
 };
 
-export default Inventory;
+export default Materials;

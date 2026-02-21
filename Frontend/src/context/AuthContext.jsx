@@ -34,7 +34,7 @@ export const AuthProvider = ({ children }) => {
     const storedMemberships = authService.getStoredMemberships();
     const storedActiveTenantId = authService.getActiveTenantId();
 
-    console.log('[AuthContext] 🔍 Initializing auth state:', {
+    if (import.meta.env.DEV) console.log('[AuthContext] Initializing auth state:', {
       hasUser: !!storedUser,
       hasMemberships: !!storedMemberships,
       membershipsCount: storedMemberships?.length || 0,
@@ -54,12 +54,12 @@ export const AuthProvider = ({ children }) => {
 
     // If user is logged in but has no memberships, or memberships lack tenant metadata (stale cache), refetch from backend
     if (storedUser && (hasStaleMemberships || !storedMemberships || storedMemberships.length === 0)) {
-      console.log('[AuthContext] 🔄 Refetching /auth/me...', hasStaleMemberships ? '(stale tenant metadata)' : '(no memberships)');
+      if (import.meta.env.DEV) console.log('[AuthContext] Refetching /auth/me...', hasStaleMemberships ? '(stale)' : '(no memberships)');
       authService.getCurrentUser()
         .then((body) => {
           const userData = body?.data ?? body;
           const memberships = userData?.tenantMemberships || [];
-          console.log('[AuthContext] ✅ Fetched memberships from backend:', {
+          if (import.meta.env.DEV) console.log('[AuthContext] Fetched memberships:', {
             membershipsCount: memberships.length,
             memberships: memberships.map(m => ({ tenantId: m.tenantId, isDefault: m.isDefault }))
           });
@@ -76,21 +76,21 @@ export const AuthProvider = ({ children }) => {
             if (resolvedTenantId) {
               authService.setActiveTenantId(resolvedTenantId);
               setActiveTenantId(resolvedTenantId);
-              console.log('[AuthContext] ✅ Set activeTenantId from fetched memberships:', resolvedTenantId);
+              if (import.meta.env.DEV) console.log('[AuthContext] Set activeTenantId:', resolvedTenantId);
             }
           } else {
-            console.warn('[AuthContext] ⚠️ User has no tenant memberships - they may need to log in via SSO');
+            if (import.meta.env.DEV) console.warn('[AuthContext] No tenant memberships');
           }
           setLoading(false);
         })
         .catch((error) => {
-          console.error('[AuthContext] ❌ Error fetching user memberships:', error);
+          if (import.meta.env.DEV) console.error('[AuthContext] Error fetching memberships:', error);
           setLoading(false);
         });
     } else {
       const resolvedTenantId = resolveInitialTenant(storedMemberships, storedActiveTenantId);
       
-      console.log('[AuthContext] 🔍 Resolved tenant ID:', {
+      if (import.meta.env.DEV) console.log('[AuthContext] Resolved tenant:', {
         resolvedTenantId,
         storedActiveTenantId,
         hasMemberships: !!storedMemberships,
@@ -99,10 +99,10 @@ export const AuthProvider = ({ children }) => {
       
       // ALWAYS ensure activeTenantId is persisted to localStorage if we have a resolved tenant
       if (resolvedTenantId) {
-        console.log('[AuthContext] ✅ Setting activeTenantId in localStorage:', resolvedTenantId);
+        if (import.meta.env.DEV) console.log('[AuthContext] Set activeTenantId:', resolvedTenantId);
         authService.setActiveTenantId(resolvedTenantId);
       } else {
-        console.warn('[AuthContext] ⚠️ No tenant ID resolved - user may not have tenant membership');
+        if (import.meta.env.DEV) console.warn('[AuthContext] No tenant ID resolved');
       }
       
       setActiveTenantId(resolvedTenantId);
@@ -120,6 +120,15 @@ export const AuthProvider = ({ children }) => {
    */
   const syncAuthState = (payload = {}) => {
     const { user: nextUser, memberships: nextMemberships = [], defaultTenantId } = payload;
+    
+    if (import.meta.env.DEV) {
+      console.log('[AuthContext] syncAuthState payload:', {
+        hasUser: !!nextUser,
+        membershipsCount: Array.isArray(nextMemberships) ? nextMemberships.length : 0,
+        defaultTenantId,
+      });
+    }
+
     setUser(nextUser || null);
     setMemberships(nextMemberships);
     const tenantFromStorage = authService.getActiveTenantId();
@@ -131,9 +140,9 @@ export const AuthProvider = ({ children }) => {
     // Persist activeTenantId to localStorage so API calls include the header
     if (resolvedTenantId) {
       authService.setActiveTenantId(resolvedTenantId);
-      console.log('[AuthContext] ✅ Set activeTenantId in localStorage:', resolvedTenantId);
+      if (import.meta.env.DEV) console.log('[AuthContext] Set activeTenantId:', resolvedTenantId);
     } else {
-      console.warn('[AuthContext] ⚠️ No tenant ID resolved, user may not have tenant membership');
+      if (import.meta.env.DEV) console.warn('[AuthContext] No tenant ID resolved');
     }
     
     setActiveTenantId(resolvedTenantId);
@@ -151,8 +160,19 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authService.login(credentials);
       syncAuthState(response.data || {});
+      if (import.meta.env.DEV) {
+        const data = response?.data || {};
+        console.log('[AuthContext] login success:', {
+          hasUser: !!data.user,
+          membershipsCount: Array.isArray(data.memberships) ? data.memberships.length : 0,
+          defaultTenantId: data.defaultTenantId || null,
+        });
+      }
       return response;
     } catch (error) {
+      if (import.meta.env.DEV) {
+        console.error('[AuthContext] login failed:', error);
+      }
       throw error;
     }
   };
@@ -187,9 +207,9 @@ export const AuthProvider = ({ children }) => {
 
   const sabitoSSO = async (sabitoToken) => {
     try {
-      console.log('[AuthContext] 🔐 Starting Sabito SSO login...');
+      if (import.meta.env.DEV) console.log('[AuthContext] Starting Sabito SSO login...');
       const response = await authService.sabitoSSO(sabitoToken);
-      console.log('[AuthContext] ✅ SSO response received:', {
+      if (import.meta.env.DEV) console.log('[AuthContext] SSO response:', {
         hasData: !!response?.data,
         hasUser: !!response?.data?.user,
         hasMemberships: !!response?.data?.memberships,
@@ -202,15 +222,28 @@ export const AuthProvider = ({ children }) => {
       
       // Verify activeTenantId was set
       const activeTenantId = authService.getActiveTenantId();
-      console.log('[AuthContext] ✅ Active tenant ID after sync:', activeTenantId);
+      if (import.meta.env.DEV) console.log('[AuthContext] Active tenant after sync:', activeTenantId);
       
       // Invalidate organization settings query to refetch after SSO
       queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
       return response;
     } catch (error) {
-      console.error('[AuthContext] ❌ SSO login failed:', error);
+      if (import.meta.env.DEV) console.error('[AuthContext] SSO login failed:', error);
       throw error;
     }
+  };
+
+  /**
+   * Google OAuth sign-in or sign-up.
+   * @param {string} idToken - Google ID token from credentialResponse.credential
+   * @param {Object} options - { signUp: boolean, businessType?: string, companyName?: string }
+   * @returns {Promise<{ data }>}
+   */
+  const googleAuth = async (idToken, options = {}) => {
+    const response = await authService.googleAuth(idToken, options);
+    syncAuthState(response.data || {});
+    queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
+    return response;
   };
 
   const loginWithToken = async (token) => {
@@ -254,12 +287,12 @@ export const AuthProvider = ({ children }) => {
    * @returns {Promise<Object>} - Updated auth payload
    */
   const refreshAuthState = async () => {
-    console.log('[AuthContext] refreshAuthState: fetching /auth/me');
+    if (import.meta.env.DEV) console.log('[AuthContext] refreshAuthState: fetching /auth/me');
     const body = await authService.getCurrentUser();
     const userData = body?.data ?? body;
     const nextMemberships = userData?.tenantMemberships || [];
     const firstTenant = nextMemberships[0]?.tenant;
-    console.log('[AuthContext] refreshAuthState: body keys=%j, userData keys=%j, memberships count=%s, first tenant id=%s, metadata=%j', body ? Object.keys(body) : [], userData ? Object.keys(userData) : [], nextMemberships.length, firstTenant?.id, firstTenant?.metadata);
+    if (import.meta.env.DEV) console.log('[AuthContext] refreshAuthState:', { membershipsCount: nextMemberships.length, firstTenantId: firstTenant?.id });
     const payload = {
       user: userData,
       memberships: nextMemberships,
@@ -267,7 +300,7 @@ export const AuthProvider = ({ children }) => {
     };
     authService.persistAuthPayload(payload);
     syncAuthState(payload);
-    console.log('[AuthContext] refreshAuthState: state updated, defaultTenantId=%s', payload.defaultTenantId);
+    if (import.meta.env.DEV) console.log('[AuthContext] refreshAuthState: updated, defaultTenantId=', payload.defaultTenantId);
     return payload;
   };
 
@@ -307,6 +340,17 @@ export const AuthProvider = ({ children }) => {
     [isFirstLogin, isPlatformAdmin, isWorkspaceAdmin, wasInvited]
   );
 
+  // Log core auth state whenever it changes (for redirect debugging)
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    console.log('[AuthContext] State change:', {
+      hasUser: !!user,
+      activeTenantId,
+      membershipsCount: Array.isArray(memberships) ? memberships.length : 0,
+      loading,
+    });
+  }, [user, activeTenantId, memberships, loading]);
+
   useEffect(() => {
     if (!user) return;
     console.log('[ProfileCompletion] Decision factors:', {
@@ -345,6 +389,7 @@ export const AuthProvider = ({ children }) => {
     logout,
     tenantSignup,
     sabitoSSO,
+    googleAuth,
     loginWithToken,
     updateUser,
     loading,

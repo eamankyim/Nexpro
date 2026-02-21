@@ -1,9 +1,13 @@
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const dayjs = require('dayjs');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
-const { Tenant, User, UserTenant, Setting } = require('../models');
-const { seedDefaultCategories } = require('../utils/categorySeeder');
+const { Tenant, User, UserTenant, Setting, EmailVerificationToken } = require('../models');
+const { seedDefaultCategories, seedDefaultEquipmentCategories } = require('../utils/categorySeeder');
+const { seedDefaultChartOfAccounts } = require('../utils/seedAccountingAccounts');
+const emailService = require('../services/emailService');
+const { emailVerification: emailVerificationTemplate } = require('../services/emailTemplates');
 
 const generateToken = (userId) =>
   jwt.sign({ id: userId }, config.jwt.secret, {
@@ -53,13 +57,13 @@ exports.signupTenant = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         message:
-          'Account owner name, email, and password are required to create a workspace.',
+          'Account owner name, email, and password are required to create a business.',
       });
     }
 
     const normalizedEmail = adminEmail.trim().toLowerCase();
     // Company name is optional - default to a placeholder if not provided
-    const trimmedCompanyName = (companyName?.trim() || 'My Workspace');
+    const trimmedCompanyName = (companyName?.trim() || 'My Business');
     const trimmedAdminName = adminName.trim();
 
     const t1 = Date.now();
@@ -109,15 +113,21 @@ exports.signupTenant = async (req, res, next) => {
         metadata.businessInfo = businessInfo;
       }
 
-      // Default to 'printing_press' if businessType is not provided (for backward compatibility)
-      const finalBusinessType = businessType || 'printing_press';
+      // Resolve business type (legacy types like 'printing_press' become 'studio')
+      const { resolveBusinessType } = require('../config/businessTypes');
+      const finalBusinessType = resolveBusinessType(businessType || 'printing_press');
+      
+      // If businessType is a legacy studio type, set studioType in metadata
+      if (['printing_press', 'mechanic', 'barber', 'salon'].includes(businessType)) {
+        metadata.studioType = businessType;
+      }
 
       const tenant = await Tenant.create(
         {
           name: trimmedCompanyName,
           slug,
           plan,
-          businessType: finalBusinessType, // Store business type (defaults to 'printing_press')
+          businessType: finalBusinessType, // Store resolved business type ('shop', 'studio', 'pharmacy')
           status: 'active',
           metadata,
           trialEndsAt: trialEndDate,
@@ -208,9 +218,38 @@ exports.signupTenant = async (req, res, next) => {
       await transaction.commit();
 
       // Seed default categories in background so signup responds quickly (~2–3s faster)
-      seedDefaultCategories(tenant.id, finalBusinessType, shopType || null)
-        .then(() => console.log(`✅ Seeded default categories for business type: ${finalBusinessType}`))
+      // Pass force=true to bypass cache/flag checks since this is initial onboarding
+      const studioType = metadata.studioType || null;
+      seedDefaultCategories(tenant.id, finalBusinessType, shopType || null, studioType, true)
+        .then(() => console.log(`✅ Seeded default categories for business type: ${finalBusinessType}${studioType ? `/${studioType}` : ''}`))
         .catch((err) => console.error('Error seeding default categories (non-blocking):', err.message));
+
+      seedDefaultChartOfAccounts(tenant.id, true)
+        .then(({ created }) => { if (created) console.log(`✅ Seeded ${created} default accounting accounts for tenant ${tenant.id}`); })
+        .catch((err) => console.error('Error seeding default chart of accounts (non-blocking):', err.message));
+
+      seedDefaultEquipmentCategories(tenant.id, true)
+        .then((created) => { if (created) console.log(`✅ Seeded ${created} default equipment categories for tenant ${tenant.id}`); })
+        .catch((err) => console.error('Error seeding default equipment categories (non-blocking):', err.message));
+
+      // Send email verification link (non-blocking; do not fail signup if email fails)
+      const verificationToken = crypto.randomBytes(32).toString('hex');
+      const verificationExpiresAt = dayjs().add(24, 'hour').toDate();
+      EmailVerificationToken.create({
+        userId: user.id,
+        token: verificationToken,
+        expiresAt: verificationExpiresAt,
+      }).then(() => {
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+        const verifyLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
+        const company = { name: trimmedCompanyName };
+        const { subject, html, text } = emailVerificationTemplate(user, verifyLink, company);
+        return emailService.sendPlatformMessage(normalizedEmail, subject, html, text);
+      }).then((result) => {
+        if (result?.success) console.log('[signup] Verification email sent to', normalizedEmail);
+      }).catch((err) => {
+        console.error('[signup] Failed to send verification email (non-blocking):', err?.message || err);
+      });
 
       const token = generateToken(user.id);
 
@@ -320,6 +359,27 @@ exports.completeOnboarding = async (req, res, next) => {
       tenant.businessType = businessType;
     }
     tenant.name = trimmedCompanyName;
+
+    // Sync organization settings so business name appears everywhere (Dashboard, receipts, etc.)
+    const [orgSetting] = await Setting.findOrCreate({
+      where: { tenantId, key: 'organization' },
+      defaults: { tenantId, key: 'organization', value: {}, description: 'Organization profile' }
+    });
+    const orgValue = orgSetting.value || {};
+    const addressUpdate = companyAddress
+      ? (typeof companyAddress === 'string' ? { ...(orgValue.address || {}), line1: companyAddress } : { ...(orgValue.address || {}), ...companyAddress })
+      : (orgValue.address || {});
+    const orgUpdate = {
+      ...orgValue,
+      name: trimmedCompanyName,
+      legalName: orgValue.legalName || trimmedCompanyName,
+      email: companyEmail || orgValue.email || tenant.metadata?.email || '',
+      phone: companyPhone || orgValue.phone || tenant.metadata?.phone || '',
+      website: companyWebsite || orgValue.website || tenant.metadata?.website || '',
+      address: addressUpdate
+    };
+    orgSetting.value = orgUpdate;
+    await orgSetting.save();
     
     // Directly assign metadata and save to ensure JSONB changes are persisted
     tenant.metadata = metadata;
@@ -338,13 +398,19 @@ exports.completeOnboarding = async (req, res, next) => {
     
     if (shouldSeedCategories) {
       try {
-        await seedDefaultCategories(tenantId, businessType, shopType || null);
+        // Pass force=true to bypass cache/flag checks since this is onboarding
+        await seedDefaultCategories(tenantId, businessType, shopType || null, null, true);
         console.log(`✅ Seeded default categories for ${businessType}${shopType ? ` (${shopType})` : ''}`);
       } catch (error) {
         console.error('Failed to seed categories during onboarding:', error);
         // Don't fail onboarding if category seeding fails
       }
     }
+
+    // Pass force=true to bypass cache/flag checks since this is onboarding
+    seedDefaultEquipmentCategories(tenantId, true)
+      .then((created) => { if (created) console.log(`✅ Seeded ${created} default equipment categories for tenant ${tenantId}`); })
+      .catch((err) => console.error('Failed to seed equipment categories during onboarding (non-blocking):', err.message));
 
     return res.status(200).json({
       success: true,

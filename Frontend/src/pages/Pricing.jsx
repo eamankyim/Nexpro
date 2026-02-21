@@ -1,18 +1,22 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, MinusCircle, Loader2, Filter, RefreshCw, DollarSign } from 'lucide-react';
+import { Plus, MinusCircle, Loader2, Filter, RefreshCw, Currency } from 'lucide-react';
 import pricingService from '../services/pricingService';
+import jobService from '../services/jobService';
 import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
 import { useResponsive } from '../hooks/useResponsive';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DashboardTable from '../components/DashboardTable';
+import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError, showWarning } from '../utils/toast';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -104,8 +108,9 @@ const Pricing = () => {
   const [editingTemplate, setEditingTemplate] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({ category: 'all', isActive: 'all' });
+  const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
-  const { isManager, isAdmin } = useAuth();
+  const { isManager, isAdmin, activeTenantId } = useAuth();
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingTemplate, setViewingTemplate] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -153,7 +158,7 @@ const Pricing = () => {
     try {
       const params = {
         page: pagination.current,
-        limit: 1000, // Fetch more for client-side filtering
+        limit: pagination.pageSize, // Backend pagination
       };
       
       if (filters.category !== 'all') {
@@ -224,6 +229,33 @@ const Pricing = () => {
     };
     loadCustomCategories();
   }, []);
+
+  const { data: jobItemCategoriesApi = [] } = useQuery({
+    queryKey: ['jobs', 'categories', activeTenantId],
+    queryFn: () => jobService.getCategories(),
+    enabled: !!activeTenantId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const defaultCategories = useMemo(() => {
+    const apiCats = Array.isArray(jobItemCategoriesApi?.data) ? jobItemCategoriesApi.data : (Array.isArray(jobItemCategoriesApi) ? jobItemCategoriesApi : []);
+    const mapped = apiCats.map(c => ({ value: c.value, label: c.label || c.value }));
+    return mapped.length > 0 ? mapped : [
+      { value: 'Services', label: 'Services' },
+      { value: 'Materials', label: 'Materials' },
+      { value: 'Other', label: 'Other' }
+    ];
+  }, [jobItemCategoriesApi]);
+
+  const materialTypes = useMemo(() => {
+    const fromApi = jobItemCategoriesApi?.materialTypes;
+    return Array.isArray(fromApi) && fromApi.length > 0 ? fromApi : [
+      'Plain Paper', 'Photo Paper', 'SAV (Self-Adhesive Vinyl)', 'Banner', 'One Way Vision',
+      'Canvas', 'Cardstock', 'Sticker Paper', 'Vinyl', 'Foam Board', 'Corrugated Board',
+      'Bond Paper', 'Glossy Paper', 'Matte Paper', 'Satin Paper', 'Transparent Vinyl',
+      'Mesh Material', 'Fabric', 'Other'
+    ];
+  }, [jobItemCategoriesApi?.materialTypes]);
 
   const handleAdd = () => {
     setEditingTemplate(null);
@@ -329,24 +361,6 @@ const Pricing = () => {
     }
   };
 
-  const defaultCategories = [
-    { value: 'Black & White Printing', label: 'Black & White Printing' },
-    { value: 'Color Printing', label: 'Color Printing' },
-    { value: 'Large Format Printing', label: 'Large Format Printing' },
-    { value: 'Business Cards', label: 'Business Cards' },
-    { value: 'Brochures', label: 'Brochures' },
-    { value: 'Flyers', label: 'Flyers' },
-    { value: 'Posters', label: 'Posters' },
-    { value: 'Banners', label: 'Banners' },
-    { value: 'Booklets', label: 'Booklets' },
-    { value: 'Binding', label: 'Binding' },
-    { value: 'Lamination', label: 'Lamination' },
-    { value: 'Photocopying', label: 'Photocopying' },
-    { value: 'Scanning', label: 'Scanning' },
-    { value: 'Printing', label: 'Printing' },
-    { value: 'Design Services', label: 'Design Services' }
-  ];
-
   const getMergedCategoryOptions = () => {
     const merged = [...defaultCategories];
     customCategories.forEach(cat => {
@@ -395,28 +409,6 @@ const Pricing = () => {
     }
   };
 
-  const materialTypes = [
-    'Plain Paper',
-    'Photo Paper',
-    'SAV (Self-Adhesive Vinyl)',
-    'Banner',
-    'One Way Vision',
-    'Canvas',
-    'Cardstock',
-    'Sticker Paper',
-    'Vinyl',
-    'Foam Board',
-    'Corrugated Board',
-    'Bond Paper',
-    'Glossy Paper',
-    'Matte Paper',
-    'Satin Paper',
-    'Transparent Vinyl',
-    'Mesh Material',
-    'Fabric',
-    'Other'
-  ];
-
   const materialSizes = ['A4', 'A3', 'A5', 'Letter', 'Legal', 'Tabloid', 'Custom', 'N/A'];
 
   // Table columns for DashboardTable
@@ -424,7 +416,7 @@ const Pricing = () => {
     {
       key: 'name',
       label: 'Name',
-      render: (_, record) => <span className="font-medium text-black">{record?.name || '—'}</span>
+      render: (_, record) => <span className="font-medium text-foreground">{record?.name || '—'}</span>
     },
     {
       key: 'category',
@@ -434,17 +426,17 @@ const Pricing = () => {
     {
       key: 'basePrice',
       label: 'Base Price',
-      render: (_, record) => <span className="text-black">GHS {parseFloat(record?.basePrice || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground">₵ {parseFloat(record?.basePrice || 0).toFixed(2)}</span>
     },
     {
       key: 'pricePerUnit',
       label: 'Price/Unit',
-      render: (_, record) => <span className="text-black">{record?.pricePerUnit ? `GHS ${parseFloat(record.pricePerUnit).toFixed(2)}` : '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.pricePerUnit ? `₵ ${parseFloat(record.pricePerUnit).toFixed(2)}` : '—'}</span>
     },
     {
       key: 'setupFee',
       label: 'Setup Fee',
-      render: (_, record) => <span className="text-black">GHS {parseFloat(record?.setupFee || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground">₵ {parseFloat(record?.setupFee || 0).toFixed(2)}</span>
     },
     {
       key: 'colorType',
@@ -455,7 +447,7 @@ const Pricing = () => {
           color: 'Color',
           spot_color: 'Spot Color'
         };
-        return record?.colorType ? <Badge variant="outline">{labels[record.colorType]}</Badge> : <span className="text-black">—</span>;
+        return record?.colorType ? <Badge variant="outline">{labels[record.colorType]}</Badge> : <span className="text-foreground">—</span>;
       }
     },
     {
@@ -500,58 +492,77 @@ const Pricing = () => {
           subText="Manage pricing templates for your products and services."
         />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-            <Filter className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Filter</span>}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={() => fetchTemplates(true)}
-            disabled={refreshingTemplates}
-            size={isMobile ? "icon" : "default"}
-          >
-            {refreshingTemplates ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
+          <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+                <Filter className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Filter</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Filter templates by category or status</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                onClick={() => fetchTemplates(true)}
+                disabled={refreshingTemplates}
+                size={isMobile ? "icon" : "default"}
+              >
+                {refreshingTemplates ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh pricing templates</TooltipContent>
+          </Tooltip>
           {isManager && (
-            <Button onClick={handleAdd}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add Template
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button onClick={handleAdd}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Template
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Add a new pricing template</TooltipContent>
+            </Tooltip>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <DashboardStatsCard
+          tooltip="Total number of pricing templates"
           title="Total Templates"
           value={summaryStats?.totals?.totalTemplates || 0}
-          icon={DollarSign}
+          icon={Currency}
           iconBgColor="rgba(22, 101, 52, 0.1)"
           iconColor="#166534"
         />
         <DashboardStatsCard
+          tooltip="Active pricing templates"
           title="Active"
           value={summaryStats?.totals?.activeTemplates || 0}
-          icon={DollarSign}
+          icon={Currency}
           iconBgColor="rgba(132, 204, 22, 0.1)"
           iconColor="#84cc16"
         />
         <DashboardStatsCard
+          tooltip="Inactive pricing templates"
           title="Inactive"
           value={summaryStats?.totals?.inactiveTemplates || 0}
-          icon={DollarSign}
+          icon={Currency}
           iconBgColor="rgba(107, 114, 128, 0.1)"
           iconColor="#6b7280"
         />
         <DashboardStatsCard
+          tooltip="Number of unique pricing categories"
           title="Categories"
           value={summaryStats?.totals?.categoryCount || 0}
-          icon={DollarSign}
+          icon={Currency}
           iconBgColor="rgba(59, 130, 246, 0.1)"
           iconColor="#3b82f6"
         />
@@ -563,8 +574,16 @@ const Pricing = () => {
         columns={tableColumns}
         loading={loading}
         title={null}
-        emptyIcon={<DollarSign className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No pricing templates found"
+        emptyIcon={<Currency className="h-12 w-12 text-muted-foreground" />}
+        emptyDescription="No pricing templates yet. Create templates to quickly add items to quotes and jobs."
+        emptyAction={
+          isManager && (
+            <Button onClick={handleAdd}>
+              <Plus className="h-4 w-4 mr-2" />
+              Create Template
+            </Button>
+          )
+        }
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);
@@ -573,11 +592,13 @@ const Pricing = () => {
           current: pagination.current,
           total: templatesCount
         }}
+        viewMode={tableViewMode}
+        onViewModeChange={setTableViewMode}
       />
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Pricing Templates</SheetTitle>
           </SheetHeader>
@@ -688,7 +709,7 @@ const Pricing = () => {
               {showCategoryOtherInput && (
                 <div className="flex gap-2">
                   <Input
-                    placeholder="e.g., T-shirt Printing, Custom Design"
+                    placeholder="e.g., Custom Service, Design Work"
                     value={categoryOtherValue}
                     onChange={(e) => setCategoryOtherValue(e.target.value)}
                     onKeyDown={(e) => {
@@ -1191,15 +1212,21 @@ const Pricing = () => {
                           <FormItem>
                             <FormLabel>Additional Price</FormLabel>
                             <FormControl>
-                              <InputNumber
-                                style={{ width: '100%' }}
-                                placeholder="0.00"
-                                prefix="GHS "
-                                min={0}
-                                precision={2}
-                                value={field.value}
-                                onChange={(value) => field.onChange(value)}
-                              />
+                              <div className="flex rounded-md border border-input">
+                                <span className="inline-flex items-center px-3 text-sm text-muted-foreground border-r border-input bg-muted">₵</span>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  step={0.01}
+                                  placeholder="0.00"
+                                  className="w-full border-0 rounded-l-none"
+                                  value={field.value ?? ''}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    field.onChange(v === '' ? undefined : parseFloat(v) || 0);
+                                  }}
+                                />
+                              </div>
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -1278,7 +1305,7 @@ const Pricing = () => {
           ...(viewingTemplate.materialSize === 'Custom' || (viewingTemplate.materialSize === undefined && viewingTemplate.paperSize === 'Custom') ? [
             { label: 'Custom Height', value: viewingTemplate.customHeight ? `${viewingTemplate.customHeight} ${viewingTemplate.customUnit || ''}` : '-' },
             { label: 'Custom Width', value: viewingTemplate.customWidth ? `${viewingTemplate.customWidth} ${viewingTemplate.customUnit || ''}` : '-' },
-            { label: 'Price per Square Foot', value: viewingTemplate.pricePerSquareFoot ? `GHS ${parseFloat(viewingTemplate.pricePerSquareFoot).toFixed(2)}` : '-' },
+            { label: 'Price per Square Foot', value: viewingTemplate.pricePerSquareFoot ? `₵ ${parseFloat(viewingTemplate.pricePerSquareFoot).toFixed(2)}` : '-' },
           ] : []),
           { 
             label: 'Color Type', 
@@ -1295,17 +1322,17 @@ const Pricing = () => {
           { 
             label: 'Base Price', 
             value: viewingTemplate.basePrice,
-            render: (price) => `GHS ${parseFloat(price || 0).toFixed(2)}`
+            render: (price) => `₵ ${parseFloat(price || 0).toFixed(2)}`
           },
           { 
             label: 'Price Per Unit', 
             value: viewingTemplate.pricePerUnit,
-            render: (price) => price ? `GHS ${parseFloat(price).toFixed(2)}` : '-'
+            render: (price) => price ? `₵ ${parseFloat(price).toFixed(2)}` : '-'
           },
           { 
             label: 'Setup Fee', 
             value: viewingTemplate.setupFee,
-            render: (fee) => `GHS ${parseFloat(fee || 0).toFixed(2)}`
+            render: (fee) => `₵ ${parseFloat(fee || 0).toFixed(2)}`
           },
           { label: 'Min Quantity', value: viewingTemplate.minimumQuantity || 1 },
           { label: 'Max Quantity', value: viewingTemplate.maximumQuantity || 'Unlimited' },
@@ -1346,7 +1373,7 @@ const Pricing = () => {
                     <List.Item>
                       <Space>
                         <Badge variant="outline">{option.name}</Badge>
-                        <span>GHS {parseFloat(option.price || 0).toFixed(2)}</span>
+                        <span>₵ {parseFloat(option.price || 0).toFixed(2)}</span>
                       </Space>
                     </List.Item>
                   )}

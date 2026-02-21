@@ -41,14 +41,14 @@ import { Separator } from '@/components/ui/separator';
 const passwordSchema = z.object({
   newPassword: z
     .string()
-    .min(6, 'Password must be at least 6 characters')
+    .min(6, 'Use at least 6 characters')
     .regex(
       /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/,
-      'Password must contain at least one uppercase letter, one lowercase letter, and one number'
+      'Use uppercase, lowercase, and a number'
     ),
-  confirmPassword: z.string().min(1, 'Please confirm new password'),
+  confirmPassword: z.string().min(1, 'Confirm your password'),
 }).refine((data) => data.newPassword === data.confirmPassword, {
-  message: "Passwords do not match",
+  message: "Passwords don't match",
   path: ["confirmPassword"],
 });
 

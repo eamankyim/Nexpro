@@ -83,7 +83,7 @@ const setCorsHeaders = (res, origin) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader(
     'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, X-Requested-With, x-tenant-id, Accept, Accept-Language, Accept-Encoding'
+    'Content-Type, Authorization, X-Requested-With, x-tenant-id, Accept, Accept-Language, Accept-Encoding, Cache-Control, Pragma'
   );
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');

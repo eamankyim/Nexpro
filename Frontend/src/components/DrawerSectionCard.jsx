@@ -14,14 +14,17 @@ import { cn } from '@/lib/utils';
  * @param {string} title - Section heading text
  * @param {React.ReactNode} children - Card content
  * @param {Array<{ label: string, onClick: function }>} actions - Optional menu items for section actions (ellipsis)
+ * @param {React.ReactNode} extra - Optional element to show next to title (e.g. Add button)
  * @param {string} className - Optional class for the wrapper
  */
-function DrawerSectionCard({ title, children, actions = [], className }) {
+function DrawerSectionCard({ title, children, actions = [], extra, className }) {
   return (
     <section className={cn('space-y-2', className)}>
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
-        {Array.isArray(actions) && actions.length > 0 && (
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <div className="flex items-center gap-1">
+          {extra}
+          {Array.isArray(actions) && actions.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-gray-500 hover:text-gray-700">
@@ -38,8 +41,9 @@ function DrawerSectionCard({ title, children, actions = [], className }) {
             </DropdownMenuContent>
           </DropdownMenu>
         )}
+        </div>
       </div>
-      <div className="rounded-lg border border-gray-100 bg-gray-50/50 p-4 [&_dl>div]:-mx-4 [&_dl>div]:w-[calc(100%+2rem)] [&_dl>div]:px-4">
+      <div className="rounded-lg border border-border bg-muted/50 p-4 [&_dl>div]:-mx-4 [&_dl>div]:w-[calc(100%+2rem)] [&_dl>div]:px-4">
         {children}
       </div>
     </section>

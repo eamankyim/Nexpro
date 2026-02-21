@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -7,10 +8,9 @@ import {
   Plus,
   Pencil,
   Upload as UploadIcon,
-  DollarSign,
+  Currency,
   ShoppingCart,
   FileText,
-  Calendar,
   Send,
   CheckCircle,
   XCircle,
@@ -19,23 +19,28 @@ import {
   Filter,
   RefreshCw,
   Receipt,
-  Archive
+  Archive,
+  Settings2
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import expenseService from '../services/expenseService';
 import jobService from '../services/jobService';
 import vendorService from '../services/vendorService';
 import { useAuth } from '../context/AuthContext';
+import { STUDIO_LIKE_TYPES } from '../constants';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError, showWarning } from '../utils/toast';
+import { resolveImageUrl } from '../utils/fileUtils';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import TableSkeleton from '../components/TableSkeleton';
 import StatusChip from '../components/StatusChip';
 import DashboardTable from '../components/DashboardTable';
+import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import { Button } from '@/components/ui/button';
+import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -48,9 +53,11 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogBody,
@@ -62,6 +69,7 @@ import {
 } from '@/components/ui/dialog';
 import MobileFormDialog from '../components/MobileFormDialog';
 import FormFieldGrid from '../components/FormFieldGrid';
+import FileUpload from '../components/FileUpload';
 import {
   Form,
   FormControl,
@@ -119,6 +127,12 @@ const multipleExpenseItemSchema = z.object({
   notes: z.string().optional(),
 });
 
+const quickVendorSchema = z.object({
+  name: z.string().min(1, 'Vendor name is required'),
+  company: z.string().optional(),
+  phone: z.string().optional()
+});
+
 const multipleExpenseSchema = z.object({
   expenseDate: z.date({ required_error: 'Expense date is required' }),
   expenses: z.array(multipleExpenseItemSchema).min(1, 'At least one expense is required'),
@@ -136,8 +150,7 @@ const Expenses = () => {
   const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
-  const [expenses, setExpenses] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const isStudioLike = STUDIO_LIKE_TYPES.includes(businessType);
   const [submittingExpense, setSubmittingExpense] = useState(false);
   const [submittingForApproval, setSubmittingForApproval] = useState(false);
   const [approvingExpense, setApprovingExpense] = useState(false);
@@ -145,7 +158,6 @@ const Expenses = () => {
   const [rejectingExpenseLoading, setRejectingExpenseLoading] = useState(false);
   const [markingPaid, setMarkingPaid] = useState(null);
   const [archivingExpense, setArchivingExpense] = useState(null);
-  const [refreshingExpenses, setRefreshingExpenses] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingExpense, setEditingExpense] = useState(null);
   const [multipleMode, setMultipleMode] = useState(false);
@@ -153,6 +165,7 @@ const Expenses = () => {
   const [jobs, setJobs] = useState([]);
   const [vendors, setVendors] = useState([]);
   const [stats, setStats] = useState(null);
+  const [uploadingReceipt, setUploadingReceipt] = useState(false);
 
   // Clear vendor and job lists when tenant changes so we don't show another tenant's data
   useEffect(() => {
@@ -170,8 +183,12 @@ const Expenses = () => {
     jobId: 'all',
     viewType: 'all'
   });
+  const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [rejectionModalVisible, setRejectionModalVisible] = useState(false);
+  const [manageCategoriesOpen, setManageCategoriesOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [removingCategoryName, setRemovingCategoryName] = useState(null);
 
   const form = useForm({
     resolver: zodResolver(multipleMode ? multipleExpenseSchema : expenseSchema),
@@ -197,107 +214,146 @@ const Expenses = () => {
       rejectionReason: '',
     },
   });
+
+  const [vendorAddModalOpen, setVendorAddModalOpen] = useState(false);
+  const [addingVendor, setAddingVendor] = useState(false);
+  const vendorForm = useForm({
+    resolver: zodResolver(quickVendorSchema),
+    defaultValues: { name: '', company: '', phone: '' },
+  });
+
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingExpense, setViewingExpense] = useState(null);
   const [expenseActivities, setExpenseActivities] = useState([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
+  const queryClient = useQueryClient();
+
+  // Fetch expense categories (business-type, shop-type, and custom)
+  const { data: expenseCategoriesResponse } = useQuery({
+    queryKey: ['expenses', 'categories', activeTenantId],
+    queryFn: () => expenseService.getCategories(),
+    enabled: !!activeTenantId,
+    staleTime: 5 * 60 * 1000,
+  });
+  const categoriesFromApi = Array.isArray(expenseCategoriesResponse) ? expenseCategoriesResponse : (expenseCategoriesResponse?.data ?? []);
+  const customCategoriesFromApi = Array.isArray(expenseCategoriesResponse?.custom) ? expenseCategoriesResponse.custom : (expenseCategoriesResponse?.custom ?? []);
+
+  const invalidateCategories = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['expenses', 'categories', activeTenantId] });
+  }, [queryClient, activeTenantId]);
+
+  const addCategoryMutation = useMutation({
+    mutationFn: (name) => expenseService.addCustomCategory(name),
+    onSuccess: () => {
+      invalidateCategories();
+      setNewCategoryName('');
+      showSuccess('Custom category added');
+    },
+    onError: (err) => {
+      showError(err?.response?.data?.error || err?.message || 'Failed to add category');
+    }
+  });
+
+  const removeCategoryMutation = useMutation({
+    mutationFn: (name) => expenseService.removeCustomCategory(name),
+    onSuccess: () => {
+      invalidateCategories();
+      setRemovingCategoryName(null);
+      showSuccess('Custom category removed');
+    },
+    onError: (err) => {
+      setRemovingCategoryName(null);
+      showError(err?.response?.data?.error || err?.message || 'Failed to remove category');
+    }
+  });
+
+  const handleAddCustomCategory = () => {
+    const name = newCategoryName.trim();
+    if (!name) {
+      showWarning('Enter a category name');
+      return;
+    }
+    if (expenseCategories.some(c => c.toLowerCase() === name.toLowerCase())) {
+      showWarning('This category already exists');
+      return;
+    }
+    addCategoryMutation.mutate(name);
+  };
+
+  const handleRemoveCustomCategory = (name) => {
+    setRemovingCategoryName(name);
+    removeCategoryMutation.mutate(name);
+  };
+
+  // Use React Query for expenses
+  const {
+    data: expensesResponse,
+    isLoading: expensesLoading,
+    error: expensesError,
+    refetch: refetchExpenses,
+    isFetching: expensesRefetching,
+  } = useQuery({
+    queryKey: ['expenses', activeTenantId, pagination.current, pagination.pageSize, filters],
+    queryFn: async () => {
+      const params = {
+        page: pagination.current,
+        limit: pagination.pageSize,
+      };
+      if (filters.category !== 'all') params.category = filters.category;
+      if (filters.status !== 'all') params.status = filters.status;
+      if (filters.jobId !== 'all') params.jobId = filters.jobId;
+      if (filters.viewType === 'approved') params.approvalStatus = 'approved';
+      if (filters.viewType === 'requests') params.approvalStatus = 'pending_approval';
+      if (filters.viewType === 'general' || filters.viewType === 'job-specific') params.viewType = filters.viewType;
+      const response = await expenseService.getAll(params);
+      return response;
+    },
+    enabled: !!activeTenantId,
+    keepPreviousData: true,
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: false,
+  });
+
+  const expenses = useMemo(() => {
+    const data = expensesResponse?.data || expensesResponse;
+    return Array.isArray(data) ? data : [];
+  }, [expensesResponse]);
+
+  const invalidateExpenses = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['expenses'] });
+  }, [queryClient]);
 
   useEffect(() => {
     if (!activeTenantId) return;
-    fetchExpenses();
     if (isPrintingPress) {
       fetchJobs();
     }
     fetchVendors();
     fetchStats();
-  }, [activeTenantId, pagination.current, pagination.pageSize, filters, isPrintingPress]);
+  }, [activeTenantId, isPrintingPress]);
 
-  const fetchExpenses = async (isRefresh = false) => {
-    try {
-      if (isRefresh) {
-        setRefreshingExpenses(true);
-      } else {
-        setLoading(true);
-      }
-      const params = {
-        page: pagination.current,
-        limit: 1000, // Fetch more for client-side filtering
-      };
-      
-      if (filters.category !== 'all') {
-        params.category = filters.category;
-      }
-      if (filters.status !== 'all') {
-        params.status = filters.status;
-      }
-      if (filters.jobId !== 'all') {
-        params.jobId = filters.jobId;
-      }
-      
-      // Filter by approvalStatus based on viewType
-      if (filters.viewType === 'approved') {
-        params.approvalStatus = 'approved';
-      }
-      
-      const response = await expenseService.getAll(params);
-      setExpenses(response.data || []);
-    } catch (error) {
-      showError(null, 'Failed to fetch expenses');
-      setExpenses([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    const total = expensesResponse?.count ?? expenses.length;
+    setPagination((prev) => (prev.total === total ? prev : { ...prev, total }));
+  }, [expensesResponse, expenses.length]);
 
-  // Apply client-side filtering
-  const filteredExpenses = useMemo(() => {
-    let result = expenses;
-    
-    // Filter by viewType
-    if (filters.viewType === 'approved') {
-      result = result.filter(exp => exp.approvalStatus === 'approved');
-    } else if (filters.viewType === 'requests') {
-      // Show expense requests (pending approval)
-      result = result.filter(exp => exp.approvalStatus === 'pending' || exp.approvalStatus === 'pending_approval' || exp.approvalStatus === 'draft');
-    } else if (filters.viewType === 'job-specific') {
-      result = result.filter(exp => exp.jobId);
-    } else if (filters.viewType === 'general') {
-      result = result.filter(exp => !exp.jobId);
-    }
-    
-    return result;
-  }, [expenses, filters.viewType]);
+  useEffect(() => {
+    if (expensesError) showError(null, 'Failed to fetch expenses');
+  }, [expensesError]);
 
-  // Paginate filtered expenses
-  const paginatedExpenses = useMemo(() => {
-    const start = (pagination.current - 1) * pagination.pageSize;
-    const end = start + pagination.pageSize;
-    return filteredExpenses.slice(start, end);
-  }, [filteredExpenses, pagination.current, pagination.pageSize]);
+  // Backend handles filtering via params; use data directly
+  const paginatedExpenses = expenses;
+  const expensesCount = expensesResponse?.count ?? expenses.length;
 
-  const expensesCount = filteredExpenses.length;
-
-  // Calculate summary stats
-  const summaryStats = useMemo(() => {
-    const totalExpenses = expenses.reduce((sum, exp) => sum + parseFloat(exp.amount || 0), 0);
-    const categoryCount = new Set(expenses.map(exp => exp.category)).size;
-    const thisMonth = expenses
-      .filter(exp => {
-        const expDate = dayjs(exp.expenseDate);
-        return expDate.month() === dayjs().month() && expDate.year() === dayjs().year();
-      })
-      .reduce((sum, exp) => sum + parseFloat(exp.amount || 0), 0);
-    const pendingRequests = expenses.filter(exp => exp.approvalStatus === 'pending').length;
-    
-    return {
-      totals: {
-        totalExpenses,
-        categoryCount,
-        thisMonth,
-        pendingRequests
-      }
-    };
-  }, [expenses]);
+  // Use stats from API (accurate totals); fallback to 0
+  const summaryStats = useMemo(() => ({
+    totals: {
+      totalExpenses: stats?.totals?.totalExpenses ?? stats?.totalExpenses ?? 0,
+      categoryCount: stats?.totals?.categoryCount ?? stats?.categoryCount ?? 0,
+      pendingRequests: stats?.totals?.pendingRequests ?? stats?.pendingRequests ?? 0,
+      approvedCount: stats?.totals?.approvedCount ?? stats?.approvedCount ?? 0,
+    },
+  }), [stats]);
 
   const fetchJobs = async () => {
     try {
@@ -314,6 +370,24 @@ const Expenses = () => {
       setVendors(response.data || []);
     } catch (error) {
       console.error('Failed to fetch vendors:', error);
+    }
+  };
+
+  const handleAddVendorSubmit = async (values) => {
+    setAddingVendor(true);
+    try {
+      const response = await vendorService.create({ name: values.name, company: values.company || undefined, phone: values.phone || undefined });
+      const newVendor = response?.data ?? response;
+      if (!newVendor?.id) throw new Error('Invalid vendor response');
+      await fetchVendors();
+      setVendorAddModalOpen(false);
+      vendorForm.reset({ name: '', company: '', phone: '' });
+      showSuccess('Vendor created successfully');
+      if (!multipleMode) form.setValue('vendorId', newVendor.id);
+    } catch (error) {
+      showError(error?.response?.data?.message || 'Failed to create vendor');
+    } finally {
+      setAddingVendor(false);
     }
   };
 
@@ -395,7 +469,7 @@ const Expenses = () => {
       setArchivingExpense(expense.id);
       await expenseService.archive(expense.id);
       showSuccess('Expense archived successfully');
-      fetchExpenses();
+      invalidateExpenses();
       fetchStats();
       if (drawerVisible && viewingExpense?.id === expense.id) {
         setDrawerVisible(false);
@@ -430,7 +504,7 @@ const Expenses = () => {
         showSuccess('Expense updated successfully');
         setModalVisible(false);
         setEditingExpense(null);
-        fetchExpenses();
+        invalidateExpenses();
         fetchStats();
         // Refetch details and activities when the drawer is open for this expense so "Expense Updated" shows
         if (drawerVisible && viewingExpense?.id === editingExpense.id) {
@@ -468,7 +542,7 @@ const Expenses = () => {
         showSuccess(`Successfully created ${response.data.count || expensesToCreate.length} expense(s)`);
         setModalVisible(false);
         setIsExpenseRequest(false);
-        fetchExpenses();
+        invalidateExpenses();
         fetchStats();
       } else {
         // Single expense creation – normalize payload for API (description required, optional UUIDs as null)
@@ -496,7 +570,7 @@ const Expenses = () => {
         showSuccess(isExpenseRequest ? 'Expense request created successfully' : 'Expense created successfully');
         setModalVisible(false);
         setIsExpenseRequest(false);
-        fetchExpenses();
+        invalidateExpenses();
         fetchStats();
       }
     } catch (error) {
@@ -514,7 +588,7 @@ const Expenses = () => {
       showSuccess('Expense rejected successfully');
       setRejectionModalVisible(false);
       setRejectingExpense(null);
-      fetchExpenses();
+      invalidateExpenses();
     } catch (error) {
       showError(null, 'Failed to reject expense');
     } finally {
@@ -538,7 +612,7 @@ const Expenses = () => {
       setSubmittingForApproval(true);
       await expenseService.submit(expenseId);
       showSuccess('Expense submitted for approval');
-      fetchExpenses();
+      invalidateExpenses();
     } catch (error) {
       showError(null, 'Failed to submit expense');
     } finally {
@@ -551,7 +625,7 @@ const Expenses = () => {
       setApprovingExpense(true);
       await expenseService.approve(expenseId);
       showSuccess('Expense approved successfully');
-      fetchExpenses();
+      invalidateExpenses();
       fetchStats();
       if (drawerVisible && viewingExpense?.id === expenseId) {
         // Refresh the viewing expense
@@ -570,7 +644,7 @@ const Expenses = () => {
       setMarkingPaid(expenseId);
       await expenseService.markPaid(expenseId);
       showSuccess('Expense marked as paid successfully');
-      fetchExpenses();
+      invalidateExpenses();
       fetchStats();
       if (drawerVisible && viewingExpense?.id === expenseId) {
         // Refresh the viewing expense
@@ -674,12 +748,12 @@ const Expenses = () => {
     {
       key: 'expenseNumber',
       label: 'Expense #',
-      render: (_, record) => <span className="font-medium text-black">{record?.expenseNumber || '—'}</span>
+      render: (_, record) => <span className="font-medium text-foreground">{record?.expenseNumber || '—'}</span>
     },
     {
       key: 'expenseDate',
       label: 'Date',
-      render: (_, record) => <span className="text-black">{record?.expenseDate ? dayjs(record.expenseDate).format('MMM DD, YYYY') : '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.expenseDate ? dayjs(record.expenseDate).format('MMM DD, YYYY') : '—'}</span>
     },
     {
       key: 'category',
@@ -689,12 +763,12 @@ const Expenses = () => {
     {
       key: 'description',
       label: 'Description',
-      render: (_, record) => <span className="text-black">{record?.description || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.description || '—'}</span>
     },
     {
       key: 'amount',
       label: 'Amount',
-      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.amount || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.amount || 0).toFixed(2)}</span>
     },
     ...(isPrintingPress ? [{
       key: 'job',
@@ -710,7 +784,7 @@ const Expenses = () => {
     {
       key: 'vendor',
       label: 'Vendor',
-      render: (_, record) => <span className="text-black">{record?.vendor?.name || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.vendor?.name || '—'}</span>
     },
     {
       key: 'status',
@@ -727,6 +801,7 @@ const Expenses = () => {
             size="sm"
             onClick={() => handleView(record)}
           >
+            <Eye className="h-4 w-4 mr-2" />
             View
           </Button>
         </div>
@@ -739,12 +814,12 @@ const Expenses = () => {
     {
       key: 'expenseNumber',
       label: 'Request #',
-      render: (_, record) => <span className="font-medium text-black">{record?.expenseNumber || '—'}</span>
+      render: (_, record) => <span className="font-medium text-foreground">{record?.expenseNumber || '—'}</span>
     },
     {
       key: 'expenseDate',
       label: 'Date',
-      render: (_, record) => <span className="text-black">{record?.expenseDate ? dayjs(record.expenseDate).format('MMM DD, YYYY') : '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.expenseDate ? dayjs(record.expenseDate).format('MMM DD, YYYY') : '—'}</span>
     },
     {
       key: 'category',
@@ -754,17 +829,17 @@ const Expenses = () => {
     {
       key: 'description',
       label: 'Description',
-      render: (_, record) => <span className="text-black">{record?.description || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.description || '—'}</span>
     },
     {
       key: 'amount',
       label: 'Amount',
-      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.amount || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.amount || 0).toFixed(2)}</span>
     },
     {
       key: 'submitter',
       label: 'Submitted By',
-      render: (_, record) => <span className="text-black">{record?.submitter?.name || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.submitter?.name || '—'}</span>
     },
     {
       key: 'approvalStatus',
@@ -781,6 +856,7 @@ const Expenses = () => {
             size="sm"
             onClick={() => handleView(record)}
           >
+            <Eye className="h-4 w-4 mr-2" />
             View
           </Button>
         </div>
@@ -788,17 +864,13 @@ const Expenses = () => {
     }
   ], [isAdmin, handleView, handleSubmitForApproval, handleApprove, handleRejectClick, handleEdit, submittingForApproval, approvingExpense, rejectingExpenseLoading]);
 
-  const expenseCategories = [
-    'Materials',
-    'Labor',
-    'Equipment',
-    'Transportation',
-    'Utilities',
-    'Marketing',
-    'Office Supplies',
-    'Maintenance',
-    'Other'
-  ];
+  // Merge API categories with existing expense categories (for filter dropdown)
+  const expenseCategories = useMemo(() => {
+    const fromExpenses = new Set((expensesResponse?.data ?? []).map(e => e.category).filter(Boolean));
+    const fromApiSet = new Set(Array.isArray(categoriesFromApi) ? categoriesFromApi : []);
+    const merged = new Set([...fromApiSet, ...fromExpenses]);
+    return Array.from(merged).sort();
+  }, [expensesResponse?.data, categoriesFromApi]);
 
   const paymentMethods = [
     'cash',
@@ -847,45 +919,73 @@ const Expenses = () => {
           subText="Track and manage your business expenses and expense requests."
         />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-            <Filter className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Filter</span>}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={async () => { 
-              await fetchExpenses(true); 
-              fetchStats(); 
-            }}
-            disabled={refreshingExpenses}
-            size={isMobile ? "icon" : "default"}
-          >
-            {refreshingExpenses ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
-          <Button 
-            variant="secondary" 
-            onClick={() => handleCreate(true)}
-            className="border-[#166534] border-2"
-            size={isMobile ? "icon" : "default"}
-          >
-            <Plus className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Expense Request</span>}
-          </Button>
-          <Button onClick={() => handleCreate(false)} size={isMobile ? "icon" : "default"}>
-            <Plus className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Add Expense</span>}
-          </Button>
+          <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+                <Filter className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Filter</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Filter by category, status, or job</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => setManageCategoriesOpen(true)} size={isMobile ? "icon" : "default"}>
+                <Settings2 className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Categories</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Manage expense categories (add or remove custom)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                onClick={async () => { 
+                  await refetchExpenses(); 
+                  fetchStats(); 
+                }}
+                disabled={expensesRefetching}
+                size={isMobile ? "icon" : "default"}
+              >
+                {expensesRefetching ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Reload expense list</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SecondaryButton 
+                onClick={() => handleCreate(true)}
+                size={isMobile ? "icon" : "default"}
+              >
+                <Plus className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Expense Request</span>}
+              </SecondaryButton>
+            </TooltipTrigger>
+            <TooltipContent>Create an expense request that needs approval</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={() => handleCreate(false)} size={isMobile ? "icon" : "default"}>
+                <Plus className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Add Expense</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add a new expense (marked as paid and approved)</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      {/* Statistics Cards - all-time totals, no date filtering */}
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <DashboardStatsCard
+          tooltip="Total approved expenses recorded"
           title="Total Expenses"
           value={summaryStats?.totals?.totalExpenses || 0}
           icon={ShoppingCart}
@@ -893,6 +993,7 @@ const Expenses = () => {
           iconColor="#ef4444"
         />
         <DashboardStatsCard
+          tooltip="Number of expense categories you use"
           title="Categories"
           value={summaryStats?.totals?.categoryCount || 0}
           icon={FileText}
@@ -900,27 +1001,29 @@ const Expenses = () => {
           iconColor="#166534"
         />
         <DashboardStatsCard
-          title="This Month"
-          value={summaryStats?.totals?.thisMonth || 0}
-          icon={Calendar}
-          iconBgColor="rgba(132, 204, 22, 0.1)"
-          iconColor="#84cc16"
-        />
-        <DashboardStatsCard
+          tooltip="Expense requests awaiting approval"
           title="Pending Requests"
           value={summaryStats?.totals?.pendingRequests || 0}
           icon={Send}
           iconBgColor="rgba(249, 115, 22, 0.1)"
           iconColor="#f97316"
         />
+        <DashboardStatsCard
+          tooltip="Expenses that have been approved"
+          title="Approved"
+          value={summaryStats?.totals?.approvedCount || 0}
+          icon={CheckCircle}
+          iconBgColor="rgba(34, 197, 94, 0.1)"
+          iconColor="#22c55e"
+        />
       </div>
 
-      {/* Expenses Table */}
-      <Card>
+      {/* Expenses Table - no Card container on mobile (standalone cards) */}
+      {isMobile ? (
         <DashboardTable
           data={paginatedExpenses}
           columns={filters.viewType === 'requests' ? requestTableColumns : tableColumns}
-          loading={loading}
+          loading={expensesLoading}
           title={null}
           emptyIcon={
             filters.viewType === 'approved' ? <CheckCircle className="h-12 w-12 text-muted-foreground" /> :
@@ -932,7 +1035,15 @@ const Expenses = () => {
             filters.viewType === 'requests' ? 'No expense requests found' :
             filters.viewType === 'job-specific' ? 'No job-specific expenses found' :
             filters.viewType === 'general' ? 'No general expenses found' :
-            'No expenses found'
+            'No expenses yet. Track your business spending by adding your first expense.'
+          }
+          emptyAction={
+            filters.viewType === 'all' && (
+              <Button onClick={() => handleCreate(false)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Add First Expense
+              </Button>
+            )
           }
           pageSize={pagination.pageSize}
           onPageChange={(newPagination) => {
@@ -942,12 +1053,53 @@ const Expenses = () => {
             current: pagination.current,
             total: expensesCount
           }}
+          viewMode={tableViewMode}
+          onViewModeChange={setTableViewMode}
         />
-      </Card>
+      ) : (
+        <Card>
+          <DashboardTable
+            data={paginatedExpenses}
+            columns={filters.viewType === 'requests' ? requestTableColumns : tableColumns}
+            loading={expensesLoading}
+            title={null}
+            emptyIcon={
+              filters.viewType === 'approved' ? <CheckCircle className="h-12 w-12 text-muted-foreground" /> :
+              filters.viewType === 'requests' ? <Send className="h-12 w-12 text-muted-foreground" /> :
+              <ShoppingCart className="h-12 w-12 text-muted-foreground" />
+            }
+            emptyDescription={
+              filters.viewType === 'approved' ? 'No approved expenses found' :
+              filters.viewType === 'requests' ? 'No expense requests found' :
+              filters.viewType === 'job-specific' ? 'No job-specific expenses found' :
+              filters.viewType === 'general' ? 'No general expenses found' :
+              'No expenses yet. Track your business spending by adding your first expense.'
+            }
+            emptyAction={
+              filters.viewType === 'all' && (
+                <Button onClick={() => handleCreate(false)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add First Expense
+                </Button>
+              )
+            }
+            pageSize={pagination.pageSize}
+            onPageChange={(newPagination) => {
+              setPagination(newPagination);
+            }}
+            externalPagination={{
+              current: pagination.current,
+              total: expensesCount
+            }}
+            viewMode={tableViewMode}
+            onViewModeChange={setTableViewMode}
+          />
+        </Card>
+      )}
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Expenses</SheetTitle>
           </SheetHeader>
@@ -1043,6 +1195,55 @@ const Expenses = () => {
         </SheetContent>
       </Sheet>
 
+      {/* Manage expense categories dialog */}
+      <Dialog open={manageCategoriesOpen} onOpenChange={setManageCategoriesOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Expense categories</DialogTitle>
+            <DialogDescription>
+              Default categories depend on your business and shop type. Add custom categories below; they will appear in the category dropdown when creating expenses.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex gap-2">
+              <Input
+                placeholder="New custom category"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddCustomCategory())}
+              />
+              <Button
+                onClick={handleAddCustomCategory}
+                disabled={addCategoryMutation.isPending || !newCategoryName.trim()}
+              >
+                {addCategoryMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Add'}
+              </Button>
+            </div>
+            {customCategoriesFromApi.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-muted-foreground">Custom categories</Label>
+                <ul className="space-y-1 border border-border rounded-md divide-y divide-border">
+                  {customCategoriesFromApi.map((cat) => (
+                    <li key={cat} className="flex items-center justify-between px-3 py-2">
+                      <span>{cat}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => handleRemoveCustomCategory(cat)}
+                        disabled={removingCategoryName !== null}
+                      >
+                        {removingCategoryName === cat ? <Loader2 className="h-4 w-4 animate-spin" /> : <MinusCircle className="h-4 w-4" />}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Add/Edit Dialog */}
       <MobileFormDialog
         open={modalVisible}
@@ -1076,16 +1277,23 @@ const Expenses = () => {
       >
         {!editingExpense && (
           <div className="mb-4 text-right">
-            <Button
-              variant={multipleMode ? 'default' : 'outline'}
-              onClick={() => {
-                setMultipleMode(!multipleMode);
-                form.reset();
-              }}
-            >
-              {multipleMode ? <Pencil className="h-4 w-4 mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
-              {multipleMode ? 'Switch to Single' : 'Switch to Multiple'}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant={multipleMode ? 'default' : 'outline'}
+                  onClick={() => {
+                    setMultipleMode(!multipleMode);
+                    form.reset();
+                  }}
+                >
+                  {multipleMode ? <Pencil className="h-4 w-4 mr-2" /> : <Plus className="h-4 w-4 mr-2" />}
+                  {multipleMode ? 'Switch to Single' : 'Switch to Multiple'}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {multipleMode ? 'Create one expense at a time' : 'Create multiple expenses in one form'}
+              </TooltipContent>
+            </Tooltip>
           </div>
         )}
         <Form {...form}>
@@ -1141,31 +1349,33 @@ const Expenses = () => {
                 </FormFieldGrid>
 
                 <FormFieldGrid columns={2}>
-                  <FormField
-                    control={form.control}
-                    name="jobId"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Associated Job (Optional)</FormLabel>
-                        <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select job (leave empty for general expense)" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
-                            {jobs.map(job => (
-                              <SelectItem key={job.id} value={job.id}>
-                                {job.jobNumber} - {job.title}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {isStudioLike && (
+                    <FormField
+                      control={form.control}
+                      name="jobId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Associated Job (Optional)</FormLabel>
+                          <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select job (leave empty for general expense)" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
+                              {jobs.map(job => (
+                                <SelectItem key={job.id} value={job.id}>
+                                  {job.jobNumber} - {job.title}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
                   <FormField
                     control={form.control}
                     name="vendorId"
@@ -1185,6 +1395,13 @@ const Expenses = () => {
                                 {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
                               </SelectItem>
                             ))}
+                            <SelectSeparator className="my-2" />
+                            <div className="px-2 py-1.5" onPointerDown={(e) => e.preventDefault()}>
+                              <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setVendorAddModalOpen(true)}>
+                                <Plus className="h-4 w-4 mr-2" />
+                                Create vendor
+                              </Button>
+                            </div>
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -1299,7 +1516,7 @@ const Expenses = () => {
                       )}
                     />
                     <FormFieldGrid columns={2} className="mt-4">
-                      {isPrintingPress && (
+                      {isStudioLike && (
                         <FormField
                           control={form.control}
                           name={`expenses.${index}.jobId`}
@@ -1345,6 +1562,13 @@ const Expenses = () => {
                                     {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
                                   </SelectItem>
                                 ))}
+                                <SelectSeparator className="my-2" />
+                                <div className="px-2 py-1.5" onPointerDown={(e) => e.preventDefault()}>
+                                  <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setVendorAddModalOpen(true)}>
+                                    <Plus className="h-4 w-4 mr-2" />
+                                    Create vendor
+                                  </Button>
+                                </div>
                               </SelectContent>
                             </Select>
                             <FormMessage />
@@ -1551,6 +1775,13 @@ const Expenses = () => {
                                 {vendor.name} {vendor.company ? `(${vendor.company})` : ''}
                               </SelectItem>
                             ))}
+                            <SelectSeparator className="my-2" />
+                            <div className="px-2 py-1.5" onPointerDown={(e) => e.preventDefault()}>
+                              <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setVendorAddModalOpen(true)}>
+                                <Plus className="h-4 w-4 mr-2" />
+                                Create vendor
+                              </Button>
+                            </div>
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -1590,9 +1821,31 @@ const Expenses = () => {
                   name="receiptUrl"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Receipt URL (Optional)</FormLabel>
+                      <FormLabel>Receipt (Optional)</FormLabel>
                       <FormControl>
-                        <Input placeholder="Enter receipt URL" {...field} />
+                        <FileUpload
+                          accept="image/*,.pdf"
+                          maxSizeMB={10}
+                          uploading={uploadingReceipt}
+                          onFileSelect={async ({ file }) => {
+                            setUploadingReceipt(true);
+                            try {
+                              const res = await expenseService.uploadReceipt(file);
+                              const receiptUrl = res?.receiptUrl;
+                              if (receiptUrl) {
+                                field.onChange(receiptUrl);
+                                showSuccess('Receipt uploaded');
+                              }
+                            } catch (err) {
+                              showError(err, 'Failed to upload receipt');
+                            } finally {
+                              setUploadingReceipt(false);
+                            }
+                          }}
+                          onFileRemove={() => field.onChange('')}
+                          uploadedFiles={field.value ? [{ url: field.value, originalName: 'Receipt' }] : []}
+                          emptyMessage="No receipt uploaded yet."
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -1623,6 +1876,71 @@ const Expenses = () => {
           </Form>
       </MobileFormDialog>
 
+      {/* Create Vendor Dialog (from expense form) */}
+      <Dialog open={vendorAddModalOpen} onOpenChange={(open) => {
+        if (!open) { setVendorAddModalOpen(false); vendorForm.reset({ name: '', company: '', phone: '' }); }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Vendor</DialogTitle>
+            <DialogDescription>Add a new vendor without leaving the form.</DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <Form {...vendorForm}>
+              <form onSubmit={vendorForm.handleSubmit(handleAddVendorSubmit)} className="space-y-4">
+                <FormField
+                  control={vendorForm.control}
+                  name="name"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Vendor Name</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="e.g. Acme Supplies" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={vendorForm.control}
+                  name="company"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Company (optional)</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Company name" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={vendorForm.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone (optional)</FormLabel>
+                      <FormControl>
+                        <Input {...field} placeholder="Phone number" />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <DialogFooter>
+                  <Button type="button" variant="outline" onClick={() => { setVendorAddModalOpen(false); vendorForm.reset({ name: '', company: '', phone: '' }); }}>
+                    Cancel
+                  </Button>
+                  <Button type="submit" disabled={addingVendor}>
+                    {addingVendor ? 'Creating...' : 'Create Vendor'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </Form>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+
       {/* Rejection Dialog */}
       <Dialog open={rejectionModalVisible} onOpenChange={(open) => {
         if (!open) {
@@ -1641,7 +1959,7 @@ const Expenses = () => {
           {rejectingExpense && (
             <div className="mb-4 p-4 bg-muted rounded-md">
               <div><strong>Expense:</strong> {rejectingExpense.expenseNumber}</div>
-              <div><strong>Amount:</strong> GHS {parseFloat(rejectingExpense.amount).toFixed(2)}</div>
+              <div><strong>Amount:</strong> ₵ {parseFloat(rejectingExpense.amount).toFixed(2)}</div>
               <div><strong>Description:</strong> {rejectingExpense.description}</div>
             </div>
           )}
@@ -1716,12 +2034,12 @@ const Expenses = () => {
                 <TimelineItem key={activity.id} isLast={isLast}>
                   <TimelineIndicator />
                   <TimelineContent>
-                    <TimelineTitle className="text-black">
+                    <TimelineTitle className="text-foreground">
                       {activity.createdByUser
                         ? `${activity.createdByUser.name} created expense ${viewingExpense.expenseNumber}`
                         : `Expense ${viewingExpense.expenseNumber} was created`}
                     </TimelineTitle>
-                    <TimelineTime className="text-black">
+                    <TimelineTime className="text-foreground">
                       {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
                       {byLine}
                     </TimelineTime>
@@ -1746,17 +2064,17 @@ const Expenses = () => {
               <TimelineItem key={activity.id} isLast={isLast}>
                 <TimelineIndicator />
                 <TimelineContent>
-                  <TimelineTitle className="text-black">
+                  <TimelineTitle className="text-foreground">
                     {byWho ? `${byWho} — ${actionTitle}` : actionTitle}
                   </TimelineTitle>
-                  <TimelineTime className="text-black">
+                  <TimelineTime className="text-foreground">
                     {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
                   </TimelineTime>
                   {activity.notes && (
-                    <TimelineDescription className="text-black">{activity.notes}</TimelineDescription>
+                    <TimelineDescription className="text-foreground">{activity.notes}</TimelineDescription>
                   )}
                   {activity.metadata?.rejectionReason && (
-                    <TimelineDescription className="text-black" style={{ color: '#ff4d4f' }}>
+                    <TimelineDescription className="text-foreground" style={{ color: '#ff4d4f' }}>
                       Rejection Reason: {activity.metadata.rejectionReason}
                     </TimelineDescription>
                   )}
@@ -1786,7 +2104,7 @@ const Expenses = () => {
                   </DescriptionItem>
                   <DescriptionItem label="Amount">
                     <strong style={{ fontSize: '18px', color: '#166534' }}>
-                      GHS {parseFloat(viewingExpense.amount || 0).toFixed(2)}
+                      ₵ {parseFloat(viewingExpense.amount || 0).toFixed(2)}
                     </strong>
                   </DescriptionItem>
                   <DescriptionItem label="Payment Method">
@@ -1875,7 +2193,7 @@ const Expenses = () => {
                   )}
                   {viewingExpense.receiptUrl && (
                     <DescriptionItem label="Receipt">
-                      <a href={viewingExpense.receiptUrl} target="_blank" rel="noopener noreferrer">
+                      <a href={resolveImageUrl(viewingExpense.receiptUrl)} target="_blank" rel="noopener noreferrer">
                         View Receipt
                       </a>
                     </DescriptionItem>

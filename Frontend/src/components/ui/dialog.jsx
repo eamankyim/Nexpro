@@ -16,7 +16,7 @@ const DialogOverlay = React.forwardRef(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-[110] bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className
     )}
     {...props}
@@ -26,7 +26,6 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
 const DialogContent = React.forwardRef(({ className, children, onInteractOutside, onEscapeKeyDown, ...props }, ref) => {
   const handleInteractOutside = (e) => {
-    console.log('[DialogContent] onInteractOutside called:', { target: e.target, currentTarget: e.currentTarget });
     if (onInteractOutside) {
       onInteractOutside(e);
     } else {
@@ -36,11 +35,9 @@ const DialogContent = React.forwardRef(({ className, children, onInteractOutside
   };
 
   const handleEscapeKeyDown = (e) => {
-    console.log('[DialogContent] onEscapeKeyDown called');
     if (onEscapeKeyDown) {
       onEscapeKeyDown(e);
     }
-    // Allow ESC to close by default
   };
 
   return (
@@ -49,13 +46,13 @@ const DialogContent = React.forwardRef(({ className, children, onInteractOutside
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
-          // Mobile: full viewport; horizontal padding via Header/Body/Footer for full-bleed separators
-          "fixed z-50 grid w-full gap-4 border bg-background shadow-lg duration-200",
+          // Mobile & Desktop: flex column so DialogBody scrolls; header/footer fixed; content scrolls behind footer
+          "fixed z-[110] flex flex-col w-full border border-border bg-background duration-200",
           "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-          "inset-0 w-[100vw] min-h-[100vh] max-h-[100vh] overflow-y-auto rounded-none pt-4 pb-4",
-          // Desktop: flex column so DialogBody scrolls; header/footer fixed; no horizontal padding so separators can full-bleed
+          "inset-0 w-[100vw] min-h-[100vh] max-h-[100vh] overflow-hidden rounded-none pt-5 pb-5 gap-0",
+          // Desktop: centered modal
           "sm:inset-auto sm:left-[50%] sm:top-[2.5vh] sm:translate-x-[-50%] sm:translate-y-0",
-          "sm:flex sm:flex-col sm:w-[var(--modal-w)] sm:min-w-[min(90vw,20rem)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)] sm:overflow-hidden sm:rounded-lg sm:pt-6 sm:pb-6",
+          "sm:w-[var(--modal-w)] sm:min-w-[min(90vw,20rem)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)] sm:rounded-lg sm:pt-8 sm:pb-6 sm:gap-0",
           "sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95",
           "sm:data-[state=closed]:slide-out-to-left-1/2 sm:data-[state=closed]:slide-out-to-top-[48%]",
           "sm:data-[state=open]:slide-in-from-left-1/2 sm:data-[state=open]:slide-in-from-top-[48%]",
@@ -66,7 +63,7 @@ const DialogContent = React.forwardRef(({ className, children, onInteractOutside
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full bg-gray-100 w-10 h-10 sm:w-8 sm:h-8 flex items-center justify-center transition-all duration-200 hover:bg-gray-200 hover:scale-110 opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none group min-h-[44px] min-w-[44px] sm:min-h-[32px] sm:min-w-[32px]">
+        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full bg-muted w-10 h-10 sm:w-8 sm:h-8 flex items-center justify-center transition-all duration-200 hover:bg-muted/80 hover:scale-110 opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none group min-h-[44px] min-w-[44px] sm:min-h-[32px] sm:min-w-[32px]">
           <X className="h-5 w-5 sm:h-4 sm:w-4 transition-transform duration-200 group-hover:rotate-[-90deg]" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>
@@ -82,7 +79,7 @@ const DialogHeader = ({
 }) => (
   <div
     className={cn(
-      "flex flex-col space-y-1.5 text-center sm:text-left flex-shrink-0 px-4 sm:px-6",
+      "flex flex-col space-y-1.5 text-center sm:text-left flex-shrink-0 px-4 sm:px-6 pt-1 pb-1 sm:pb-2",
       className
     )}
     {...props}
@@ -102,10 +99,10 @@ const SEPARATOR_FULL_BLEED =
 const DialogBody = React.forwardRef(({ className, children, ...rest }, ref) => (
   <div
     ref={ref}
-    className={cn("flex-1 min-h-0 overflow-y-auto overflow-x-hidden", className)}
+    className={cn("flex-1 min-h-0 overflow-y-auto overflow-x-hidden py-1", className)}
     {...rest}
   >
-    <div className={cn("px-4 sm:px-6", SEPARATOR_FULL_BLEED)}>
+    <div className={cn("px-4 sm:px-6 py-2", SEPARATOR_FULL_BLEED)}>
       {children}
     </div>
   </div>
@@ -118,8 +115,8 @@ const DialogFooter = ({
 }) => (
   <div
     className={cn(
-      // Mobile: stack buttons vertically, Desktop: horizontal
-      "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:space-x-2 flex-shrink-0 px-4 sm:px-6",
+      // Fixed at bottom; content scrolls behind; stack on mobile, row on desktop
+      "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:space-x-2 flex-shrink-0 px-4 sm:px-6 pt-4 pb-1 sm:pt-5 sm:pb-2 border-t border-border bg-background",
       className
     )}
     {...props}

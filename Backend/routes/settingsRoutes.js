@@ -3,6 +3,8 @@ const path = require('path');
 const {
   getProfile,
   updateProfile,
+  getCustomerSources,
+  getLeadSources,
   getOrganizationSettings,
   updateOrganizationSettings,
   getSubscriptionSettings,
@@ -18,6 +20,8 @@ const {
   getEmailSettings,
   updateEmailSettings,
   testEmailConnection,
+  getPOSConfig,
+  updatePOSConfig,
   uploadProfilePicture,
   uploadOrganizationLogo
 } = require('../controllers/settingsController');
@@ -59,6 +63,9 @@ const organizationUploader = multer({
     }
   }
 });
+
+router.get('/customer-sources', getCustomerSources);
+router.get('/lead-sources', getLeadSources);
 
 router
   .route('/profile')
@@ -121,6 +128,11 @@ router.post(
   authorize('admin', 'manager'),
   testEmailConnection
 );
+
+router
+  .route('/pos-config')
+  .get(getPOSConfig)
+  .put(authorize('admin', 'manager'), updatePOSConfig);
 
 module.exports = router;
 

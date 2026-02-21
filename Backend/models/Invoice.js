@@ -18,8 +18,8 @@ const Invoice = sequelize.define('Invoice', {
   },
   invoiceNumber: {
     type: DataTypes.STRING,
-    unique: true,
     allowNull: false
+    // Unique per tenant via migration idx_invoices_tenant_invoice_number
   },
   jobId: {
     type: DataTypes.UUID,

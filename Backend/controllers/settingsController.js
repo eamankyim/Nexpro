@@ -4,6 +4,8 @@ const { Setting, User, Tenant } = require('../models');
 const { baseUploadDir } = require('../middleware/upload');
 const { seedDefaultCategories } = require('../utils/categorySeeder');
 const { sanitizePayload } = require('../utils/tenantUtils');
+const { getCustomerSourceOptions } = require('../config/customerSourceOptions');
+const { getLeadSourceOptions } = require('../config/leadSourceOptions');
 
 const getSettingValue = async (tenantId, key, fallback = {}) => {
   const setting = await Setting.findOne({ where: { tenantId, key } });
@@ -49,6 +51,36 @@ const deleteFileIfExists = async (fileUrl) => {
 };
 
 const buildPublicUrl = (storagePath) => `/uploads/${storagePath.replace(/\\/g, '/')}`;
+
+// @desc    Get customer source options for current tenant (business-type specific)
+// @route   GET /api/settings/customer-sources
+// @access  Private
+exports.getCustomerSources = async (req, res, next) => {
+  try {
+    const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
+    const businessType = tenant?.businessType || 'shop';
+    const metadata = tenant?.metadata || {};
+    const options = getCustomerSourceOptions(businessType, metadata);
+    res.status(200).json({ success: true, data: options });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get lead source options for current tenant (business-type specific)
+// @route   GET /api/settings/lead-sources
+// @access  Private
+exports.getLeadSources = async (req, res, next) => {
+  try {
+    const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
+    const businessType = tenant?.businessType || 'shop';
+    const metadata = tenant?.metadata || {};
+    const options = getLeadSourceOptions(businessType, metadata);
+    res.status(200).json({ success: true, data: options });
+  } catch (error) {
+    next(error);
+  }
+};
 
 exports.getProfile = async (req, res, next) => {
   try {
@@ -207,6 +239,9 @@ exports.getOrganizationSettings = async (req, res, next) => {
         : (tenant?.metadata?.website || ''),
       logoUrl: organizationSettings.logoUrl || '',
       invoiceFooter: organizationSettings.invoiceFooter || '',
+      defaultPaymentTerms: organizationSettings.defaultPaymentTerms || '',
+      defaultTermsAndConditions: organizationSettings.defaultTermsAndConditions || '',
+      supportEmail: organizationSettings.supportEmail || '',
       address: organizationSettings.address || {},
       tax: {
         vatNumber: organizationSettings.tax?.vatNumber || '',
@@ -404,6 +439,9 @@ exports.updateOrganizationSettings = async (req, res, next) => {
         : (tenant?.metadata?.website || ''),
       logoUrl: (updated && updated.hasOwnProperty('logoUrl')) ? updated.logoUrl : '',
       invoiceFooter: (updated && updated.hasOwnProperty('invoiceFooter')) ? updated.invoiceFooter : '',
+      defaultPaymentTerms: (updated && updated.hasOwnProperty('defaultPaymentTerms')) ? updated.defaultPaymentTerms : '',
+      defaultTermsAndConditions: (updated && updated.hasOwnProperty('defaultTermsAndConditions')) ? updated.defaultTermsAndConditions : '',
+      supportEmail: (updated && updated.hasOwnProperty('supportEmail')) ? updated.supportEmail : '',
       address: (updated && updated.address) ? updated.address : {},
       tax: {
         vatNumber: (updated && updated.tax?.vatNumber) ? updated.tax.vatNumber : '',
@@ -1069,6 +1107,99 @@ exports.updateEmailSettings = async (req, res, next) => {
       message: 'Email settings updated successfully',
       data: safeSettings
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get POS config
+// @route   GET /api/settings/pos-config
+// @access  Private
+const POS_CONFIG_DEFAULTS = {
+  receipt: { mode: 'ask', channels: ['sms', 'print'] },
+  print: { format: 'a4', showLogo: true, color: true, fontSize: 'normal' },
+  customer: { phoneRequired: false, nameRequired: false }
+};
+
+const VALID_RECEIPT_MODES = ['ask', 'auto_send', 'auto_print', 'auto_both'];
+const VALID_CHANNELS = ['sms', 'whatsapp', 'email', 'print'];
+const VALID_PRINT_FORMATS = ['a4', 'thermal_58', 'thermal_80'];
+const VALID_FONT_SIZES = ['normal', 'small'];
+
+exports.getPOSConfig = async (req, res, next) => {
+  try {
+    const config = await getSettingValue(req.tenantId, 'pos_config', POS_CONFIG_DEFAULTS);
+    const merged = {
+      receipt: { ...POS_CONFIG_DEFAULTS.receipt, ...(config.receipt || {}) },
+      print: { ...POS_CONFIG_DEFAULTS.print, ...(config.print || {}) },
+      customer: { ...POS_CONFIG_DEFAULTS.customer, ...(config.customer || {}) }
+    };
+
+    // Check which receipt channels (SMS, WhatsApp, Email) are actually integrated
+    const smsService = require('../services/smsService');
+    const [smsSetting, whatsappSetting, emailSetting] = await Promise.all([
+      Setting.findOne({ where: { tenantId: req.tenantId, key: 'sms' } }),
+      Setting.findOne({ where: { tenantId: req.tenantId, key: 'whatsapp' } }),
+      Setting.findOne({ where: { tenantId: req.tenantId, key: 'email' } })
+    ]);
+    merged.receiptChannelsAvailable = {
+      sms: !!(smsSetting?.value?.enabled) || smsService.isPlatformSmsEnabled(),
+      whatsapp: !!(whatsappSetting?.value?.enabled),
+      email: !!(emailSetting?.value?.enabled)
+    };
+
+    res.status(200).json({ success: true, data: merged });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update POS config
+// @route   PUT /api/settings/pos-config
+// @access  Private
+exports.updatePOSConfig = async (req, res, next) => {
+  try {
+    const existing = await getSettingValue(req.tenantId, 'pos_config', POS_CONFIG_DEFAULTS);
+    const incoming = sanitizePayload(req.body || {});
+
+    const receipt = { ...(existing.receipt || {}), ...(incoming.receipt || {}) };
+    if (receipt.mode && !VALID_RECEIPT_MODES.includes(receipt.mode)) {
+      return res.status(400).json({ success: false, message: 'Invalid receipt mode' });
+    }
+    if (receipt.channels) {
+      if (!Array.isArray(receipt.channels)) {
+        return res.status(400).json({ success: false, message: 'channels must be an array' });
+      }
+      const invalid = receipt.channels.filter((c) => !VALID_CHANNELS.includes(c));
+      if (invalid.length) {
+        return res.status(400).json({ success: false, message: `Invalid channels: ${invalid.join(', ')}` });
+      }
+    }
+
+    const print = { ...(existing.print || {}), ...(incoming.print || {}) };
+    if (print.format && !VALID_PRINT_FORMATS.includes(print.format)) {
+      return res.status(400).json({ success: false, message: 'Invalid print format' });
+    }
+    if (print.fontSize && !VALID_FONT_SIZES.includes(print.fontSize)) {
+      return res.status(400).json({ success: false, message: 'Invalid font size' });
+    }
+    if (['thermal_58', 'thermal_80'].includes(print.format)) {
+      print.showLogo = false;
+      print.color = false;
+      print.fontSize = 'small';
+    }
+
+    const customer = { ...(existing.customer || {}), ...(incoming.customer || {}) };
+    if (typeof customer.phoneRequired !== 'undefined') {
+      customer.phoneRequired = Boolean(customer.phoneRequired);
+    }
+    if (typeof customer.nameRequired !== 'undefined') {
+      customer.nameRequired = Boolean(customer.nameRequired);
+    }
+
+    const merged = { receipt, print, customer };
+    const updated = await upsertSettingValue(req.tenantId, 'pos_config', merged, 'POS and checkout configuration');
+    res.status(200).json({ success: true, data: updated });
   } catch (error) {
     next(error);
   }

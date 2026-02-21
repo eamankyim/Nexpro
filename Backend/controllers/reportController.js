@@ -1,8 +1,9 @@
 const { sequelize } = require('../config/database');
-const { Job, Expense, Customer, Vendor, Invoice, JobItem, Lead, Sale, SaleItem, Product, Prescription, PrescriptionItem, Drug, InventoryMovement, InventoryItem, Payment } = require('../models');
+const { Job, Expense, Customer, Vendor, Invoice, JobItem, Lead, Sale, SaleItem, Product, Prescription, PrescriptionItem, Drug, MaterialMovement, MaterialItem, Payment } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const config = require('../config/config');
+const accountingReportService = require('../services/accountingReportService');
 
 // Debug logging: no-op in production to avoid hot-path I/O
 const logReport = (...args) => {
@@ -58,8 +59,9 @@ exports.getRevenueReport = async (req, res, next) => {
         );
       }
       if (groupBy === 'week') {
+        // Week of month: 1 = days 1-7, 2 = 8-14, 3 = 15-21, 4 = 22-28, 5 = 29-31 (calendar-aligned, not ISO week)
         return sequelize.query(
-          `SELECT EXTRACT(WEEK FROM "paidDate")-EXTRACT(WEEK FROM DATE_TRUNC('month',"paidDate"))+1 as "week", DATE_TRUNC('month',"paidDate") as "month", SUM("amountPaid") as "totalRevenue", COUNT("id") as "count" FROM "invoices" WHERE "tenantId"=:tenantId AND status='paid' ${hasDateFilterValue ? 'AND "paidDate" BETWEEN :startDate AND :endDate' : ''} GROUP BY 1,2 ORDER BY 2,1`,
+          `SELECT FLOOR((EXTRACT(DAY FROM "paidDate") - 1) / 7) + 1 as "week", DATE_TRUNC('month', "paidDate") as "month", SUM("amountPaid") as "totalRevenue", COUNT("id") as "count" FROM "invoices" WHERE "tenantId"=:tenantId AND status='paid' ${hasDateFilterValue ? 'AND "paidDate" BETWEEN :startDate AND :endDate' : ''} GROUP BY 1, 2 ORDER BY 2, 1`,
           { replacements: { tenantId: req.tenantId, ...(hasDateFilterValue && { startDate: dateFilter[Op.between][0], endDate: dateFilter[Op.between][1] }) }, type: sequelize.QueryTypes.SELECT }
         );
       }
@@ -153,6 +155,8 @@ exports.getExpenseReport = async (req, res, next) => {
     }
 
     const expenseWhere = applyTenantFilter(req.tenantId, {
+      approvalStatus: 'approved',
+      isArchived: false,
       ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
     });
 
@@ -165,7 +169,8 @@ exports.getExpenseReport = async (req, res, next) => {
         ],
         where: expenseWhere,
         group: ['category'],
-        order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
+        order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']],
+        raw: true
       }),
       Expense.findAll({
         attributes: [
@@ -633,12 +638,12 @@ exports.getSalesReport = async (req, res, next) => {
     }) || 0;
 
     // Sales by payment method (from Sale model – shop/pharmacy; used for Revenue by Channel fallback)
+    const saleWhere = applyTenantFilter(req.tenantId, {
+      status: 'completed',
+      ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
+    });
     let salesByPaymentMethod = [];
     try {
-      const saleWhere = applyTenantFilter(req.tenantId, {
-        status: 'completed',
-        ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
-      });
       salesByPaymentMethod = await Sale.findAll({
         attributes: [
           'paymentMethod',
@@ -659,11 +664,28 @@ exports.getSalesReport = async (req, res, next) => {
       logReportError('Sales by payment method (Sale model):', e);
     }
 
+    // For shop/pharmacy use Sale model for count and value so "Total Sales" = transaction count, "Total Sales Value" = revenue
+    const businessType = req.tenant?.businessType || '';
+    let effectiveTotalSales = parseFloat(totalSales);
+    let effectiveTotalJobs = totalJobs;
+    if (businessType === 'shop' || businessType === 'pharmacy') {
+      try {
+        const [saleRevenue, saleCount] = await Promise.all([
+          Sale.sum('total', { where: saleWhere }) || 0,
+          Sale.count({ where: saleWhere }) || 0
+        ]);
+        effectiveTotalSales = parseFloat(saleRevenue);
+        effectiveTotalJobs = saleCount;
+      } catch (e) {
+        logReportError('Sales report (shop/pharmacy Sale totals):', e);
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: {
-        totalSales: parseFloat(totalSales),
-        totalJobs: totalJobs,
+        totalSales: effectiveTotalSales,
+        totalJobs: effectiveTotalJobs,
         byJobType: salesByJobType,
         byCustomer: salesByCustomer,
         byDate: salesByDate,
@@ -685,7 +707,11 @@ exports.getSalesReport = async (req, res, next) => {
 exports.getProfitLossReport = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
-    
+    if (startDate && endDate && (await accountingReportService.hasAccountingData(req.tenantId))) {
+      const data = await accountingReportService.getProfitLossFromAccounting(req.tenantId, startDate, endDate);
+      return res.status(200).json({ success: true, data, source: 'accounting' });
+    }
+
     let dateFilter = {};
     if (startDate && endDate) {
       const start = new Date(startDate);
@@ -728,6 +754,320 @@ exports.getProfitLossReport = async (req, res, next) => {
     });
   } catch (error) {
     logReportError('Error in getRevenueReport:', error);
+    next(error);
+  }
+};
+
+// --- Compliance / Revenue Center reports (submission-ready statements) ---
+
+// @desc    Get income and expenditure report (for compliance submission)
+// @route   GET /api/reports/income-expenditure
+// @access  Private
+exports.getIncomeExpenditureReport = async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (startDate && endDate && (await accountingReportService.hasAccountingData(req.tenantId))) {
+      const [data, stock] = await Promise.all([
+        accountingReportService.getIncomeExpenditureFromAccounting(req.tenantId, startDate, endDate),
+        accountingReportService.getOpeningClosingStockFromAccounting(req.tenantId, startDate, endDate)
+      ]);
+      return res.status(200).json({
+        success: true,
+        data: { ...data, openingStockValue: stock.openingStockValue, closingStockValue: stock.closingStockValue },
+        source: 'accounting'
+      });
+    }
+
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { [Op.between]: [start, end] };
+    }
+
+    const revWhere = applyTenantFilter(req.tenantId, {
+      status: 'paid',
+      ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
+    });
+    const expenseWhere = applyTenantFilter(req.tenantId, {
+      approvalStatus: 'approved',
+      isArchived: false,
+      ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
+    });
+
+    const [totalIncome, expensesByCategory, totalExpenditure] = await Promise.all([
+      Invoice.sum('amountPaid', { where: revWhere }) || 0,
+      Expense.findAll({
+        attributes: [
+          'category',
+          [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: expenseWhere,
+        group: ['category'],
+        order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']],
+        raw: true
+      }),
+      Expense.sum('amount', { where: expenseWhere }) || 0
+    ]);
+
+    const incomeTotal = parseFloat(totalIncome);
+    const expenditureTotal = parseFloat(totalExpenditure);
+    const surplusDeficit = incomeTotal - expenditureTotal;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        income: {
+          total: incomeTotal,
+          label: 'Income (from sales / paid invoices)'
+        },
+        expenditure: {
+          total: expenditureTotal,
+          byCategory: (expensesByCategory || []).map((row) => ({
+            category: row.category || 'Uncategorized',
+            amount: parseFloat(row.totalAmount || 0),
+            count: parseInt(row.count, 10) || 0
+          }))
+        },
+        surplusDeficit
+      }
+    });
+  } catch (error) {
+    logReportError('Error in getIncomeExpenditureReport:', error);
+    next(error);
+  }
+};
+
+// @desc    Get profit & loss report with expense breakdown (compliance submission format)
+// @route   GET /api/reports/profit-loss/compliance
+// @access  Private
+exports.getProfitLossComplianceReport = async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (startDate && endDate && (await accountingReportService.hasAccountingData(req.tenantId))) {
+      const [data, stock] = await Promise.all([
+        accountingReportService.getProfitLossComplianceFromAccounting(req.tenantId, startDate, endDate),
+        accountingReportService.getOpeningClosingStockFromAccounting(req.tenantId, startDate, endDate)
+      ]);
+      return res.status(200).json({
+        success: true,
+        data: { ...data, openingStockValue: stock.openingStockValue, closingStockValue: stock.closingStockValue },
+        source: 'accounting'
+      });
+    }
+
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { [Op.between]: [start, end] };
+    }
+
+    const revWhere = applyTenantFilter(req.tenantId, {
+      status: 'paid',
+      ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
+    });
+    const expenseWhere = applyTenantFilter(req.tenantId, {
+      approvalStatus: 'approved',
+      isArchived: false,
+      ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
+    });
+
+    const [revenue, expensesByCategory, totalExpenses] = await Promise.all([
+      Invoice.sum('amountPaid', { where: revWhere }) || 0,
+      Expense.findAll({
+        attributes: [
+          'category',
+          [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: expenseWhere,
+        group: ['category'],
+        order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']],
+        raw: true
+      }),
+      Expense.sum('amount', { where: expenseWhere }) || 0
+    ]);
+
+    const revenueNum = parseFloat(revenue);
+    const expensesNum = parseFloat(totalExpenses);
+    const grossProfit = revenueNum - expensesNum;
+    const profitMargin = revenueNum > 0 ? ((grossProfit / revenueNum) * 100) : 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        revenue: revenueNum,
+        expenses: expensesNum,
+        grossProfit,
+        profitMargin: parseFloat(profitMargin.toFixed(2)),
+        expensesByCategory: (expensesByCategory || []).map((row) => ({
+          category: row.category || 'Uncategorized',
+          amount: parseFloat(row.totalAmount || 0),
+          count: parseInt(row.count, 10) || 0
+        }))
+      }
+    });
+  } catch (error) {
+    logReportError('Error in getProfitLossComplianceReport:', error);
+    next(error);
+  }
+};
+
+// @desc    Get statement of financial position (simplified balance sheet as at end date)
+// @route   GET /api/reports/financial-position
+// @access  Private
+exports.getFinancialPositionReport = async (req, res, next) => {
+  try {
+    const { endDate } = req.query;
+    const asAtEnd = endDate ? new Date(endDate) : new Date();
+    asAtEnd.setHours(23, 59, 59, 999);
+
+    if (await accountingReportService.hasAccountingData(req.tenantId)) {
+      const data = await accountingReportService.getFinancialPositionFromAccounting(req.tenantId, asAtEnd);
+      return res.status(200).json({ success: true, data, source: 'accounting' });
+    }
+
+    // Debtors (trade receivables): outstanding invoice balance – customers with pending invoices; 0 when none
+    const debtors = await Invoice.sum('balance', {
+      where: applyTenantFilter(req.tenantId, {
+        status: { [Op.in]: ['sent', 'partial', 'overdue'] },
+        balance: { [Op.gt]: 0 },
+        invoiceDate: { [Op.lte]: asAtEnd }
+      })
+    }) || 0;
+    const debtorsNum = parseFloat(debtors);
+
+    // Product inventory: stock value of goods for sale (Product model)
+    const productStockResult = await Product.findAll({
+      attributes: [
+        [sequelize.literal('COALESCE(SUM("Product"."quantityOnHand" * "Product"."costPrice"), 0)'), 'totalStockValue']
+      ],
+      where: applyTenantFilter(req.tenantId, {}),
+      raw: true
+    });
+    const productInventoryValue = parseFloat(productStockResult[0]?.totalStockValue || 0);
+
+    // Materials: stock value of supplies (MaterialItem model)
+    const materialsResult = await MaterialItem.findAll({
+      attributes: [
+        [sequelize.literal('COALESCE(SUM("MaterialItem"."quantityOnHand" * "MaterialItem"."unitCost"), 0)'), 'totalValue']
+      ],
+      where: applyTenantFilter(req.tenantId, {}),
+      raw: true
+    });
+    const materialsValue = parseFloat(materialsResult[0]?.totalValue || 0);
+
+    const totalAssets = debtorsNum + productInventoryValue + materialsValue;
+
+    // Retained earnings: cumulative profit (revenue - expenses) up to end date
+    const revToDate = await Invoice.sum('amountPaid', {
+      where: applyTenantFilter(req.tenantId, {
+        status: 'paid',
+        paidDate: { [Op.lte]: asAtEnd }
+      })
+    }) || 0;
+    const expToDate = await Expense.sum('amount', {
+      where: applyTenantFilter(req.tenantId, {
+        approvalStatus: 'approved',
+        isArchived: false,
+        expenseDate: { [Op.lte]: asAtEnd }
+      })
+    }) || 0;
+    const retainedEarnings = parseFloat(revToDate) - parseFloat(expToDate);
+
+    // Simplified: no separate liabilities tracking; equity = retained earnings; balance with "other" if needed
+    const totalLiabilities = 0;
+    const totalEquity = retainedEarnings;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        asAtDate: asAtEnd.toISOString().split('T')[0],
+        assets: {
+          debtors: debtorsNum,
+          receivables: debtorsNum,
+          productInventory: productInventoryValue,
+          materials: materialsValue,
+          total: totalAssets
+        },
+        liabilities: {
+          total: totalLiabilities
+        },
+        equity: {
+          retainedEarnings,
+          total: totalEquity
+        },
+        totalAssets,
+        totalLiabilitiesAndEquity: totalLiabilities + totalEquity
+      }
+    });
+  } catch (error) {
+    logReportError('Error in getFinancialPositionReport:', error);
+    next(error);
+  }
+};
+
+// @desc    Get cash flow statement (simplified: operating only)
+// @route   GET /api/reports/cashflow
+// @access  Private
+exports.getCashFlowReport = async (req, res, next) => {
+  try {
+    const { startDate, endDate } = req.query;
+    if (startDate && endDate && (await accountingReportService.hasAccountingData(req.tenantId))) {
+      const data = await accountingReportService.getCashFlowFromAccounting(req.tenantId, startDate, endDate);
+      return res.status(200).json({ success: true, data, source: 'accounting' });
+    }
+
+    let dateFilter = {};
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { [Op.between]: [start, end] };
+    }
+
+    const revWhere = applyTenantFilter(req.tenantId, {
+      status: 'paid',
+      ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
+    });
+    const expenseWhere = applyTenantFilter(req.tenantId, {
+      approvalStatus: 'approved',
+      isArchived: false,
+      ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
+    });
+
+    const [cashFromCustomers, cashPaidExpenses] = await Promise.all([
+      Invoice.sum('amountPaid', { where: revWhere }) || 0,
+      Expense.sum('amount', { where: expenseWhere }) || 0
+    ]);
+
+    const operatingIn = parseFloat(cashFromCustomers);
+    const operatingOut = parseFloat(cashPaidExpenses);
+    const netCashFromOperating = operatingIn - operatingOut;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        operating: {
+          cashReceivedFromCustomers: operatingIn,
+          cashPaidToSuppliersAndExpenses: operatingOut,
+          netCashFromOperatingActivities: netCashFromOperating
+        },
+        investing: {
+          netCashUsedInInvestingActivities: 0
+        },
+        financing: {
+          netCashFromFinancingActivities: 0
+        },
+        netChangeInCash: netCashFromOperating
+      }
+    });
+  } catch (error) {
+    logReportError('Error in getCashFlowReport:', error);
     next(error);
   }
 };
@@ -1196,8 +1536,16 @@ exports.generateAIAnalysis = async (req, res, next) => {
       });
     }
 
+    const tenant = req.tenant || {};
+    const businessType = options.businessType ?? tenant.businessType ?? 'printing_press';
+    const studioType = options.studioType ?? tenant.metadata?.studioType ?? (['printing_press', 'mechanic', 'barber', 'salon'].includes(businessType) ? businessType : null);
+
     const analysis = await openaiService.analyzeReportData(reportData, {
-      businessType: req.tenant?.businessType || 'printing_press',
+      businessType,
+      studioType,
+      period: options.period,
+      startDate: options.startDate,
+      endDate: options.endDate,
       ...options
     });
 
@@ -1209,14 +1557,14 @@ exports.generateAIAnalysis = async (req, res, next) => {
     if (error.code === 'OPENAI_NOT_CONFIGURED') {
       return res.status(503).json({
         success: false,
-        error: 'AI analysis is not configured. Set OPENAI_API_KEY in the backend .env to enable.',
+        error: 'AI analysis is not configured. Set ANTHROPIC_API_KEY in the backend .env to enable.',
         code: 'OPENAI_NOT_CONFIGURED'
       });
     }
     if (error.code === 'invalid_api_key' || error.status === 401) {
       return res.status(503).json({
         success: false,
-        error: 'Invalid OpenAI API key. Check OPENAI_API_KEY in Backend/.env, ensure no extra spaces or line breaks, and create a new key at https://platform.openai.com/api-keys if needed.',
+        error: 'Invalid Anthropic API key. Check ANTHROPIC_API_KEY in Backend/.env and create a key at https://console.anthropic.com/.',
         code: 'OPENAI_INVALID_KEY'
       });
     }
@@ -1466,10 +1814,10 @@ exports.getPrescriptionReport = async (req, res, next) => {
   }
 };
 
-// @desc    Get inventory summary
-// @route   GET /api/reports/inventory-summary
+// @desc    Get product stock summary (Product model - goods for sale)
+// @route   GET /api/reports/product-stock-summary
 // @access  Private
-exports.getInventorySummary = async (req, res, next) => {
+exports.getProductStockSummary = async (req, res, next) => {
   try {
     const productWhere = applyTenantFilter(req.tenantId, {});
     const totalProducts = await Product.count({ where: productWhere });
@@ -1496,18 +1844,59 @@ exports.getInventorySummary = async (req, res, next) => {
       }
     });
   } catch (error) {
-    logReportError('Error getting inventory summary:', error);
+    logReportError('Error getting product stock summary:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get inventory summary'
+      error: 'Failed to get product stock summary'
     });
   }
 };
 
-// @desc    Get inventory movements
-// @route   GET /api/reports/inventory-movements
+// @desc    Get materials summary (MaterialItem - supplies used by the business)
+// @route   GET /api/reports/materials-summary
 // @access  Private
-exports.getInventoryMovements = async (req, res, next) => {
+exports.getMaterialsSummary = async (req, res, next) => {
+  try {
+    const where = applyTenantFilter(req.tenantId, {});
+    const [totals] = await MaterialItem.findAll({
+      attributes: [
+        [sequelize.fn('COUNT', sequelize.col('MaterialItem.id')), 'totalItems'],
+        [sequelize.fn('SUM', sequelize.col('MaterialItem.quantityOnHand')), 'totalQuantity'],
+        [sequelize.fn('SUM', sequelize.literal('"MaterialItem"."quantityOnHand" * "MaterialItem"."unitCost"')), 'materialsValue'],
+        [sequelize.fn('SUM', sequelize.literal(`CASE WHEN "MaterialItem"."quantityOnHand" <= "MaterialItem"."reorderLevel" THEN 1 ELSE 0 END`)), 'lowStockCount'],
+        [sequelize.fn('SUM', sequelize.literal(`CASE WHEN "MaterialItem"."quantityOnHand" > 0 AND "MaterialItem"."quantityOnHand" > "MaterialItem"."reorderLevel" THEN 1 ELSE 0 END`)), 'inStockCount'],
+        [sequelize.fn('SUM', sequelize.literal(`CASE WHEN "MaterialItem"."quantityOnHand" <= 0 THEN 1 ELSE 0 END`)), 'outOfStockCount']
+      ],
+      where,
+      raw: true
+    });
+    const totalItems = totals ? parseInt(totals.totalItems || 0, 10) : 0;
+    const totalStockValue = parseFloat(totals?.materialsValue || 0);
+    const inStockCount = totals ? parseInt(totals.inStockCount || 0, 10) : 0;
+    const stockAvailabilityRate = totalItems > 0 ? Math.round((inStockCount / totalItems) * 1000) / 10 : 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalStocks: totalItems,
+        totalStockValue,
+        stockAvailabilityRate,
+        inStockCount: inStockCount || 0
+      }
+    });
+  } catch (error) {
+    logReportError('Error getting materials summary:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get materials summary'
+    });
+  }
+};
+
+// @desc    Get materials movements (MaterialItem/MaterialMovement)
+// @route   GET /api/reports/materials-movements
+// @access  Private
+exports.getMaterialsMovements = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
 
@@ -1523,10 +1912,10 @@ exports.getInventoryMovements = async (req, res, next) => {
       ...(hasDateFilter(dateFilter) && { occurredAt: dateFilter })
     });
 
-    const movements = await InventoryMovement.findAll({
+    const movements = await MaterialMovement.findAll({
       where: movementWhere,
       include: [{
-        model: InventoryItem,
+        model: MaterialItem,
         as: 'item',
         attributes: ['id', 'name', 'sku', 'unit']
       }],
@@ -1552,10 +1941,10 @@ exports.getInventoryMovements = async (req, res, next) => {
       data
     });
   } catch (error) {
-    logReportError('Error getting inventory movements:', error);
+    logReportError('Error getting materials movements:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to get inventory movements'
+      error: 'Failed to get materials movements'
     });
   }
 };
@@ -1736,6 +2125,228 @@ function runReportHandler(handler, req) {
 }
 
 /**
+ * @desc    Get VAT/Tax report - summary of VAT collected from invoices and sales
+ * @route   GET /api/reports/vat
+ * @access  Private
+ */
+exports.getVatReport = async (req, res, next) => {
+  try {
+    logReport('[VAT Report] Starting VAT report generation');
+    logReport('[VAT Report] Tenant ID:', req.tenantId);
+    const { startDate, endDate, groupBy = 'month' } = req.query;
+    logReport('[VAT Report] Query params:', { startDate, endDate, groupBy });
+
+    let dateFilter = {};
+    let invoiceDateFilter = {};
+    let saleDateFilter = {};
+    
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter = { [Op.between]: [start, end] };
+      invoiceDateFilter = { invoiceDate: dateFilter };
+      saleDateFilter = { createdAt: dateFilter };
+      logReport('[VAT Report] Date filter applied:', { start, end });
+    }
+
+    // Get VAT from invoices
+    const invoiceVatWhere = applyTenantFilter(req.tenantId, {
+      ...invoiceDateFilter
+    });
+
+    const invoiceVatTotal = await Invoice.findOne({
+      attributes: [
+        [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('taxAmount')), 0), 'totalVat'],
+        [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('subtotal')), 0), 'totalSubtotal'],
+        [sequelize.fn('COUNT', sequelize.col('id')), 'invoiceCount']
+      ],
+      where: invoiceVatWhere,
+      raw: true
+    });
+
+    // Get VAT from sales (POS)
+    const saleVatWhere = applyTenantFilter(req.tenantId, {
+      ...saleDateFilter
+    });
+
+    const saleVatTotal = await Sale.findOne({
+      attributes: [
+        [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('tax')), 0), 'totalVat'],
+        [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('subtotal')), 0), 'totalSubtotal'],
+        [sequelize.fn('COUNT', sequelize.col('id')), 'saleCount']
+      ],
+      where: saleVatWhere,
+      raw: true
+    });
+
+    // Get VAT breakdown by period (invoices)
+    let invoiceVatByPeriod = [];
+    if (groupBy === 'month') {
+      invoiceVatByPeriod = await Invoice.findAll({
+        attributes: [
+          [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "invoiceDate"')), 'month'],
+          [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "invoiceDate"')), 'year'],
+          [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('taxAmount')), 0), 'vatAmount'],
+          [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('subtotal')), 0), 'subtotal'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: invoiceVatWhere,
+        group: [
+          sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "invoiceDate"')),
+          sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "invoiceDate"'))
+        ],
+        order: [
+          [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "invoiceDate"')), 'ASC'],
+          [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "invoiceDate"')), 'ASC']
+        ],
+        raw: true
+      });
+    } else {
+      invoiceVatByPeriod = await Invoice.findAll({
+        attributes: [
+          [sequelize.literal('CAST("invoiceDate" AS DATE)'), 'date'],
+          [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('taxAmount')), 0), 'vatAmount'],
+          [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('subtotal')), 0), 'subtotal'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: invoiceVatWhere,
+        group: [sequelize.literal('CAST("invoiceDate" AS DATE)')],
+        order: [[sequelize.literal('CAST("invoiceDate" AS DATE)'), 'ASC']],
+        raw: true
+      });
+    }
+
+    // Get VAT breakdown by period (sales)
+    let saleVatByPeriod = [];
+    if (groupBy === 'month') {
+      saleVatByPeriod = await Sale.findAll({
+        attributes: [
+          [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "createdAt"')), 'month'],
+          [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "createdAt"')), 'year'],
+          [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('tax')), 0), 'vatAmount'],
+          [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('subtotal')), 0), 'subtotal'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: saleVatWhere,
+        group: [
+          sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "createdAt"')),
+          sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "createdAt"'))
+        ],
+        order: [
+          [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "createdAt"')), 'ASC'],
+          [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "createdAt"')), 'ASC']
+        ],
+        raw: true
+      });
+    } else {
+      saleVatByPeriod = await Sale.findAll({
+        attributes: [
+          [sequelize.literal('CAST("createdAt" AS DATE)'), 'date'],
+          [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('tax')), 0), 'vatAmount'],
+          [sequelize.fn('COALESCE', sequelize.fn('SUM', sequelize.col('subtotal')), 0), 'subtotal'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        where: saleVatWhere,
+        group: [sequelize.literal('CAST("createdAt" AS DATE)')],
+        order: [[sequelize.literal('CAST("createdAt" AS DATE)'), 'ASC']],
+        raw: true
+      });
+    }
+
+    // Combine and calculate totals
+    const invoiceVat = parseFloat(invoiceVatTotal?.totalVat || 0);
+    const saleVat = parseFloat(saleVatTotal?.totalVat || 0);
+    const totalVatCollected = invoiceVat + saleVat;
+    
+    const invoiceSubtotal = parseFloat(invoiceVatTotal?.totalSubtotal || 0);
+    const saleSubtotal = parseFloat(saleVatTotal?.totalSubtotal || 0);
+    const totalTaxableAmount = invoiceSubtotal + saleSubtotal;
+
+    // Merge period data
+    const periodMap = new Map();
+    
+    const formatPeriodKey = (item) => {
+      if (groupBy === 'month') {
+        return `${item.year}-${String(item.month).padStart(2, '0')}`;
+      }
+      return item.date;
+    };
+
+    invoiceVatByPeriod.forEach(item => {
+      const key = formatPeriodKey(item);
+      const existing = periodMap.get(key) || { 
+        period: key, 
+        invoiceVat: 0, 
+        saleVat: 0, 
+        totalVat: 0,
+        invoiceSubtotal: 0,
+        saleSubtotal: 0,
+        totalTaxable: 0,
+        invoiceCount: 0,
+        saleCount: 0
+      };
+      existing.invoiceVat = parseFloat(item.vatAmount || 0);
+      existing.invoiceSubtotal = parseFloat(item.subtotal || 0);
+      existing.invoiceCount = parseInt(item.count || 0);
+      existing.totalVat = existing.invoiceVat + existing.saleVat;
+      existing.totalTaxable = existing.invoiceSubtotal + existing.saleSubtotal;
+      periodMap.set(key, existing);
+    });
+
+    saleVatByPeriod.forEach(item => {
+      const key = formatPeriodKey(item);
+      const existing = periodMap.get(key) || { 
+        period: key, 
+        invoiceVat: 0, 
+        saleVat: 0, 
+        totalVat: 0,
+        invoiceSubtotal: 0,
+        saleSubtotal: 0,
+        totalTaxable: 0,
+        invoiceCount: 0,
+        saleCount: 0
+      };
+      existing.saleVat = parseFloat(item.vatAmount || 0);
+      existing.saleSubtotal = parseFloat(item.subtotal || 0);
+      existing.saleCount = parseInt(item.count || 0);
+      existing.totalVat = existing.invoiceVat + existing.saleVat;
+      existing.totalTaxable = existing.invoiceSubtotal + existing.saleSubtotal;
+      periodMap.set(key, existing);
+    });
+
+    const byPeriod = Array.from(periodMap.values()).sort((a, b) => 
+      a.period.localeCompare(b.period)
+    );
+
+    // Calculate effective tax rate
+    const effectiveTaxRate = totalTaxableAmount > 0 
+      ? ((totalVatCollected / totalTaxableAmount) * 100).toFixed(2)
+      : '0.00';
+
+    res.status(200).json({
+      success: true,
+      data: {
+        summary: {
+          totalVatCollected,
+          totalTaxableAmount,
+          effectiveTaxRate: parseFloat(effectiveTaxRate),
+          invoiceVat,
+          saleVat,
+          invoiceCount: parseInt(invoiceVatTotal?.invoiceCount || 0),
+          saleCount: parseInt(saleVatTotal?.saleCount || 0)
+        },
+        byPeriod,
+        dateRange: startDate && endDate ? { startDate, endDate } : null
+      }
+    });
+  } catch (error) {
+    logReportError('[VAT Report] Error:', error);
+    next(error);
+  }
+};
+
+/**
  * @desc    Batched overview phase 1 (revenue, expenses, outstanding, sales, serviceAnalytics, productSales)
  * @route   GET /api/reports/overview/phase1
  * @access  Private
@@ -1778,15 +2389,16 @@ exports.getOverviewPhase1 = async (req, res, next) => {
 };
 
 /**
- * @desc    Batched overview phase 2 (inventory, KPI, top customers, pipeline, revenue by channel)
+ * @desc    Batched overview phase 2 (product stock, materials, KPI, top customers, pipeline, revenue by channel)
  * @route   GET /api/reports/overview/phase2
  * @access  Private
  */
 exports.getOverviewPhase2 = async (req, res, next) => {
   try {
     const handlers = [
-      exports.getInventorySummary,
-      exports.getInventoryMovements,
+      exports.getProductStockSummary,
+      exports.getMaterialsSummary,
+      exports.getMaterialsMovements,
       exports.getFastestMovingItems,
       exports.getRevenueByChannel,
       exports.getKpiSummary,
@@ -1802,8 +2414,9 @@ exports.getOverviewPhase2 = async (req, res, next) => {
       )
     );
     const [
-      inventorySummary,
-      inventoryMovements,
+      productStockSummary,
+      materialsSummary,
+      materialsMovements,
       fastestMovingItems,
       revenueByChannel,
       kpiSummary,
@@ -1811,8 +2424,9 @@ exports.getOverviewPhase2 = async (req, res, next) => {
       pipelineSummary
     ] = results;
     const data = {
-      inventorySummary: inventorySummary?.success ? inventorySummary.data : { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
-      inventoryMovements: inventoryMovements?.success ? inventoryMovements.data : [],
+      productStockSummary: productStockSummary?.success ? productStockSummary.data : { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+      materialsSummary: materialsSummary?.success ? materialsSummary.data : { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+      materialsMovements: materialsMovements?.success ? materialsMovements.data : [],
       fastestMovingItems: fastestMovingItems?.success ? fastestMovingItems.data : [],
       revenueByChannel: revenueByChannel?.success ? revenueByChannel.data : [],
       kpiSummary: kpiSummary?.success ? kpiSummary.data : { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },

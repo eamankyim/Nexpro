@@ -1,24 +1,23 @@
 /**
  * Shop Type Configuration
- * 
- * Defines default inventory categories and dropdown options for each shop type.
- * Used during onboarding to seed default categories.
+ *
+ * Defines default **material** (inventory) categories for the Materials page only.
+ * Used during onboarding to seed inventory_categories. Product categories (Products page)
+ * are defined in productCategories.js and may differ per shop type (e.g. restaurant products = menu).
  */
 
 const SHOP_TYPES = {
   supermarket: {
     name: 'Supermarket/Grocery Store',
+    // Material categories (Materials page): supplies used to run the store, not products sold
     defaultCategories: [
-      { name: 'Fresh Produce', description: 'Fruits, vegetables, and fresh items' },
-      { name: 'Dairy Products', description: 'Milk, cheese, yogurt, and dairy items' },
-      { name: 'Meat & Seafood', description: 'Fresh and frozen meat and seafood' },
-      { name: 'Bakery Items', description: 'Bread, pastries, and baked goods' },
-      { name: 'Beverages', description: 'Soft drinks, juices, water, and beverages' },
-      { name: 'Snacks & Confectionery', description: 'Chips, candies, and snacks' },
-      { name: 'Canned Goods', description: 'Canned foods and preserved items' },
-      { name: 'Frozen Foods', description: 'Frozen meals and frozen products' },
-      { name: 'Household Items', description: 'Cleaning supplies and household products' },
-      { name: 'Personal Care', description: 'Toiletries and personal hygiene products' }
+      { name: 'Packaging & Bags', description: 'Shopping bags, boxes, wraps, and packaging supplies' },
+      { name: 'Cleaning Supplies', description: 'Cleaning chemicals, mops, and store hygiene' },
+      { name: 'Labels & Tags', description: 'Price labels, shelf tags, and signage supplies' },
+      { name: 'Equipment & Maintenance', description: 'Cooler parts, scales, and equipment maintenance' },
+      { name: 'Office Supplies', description: 'Register rolls, stationery, and office consumables' },
+      { name: 'Safety & Compliance', description: 'Safety gear and compliance supplies' },
+      { name: 'Miscellaneous Supplies', description: 'Other materials used to operate the store' }
     ]
   },
   hardware: {
@@ -160,6 +159,22 @@ const SHOP_TYPES = {
       { name: 'Art Supplies', description: 'Paints, brushes, and art materials' },
       { name: 'School Supplies', description: 'Backpacks, lunch boxes, and school items' },
       { name: 'Gift Items', description: 'Greeting cards, gift wrap, and gift items' }
+    ]
+  },
+  restaurant: {
+    name: 'Restaurant',
+    // Material/ingredient categories for inventory (used to prepare food)
+    defaultCategories: [
+      { name: 'Fresh Produce', description: 'Fruits, vegetables, and fresh ingredients' },
+      { name: 'Dairy Products', description: 'Milk, cheese, butter, cream, and dairy items' },
+      { name: 'Meat & Seafood', description: 'Fresh and frozen meat, poultry, and seafood' },
+      { name: 'Bakery & Bread', description: 'Bread, flour, and baking ingredients' },
+      { name: 'Canned Goods', description: 'Canned foods, sauces, and preserved items' },
+      { name: 'Dry Goods', description: 'Pasta, rice, grains, and pantry staples' },
+      { name: 'Beverages', description: 'Soft drinks, juices, and non-alcoholic drinks' },
+      { name: 'Hot Drinks', description: 'Coffee, tea, and hot beverage supplies' },
+      { name: 'Oils & Condiments', description: 'Cooking oils, spices, and condiments' },
+      { name: 'Cleaning & Supplies', description: 'Cleaning supplies and kitchen consumables' }
     ]
   },
   other: {

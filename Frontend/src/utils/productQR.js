@@ -51,6 +51,7 @@ export function parseProductQRPayload(text) {
   const metadata = o.metadata && typeof o.metadata === 'object' ? o.metadata : {};
 
   const data = {
+    id: str(o.id),
     name,
     sku: str(o.sku),
     barcode: str(o.barcode),
@@ -89,31 +90,29 @@ export function parseProductQRPayload(text) {
   return { success: true, data };
 }
 
+/** Max chars for fields in QR payload to avoid exceeding QR capacity (~400–700 chars safe). */
+const MAX_NAME_LEN = 60;
+const MAX_SKU_LEN = 40;
+const MAX_BARCODE_LEN = 30;
+
 /**
- * Build JSON payload for product QR code (same format we parse).
+ * Build minimal JSON payload for product QR code.
+ * Only includes id, name, sku, barcode to stay within QR capacity.
+ * POS lookup uses id first, then barcode, sku, name. Long fields (description, imageUrl) are excluded.
  * @param {Object} product - Product from API (name required; sku, barcode, etc. optional)
  * @returns {string} JSON string (no whitespace) to encode as QR
  */
 export function buildProductQRPayload(product) {
   if (!product || typeof product !== 'object') return '{}';
-  const n = (v) => (Number.isFinite(parseFloat(v)) ? parseFloat(v) : 0);
-  const s = (v) => (v != null && String(v).trim() ? String(v).trim() : '');
-  const cat = product.category?.name || product.categoryName || '';
+  const s = (v, max) => {
+    const t = v != null && String(v).trim() ? String(v).trim() : '';
+    return max ? t.slice(0, max) : t;
+  };
   const payload = {
-    name: s(product.name) || 'Product',
-    sku: s(product.sku),
-    barcode: s(product.barcode),
-    description: s(product.description),
-    imageUrl: s(product.imageUrl ?? product.image_url),
-    costPrice: n(product.costPrice ?? product.cost_price),
-    sellingPrice: n(product.sellingPrice ?? product.selling_price),
-    quantityOnHand: n(product.quantityOnHand ?? product.quantity_on_hand),
-    reorderLevel: n(product.reorderLevel ?? product.reorder_level),
-    reorderQuantity: n(product.reorderQuantity ?? product.reorder_quantity),
-    unit: s(product.unit) || 'pcs',
-    brand: s(product.brand),
-    supplier: s(product.supplier),
-    categoryName: cat,
+    id: product.id ? String(product.id) : '',
+    name: s(product.name, MAX_NAME_LEN) || 'Product',
+    sku: s(product.sku, MAX_SKU_LEN),
+    barcode: s(product.barcode, MAX_BARCODE_LEN),
   };
   const filtered = {};
   Object.entries(payload).forEach(([k, v]) => {

@@ -91,6 +91,10 @@ const Product = sequelize.define('Product', {
     type: DataTypes.BOOLEAN,
     defaultValue: true
   },
+  trackStock: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: true
+  },
   metadata: {
     type: DataTypes.JSONB,
     defaultValue: {}

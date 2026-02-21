@@ -11,8 +11,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   cacheProducts,
+  getItem,
   searchProductsOffline,
   getProductByBarcodeOffline,
+  cacheCustomers,
+  getCachedCustomers,
+  searchCustomersOffline,
+  getCustomerByPhoneOffline,
+  setLastCustomerSyncTime,
+  shouldRefreshCustomers,
   queuePendingSale,
   getPendingSales,
   updatePendingSaleStatus,
@@ -27,6 +34,7 @@ import {
   STORES
 } from '../utils/posDb';
 import productService from '../services/productService';
+import customerService from '../services/customerService';
 import saleService from '../services/saleService';
 import { showSuccess, showError } from '../utils/toast';
 
@@ -40,6 +48,7 @@ export const usePOSOffline = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [lastSyncError, setLastSyncError] = useState(null);
   const [isProductsCached, setIsProductsCached] = useState(false);
+  const [isCustomersCached, setIsCustomersCached] = useState(false);
   const syncIntervalRef = useRef(null);
   const isMountedRef = useRef(true);
 
@@ -90,6 +99,82 @@ export const usePOSOffline = () => {
       console.error('Failed to refresh product cache:', error);
       return false;
     }
+  }, []);
+
+  /**
+   * Sync customer list to offline cache
+   * @param {Array} customers - Customer array to cache
+   */
+  const syncCustomersToCache = useCallback(async (customers) => {
+    if (!Array.isArray(customers) || customers.length === 0) return;
+    try {
+      await cacheCustomers(customers);
+      await setLastCustomerSyncTime(new Date().toISOString());
+      setIsCustomersCached(true);
+    } catch (error) {
+      console.error('Failed to sync customers to offline cache:', error);
+    }
+  }, []);
+
+  /**
+   * Refresh customer cache from server
+   */
+  const refreshCustomerCache = useCallback(async () => {
+    if (!navigator.onLine) {
+      console.log('Offline - skipping customer cache refresh');
+      return false;
+    }
+
+    try {
+      const response = await customerService.getCustomers({ limit: 1000, isActive: true });
+      const customers = response?.data?.customers || response?.customers || response?.data || [];
+      if (Array.isArray(customers) && customers.length > 0) {
+        await cacheCustomers(customers);
+        await setLastCustomerSyncTime(new Date().toISOString());
+        setIsCustomersCached(true);
+      }
+      return true;
+    } catch (error) {
+      console.error('Failed to refresh customer cache:', error);
+      return false;
+    }
+  }, []);
+
+  /**
+   * Search customers (online or offline)
+   * @param {string} query - Search query
+   * @returns {Promise<Array>} - Matching customers
+   */
+  const searchCustomers = useCallback(async (query) => {
+    if (navigator.onLine) {
+      try {
+        const response = await customerService.getCustomers({ search: query, limit: 20, isActive: true });
+        const customers = response?.data?.customers || response?.customers || response?.data || [];
+        return Array.isArray(customers) ? customers : [];
+      } catch (error) {
+        console.warn('Online customer search failed, falling back to offline:', error);
+      }
+    }
+    return await searchCustomersOffline(query);
+  }, []);
+
+  /**
+   * Get customer by phone (online or offline)
+   * @param {string} phone - Phone number
+   * @returns {Promise<Object|null>} - Customer or null
+   */
+  const getCustomerByPhone = useCallback(async (phone) => {
+    if (navigator.onLine) {
+      try {
+        const response = await customerService.getCustomers({ search: phone, limit: 5 });
+        const customers = response?.data?.customers || response?.customers || response?.data || [];
+        const match = Array.isArray(customers) ? customers.find(c => c.phone === phone) : null;
+        if (match) return match;
+      } catch (error) {
+        console.warn('Online customer phone lookup failed, trying offline:', error);
+      }
+    }
+    return await getCustomerByPhoneOffline(phone);
   }, []);
 
   /**
@@ -156,8 +241,15 @@ export const usePOSOffline = () => {
       }
     }
 
+    const id = (qrData.id || '').trim();
     const barcode = (qrData.barcode || '').trim();
     const sku = (qrData.sku || '').trim();
+    const name = (qrData.name || '').trim();
+
+    if (id) {
+      const p = await getItem(STORES.PRODUCTS, id);
+      if (p?.id) return p;
+    }
     if (barcode) {
       const p = await getProductByBarcodeOffline(barcode);
       if (p?.id) return p;
@@ -165,6 +257,11 @@ export const usePOSOffline = () => {
     if (sku) {
       const list = await searchProductsOffline(sku);
       const exact = list.find((p) => (p.sku || '').trim() === sku);
+      if (exact?.id) return exact;
+    }
+    if (name) {
+      const list = await searchProductsOffline(name);
+      const exact = list.find((p) => (p.name || '').trim().toLowerCase() === name.toLowerCase());
       if (exact?.id) return exact;
     }
     return null;
@@ -371,7 +468,8 @@ export const usePOSOffline = () => {
     isSyncing,
     lastSyncError,
     isProductsCached,
-    
+    isCustomersCached,
+
     // Product functions
     searchProducts,
     getProductByBarcode,
@@ -379,11 +477,17 @@ export const usePOSOffline = () => {
     refreshProductCache,
     syncProductsToCache,
     getCachedProducts,
-    
+
+    // Customer functions
+    searchCustomers,
+    getCustomerByPhone,
+    refreshCustomerCache,
+    syncCustomersToCache,
+
     // Sale functions
     processSale,
     syncPendingSales,
-    
+
     // Quick items
     getQuickAddItems,
     addQuickItem,

@@ -34,12 +34,48 @@ export const QUERY_CACHE = {
   CACHE_TIME: 10 * 60 * 1000, // 10 minutes cache time
 };
 
+// Default tenant names (placeholders when business not set up)
+export const DEFAULT_TENANT_NAMES = ['My Workspace', 'My Business'];
+
+/** Matches "Eric's Business", "Eric's Workspace" etc. - treated as placeholder, not real business name */
+const PLACEHOLDER_PATTERN = /^.+'s (Business|Workspace)$/i;
+
+/**
+ * Check if a name is a placeholder (not a real business name set by the user).
+ */
+export const isPlaceholderBusinessName = (name) => {
+  if (!name || !name.trim()) return true;
+  if (DEFAULT_TENANT_NAMES.includes(name.trim())) return true;
+  return PLACEHOLDER_PATTERN.test(name.trim());
+};
+
+/**
+ * Get display name for business. Uses the business name set during onboarding everywhere.
+ * Avoids "Workspace" or "Eric's Business" - shows actual business name when set.
+ * @param {string} tenantName - activeTenant?.name
+ * @param {string} [organizationName] - organization?.name (from Settings)
+ * @param {string} [fallback] - Fallback when no business name (default: 'your business')
+ * @returns {string}
+ */
+export const getWorkspaceDisplayName = (tenantName, organizationName, fallback = 'your business') => {
+  const tenant = (tenantName || '').trim();
+  const org = (organizationName || '').trim();
+
+  if (tenant && !isPlaceholderBusinessName(tenant)) return tenant;
+  if (org && !isPlaceholderBusinessName(org)) return org;
+
+  return fallback;
+};
+
 // Business Types
 export const BUSINESS_TYPES = {
   PRINTING_PRESS: 'printing_press',
   SHOP: 'shop',
   PHARMACY: 'pharmacy',
 };
+
+/** Business types that use Jobs (studio-like: printing press, mechanic, barber, salon) */
+export const STUDIO_LIKE_TYPES = ['printing_press', 'mechanic', 'barber', 'salon', 'studio'];
 
 // Job Statuses
 export const JOB_STATUSES = {
@@ -115,11 +151,36 @@ export const FILE_UPLOAD = {
   ALLOWED_DOCUMENT_TYPES: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
 };
 
-// Currency Configuration
+// Currency Configuration (default)
 export const CURRENCY = {
-  SYMBOL: 'GHS',
+  SYMBOL: '₵',
+  CODE: 'GHS',
   DECIMAL_PLACES: 2,
 };
+
+// Available Currencies (African currencies + major international)
+export const CURRENCIES = [
+  // African Currencies
+  { code: 'GHS', symbol: '₵', name: 'Ghana Cedi', country: 'Ghana' },
+  { code: 'NGN', symbol: '₦', name: 'Nigerian Naira', country: 'Nigeria' },
+  { code: 'KES', symbol: 'KSh', name: 'Kenyan Shilling', country: 'Kenya' },
+  { code: 'ZAR', symbol: 'R', name: 'South African Rand', country: 'South Africa' },
+  { code: 'EGP', symbol: 'E£', name: 'Egyptian Pound', country: 'Egypt' },
+  { code: 'MAD', symbol: 'د.م.', name: 'Moroccan Dirham', country: 'Morocco' },
+  { code: 'TZS', symbol: 'TSh', name: 'Tanzanian Shilling', country: 'Tanzania' },
+  { code: 'UGX', symbol: 'USh', name: 'Ugandan Shilling', country: 'Uganda' },
+  { code: 'XOF', symbol: 'CFA', name: 'West African CFA Franc', country: 'West Africa' },
+  { code: 'XAF', symbol: 'FCFA', name: 'Central African CFA Franc', country: 'Central Africa' },
+  { code: 'ZMW', symbol: 'ZK', name: 'Zambian Kwacha', country: 'Zambia' },
+  { code: 'BWP', symbol: 'P', name: 'Botswana Pula', country: 'Botswana' },
+  { code: 'MUR', symbol: '₨', name: 'Mauritian Rupee', country: 'Mauritius' },
+  { code: 'ETB', symbol: 'Br', name: 'Ethiopian Birr', country: 'Ethiopia' },
+  { code: 'RWF', symbol: 'FRw', name: 'Rwandan Franc', country: 'Rwanda' },
+  // International Currencies
+  { code: 'USD', symbol: '$', name: 'US Dollar', country: 'United States' },
+  { code: 'GBP', symbol: '£', name: 'British Pound', country: 'United Kingdom' },
+  { code: 'EUR', symbol: '€', name: 'Euro', country: 'European Union' },
+];
 
 // Notification Types
 export const NOTIFICATION_TYPES = {
@@ -156,7 +217,7 @@ export const CHIP_ORANGE = 'bg-orange-100 text-orange-800 border-orange-300';
 export const CHIP_BLUE = 'bg-blue-100 text-blue-800 border-blue-300';
 export const CHIP_YELLOW = 'bg-yellow-100 text-yellow-800 border-yellow-300';
 export const CHIP_PURPLE = 'bg-purple-100 text-purple-800 border-purple-300';
-export const CHIP_GRAY = 'bg-gray-100 text-gray-800 border-gray-300';
+export const CHIP_GRAY = 'bg-muted text-muted-foreground border-border';
 
 /** Default chip class when status is unknown */
 export const STATUS_CHIP_DEFAULT_CLASS = CHIP_GRAY;
@@ -291,50 +352,81 @@ export const DEFAULTS = {
   PAGE_SIZE: PAGINATION.DEFAULT_PAGE_SIZE,
 };
 
-// Error Messages
+// Error Messages - Actionable copy that answers "What went wrong?" + "How to fix it?"
 export const ERROR_MESSAGES = {
-  NETWORK_ERROR: 'Unable to connect to server. Please check your internet connection.',
-  TIMEOUT_ERROR: 'Request timed out. Please try again.',
-  UNAUTHORIZED: 'You are not authorized to perform this action.',
-  NOT_FOUND: 'The requested resource was not found.',
-  VALIDATION_ERROR: 'Please check your input and try again.',
-  SERVER_ERROR: 'An error occurred on the server. Please try again later.',
-  UNKNOWN_ERROR: 'An unexpected error occurred. Please try again.',
+  NETWORK_ERROR: 'Connection lost. Check your internet and try again.',
+  TIMEOUT_ERROR: 'Taking longer than expected. Try again or check your connection.',
+  UNAUTHORIZED: "You don't have permission for this. Contact your admin if needed.",
+  NOT_FOUND: "We couldn't find that. It may have been moved or deleted.",
+  VALIDATION_ERROR: 'Please review the highlighted fields.',
+  SERVER_ERROR: 'Something went wrong on our end. Please try again shortly.',
+  UNKNOWN_ERROR: 'Something went wrong. Please try again.',
 };
 
-// Success Messages
+// Success Messages - Contextual, brief (3-5 words), no "successfully"
 export const SUCCESS_MESSAGES = {
-  CREATED: 'Created successfully',
-  UPDATED: 'Updated successfully',
-  DELETED: 'Deleted successfully',
-  SAVED: 'Saved successfully',
+  // Generic (use contextual functions when entity name is available)
+  CREATED: 'Created',
+  UPDATED: 'Updated',
+  DELETED: 'Deleted',
+  SAVED: 'Changes saved',
+  
+  // Contextual message generators
+  created: (entity) => `${entity} created`,
+  updated: (entity) => `${entity} updated`,
+  deleted: (entity) => `${entity} deleted`,
+  added: (entity) => `${entity} added`,
 };
 
-// Header search placeholders (context-aware per page)
+// Header search placeholders - Show searchable fields to guide users
 export const SEARCH_PLACEHOLDERS = {
-  GLOBAL: 'Search products, customers and transactions',
-  CUSTOMERS: 'Search for customers',
-  INVOICES: 'Search for invoices',
-  LEADS: 'Search for leads',
-  JOBS: 'Search for jobs',
-  QUOTES: 'Search for quotes',
-  VENDORS: 'Search for vendors',
-  INVENTORY: 'Search for inventory',
-  EMPLOYEES: 'Search for employees',
-  USERS: 'Search for users',
-  EXPENSES: 'Search for expenses',
-  SALES: 'Search for sales',
-  PAYROLL: 'Search for payroll',
-  ACCOUNTING: 'Search for accounting',
-  REPORTS: 'Search for reports',
-  SHOPS: 'Search for shops',
-  PHARMACIES: 'Search for pharmacies',
-  PRODUCTS: 'Search for products',
-  DRUGS: 'Search for drugs',
-  PRESCRIPTIONS: 'Search for prescriptions',
-  PRICING: 'Search for pricing',
-  ADMIN_TENANTS: 'Search tenants by name or slug',
+  GLOBAL: 'Type to search...',
+  CUSTOMERS: 'Name, email, or phone...',
+  INVOICES: 'Invoice #, customer, or amount...',
+  LEADS: 'Name, company, or email...',
+  JOBS: 'Job #, title, or customer...',
+  QUOTES: 'Quote #, customer, or title...',
+  VENDORS: 'Name, company, or category...',
+  ASSETS: 'Name, tag, or location...',
+  MATERIALS: 'Name, SKU, or category...',
+  EQUIPMENT: 'Name, serial #, or location...',
+  EMPLOYEES: 'Name, department, or role...',
+  USERS: 'Name, email, or role...',
+  EXPENSES: 'Description, vendor, or category...',
+  SALES: 'Sale #, customer, or product...',
+  PAYROLL: 'Employee name or period...',
+  ACCOUNTING: 'Account, code, or entry...',
+  REPORTS: 'Report name or type...',
+  SHOPS: 'Name, code, or location...',
+  PHARMACIES: 'Name, code, or pharmacist...',
+  PRODUCTS: 'Name, SKU, or barcode...',
+  DRUGS: 'Name, generic, or batch...',
+  PRESCRIPTIONS: 'Prescription #, patient, or drug...',
+  PRICING: 'Template name or category...',
+  ADMIN_TENANTS: 'Name, slug, or email...',
 };
+
+/**
+ * Quotes visibility: dependent on business type and (for shop) shop type.
+ * - Studio (printing_press, mechanic, barber, salon) and pharmacy: always enabled.
+ * - Shop: enabled except when shopType is in QUOTES_HIDDEN_SHOP_TYPES (e.g. restaurant).
+ */
+export const QUOTES_HIDDEN_SHOP_TYPES = ['restaurant'];
+
+/**
+ * @param {string|null} businessType - Tenant businessType
+ * @param {string|null} shopType - Tenant metadata.shopType (only relevant when businessType is 'shop')
+ * @returns {boolean} Whether the Quotes feature is visible for this tenant
+ */
+export function isQuotesEnabledForTenant(businessType, shopType) {
+  if (!businessType) return false;
+  const isStudio = ['printing_press', 'mechanic', 'barber', 'salon', 'studio'].includes(businessType);
+  if (isStudio || businessType === 'pharmacy') return true;
+  if (businessType === 'shop') {
+    return !QUOTES_HIDDEN_SHOP_TYPES.includes(shopType || '');
+  }
+  return false;
+}
 
 // Responsive Breakpoints (in pixels)
 export const RESPONSIVE = {
@@ -379,8 +471,10 @@ export const RESPONSIVE = {
 // PRODUCT MANAGEMENT CONSTANTS
 // =============================================
 
-// Product Units (common African market units)
+// Product Units (common African market units; used for products, materials, vendor price lists)
 export const PRODUCT_UNITS = [
+  { value: 'unit', label: 'Unit' },
+  { value: 'hour', label: 'Hour' },
   { value: 'pcs', label: 'Pieces' },
   { value: 'bag', label: 'Bag' },
   { value: 'crate', label: 'Crate' },
@@ -399,6 +493,40 @@ export const PRODUCT_UNITS = [
   { value: 'set', label: 'Set' },
   { value: 'meter', label: 'Meter' },
   { value: 'yard', label: 'Yard' },
+];
+
+// Restaurant-specific units (food/service)
+export const RESTAURANT_UNITS = [
+  { value: 'serving', label: 'Serving' },
+  { value: 'portion', label: 'Portion' },
+  { value: 'plate', label: 'Plate' },
+  { value: 'bowl', label: 'Bowl' },
+  { value: 'cup', label: 'Cup' },
+];
+
+// Common allergens (for restaurant/food products)
+export const ALLERGENS_OPTIONS = [
+  { value: 'milk', label: 'Milk' },
+  { value: 'eggs', label: 'Eggs' },
+  { value: 'fish', label: 'Fish' },
+  { value: 'shellfish', label: 'Shellfish' },
+  { value: 'tree_nuts', label: 'Tree Nuts' },
+  { value: 'peanuts', label: 'Peanuts' },
+  { value: 'wheat', label: 'Wheat/Gluten' },
+  { value: 'soy', label: 'Soybeans' },
+  { value: 'sesame', label: 'Sesame' },
+];
+
+// Age range options for toys
+export const AGE_RANGE_OPTIONS = [
+  { value: '0+', label: '0+' },
+  { value: '1+', label: '1+' },
+  { value: '3+', label: '3+' },
+  { value: '5+', label: '5+' },
+  { value: '8+', label: '8+' },
+  { value: '12+', label: '12+' },
+  { value: '14+', label: '14+' },
+  { value: '18+', label: '18+' },
 ];
 
 // Profit Margin Thresholds (for color coding)
@@ -423,6 +551,21 @@ export const calculateMargin = (costPrice, sellingPrice) => {
   return ((sell - cost) / sell) * 100;
 };
 
+// Restaurant order statuses (kitchen tracking)
+export const ORDER_STATUSES = {
+  RECEIVED: 'received',
+  PREPARING: 'preparing',
+  READY: 'ready',
+  COMPLETED: 'completed',
+};
+
+export const ORDER_STATUS_LABELS = {
+  [ORDER_STATUSES.RECEIVED]: 'Received',
+  [ORDER_STATUSES.PREPARING]: 'Preparing',
+  [ORDER_STATUSES.READY]: 'Ready',
+  [ORDER_STATUSES.COMPLETED]: 'Completed',
+};
+
 // Shop Types (from backend config)
 export const SHOP_TYPES = {
   SUPERMARKET: 'supermarket',
@@ -438,6 +581,7 @@ export const SHOP_TYPES = {
   TOYS: 'toys',
   PET: 'pet',
   STATIONERY: 'stationery',
+  RESTAURANT: 'restaurant',
   OTHER: 'other',
 };
 
@@ -456,6 +600,7 @@ export const SHOP_TYPE_LABELS = {
   [SHOP_TYPES.TOYS]: 'Toy Store',
   [SHOP_TYPES.PET]: 'Pet Store',
   [SHOP_TYPES.STATIONERY]: 'Stationery',
+  [SHOP_TYPES.RESTAURANT]: 'Restaurant',
   [SHOP_TYPES.OTHER]: 'Other',
 };
 
@@ -483,13 +628,109 @@ export const SHOP_TYPE_FIELDS = {
   [SHOP_TYPES.STATIONERY]: ['isbn', 'brand'],
   
   // Fields for furniture
-  [SHOP_TYPES.FURNITURE]: ['dimensions', 'material', 'assemblyRequired'],
+  [SHOP_TYPES.FURNITURE]: ['dimensions', 'weight', 'material', 'assemblyRequired'],
   
-  // Default fields for other types
-  [SHOP_TYPES.SPORTS]: [],
-  [SHOP_TYPES.TOYS]: [],
-  [SHOP_TYPES.PET]: ['expiryDate'],
+  // Sports store
+  [SHOP_TYPES.SPORTS]: ['size', 'warrantyPeriod'],
+  
+  // Toy store
+  [SHOP_TYPES.TOYS]: ['ageRange', 'batteryRequired'],
+  
+  // Pet store (pet food similar to supermarket)
+  [SHOP_TYPES.PET]: ['expiryDate', 'isPerishable', 'batchNumber'],
+  
+  // Restaurant (size for pizza, etc.: small, medium, large, XL; hasVariants for size-based pricing)
+  [SHOP_TYPES.RESTAURANT]: ['expiryDate', 'isPerishable', 'allergens', 'size', 'hasVariants'],
+  
   [SHOP_TYPES.OTHER]: [],
+};
+
+// Fields to hide per shop type (simplify form)
+// Note: sku, barcode, brand, reorderLevel, reorderQuantity, supplier show when Track stock is ON (all shop types)
+export const SHOP_TYPE_HIDDEN_FIELDS = {};
+
+// Shop-type-specific placeholder examples for form fields
+export const SHOP_TYPE_PLACEHOLDERS = {
+  [SHOP_TYPES.SUPERMARKET]: {
+    productName: 'e.g., Milo 400g, Peak Milk 400g',
+    category: 'e.g., Beverages, Dairy, Snacks',
+    description: 'e.g., Nestle Milo chocolate malt drink',
+  },
+  [SHOP_TYPES.CONVENIENCE]: {
+    productName: 'e.g., Coca-Cola 500ml, Bread',
+    category: 'e.g., Drinks, Snacks, Essentials',
+    description: 'e.g., Refreshing cola drink',
+  },
+  [SHOP_TYPES.HARDWARE]: {
+    productName: 'e.g., PVC Pipe 2 inch, Cement 50kg',
+    category: 'e.g., Plumbing, Building Materials',
+    description: 'e.g., High-quality PVC pipe for plumbing',
+  },
+  [SHOP_TYPES.ELECTRONICS]: {
+    productName: 'e.g., Samsung TV 55", iPhone Charger',
+    category: 'e.g., TVs, Phones, Accessories',
+    description: 'e.g., Smart TV with 4K resolution',
+  },
+  [SHOP_TYPES.CLOTHING]: {
+    productName: 'e.g., Cotton T-Shirt, Jeans',
+    category: 'e.g., Men, Women, Kids',
+    description: 'e.g., Comfortable cotton t-shirt',
+  },
+  [SHOP_TYPES.FURNITURE]: {
+    productName: 'e.g., Office Chair, Dining Table',
+    category: 'e.g., Living Room, Bedroom, Office',
+    description: 'e.g., Ergonomic office chair with lumbar support',
+  },
+  [SHOP_TYPES.BOOKSTORE]: {
+    productName: 'e.g., Things Fall Apart, WAEC Past Questions',
+    category: 'e.g., Fiction, Education, Textbooks',
+    description: 'e.g., Classic African literature novel',
+  },
+  [SHOP_TYPES.AUTO_PARTS]: {
+    productName: 'e.g., Brake Pad Toyota, Engine Oil 5W-30',
+    category: 'e.g., Brakes, Engine Parts, Filters',
+    description: 'e.g., Compatible with Toyota Corolla 2015-2020',
+  },
+  [SHOP_TYPES.BEAUTY]: {
+    productName: 'e.g., Shea Butter Cream, Lipstick',
+    category: 'e.g., Skincare, Makeup, Hair',
+    description: 'e.g., Natural shea butter moisturizing cream',
+  },
+  [SHOP_TYPES.SPORTS]: {
+    productName: 'e.g., Football, Running Shoes',
+    category: 'e.g., Balls, Footwear, Equipment',
+    description: 'e.g., Official size 5 football',
+  },
+  [SHOP_TYPES.TOYS]: {
+    productName: 'e.g., Building Blocks, Doll House',
+    category: 'e.g., Educational, Dolls, Games',
+    description: 'e.g., Colorful building blocks for ages 3+',
+  },
+  [SHOP_TYPES.PET]: {
+    productName: 'e.g., Dog Food 5kg, Cat Litter',
+    category: 'e.g., Dog, Cat, Fish',
+    description: 'e.g., Premium dry dog food for adult dogs',
+  },
+  [SHOP_TYPES.STATIONERY]: {
+    productName: 'e.g., A4 Paper Ream, Bic Pen',
+    category: 'e.g., Paper, Pens, Office Supplies',
+    description: 'e.g., 500 sheets A4 white paper',
+  },
+  [SHOP_TYPES.RESTAURANT]: {
+    productName: 'e.g., Jollof Rice, Fried Chicken',
+    category: 'e.g., Main Dishes, Sides, Drinks',
+    description: 'e.g., Delicious West African jollof rice',
+  },
+  [SHOP_TYPES.OTHER]: {
+    productName: 'Enter product name',
+    category: 'Select or create category',
+    description: 'Enter product description',
+  },
+  default: {
+    productName: 'Enter product name',
+    category: 'Select or create category',
+    description: 'Enter product description',
+  },
 };
 
 // Product Field Labels
@@ -513,6 +754,10 @@ export const PRODUCT_FIELD_LABELS = {
   author: 'Author (optional)',
   publisher: 'Publisher (optional)',
   assemblyRequired: 'Assembly Required (optional)',
+  allergens: 'Allergens (optional)',
+  size: 'Size (optional)',
+  ageRange: 'Age Range (optional)',
+  batteryRequired: 'Battery Required (optional)',
 };
 
 // Common Size Options (for clothing/beauty)

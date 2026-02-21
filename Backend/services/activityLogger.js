@@ -67,9 +67,9 @@ const ACTIVITY_TYPES = {
   USER_JOINED: 'user_joined',
   USER_ROLE_CHANGED: 'user_role_changed',
   
-  // INVENTORY ACTIVITIES
-  INVENTORY_LOW_STOCK: 'inventory_low_stock',
-  INVENTORY_OUT_OF_STOCK: 'inventory_out_of_stock',
+  // MATERIALS ACTIVITIES
+  MATERIALS_LOW_STOCK: 'materials_low_stock',
+  MATERIALS_OUT_OF_STOCK: 'materials_out_of_stock',
   
   // SYSTEM ACTIVITIES
   SYSTEM_BACKUP_COMPLETED: 'system_backup_completed',
@@ -255,8 +255,8 @@ const ACTIVITY_CONFIG = {
     icon: 'user-add'
   },
   
-  // INVENTORY ACTIVITIES
-  [ACTIVITY_TYPES.INVENTORY_LOW_STOCK]: {
+  // MATERIALS ACTIVITIES
+  [ACTIVITY_TYPES.MATERIALS_LOW_STOCK]: {
     recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'high',
@@ -908,10 +908,10 @@ const logCustomerCreated = async (customer, triggeredBy = null) => {
   });
 };
 
-// INVENTORY ACTIVITIES
+// MATERIALS ACTIVITIES
 const logLowStock = async (item, tenantId, triggeredBy = null) => {
   return logActivity({
-    activityType: ACTIVITY_TYPES.INVENTORY_LOW_STOCK,
+    activityType: ACTIVITY_TYPES.MATERIALS_LOW_STOCK,
     tenantId,
     title: 'Low Stock Alert',
     message: `${item.name} is running low on stock (${item.currentStock} remaining).`,
@@ -922,7 +922,7 @@ const logLowStock = async (item, tenantId, triggeredBy = null) => {
       reorderLevel: item.reorderLevel
     },
     triggeredBy,
-    link: `/inventory`
+    link: `/materials`
   });
 };
 
@@ -968,7 +968,7 @@ module.exports = {
   // Customers
   logCustomerCreated,
   
-  // Inventory
+  // Materials
   logLowStock
 };
 

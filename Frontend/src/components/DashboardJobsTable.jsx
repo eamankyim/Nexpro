@@ -11,7 +11,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Empty } from '@/components/ui/empty';
-import { ChevronLeft, ChevronRight, Briefcase } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Briefcase, Plus, Package } from 'lucide-react';
 import TableSkeleton from './TableSkeleton';
 import StatusChip from './StatusChip';
 import { useResponsive } from '../hooks/useResponsive';
@@ -25,6 +25,8 @@ import dayjs from 'dayjs';
  * @param {Function} getDueDateStatus - Function to get due date status (color, label, formatted)
  * @param {number} pageSize - Number of items per page (default: 5)
  * @param {boolean} isSalesTable - Whether this is showing sales data (different columns)
+ * @param {Function} onAddProduct - Callback when "Add Product" button is clicked (shown when no sales and isSalesTable)
+ * @param {boolean} hasProducts - Whether the tenant has any products (to show appropriate empty message)
  */
 const DashboardJobsTable = memo(({
   jobs = [],
@@ -32,7 +34,9 @@ const DashboardJobsTable = memo(({
   title = 'Jobs In Progress',
   getDueDateStatus,
   pageSize = 5,
-  isSalesTable = false
+  isSalesTable = false,
+  onAddProduct,
+  hasProducts = true
 }) => {
   const { isMobile } = useResponsive();
   const [pagination, setPagination] = useState({ current: 1, pageSize });
@@ -58,10 +62,27 @@ const DashboardJobsTable = memo(({
           </div>
         ) : paginatedJobs.length === 0 ? (
           <div className="flex items-center justify-center p-8">
-            <Empty
-              description={isSalesTable ? "No sales found" : "No jobs found"}
-              image={<Briefcase className="h-12 w-12 text-muted-foreground" />}
-            />
+            {isSalesTable && !hasProducts && onAddProduct ? (
+              <div className="text-center space-y-3">
+                <Package className="h-12 w-12 mx-auto text-muted-foreground opacity-50" />
+                <div>
+                  <p className="text-muted-foreground">You haven't added any products yet.</p>
+                  <p className="text-sm text-muted-foreground mt-1">Add your products first before you can start selling.</p>
+                </div>
+                <Button
+                  onClick={onAddProduct}
+                  className="bg-[#166534] hover:bg-[#14532d] text-white"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Your First Product
+                </Button>
+              </div>
+            ) : (
+              <Empty
+                description={isSalesTable ? "No sales found" : "No jobs found"}
+                image={<Briefcase className="h-12 w-12 text-muted-foreground" />}
+              />
+            )}
           </div>
         ) : isMobile ? (
           <>
@@ -108,7 +129,7 @@ const DashboardJobsTable = memo(({
                                     className={`w-fit text-xs ${
                                       color === 'red' ? 'bg-red-100 text-red-800 border-red-200' :
                                       color === 'orange' ? 'bg-orange-100 text-orange-800 border-orange-200' :
-                                      'bg-gray-100 text-gray-800 border-gray-200'
+                                      'bg-muted text-foreground border-border'
                                     }`}
                                   >
                                     {label}
@@ -221,7 +242,7 @@ const DashboardJobsTable = memo(({
                                   `w-fit ${
                                     color === 'red' ? 'bg-red-100 text-red-800 border-red-200' :
                                     color === 'orange' ? 'bg-orange-100 text-orange-800 border-orange-200' :
-                                    'bg-gray-100 text-gray-800 border-gray-200'
+                                    'bg-muted text-foreground border-border'
                                   }`
                                 }
                               >

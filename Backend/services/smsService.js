@@ -2,6 +2,33 @@ const axios = require('axios');
 const { formatToE164, isValidPhoneNumber } = require('../utils/phoneUtils');
 const { Setting } = require('../models');
 
+/**
+ * Build platform SMS config from environment variables.
+ * Used when tenant has no SMS config so receipts can still be sent via platform account.
+ * @returns {Object|null} - Config object or null if platform SMS not enabled
+ */
+function getPlatformConfigFromEnv() {
+  const enabled = process.env.PLATFORM_SMS_ENABLED === 'true' || process.env.PLATFORM_SMS_ENABLED === '1';
+  if (!enabled) return null;
+
+  const provider = (process.env.PLATFORM_SMS_PROVIDER || 'twilio').toLowerCase();
+  if (provider === 'twilio') {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID || process.env.PLATFORM_TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN || process.env.PLATFORM_TWILIO_AUTH_TOKEN;
+    const fromNumber = process.env.TWILIO_FROM_NUMBER || process.env.PLATFORM_TWILIO_FROM_NUMBER;
+    if (!accountSid || !authToken || !fromNumber) return null;
+    return { enabled: true, provider: 'twilio', accountSid, authToken, fromNumber };
+  }
+  if (provider === 'africas_talking') {
+    const apiKey = process.env.AFRICAS_TALKING_API_KEY || process.env.PLATFORM_AFRICAS_TALKING_API_KEY;
+    const username = process.env.AFRICAS_TALKING_USERNAME || process.env.PLATFORM_AFRICAS_TALKING_USERNAME;
+    const fromNumber = process.env.AFRICAS_TALKING_FROM_NUMBER || process.env.PLATFORM_AFRICAS_TALKING_FROM || 'NEXPRO';
+    if (!apiKey || !username) return null;
+    return { enabled: true, provider: 'africas_talking', apiKey, username, fromNumber };
+  }
+  return null;
+}
+
 class SMSService {
   constructor() {
     this.rateLimitCache = new Map();
@@ -9,7 +36,7 @@ class SMSService {
   }
 
   /**
-   * Get SMS configuration for a tenant
+   * Get SMS configuration for a tenant (tenant-only, no platform fallback)
    * @param {string} tenantId - Tenant ID
    * @returns {Promise<Object|null>} - SMS configuration or null
    */
@@ -29,6 +56,26 @@ class SMSService {
       return null;
     }
   }
+
+  /**
+   * Whether platform SMS is configured via env (so tenants without own config can send)
+   * @returns {boolean}
+   */
+  isPlatformSmsEnabled() {
+    return getPlatformConfigFromEnv() !== null;
+  }
+
+  /**
+   * Get resolved SMS config: tenant if set and enabled, otherwise platform from env.
+   * @param {string} tenantId - Tenant ID
+   * @returns {Promise<Object|null>} - SMS configuration or null
+   */
+  async getResolvedConfig(tenantId) {
+    const tenantConfig = await this.getConfig(tenantId);
+    if (tenantConfig) return tenantConfig;
+    return getPlatformConfigFromEnv();
+  }
+
 
   /**
    * Validate phone number format
@@ -69,7 +116,7 @@ class SMSService {
    */
   async sendMessage(tenantId, phoneNumber, message, fromNumber = null) {
     try {
-      const config = await this.getConfig(tenantId);
+      const config = await this.getResolvedConfig(tenantId);
       if (!config) {
         return {
           success: false,

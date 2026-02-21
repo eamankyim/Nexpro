@@ -288,11 +288,11 @@ const PrintableQuote = ({ quote, organization = {} }) => {
                   )}
                 </td>
                 <td>{item.quantity}</td>
-                <td>GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</td>
+                <td>₵ {parseFloat(item.unitPrice || 0).toFixed(2)}</td>
                 <td style={{ color: item.discountAmount > 0 ? '#52c41a' : 'inherit' }}>
                   {item.discountAmount > 0 ? (
                     <div>
-                      <div>-GHS {parseFloat(item.discountAmount || 0).toFixed(2)}</div>
+                      <div>-₵ {parseFloat(item.discountAmount || 0).toFixed(2)}</div>
                       {item.discountPercent > 0 && (
                         <div style={{ fontSize: '9px', color: '#666' }}>({item.discountPercent}% off)</div>
                       )}
@@ -304,7 +304,7 @@ const PrintableQuote = ({ quote, organization = {} }) => {
                     '-'
                   )}
                 </td>
-                <td>GHS {parseFloat(item.total || 0).toFixed(2)}</td>
+                <td>₵ {parseFloat(item.total || 0).toFixed(2)}</td>
               </tr>
             ))}
           </tbody>
@@ -313,7 +313,7 @@ const PrintableQuote = ({ quote, organization = {} }) => {
         <div className="totals-wrapper">
           <div className="totals-row">
             <span>Subtotal</span>
-            <span>GHS {parseFloat(quote.subtotal || 0).toFixed(2)}</span>
+            <span>₵ {parseFloat(quote.subtotal || 0).toFixed(2)}</span>
           </div>
           {quote.discountTotal > 0 && (
             <div className="totals-row" style={{ color: '#52c41a', fontWeight: '500' }}>
@@ -325,12 +325,12 @@ const PrintableQuote = ({ quote, organization = {} }) => {
                   </div>
                 )}
               </span>
-            <span>-GHS {parseFloat(quote.discountTotal || 0).toFixed(2)}</span>
+            <span>-₵ {parseFloat(quote.discountTotal || 0).toFixed(2)}</span>
           </div>
           )}
           <div className="totals-row total">
             <span>Total</span>
-            <span>GHS {parseFloat(quote.totalAmount || 0).toFixed(2)}</span>
+            <span>₵ {parseFloat(quote.totalAmount || 0).toFixed(2)}</span>
           </div>
         </div>
 

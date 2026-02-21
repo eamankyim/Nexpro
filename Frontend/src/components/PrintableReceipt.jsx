@@ -15,15 +15,32 @@ const formatAddress = (address) => {
   return parts.join('\n');
 };
 
+const getPrintStyles = (printConfig) => {
+  const format = printConfig?.format || 'a4';
+  const isThermal = format === 'thermal_58' || format === 'thermal_80';
+  const pageWidth = format === 'thermal_58' ? '58mm' : format === 'thermal_80' ? '80mm' : 'A4';
+  const contentWidth = format === 'thermal_58' ? '52mm' : format === 'thermal_80' ? '72mm' : '210mm';
+  const showLogo = printConfig?.showLogo !== false && !isThermal;
+  const fontSize = isThermal ? 'small' : (printConfig?.fontSize || 'normal');
+  const titleSize = fontSize === 'small' ? '14px' : '32px';
+  const bodySize = fontSize === 'small' ? '10px' : '12px';
+  const tableSize = fontSize === 'small' ? '9px' : '11px';
+  const grayscale = isThermal ? 'filter: grayscale(100%); -webkit-print-color-adjust: none; print-color-adjust: none;' : '';
+
+  return { isThermal, showLogo, titleSize, bodySize, tableSize, grayscale, pageWidth, contentWidth, fontSize };
+};
+
 const PrintableReceipt = ({
   sale,
   documentTitle = 'RECEIPT',
   documentSubtitle,
-  organization = {}
+  organization = {},
+  printConfig = {}
 }) => {
   if (!sale) return null;
 
   const titleText = documentTitle || 'RECEIPT';
+  const printStyles = getPrintStyles(printConfig);
 
   // Format logo URL - handle relative paths by prepending API base URL
   const logoSource = organization?.logoUrl
@@ -39,7 +56,9 @@ const PrintableReceipt = ({
     phone: organization.phone || '',
     website: organization.website || '',
     email: organization.email || '',
-    location: formatAddress(organization.address)
+    location: formatAddress(organization.address),
+    vatNumber: organization.tax?.vatNumber || '',
+    tin: organization.tax?.tin || ''
   };
 
   const paymentMethodLabels = {
@@ -56,19 +75,21 @@ const PrintableReceipt = ({
       <style>{`
         @media print {
           @page {
-            size: A4;
-            margin: 10mm;
+            size: ${printStyles.pageWidth} auto;
+            margin: ${printStyles.isThermal ? '2mm' : '10mm'};
           }
           
           .printable-receipt {
             width: 100% !important;
-            max-width: 210mm !important;
-            padding: 0 !important;
+            max-width: ${printStyles.contentWidth} !important;
+            padding: ${printStyles.isThermal ? '2mm' : '0'} !important;
             margin: 0 !important;
             background: white !important;
+            color: #000 !important;
             box-shadow: none !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+            ${printStyles.grayscale}
+            -webkit-print-color-adjust: ${printStyles.isThermal ? 'none' : 'exact'} !important;
+            print-color-adjust: ${printStyles.isThermal ? 'none' : 'exact'} !important;
           }
           
           .receipt-header {
@@ -93,13 +114,21 @@ const PrintableReceipt = ({
         }
         .printable-receipt {
           width: 100%;
-          max-width: 210mm;
-          padding: 15mm;
+          max-width: ${printStyles.contentWidth};
+          padding: ${printStyles.isThermal ? '4mm' : '15mm'};
           margin: 0 auto;
-          background: white;
           font-family: Arial, sans-serif;
-          color: #000;
+          background: var(--receipt-bg);
+          color: var(--receipt-fg);
           box-sizing: border-box;
+          ${printStyles.grayscale}
+          overflow-x: hidden;
+        }
+        @media (max-width: 640px) {
+          .printable-receipt {
+            padding: ${printStyles.isThermal ? '4mm' : '12px'};
+            max-width: 100%;
+          }
         }
         
         /* Ensure content stays together */
@@ -114,10 +143,17 @@ const PrintableReceipt = ({
         }
         .receipt-header {
           display: flex;
-          justify-content: space-between;
+          flex-direction: column;
+          gap: 16px;
           margin-bottom: 20px;
           padding-bottom: 15px;
-          border-bottom: 2px solid #000;
+          border-bottom: 2px solid var(--receipt-border);
+        }
+        @media (min-width: 640px) {
+          .receipt-header {
+            flex-direction: row;
+            justify-content: space-between;
+          }
         }
         .company-info {
           flex: 1;
@@ -127,39 +163,82 @@ const PrintableReceipt = ({
           max-height: 80px;
           margin-bottom: 10px;
           object-fit: contain;
+          ${!printStyles.showLogo ? 'display: none !important;' : ''}
+        }
+        @media (max-width: 640px) {
+          .company-logo {
+            max-width: 150px;
+            max-height: 60px;
+          }
         }
         .company-details {
-          font-size: 12px;
+          font-size: ${printStyles.bodySize};
           line-height: 1.6;
-          color: #333;
+          color: var(--receipt-muted);
+        }
+        .company-details > div {
+          word-break: break-word;
+          overflow-wrap: break-word;
+        }
+        @media (max-width: 640px) {
+          .company-details {
+            font-size: ${printStyles.fontSize === 'small' ? '9px' : '11px'};
+          }
+          .company-details > div {
+            font-size: ${printStyles.fontSize === 'small' ? '9px' : '11px'};
+          }
         }
         .receipt-info {
-          text-align: right;
+          text-align: left;
           flex: 1;
         }
+        @media (min-width: 640px) {
+          .receipt-info {
+            text-align: right;
+          }
+        }
         .receipt-title {
-          font-size: 32px;
+          font-size: ${printStyles.titleSize};
           font-weight: bold;
           margin-bottom: 6px;
-          color: #000;
+          color: var(--receipt-fg);
           letter-spacing: 2px;
         }
         .receipt-subtitle {
-          font-size: 14px;
-          color: #555;
+          font-size: ${printStyles.fontSize === 'small' ? '10px' : '14px'};
+          color: var(--receipt-muted);
           margin-bottom: 12px;
           text-transform: uppercase;
           letter-spacing: 1px;
         }
         .receipt-number {
-          font-size: 14px;
+          font-size: ${printStyles.bodySize};
           margin-bottom: 5px;
+          word-break: break-word;
+        }
+        .receipt-label-value-row {
+          display: flex;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .receipt-label-value-row span:last-child {
+          text-align: right;
+        }
+        @media (max-width: 640px) {
+          .receipt-number {
+            font-size: ${printStyles.fontSize === 'small' ? '9px' : '11px'};
+          }
         }
         .receipt-details {
           display: grid;
-          grid-template-columns: 1fr 1fr;
+          grid-template-columns: 1fr;
           gap: 20px;
           margin: 20px 0;
+        }
+        @media (min-width: 640px) {
+          .receipt-details {
+            grid-template-columns: 1fr 1fr;
+          }
         }
         .billing-section {
           margin-bottom: 30px;
@@ -169,33 +248,92 @@ const PrintableReceipt = ({
           font-weight: bold;
           margin-bottom: 10px;
           text-transform: uppercase;
-          color: #000;
+          color: var(--receipt-fg);
         }
         .billing-info {
           font-size: 12px;
           line-height: 1.8;
+          word-break: break-word;
+        }
+        @media (max-width: 640px) {
+          .billing-info {
+            font-size: 11px;
+            line-height: 1.6;
+          }
         }
         .items-table {
           width: 100%;
           border-collapse: collapse;
-          margin: 30px 0;
-          font-size: 11px;
+          margin: ${printStyles.isThermal ? '8px 0' : '30px 0'};
+          font-size: ${printStyles.tableSize};
+          table-layout: auto;
+          word-wrap: break-word;
+        }
+        @media (max-width: 640px) {
+          .items-table {
+            font-size: ${printStyles.fontSize === 'small' ? '8px' : '10px'};
+            margin: ${printStyles.isThermal ? '8px 0' : '20px 0'};
+          }
+          .items-table th,
+          .items-table td {
+            padding: 4px;
+            word-break: break-word;
+          }
         }
         .items-table th {
-          background-color: #f5f5f5;
-          padding: 8px;
+          background-color: var(--receipt-muted-bg);
+          padding: ${printStyles.isThermal ? '4px' : '8px'};
           text-align: left;
           font-weight: bold;
-          font-size: 11px;
-          border: 1px solid #ddd;
+          font-size: ${printStyles.tableSize};
+          border: 1px solid var(--receipt-border);
         }
         .items-table td {
-          padding: 6px 8px;
-          border: 1px solid #ddd;
-          font-size: 11px;
+          padding: ${printStyles.isThermal ? '3px 4px' : '6px 8px'};
+          border: 1px solid var(--receipt-border);
+          font-size: ${printStyles.tableSize};
         }
         .items-table tr:nth-child(even) {
-          background-color: #fafafa;
+          background-color: var(--receipt-muted-bg);
+        }
+        .receipt-items-list {
+          margin: 16px 0;
+          word-break: break-word;
+        }
+        @media (max-width: 640px) {
+          .receipt-items-list {
+            margin: 12px 0;
+          }
+        }
+        .receipt-item-row {
+          display: flex;
+          flex-wrap: wrap;
+          justify-content: space-between;
+          align-items: baseline;
+          gap: 4px 12px;
+          padding: 6px 0;
+          border-bottom: 1px solid var(--receipt-border);
+          font-size: 12px;
+          word-break: break-word;
+        }
+        .receipt-item-row .receipt-item-name {
+          flex: 1;
+          min-width: 0;
+        }
+        .receipt-item-row .receipt-item-price {
+          text-align: right;
+          font-weight: 500;
+        }
+        .receipt-item-row .receipt-item-detail {
+          font-size: 11px;
+          color: var(--receipt-muted);
+          width: 100%;
+        }
+        @media (max-width: 640px) {
+          .receipt-item-row {
+            font-size: 11px;
+            padding: 5px 0;
+          }
         }
         .text-right {
           text-align: right;
@@ -206,32 +344,177 @@ const PrintableReceipt = ({
         .totals-section {
           margin-top: 20px;
           margin-left: auto;
-          width: 300px;
+          width: 100%;
+          max-width: 300px;
+        }
+        @media (max-width: 640px) {
+          .totals-section {
+            max-width: 100%;
+            margin-left: 0;
+          }
         }
         .total-row {
           display: flex;
           justify-content: space-between;
-          padding: 8px 0;
-          font-size: 12px;
+          padding: ${printStyles.isThermal ? '4px 0' : '8px 0'};
+          font-size: ${printStyles.bodySize};
         }
         .total-row.bold {
           font-weight: bold;
-          font-size: 14px;
-          border-top: 2px solid #000;
+          font-size: ${printStyles.fontSize === 'small' ? '11px' : '14px'};
+          border-top: 2px solid var(--receipt-border);
           padding-top: 10px;
           margin-top: 10px;
         }
         .footer {
-          margin-top: 20px;
-          padding-top: 15px;
-          border-top: 1px solid #ddd;
+          margin-top: ${printStyles.isThermal ? '8px' : '20px'};
+          padding-top: ${printStyles.isThermal ? '8px' : '15px'};
+          border-top: 1px solid var(--receipt-border);
           text-align: center;
+          font-size: ${printStyles.fontSize === 'small' ? '9px' : '10px'};
+          color: var(--receipt-muted);
+        }
+        
+        /* Thermal receipt layout */
+        .thermal-receipt {
+          text-align: center;
+          max-width: ${printStyles.contentWidth};
+          margin: 0 auto;
+          padding: ${printStyles.isThermal ? '2mm' : '0'};
+          font-family: Arial, sans-serif;
           font-size: 10px;
-          color: #666;
+          color: var(--receipt-fg);
+        }
+        .thermal-title {
+          font-size: 14px;
+          font-weight: bold;
+          margin-bottom: 4px;
+          letter-spacing: 1px;
+        }
+        .thermal-business {
+          font-size: 9px;
+          line-height: 1.4;
+          margin-bottom: 6px;
+          color: var(--receipt-fg);
+        }
+        .thermal-separator {
+          border: none;
+          border-top: 1px dotted var(--receipt-border);
+          margin: 6px 0;
+        }
+        .thermal-date-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 9px;
+          margin-bottom: 6px;
+        }
+        .thermal-items {
+          text-align: left;
+          margin: 8px 0;
+          list-style: none;
+          padding: 0;
+        }
+        .thermal-item-list {
+          display: flex;
+          justify-content: space-between;
+          align-items: baseline;
+          gap: 8px;
+          font-size: 9px;
+          padding: 4px 0;
+          border-bottom: none;
+        }
+        .thermal-item-name {
+          flex: 1;
+          min-width: 0;
+        }
+        .thermal-item-amount {
+          font-weight: 500;
+          text-align: right;
+          flex-shrink: 0;
+        }
+        .thermal-total-row {
+          display: flex;
+          justify-content: space-between;
+          font-size: 10px;
+          padding: 3px 0;
+        }
+        .thermal-total-row.bold {
+          font-weight: bold;
+          font-size: 11px;
+          border-top: 1px dotted var(--receipt-border);
+          padding-top: 6px;
+          margin-top: 4px;
+        }
+        .thermal-thanks {
+          font-size: 12px;
+          font-weight: bold;
+          margin-top: 10px;
+          letter-spacing: 2px;
         }
       `}</style>
 
-      <div className="printable-receipt">
+      <div className={`printable-receipt ${printStyles.isThermal ? 'thermal-mode' : ''}`}>
+        {printStyles.isThermal ? (
+          /* Thermal receipt layout - simplified CASH RECEIPT style */
+          <div className="thermal-receipt">
+            <div className="thermal-title">CASH RECEIPT</div>
+            <div className="thermal-business">
+              <div style={{ fontWeight: 600 }}>{companyInfo.name}</div>
+              {companyInfo.location && <div>Address: {companyInfo.location.replace(/\n/g, ', ')}</div>}
+              {companyInfo.phone && <div>Tel: {companyInfo.phone}</div>}
+              {companyInfo.vatNumber && <div>VAT: {companyInfo.vatNumber}</div>}
+              {companyInfo.tin && <div>TIN: {companyInfo.tin}</div>}
+            </div>
+            <hr className="thermal-separator" />
+            <div className="thermal-date-row">
+              <span>Date: {dayjs(sale.createdAt).format('DD-MM-YYYY')}</span>
+              <span>{dayjs(sale.createdAt).format('HH:mm')}</span>
+            </div>
+            <hr className="thermal-separator" />
+            <div className="thermal-items">
+              {sale.items && sale.items.length > 0 ? (
+                sale.items.map((item, index) => {
+                  const qty = item.quantity || 1;
+                  const total = parseFloat(item.total || 0).toFixed(2);
+                  const unitPrice = parseFloat(item.unitPrice || 0).toFixed(2);
+                  return (
+                    <div key={item.id || index} className="thermal-item-list">
+                      <span className="thermal-item-name">{item.name || item.product?.name || 'Item'}</span>
+                      <span className="thermal-item-amount">₵ {total}</span>
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="thermal-item-list">
+                  <span className="thermal-item-name">No items</span>
+                  <span className="thermal-item-amount">₵ 0.00</span>
+                </div>
+              )}
+            </div>
+            <hr className="thermal-separator" />
+            <div className="thermal-total-row">
+              <span>Sub-total</span>
+              <span>₵ {parseFloat(sale.subtotal || 0).toFixed(2)}</span>
+            </div>
+            {parseFloat(sale.tax || 0) > 0 && (
+              <div className="thermal-total-row">
+                <span>Sales Tax</span>
+                <span>₵ {parseFloat(sale.tax || 0).toFixed(2)}</span>
+              </div>
+            )}
+            <div className="thermal-total-row bold">
+              <span>Total</span>
+              <span>₵ {parseFloat(sale.total || 0).toFixed(2)}</span>
+            </div>
+            <hr className="thermal-separator" />
+            <div className="thermal-thanks text-center">THANK YOU</div>
+            <div className="thermal-business-footer" style={{ fontSize: '9px', marginTop: '8px', lineHeight: 1.4 }}>
+              {companyInfo.name}
+              {companyInfo.phone && ` | ${companyInfo.phone}`}
+            </div>
+          </div>
+        ) : (
+          <>
         {/* Header */}
         <div className="receipt-header">
           <div className="company-info">
@@ -256,9 +539,15 @@ const PrintableReceipt = ({
                 </div>
               )}
               {companyInfo.email && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                   <Mail className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
                   <span>{companyInfo.email}</span>
+                </div>
+              )}
+              {(companyInfo.vatNumber || companyInfo.tin) && (
+                <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #e5e7eb', fontSize: '11px', color: '#6b7280' }}>
+                  {companyInfo.vatNumber && <div>VAT: {companyInfo.vatNumber}</div>}
+                  {companyInfo.tin && <div>TIN: {companyInfo.tin}</div>}
                 </div>
               )}
             </div>
@@ -268,17 +557,21 @@ const PrintableReceipt = ({
             {documentSubtitle && (
               <div className="receipt-subtitle">{documentSubtitle}</div>
             )}
-            <div className="receipt-number">
-              <strong>Receipt #:</strong> {sale.saleNumber}
+            <div className="receipt-number receipt-label-value-row">
+              <span><strong>Receipt #:</strong></span>
+              <span>{sale.saleNumber}</span>
             </div>
-            <div className="receipt-number">
-              <strong>Date:</strong> {dayjs(sale.createdAt).format('MMMM DD, YYYY')}
+            <div className="receipt-number receipt-label-value-row">
+              <span><strong>Date:</strong></span>
+              <span>{dayjs(sale.createdAt).format('MMMM DD, YYYY')}</span>
             </div>
-            <div className="receipt-number">
-              <strong>Time:</strong> {dayjs(sale.createdAt).format('h:mm A')}
+            <div className="receipt-number receipt-label-value-row">
+              <span><strong>Time:</strong></span>
+              <span>{dayjs(sale.createdAt).format('h:mm A')}</span>
             </div>
-            <div className="receipt-number">
-              <strong>Payment Method:</strong> {paymentMethodLabels[sale.paymentMethod] || sale.paymentMethod}
+            <div className="receipt-number receipt-label-value-row">
+              <span><strong>Payment Method:</strong></span>
+              <span>{paymentMethodLabels[sale.paymentMethod] || sale.paymentMethod}</span>
             </div>
           </div>
         </div>
@@ -322,92 +615,67 @@ const PrintableReceipt = ({
           )}
         </div>
 
-        {/* Items Table */}
-        <table className="items-table">
-          <thead>
-            <tr>
-              <th style={{ width: '40%' }}>Item</th>
-              <th className="text-center" style={{ width: '15%' }}>Qty</th>
-              <th className="text-right" style={{ width: '15%' }}>Unit Price</th>
-              <th className="text-right" style={{ width: '15%' }}>Discount</th>
-              <th className="text-right" style={{ width: '15%' }}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sale.items && sale.items.length > 0 ? (
-              sale.items.map((item, index) => (
-                <tr key={item.id || index}>
-                  <td>
-                    <div>{item.name || item.product?.name || 'Item'}</div>
-                    {item.sku && (
-                      <div style={{ fontSize: '10px', color: '#666' }}>
-                        SKU: {item.sku}
-                      </div>
-                    )}
-                  </td>
-                  <td className="text-center">{item.quantity || 1}</td>
-                  <td className="text-right">GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</td>
-                  <td className="text-right">
-                    {parseFloat(item.discount || 0) > 0 ? (
-                      <>-GHS {parseFloat(item.discount || 0).toFixed(2)}</>
-                    ) : (
-                      <>—</>
-                    )}
-                  </td>
-                  <td className="text-right">
-                    <strong>GHS {parseFloat(item.total || 0).toFixed(2)}</strong>
-                  </td>
-                </tr>
-              ))
-            ) : (
-              <tr>
-                <td colSpan="5" className="text-center">No items</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+        {/* Items list (receipts use list, not table) */}
+        <div className="receipt-items-list" style={{ margin: '16px 0' }}>
+          {sale.items && sale.items.length > 0 ? (
+            sale.items.map((item, index) => {
+              const qty = item.quantity || 1;
+              const total = parseFloat(item.total || 0).toFixed(2);
+              const unitPrice = parseFloat(item.unitPrice || 0).toFixed(2);
+              return (
+                <div key={item.id || index} className="receipt-item-row">
+                  <div className="receipt-item-name" style={{ fontWeight: 500 }}>{item.name || item.product?.name || 'Item'}</div>
+                  <div className="receipt-item-price">₵ {total}</div>
+                  <div className="receipt-item-detail">{qty} × ₵ {unitPrice}</div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="receipt-item-row">No items</div>
+          )}
+        </div>
 
         {/* Totals */}
         <div className="totals-section">
           <div className="total-row">
             <span>Subtotal:</span>
-            <span>GHS {parseFloat(sale.subtotal || 0).toFixed(2)}</span>
+            <span>₵ {parseFloat(sale.subtotal || 0).toFixed(2)}</span>
           </div>
           {parseFloat(sale.discount || 0) > 0 && (
             <div className="total-row" style={{ color: '#52c41a', fontWeight: '500' }}>
               <span>Discount:</span>
-              <span>-GHS {parseFloat(sale.discount || 0).toFixed(2)}</span>
+              <span>-₵ {parseFloat(sale.discount || 0).toFixed(2)}</span>
             </div>
           )}
           {parseFloat(sale.tax || 0) > 0 && (
             <div className="total-row">
               <span>Tax:</span>
-              <span>GHS {parseFloat(sale.tax || 0).toFixed(2)}</span>
+              <span>₵ {parseFloat(sale.tax || 0).toFixed(2)}</span>
             </div>
           )}
           <div className="total-row bold">
             <span>Total:</span>
-            <span>GHS {parseFloat(sale.total || 0).toFixed(2)}</span>
+            <span>₵ {parseFloat(sale.total || 0).toFixed(2)}</span>
           </div>
           {parseFloat(sale.amountPaid || 0) > 0 && (
             <div className="total-row">
               <span>Amount Paid:</span>
-              <span style={{ color: '#52c41a' }}>GHS {parseFloat(sale.amountPaid || 0).toFixed(2)}</span>
+              <span style={{ color: '#52c41a' }}>₵ {parseFloat(sale.amountPaid || 0).toFixed(2)}</span>
             </div>
           )}
           {parseFloat(sale.change || 0) > 0 && (
             <div className="total-row">
               <span>Change:</span>
-              <span style={{ color: '#52c41a' }}>GHS {parseFloat(sale.change || 0).toFixed(2)}</span>
+              <span style={{ color: '#52c41a' }}>₵ {parseFloat(sale.change || 0).toFixed(2)}</span>
             </div>
           )}
         </div>
 
         {/* Notes */}
         {sale.notes && (
-          <div className="notes-section" style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px solid #ddd' }}>
+          <div className="notes-section" style={{ marginTop: '20px', paddingTop: '15px', borderTop: '1px solid var(--receipt-border)' }}>
             <div style={{ fontWeight: 'bold', fontSize: '12px', marginBottom: '8px' }}>Notes:</div>
-            <div style={{ fontSize: '11px', lineHeight: '1.6', color: '#666' }}>{sale.notes}</div>
+            <div style={{ fontSize: '11px', lineHeight: '1.6', color: 'var(--receipt-muted)' }}>{sale.notes}</div>
           </div>
         )}
 
@@ -420,6 +688,8 @@ const PrintableReceipt = ({
             {companyInfo.email && ` | ${companyInfo.email}`}
           </div>
         </div>
+          </>
+        )}
       </div>
     </>
   );

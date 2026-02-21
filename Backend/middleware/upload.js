@@ -105,6 +105,18 @@ const vendorPriceListUploader = multer({
 // Product image uploader (memory storage; controller writes to disk)
 const productImageUploader = imageOnlyMulter();
 
+// Expense receipt uploader (images + PDF)
+const expenseReceiptUploader = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: parseInt(process.env.UPLOAD_MAX_SIZE_MB || '10', 10) * 1024 * 1024
+  },
+  fileFilter: (req, file, cb) => {
+    const allowed = file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf';
+    cb(allowed ? null : new Error('Only images (PNG, JPG, etc.) and PDF files are allowed'), allowed);
+  }
+});
+
 /**
  * Middleware to check storage limits before upload
  * Use this BEFORE multer middleware
@@ -156,6 +168,7 @@ module.exports = {
   upload,
   vendorPriceListUploader,
   productImageUploader,
+  expenseReceiptUploader,
   baseUploadDir,
   ensureDirExists,
   createUploader,

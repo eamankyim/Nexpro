@@ -7,6 +7,12 @@ const customerService = {
     return await api.get(`/customers?${queryString}`);
   },
 
+  // Get customer stats (counts) – lightweight, single query
+  getStats: async () => {
+    const res = await api.get('/customers/stats');
+    return res?.data || res;
+  },
+
   // Get all customers (alias for getAll, used by POS)
   getCustomers: async (params = {}) => {
     const queryString = new URLSearchParams(params).toString();

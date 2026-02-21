@@ -9,9 +9,19 @@ const path = require('path');
 // Load .env from Backend directory (avoids cwd issues when running from project root or different case)
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
+// Validate required environment variables at startup
+const REQUIRED_ENV_VARS = ['JWT_SECRET', 'DATABASE_URL'];
+const missingEnvVars = REQUIRED_ENV_VARS.filter(v => !process.env[v]);
+if (missingEnvVars.length > 0) {
+  console.error(`[Server] ❌ Missing required environment variables: ${missingEnvVars.join(', ')}`);
+  console.error('[Server] Please set these variables in your .env file or environment');
+  process.exit(1);
+}
+
 const { sequelize, testConnection } = require('./config/database');
 const config = require('./config/config');
 const errorHandler = require('./middleware/errorHandler');
+const requestTiming = require('./middleware/requestTiming');
 const { generalLimiter, webhookLimiter } = require('./middleware/rateLimiter');
 const { isOriginAllowed, setCorsHeaders } = require('./utils/corsUtils');
 const { csrfProtection } = require('./middleware/csrfProtection');
@@ -37,9 +47,11 @@ const inviteRoutes = require('./routes/inviteRoutes');
 const tenantRoutes = require('./routes/tenantRoutes');
 const reportRoutes = require('./routes/reportRoutes');
 const assistantRoutes = require('./routes/assistantRoutes');
-const inventoryRoutes = require('./routes/inventoryRoutes');
+const materialsRoutes = require('./routes/materialsRoutes');
+const equipmentRoutes = require('./routes/equipmentRoutes');
 const leadRoutes = require('./routes/leadRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const tourRoutes = require('./routes/tourRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const employeeRoutes = require('./routes/employeeRoutes');
 const accountingRoutes = require('./routes/accountingRoutes');
@@ -47,6 +59,7 @@ const payrollRoutes = require('./routes/payrollRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const platformSettingsRoutes = require('./routes/platformSettingsRoutes');
 const platformAdminRoutes = require('./routes/platformAdminRoutes');
+const platformAdminRoleRoutes = require('./routes/platformAdminRoleRoutes');
 const customDropdownRoutes = require('./routes/customDropdownRoutes');
 const sabitoMappingRoutes = require('./routes/sabitoMappingRoutes');
 // Shop Management Routes
@@ -65,6 +78,7 @@ const stockCountRoutes = require('./routes/stockCountRoutes');
 const mobileMoneyRoutes = require('./routes/mobileMoneyRoutes');
 // Variance Detection Routes
 const varianceRoutes = require('./routes/varianceRoutes');
+const userWorkspaceRoutes = require('./routes/userWorkspaceRoutes');
 const swaggerUi = require('swagger-ui-express');
 const openapiSpecification = require('./docs/openapi');
 
@@ -76,6 +90,12 @@ app.use(cors(config.cors));
 app.use(express.json({ limit: '10mb' })); // Increased limit for base64 images
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(compression());
+app.use('/api', requestTiming);
+// Allow cross-origin loading of uploads (images) so frontend on different port can display them
+app.use('/uploads', (req, res, next) => {
+  res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  next();
+});
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Explicit OPTIONS preflight for /api (runs before rate limit). CORS uses preflightContinue,
@@ -159,9 +179,12 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/invites', inviteRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/assistant', assistantRoutes);
-app.use('/api/inventory', inventoryRoutes);
+app.use('/api/materials', materialsRoutes);
+app.use('/api/inventory', materialsRoutes); // backward compat; remove after frontend/mobile use /api/materials
+app.use('/api/equipment', equipmentRoutes);
 app.use('/api/leads', leadRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/tours', tourRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/accounting', accountingRoutes);
@@ -170,6 +193,7 @@ app.use('/api/tenants', tenantRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/platform-settings', platformSettingsRoutes);
 app.use('/api/platform-admins', platformAdminRoutes);
+app.use('/api/platform-admin', platformAdminRoleRoutes);
 app.use('/api/custom-dropdowns', customDropdownRoutes);
 app.use('/api/sabito', sabitoMappingRoutes);
 // Shop Management Routes
@@ -188,6 +212,7 @@ app.use('/api/stock-counts', stockCountRoutes);
 app.use('/api/mobile-money', mobileMoneyRoutes);
 // Variance Detection Routes
 app.use('/api/variance', varianceRoutes);
+app.use('/api/user-workspace', userWorkspaceRoutes);
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapiSpecification));
 
 // Health check
@@ -218,6 +243,7 @@ app.get('/', (req, res) => {
       invites: '/api/invites',
       reports: '/api/reports',
       inventory: '/api/inventory',
+      equipment: '/api/equipment',
       leads: '/api/leads',
       notifications: '/api/notifications',
       tenants: '/api/tenants',
@@ -248,13 +274,31 @@ const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
 const server = http.createServer(app);
 
 if (!isVercel) {
-  const PORT = config.port;
+  const PORT_BASE = config.port;
+  const PORT_MAX = PORT_BASE + 10;
+
+  const onListen = (port) => {
+    console.log(`[Server] Running in ${config.nodeEnv} mode on port ${port}`);
+    const openaiKey = process.env.OPENAI_API_KEY?.trim();
+    console.log(`[Server] OpenAI: ${openaiKey ? 'configured' : 'not set (AI features disabled)'}`);
+    if (process.env.SABITO_SYNC_ENABLED !== 'false') {
+      try {
+        require('./services/sabitoScheduler').start();
+      } catch (error) {
+        console.error('[Server] Failed to start Sabito scheduler:', error);
+      }
+    }
+    try {
+      require('./services/paymentReminderService').start();
+      console.log('[Server] ✅ Payment reminder service started');
+    } catch (error) {
+      console.error('[Server] Failed to start payment reminder service:', error);
+    }
+  };
 
   const startServer = async () => {
     try {
       await testConnection();
-
-      // Initialize WebSocket server
       try {
         const { initializeWebSocket } = require('./services/websocketService');
         initializeWebSocket(server);
@@ -263,30 +307,24 @@ if (!isVercel) {
         console.error('[Server] Failed to initialize WebSocket:', error);
       }
 
-      server.listen(PORT, () => {
-        console.log(`[Server] Running in ${config.nodeEnv} mode on port ${PORT}`);
-        const openaiKey = process.env.OPENAI_API_KEY?.trim();
-        console.log(`[Server] OpenAI: ${openaiKey ? 'configured' : 'not set (AI features disabled)'}`);
-        
-        // Start Sabito sync scheduler
-        if (process.env.SABITO_SYNC_ENABLED !== 'false') {
-          try {
-            const sabitoScheduler = require('./services/sabitoScheduler');
-            sabitoScheduler.start();
-          } catch (error) {
-            console.error('[Server] Failed to start Sabito scheduler:', error);
+      const tryListen = (port) => {
+        if (port > PORT_MAX) {
+          console.error(`[Server] No available port in range ${PORT_BASE}-${PORT_MAX}`);
+          process.exit(1);
+        }
+        server.once('error', (err) => {
+          if (err.code === 'EADDRINUSE') {
+            console.log(`[Server] Port ${port} in use, trying ${port + 1}...`);
+            tryListen(port + 1);
+          } else {
+            console.error('Server error:', err);
+            process.exit(1);
           }
-        }
+        });
+        server.listen(port, () => onListen(port));
+      };
 
-        // Start payment reminder service
-        try {
-          const paymentReminderService = require('./services/paymentReminderService');
-          paymentReminderService.start();
-          console.log('[Server] ✅ Payment reminder service started');
-        } catch (error) {
-          console.error('[Server] Failed to start payment reminder service:', error);
-        }
-      });
+      tryListen(PORT_BASE);
     } catch (error) {
       console.error('Failed to start server:', error);
       process.exit(1);

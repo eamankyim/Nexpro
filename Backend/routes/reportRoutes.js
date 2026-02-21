@@ -5,16 +5,22 @@ const {
   getOutstandingPaymentsReport,
   getSalesReport,
   getProfitLossReport,
+  getIncomeExpenditureReport,
+  getProfitLossComplianceReport,
+  getFinancialPositionReport,
+  getCashFlowReport,
   getKpiSummary,
   getTopCustomers,
   getPipelineSummary,
   getServiceAnalyticsReport,
   getProductSalesReport,
   getPrescriptionReport,
-  getInventorySummary,
-  getInventoryMovements,
+  getProductStockSummary,
+  getMaterialsSummary,
+  getMaterialsMovements,
   getFastestMovingItems,
   getRevenueByChannel,
+  getVatReport,
   generateAIAnalysis,
   getOverviewPhase1,
   getOverviewPhase2
@@ -42,17 +48,23 @@ router.get('/revenue', reportCache, getRevenueReport);
 router.get('/expenses', reportCache, getExpenseReport);
 router.get('/outstanding-payments', reportCache, getOutstandingPaymentsReport);
 router.get('/sales', reportCache, getSalesReport);
+router.get('/profit-loss/compliance', reportCache, getProfitLossComplianceReport);
 router.get('/profit-loss', reportCache, getProfitLossReport);
+router.get('/income-expenditure', reportCache, getIncomeExpenditureReport);
+router.get('/financial-position', reportCache, getFinancialPositionReport);
+router.get('/cashflow', reportCache, getCashFlowReport);
 router.get('/kpi-summary', reportCache, getKpiSummary);
 router.get('/top-customers', reportCache, getTopCustomers);
 router.get('/pipeline-summary', reportCache, getPipelineSummary);
 router.get('/service-analytics', reportCache, getServiceAnalyticsReport);
 router.get('/product-sales', reportCache, getProductSalesReport);
 router.get('/prescription-report', reportCache, getPrescriptionReport);
-router.get('/inventory-summary', reportCache, getInventorySummary);
-router.get('/inventory-movements', reportCache, getInventoryMovements);
+router.get('/product-stock-summary', reportCache, getProductStockSummary);
+router.get('/materials-summary', reportCache, getMaterialsSummary);
+router.get('/materials-movements', reportCache, getMaterialsMovements);
 router.get('/fastest-moving-items', reportCache, getFastestMovingItems);
 router.get('/revenue-by-channel', reportCache, getRevenueByChannel);
+router.get('/vat', reportCache, getVatReport);
 router.post('/ai-analysis', generateAIAnalysis); // No cache for POST requests
 
 module.exports = router;

@@ -2,6 +2,7 @@ import { memo, useState, useMemo, useRef, useCallback } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Empty } from '@/components/ui/empty';
+import { EmptyState } from '@/components/ui/empty-state';
 import { ChevronLeft, ChevronRight, ChevronRight as ChevronRightIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import SwipeableCard from './SwipeableCard';
@@ -17,8 +18,11 @@ import {
  * @param {Array} data - Array of data objects
  * @param {Array} columns - Array of column definitions with { key, label, render }
  * @param {boolean} loading - Loading state
- * @param {string} emptyDescription - Description text when empty
+ * @param {Object} emptyState - EmptyState config { icon, title, description, primaryAction, secondaryAction }
+ * @param {string} emptyDescription - (Legacy) Description text when empty
+ * @param {string} emptyTitle - (Legacy) Title text when empty
  * @param {React.ReactNode} emptyIcon - Icon to show when empty
+ * @param {React.ReactNode} emptyAction - Optional action button/content to show when empty
  * @param {number} pageSize - Number of items per page (default: 10)
  * @param {Function} onPageChange - Callback when page changes (optional, for external pagination)
  * @param {Object} externalPagination - External pagination state { current, total } (optional)
@@ -27,13 +31,19 @@ import {
  * @param {boolean} enableSwipe - Whether to enable swipe actions (default: true on mobile)
  * @param {Function} getQuickActions - Optional function that returns quick action menu items for each item
  * @param {boolean} enableLongPress - Whether to enable long-press quick actions (default: true on mobile)
+ * @param {boolean} gridLayout - When true, show cards in a multi-column grid (desktop grid mode); when false, single column stack
+ * @param {Function} getCardImage - Optional function(record) => imageUrl to show a thumbnail at top of each card
+ * @param {boolean} showLabelsInCardView - When false (default), omit column labels in card view for "no header" consistency
  */
 const MobileCardView = memo(({
   data = [],
   columns = [],
   loading = false,
+  emptyState,
   emptyDescription = 'No items found',
+  emptyTitle,
   emptyIcon,
+  emptyAction,
   pageSize = 10,
   onPageChange,
   externalPagination,
@@ -42,6 +52,9 @@ const MobileCardView = memo(({
   enableSwipe = true,
   getQuickActions,
   enableLongPress = true,
+  gridLayout = false,
+  getCardImage,
+  showLabelsInCardView = false,
 }) => {
   const { isMobile } = useResponsive();
   const [internalPagination, setInternalPagination] = useState({ current: 1, pageSize });
@@ -84,13 +97,19 @@ const MobileCardView = memo(({
   };
 
   // Separate primary columns (first 2-3) from secondary columns
+  // Filter out hidden columns (e.g. costPrice, margin on mobile)
+  const visibleColumns = useMemo(() => 
+    columns.filter(col => (col.key !== 'actions' && !col.label?.toLowerCase().includes('action')) && !col.hidden),
+    [columns]
+  );
+
   const primaryColumns = useMemo(() => {
-    return columns.slice(0, 3).filter(col => col.key !== 'actions');
-  }, [columns]);
+    return visibleColumns.slice(0, 3);
+  }, [visibleColumns]);
 
   const secondaryColumns = useMemo(() => {
-    return columns.slice(3).filter(col => col.key !== 'actions');
-  }, [columns]);
+    return visibleColumns.slice(3);
+  }, [visibleColumns]);
 
   // Find actions column
   const actionsColumn = useMemo(() => {
@@ -156,14 +175,21 @@ const MobileCardView = memo(({
     }
   }, []);
 
+  const cardsContainerClass = gridLayout
+    ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'
+    : isMobile ? 'space-y-2' : 'space-y-3';
+
+  // Dashboard-style: separate cards like sales cards (no label: value pairs, cleaner layout)
+  const useDashboardCardStyle = isMobile && !gridLayout;
+
   if (loading) {
     return (
-      <div className="space-y-3">
-        {[...Array(pageSize)].map((_, i) => (
+      <div className={cardsContainerClass}>
+        {[...Array(Math.min(pageSize, gridLayout ? 8 : pageSize))].map((_, i) => (
           <Card key={i} className="animate-pulse">
-            <CardContent className="p-4">
-              <div className="h-4 bg-gray-200 rounded w-3/4 mb-3"></div>
-              <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+            <CardContent className={isMobile ? "px-4 py-3" : "p-4"}>
+              <div className="h-4 bg-muted rounded w-3/4 mb-3"></div>
+              <div className="h-3 bg-muted rounded w-1/2"></div>
             </CardContent>
           </Card>
         ))}
@@ -174,10 +200,24 @@ const MobileCardView = memo(({
   if (paginatedData.length === 0) {
     return (
       <div className="flex items-center justify-center p-8">
-        <Empty
-          description={emptyDescription}
-          image={emptyIcon}
-        />
+        {emptyState ? (
+          <EmptyState
+            icon={emptyState.icon}
+            title={emptyState.title}
+            description={emptyState.description}
+            primaryAction={emptyState.primaryAction}
+            secondaryAction={emptyState.secondaryAction}
+          />
+        ) : (
+          <div className="text-center space-y-3">
+            {emptyTitle && <h3 className="text-lg font-medium">{emptyTitle}</h3>}
+            <Empty
+              description={emptyDescription}
+              image={emptyIcon}
+            />
+            {emptyAction}
+          </div>
+        )}
       </div>
     );
   }
@@ -227,7 +267,7 @@ const MobileCardView = memo(({
         </Popover>
       )}
 
-      <div className="space-y-3">
+      <div className={cardsContainerClass}>
         {/* Cards */}
         {paginatedData.map((item, index) => {
         const swipeActions = getItemSwipeActions(item, index);
@@ -237,12 +277,15 @@ const MobileCardView = memo(({
         const quickActions = getItemQuickActions(item, index);
         const hasItemQuickActions = quickActions && quickActions.length > 0 && enableLongPress && isMobile;
 
+        const cardImageUrl = getCardImage ? getCardImage(item) : null;
+        const columnLabel = (col) => col.label ?? col.title ?? col.key;
+
         const cardContent = (
           <Card 
             key={item.id || item.key || index}
             className={cn(
-              "transition-colors",
-              onCardClick && "cursor-pointer hover:bg-gray-50 active:bg-gray-100",
+              "transition-colors overflow-hidden border",
+              onCardClick && "cursor-pointer hover:bg-muted active:bg-muted/80",
               hasItemQuickActions && "select-none" // Prevent text selection during long press
             )}
             onClick={() => onCardClick && onCardClick(item, index)}
@@ -250,63 +293,124 @@ const MobileCardView = memo(({
             onTouchEnd={handleTouchEnd}
             onTouchMove={handleTouchMove}
           >
-            <CardContent className="p-4">
-              {/* Primary Information */}
-              <div className="space-y-2 mb-3">
-                {primaryColumns.map((column) => {
-                  const value = column.render 
-                    ? column.render(item[column.key], item, index)
-                    : (item[column.key] !== undefined && item[column.key] !== null ? item[column.key] : '—');
-                  
-                  return (
-                    <div key={column.key} className="flex items-start justify-between gap-2">
-                      <span className="text-sm font-medium text-gray-500 min-w-[80px]">
-                        {column.label}:
-                      </span>
-                      <span className="text-sm text-gray-900 flex-1 text-right">
-                        {value}
-                      </span>
-                    </div>
-                  );
-                })}
+            {cardImageUrl && (
+              <div className="w-full h-24 sm:h-28 bg-muted flex-shrink-0">
+                <img
+                  src={cardImageUrl}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
               </div>
-
-              {/* Secondary Information (collapsible or shown if space allows) */}
-              {secondaryColumns.length > 0 && (
-                <div className="space-y-1.5 pt-2 border-t border-gray-100">
-                  {secondaryColumns.slice(0, 2).map((column) => {
-                    const value = column.render 
-                      ? column.render(item[column.key], item, index)
-                      : (item[column.key] !== undefined && item[column.key] !== null ? item[column.key] : '—');
-                    
-                    return (
-                      <div key={column.key} className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-gray-400 min-w-[70px]">
-                          {column.label}:
-                        </span>
-                        <span className="text-xs text-gray-600 flex-1 text-right truncate">
-                          {value}
-                        </span>
+            )}
+            <CardContent className={cn(isMobile ? "px-4 py-3" : "p-4", cardImageUrl && "pt-3")}>
+              {useDashboardCardStyle ? (
+                <>
+                  {/* Dashboard-style: primary row (name + category badge) - like sales cards */}
+                  <div className="flex justify-between items-start gap-2">
+                    <div className="min-w-0 flex-1">
+                      {primaryColumns[0] && (
+                        <div className="text-foreground">
+                          {primaryColumns[0].render
+                            ? primaryColumns[0].render(item[primaryColumns[0].key], item, index)
+                            : (item[primaryColumns[0].key] ?? '—')}
+                        </div>
+                      )}
+                      {primaryColumns[2] && (
+                        <div className="text-muted-foreground text-sm truncate mt-0.5">
+                          {primaryColumns[2].render
+                            ? primaryColumns[2].render(item[primaryColumns[2].key], item, index)
+                            : (item[primaryColumns[2].key] ?? '—')}
+                        </div>
+                      )}
+                    </div>
+                    {primaryColumns[1] && (
+                      <div className="shrink-0">
+                        {primaryColumns[1].render
+                          ? primaryColumns[1].render(item[primaryColumns[1].key], item, index)
+                          : (item[primaryColumns[1].key] ?? '—')}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Actions */}
-              {actionsColumn && (
-                <div className="mt-3 pt-3 border-t border-gray-100">
-                  <div className="flex justify-end">
-                    {actionsColumn.render && actionsColumn.render(null, item, index)}
+                    )}
                   </div>
-                </div>
-              )}
-
-              {/* Click indicator */}
-              {onCardClick && (
-                <div className="mt-2 flex justify-end">
-                  <ChevronRightIcon className="h-4 w-4 text-gray-400" />
-                </div>
+                  {/* Dashboard-style: bottom row with border-t (stock + price) */}
+                  <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t">
+                    {secondaryColumns.slice(0, 2).map((column) => (
+                      <div key={column.key} className="text-sm text-muted-foreground min-w-0">
+                        {column.render
+                          ? column.render(item[column.key], item, index)
+                          : (item[column.key] ?? '—')}
+                      </div>
+                    ))}
+                  </div>
+                  {/* Actions - full width View Details */}
+                  {actionsColumn && (
+                    <div className="mt-2 pt-2 border-t">
+                      {actionsColumn.render && actionsColumn.render(null, item, index)}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* Default: label-value layout (no labels when showLabelsInCardView is false) */}
+                  <div className="space-y-2 mb-3">
+                    {primaryColumns.map((column) => {
+                      const value = column.render 
+                        ? column.render(item[column.key], item, index)
+                        : (item[column.key] !== undefined && item[column.key] !== null ? item[column.key] : '—');
+                      return (
+                        <div key={column.key} className="flex items-start justify-between gap-2">
+                          {showLabelsInCardView && (
+                            <span className="text-sm font-medium text-gray-500 min-w-[80px]">
+                              {columnLabel(column)}:
+                            </span>
+                          )}
+                          <span className={cn(
+                            "text-sm text-foreground flex-1",
+                            showLabelsInCardView ? "text-right" : ""
+                          )}>
+                            {value}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {secondaryColumns.length > 0 && (
+                    <div className="space-y-1.5 pt-2 -mx-4 px-4 border-t border-gray-200">
+                      {secondaryColumns.slice(0, 2).map((column) => {
+                        const value = column.render 
+                          ? column.render(item[column.key], item, index)
+                          : (item[column.key] !== undefined && item[column.key] !== null ? item[column.key] : '—');
+                        return (
+                          <div key={column.key} className="flex items-center justify-between gap-2">
+                            {showLabelsInCardView && (
+                              <span className="text-xs text-gray-400 min-w-[70px]">
+                                {columnLabel(column)}:
+                              </span>
+                            )}
+                            <span className={cn(
+                              "text-xs text-gray-600 flex-1 truncate",
+                              showLabelsInCardView ? "text-right" : ""
+                            )}>
+                              {value}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {actionsColumn && (
+                    <div className="mt-3 pt-3 -mx-4 px-4 border-t border-gray-200">
+                      <div className={cn("flex gap-2", isMobile ? "w-full flex-col" : "justify-end")}>
+                        {actionsColumn.render && actionsColumn.render(null, item, index)}
+                      </div>
+                    </div>
+                  )}
+                  {onCardClick && (
+                    <div className="mt-2 flex justify-end">
+                      <ChevronRightIcon className="h-4 w-4 text-gray-400" />
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
@@ -330,10 +434,14 @@ const MobileCardView = memo(({
 
         return wrappedContent;
         })}
+      </div>
 
-        {/* Pagination */}
+      {/* Pagination - always at bottom, outside grid */}
       {totalItems > 0 && (
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 py-4 px-2">
+        <div className={cn(
+          "flex flex-col sm:flex-row items-center justify-between gap-3 w-full border-t border-gray-200 mt-4",
+          isMobile ? "py-3 px-4" : "py-4 px-2"
+        )}>
           <div className="text-sm text-muted-foreground text-center sm:text-left">
             Showing {startIndex} to {endIndex} of {totalItems} items
           </div>
@@ -364,7 +472,6 @@ const MobileCardView = memo(({
           </div>
         </div>
       )}
-      </div>
     </>
   );
 });

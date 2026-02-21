@@ -71,12 +71,12 @@ const BottomSheet = ({
       >
         {/* Handle bar */}
         <div className="flex flex-shrink-0 justify-center pt-3 pb-2">
-          <div className="w-12 h-1.5 bg-gray-300 rounded-full" />
+          <div className="w-12 h-1.5 bg-muted rounded-full" />
         </div>
 
         {/* Header */}
         {(title || description) && (
-          <SheetHeader className="flex-shrink-0 px-4 pb-4 border-b border-gray-200">
+          <SheetHeader className="flex-shrink-0 px-4 pb-4 border-b border-border">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1">
                 {title && <SheetTitle>{title}</SheetTitle>}
@@ -95,10 +95,10 @@ const BottomSheet = ({
             {children}
           </div>
           
-          {/* Sticky Footer */}
+          {/* Fixed Footer - content scrolls behind */}
           {footer && (
             <div 
-              className="sticky bottom-0 left-0 right-0 bg-background border-t border-gray-200 px-4 py-3 z-10 flex-shrink-0"
+              className="flex-shrink-0 left-0 right-0 bg-background border-t border-border px-4 py-3 z-10"
               style={{
                 paddingBottom: safeAreaInsets.bottom > 0 
                   ? `calc(0.75rem + ${safeAreaInsets.bottom}px)` 

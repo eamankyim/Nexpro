@@ -4,6 +4,37 @@ This guide covers deploying the **Backend**, **Frontend**, and **Marketing Site*
 
 ---
 
+## ShopWISE Africa production domains
+
+The production app is served at **myapp.shopwiseafrica.com** (any previous Vercel preview URL such as `nexpro-frontend-dusky.vercel.app` is no longer used). When the app is deployed on these domains, use the following so the frontend and API stay connected:
+
+| Role | Domain |
+|------|--------|
+| **API (Backend)** | `https://api.shopwiseafrica.com` |
+| **App (Frontend)** | `https://myapp.shopwiseafrica.com` |
+| **Website** | `https://shopwiseafrica.com` |
+
+### Backend (api.shopwiseafrica.com)
+
+Set these environment variables on the API server:
+
+- **`CORS_ORIGIN`** = `https://myapp.shopwiseafrica.com,https://shopwiseafrica.com`  
+  (so both the app and the website can call the API)
+- **`FRONTEND_URL`** = `https://myapp.shopwiseafrica.com`  
+  (for auth redirects, invite links, and email links)
+
+### Frontend (myapp.shopwiseafrica.com)
+
+- The app automatically uses `https://api.shopwiseafrica.com` when it is served from `myapp.shopwiseafrica.com` or `shopwiseafrica.com`, so **`VITE_API_URL`** is optional for that deployment.
+- To override, set **`VITE_API_URL`** = `https://api.shopwiseafrica.com`.
+
+### Website (shopwiseafrica.com)
+
+- If the website only links to the app (e.g. “Log in” → myapp.shopwiseafrica.com), no API env is needed on the website.
+- If the website makes API calls, ensure the backend has `https://shopwiseafrica.com` in **`CORS_ORIGIN`** (see above).
+
+---
+
 ## Prerequisites
 
 - [Vercel account](https://vercel.com/signup)
@@ -46,8 +77,8 @@ In **Settings** → **Environment Variables**, add:
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@host:5432/db?sslmode=require` |
 | `JWT_SECRET` | Secret for JWT signing | `openssl rand -base64 32` |
 | `JWT_EXPIRE` | Token expiry | `7d` |
-| `CORS_ORIGIN` | Allowed frontend origins (comma‑separated) | `https://nexpro-app.vercel.app,https://nexpro.vercel.app` |
-| `FRONTEND_URL` | Main app URL (invites, etc.) | `https://nexpro-app.vercel.app` |
+| `CORS_ORIGIN` | Allowed frontend origins (comma‑separated) | `https://myapp.shopwiseafrica.com,https://shopwiseafrica.com` |
+| `FRONTEND_URL` | Main app URL (invites, etc.) | `https://myapp.shopwiseafrica.com` |
 
 Optional (see `Backend/env.example`):
 
@@ -85,7 +116,7 @@ Add these for **Production** (and **Preview** if you use branch deploys).
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `VITE_API_URL` | Backend API base URL (**required**) | `https://nexpro-api-xxx.vercel.app` |
+| `VITE_API_URL` | Backend API base URL (**required** unless on myapp.shopwiseafrica.com) | `https://api.shopwiseafrica.com` |
 
 Optional:
 
@@ -94,7 +125,7 @@ Optional:
 
 ### 3.4 Deploy
 
-Deploy and note the Frontend URL, e.g. `https://nexpro-app.vercel.app`.
+Deploy and note the Frontend URL (production: `https://myapp.shopwiseafrica.com`).
 
 ### 3.5 Wire Backend ↔ Frontend
 
@@ -121,7 +152,7 @@ Use defaults (`npm run build`, Next.js output).
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `NEXT_PUBLIC_APP_URL` | Main app URL for redirects | `https://nexpro-app.vercel.app` |
+| `NEXT_PUBLIC_APP_URL` | Main app URL for redirects | `https://myapp.shopwiseafrica.com` |
 
 If set, `/signup` and `/login` on the marketing site redirect to the main app.
 
@@ -203,6 +234,9 @@ Use the same domains in `CORS_ORIGIN`, `FRONTEND_URL`, and `VITE_API_URL` as nee
 | Backend 404 / 500 | Root Directory = `Backend`, `DATABASE_URL` set, redeploy after env changes |
 | Frontend “VITE_API_URL not set” | Add `VITE_API_URL` in Frontend project env and redeploy |
 | CORS errors | Add Frontend (and marketing) URLs to Backend `CORS_ORIGIN` |
+| CORS "cache-control is not allowed" | Backend must allow `Cache-Control` (and `Pragma`) in `Access-Control-Allow-Headers`. See `Backend/config/config.js` and `Backend/utils/corsUtils.js`. Redeploy Backend after change. |
+| WebSocket connection failed | API must run on a host that supports long-lived WebSockets (Vercel serverless does not). Use a Node server (e.g. Railway, Render, Fly.io) for the API if real-time is required. Ensure `CORS_ORIGIN` includes the app origin. |
+| PWA "Resource size is not correct" for icon | Each icon in `public/icons/` must have pixel dimensions matching its filename (e.g. `icon-192x192.png` must be 192×192). Regenerate icons or fix `public/manifest.json` to match actual file dimensions. |
 | DB connection errors | `DATABASE_URL` correct, IP allowlist if required, SSL params for Neon/Supabase |
 
 ---

@@ -1,21 +1,27 @@
 import { useState, useEffect } from 'react';
 import { Users, Info, Rocket, Loader2 } from 'lucide-react';
 import inviteService from '../services/inviteService';
+import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { StatisticCard } from '@/components/ui/statistic-card';
+import DashboardStatsCard from './DashboardStatsCard';
 
 /**
  * Reusable component to display seat usage and limits
  */
 function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
+  const { activeTenantId } = useAuth();
   const [seatUsage, setSeatUsage] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!activeTenantId) {
+      setLoading(false);
+      return;
+    }
     const fetchSeatUsage = async () => {
       try {
         setLoading(true);
@@ -31,7 +37,7 @@ function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
     };
 
     fetchSeatUsage();
-  }, []);
+  }, [activeTenantId]);
 
   if (loading) {
     return (
@@ -109,18 +115,18 @@ function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
         ) : (
           <>
             <div className="grid grid-cols-3 gap-4 mb-6">
-              <StatisticCard
+              <DashboardStatsCard
                 title="Active Users"
                 value={current}
                 prefix={<Users className="h-4 w-4 inline mr-1" />}
                 className={isAtLimit ? 'text-red-600' : 'text-green-600'}
               />
-              <StatisticCard
+              <DashboardStatsCard
                 title="Total Seats"
                 value={limit}
                 suffix=" seats"
               />
-              <StatisticCard
+              <DashboardStatsCard
                 title="Available"
                 value={remaining}
                 suffix=" seats"
@@ -153,7 +159,7 @@ function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
                   {pricePerAdditional ? (
                     <span>
                       You've reached your {limit}-seat limit. 
-                      Add more seats for <strong>GHS {pricePerAdditional}</strong> per user or upgrade your plan.
+                      Add more seats for <strong>₵ {pricePerAdditional}</strong> per user or upgrade your plan.
                     </span>
                   ) : (
                     <span>
@@ -190,7 +196,7 @@ function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
                       <div className="flex items-center gap-2 text-sm">
                         <Info className="h-4 w-4 text-[#166534]" />
                         <span>
-                          Need more seats? Add them for <strong>GHS {pricePerAdditional}</strong> per user
+                          Need more seats? Add them for <strong>₵ {pricePerAdditional}</strong> per user
                         </span>
                       </div>
                     </TooltipTrigger>

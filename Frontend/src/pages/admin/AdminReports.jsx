@@ -1,18 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Card,
-  Col,
-  Row,
-  Spin,
-  Statistic,
-  Typography,
-  DatePicker,
-  Space,
-  Table,
-  Tabs,
-  Tag,
-} from 'antd';
-import {
   AreaChart,
   Area,
   XAxis,
@@ -26,11 +13,21 @@ import {
   Bar,
 } from 'recharts';
 import dayjs from 'dayjs';
+import { Loader2 } from 'lucide-react';
 import { useResponsive } from '../../hooks/useResponsive';
 import adminService from '../../services/adminService';
-
-const { Title, Text } = Typography;
-const { RangePicker } = DatePicker;
+import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const defaultRange = [
   dayjs().subtract(29, 'day').startOf('day'),
@@ -39,6 +36,7 @@ const defaultRange = [
 
 const AdminReports = () => {
   const { isMobile } = useResponsive();
+  const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
   const [loading, setLoading] = useState(true);
   const [revenueLoading, setRevenueLoading] = useState(false);
   const [expenseLoading, setExpenseLoading] = useState(false);
@@ -48,6 +46,18 @@ const AdminReports = () => {
   const [pipeline, setPipeline] = useState(null);
   const [topCustomers, setTopCustomers] = useState([]);
   const [range, setRange] = useState(defaultRange);
+
+  const rangeForPicker = useMemo(() => {
+    if (!range || !range[0] || !range[1]) return undefined;
+    return { from: range[0].toDate(), to: range[1].toDate() };
+  }, [range]);
+
+  const handleRangeSelect = (newRange) => {
+    if (!newRange?.from) return;
+    const from = dayjs(newRange.from);
+    const to = newRange.to ? dayjs(newRange.to) : from;
+    setRange([from, to]);
+  };
 
   const dateParams = useMemo(() => {
     if (!range || range.length !== 2) return {};
@@ -145,80 +155,77 @@ const AdminReports = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dateParams.startDate, dateParams.endDate]);
 
-  if (loading) {
+  // Check permission after all hooks
+  if (!permissionsLoading && !hasPermission('reports.view')) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
-        <Spin size="large" />
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <h3 className="text-lg font-semibold text-foreground mb-2">Access Denied</h3>
+          <p className="text-muted-foreground">You don&apos;t have permission to view reports.</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading || permissionsLoading) {
+    return (
+      <div className="flex justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }
 
   return (
-    <div>
-      <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between' }}>
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <Title level={3} style={{ marginBottom: 8 }}>
-            Reports
-          </Title>
-          <Text type="secondary">
-            Analyze revenue trends, spending, and pipeline health across tenants.
-          </Text>
+          <h2 className="text-xl font-semibold text-foreground">Reports</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Platform operations: subscription revenue, tenant growth, and pipeline health.
+          </p>
         </div>
-        <RangePicker
-          allowClear={false}
-          value={range}
-          onChange={(value) => setRange(value)}
-        />
+        <DateRangePicker range={rangeForPicker} onSelect={handleRangeSelect} className="w-auto min-w-[220px]" />
       </div>
 
-      <Row gutter={[24, 24]}>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Revenue"
-              value={kpis?.totalRevenue ?? 0}
-              precision={2}
-              prefix="GHS "
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Expenses"
-              value={kpis?.totalExpenses ?? 0}
-              precision={2}
-              prefix="GHS "
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Gross profit"
-              value={kpis?.grossProfit ?? 0}
-              precision={2}
-              prefix="GHS "
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Pending invoices"
-              value={kpis?.pendingInvoices ?? 0}
-              precision={2}
-              prefix="GHS "
-            />
-          </Card>
-        </Col>
-      </Row>
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-sm text-muted-foreground">Subscription revenue (MRR)</p>
+            <p className="text-2xl font-bold text-foreground mt-1">
+              ₵ {(kpis?.totalRevenue ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-sm text-muted-foreground">Paying tenants</p>
+            <p className="text-2xl font-bold text-foreground mt-1">{kpis?.payingTenants ?? 0}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-sm text-muted-foreground">Trialing tenants</p>
+            <p className="text-2xl font-bold text-foreground mt-1">{kpis?.trialingTenants ?? 0}</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-6">
+            <p className="text-sm text-muted-foreground">New tenants (period)</p>
+            <p className="text-2xl font-bold text-foreground mt-1">{kpis?.newTenants ?? 0}</p>
+          </CardContent>
+        </Card>
+      </div>
 
-      <Row gutter={[24, 24]} style={{ marginTop: 24 }}>
-        <Col xs={24} lg={12}>
-          <Card title="Revenue trend">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>New signups trend</CardTitle>
+          </CardHeader>
+          <CardContent>
             {revenueLoading ? (
-              <Spin />
+              <div className="flex justify-center h-[280px] items-center">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height={280}>
                 <AreaChart data={revenueSeries}>
@@ -232,7 +239,7 @@ const AdminReports = () => {
                   <XAxis dataKey="date" tickFormatter={(value) => dayjs(value).format('MMM D')} />
                   <YAxis allowDecimals={false} />
                   <Tooltip
-                    formatter={(value) => `GHS ${Number(value).toLocaleString()}`}
+                    formatter={(value) => `${Number(value).toLocaleString()} signups`}
                     labelFormatter={(value) => dayjs(value).format('MMMM D, YYYY')}
                   />
                   <Area
@@ -245,20 +252,25 @@ const AdminReports = () => {
                 </AreaChart>
               </ResponsiveContainer>
             )}
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="Expense trend">
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Platform expenses</CardTitle>
+          </CardHeader>
+          <CardContent>
             {expenseLoading ? (
-              <Spin />
-            ) : (
+              <div className="flex justify-center h-[280px] items-center">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : expenseSeries.length > 0 ? (
               <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={expenseSeries}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" tickFormatter={(value) => dayjs(value).format('MMM D')} />
                   <YAxis allowDecimals={false} />
                   <Tooltip
-                    formatter={(value) => `GHS ${Number(value).toLocaleString()}`}
+                    formatter={(value) => `₵ ${Number(value).toLocaleString()}`}
                     labelFormatter={(value) => dayjs(value).format('MMMM D, YYYY')}
                   />
                   <Line
@@ -270,19 +282,24 @@ const AdminReports = () => {
                   />
                 </LineChart>
               </ResponsiveContainer>
+            ) : (
+              <p className="text-sm text-muted-foreground py-8">No platform expenses tracked yet.</p>
             )}
-          </Card>
-        </Col>
-      </Row>
+          </CardContent>
+        </Card>
+      </div>
 
-      <Row gutter={[24, 24]} style={{ marginTop: 24 }}>
-        <Col xs={24} lg={8}>
-          <Card title="Pipeline">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="lg:col-span-1">
+          <CardHeader>
+            <CardTitle>Pipeline</CardTitle>
+          </CardHeader>
+          <CardContent>
             {pipeline ? (
               <BarChart width={360} height={260} data={[
-                { name: 'Active jobs', value: pipeline.activeJobs },
-                { name: 'Open leads', value: pipeline.openLeads },
-                { name: 'Pending invoices', value: pipeline.pendingInvoices },
+                { name: 'Paying tenants', value: pipeline.activeJobs },
+                { name: 'Trialing tenants', value: pipeline.openLeads },
+                { name: 'New this month', value: pipeline.pendingInvoices },
               ]}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
@@ -291,155 +308,161 @@ const AdminReports = () => {
                 <Bar dataKey="value" fill="#9b51e0" radius={[6, 6, 0, 0]} />
               </BarChart>
             ) : (
-              <Text type="secondary">No pipeline data available.</Text>
+              <p className="text-sm text-muted-foreground">No pipeline data available.</p>
             )}
-          </Card>
-        </Col>
-        <Col xs={24} lg={16}>
-          <Card title="Top customers">
+          </CardContent>
+        </Card>
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Top paying tenants</CardTitle>
+          </CardHeader>
+          <CardContent>
             {isMobile ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div className="flex flex-col gap-3">
                 {topCustomers.length === 0 ? (
-                  <Text type="secondary">No customers</Text>
+                  <p className="text-sm text-muted-foreground">No paying tenants</p>
                 ) : (
                   topCustomers.map((record) => (
-                    <Card key={record.customer?.id || record.customerId} size="small" style={{ border: '1px solid #f0f0f0' }}>
-                      <Text strong>{record.customer?.name || '—'}</Text>
-                      <br />
-                      <Text type="secondary" style={{ fontSize: 12 }}>{record.customer?.company || '—'}</Text>
-                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
-                        <Text>GHS {Number(record.totalRevenue || 0).toLocaleString()}</Text>
-                        <Text type="secondary" style={{ marginLeft: 8 }}>{record.paymentCount} payments</Text>
+                    <div
+                      key={record.tenant?.id || record.tenantId}
+                      className="rounded-lg border border-border p-4"
+                    >
+                      <p className="font-semibold text-foreground">{record.tenant?.name || '—'}</p>
+                      <p className="text-xs text-muted-foreground">{record.tenant?.company || record.tenant?.plan || '—'}</p>
+                      <div className="mt-3 pt-3 border-t border-border flex items-center gap-2">
+                        <span className="font-medium text-foreground">₵ {Number(record.totalRevenue || 0).toLocaleString()}/mo</span>
+                        <span className="text-xs text-muted-foreground">{record.tenant?.plan || '—'}</span>
                       </div>
-                    </Card>
+                    </div>
                   ))
                 )}
               </div>
             ) : (
-              <Table
-                rowKey={(record) => record.customer?.id || record.customerId}
-                dataSource={topCustomers}
-                pagination={false}
-                columns={[
-                  {
-                    title: 'Customer',
-                    dataIndex: ['customer', 'name'],
-                    key: 'customer',
-                    render: (_, record) => (
-                      <div>
-                        <Text strong>{record.customer?.name || '—'}</Text>
-                        <br />
-                        <Text type="secondary">{record.customer?.company || '—'}</Text>
-                      </div>
-                    ),
-                  },
-                  {
-                    title: 'Revenue',
-                    dataIndex: 'totalRevenue',
-                    key: 'revenue',
-                    render: (value) => `GHS ${Number(value || 0).toLocaleString()}`,
-                  },
-                  {
-                    title: 'Payments',
-                    dataIndex: 'paymentCount',
-                    key: 'payments',
-                  },
-                ]}
-              />
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Tenant</TableHead>
+                    <TableHead>Plan value (₵/mo)</TableHead>
+                    <TableHead>Plan</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {topCustomers.map((record) => (
+                    <TableRow key={record.tenant?.id || record.tenantId}>
+                      <TableCell>
+                        <div>
+                          <p className="font-semibold text-foreground">{record.tenant?.name || '—'}</p>
+                          <p className="text-xs text-muted-foreground">{record.tenant?.company || record.tenant?.plan || '—'}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>₵ {Number(record.totalRevenue || 0).toLocaleString()}</TableCell>
+                      <TableCell>{record.tenant?.plan || '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
             )}
-          </Card>
-        </Col>
-      </Row>
+          </CardContent>
+        </Card>
+      </div>
 
-      <Card title="Detailed reports" style={{ marginTop: 24 }}>
-        <Tabs
-          items={[
-            {
-              key: 'revenue',
-              label: 'Revenue by customer',
-              children: isMobile ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <Card>
+        <CardHeader>
+          <CardTitle>Detailed reports</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Tabs defaultValue="signups">
+            <TabsList>
+              <TabsTrigger value="signups">Signups by date</TabsTrigger>
+              <TabsTrigger value="expenses">Platform expenses</TabsTrigger>
+            </TabsList>
+            <TabsContent value="signups" className="mt-4">
+              {isMobile ? (
+                <div className="flex flex-col gap-2">
                   {revenueSeries.filter((item) => item.revenue > 0).length === 0 ? (
-                    <Text type="secondary">Select a shorter range to view daily revenue entries.</Text>
+                    <p className="text-sm text-muted-foreground">No signups in selected period.</p>
                   ) : (
                     revenueSeries.filter((item) => item.revenue > 0).map((item) => (
-                      <Card key={item.date} size="small" style={{ border: '1px solid #f0f0f0' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Text>{dayjs(item.date).format('MMM D, YYYY')}</Text>
-                          <Text strong>GHS {Number(item.revenue || 0).toLocaleString()}</Text>
-                        </div>
-                      </Card>
+                      <div key={item.date} className="rounded-lg border border-border p-3 flex justify-between items-center">
+                        <span className="text-sm text-foreground">{dayjs(item.date).format('MMM D, YYYY')}</span>
+                        <span className="font-semibold text-foreground">{Number(item.revenue || 0)} signups</span>
+                      </div>
                     ))
                   )}
                 </div>
               ) : (
-                <Table
-                  rowKey="date"
-                  size="small"
-                  dataSource={revenueSeries.filter((item) => item.revenue > 0)}
-                  columns={[
-                    {
-                      title: 'Date',
-                      dataIndex: 'date',
-                      render: (value) => dayjs(value).format('MMM D, YYYY'),
-                    },
-                    {
-                      title: 'Revenue',
-                      dataIndex: 'revenue',
-                      render: (value) => `GHS ${Number(value || 0).toLocaleString()}`,
-                    },
-                  ]}
-                  pagination={false}
-                  locale={{ emptyText: 'Select a shorter range to view daily revenue entries.' }}
-                />
-              ),
-            },
-            {
-              key: 'expenses',
-              label: 'Expenses by date',
-              children: isMobile ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Signups</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {revenueSeries.filter((item) => item.revenue > 0).length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={2} className="text-center text-muted-foreground">
+                          No signups in selected period.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      revenueSeries.filter((item) => item.revenue > 0).map((item) => (
+                        <TableRow key={item.date}>
+                          <TableCell>{dayjs(item.date).format('MMM D, YYYY')}</TableCell>
+                          <TableCell>{Number(item.revenue || 0)}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              )}
+            </TabsContent>
+            <TabsContent value="expenses" className="mt-4">
+              {isMobile ? (
+                <div className="flex flex-col gap-2">
                   {expenseSeries.length === 0 ? (
-                    <Text type="secondary">No expense data</Text>
+                    <p className="text-sm text-muted-foreground">No platform expenses tracked yet.</p>
                   ) : (
                     expenseSeries.map((item) => (
-                      <Card key={item.date} size="small" style={{ border: '1px solid #f0f0f0' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Text>{dayjs(item.date).format('MMM D, YYYY')}</Text>
-                          <Text strong>GHS {Number(item.expenses || 0).toLocaleString()}</Text>
-                        </div>
-                      </Card>
+                      <div key={item.date} className="rounded-lg border border-border p-3 flex justify-between items-center">
+                        <span className="text-sm text-foreground">{dayjs(item.date).format('MMM D, YYYY')}</span>
+                        <span className="font-semibold text-foreground">₵ {Number(item.expenses || 0).toLocaleString()}</span>
+                      </div>
                     ))
                   )}
                 </div>
               ) : (
-                <Table
-                  rowKey="date"
-                  size="small"
-                  dataSource={expenseSeries}
-                  columns={[
-                    {
-                      title: 'Date',
-                      dataIndex: 'date',
-                      render: (value) => dayjs(value).format('MMM D, YYYY'),
-                    },
-                    {
-                      title: 'Expenses',
-                      dataIndex: 'expenses',
-                      render: (value) => `GHS ${Number(value || 0).toLocaleString()}`,
-                    },
-                  ]}
-                  pagination={false}
-                />
-              ),
-            },
-          ]}
-        />
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Expenses</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {expenseSeries.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={2} className="text-center text-muted-foreground">
+                          No platform expenses tracked yet.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      expenseSeries.map((item) => (
+                        <TableRow key={item.date}>
+                          <TableCell>{dayjs(item.date).format('MMM D, YYYY')}</TableCell>
+                          <TableCell>₵ {Number(item.expenses || 0).toLocaleString()}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              )}
+            </TabsContent>
+          </Tabs>
+        </CardContent>
       </Card>
     </div>
   );
 };
 
 export default AdminReports;
-
-

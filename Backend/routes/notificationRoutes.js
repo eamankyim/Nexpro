@@ -1,7 +1,7 @@
 const express = require('express');
 const { protect } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
-const { cacheMiddleware, generateNotificationSummaryKey } = require('../middleware/cache');
+const { cacheMiddleware, generateNotificationSummaryKey, generateNotificationListKey } = require('../middleware/cache');
 const {
   getNotifications,
   markNotificationRead,
@@ -18,7 +18,7 @@ router.use(tenantContext);
 router.get('/summary', cacheMiddleware(60, generateNotificationSummaryKey), getNotificationSummary);
 router.post('/mark-all-read', markAllNotificationsRead);
 router.put('/:id/read', markNotificationRead);
-router.get('/', getNotifications);
+router.get('/', cacheMiddleware(60, generateNotificationListKey), getNotifications);
 
 module.exports = router;
 

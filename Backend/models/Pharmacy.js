@@ -71,6 +71,30 @@ const Pharmacy = sequelize.define('Pharmacy', {
 }, {
   tableName: 'pharmacies',
   timestamps: true,
+  hooks: {
+    beforeCreate: (pharmacy) => {
+      if (pharmacy.email && typeof pharmacy.email === 'string') pharmacy.email = pharmacy.email.trim().toLowerCase();
+      if (pharmacy.phone && typeof pharmacy.phone === 'string') {
+        try {
+          const { formatToE164 } = require('../utils/phoneUtils');
+          const e164 = formatToE164(pharmacy.phone.trim());
+          if (e164) pharmacy.phone = e164;
+          else pharmacy.phone = pharmacy.phone.trim();
+        } catch { pharmacy.phone = pharmacy.phone.trim(); }
+      }
+    },
+    beforeUpdate: (pharmacy) => {
+      if (pharmacy.changed('email') && pharmacy.email && typeof pharmacy.email === 'string') pharmacy.email = pharmacy.email.trim().toLowerCase();
+      if (pharmacy.changed('phone') && pharmacy.phone && typeof pharmacy.phone === 'string') {
+        try {
+          const { formatToE164 } = require('../utils/phoneUtils');
+          const e164 = formatToE164(pharmacy.phone.trim());
+          if (e164) pharmacy.phone = e164;
+          else pharmacy.phone = pharmacy.phone.trim();
+        } catch { pharmacy.phone = pharmacy.phone.trim(); }
+      }
+    }
+  },
   indexes: [
     {
       fields: ['tenantId']

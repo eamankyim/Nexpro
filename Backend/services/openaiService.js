@@ -1,22 +1,22 @@
-let _openai = null;
+let _anthropic = null;
 
-/** Lazy-init OpenAI client; null if OPENAI_API_KEY is not set. Never requires openai until key exists. */
-function getOpenAI() {
-  if (_openai !== null) return _openai;
-  let key = process.env.OPENAI_API_KEY?.trim();
+/** Lazy-init Anthropic client for Claude; null if ANTHROPIC_API_KEY is not set. */
+function getAnthropic() {
+  if (_anthropic !== null) return _anthropic;
+  let key = process.env.ANTHROPIC_API_KEY?.trim();
   if (!key) return null;
-  // Remove any newlines/carriage returns (e.g. from .env line wrap or copy-paste)
   key = key.replace(/\r?\n/g, '');
   if (!key) return null;
-  const { OpenAI } = require('openai');
-  _openai = new OpenAI({ apiKey: key });
-  return _openai;
+  const { Anthropic } = require('@anthropic-ai/sdk');
+  _anthropic = new Anthropic({ apiKey: key });
+  return _anthropic;
 }
 
-function requireOpenAI() {
-  const client = getOpenAI();
+/** Require Anthropic client; throws if ANTHROPIC_API_KEY is not set. All AI features use Claude. */
+function requireAnthropic() {
+  const client = getAnthropic();
   if (!client) {
-    const err = new Error('OpenAI API key not configured. Set OPENAI_API_KEY in .env to use AI features.');
+    const err = new Error('AI is not configured. Set ANTHROPIC_API_KEY in .env to use AI features.');
     err.code = 'OPENAI_NOT_CONFIGURED';
     throw err;
   }
@@ -29,20 +29,52 @@ function requireOpenAI() {
  * @param {Object} options - Additional options (businessType, period, etc.)
  * @returns {Promise<Object>} AI-generated insights, recommendations, and analysis
  */
+// Display names for AI prompts (user-friendly)
+const BUSINESS_DISPLAY_NAMES = {
+  printing_press: 'printing press',
+  mechanic: 'auto repair / mechanic',
+  barber: 'barber',
+  salon: 'salon',
+  shop: 'retail shop',
+  pharmacy: 'pharmacy',
+  studio: 'service business'
+};
+
 const analyzeReportData = async (reportData, options = {}) => {
   try {
     const {
       businessType = 'printing_press',
+      studioType,
       period = 'monthly',
       startDate,
       endDate
     } = options;
 
-    // Map business type to terminology
+    const effectiveType = studioType || businessType;
+
+    // Map business type to terminology (supports studio types: mechanic, barber, salon)
     const businessTerminology = {
       printing_press: {
         items: 'services',
         sales: 'jobs',
+        revenue: 'service revenue',
+        analytics: 'service performance'
+      },
+      mechanic: {
+        items: 'repairs',
+        sales: 'repairs',
+        revenue: 'repair revenue',
+        analytics: 'repair performance'
+      },
+      barber: {
+        items: 'services',
+        sales: 'appointments',
+        revenue: 'service revenue',
+        analytics: 'service performance'
+      },
+      salon: {
+        items: 'services',
+        sales: 'appointments',
         revenue: 'service revenue',
         analytics: 'service performance'
       },
@@ -60,7 +92,8 @@ const analyzeReportData = async (reportData, options = {}) => {
       }
     };
 
-    const terms = businessTerminology[businessType] || businessTerminology.printing_press;
+    const terms = businessTerminology[effectiveType] || businessTerminology.printing_press;
+    const displayName = BUSINESS_DISPLAY_NAMES[effectiveType] || effectiveType;
 
     // Prepare structured data summary for AI
     const dataSummary = {
@@ -77,17 +110,17 @@ const analyzeReportData = async (reportData, options = {}) => {
         endDate,
         type: period
       },
-      businessType,
+      businessType: effectiveType,
       topItems: reportData.topItems || [],
       expenseBreakdown: reportData.expenseBreakdown || [],
-      inventory: reportData.inventory || null,
+      materials: reportData.materials || null,
       outstandingPayments: reportData.outstandingPayments || 0
     };
 
     // Create comprehensive prompt for AI analysis
-    const systemPrompt = `You are an expert business analyst specializing in ${businessType} operations. Analyze the provided business data and generate actionable insights, recommendations, and strategic suggestions. Be specific, data-driven, and practical.`;
+    const systemPrompt = `You are an expert business analyst specializing in ${displayName} operations. Analyze the provided business data and generate actionable insights, recommendations, and strategic suggestions. Be specific, data-driven, and practical.`;
 
-    const userPrompt = `Analyze the following business report data for a ${businessType} business and provide:
+    const userPrompt = `Analyze the following business report data for a ${displayName} business and provide:
 
 1. **Key Findings** (3-5 bullet points highlighting the most important insights)
 2. **Performance Analysis** (detailed analysis of revenue, expenses, and profitability trends)
@@ -110,7 +143,7 @@ ${dataSummary.topItems.length > 0 ? `Top Performing ${terms.items}: ${dataSummar
 
 ${dataSummary.expenseBreakdown.length > 0 ? `Expense Breakdown: ${dataSummary.expenseBreakdown.map(exp => `${exp.category}: GHS ${exp.amount.toLocaleString()}`).join(', ')}` : ''}
 
-${dataSummary.inventory ? `Inventory Status: ${dataSummary.inventory.totalStocks} total items, ${dataSummary.inventory.stockAvailabilityRate}% availability rate` : ''}
+${dataSummary.materials ? `Materials Status: ${dataSummary.materials.totalStocks} total items, ${dataSummary.materials.stockAvailabilityRate}% availability rate` : ''}
 
 Provide your analysis in a structured JSON format with the following keys:
 - keyFindings: array of strings
@@ -120,22 +153,20 @@ Provide your analysis in a structured JSON format with the following keys:
 - growthOpportunities: array of objects with {opportunity: string, potentialImpact: string, actionSteps: string[]}
 - strategicSuggestions: array of strings
 
-Be specific, actionable, and data-driven. Use the actual numbers from the report in your analysis.`;
+Be specific, actionable, and data-driven. Use the actual numbers from the report in your analysis. Respond with only valid JSON, no other text or markdown.`;
 
-    const openai = requireOpenAI();
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      temperature: 0.7,
+    const anthropic = requireAnthropic();
+    const completion = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5-20250929',
       max_tokens: 2000,
-      response_format: { type: 'json_object' }
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }]
     });
 
-    // Parse the AI response
-    const aiResponse = JSON.parse(completion.choices[0].message.content);
+    const rawText = completion.content?.find((b) => b.type === 'text')?.text?.trim() || '{}';
+    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+    const jsonStr = jsonMatch ? jsonMatch[0] : rawText;
+    const aiResponse = JSON.parse(jsonStr);
 
     // Structure the response
     return {
@@ -150,7 +181,7 @@ Be specific, actionable, and data-driven. Use the actual numbers from the report
       }
     };
   } catch (error) {
-    console.error('Error in OpenAI analysis:', error);
+    console.error('Error in AI report analysis:', error);
     throw error;
   }
 };
@@ -176,20 +207,15 @@ Key metrics:
 
 Write in a professional, executive-friendly tone. Highlight key achievements, challenges, and strategic priorities.`;
 
-    const openai = requireOpenAI();
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'user',
-          content: prompt
-        }
-      ],
-      temperature: 0.7,
-      max_tokens: 500
+    const anthropic = requireAnthropic();
+    const completion = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5-20250929',
+      max_tokens: 500,
+      messages: [{ role: 'user', content: prompt }]
     });
 
-    return completion.choices[0].message.content;
+    const textBlock = completion.content?.find((b) => b.type === 'text');
+    return textBlock?.text?.trim() || '';
   } catch (error) {
     console.error('Error generating executive summary:', error);
     throw error;
@@ -225,25 +251,21 @@ ${contextBlob}
 
 Rules:
 - Answer factual questions (e.g. "How many customers this month?") using only the data above. Be concise and cite numbers.
+- Use clear formatting: put the main number in a short first line, then use a bullet list for details (e.g. "New customers this month: **2**"). Use **bold** for key numbers and labels.
 - For predictions (e.g. "Predict next month sales"), use the trends in the data and clearly state: "This is an estimate, not a guarantee."
 - For summaries, highlight key numbers and one or two actionable points.
-- Keep replies concise (a short paragraph or bullet points). Do not make up data not present in the context.`;
+- Keep replies concise. Do not make up data not present in the context.`;
 
-    const apiMessages = [
-      { role: 'system', content: systemPrompt },
-      ...messages.map((m) => ({ role: m.role, content: m.content }))
-    ];
-
-    const openai = requireOpenAI();
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: apiMessages,
-      temperature: 0.5,
-      max_tokens: 1024
+    const anthropic = requireAnthropic();
+    const claudeMessages = messages.map((m) => ({ role: m.role, content: m.content }));
+    const claudeResponse = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5-20250929',
+      max_tokens: 1024,
+      system: systemPrompt,
+      messages: claudeMessages
     });
-
-    const reply = completion.choices[0]?.message?.content?.trim() || 'I couldn\'t generate a response. Please try again.';
-    return reply;
+    const textBlock = claudeResponse.content?.find((b) => b.type === 'text');
+    return textBlock?.text?.trim() || 'I couldn\'t generate a response. Please try again.';
   } catch (error) {
     console.error('Error in chatWithContext:', error);
     throw error;

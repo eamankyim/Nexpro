@@ -1,8 +1,29 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
+import { API_BASE_URL } from '../services/api';
 
-const WS_URL = import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL?.replace('/api', '') || 'http://localhost:5000';
+/** Production WebSocket base URL when app is on ShopWISE Africa domains */
+const SHOPWISE_AFRICA_WS_URL = 'https://api.shopwiseafrica.com';
+
+const getWsUrl = () => {
+  const explicit = import.meta.env.VITE_WS_URL?.trim();
+  if (explicit && explicit.startsWith('http')) return explicit;
+  const base = API_BASE_URL?.trim();
+  if (base && base.startsWith('http')) {
+    try {
+      const u = new URL(base);
+      if (u.hostname && u.hostname !== 'http' && u.hostname !== 'https') return base;
+    } catch (_) {}
+  }
+  if (typeof window !== 'undefined') {
+    const { hostname } = window.location;
+    if (hostname === 'myapp.shopwiseafrica.com' || hostname === 'shopwiseafrica.com') return SHOPWISE_AFRICA_WS_URL;
+  }
+  return 'http://localhost:5001';
+};
+
+const WS_URL = getWsUrl();
 
 /**
  * useWebSocket hook
@@ -86,8 +107,21 @@ export const useWebSocket = (options = {}) => {
 
     socket.on('connect_error', (error) => {
       console.error('[WebSocket] Connection error:', error.message);
+
+      // If the backend rejects our JWT (e.g. token from a different environment or expired),
+      // clear local auth so the user is forced to log in again with a fresh token.
+      if (error?.message === 'Invalid authentication token') {
+        try {
+          localStorage.removeItem('token');
+          localStorage.removeItem('tenantMemberships');
+          localStorage.removeItem('activeTenantId');
+          console.warn('[WebSocket] Cleared invalid auth token from storage. User must log in again.');
+        } catch (_) {
+          // ignore storage errors
+        }
+      }
+
       reconnectAttempts.current += 1;
-      
       if (reconnectAttempts.current >= maxReconnectAttempts) {
         console.warn('[WebSocket] Max reconnection attempts reached');
       }

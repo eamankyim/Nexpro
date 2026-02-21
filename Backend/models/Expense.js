@@ -9,7 +9,7 @@ const Expense = sequelize.define('Expense', {
   },
   tenantId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true,
     references: {
       model: 'tenants',
       key: 'id'

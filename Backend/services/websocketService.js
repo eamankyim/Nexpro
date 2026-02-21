@@ -1,6 +1,7 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const config = require('../config/config');
+const { isOriginAllowed } = require('../utils/corsUtils');
 
 let io = null;
 
@@ -14,11 +15,19 @@ const tenantSockets = new Map();
 const initializeWebSocket = (server) => {
   io = new Server(server, {
     cors: {
-      origin: config.cors.origin,
+      origin: (origin, callback) => {
+        // Allow requests with no origin (mobile apps, Postman, etc.)
+        if (!origin) return callback(null, true);
+        if (isOriginAllowed(origin)) return callback(null, true);
+        callback(new Error('WebSocket CORS not allowed'));
+      },
       methods: ['GET', 'POST'],
       credentials: true
     },
-    transports: ['websocket', 'polling']
+    transports: ['websocket', 'polling'],
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    connectTimeout: 45000
   });
 
   // Authentication middleware
@@ -30,7 +39,8 @@ const initializeWebSocket = (server) => {
     }
 
     try {
-      const decoded = jwt.verify(token, config.jwtSecret);
+      // Use the same JWT secret as the rest of the app (config.jwt.secret)
+      const decoded = jwt.verify(token, config.jwt.secret);
       socket.userId = decoded.id;
       socket.tenantId = socket.handshake.auth.tenantId || socket.handshake.query.tenantId;
       next();
@@ -93,6 +103,15 @@ const initializeWebSocket = (server) => {
         }
       }
     });
+
+    socket.on('error', (error) => {
+      console.error(`[WebSocket] Socket error for userId=${userId}:`, error.message);
+    });
+  });
+
+  // Engine-level connection error handler for debugging
+  io.engine.on('connection_error', (err) => {
+    console.error('[WebSocket] Connection error:', err.code, err.message, err.context?.request?.url || '');
   });
 
   console.log('[WebSocket] Server initialized');

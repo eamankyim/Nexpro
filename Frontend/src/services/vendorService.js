@@ -1,6 +1,12 @@
 import api from './api';
 
 const vendorService = {
+  // Get vendor categories (business-type and shop-type specific)
+  getCategories: async () => {
+    const res = await api.get('/vendors/categories');
+    return res?.data ?? [];
+  },
+
   // Get all vendors
   getAll: async (params = {}) => {
     const queryString = new URLSearchParams(params).toString();

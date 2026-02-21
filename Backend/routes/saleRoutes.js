@@ -10,7 +10,8 @@ const {
   printReceipt,
   sendReceipt,
   addSaleActivity,
-  getSaleActivities
+  getSaleActivities,
+  updateOrderStatus
 } = require('../controllers/saleController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
@@ -29,6 +30,9 @@ router.route('/:id')
   .get(getSale)
   .put(authorize('admin', 'manager', 'staff'), updateSale)
   .delete(authorize('admin'), deleteSale);
+
+router.route('/:id/order-status')
+  .patch(authorize('admin', 'manager', 'staff'), updateOrderStatus);
 
 router.route('/:id/cancel')
   .post(authorize('admin', 'manager', 'staff'), cancelSale);

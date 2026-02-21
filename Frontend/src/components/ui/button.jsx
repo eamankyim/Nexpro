@@ -17,7 +17,7 @@ const buttonVariants = cva(
           "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
         /** White background with border (stroke). Use for secondary actions e.g. Refresh, Filter, Cancel, View. */
         secondaryStroke:
-          "border border-gray-300 bg-white text-gray-900 hover:bg-gray-50",
+          "border border-input bg-background text-foreground hover:bg-muted",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         ghost: "hover:bg-accent hover:text-accent-foreground",
@@ -27,7 +27,7 @@ const buttonVariants = cva(
         default: "h-10 px-4 py-2 min-h-[44px] md:min-h-[40px]",
         sm: "h-9 rounded-md px-3 min-h-[44px] md:min-h-[36px]",
         lg: "h-11 rounded-md px-8 min-h-[48px]",
-        icon: "h-10 w-10 min-h-[44px] min-w-[44px] md:min-h-[40px] md:min-w-[40px]",
+        icon: "h-10 w-10 min-h-[44px] min-w-[44px] md:min-h-[40px] md:min-w-[40px] p-1.5 shrink-0",
       },
     },
     defaultVariants: {

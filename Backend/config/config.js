@@ -26,6 +26,8 @@ module.exports = {
       'Accept',
       'Accept-Language',
       'Accept-Encoding',
+      'Cache-Control',
+      'Pragma',
     ],
     preflightContinue: true,
   },

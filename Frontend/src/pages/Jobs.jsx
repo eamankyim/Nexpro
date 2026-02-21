@@ -5,7 +5,7 @@ import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, XCircle, Loader2, Trash2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, DollarSign, Eye, ChevronLeft, ChevronRight, Filter, RefreshCw, Briefcase, AlertCircle } from 'lucide-react';
+import { Plus, XCircle, Loader2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, Currency, Eye, ChevronLeft, ChevronRight, Filter, RefreshCw, Briefcase, AlertCircle } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import jobService from '../services/jobService';
@@ -16,17 +16,20 @@ import invoiceService from '../services/invoiceService';
 import pricingService from '../services/pricingService';
 import userService from '../services/userService';
 import customDropdownService from '../services/customDropdownService';
+import settingsService from '../services/settingsService';
+import { useAuth } from '../context/AuthContext';
 import dayjs from 'dayjs';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
+import MobileFormDialog from '../components/MobileFormDialog';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import FileUpload from '../components/FileUpload';
 import FilePreview from '../components/FilePreview';
 import PhoneNumberInput from '../components/PhoneNumberInput';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
-import DetailSkeleton from '../components/DetailSkeleton';
 import DashboardTable from '../components/DashboardTable';
+import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import FloatingActionButton from '../components/FloatingActionButton';
@@ -53,15 +56,6 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogBody,
-} from '@/components/ui/dialog';
 import {
   Form,
   FormControl,
@@ -128,14 +122,14 @@ const statusSchema = z.object({
 });
 
 const customerSchema = z.object({
-  name: z.string().min(1, 'Customer name is required'),
+  name: z.string().min(1, 'Enter customer name'),
   company: z.string().optional(),
-  email: z.string().email('Please enter a valid email').optional().or(z.literal('')),
+  email: z.string().email('Enter a valid email').optional().or(z.literal('')),
   phone: z.string().optional(),
   address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
-  howDidYouHear: z.string().min(1, 'Please select an option'),
+  howDidYouHear: z.string().min(1, 'Select how they heard about you'),
   referralName: z.string().optional(),
 });
 
@@ -144,6 +138,7 @@ const uploadMaxSizeMb = Number.parseFloat(import.meta.env.VITE_UPLOAD_MAX_SIZE_M
 const Jobs = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { activeTenantId } = useAuth();
   const { isMobile } = useResponsive();
   const queryClient = useQueryClient();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
@@ -155,12 +150,14 @@ const Jobs = () => {
     customerId: 'all',
     dueDate: 'all'
   });
+  const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [summary, setSummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingJob, setViewingJob] = useState(null);
   const [jobDetailsLoading, setJobDetailsLoading] = useState(false);
+  const [jobToDelete, setJobToDelete] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
   
   const form = useForm({
@@ -256,7 +253,7 @@ const Jobs = () => {
       hideFields: [],
       defaultValues: { priority: 'medium', status: 'new' },
       titleFormat: (type, customer) => `${type} - ${customer?.name || 'Customer'}`,
-      descriptionFormat: (type, customer) => `${type} printing for ${customer?.company || customer?.name || 'customer'}`,
+      descriptionFormat: (type, customer) => `${type} service for ${customer?.company || customer?.name || 'customer'}`,
       isInstant: false
     },
     'Large Format': {
@@ -340,7 +337,7 @@ const Jobs = () => {
       try {
         const params = {
           page: pagination.current,
-          limit: 1000, // Fetch more to allow client-side filtering
+          limit: pagination.pageSize, // Backend pagination
         };
 
         if (filters.status !== 'all') {
@@ -349,6 +346,14 @@ const Jobs = () => {
 
         if (filters.customerId !== 'all') {
           params.customerId = filters.customerId;
+        }
+
+        if (filters.priority !== 'all') {
+          params.priority = filters.priority;
+        }
+
+        if (filters.dueDate !== 'all') {
+          params.dueDate = filters.dueDate;
         }
 
         if (debouncedSearch) params.search = debouncedSearch;
@@ -365,55 +370,9 @@ const Jobs = () => {
     refetchOnWindowFocus: false,
   });
 
-  // Apply client-side filters for priority and due date
-  const filteredJobs = useMemo(() => {
-    let allJobs = jobsQueryResult?.data || [];
-    
-    // Filter by priority
-    if (filters.priority !== 'all') {
-      allJobs = allJobs.filter(job => job.priority === filters.priority);
-    }
-    
-    // Filter by due date
-    if (filters.dueDate !== 'all') {
-      const today = dayjs().startOf('day');
-      const tomorrow = dayjs().add(1, 'day').startOf('day');
-      const endOfWeek = dayjs().endOf('week');
-      const startOfNextWeek = dayjs().add(1, 'week').startOf('week');
-      const endOfNextWeek = dayjs().add(1, 'week').endOf('week');
-      
-      allJobs = allJobs.filter(job => {
-        if (!job.dueDate) return false;
-        const dueDate = dayjs(job.dueDate);
-        
-        switch (filters.dueDate) {
-          case 'today':
-            return dueDate.isSame(today, 'day');
-          case 'tomorrow':
-            return dueDate.isSame(tomorrow, 'day');
-          case 'this_week':
-            return dueDate.isAfter(today.subtract(1, 'day')) && dueDate.isBefore(endOfWeek.add(1, 'day'));
-          case 'next_week':
-            return dueDate.isAfter(startOfNextWeek.subtract(1, 'day')) && dueDate.isBefore(endOfNextWeek.add(1, 'day'));
-          case 'overdue':
-            return dueDate.isBefore(today) && job.status !== 'completed';
-          default:
-            return true;
-        }
-      });
-    }
-    
-    return allJobs;
-  }, [jobsQueryResult?.data, filters.priority, filters.dueDate]);
-
-  // Paginate filtered jobs
-  const jobs = useMemo(() => {
-    const start = (pagination.current - 1) * pagination.pageSize;
-    const end = start + pagination.pageSize;
-    return filteredJobs.slice(start, end);
-  }, [filteredJobs, pagination.current, pagination.pageSize]);
-
-  const jobsCount = filteredJobs.length;
+  // Use backend pagination directly
+  const jobs = useMemo(() => jobsQueryResult?.data || [], [jobsQueryResult?.data]);
+  const jobsCount = jobsQueryResult?.count || 0;
   
   useEffect(() => {
     console.log('Jobs Query Result:', jobsQueryResult);
@@ -422,8 +381,9 @@ const Jobs = () => {
   }, [jobsQueryResult, jobs, jobsCount]);
 
   useEffect(() => {
-    setPagination((prev) => (prev.total === jobsCount ? prev : { ...prev, total: jobsCount }));
-  }, [jobsCount]);
+    const totalCount = jobsQueryResult?.count || 0;
+    setPagination((prev) => (prev.total === totalCount ? prev : { ...prev, total: totalCount }));
+  }, [jobsQueryResult?.count]);
 
   useEffect(() => {
     if (jobsError) {
@@ -436,7 +396,7 @@ const Jobs = () => {
   const { data: customersData = [], isLoading: customersLoading } = useQuery({
     queryKey: ['customers', 'all'],
     queryFn: async () => {
-      const response = await customerService.getAll({ limit: 1000 });
+      const response = await customerService.getAll({ limit: 100 });
       return response.data || [];
     },
     staleTime: 5 * 60 * 1000, // 5 minutes
@@ -472,6 +432,24 @@ const Jobs = () => {
     cacheTime: 30 * 60 * 1000, // 30 minutes
   });
 
+  const { data: jobItemCategoriesApi = [] } = useQuery({
+    queryKey: ['jobs', 'categories', activeTenantId],
+    queryFn: () => jobService.getCategories(),
+    enabled: !!activeTenantId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const jobItemCategoriesGrouped = useMemo(() => {
+    const apiCats = Array.isArray(jobItemCategoriesApi?.data) ? jobItemCategoriesApi.data : (Array.isArray(jobItemCategoriesApi) ? jobItemCategoriesApi : []);
+    const byGroup = new Map();
+    apiCats.forEach(cat => {
+      const group = cat.group || 'Other';
+      if (!byGroup.has(group)) byGroup.set(group, []);
+      byGroup.get(group).push({ value: cat.value, label: cat.label });
+    });
+    return byGroup;
+  }, [jobItemCategoriesApi]);
+
 useEffect(() => {
   if (assignModalVisible && jobBeingAssigned) {
     assignmentForm.reset({
@@ -493,43 +471,28 @@ useEffect(() => {
 
   const refreshJobDetails = async (jobId) => {
     const response = await jobService.getById(jobId);
-    // API interceptor already returns response.data, so response is the data directly
-    // Handle both wrapped and unwrapped responses
     const jobDetails = response?.data || response;
-    if (!jobDetails) {
-      throw new Error('Failed to fetch job details');
-    }
+    if (!jobDetails) throw new Error('Failed to fetch job details');
     jobDetails.attachments = Array.isArray(jobDetails.attachments) ? jobDetails.attachments : [];
-    // Check invoice in background, don't fail if it errors
     try {
       await checkJobInvoice(jobId);
     } catch (error) {
       console.error('Failed to check job invoice:', error);
-      // Don't throw - invoice check is optional
     }
-    setViewingJob(jobDetails);
+    setViewingJob((prev) => (prev?.id === jobId ? jobDetails : prev));
     return jobDetails;
   };
 
-  const handleView = useCallback(async (job) => {
-    // Set viewing job immediately with data from table row
+  const handleView = useCallback((job) => {
     setViewingJob(job);
-    // Open drawer immediately
     setDrawerVisible(true);
-    // Load full details asynchronously
     setJobDetailsLoading(true);
-    try {
-      await refreshJobDetails(job.id);
-    } catch (error) {
-      console.error('Failed to load job details:', error);
-      // Only show error if we don't have basic job data
-      if (!job || !job.id) {
-        showError('Failed to load job details');
-      }
-      // Keep the job data from table row if loading fails
-    } finally {
-      setJobDetailsLoading(false);
-    }
+    refreshJobDetails(job.id)
+      .catch((error) => {
+        console.error('Failed to load job details:', error);
+        if (!job?.id) showError('Failed to load job details');
+      })
+      .finally(() => setJobDetailsLoading(false));
   }, []);
 
   // Check if coming from dashboard with openModal flag
@@ -572,6 +535,20 @@ useEffect(() => {
     setViewingJob(null);
     setJobDetailsLoading(false);
   }, []);
+
+  const handleDeleteJob = useCallback(async (id) => {
+    try {
+      await jobService.delete(id);
+      showSuccess('Job deleted successfully');
+      queryClient.invalidateQueries({ queryKey: ['jobs'] });
+      setJobToDelete(null);
+      if (viewingJob?.id === id) {
+        handleCloseDrawer();
+      }
+    } catch (error) {
+      showError(error, 'Failed to delete job');
+    }
+  }, [queryClient, viewingJob?.id, handleCloseDrawer]);
 
   const handleMarkAsPaid = useCallback(async (job) => {
     try {
@@ -872,7 +849,7 @@ useEffect(() => {
         description: jobData.description || '',
         items: (jobData.items || []).map(item => ({
           ...item,
-          // Parse unitPrice if it's a string (handle formatted values like "GHS 50,00", "50,00", "50.00", etc.)
+          // Parse unitPrice if it's a string (handle formatted values like "₵ 50,00", "50,00", "50.00", etc.)
           unitPrice: typeof item.unitPrice === 'string' 
             ? parseFloat(item.unitPrice.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0
             : (typeof item.unitPrice === 'number' ? item.unitPrice : 0),
@@ -921,6 +898,13 @@ useEffect(() => {
     },
     staleTime: 10 * 60 * 1000, // 10 minutes
     cacheTime: 30 * 60 * 1000, // 30 minutes
+  });
+
+  const { data: customerSourceOptionsApi = [] } = useQuery({
+    queryKey: ['settings', 'customer-sources', activeTenantId],
+    queryFn: () => settingsService.getCustomerSources(),
+    enabled: !!activeTenantId,
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: customRegions = [] } = useQuery({
@@ -1540,12 +1524,12 @@ useEffect(() => {
     {
       key: 'title',
       label: 'Title',
-      render: (_, record) => <span className="text-black">{record?.title || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.title || '—'}</span>
     },
     {
       key: 'customer',
       label: 'Customer',
-      render: (_, record) => <span className="text-black">{record?.customer?.name || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.customer?.name || '—'}</span>
     },
     {
       key: 'status',
@@ -1570,17 +1554,22 @@ useEffect(() => {
     {
       key: 'price',
       label: 'Price',
-      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.finalPrice || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.finalPrice || 0).toFixed(2)}</span>
     },
     {
       key: 'dueDate',
       label: 'Due Date',
-      render: (_, record) => <span className="text-black">{record?.dueDate ? dayjs(record.dueDate).format('MMM DD, YYYY') : '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.dueDate ? dayjs(record.dueDate).format('MMM DD, YYYY') : '—'}</span>
     },
     {
       key: 'actions',
       label: 'Actions',
-      render: (_, record) => <ActionColumn onView={handleView} record={record} />
+      render: (_, record) => (
+        <ActionColumn
+          onView={handleView}
+          record={record}
+        />
+      )
     }
   ], [handleView]);
 
@@ -1601,40 +1590,56 @@ useEffect(() => {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
         <WelcomeSection
           welcomeMessage="Jobs"
-          subText="Manage and track all your printing jobs and orders."
+          subText="Manage and track all your jobs, services, and orders."
         />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-            <Filter className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Filter</span>}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={async () => {
-              setRefreshingJobs(true);
-              await queryClient.invalidateQueries({ queryKey: ['jobs'] });
-              setRefreshingJobs(false);
-            }}
-            disabled={refreshingJobs}
-            size={isMobile ? "icon" : "default"}
-          >
-            {refreshingJobs ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
-          <Button onClick={handleAddJob} size={isMobile ? "icon" : "default"}>
-            <Plus className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">New Job</span>}
-          </Button>
+          <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+                <Filter className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Filter</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Filter jobs by status, priority, customer, or due date</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                onClick={async () => {
+                  setRefreshingJobs(true);
+                  await queryClient.invalidateQueries({ queryKey: ['jobs'] });
+                  setRefreshingJobs(false);
+                }}
+                disabled={refreshingJobs}
+                size={isMobile ? "icon" : "default"}
+              >
+                {refreshingJobs ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh jobs list</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={handleAddJob} size={isMobile ? "icon" : "default"}>
+                <Plus className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">New Job</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Create a new job</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
         {/* Total Jobs Card */}
         <DashboardStatsCard
+          tooltip="Total number of jobs in your workspace"
           title="Total Jobs"
           value={calculatedSummary?.totals?.totalJobs || 0}
           icon={Briefcase}
@@ -1644,6 +1649,7 @@ useEffect(() => {
 
         {/* In Progress Card */}
         <DashboardStatsCard
+          tooltip="Jobs currently being worked on"
           title="In Progress"
           value={calculatedSummary?.totals?.inProgressJobs || 0}
           icon={Clock}
@@ -1653,6 +1659,7 @@ useEffect(() => {
 
         {/* Completed Card */}
         <DashboardStatsCard
+          tooltip="Jobs that have been completed"
           title="Completed"
           value={calculatedSummary?.totals?.completedJobs || 0}
           icon={CheckCircle}
@@ -1662,6 +1669,7 @@ useEffect(() => {
 
         {/* Overdue Card */}
         <DashboardStatsCard
+          tooltip="Jobs past their due date"
           title="Overdue"
           value={calculatedSummary?.totals?.overdueJobs || 0}
           icon={AlertCircle}
@@ -1695,7 +1703,13 @@ useEffect(() => {
           loading={isJobsLoading || isJobsFetching || (isMobile && isRefreshing)}
           title={null}
           emptyIcon={<Briefcase className="h-12 w-12 text-muted-foreground" />}
-          emptyDescription="No jobs found"
+          emptyDescription="No jobs yet. Create a job to track work orders and generate invoices."
+          emptyAction={
+            <Button onClick={handleAddJob}>
+              <Plus className="h-4 w-4 mr-2" />
+              Create First Job
+            </Button>
+          }
           pageSize={pagination.pageSize}
           onPageChange={(newPagination) => {
             setPagination(newPagination);
@@ -1704,6 +1718,8 @@ useEffect(() => {
             current: pagination.current,
             total: jobsCount
           }}
+          viewMode={tableViewMode}
+          onViewModeChange={setTableViewMode}
         />
       </div>
 
@@ -1712,12 +1728,13 @@ useEffect(() => {
         onClick={handleAddJob}
         icon={Plus}
         label="Add Job"
+        tooltip="Create a new job"
         show={isMobile}
       />
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Jobs</SheetTitle>
           </SheetHeader>
@@ -1816,6 +1833,8 @@ useEffect(() => {
         title="Job Details"
         width={window.innerWidth < 768 ? '100%' : 720}
         showActions={true}
+        onDelete={viewingJob ? () => handleDeleteJob(viewingJob.id) : null}
+        deleteConfirmText="Are you sure you want to delete this job? This action cannot be undone."
         extraActions={viewingJob ? [
           {
             key: 'edit',
@@ -1842,7 +1861,7 @@ useEffect(() => {
             key: 'markAsPaid',
             label: markingAsPaid ? 'Marking...' : 'Mark as Paid',
             variant: 'secondary',
-            icon: markingAsPaid ? <Loader2 className="h-4 w-4 animate-spin" /> : <DollarSign className="h-4 w-4" />,
+            icon: markingAsPaid ? <Loader2 className="h-4 w-4 animate-spin" /> : <Currency className="h-4 w-4" />,
             onClick: () => handleMarkAsPaid(viewingJob),
             disabled: markingAsPaid
           }] : [])
@@ -1852,9 +1871,6 @@ useEffect(() => {
             key: 'details',
             label: 'Details',
             content: (
-              jobDetailsLoading ? (
-                <DetailSkeleton />
-              ) : (
                 <div className="space-y-4">
                   {/* Job Information Section */}
                   <div>
@@ -1953,7 +1969,7 @@ useEffect(() => {
                       <Descriptions column={1} className="space-y-2">
                       <DescriptionItem label="Final Price">
                         <strong className="text-base" style={{ color: '#166534' }}>
-                          GHS {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
+                          ₵ {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
                         </strong>
                       </DescriptionItem>
                       <DescriptionItem label="Invoice">
@@ -2006,16 +2022,12 @@ useEffect(() => {
                     </div>
                   </div>
                 </div>
-              )
             )
           },
           {
             key: 'services',
             label: 'Services',
             content: (
-              jobDetailsLoading ? (
-                <DetailSkeleton />
-              ) : (
                 <DrawerSectionCard title="Items">
                   {(!viewingJob.items || viewingJob.items.length === 0) ? (
                     <div className="py-8 text-center text-muted-foreground">
@@ -2043,12 +2055,12 @@ useEffect(() => {
                             </div>
                             <div className="col-span-2 text-right">
                               <div className="text-xs text-muted-foreground mb-1">Unit Price</div>
-                              <div className="text-sm font-medium">GHS {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
+                              <div className="text-sm font-medium">₵ {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
                             </div>
                             <div className="col-span-2 text-right">
                               <div className="text-xs text-muted-foreground mb-1">Total</div>
                               <div className="font-bold text-sm" style={{ color: '#166534' }}>
-                                GHS {(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
+                                ₵ {(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
                               </div>
                             </div>
                           </div>
@@ -2057,13 +2069,12 @@ useEffect(() => {
                       <div className="border border-border/50 rounded-md p-4 flex justify-between items-center bg-muted/30">
                         <strong className="text-base font-semibold">Total:</strong>
                         <strong className="text-lg font-bold" style={{ color: '#166534' }}>
-                          GHS {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
+                          ₵ {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
                         </strong>
                       </div>
                     </div>
                   )}
                 </DrawerSectionCard>
-              )
             )
           },
           {
@@ -2088,9 +2099,6 @@ useEffect(() => {
             key: 'activities',
             label: 'Activities',
             content: (
-              jobDetailsLoading ? (
-                <DetailSkeleton />
-              ) : (
                 <DrawerSectionCard title="Activity">
                   {(() => {
                     const statusHistory = (viewingJob?.statusHistory || []).slice();
@@ -2146,7 +2154,7 @@ useEffect(() => {
                             <TimelineItem key={activity.id} isLast={isLast}>
                               <TimelineIndicator />
                               <TimelineContent>
-                                <TimelineTitle className="text-black">
+                                <TimelineTitle className="text-foreground">
                                   {activity.isCreated ? (
                                     <>
                                       {activity.changedByUser?.name || viewingJob?.creator?.name || 'System'} created job {viewingJob?.jobNumber}
@@ -2160,17 +2168,17 @@ useEffect(() => {
                                     <>Status changed to <StatusChip status={activity.status} className="ml-2" /></>
                                   )}
                                 </TimelineTitle>
-                                <TimelineTime className="text-black">
+                                <TimelineTime className="text-foreground">
                                   {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
                                   {activity.changedByUser && !activity.isCreated && (
                                     <> • {activity.changedByUser.name}</>
                                   )}
                                 </TimelineTime>
                                 {activity.comment && (
-                                  <TimelineDescription className="text-black">{activity.comment}</TimelineDescription>
+                                  <TimelineDescription className="text-foreground">{activity.comment}</TimelineDescription>
                                 )}
                                 {(activity.isCreated || activity.isUpdated) && (
-                                  <TimelineDescription className="text-black">
+                                  <TimelineDescription className="text-foreground">
                                     {activity.isCreated ? (
                                       <>Created by: {activity.changedByUser?.name || viewingJob?.creator?.name || 'System'}</>
                                     ) : (
@@ -2191,7 +2199,6 @@ useEffect(() => {
                     );
                   })()}
                 </DrawerSectionCard>
-              )
             )
           }
         ] : []}
@@ -2208,23 +2215,34 @@ useEffect(() => {
         } : null}
       />
 
-      <Dialog open={modalVisible} onOpenChange={(open) => {
-        if (!open) {
-          setModalVisible(false);
-          setEditingJobId(null);
-          setCategoryOtherInputs({}); // Clear category "Other" inputs
+      <MobileFormDialog
+        open={modalVisible}
+        onOpenChange={(open) => {
+          if (!open) {
+            setModalVisible(false);
+            setEditingJobId(null);
+            setCategoryOtherInputs({}); // Clear category "Other" inputs
+          }
+        }}
+        title={editingJobId ? "Edit Job" : "Add New Job"}
+        description={editingJobId ? "Update the job details below." : "Fill in the details to create a new job."}
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => {
+              setModalVisible(false);
+              setEditingJobId(null);
+              setCategoryOtherInputs({});
+            }}>
+              Cancel
+            </Button>
+            <Button form="job-form" type="submit" loading={submittingJob}>
+              {editingJobId ? 'Update Job' : 'Create Job'}
+            </Button>
+          </>
         }
-      }}>
-        <DialogContent className="sm:w-[var(--modal-w-2xl)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
-          <DialogHeader>
-            <DialogTitle>{editingJobId ? "Edit Job" : "Add New Job"}</DialogTitle>
-            <DialogDescription>
-              {editingJobId ? "Update the job details below." : "Fill in the details to create a new job."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
+      >
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
+            <form id="job-form" onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
               <div className="grid grid-cols-2 gap-2 md:gap-4">
                 {!customerModalVisible && (
                 <FormField
@@ -2404,7 +2422,7 @@ useEffect(() => {
 
               <div className="space-y-4">
                 {fields.map((field, index) => (
-                  <Card key={field.id} className="p-4 bg-gray-50">
+                  <Card key={field.id} className="p-4 bg-muted/50">
                     {pricingTemplates.length > 0 && (
                       <div className="mb-4">
                         <Label>Select Pricing Template (Optional)</Label>
@@ -2421,9 +2439,9 @@ useEffect(() => {
                                 const hasSquareFootPricing = Number.isFinite(parseFloat(template.pricePerSquareFoot)) && parseFloat(template.pricePerSquareFoot) > 0;
                                 const priceLabel = (() => {
                                   if (resolvedPrice <= 0) return '';
-                                  if (hasUnitPricing) return ` (GHS ${resolvedPrice.toFixed(2)}/unit)`;
-                                  if (hasSquareFootPricing) return ` (GHS ${resolvedPrice.toFixed(2)}/sq ft)`;
-                                  return ` (GHS ${resolvedPrice.toFixed(2)})`;
+                                  if (hasUnitPricing) return ` (₵ ${resolvedPrice.toFixed(2)}/unit)`;
+                                  if (hasSquareFootPricing) return ` (₵ ${resolvedPrice.toFixed(2)}/sq ft)`;
+                                  return ` (₵ ${resolvedPrice.toFixed(2)})`;
                                 })();
                                 return (
                                 <SelectItem key={template.id} value={template.id}>
@@ -2461,24 +2479,14 @@ useEffect(() => {
                                     </SelectTrigger>
                                   </FormControl>
                                   <SelectContent>
-                                    <div className="px-2 py-1.5 text-sm font-semibold">Printing Services</div>
-                                    <SelectItem value="Black & White Printing">Black & White Printing</SelectItem>
-                                    <SelectItem value="Color Printing">Color Printing</SelectItem>
-                                    <SelectItem value="Large Format Printing">Large Format Printing</SelectItem>
-                                    <SelectItem value="Photocopying">Photocopying</SelectItem>
-                                    <div className="px-2 py-1.5 text-sm font-semibold">Print Products</div>
-                                    <SelectItem value="Business Cards">Business Cards</SelectItem>
-                                    <SelectItem value="Brochures">Brochures</SelectItem>
-                                    <SelectItem value="Flyers">Flyers</SelectItem>
-                                    <SelectItem value="Posters">Posters</SelectItem>
-                                    <SelectItem value="Banners">Banners</SelectItem>
-                                    <SelectItem value="Booklets">Booklets</SelectItem>
-                                    <div className="px-2 py-1.5 text-sm font-semibold">Finishing Services</div>
-                                    <SelectItem value="Binding">Binding</SelectItem>
-                                    <SelectItem value="Lamination">Lamination</SelectItem>
-                                    <SelectItem value="Scanning">Scanning</SelectItem>
-                                    <div className="px-2 py-1.5 text-sm font-semibold">Professional Services</div>
-                                    <SelectItem value="Design Services">Design Services</SelectItem>
+                                    {Array.from(jobItemCategoriesGrouped.entries()).map(([groupName, items]) => (
+                                      <div key={groupName}>
+                                        <div className="px-2 py-1.5 text-sm font-semibold">{groupName}</div>
+                                        {items.map(cat => (
+                                          <SelectItem key={cat.value} value={cat.value}>{cat.label}</SelectItem>
+                                        ))}
+                                      </div>
+                                    ))}
                                     {customCategories.length > 0 && (
                                       <>
                                         <div className="px-2 py-1.5 text-sm font-semibold">Custom Categories</div>
@@ -2513,7 +2521,7 @@ useEffect(() => {
                         <div className="flex gap-2 mt-2">
                                       <Input
                             className="flex-1"
-                                        placeholder="e.g., T-shirt Printing"
+                                        placeholder="e.g., Custom Service"
                             value={categoryOtherInputs[index] || ''}
                             onChange={(e) => setCategoryOtherInputs(prev => ({ ...prev, [index]: e.target.value }))}
                             onKeyDown={(e) => e.key === 'Enter' && handleSaveCustomCategory(categoryOtherInputs[index], index)}
@@ -2654,7 +2662,7 @@ useEffect(() => {
                       <div className="space-y-2">
                         <Label>Total</Label>
                         <div className="h-10 px-3 py-2 border border-input rounded-md bg-background flex items-center text-sm font-semibold">
-                          GHS {(() => {
+                          ₵ {(() => {
                             const items = form.getValues('items') || [];
                             const currentItem = items[index] || {};
                             const qty = parseFloat(currentItem.quantity || 1);
@@ -2718,23 +2726,23 @@ useEffect(() => {
               const total = subtotal - totalDiscount;
               
               return (
-                  <div className="bg-gray-50 border border-gray-200 rounded-md mb-4 overflow-hidden">
+                  <div className="bg-muted/50 border border-border rounded-md mb-4 overflow-hidden">
                     <div className="p-3">
                     <div className="flex justify-between mb-1 text-sm text-gray-600">
                       <span>Subtotal:</span>
-                      <span className="font-medium">GHS {subtotal.toFixed(2)}</span>
+                      <span className="font-medium">₵ {subtotal.toFixed(2)}</span>
                     </div>
                   {totalDiscount > 0 && (
                       <div className="flex justify-between mb-1 text-sm text-gray-600">
                         <span>Total Discount:</span>
-                        <span className="font-medium">-GHS {totalDiscount.toFixed(2)}</span>
+                        <span className="font-medium">-₵ {totalDiscount.toFixed(2)}</span>
                       </div>
                     )}
                     </div>
                     <Separator className="w-full" />
                     <div className="p-3 flex justify-between">
                       <span className="text-base font-bold">Grand Total:</span>
-                      <span className="text-lg font-bold">GHS {total.toFixed(2)}</span>
+                      <span className="text-lg font-bold">₵ {total.toFixed(2)}</span>
                     </div>
                 </div>
               );
@@ -2757,38 +2765,31 @@ useEffect(() => {
                   </FormItem>
                 )}
               />
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => {
-                  setModalVisible(false);
-                  setEditingJobId(null);
-                  setCategoryOtherInputs({});
-                }}>
-                  Cancel
-                </Button>
-                <Button type="submit" loading={submittingJob}>
-                  {editingJobId ? 'Update Job' : 'Create Job'}
-                </Button>
-              </DialogFooter>
             </form>
           </Form>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
+      </MobileFormDialog>
 
-      <Dialog open={assignModalVisible} onOpenChange={(open) => !open && closeAssignModal()}>
-        <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
-          <DialogHeader>
-            <DialogTitle>{jobBeingAssigned ? `Assign ${jobBeingAssigned.jobNumber}` : 'Assign Job'}</DialogTitle>
-            <DialogDescription>
-              Select a team member to assign this job to, or leave it unassigned.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
+      <MobileFormDialog
+        open={assignModalVisible}
+        onOpenChange={(open) => { if (!open) closeAssignModal(); }}
+        title={jobBeingAssigned ? `Assign ${jobBeingAssigned.jobNumber}` : 'Assign Job'}
+        description="Select a team member to assign this job to, or leave it unassigned."
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={closeAssignModal}>
+              Cancel
+            </Button>
+            <Button form="assign-form" type="submit" loading={updatingAssignment}>
+              Save
+            </Button>
+          </>
+        }
+      >
           <Form {...assignmentForm}>
-            <form onSubmit={assignmentForm.handleSubmit(handleAssignmentSubmit)} className="space-y-4">
+            <form id="assign-form" onSubmit={assignmentForm.handleSubmit(handleAssignmentSubmit)} className="space-y-4">
               <FormField
                 control={assignmentForm.control}
-            name="assignedTo"
+                name="assignedTo"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Team Member</FormLabel>
@@ -2800,45 +2801,42 @@ useEffect(() => {
                       </FormControl>
                       <SelectContent>
                         <SelectItem value="__NONE__">None</SelectItem>
-              {teamMembers.map(member => (
+                        {teamMembers.map(member => (
                           <SelectItem key={member.id} value={member.id}>
-                  {member.name} {member.role ? `(${member.role})` : ''}
+                            {member.name} {member.role ? `(${member.role})` : ''}
                           </SelectItem>
-              ))}
+                        ))}
                       </SelectContent>
-            </Select>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={closeAssignModal}>
-                  Cancel
-                </Button>
-                <Button type="submit" loading={updatingAssignment}>
-                  Save
-                </Button>
-              </DialogFooter>
             </form>
           </Form>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
+      </MobileFormDialog>
 
-      <Dialog open={statusModalVisible} onOpenChange={(open) => !open && closeStatusModal()}>
-        <DialogContent className="sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
-          <DialogHeader>
-            <DialogTitle>{jobBeingUpdated ? `Update Status - ${jobBeingUpdated.jobNumber}` : 'Update Status'}</DialogTitle>
-            <DialogDescription>
-              Update the status of this job and optionally add a comment.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
+      <MobileFormDialog
+        open={statusModalVisible}
+        onOpenChange={(open) => { if (!open) closeStatusModal(); }}
+        title={jobBeingUpdated ? `Update Status - ${jobBeingUpdated.jobNumber}` : 'Update Status'}
+        description="Update the status of this job and optionally add a comment."
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={closeStatusModal}>
+              Cancel
+            </Button>
+            <Button form="status-form" type="submit" loading={updatingStatus}>
+              Update Status
+            </Button>
+          </>
+        }
+      >
           <Form {...statusForm}>
-            <form onSubmit={statusForm.handleSubmit(handleStatusSubmit)} className="space-y-4">
+            <form id="status-form" onSubmit={statusForm.handleSubmit(handleStatusSubmit)} className="space-y-4">
               <FormField
                 control={statusForm.control}
-            name="status"
+                name="status"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Status</FormLabel>
@@ -2849,20 +2847,20 @@ useEffect(() => {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-              {statusOptions.map(option => (
+                        {statusOptions.map(option => (
                           <SelectItem key={option.value} value={option.value}>
-                  {option.label}
+                            {option.label}
                           </SelectItem>
-              ))}
+                        ))}
                       </SelectContent>
-            </Select>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
               />
               <FormField
                 control={statusForm.control}
-            name="statusComment"
+                name="statusComment"
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Comment (optional)</FormLabel>
@@ -2873,40 +2871,43 @@ useEffect(() => {
                   </FormItem>
                 )}
               />
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={closeStatusModal}>
-                  Cancel
-                </Button>
-                <Button type="submit" loading={updatingStatus}>
-                  Update Status
-                </Button>
-              </DialogFooter>
             </form>
           </Form>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
+      </MobileFormDialog>
 
       {/* Add New Customer Modal */}
-      <Dialog open={customerModalVisible} onOpenChange={(open) => {
-        if (!open) {
-          setCustomerModalVisible(false);
-          setShowCustomerSourceOtherInput(false);
-          setCustomerSourceOtherValue('');
-          setShowRegionOtherInput(false);
-          setRegionOtherValue('');
+      <MobileFormDialog
+        open={customerModalVisible}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCustomerModalVisible(false);
+            setShowCustomerSourceOtherInput(false);
+            setCustomerSourceOtherValue('');
+            setShowRegionOtherInput(false);
+            setRegionOtherValue('');
+          }
+        }}
+        title="Add New Customer"
+        description="Enter the customer information below to add them to your system."
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => {
+              setCustomerModalVisible(false);
+              setShowCustomerSourceOtherInput(false);
+              setCustomerSourceOtherValue('');
+              setShowRegionOtherInput(false);
+              setRegionOtherValue('');
+            }}>
+              Cancel
+            </Button>
+            <Button form="customer-form" type="submit" loading={submittingCustomer}>
+              Create Customer
+            </Button>
+          </>
         }
-      }}>
-        <DialogContent className="sm:w-[var(--modal-w-lg)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
-          <DialogHeader>
-            <DialogTitle>Add New Customer</DialogTitle>
-            <DialogDescription>
-              Enter the customer information below to add them to your system.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
+      >
           <Form {...customerForm}>
-            <form onSubmit={customerForm.handleSubmit(handleCustomerSubmit)} className="space-y-4">
+            <form id="customer-form" onSubmit={customerForm.handleSubmit(handleCustomerSubmit)} className="space-y-4">
               <div className="grid grid-cols-2 gap-2 md:gap-4">
                 <FormField
                   control={customerForm.control}
@@ -3055,34 +3056,13 @@ useEffect(() => {
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        <div className="px-2 py-1.5 text-sm font-semibold">Social Media</div>
-                        <SelectItem value="Facebook">Facebook</SelectItem>
-                        <SelectItem value="Instagram">Instagram</SelectItem>
-                        <SelectItem value="Twitter">Twitter</SelectItem>
-                        <SelectItem value="LinkedIn">LinkedIn</SelectItem>
-                        <SelectItem value="TikTok">TikTok</SelectItem>
-                        <SelectItem value="WhatsApp">WhatsApp</SelectItem>
-                        <div className="px-2 py-1.5 text-sm font-semibold">Online</div>
-                        <SelectItem value="Google Search">Google Search</SelectItem>
-                        <SelectItem value="Website">Website</SelectItem>
-                        <SelectItem value="Online Ad">Online Ad</SelectItem>
-                        <div className="px-2 py-1.5 text-sm font-semibold">Physical</div>
-                        <SelectItem value="Signboard">Signboard</SelectItem>
-                        <SelectItem value="Walk-in">Walk-in</SelectItem>
-                        <SelectItem value="Market Outreach">Market Outreach</SelectItem>
-                        <SelectItem value="Flyer/Brochure">Flyer/Brochure</SelectItem>
-                        <div className="px-2 py-1.5 text-sm font-semibold">Personal</div>
-                        <SelectItem value="Referral">Referral (Word of Mouth)</SelectItem>
-                        <SelectItem value="Existing Customer">Existing Customer</SelectItem>
-                        <div className="px-2 py-1.5 text-sm font-semibold">Other</div>
-                        <SelectItem value="Radio">Radio</SelectItem>
-                        <SelectItem value="TV">TV</SelectItem>
-                        <SelectItem value="Newspaper">Newspaper</SelectItem>
-                        <SelectItem value="Event/Trade Show">Event/Trade Show</SelectItem>
-                  {customCustomerSources.length > 0 && (
+                        {(Array.isArray(customerSourceOptionsApi) ? customerSourceOptionsApi : []).map(source => (
+                          <SelectItem key={source.value} value={source.value}>{source.label || source.value}</SelectItem>
+                        ))}
+                        {customCustomerSources.length > 0 && (
                           <>
                             <div className="px-2 py-1.5 text-sm font-semibold">Custom Sources</div>
-                      {customCustomerSources.map(source => (
+                            {customCustomerSources.map(source => (
                               <SelectItem key={source.value} value={source.value}>{source.label}</SelectItem>
                             ))}
                           </>
@@ -3129,25 +3109,31 @@ useEffect(() => {
                   )}
                 />
               )}
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => {
-                  setCustomerModalVisible(false);
-                  setShowCustomerSourceOtherInput(false);
-                  setCustomerSourceOtherValue('');
-                  setShowRegionOtherInput(false);
-                  setRegionOtherValue('');
-                }}>
-                  Cancel
-                </Button>
-                <Button type="submit" loading={submittingCustomer}>
-                  Create Customer
-                </Button>
-              </DialogFooter>
             </form>
           </Form>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
+      </MobileFormDialog>
+
+      <AlertDialog open={!!jobToDelete} onOpenChange={(open) => !open && setJobToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete job?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {jobToDelete
+                ? `Are you sure you want to delete "${jobToDelete.jobNumber || jobToDelete.title || 'this job'}"? This action cannot be undone.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => jobToDelete && handleDeleteJob(jobToDelete.id)}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

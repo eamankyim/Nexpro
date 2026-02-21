@@ -31,7 +31,7 @@ const Tenant = sequelize.define('Tenant', {
     defaultValue: 'trial'
   },
   businessType: {
-    type: DataTypes.ENUM('printing_press', 'shop', 'pharmacy'),
+    type: DataTypes.ENUM('shop', 'studio', 'pharmacy', 'printing_press', 'mechanic', 'barber', 'salon'),
     allowNull: true,
     defaultValue: null
   },
@@ -47,6 +47,29 @@ const Tenant = sequelize.define('Tenant', {
   billingCustomerId: {
     type: DataTypes.STRING(255),
     allowNull: true
+  },
+  paystackSubaccountCode: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    comment: 'Paystack subaccount code (ACCT_xxx) for POS payment splits'
+  },
+  categoriesSeeded: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: 'Whether default categories have been seeded for this tenant'
+  },
+  accountsSeeded: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: 'Whether default chart of accounts has been seeded for this tenant'
+  },
+  equipmentCategoriesSeeded: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false,
+    comment: 'Whether default equipment categories have been seeded for this tenant'
   }
 }, {
   tableName: 'tenants',

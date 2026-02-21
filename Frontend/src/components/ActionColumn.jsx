@@ -7,6 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Eye, MoreVertical } from 'lucide-react';
 import { useResponsive } from '@/hooks/useResponsive';
 import { cn } from '@/lib/utils';
@@ -20,51 +21,63 @@ import { cn } from '@/lib/utils';
 const ActionColumn = memo(({ onView, record, extraActions = [] }) => {
   const { isMobile } = useResponsive();
 
-  if (extraActions.length === 0) {
+  const viewButton = (
+    <SecondaryButton
+      onClick={() => onView(record)}
+      size="sm"
+      className={cn(isMobile && "w-full min-h-[44px]")}
+    >
+      <Eye className="h-4 w-4" />
+      <span className="ml-2">View</span>
+    </SecondaryButton>
+  );
+
+  if (extraActions.length === 0 || isMobile) {
     return (
-      <div className={cn("flex items-center gap-1 md:gap-2")}>
-        <SecondaryButton
-          onClick={() => onView(record)}
-          size={isMobile ? "icon" : "sm"}
-        >
-          <Eye className="h-4 w-4" />
-          {!isMobile && <span className="ml-2">View</span>}
-        </SecondaryButton>
+      <div className={cn("flex items-center gap-1 md:gap-2", isMobile && "w-full flex-col")}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            {viewButton}
+          </TooltipTrigger>
+          <TooltipContent>Click to view details</TooltipContent>
+        </Tooltip>
       </div>
     );
   }
 
   return (
     <div className={cn("flex items-center gap-1 md:gap-2")}>
-      <SecondaryButton
-        onClick={() => onView(record)}
-        size={isMobile ? "icon" : "sm"}
-      >
-        <Eye className="h-4 w-4" />
-        {!isMobile && <span className="ml-2">View</span>}
-      </SecondaryButton>
-      {extraActions.length > 0 && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <SecondaryButton size={isMobile ? "icon" : "sm"}>
-              <MoreVertical className="h-4 w-4" />
-            </SecondaryButton>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {extraActions.map((action, index) => (
-              <DropdownMenuItem
-                key={index}
-                onClick={action.disabled ? undefined : action.onClick}
-                className="flex items-center gap-2"
-                disabled={action.disabled}
-              >
-                {action.icon}
-                {action.label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          {viewButton}
+        </TooltipTrigger>
+        <TooltipContent>Click to view details</TooltipContent>
+      </Tooltip>
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <SecondaryButton size="sm">
+                <MoreVertical className="h-4 w-4" />
+              </SecondaryButton>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>More actions</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent align="end">
+          {extraActions.map((action, index) => (
+            <DropdownMenuItem
+              key={index}
+              onClick={action.disabled ? undefined : action.onClick}
+              className="flex items-center gap-2"
+              disabled={action.disabled}
+            >
+              {action.icon}
+              {action.label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 });

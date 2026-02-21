@@ -1,6 +1,32 @@
 import api from './api';
 
 const expenseService = {
+  /**
+   * Get expense categories (business-type and shop-type specific + custom).
+   * @returns {Promise<{ data: string[], custom: string[] }>} categories list and custom-only list
+   */
+  getCategories: async () => {
+    const res = await api.get('/expenses/categories');
+    return {
+      data: Array.isArray(res?.data) ? res.data : [],
+      custom: Array.isArray(res?.custom) ? res.custom : []
+    };
+  },
+
+  /** Add a custom expense category for the current tenant */
+  addCustomCategory: async (name) => {
+    const res = await api.post('/expenses/categories', { name: String(name).trim() });
+    return res;
+  },
+
+  /** Remove a custom expense category (query param name) */
+  removeCustomCategory: async (name) => {
+    const res = await api.delete('/expenses/categories', {
+      params: { name: String(name).trim() }
+    });
+    return res;
+  },
+
   // Get all expenses
   getAll: async (params = {}) => {
     const queryString = new URLSearchParams(params).toString();
@@ -72,6 +98,16 @@ const expenseService = {
   // Add expense activity
   addActivity: async (id, activityData) => {
     return await api.post(`/expenses/${id}/activities`, activityData);
+  },
+
+  // Upload expense receipt (image or PDF)
+  uploadReceipt: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await api.post('/expenses/upload-receipt', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return res?.data;
   }
 };
 

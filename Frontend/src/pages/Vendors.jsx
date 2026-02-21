@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -14,6 +15,7 @@ import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import PhoneNumberInput from '../components/PhoneNumberInput';
 import DashboardTable from '../components/DashboardTable';
+import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import TableSkeleton from '../components/TableSkeleton';
@@ -21,6 +23,7 @@ import FileUpload from '../components/FileUpload';
 import FilePreview from '../components/FilePreview';
 import { showSuccess, showError } from '../utils/toast';
 import { API_BASE_URL } from '../services/api';
+import { PRODUCT_UNITS } from '../constants';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -69,23 +72,24 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 
 const vendorSchema = z.object({
-  name: z.string().min(1, 'Vendor name is required'),
+  name: z.string().min(1, 'Enter vendor name'),
   company: z.string().optional(),
-  email: z.string().email('Please enter a valid email').optional().or(z.literal('')),
+  email: z.string().email('Enter a valid email').optional().or(z.literal('')),
   phone: z.string().optional(),
-  website: z.string().url('Please enter a valid URL').optional().or(z.literal('')),
-  category: z.string().min(1, 'Category is required'),
+  website: z.string().url('Enter a valid URL').optional().or(z.literal('')),
+  category: z.string().min(1, 'Select a category'),
   address: z.string().optional(),
 });
 
 const priceListItemSchema = z.object({
   itemType: z.enum(['service', 'product']),
-  name: z.string().min(1, 'Name is required'),
+  name: z.string().min(1, 'Enter a name'),
   description: z.string().optional(),
-  price: z.number().min(0, 'Price must be at least 0'),
+  price: z.number().min(0, 'Price must be 0 or more'),
   unit: z.string().optional(),
   imageUrl: z.string().optional().nullable(),
 });
@@ -108,8 +112,7 @@ const Vendors = () => {
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
-  const [vendors, setVendors] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const queryClient = useQueryClient();
   const [modalVisible, setModalVisible] = useState(false);
   const [editingVendor, setEditingVendor] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
@@ -117,6 +120,7 @@ const Vendors = () => {
     category: 'all',
     isActive: 'all'
   });
+  const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingVendor, setViewingVendor] = useState(null);
@@ -125,12 +129,74 @@ const Vendors = () => {
   const [priceListModalVisible, setPriceListModalVisible] = useState(false);
   const [editingPriceItem, setEditingPriceItem] = useState(null);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [refreshingVendors, setRefreshingVendors] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
   const [imagePreviewVisible, setImagePreviewVisible] = useState(false);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
   const [deletePriceItemId, setDeletePriceItemId] = useState(null);
   const [deletePriceItemDialogOpen, setDeletePriceItemDialogOpen] = useState(false);
   const [deletingPriceItem, setDeletingPriceItem] = useState(false);
+
+  // Fetch vendor categories (business-type and shop-type specific)
+  const { data: vendorCategories = [] } = useQuery({
+    queryKey: ['vendors', 'categories', activeTenantId],
+    queryFn: () => vendorService.getCategories(),
+    enabled: !!activeTenantId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  // Use React Query for vendors
+  const {
+    data: vendorsQueryResult,
+    isLoading: vendorsLoading,
+    error: vendorsError,
+    refetch: refetchVendors,
+    isFetching: vendorsRefetching,
+  } = useQuery({
+    queryKey: ['vendors', activeTenantId, pagination.current, pagination.pageSize, filters, debouncedSearch],
+    queryFn: async () => {
+      try {
+        const params = {
+          page: pagination.current,
+          limit: pagination.pageSize,
+        };
+
+        if (filters.category !== 'all') {
+          params.category = filters.category;
+        }
+
+        if (filters.isActive !== 'all') {
+          params.isActive = filters.isActive === 'true';
+        }
+
+        if (debouncedSearch) params.search = debouncedSearch;
+
+        const response = await vendorService.getAll(params);
+        return response;
+      } catch (error) {
+        console.error('Error in queryFn:', error);
+        throw error;
+      }
+    },
+    enabled: !!activeTenantId,
+    keepPreviousData: true,
+    staleTime: 60 * 1000, // 1 minute
+    refetchOnWindowFocus: false,
+  });
+
+  // Extract vendors and count from query result
+  const vendors = useMemo(() => {
+    const result = vendorsQueryResult?.data || vendorsQueryResult || [];
+    return Array.isArray(result) ? result : [];
+  }, [vendorsQueryResult]);
+
+  const vendorsCount = useMemo(() => {
+    return vendorsQueryResult?.count || vendors.length;
+  }, [vendorsQueryResult, vendors]);
+
+  // Invalidate vendors query
+  const invalidateVendors = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['vendors'] });
+  }, [queryClient]);
 
   const form = useForm({
     resolver: zodResolver(vendorSchema),
@@ -166,87 +232,20 @@ const Vendors = () => {
     setPagination((prev) => ({ ...prev, current: 1 }));
   }, [searchValue]);
 
-  // Clear vendor list when tenant changes so we don't show another tenant's data
   useEffect(() => {
-    setVendors([]);
-  }, [activeTenantId]);
+    const totalCount = vendorsQueryResult?.count || 0;
+    setPagination((prev) => (prev.total === totalCount ? prev : { ...prev, total: totalCount }));
+  }, [vendorsQueryResult]);
 
   useEffect(() => {
-    if (!activeTenantId) return;
-    fetchVendors();
-  }, [activeTenantId, pagination.current, pagination.pageSize, filters, debouncedSearch]);
-
-  const fetchVendors = async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshingVendors(true);
-    } else {
-      setLoading(true);
+    if (vendorsError) {
+      console.error('Failed to load vendors:', vendorsError);
+      showError('Failed to load vendors');
     }
-    try {
-      const params = {
-        page: pagination.current,
-        limit: 1000, // Fetch more for client-side filtering
-      };
+  }, [vendorsError]);
 
-      if (filters.category !== 'all') {
-        params.category = filters.category;
-      }
-
-      if (filters.isActive !== 'all') {
-        params.isActive = filters.isActive === 'true';
-      }
-
-      if (debouncedSearch) params.search = debouncedSearch;
-
-      const response = await vendorService.getAll(params);
-      
-      // Handle response structure (API interceptor returns response.data)
-      let allVendors = [];
-      if (response?.success !== false && response?.data) {
-        allVendors = Array.isArray(response.data) ? response.data : [];
-      } else {
-        allVendors = Array.isArray(response) ? response : [];
-      }
-      
-      setVendors(allVendors);
-    } catch (error) {
-      showError(error, 'Failed to load vendors');
-      setVendors([]);
-    } finally {
-      if (isRefresh) {
-        setRefreshingVendors(false);
-      } else {
-        setLoading(false);
-      }
-    }
-  };
-
-  // Apply client-side filtering
-  const filteredVendors = useMemo(() => {
-    let filtered = vendors;
-    
-    // Filter by category
-    if (filters.category !== 'all') {
-      filtered = filtered.filter(v => v.category === filters.category);
-    }
-    
-    // Filter by active status
-    if (filters.isActive !== 'all') {
-      const isActive = filters.isActive === 'true';
-      filtered = filtered.filter(v => v.isActive === isActive);
-    }
-    
-    return filtered;
-  }, [vendors, filters]);
-
-  // Paginate filtered vendors
-  const paginatedVendors = useMemo(() => {
-    const start = (pagination.current - 1) * pagination.pageSize;
-    const end = start + pagination.pageSize;
-    return filteredVendors.slice(start, end);
-  }, [filteredVendors, pagination.current, pagination.pageSize]);
-
-  const vendorsCount = filteredVendors.length;
+  // Backend already handles filtering, no need for client-side filtering
+  const paginatedVendors = vendors;
 
   const onSubmit = async (values) => {
     try {
@@ -262,7 +261,7 @@ const Vendors = () => {
         showSuccess(editingVendor ? 'Vendor updated successfully' : 'Vendor created successfully');
         setModalVisible(false);
         form.reset();
-        fetchVendors();
+        invalidateVendors();
       } else if (response && response.success === false) {
         // Explicit failure response
         const errorMessage = response.error || response.message || 'Operation failed';
@@ -273,7 +272,7 @@ const Vendors = () => {
         showSuccess(editingVendor ? 'Vendor updated successfully' : 'Vendor created successfully');
         setModalVisible(false);
         form.reset();
-        fetchVendors();
+        invalidateVendors();
       }
     } catch (error) {
       // Only show error if it's a real error (not a false positive from interceptor)
@@ -287,26 +286,23 @@ const Vendors = () => {
     try {
       await vendorService.delete(id);
       showSuccess('Vendor deleted successfully');
-      fetchVendors();
+      invalidateVendors();
     } catch (error) {
       showError(error, 'Failed to delete vendor');
     }
   };
 
-  const handleView = async (vendor) => {
+  const handleView = (vendor) => {
     setViewingVendor(vendor);
     setDrawerVisible(true);
-    
     setLoadingPriceList(true);
-    try {
-      const response = await vendorPriceListService.getAll(vendor.id);
-      setPriceList(response.data || []);
-    } catch (error) {
-      console.error('Failed to load vendor price list:', error);
-      setPriceList([]);
-    } finally {
-      setLoadingPriceList(false);
-    }
+    vendorPriceListService.getAll(vendor.id)
+      .then((response) => setPriceList(response?.data || []))
+      .catch((error) => {
+        console.error('Failed to load vendor price list:', error);
+        setPriceList([]);
+      })
+      .finally(() => setLoadingPriceList(false));
   };
 
   const handleCloseDrawer = () => {
@@ -492,22 +488,22 @@ const Vendors = () => {
     {
       key: 'name',
       label: 'Name',
-      render: (_, record) => <span className="font-medium text-black">{record?.name || '—'}</span>
+      render: (_, record) => <span className="font-medium text-foreground">{record?.name || '—'}</span>
     },
     {
       key: 'company',
       label: 'Company',
-      render: (_, record) => <span className="text-black">{record?.company || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.company || '—'}</span>
     },
     {
       key: 'email',
       label: 'Email',
-      render: (_, record) => <span className="text-black">{record?.email || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.email || '—'}</span>
     },
     {
       key: 'phone',
       label: 'Phone',
-      render: (_, record) => <span className="text-black">{record?.phone || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.phone || '—'}</span>
     },
     {
       key: 'category',
@@ -540,11 +536,13 @@ const Vendors = () => {
 
   const hasActiveFilters = filters.category !== 'all' || filters.isActive !== 'all';
 
-  // Get unique categories for filter
+  // Merge API categories with existing vendor categories (for filter dropdown)
   const uniqueCategories = useMemo(() => {
-    const categories = new Set(vendors.map(v => v.category).filter(Boolean));
-    return Array.from(categories).sort();
-  }, [vendors]);
+    const fromVendors = new Set(vendors.map(v => v.category).filter(Boolean));
+    const fromApi = new Set(Array.isArray(vendorCategories) ? vendorCategories : []);
+    const merged = new Set([...fromApi, ...fromVendors]);
+    return Array.from(merged).sort();
+  }, [vendors, vendorCategories]);
 
   return (
     <div className="space-y-4 md:space-y-6">
@@ -554,42 +552,58 @@ const Vendors = () => {
           subText="Manage your vendor relationships and price lists."
         />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-            <Filter className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Filter</span>}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={() => fetchVendors(true)}
-            disabled={refreshingVendors}
-            size={isMobile ? "icon" : "default"}
-          >
-            {refreshingVendors ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
+          <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+                <Filter className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Filter</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Filter vendors by category or status</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                onClick={() => refetchVendors()}
+                disabled={vendorsRefetching}
+                size={isMobile ? "icon" : "default"}
+              >
+                {vendorsRefetching ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh vendors list</TooltipContent>
+          </Tooltip>
           {isManager && (
-            <Button
-              onClick={() => {
-                setEditingVendor(null);
-                form.reset();
-                setModalVisible(true);
-              }}
-              size={isMobile ? "icon" : "default"}
-            >
-              <Plus className="h-4 w-4" />
-              {!isMobile && <span className="ml-2">New Vendor</span>}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={() => {
+                    setEditingVendor(null);
+                    form.reset();
+                    setModalVisible(true);
+                  }}
+                  size={isMobile ? "icon" : "default"}
+                >
+                  <Plus className="h-4 w-4" />
+                  {!isMobile && <span className="ml-2">New Vendor</span>}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Add a new vendor</TooltipContent>
+            </Tooltip>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
         {/* Total Vendors Card */}
         <DashboardStatsCard
+          tooltip="Total number of vendors in your directory"
           title="Total Vendors"
           value={summaryStats?.totals?.totalVendors || 0}
           icon={Building2}
@@ -599,6 +613,7 @@ const Vendors = () => {
 
         {/* Active Vendors Card */}
         <DashboardStatsCard
+          tooltip="Vendors currently active and available"
           title="Active"
           value={summaryStats?.totals?.activeVendors || 0}
           icon={CheckCircle}
@@ -608,6 +623,7 @@ const Vendors = () => {
 
         {/* Inactive Vendors Card */}
         <DashboardStatsCard
+          tooltip="Vendors that are no longer active"
           title="Inactive"
           value={summaryStats?.totals?.inactiveVendors || 0}
           icon={XCircle}
@@ -617,6 +633,7 @@ const Vendors = () => {
 
         {/* Categories Card */}
         <DashboardStatsCard
+          tooltip="Number of unique vendor categories"
           title="Categories"
           value={summaryStats?.totals?.uniqueCategories || 0}
           icon={Users}
@@ -629,10 +646,20 @@ const Vendors = () => {
       <DashboardTable
         data={paginatedVendors}
         columns={tableColumns}
-        loading={loading}
+        loading={vendorsLoading}
         title={null}
         emptyIcon={<Building2 className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No vendors found"
+        emptyDescription="No vendors yet. Add suppliers to track purchases and manage relationships."
+        emptyAction={
+          <Button onClick={() => {
+            setEditingVendor(null);
+            form.reset();
+            setModalVisible(true);
+          }}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add First Vendor
+          </Button>
+        }
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);
@@ -641,11 +668,13 @@ const Vendors = () => {
           current: pagination.current,
           total: vendorsCount
         }}
+        viewMode={tableViewMode}
+        onViewModeChange={setTableViewMode}
       />
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Vendors</SheetTitle>
           </SheetHeader>
@@ -803,20 +832,11 @@ const Vendors = () => {
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
-                          <SelectItem value="Paper Supplier">Paper Supplier</SelectItem>
-                          <SelectItem value="Ink Supplier">Ink Supplier</SelectItem>
-                          <SelectItem value="Equipment Supplier">Equipment Supplier</SelectItem>
-                          <SelectItem value="Printing Equipment">Printing Equipment</SelectItem>
-                          <SelectItem value="Printing Services">Printing Services</SelectItem>
-                          <SelectItem value="Binding & Finishing">Binding & Finishing</SelectItem>
-                          <SelectItem value="Design Services">Design Services</SelectItem>
-                          <SelectItem value="Pre-Press Services">Pre-Press Services</SelectItem>
-                          <SelectItem value="Packaging Materials">Packaging Materials</SelectItem>
-                          <SelectItem value="Specialty Papers">Specialty Papers</SelectItem>
-                          <SelectItem value="Maintenance & Repair">Maintenance & Repair</SelectItem>
-                          <SelectItem value="Shipping & Logistics">Shipping & Logistics</SelectItem>
-                          <SelectItem value="Software & Technology">Software & Technology</SelectItem>
-                          <SelectItem value="Other">Other</SelectItem>
+                          {(Array.isArray(vendorCategories) ? vendorCategories : []).map(cat => (
+                            <SelectItem key={cat} value={cat}>
+                              {cat}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                       <FormMessage />
@@ -942,13 +962,18 @@ const Vendors = () => {
                           className="flex items-start gap-4 p-4 border border-border/50 rounded-md bg-background"
                         >
                           {item.imageUrl ? (
-                            <img
-                              src={resolveFileUrl(item.imageUrl)}
-                              alt={item.name}
-                              loading="lazy"
-                              className="w-16 h-16 object-cover rounded-lg cursor-pointer"
-                              onClick={() => window.open(resolveFileUrl(item.imageUrl), '_blank')}
-                            />
+                            <button
+                              type="button"
+                              onClick={() => setImagePreviewUrl(resolveFileUrl(item.imageUrl))}
+                              className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 border border-border focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset"
+                            >
+                              <img
+                                src={resolveFileUrl(item.imageUrl)}
+                                alt={item.name}
+                                loading="lazy"
+                                className="w-full h-full object-cover"
+                              />
+                            </button>
                           ) : (
                             <div className="w-16 h-16 bg-muted rounded-lg flex items-center justify-center text-xs text-muted-foreground text-center">
                               No Image
@@ -966,7 +991,7 @@ const Vendors = () => {
                             </p>
                             <div className="flex items-center gap-4">
                               <span className="text-lg font-bold text-primary">
-                                GHS {parseFloat(item.price || 0).toFixed(2)}
+                                ₵ {parseFloat(item.price || 0).toFixed(2)}
                               </span>
                               <span className="text-sm text-muted-foreground">
                                 per {item.unit || 'unit'}
@@ -1052,7 +1077,7 @@ const Vendors = () => {
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder="Select printing item" />
+                            <SelectValue placeholder="Select service item" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
@@ -1119,9 +1144,20 @@ const Vendors = () => {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Unit (optional)</FormLabel>
-                    <FormControl>
-                      <Input {...field} placeholder="e.g., unit, hour, piece" />
-                    </FormControl>
+                    <Select value={field.value || undefined} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select unit" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {PRODUCT_UNITS.map((u) => (
+                          <SelectItem key={u.value} value={u.value}>
+                            {u.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -1168,6 +1204,21 @@ const Vendors = () => {
             </form>
           </Form>
           </DialogBody>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!imagePreviewUrl} onOpenChange={(open) => !open && setImagePreviewUrl(null)}>
+        <DialogContent className="max-w-[95vw] max-h-[95vh] w-auto p-0 overflow-hidden rounded-2xl">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Image preview</DialogTitle>
+          </DialogHeader>
+          {imagePreviewUrl && (
+            <img
+              src={imagePreviewUrl}
+              alt="Preview"
+              className="w-full h-auto max-h-[85vh] object-contain"
+            />
+          )}
         </DialogContent>
       </Dialog>
 

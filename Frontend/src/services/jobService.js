@@ -1,6 +1,12 @@
 import api from './api';
 
 const jobService = {
+  // Get job item categories (studio-type specific)
+  getCategories: async () => {
+    const res = await api.get('/jobs/categories');
+    return res ?? { data: [], materialTypes: [] };
+  },
+
   // Get all jobs
   getAll: async (params = {}) => {
     const queryString = new URLSearchParams(params).toString();

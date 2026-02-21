@@ -9,6 +9,7 @@ const {
   updateSubscriptionPlan,
   deleteSubscriptionPlan,
   reorderSubscriptionPlans,
+  syncPaystackPlans,
   getFeatureCatalog,
   getModules,
   getTenantStorageUsage
@@ -150,6 +151,20 @@ router.post('/plans', createSubscriptionPlan);
  *         description: Plan order updated
  */
 router.put('/plans/bulk/reorder', reorderSubscriptionPlans);
+
+/**
+ * @swagger
+ * /api/platform-settings/plans/sync-paystack:
+ *   post:
+ *     summary: Sync plans from Paystack to database
+ *     tags: [PlatformSettings]
+ *     security:
+ *       - BearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Plans synced from Paystack
+ */
+router.post('/plans/sync-paystack', syncPaystackPlans);
 
 /**
  * @swagger

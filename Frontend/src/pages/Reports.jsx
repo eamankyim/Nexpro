@@ -1,29 +1,9 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+import { REPORT_CHART_COLORS as COLORS, createReportSchema, STUDIO_TYPES, getBusinessTerminology } from './reports/reportConstants';
 import { useSmartSearch } from '../context/SmartSearchContext';
-import {
-  Select,
-  DatePicker,
-  Button,
-  Space,
-  Row,
-  Col,
-  Spin,
-  Table,
-  Tag,
-  Statistic,
-  Divider,
-  Tabs,
-  Input,
-  Typography,
-  Alert,
-  Progress,
-  Dropdown
-} from 'antd';
-import { Card as AntdCard } from 'antd';
 import { showSuccess, showError, showWarning, showLoading } from '../utils/toast';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
@@ -31,6 +11,7 @@ import DetailSkeleton from '../components/DetailSkeleton';
 import { Skeleton } from '../components/ui/skeleton';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Table as ShadcnTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
+import ReportsTableWithCards from '../components/ReportsTableWithCards';
 import { Button as ShadcnButton } from '../components/ui/button';
 import { Select as ShadcnSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Badge } from '../components/ui/badge';
@@ -52,12 +33,18 @@ import {
   DialogFooter,
 } from '../components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
+import { Textarea } from '@/components/ui/textarea';
+import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Progress } from '@/components/ui/progress';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
-const { RangePicker } = DatePicker;
 import {
   Download,
   BarChart3,
-  DollarSign,
+  Currency,
   ShoppingCart,
   FileText,
   Calendar,
@@ -72,7 +59,8 @@ import {
   Search,
   SlidersHorizontal,
   MoreVertical,
-  ArrowLeft
+  ArrowLeft,
+  Loader2
 } from 'lucide-react';
 import {
   LineChart,
@@ -85,68 +73,19 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
-  Tooltip,
+  Tooltip as RechartsTooltip,
   Legend,
   ResponsiveContainer
 } from 'recharts';
 import reportService from '../services/reportService';
-import inventoryService from '../services/inventoryService';
+import materialsService from '../services/materialsService';
 import { useAuth } from '../context/AuthContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { SEARCH_PLACEHOLDERS } from '../constants';
 import { getPreviousPeriod } from '../utils/periodComparison';
+import { cn } from '@/lib/utils';
 import dayjs from 'dayjs';
 
-const { Option } = Select;
-const { TextArea } = Input;
-const { Title, Text, Paragraph } = Typography;
-const { CheckableTag } = Tag;
-
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
-
-const createReportSchema = z.object({
-  reportTitle: z.string().min(1, 'Please enter report title'),
-  durationType: z.string().min(1, 'Please select duration type'),
-  year: z.number({ required_error: 'Please select year' }),
-  month: z.string().min(1, 'Please select month'),
-});
-
-// Business type terminology helper
-const getBusinessTerminology = (businessType) => {
-  const terms = {
-    printing_press: {
-      analytics: 'Service Analytics',
-      items: 'Services',
-      sales: 'Jobs',
-      categories: 'Service Categories',
-      units: 'Units',
-      revenue: 'Service Revenue',
-      analyticsTitle: 'Service Analytics Summary',
-      analyticsDescription: 'An overview of the performance of your services and their revenue.'
-    },
-    shop: {
-      analytics: 'Product Analytics',
-      items: 'Products',
-      sales: 'Sales',
-      categories: 'Product Categories',
-      units: 'Units Sold',
-      revenue: 'Product Revenue',
-      analyticsTitle: 'Product Analytics Summary',
-      analyticsDescription: 'A detailed summary of all products and their sales status.'
-    },
-    pharmacy: {
-      analytics: 'Drug Analytics',
-      items: 'Drugs',
-      sales: 'Prescriptions',
-      categories: 'Drug Categories',
-      units: 'Dispensed',
-      revenue: 'Prescription Revenue',
-      analyticsTitle: 'Drug Analytics Summary',
-      analyticsDescription: 'A detailed summary of all drugs and their prescription status.'
-    }
-  };
-  return terms[businessType] || terms.printing_press;
-};
 
 const Reports = () => {
   const location = useLocation();
@@ -159,13 +98,22 @@ const Reports = () => {
   const [generatedReport, setGeneratedReport] = useState(null);
 
   const businessType = activeTenant?.businessType || 'printing_press';
+  const metadata = activeTenant?.metadata || {};
+  const isStudio = useMemo(() => STUDIO_TYPES.includes(businessType) || businessType === 'studio', [businessType]);
   const isPrintingPress = businessType === 'printing_press';
   const isShop = businessType === 'shop';
   const isPharmacy = businessType === 'pharmacy';
-  const terminology = useMemo(() => getBusinessTerminology(businessType), [businessType]);
+  const isRestaurant = isShop && metadata?.shopType === 'restaurant';
+  const terminology = useMemo(() => getBusinessTerminology(businessType, metadata), [businessType, metadata]);
 
-  // Determine which view to show based on route (two tabs: Overview, Smart Report)
+  // Compact empty state padding for restaurant (many empty sections when no data)
+  const emptyStateClass = isRestaurant ? 'py-3 text-sm text-muted-foreground' : 'py-6 text-muted-foreground';
+  const emptyStateClassLarge = isRestaurant ? 'py-4 text-sm text-muted-foreground' : 'py-10 text-muted-foreground';
+  const emptyStateClassXL = isRestaurant ? 'py-6 text-sm text-muted-foreground' : 'py-16 text-muted-foreground';
+
+  // Determine which view to show based on route (Overview, Smart Report, Compliance)
   const isSmartReport = location.pathname === '/reports/smart-report';
+  const isCompliance = location.pathname === '/reports/compliance';
   const showSmartReportList = isSmartReport && !generatedReport;
 
   const [loading, setLoading] = useState(false);
@@ -194,6 +142,18 @@ const Reports = () => {
   });
   const [selectedReportTypes, setSelectedReportTypes] = useState(['cashflow']);
   const [reportDateFilter, setReportDateFilter] = useState('last6months');
+
+  // Compliance view: statement type and data
+  const [complianceStatementType, setComplianceStatementType] = useState('income-expenditure');
+  const [complianceData, setComplianceData] = useState(null);
+  const [complianceSource, setComplianceSource] = useState(null);
+  const [complianceLoading, setComplianceLoading] = useState(false);
+  const [complianceError, setComplianceError] = useState(null);
+  const compliancePrintRef = useRef(null);
+  
+  // VAT report data
+  const [vatData, setVatData] = useState(null);
+  const [vatLoading, setVatLoading] = useState(false);
 
   useEffect(() => {
     setPageSearchConfig({ scope: 'reports', placeholder: SEARCH_PLACEHOLDERS.REPORTS });
@@ -330,11 +290,72 @@ const Reports = () => {
   }, [savedReports, searchValue, showSmartReportList]);
 
   useEffect(() => {
-    if (!isSmartReport) {
+    if (!isSmartReport && !isCompliance) {
       fetchOverviewStats();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reportType, dateRange, groupBy, isSmartReport, dateFilter]);
+  }, [reportType, dateRange, groupBy, isSmartReport, isCompliance, dateFilter]);
+
+  // Fetch compliance report when on Compliance view and statement type or date changes
+  useEffect(() => {
+    if (!isCompliance || !dateRange?.[0] || !dateRange?.[1]) return;
+    const startDate = dateRange[0].format('YYYY-MM-DD');
+    const endDate = dateRange[1].format('YYYY-MM-DD');
+    let cancelled = false;
+    
+    // Handle VAT report separately
+    if (complianceStatementType === 'vat') {
+      setVatLoading(true);
+      const fetchVat = async () => {
+        try {
+          const res = await reportService.getVatReport(startDate, endDate, 'month');
+          if (!cancelled && res?.data) {
+            setVatData(res.data);
+          }
+        } catch (err) {
+          if (!cancelled) {
+            setVatData(null);
+            showError(null, 'Failed to load VAT report');
+          }
+        } finally {
+          if (!cancelled) setVatLoading(false);
+        }
+      };
+      fetchVat();
+      return () => { cancelled = true; };
+    }
+    
+    setComplianceLoading(true);
+    setComplianceError(null);
+    const fetchCompliance = async () => {
+      try {
+        let res;
+        if (complianceStatementType === 'income-expenditure') {
+          res = await reportService.getIncomeExpenditureReport(startDate, endDate);
+        } else if (complianceStatementType === 'profit-loss') {
+          res = await reportService.getProfitLossComplianceReport(startDate, endDate);
+        } else if (complianceStatementType === 'financial-position') {
+          res = await reportService.getFinancialPositionReport(endDate);
+        } else {
+          res = await reportService.getCashFlowReport(startDate, endDate);
+        }
+        if (!cancelled && res?.data) {
+          setComplianceData(res.data);
+          setComplianceSource(res.source || null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setComplianceError(err?.response?.data?.error || 'Failed to load report');
+          setComplianceData(null);
+          setComplianceSource(null);
+        }
+      } finally {
+        if (!cancelled) setComplianceLoading(false);
+      }
+    };
+    fetchCompliance();
+    return () => { cancelled = true; };
+  }, [isCompliance, complianceStatementType, dateRange]);
 
   const handleFilterChange = (filterType) => {
     setDateFilter(filterType);
@@ -421,8 +442,9 @@ const Reports = () => {
         sales: sales?.data || { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [], jobsTrendByDate: [] },
         serviceAnalytics: serviceAnalytics?.data || { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] },
         productSales: productSalesData?.data || { products: [], totalRevenue: 0, totalQuantitySold: 0 },
-        inventorySummary: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
-        inventoryMovements: [],
+        productStockSummary: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+        materialsSummary: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+        materialsMovements: [],
         fastestMovingItems: [],
         revenueByChannel: [],
         kpiSummary: { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },
@@ -440,8 +462,9 @@ const Reports = () => {
         return { data: null };
       });
       const phase2 = phase2Res?.data || {};
-      const inventorySummary = { data: phase2.inventorySummary ?? { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 } };
-      const inventoryMovements = { data: phase2.inventoryMovements ?? [] };
+      const productStockSummary = { data: phase2.productStockSummary ?? { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 } };
+      const materialsSummary = { data: phase2.materialsSummary ?? { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 } };
+      const materialsMovements = { data: phase2.materialsMovements ?? [] };
       const fastestMovingItems = { data: phase2.fastestMovingItems ?? [] };
       const revenueByChannel = { data: phase2.revenueByChannel ?? [] };
       const kpiSummary = { data: phase2.kpiSummary ?? { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 } };
@@ -681,8 +704,9 @@ const Reports = () => {
         outstanding: outstanding?.data || { totalOutstanding: 0 },
         sales: sales?.data || { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [], jobsTrendByDate: [] },
         serviceAnalytics: serviceAnalytics?.data || { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] },
-        inventorySummary: inventorySummary?.data || { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
-        inventoryMovements: inventoryMovements?.data || [],
+        productStockSummary: productStockSummary?.data || { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+        materialsSummary: materialsSummary?.data || { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+        materialsMovements: materialsMovements?.data || [],
         fastestMovingItems: fastestMovingItems?.data || [],
         revenueByChannel: revenueByChannel?.data || [],
         kpiSummary: kpiSummary?.data || { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },
@@ -828,7 +852,7 @@ const Reports = () => {
       if (isShop || isPharmacy) {
         fetchPromises.push(
           reportService.getProductSalesReport(startDate, endDate).catch(() => ({ data: { products: [], totalProducts: 0, totalRevenue: 0, totalQuantitySold: 0 } })),
-          inventoryService.getItems().catch(() => ({ data: { data: [] } }))
+          materialsService.getItems().catch(() => ({ data: { data: [] } }))
         );
       } else {
         fetchPromises.push(Promise.resolve(null), Promise.resolve(null));
@@ -842,7 +866,7 @@ const Reports = () => {
         fetchPromises.push(Promise.resolve(null));
       }
 
-      const [revenueData, expenseData, salesData, outstandingData, serviceAnalyticsData, productSalesData, inventoryData, prescriptionData] = await Promise.all(fetchPromises);
+      const [revenueData, expenseData, salesData, outstandingData, serviceAnalyticsData, productSalesData, materialsData, prescriptionData] = await Promise.all(fetchPromises);
 
       const revenue = revenueData.data?.totalRevenue || 0;
       const expenses = expenseData.data?.totalExpenses || 0;
@@ -895,11 +919,11 @@ const Reports = () => {
         })(),
         expenseBreakdown: (expenseData.data?.byCategory || []).map(cat => ({
           category: cat.category,
-          amount: parseFloat(cat.totalExpenses || 0)
+          amount: parseFloat(cat.totalAmount || 0)
         })),
-        inventory: inventoryData?.data?.data ? {
-          totalStocks: inventoryData.data.data.length,
-          stockAvailabilityRate: inventoryData.data.data.filter(item => parseFloat(item.quantity || 0) > 0).length / inventoryData.data.data.length * 100
+        materials: materialsData?.data?.data ? {
+          totalStocks: materialsData.data.data.length,
+          stockAvailabilityRate: materialsData.data.data.filter(item => parseFloat(item.quantity || 0) > 0).length / materialsData.data.data.length * 100
         } : null,
         outstandingPayments: outstandingData.data?.totalOutstanding || 0
       };
@@ -909,6 +933,7 @@ const Reports = () => {
       try {
         const aiResponse = await reportService.generateAIAnalysis(reportDataForAI, {
           businessType: activeTenant?.businessType || 'printing_press',
+          studioType: activeTenant?.metadata?.studioType,
           period: config.durationType || 'monthly',
           startDate,
           endDate
@@ -918,19 +943,8 @@ const Reports = () => {
         console.warn('AI analysis failed, using fallback insights:', aiError);
       }
 
-      // Generate comprehensive smart report with real data
-      const mockReport = {
-        title: config.reportTitle,
-        durationType: config.durationType,
-        year: config.year,
-        month: config.month,
-        generatedAt: new Date().toISOString(),
-        generatedBy: config.generatedBy,
-        reportTypes: config.reportTypes || selectedReportTypes,
-        period: `${dayjs(startDate).format('MMM DD, YYYY')} to ${dayjs(endDate).format('MMM DD, YYYY')}`,
-        greeting: `Hello${user?.first_name ? ` ${user.first_name}` : ''}, here is a summary of the performance of your business operations for ${config.month} ${config.year}.`,
-        sections: [],
-        insights: [
+      // Generate comprehensive smart report with real data (build array via push to avoid JSX parse issue)
+      const reportInsights = [
           {
             type: 'performance',
             title: 'Performance Summary',
@@ -942,40 +956,87 @@ const Reports = () => {
               { label: 'Total Expenses', value: expenses, prevValue: prevExpenses, change: Math.abs(expenseChange), trend: expenseChange <= 0 ? 'down' : 'up', color: expenseChange <= 0 ? '#006d32' : '#cf1322' },
               { label: 'Net Profit', value: profit, prevValue: prevProfit, change: Math.abs(profitChange), trend: profitChange >= 0 ? 'up' : 'down', color: '#006d32' }
             ],
-            note: revenueChange > 0 
-              ? `Your revenue is up ${revenueChange.toFixed(1)}% (GHS ${(revenue - prevRevenue).toLocaleString()}) from the previous period.`
-              : `Your revenue is down ${Math.abs(revenueChange).toFixed(1)}% (GHS ${(prevRevenue - revenue).toLocaleString()}) from the previous period.`
-          },
-          // Conditionally add sections based on selected report types and business type
-          ...(selectedReportTypes.includes('cashflow') || selectedReportTypes.includes('service-analytics') || selectedReportTypes.includes('product-analytics') ? [{
-            type: isShop || isPharmacy ? 'product-analytics' : 'service-analytics',
-            title: terminology.analyticsTitle,
-            description: terminology.analyticsDescription,
-            data: (() => {
-              // For shop/pharmacy, use product sales data
-              if (isShop || isPharmacy) {
-                return (productSalesData?.data?.products || []).map(item => ({
-                  productName: item.productName || 'Unknown',
-                  quantitySold: parseFloat(item.quantitySold || 0),
-                  revenue: parseFloat(item.revenue || 0),
-                  currentStock: parseFloat(item.currentStock || 0),
-                  safetyStock: parseFloat(item.safetyStock || 0),
-                  unit: item.unit || 'pcs',
-                  sku: item.sku,
-                  isLowStock: item.isLowStock,
-                  isHighRisk: item.isHighRisk,
-                  stockPercentage: parseFloat(item.stockPercentage || 0)
-                })).slice(0, 10);
-              }
-              // For printing press, use service analytics data
-              return (serviceAnalyticsData.data?.byCategory || salesData.data?.byJobType || []).map(item => {
+            note: (revenueChange > 0)
+              ? `Your revenue is up ${revenueChange.toFixed(1)}% (₵ ${(revenue - prevRevenue).toLocaleString()}) from the previous period.`
+              : `Your revenue is down ${Math.abs(revenueChange).toFixed(1)}% (₵ ${(prevRevenue - revenue).toLocaleString()}) from the previous period.`
+          }
+      ];
+      const conditionalSections = (selectedReportTypes.includes('cashflow') || selectedReportTypes.includes('service-analytics') || selectedReportTypes.includes('product-analytics')) ? [
+            ...(isShop || isPharmacy ? [{
+              type: 'product-analytics',
+              title: 'Product Sales',
+              description: 'Sales performance by product (quantity sold and revenue). Tenant-isolated.',
+              data: (productSalesData?.data?.products || []).map(item => ({
+                productName: item.productName || 'Unknown',
+                quantitySold: parseFloat(item.quantitySold || 0),
+                revenue: parseFloat(item.revenue || 0),
+                unit: item.unit || 'pcs',
+                sku: item.sku,
+                currentStock: parseFloat(item.currentStock || 0),
+                safetyStock: parseFloat(item.safetyStock || 0),
+                isLowStock: item.isLowStock,
+                isHighRisk: item.isHighRisk,
+                stockPercentage: parseFloat(item.stockPercentage || 0)
+              })).slice(0, 10),
+              recommendations: (() => {
+                const recs = [];
+                const products = productSalesData?.data?.products || [];
+                const top = products[0];
+                if (top && (revenue > 0)) {
+                  const topRev = parseFloat(top.revenue || 0);
+                  const pct = (topRev / revenue) * 100;
+                  if (pct > 30) recs.push({ finding: `${top.productName} accounts for ${pct.toFixed(1)}% of revenue.`, recommendation: 'Maintain stock levels for this top-performing product.' });
+                }
+                return recs;
+              })()
+            }] : []),
+            ...(isShop || isPharmacy ? [{
+              type: 'inventory-status',
+              title: 'Materials Status',
+              description: 'Current stock levels by product. Tenant-isolated.',
+              data: (productSalesData?.data?.products || []).map(item => ({
+                productName: item.productName || 'Unknown',
+                currentStock: parseFloat(item.currentStock || 0),
+                safetyStock: parseFloat(item.safetyStock || 0),
+                unit: item.unit || 'pcs',
+                sku: item.sku,
+                isLowStock: item.isLowStock,
+                isHighRisk: item.isHighRisk,
+                stockPercentage: parseFloat(item.stockPercentage || 0)
+              })).slice(0, 10),
+              recommendations: (() => {
+                const recs = [];
+                const products = productSalesData?.data?.products || [];
+                const lowStock = products.filter(p => p.isLowStock);
+                const highRisk = products.filter(p => p.isHighRisk);
+                if (lowStock.length > 0) {
+                  const critical = lowStock.find(p => p.currentStock < (p.safetyStock * 0.5));
+                  recs.push({
+                    finding: critical ? `${critical.productName} stock is critically low.` : `${lowStock.length} product(s) below safety stock.`,
+                    recommendation: 'Review and reorder low stock items.'
+                  });
+                }
+                if (highRisk.length > 0) {
+                  recs.push({
+                    finding: `${highRisk[0].productName} is overstocked.`,
+                    recommendation: 'Consider promotions or archive to free up capital.'
+                  });
+                }
+                return recs;
+              })()
+            }] : []),
+            // Service analytics (printing press/studio)
+            ...(!isShop && !isPharmacy ? [{
+              type: 'service-analytics',
+              title: terminology.analyticsTitle,
+              description: terminology.analyticsDescription,
+              data: (serviceAnalyticsData.data?.byCategory || salesData.data?.byJobType || []).map(item => {
                 const totalRevenue = parseFloat(item.totalRevenue || item.totalSales || 0);
                 const quantitySold = parseFloat(item.totalQuantity || item.jobCount || 0);
                 const avgRevenue = parseFloat(item.averagePrice || 0);
                 let demand = 'Low';
-                if (totalRevenue > revenue * 0.3) demand = 'High';
-                else if (totalRevenue > revenue * 0.15) demand = 'Medium';
-                
+                if ((totalRevenue > revenue * 0.3)) demand = 'High';
+                else if ((totalRevenue > revenue * 0.15)) demand = 'Medium';
                 return {
                   service: item.category || item.jobType || 'Unknown',
                   quantitySold: quantitySold,
@@ -983,9 +1044,8 @@ const Reports = () => {
                   averagePrice: avgRevenue,
                   demand
                 };
-              }).slice(0, 5);
-            })(),
-            recommendations: (() => {
+              }).slice(0, 5),
+              recommendations: (() => {
               const recommendations = [];
               
               // For shop/pharmacy, generate product-based recommendations
@@ -1002,7 +1062,7 @@ const Reports = () => {
                   
                   if (topPercentage > 30) {
                     recommendations.push({
-                      finding: `${topProduct.productName} dominates sales with ${topPercentage.toFixed(1)}% of total revenue (GHS ${topRevenue.toLocaleString()}).`,
+                      finding: `${topProduct.productName} dominates sales with ${topPercentage.toFixed(1)}% of total revenue (₵ ${topRevenue.toLocaleString()}).`,
                       recommendation: 'Consider maintaining higher stock levels for this top-performing product.'
                     });
                   }
@@ -1053,7 +1113,7 @@ const Reports = () => {
                 
                 if (topPercentage > 30) {
                   recommendations.push({
-                    finding: `${topService.category || topService.jobType} accounts for ${topPercentage.toFixed(1)}% of total revenue (GHS ${topRevenue.toLocaleString()}).`,
+                    finding: `${topService.category || topService.jobType} accounts for ${topPercentage.toFixed(1)}% of total revenue (₵ ${topRevenue.toLocaleString()}).`,
                     recommendation: 'Consider investing in additional resources to meet the high demand for this service.'
                   });
                 }
@@ -1099,7 +1159,7 @@ const Reports = () => {
               
               if (topPercentage > 40) {
                 recommendations.push({
-                  finding: `${topCategory.category} is identified as the highest cost driver, accounting for ${topPercentage.toFixed(1)}% of total expenses (GHS ${topAmount.toLocaleString()}).`,
+                  finding: `${topCategory.category} is identified as the highest cost driver, accounting for ${topPercentage.toFixed(1)}% of total expenses (₵ ${topAmount.toLocaleString()}).`,
                   recommendation: 'Negotiate bulk purchasing agreements with suppliers to reduce unit costs by 10-15%.'
                 });
               }
@@ -1113,7 +1173,7 @@ const Reports = () => {
               if (utilitiesCategory) {
                 const utilAmount = parseFloat(utilitiesCategory.totalAmount || 0);
                 recommendations.push({
-                  finding: `Utilities costs account for ${expenses > 0 ? ((utilAmount / expenses) * 100).toFixed(1) : 0}% of total expenses (GHS ${utilAmount.toLocaleString()}).`,
+                  finding: `Utilities costs account for ${expenses > 0 ? ((utilAmount / expenses) * 100).toFixed(1) : 0}% of total expenses (₵ ${utilAmount.toLocaleString()}).`,
                   recommendation: 'Consider LED lighting and energy-efficient machines to reduce energy consumption.'
                 });
               }
@@ -1148,14 +1208,14 @@ const Reports = () => {
               
               if (outstanding > 0) {
                 recommendations.push({
-                  finding: `Total outstanding balance is GHS ${outstanding.toLocaleString()}.`,
+                  finding: `Total outstanding balance is ₵ ${outstanding.toLocaleString()}.`,
                   recommendation: 'Implement automated reminders for outstanding payments 3 days before due date.'
                 });
               }
               
               if (overdueAmount > 0) {
                 recommendations.push({
-                  finding: `Overdue invoices total GHS ${overdueAmount.toLocaleString()} (${overdueInvoices.length} invoice${overdueInvoices.length > 1 ? 's' : ''}).`,
+                  finding: `Overdue invoices total ₵ ${overdueAmount.toLocaleString()} (${overdueInvoices.length} invoice${overdueInvoices.length > 1 ? 's' : ''}).`,
                   recommendation: 'Consider implementing a late payment fee of 2% to encourage timely payments.'
                 });
               }
@@ -1196,30 +1256,31 @@ const Reports = () => {
               if (revenue > 0 && rev > 0) {
                 const pct = (rev / revenue) * 100;
                 recommendations.push({
-                  finding: `Prescription revenue is GHS ${rev.toLocaleString()} (${pct.toFixed(1)}% of total revenue).`,
+                  finding: `Prescription revenue is ₵ ${rev.toLocaleString()} (${pct.toFixed(1)}% of total revenue).`,
                   recommendation: 'Continue tracking prescription vs OTC mix.'
                 });
               }
               return recommendations;
             })()
-          }] : []),
-          {
+          }] : [])
+      ] : [];
+      reportInsights.push(...conditionalSections, {
             type: 'insight',
             title: 'AI-Powered Insights',
             points: [
-              revenueChange > 0 
-                ? `Revenue has ${revenueChange > 0 ? 'increased' : 'decreased'} by ${Math.abs(revenueChange).toFixed(1)}% compared to the previous period.`
+              (revenueChange > 0)
+                ? `Revenue has ${(revenueChange > 0) ? 'increased' : 'decreased'} by ${Math.abs(revenueChange).toFixed(1)}% compared to the previous period.`
                 : 'Revenue remains stable compared to the previous period.',
-              ...(isPrintingPress && salesData.data?.byJobType?.length > 0
-                ? [`Your top service category (${salesData.data.byJobType[0]?.jobType || 'N/A'}) accounts for ${revenue > 0 ? ((parseFloat(salesData.data.byJobType[0]?.totalSales || 0) / revenue) * 100).toFixed(1) : 0}% of total revenue.`]
-                : (isShop || isPharmacy) && productSalesData?.data?.products?.length > 0
-                ? [`Your top ${terminology.items.toLowerCase()} (${productSalesData.data.products[0]?.productName || 'N/A'}) accounts for ${revenue > 0 ? ((parseFloat(productSalesData.data.products[0]?.revenue || 0) / revenue) * 100).toFixed(1) : 0}% of total revenue.`]
+              ...((isStudio && salesData.data?.byJobType?.length > 0)
+                ? [`Your top ${terminology.topCategoryInsightLabel} (${salesData.data.byJobType[0]?.jobType || 'N/A'}) accounts for ${(revenue > 0) ? ((parseFloat(salesData.data.byJobType[0]?.totalSales || 0) / revenue) * 100).toFixed(1) : 0}% of total revenue.`]
+                : ((isShop || isPharmacy) && productSalesData?.data?.products?.length > 0)
+                ? [`Your top ${terminology.topCategoryInsightLabel} (${productSalesData.data.products[0]?.productName || 'N/A'}) accounts for ${(revenue > 0) ? ((parseFloat(productSalesData.data.products[0]?.revenue || 0) / revenue) * 100).toFixed(1) : 0}% of total revenue.`]
                 : [`${terminology.analytics} data is being analyzed.`]),
-              outstandingData.data?.totalOutstanding > 0
-                ? `Outstanding payments total GHS ${outstandingData.data.totalOutstanding.toLocaleString()}. Consider implementing automated payment reminders.`
+              (outstandingData.data?.totalOutstanding > 0)
+                ? `Outstanding payments total ₵ ${outstandingData.data.totalOutstanding.toLocaleString()}. Consider implementing automated payment reminders.`
                 : 'All payments are up to date.',
-              profitMargin > 0
-                ? `Operating expenses are ${expenses > 0 ? ((expenses / revenue) * 100).toFixed(1) : 0}% of revenue, with a profit margin of ${profitMargin.toFixed(1)}%.`
+              (profitMargin > 0)
+                ? `Operating expenses are ${(expenses > 0) ? ((expenses / revenue) * 100).toFixed(1) : 0}% of revenue, with a profit margin of ${profitMargin.toFixed(1)}%.`
                 : 'Monitor expense ratios to improve profitability.',
               'Continue analyzing business patterns to identify optimization opportunities.'
             ]
@@ -1237,7 +1298,7 @@ const Reports = () => {
                     recommendations.push({
                       priority: 'High',
                       action: 'Implement automated follow-ups for overdue invoices',
-                      impact: `Could recover GHS ${(outstanding * 0.4).toLocaleString()} in outstanding payments`
+                      impact: `Could recover ₵ ${(outstanding * 0.4).toLocaleString()} in outstanding payments`
                     });
                   }
                   
@@ -1279,11 +1340,23 @@ const Reports = () => {
           {
             type: 'forecast',
             title: 'Predictive Analysis',
-            content: revenueChange > 0
-              ? `Based on current trends showing ${revenueChange.toFixed(1)}% growth, projected revenue for the next period is estimated at GHS ${(revenue * (1 + revenueChange / 100)).toLocaleString()} (±8%). This forecast considers current growth patterns and historical data.`
-              : `Based on current trends, projected revenue for the next period is estimated at GHS ${revenue.toLocaleString()} (±8%). This forecast considers seasonal patterns, customer growth rate, and historical data.`
+            content: (revenueChange > 0)
+              ? 'Based on current trends, projected revenue for the next period is estimated (see metrics).'
+              : 'Based on current trends, projected revenue is estimated (see metrics).'
           }
-        ]
+      );
+      const mockReport = {
+        title: config.reportTitle,
+        durationType: config.durationType,
+        year: config.year,
+        month: config.month,
+        generatedAt: new Date().toISOString(),
+        generatedBy: config.generatedBy,
+        reportTypes: config.reportTypes || selectedReportTypes,
+        period: `${dayjs(startDate).format('MMM DD, YYYY')} to ${dayjs(endDate).format('MMM DD, YYYY')}`,
+        greeting: `Hello${user?.first_name ? ` ${user.first_name}` : ''}, here is a summary of the performance of your business operations for ${config.month} ${config.year}.`,
+        sections: [],
+        insights: reportInsights
       };
 
       // Return the report data instead of saving it
@@ -1401,60 +1474,70 @@ const Reports = () => {
     const { totalRevenue } = reportData;
     const { periodChartData, customerChartData, methodChartData } = revenueChartData;
 
+    const customerData = [...(byCustomer || [])].sort((a, b) => parseFloat(a.totalRevenue || 0) - parseFloat(b.totalRevenue || 0));
+
     return (
       <div id="report-content">
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={24}>
-            <AntdCard>
-              <Statistic
-                title="Total Revenue"
-                value={totalRevenue}
-                prefix="GHS "
-                precision={2}
-                valueStyle={{ color: '#3f8600' }}
-              />
-            </AntdCard>
-          </Col>
-        </Row>
+        <div className="grid grid-cols-1 gap-3 md:gap-4 mb-4 md:mb-6">
+          <Card>
+            <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
+              <p className="text-sm text-muted-foreground">Total Revenue</p>
+              <p className="text-2xl font-semibold text-green-700">₵ {parseFloat(totalRevenue || 0).toFixed(2)}</p>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={24}>
-            <AntdCard title="Revenue Trend" extra={
-              <Select value={groupBy} onChange={setGroupBy} style={{ width: 120 }}>
-                <Option value="day">By Day</Option>
-                <Option value="month">By Month</Option>
-              </Select>
-            }>
+        <div className="grid grid-cols-1 gap-4 mb-6">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle>Revenue Trend</CardTitle>
+              <ShadcnSelect value={groupBy} onValueChange={setGroupBy}>
+                <SelectTrigger className="w-[120px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="day">By Day</SelectItem>
+                  <SelectItem value="month">By Month</SelectItem>
+                </SelectContent>
+              </ShadcnSelect>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={periodChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Legend />
                   <Line type="monotone" dataKey="revenue" stroke="#8884d8" strokeWidth={2} name="Revenue" />
                 </LineChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={12}>
-            <AntdCard title="Top Customers">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Top Customers</CardTitle>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={customerChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Bar dataKey="revenue" fill="#8884d8" />
                 </BarChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-          <Col span={12}>
-            <AntdCard title="Revenue by Payment Method">
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Revenue by Payment Method</CardTitle>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
@@ -1471,48 +1554,31 @@ const Reports = () => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                 </PieChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16}>
-          <Col span={24}>
-            <AntdCard title="Customer Details">
-              <Table
-                dataSource={byCustomer || []}
-                rowKey={(record) => record.customerId || Math.random()}
-                pagination={{ pageSize: 10 }}
+        <div className="grid grid-cols-1 gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Customer Details</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ReportsTableWithCards
                 columns={[
-                  {
-                    title: 'Customer',
-                    dataIndex: ['customer', 'name'],
-                    key: 'customer',
-                  },
-                  {
-                    title: 'Company',
-                    dataIndex: ['customer', 'company'],
-                    key: 'company',
-                  },
-                  {
-                    title: 'Total Revenue',
-                    dataIndex: 'totalRevenue',
-                    key: 'revenue',
-                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
-                    sorter: (a, b) => parseFloat(a.totalRevenue || 0) - parseFloat(b.totalRevenue || 0),
-                  },
-                  {
-                    title: 'Payments',
-                    dataIndex: 'paymentCount',
-                    key: 'count',
-                  },
+                  { key: 'customer', label: 'Customer', render: (_, r) => r.customer?.name || '-' },
+                  { key: 'company', label: 'Company', render: (_, r) => r.customer?.company || '-' },
+                  { key: 'totalRevenue', label: 'Total Revenue', render: (_, r) => `₵ ${parseFloat(r.totalRevenue || 0).toFixed(2)}` },
+                  { key: 'paymentCount', label: 'Payments', render: (_, r) => r.paymentCount ?? '-' },
                 ]}
+                data={customerData.slice(0, 10)}
               />
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   };
@@ -1539,23 +1605,21 @@ const Reports = () => {
 
     return (
       <div id="report-content">
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={24}>
-            <AntdCard>
-              <Statistic
-                title="Total Expenses"
-                value={totalExpenses}
-                prefix="GHS "
-                precision={2}
-                valueStyle={{ color: '#cf1322' }}
-              />
-            </AntdCard>
-          </Col>
-        </Row>
+        <div className="grid grid-cols-1 gap-3 md:gap-4 mb-4 md:mb-6">
+          <Card>
+            <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
+              <p className="text-sm text-muted-foreground">Total Expenses</p>
+              <p className="text-2xl font-semibold text-red-700">₵ {parseFloat(totalExpenses || 0).toFixed(2)}</p>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={12}>
-            <AntdCard title="Expenses by Category">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Expenses by Category</CardTitle>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
@@ -1572,87 +1636,81 @@ const Reports = () => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                 </PieChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-          <Col span={12}>
-            <AntdCard title="Top Vendors">
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Top Vendors</CardTitle>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={vendorChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Bar dataKey="amount" fill="#ff4d4f" />
                 </BarChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={24}>
-            <AntdCard title="Expense Trend">
+        <div className="grid grid-cols-1 gap-4 mb-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Expense Trend</CardTitle>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={dateChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Legend />
                   <Line type="monotone" dataKey="amount" stroke="#ff4d4f" strokeWidth={2} name="Expenses" />
                 </LineChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16}>
-          <Col span={12}>
-            <AntdCard title="Expenses by Category">
-              <Table
-                dataSource={byCategory || []}
-                rowKey="category"
-                pagination={false}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Expenses by Category</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ReportsTableWithCards
                 columns={[
-                  { title: 'Category', dataIndex: 'category', key: 'category' },
-                  {
-                    title: 'Amount',
-                    dataIndex: 'totalAmount',
-                    key: 'amount',
-                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
-                  },
-                  { title: 'Count', dataIndex: 'count', key: 'count' },
+                  { key: 'category', label: 'Category' },
+                  { key: 'totalAmount', label: 'Amount', render: (v) => `₵ ${parseFloat(v || 0).toFixed(2)}` },
+                  { key: 'count', label: 'Count' },
                 ]}
+                data={byCategory || []}
               />
-            </AntdCard>
-          </Col>
-          <Col span={12}>
-            <AntdCard title="Top Vendors">
-              <Table
-                dataSource={byVendor?.slice(0, 10) || []}
-                rowKey={(record) => record.vendorId || Math.random()}
-                pagination={false}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Top Vendors</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ReportsTableWithCards
                 columns={[
-                  {
-                    title: 'Vendor',
-                    dataIndex: ['vendor', 'name'],
-                    key: 'vendor',
-                  },
-                  {
-                    title: 'Amount',
-                    dataIndex: 'totalAmount',
-                    key: 'amount',
-                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
-                  },
-                  { title: 'Count', dataIndex: 'count', key: 'count' },
+                  { key: 'vendor', label: 'Vendor', render: (_, r) => r.vendor?.name || '-' },
+                  { key: 'totalAmount', label: 'Amount', render: (v) => `₵ ${parseFloat(v || 0).toFixed(2)}` },
+                  { key: 'count', label: 'Count' },
                 ]}
+                data={byVendor?.slice(0, 10) || []}
               />
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   };
@@ -1674,38 +1732,41 @@ const Reports = () => {
       { name: '90+ Days', value: agingAnalysis?.ninetyPlusDays || 0 },
     ];
 
+    const invoicesList = (invoices || []).slice(0, 10);
+
     return (
       <div id="report-content">
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={24}>
-            <AntdCard>
-              <Statistic
-                title="Total Outstanding"
-                value={totalOutstanding}
-                prefix="GHS "
-                precision={2}
-                valueStyle={{ color: '#cf1322' }}
-              />
-            </AntdCard>
-          </Col>
-        </Row>
+        <div className="grid grid-cols-1 gap-3 md:gap-4 mb-4 md:mb-6">
+          <Card>
+            <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
+              <p className="text-sm text-muted-foreground">Total Outstanding</p>
+              <p className="text-2xl font-semibold text-red-700">₵ {parseFloat(totalOutstanding || 0).toFixed(2)}</p>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={12}>
-            <AntdCard title="Outstanding by Customer">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Outstanding by Customer</CardTitle>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={customerChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Bar dataKey="amount" fill="#ff4d4f" />
                 </BarChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-          <Col span={12}>
-            <AntdCard title="Aging Analysis">
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle>Aging Analysis</CardTitle>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
@@ -1722,56 +1783,32 @@ const Reports = () => {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                 </PieChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16}>
-          <Col span={24}>
-            <AntdCard title="Outstanding Invoices">
-              <Table
-                dataSource={invoices || []}
-                rowKey="id"
-                pagination={{ pageSize: 10 }}
+        <div className="grid grid-cols-1 gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Outstanding Invoices</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ReportsTableWithCards
                 columns={[
-                  {
-                    title: 'Invoice Number',
-                    dataIndex: 'invoiceNumber',
-                    key: 'invoiceNumber',
-                  },
-                  {
-                    title: 'Customer',
-                    dataIndex: ['customer', 'name'],
-                    key: 'customer',
-                  },
-                  {
-                    title: 'Due Date',
-                    dataIndex: 'dueDate',
-                    key: 'dueDate',
-                    render: (date) => dayjs(date).format('MMM DD, YYYY'),
-                  },
-                  {
-                    title: 'Balance',
-                    dataIndex: 'balance',
-                    key: 'balance',
-                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
-                  },
-                  {
-                    title: 'Status',
-                    dataIndex: 'status',
-                    key: 'status',
-                    render: (status) => {
-                      return <StatusChip status={status} />;
-                    },
-                  },
+                  { key: 'invoiceNumber', label: 'Invoice Number' },
+                  { key: 'customer', label: 'Customer', render: (_, r) => r.customer?.name || '-' },
+                  { key: 'dueDate', label: 'Due Date', render: (v) => dayjs(v).format('MMM DD, YYYY') },
+                  { key: 'balance', label: 'Balance', render: (v) => `₵ ${parseFloat(v || 0).toFixed(2)}` },
+                  { key: 'status', label: 'Status', render: (_, r) => <StatusChip status={r.status} /> },
                 ]}
+                data={invoicesList}
               />
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   };
@@ -1781,7 +1818,7 @@ const Reports = () => {
 
     const { totalSales, byJobType, byCustomer, byDate, byStatus } = reportData;
 
-    const jobTypeChartData = isPrintingPress && byJobType ? byJobType.map(item => ({
+    const jobTypeChartData = isStudio && byJobType ? byJobType.map(item => ({
       name: item.jobType || 'Unknown',
       value: parseFloat(item.totalSales || 0)
     })) : [];
@@ -1798,24 +1835,22 @@ const Reports = () => {
 
     return (
       <div id="report-content">
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={24}>
-            <AntdCard>
-              <Statistic
-                title="Total Sales"
-                value={totalSales}
-                prefix="GHS "
-                precision={2}
-                valueStyle={{ color: '#3f8600' }}
-              />
-            </AntdCard>
-          </Col>
-        </Row>
+        <div className="grid grid-cols-1 gap-3 md:gap-4 mb-4 md:mb-6">
+          <Card>
+            <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
+              <p className="text-sm text-muted-foreground">{terminology.salesLabel}</p>
+              <p className="text-2xl font-semibold text-green-700">₵ {parseFloat(totalSales || 0).toFixed(2)}</p>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          {isPrintingPress && (
-            <Col span={12}>
-              <AntdCard title="Sales by Job Type">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+          {isStudio && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{terminology.salesByTypeLabel}</CardTitle>
+              </CardHeader>
+              <CardContent>
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie
@@ -1832,99 +1867,106 @@ const Reports = () => {
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                    <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   </PieChart>
                 </ResponsiveContainer>
-              </AntdCard>
-            </Col>
+              </CardContent>
+            </Card>
           )}
-          <Col span={isPrintingPress ? 12 : 24}>
-            <AntdCard title="Top Customers">
+          <Card>
+            <CardHeader>
+              <CardTitle>Top Customers</CardTitle>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={customerChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Bar dataKey="sales" fill="#8884d8" />
                 </BarChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={24}>
-            <AntdCard title="Sales Trend">
+        <div className="grid grid-cols-1 gap-4 mb-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>{terminology.trendLabel}</CardTitle>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={dateChartData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Legend />
-                  <Line type="monotone" dataKey="sales" stroke="#8884d8" strokeWidth={2} name="Sales" />
+                  <Line type="monotone" dataKey="sales" stroke="#8884d8" strokeWidth={2} name={terminology.revenue} />
                 </LineChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16}>
-          {isPrintingPress && (
-            <Col span={12}>
-              <AntdCard title="Sales by Job Type">
-                <Table
-                  dataSource={byJobType || []}
-                  rowKey="jobType"
-                  pagination={false}
-                  columns={[
-                    { title: 'Job Type', dataIndex: 'jobType', key: 'jobType' },
-                    {
-                      title: 'Total Sales',
-                      dataIndex: 'totalSales',
-                      key: 'sales',
-                      render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
-                    },
-                    { title: 'Jobs', dataIndex: 'jobCount', key: 'count' },
-                    {
-                      title: 'Avg Price',
-                      dataIndex: 'averagePrice',
-                      key: 'avg',
-                      render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
-                    },
-                  ]}
-                />
-              </AntdCard>
-            </Col>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {isStudio && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{terminology.salesByTypeLabel}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ShadcnTable className="min-w-[400px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{terminology.typeColumnLabel}</TableHead>
+                      <TableHead>Total Sales</TableHead>
+                      <TableHead>{terminology.countColumnLabel}</TableHead>
+                      <TableHead>Avg Price</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(byJobType || []).map((item) => (
+                      <TableRow key={item.jobType}>
+                        <TableCell>{item.jobType || '-'}</TableCell>
+                        <TableCell>₵ {parseFloat(item.totalSales || 0).toFixed(2)}</TableCell>
+                        <TableCell>{item.jobCount ?? '-'}</TableCell>
+                        <TableCell>₵ {parseFloat(item.averagePrice || 0).toFixed(2)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </ShadcnTable>
+              </CardContent>
+            </Card>
           )}
-          <Col span={isPrintingPress ? 12 : 24}>
-            <AntdCard title="Sales by Status">
-              <Table
-                dataSource={byStatus || []}
-                rowKey="status"
-                pagination={false}
-                columns={[
-                  {
-                    title: 'Status',
-                    dataIndex: 'status',
-                    key: 'status',
-                    render: (status) => (
-                      <StatusChip status={status} />
-                    ),
-                  },
-                  {
-                    title: 'Total Sales',
-                    dataIndex: 'totalSales',
-                    key: 'sales',
-                    render: (value) => `GHS ${parseFloat(value || 0).toFixed(2)}`,
-                  },
-                  { title: 'Jobs', dataIndex: 'jobCount', key: 'count' },
-                ]}
-              />
-            </AntdCard>
-          </Col>
-        </Row>
+          <Card>
+            <CardHeader>
+              <CardTitle>Sales by Status</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ShadcnTable className="min-w-[400px]">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Total Sales</TableHead>
+                    <TableHead>{terminology.countColumnLabel}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(byStatus || []).map((item) => (
+                    <TableRow key={item.status}>
+                      <TableCell><StatusChip status={item.status} /></TableCell>
+                      <TableCell>₵ {parseFloat(item.totalSales || 0).toFixed(2)}</TableCell>
+                      <TableCell>{item.jobCount ?? '-'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </ShadcnTable>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   };
@@ -1949,65 +1991,48 @@ const Reports = () => {
 
     return (
       <div id="report-content">
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={8}>
-            <AntdCard>
-              <Statistic
-                title="Revenue"
-                value={revenue}
-                prefix="GHS "
-                precision={2}
-                valueStyle={{ color: '#3f8600' }}
-              />
-            </AntdCard>
-          </Col>
-          <Col span={8}>
-            <AntdCard>
-              <Statistic
-                title="Expenses"
-                value={expenses}
-                prefix="GHS "
-                precision={2}
-                valueStyle={{ color: '#cf1322' }}
-              />
-            </AntdCard>
-          </Col>
-          <Col span={8}>
-            <AntdCard>
-              <Statistic
-                title="Gross Profit"
-                value={grossProfit}
-                prefix="GHS "
-                precision={2}
-                valueStyle={{ color: grossProfit >= 0 ? '#3f8600' : '#cf1322' }}
-              />
-            </AntdCard>
-          </Col>
-        </Row>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-sm text-muted-foreground">Revenue</p>
+              <p className="text-2xl font-semibold text-green-700">₵ {parseFloat(revenue || 0).toFixed(2)}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-sm text-muted-foreground">Expenses</p>
+              <p className="text-2xl font-semibold text-red-700">₵ {parseFloat(expenses || 0).toFixed(2)}</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-sm text-muted-foreground">Gross Profit</p>
+              <p className={cn("text-2xl font-semibold", grossProfit >= 0 ? "text-green-700" : "text-red-700")}>₵ {parseFloat(grossProfit || 0).toFixed(2)}</p>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16} style={{ marginBottom: 24 }}>
-          <Col span={24}>
-            <AntdCard>
-              <Statistic
-                title="Profit Margin"
-                value={profitMargin}
-                suffix="%"
-                precision={2}
-                valueStyle={{ color: profitMargin >= 0 ? '#3f8600' : '#cf1322' }}
-              />
-            </AntdCard>
-          </Col>
-        </Row>
+        <div className="grid grid-cols-1 gap-4 mb-6">
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-sm text-muted-foreground">Profit Margin</p>
+              <p className={cn("text-2xl font-semibold", profitMargin >= 0 ? "text-green-700" : "text-red-700")}>{parseFloat(profitMargin || 0).toFixed(2)}%</p>
+            </CardContent>
+          </Card>
+        </div>
 
-        <Row gutter={16}>
-          <Col span={24}>
-            <AntdCard title="Profit & Loss Overview">
+        <div className="grid grid-cols-1 gap-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Profit & Loss Overview</CardTitle>
+            </CardHeader>
+            <CardContent>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={profitData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <Tooltip formatter={(value) => `GHS ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Bar dataKey="value" fill="#8884d8">
                     {profitData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
@@ -2015,9 +2040,9 @@ const Reports = () => {
                   </Bar>
                 </BarChart>
               </ResponsiveContainer>
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   };
@@ -2039,17 +2064,387 @@ const Reports = () => {
     }
   };
 
-  const reportTypes = [
-    { value: 'revenue', label: 'Revenue Report', icon: <DollarSign className="h-4 w-4" /> },
+  const reportTypes = useMemo(() => [
+    { value: 'revenue', label: 'Revenue Report', icon: <Currency className="h-4 w-4" /> },
     { value: 'expenses', label: 'Expense Report', icon: <ShoppingCart className="h-4 w-4" /> },
     { value: 'outstanding', label: 'Outstanding Payments', icon: <FileText className="h-4 w-4" /> },
-    { value: 'sales', label: 'Sales Report', icon: <BarChart3 className="h-4 w-4" /> },
+    { value: 'sales', label: terminology.reportLabel, icon: <BarChart3 className="h-4 w-4" /> },
     { value: 'profit-loss', label: 'Profit & Loss', icon: <BarChart3 className="h-4 w-4" /> },
-  ];
+  ], [terminology.reportLabel]);
 
   const cardStyle = {
     borderRadius: '8px',
     border: '1px solid #f4f4f4'
+  };
+
+  const formatComplianceCurrency = (num) => `₵ ${Number(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  const renderComplianceView = () => {
+    const statementTabs = [
+      { value: 'income-expenditure', label: 'Income and expenditure' },
+      { value: 'profit-loss', label: 'Profit or loss' },
+      { value: 'financial-position', label: 'Statement of financial position' },
+      { value: 'cashflow', label: 'Statement of cash flows' },
+      { value: 'vat', label: 'VAT Summary' }
+    ];
+
+    const handlePrint = () => {
+      if (compliancePrintRef.current) {
+        const printContent = compliancePrintRef.current.innerHTML;
+        const win = window.open('', '_blank');
+        win.document.write(`
+          <html><head><title>Compliance Report</title>
+          <style>body{font-family:system-ui,sans-serif;padding:24px;} table{width:100%;border-collapse:collapse;} th,td{border:1px solid #e5e7eb;padding:8px 12px;text-align:left;} th{background:#f9fafb;}</style>
+          </head><body>${printContent}</body></html>`);
+        win.document.close();
+        win.print();
+        win.close();
+      }
+    };
+
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h3 className="text-lg font-semibold">Compliance reports</h3>
+            <p className="text-sm text-muted-foreground">For submission to revenue centers and tax authorities. Prepared in accordance with International Accounting Standards (IAS) and International Financial Reporting Standards (IFRS).</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <DateRangePicker
+              range={dateRange?.[0] && dateRange?.[1] ? { from: dateRange[0].toDate(), to: dateRange[1].toDate() } : undefined}
+              onSelect={(r) => r?.from && r?.to && setDateRange([dayjs(r.from), dayjs(r.to)])}
+              className="w-auto min-w-[240px]"
+            />
+            <ShadcnButton variant="outline" size="sm" onClick={handlePrint}>
+              <FileText className="h-4 w-4 mr-2" />
+              Print
+            </ShadcnButton>
+            <ShadcnButton className="bg-[#166534] hover:bg-[#14502a] text-white" size="sm" onClick={handlePrint}>
+              <Download className="h-4 w-4 mr-2" />
+              Export
+            </ShadcnButton>
+          </div>
+        </div>
+        <Tabs value={complianceStatementType} onValueChange={setComplianceStatementType}>
+          <TabsList className="grid w-full grid-cols-2 lg:grid-cols-5">
+            {statementTabs.map((tab) => (
+              <TabsTrigger key={tab.value} value={tab.value}>
+                {tab.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <div ref={compliancePrintRef} className="mt-4 border border-border rounded-lg p-4 md:p-6 bg-card">
+            {complianceSource === 'accounting' && complianceData && (
+              <p className="text-xs text-muted-foreground mb-2">
+                From Accounting — figures reflect posted journal entries and chart of accounts.
+                {complianceStatementType === 'income-expenditure' && (complianceData.income?.total ?? 0) === 0 && (complianceData.expenditure?.total ?? 0) === 0 && (
+                  <span className="block mt-1">No income or expenditure in this period. This report only includes revenue (income) and expense accounts. Post journal entries that affect those accounts to see figures here; asset/liability/equity movements (e.g. buying furniture) do not appear here.</span>
+                )}
+                {complianceStatementType === 'profit-loss' && (complianceData.revenue ?? 0) === 0 && (complianceData.expenses ?? 0) === 0 && (
+                  <span className="block mt-1">No revenue or expenses in this period. Post journal entries that affect income or expense accounts to see figures here.</span>
+                )}
+                {complianceStatementType === 'cashflow' && (complianceData.operating?.cashReceivedFromCustomers ?? 0) === 0 && (complianceData.operating?.cashPaidToSuppliersAndExpenses ?? 0) === 0 && (
+                  <span className="block mt-1">No operating cash in/out in this period from income or expense accounts. Post journal entries that affect those accounts to see figures here.</span>
+                )}
+              </p>
+            )}
+            {complianceLoading && (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {complianceError && !complianceLoading && (
+              <Alert variant="destructive">
+                <AlertDescription>{complianceError}</AlertDescription>
+              </Alert>
+            )}
+            {!complianceLoading && !complianceError && complianceData && complianceStatementType === 'income-expenditure' && (
+              <>
+                <h4 className="text-base font-semibold mb-3">Income and expenditure report (IAS/IFRS)</h4>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Period: {dateRange?.[0]?.format('DD MMM YYYY')} to {dateRange?.[1]?.format('DD MMM YYYY')}
+                </p>
+                <div className="space-y-4">
+                  <div>
+                    <p className="font-medium">Income</p>
+                    <p className="text-lg">{formatComplianceCurrency(complianceData.income?.total ?? 0)}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium mb-2">Expenditure by category</p>
+                    <ShadcnTable>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Category</TableHead>
+                          <TableHead className="text-right">Amount</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(complianceData.expenditure?.byCategory || []).map((row, i) => (
+                          <TableRow key={i}>
+                            <TableCell>{row.category}</TableCell>
+                            <TableCell className="text-right">{formatComplianceCurrency(row.amount)}</TableCell>
+                          </TableRow>
+                        ))}
+                        <TableRow className="font-medium">
+                          <TableCell>Total expenditure</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(complianceData.expenditure?.total ?? 0)}</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </ShadcnTable>
+                  </div>
+                  <div>
+                    <p className="font-medium">Surplus / (Deficit)</p>
+                    <p className="text-lg">{formatComplianceCurrency(complianceData.surplusDeficit ?? 0)}</p>
+                  </div>
+                  {complianceSource === 'accounting' && (complianceData.openingStockValue != null || complianceData.closingStockValue != null) && (
+                    <div>
+                      <p className="font-medium mb-2">Stock (from accounting)</p>
+                      <p className="text-sm">Opening stock: {formatComplianceCurrency(complianceData.openingStockValue ?? 0)}</p>
+                      <p className="text-sm">Closing stock: {formatComplianceCurrency(complianceData.closingStockValue ?? 0)}</p>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+            {!complianceLoading && !complianceError && complianceData && complianceStatementType === 'profit-loss' && (
+              <>
+                <h4 className="text-base font-semibold mb-3">Profit or loss (IAS 1)</h4>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Period: {dateRange?.[0]?.format('DD MMM YYYY')} to {dateRange?.[1]?.format('DD MMM YYYY')}
+                </p>
+                <div className="space-y-4">
+                  <div>
+                    <p className="font-medium">Revenue</p>
+                    <p className="text-lg">{formatComplianceCurrency(complianceData.revenue ?? 0)}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium mb-2">Expenses by category</p>
+                    <ShadcnTable>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Category</TableHead>
+                          <TableHead className="text-right">Amount</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {(complianceData.expensesByCategory || []).map((row, i) => (
+                          <TableRow key={i}>
+                            <TableCell>{row.category}</TableCell>
+                            <TableCell className="text-right">{formatComplianceCurrency(row.amount)}</TableCell>
+                          </TableRow>
+                        ))}
+                        <TableRow className="font-medium">
+                          <TableCell>Total expenses</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(complianceData.expenses ?? 0)}</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </ShadcnTable>
+                  </div>
+                  <div>
+                    <p className="font-medium">Gross profit</p>
+                    <p className="text-lg">{formatComplianceCurrency(complianceData.grossProfit ?? 0)}</p>
+                  </div>
+                  <p className="text-sm text-muted-foreground">Profit margin: {(complianceData.profitMargin ?? 0).toFixed(2)}%</p>
+                  {complianceSource === 'accounting' && (complianceData.openingStockValue != null || complianceData.closingStockValue != null) && (
+                    <div>
+                      <p className="font-medium mb-2">Stock (from accounting)</p>
+                      <p className="text-sm">Opening stock: {formatComplianceCurrency(complianceData.openingStockValue ?? 0)}</p>
+                      <p className="text-sm">Closing stock: {formatComplianceCurrency(complianceData.closingStockValue ?? 0)}</p>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+            {!complianceLoading && !complianceError && complianceData && complianceStatementType === 'financial-position' && (
+              <>
+                <h4 className="text-base font-semibold mb-3">Statement of financial position (IAS 1)</h4>
+                <p className="text-sm text-muted-foreground mb-4">As at {complianceData.asAtDate || dateRange?.[1]?.format('YYYY-MM-DD')}</p>
+                <div className="space-y-4">
+                  <div>
+                    <p className="font-medium mb-2">Assets</p>
+                    <ShadcnTable>
+                      <TableBody>
+                        <TableRow>
+                          <TableCell>Debtors (trade receivables)</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(complianceData.assets?.debtors ?? complianceData.assets?.receivables ?? 0)}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Product inventory</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(complianceData.assets?.productInventory ?? 0)}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Materials</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(complianceData.assets?.materials ?? 0)}</TableCell>
+                        </TableRow>
+                        <TableRow className="font-medium">
+                          <TableCell>Total assets</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(complianceData.totalAssets ?? 0)}</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </ShadcnTable>
+                  </div>
+                  <div>
+                    <p className="font-medium mb-2">Liabilities</p>
+                    <p className="text-sm">Total liabilities: {formatComplianceCurrency(complianceData.liabilities?.total ?? 0)}</p>
+                  </div>
+                  <div>
+                    <p className="font-medium mb-2">Equity</p>
+                    <p className="text-sm">Retained earnings: {formatComplianceCurrency(complianceData.equity?.retainedEarnings ?? 0)}</p>
+                  </div>
+                </div>
+              </>
+            )}
+            {!complianceLoading && !complianceError && complianceData && complianceStatementType === 'cashflow' && (
+              <>
+                <h4 className="text-base font-semibold mb-3">Statement of cash flows (IAS 7)</h4>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Period: {dateRange?.[0]?.format('DD MMM YYYY')} to {dateRange?.[1]?.format('DD MMM YYYY')}
+                </p>
+                <div className="space-y-4">
+                  <div>
+                    <p className="font-medium mb-2">Operating activities</p>
+                    <ShadcnTable>
+                      <TableBody>
+                        <TableRow>
+                          <TableCell>Cash received from customers</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(complianceData.operating?.cashReceivedFromCustomers ?? 0)}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>Cash paid to suppliers and expenses</TableCell>
+                          <TableCell className="text-right">({formatComplianceCurrency(complianceData.operating?.cashPaidToSuppliersAndExpenses ?? 0)})</TableCell>
+                        </TableRow>
+                        <TableRow className="font-medium">
+                          <TableCell>Net cash from operating activities</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(complianceData.operating?.netCashFromOperatingActivities ?? 0)}</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </ShadcnTable>
+                  </div>
+                  <div>
+                    <p className="font-medium">Net change in cash</p>
+                    <p className="text-lg">{formatComplianceCurrency(complianceData.netChangeInCash ?? 0)}</p>
+                  </div>
+                </div>
+              </>
+            )}
+            {complianceStatementType === 'vat' && vatLoading && (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {complianceStatementType === 'vat' && !vatLoading && vatData && (
+              <>
+                <h4 className="text-base font-semibold mb-3">VAT Summary Report</h4>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Period: {dateRange?.[0]?.format('DD MMM YYYY')} to {dateRange?.[1]?.format('DD MMM YYYY')}
+                </p>
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <Card>
+                      <CardContent className="pt-4">
+                        <p className="text-sm text-muted-foreground">Total VAT Collected</p>
+                        <p className="text-2xl font-bold text-green-700">
+                          {formatComplianceCurrency(vatData.summary?.totalVatCollected ?? 0)}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          From {vatData.summary?.invoiceCount ?? 0} invoices + {vatData.summary?.saleCount ?? 0} sales
+                        </p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-4">
+                        <p className="text-sm text-muted-foreground">Taxable Amount</p>
+                        <p className="text-2xl font-bold">
+                          {formatComplianceCurrency(vatData.summary?.totalTaxableAmount ?? 0)}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">Total sales before tax</p>
+                      </CardContent>
+                    </Card>
+                    <Card>
+                      <CardContent className="pt-4">
+                        <p className="text-sm text-muted-foreground">Effective Tax Rate</p>
+                        <p className="text-2xl font-bold">
+                          {vatData.summary?.effectiveTaxRate ?? 0}%
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">Average across all transactions</p>
+                      </CardContent>
+                    </Card>
+                  </div>
+                  
+                  <div>
+                    <p className="font-medium mb-2">VAT Breakdown by Source</p>
+                    <ShadcnTable>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Source</TableHead>
+                          <TableHead className="text-right">Transactions</TableHead>
+                          <TableHead className="text-right">VAT Amount</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        <TableRow>
+                          <TableCell>Invoices</TableCell>
+                          <TableCell className="text-right">{vatData.summary?.invoiceCount ?? 0}</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(vatData.summary?.invoiceVat ?? 0)}</TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell>POS Sales</TableCell>
+                          <TableCell className="text-right">{vatData.summary?.saleCount ?? 0}</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(vatData.summary?.saleVat ?? 0)}</TableCell>
+                        </TableRow>
+                        <TableRow className="font-medium bg-muted/50">
+                          <TableCell>Total</TableCell>
+                          <TableCell className="text-right">{(vatData.summary?.invoiceCount ?? 0) + (vatData.summary?.saleCount ?? 0)}</TableCell>
+                          <TableCell className="text-right">{formatComplianceCurrency(vatData.summary?.totalVatCollected ?? 0)}</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </ShadcnTable>
+                  </div>
+
+                  {vatData.byPeriod && vatData.byPeriod.length > 0 && (
+                    <div>
+                      <p className="font-medium mb-2">VAT by Period</p>
+                      <ShadcnTable>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Period</TableHead>
+                            <TableHead className="text-right">Invoice VAT</TableHead>
+                            <TableHead className="text-right">Sales VAT</TableHead>
+                            <TableHead className="text-right">Total VAT</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {vatData.byPeriod.map((row, i) => (
+                            <TableRow key={i}>
+                              <TableCell>{row.period}</TableCell>
+                              <TableCell className="text-right">{formatComplianceCurrency(row.invoiceVat ?? 0)}</TableCell>
+                              <TableCell className="text-right">{formatComplianceCurrency(row.saleVat ?? 0)}</TableCell>
+                              <TableCell className="text-right font-medium">{formatComplianceCurrency(row.totalVat ?? 0)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </ShadcnTable>
+                    </div>
+                  )}
+
+                  <Alert>
+                    <AlertDescription>
+                      This VAT summary is for internal reporting purposes. For official tax filings, please verify all figures with your accountant and ensure compliance with local tax regulations.
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              </>
+            )}
+            {complianceStatementType === 'vat' && !vatLoading && !vatData && (
+              <p className="text-sm text-muted-foreground">No VAT data available for the selected period.</p>
+            )}
+            {!complianceLoading && !complianceError && !complianceData && complianceStatementType !== 'vat' && (
+              <p className="text-sm text-muted-foreground">Select a statement type and date range to view the report.</p>
+            )}
+          </div>
+        </Tabs>
+      </div>
+    );
   };
 
   const renderOverviewDashboard = () => {
@@ -2070,8 +2465,9 @@ const Reports = () => {
       profitLoss, 
       revenueGrowth,
       periodTypeLabel,
-      inventorySummary,
-      inventoryMovements,
+      productStockSummary,
+      materialsSummary,
+      materialsMovements,
       fastestMovingItems,
       revenueByChannel: revenueByChannelFromApi,
       serviceAnalytics,
@@ -2332,13 +2728,21 @@ const Reports = () => {
         });
     })();
 
-    // Top services - use revenue by customer (from paid invoices) for consistency
-    const topServices = revenue?.byCustomer?.length > 0 
-      ? revenue.byCustomer.slice(0, 5).map(item => ({
-          name: item.customer?.name || 'Unknown',
-          value: parseFloat(item.totalRevenue || 0)
-        }))
-      : [];
+    // Top revenue entities:
+    // - For shop/pharmacy: use top products by revenue
+    // - Otherwise (studio-like): use top customers by revenue
+    let topServices = [];
+    if ((isShop || isPharmacy) && (productSales?.products || []).length > 0) {
+      topServices = productSales.products.slice(0, 5).map((item) => ({
+        name: item.productName || 'Unknown',
+        value: parseFloat(item.revenue || 0)
+      }));
+    } else if (revenue?.byCustomer?.length > 0) {
+      topServices = revenue.byCustomer.slice(0, 5).map((item) => ({
+        name: item.customer?.name || 'Unknown',
+        value: parseFloat(item.totalRevenue || 0)
+      }));
+    }
 
     // Revenue by channel - prefer API (payment method), then service analytics / job type / sales by payment method
     const paymentMethodLabel = (method) =>
@@ -2385,63 +2789,50 @@ const Reports = () => {
     return (
       <div>
         {/* Date Range Indicator */}
-        <div style={{ marginBottom: 16, padding: '8px 16px', background: '#f5f5f5', borderRadius: 6, display: 'inline-block' }}>
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            Showing data for: <Text strong>{dateRangeDisplay}</Text>
+        <div className="mb-4 py-2 px-4 bg-muted rounded-md inline-block">
+          <span className="text-xs text-muted-foreground">
+            Showing data for: <span className="font-semibold">{dateRangeDisplay}</span>
             {!hasDataForPeriod && (
-              <Text type="warning" style={{ marginLeft: 8 }}> (No data found for this period)</Text>
+              <span className="text-amber-600 ml-2"> (No data found for this period)</span>
             )}
-          </Text>
+          </span>
         </div>
         
         {/* Top Row - 3 Cards */}
-        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-3 md:mb-4">
           {/* Card 1: Financial Summary */}
-          <Col xs={24} md={8}>
-            <AntdCard style={cardStyle} bodyStyle={{ padding: '24px' }}>
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
+          <Card style={cardStyle}>
+            <CardContent className="pt-4 md:pt-6 space-y-3 md:space-y-4">
+              <div>
+                <p className="text-sm text-muted-foreground">Revenue growth {overviewStats?.periodTypeLabel || 'M/M'}</p>
+                <h2 className={cn("text-3xl font-bold mt-2", revenueGrowth >= 0 ? "text-green-700" : "text-red-700")}>
+                  {revenueGrowth >= 0 ? '+' : ''}{revenueGrowth.toFixed(1)}%
+                </h2>
+              </div>
+              <Separator />
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <Text style={{ fontSize: 13, color: '#8c8c8c', fontWeight: 400 }}>Revenue growth {overviewStats?.periodTypeLabel || 'M/M'}</Text>
-                  <Title level={2} style={{ margin: '8px 0 0 0', color: revenueGrowth >= 0 ? '#006d32' : '#cf1322', fontSize: 32, fontWeight: 700 }}>
-                    {revenueGrowth >= 0 ? '+' : ''}{revenueGrowth.toFixed(1)}%
-                  </Title>
+                  <p className="text-xs text-muted-foreground mb-1">Revenue</p>
+                  <p className="text-xl font-semibold text-foreground">₵ {(totalRevenue / 1000).toFixed(3)}K</p>
                 </div>
-                <Divider style={{ margin: '16px 0 12px 0', borderColor: '#f0f0f0' }} />
-                <Row gutter={24}>
-                  <Col span={12}>
-                    <div>
-                      <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 4 }}>Revenue</Text>
-                      <Text style={{ fontSize: 20, fontWeight: 600, color: '#262626' }}>
-                        GHS {(totalRevenue / 1000).toFixed(3)}K
-                      </Text>
-                    </div>
-                  </Col>
-                  <Col span={12}>
-                    <div>
-                      <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 4 }}>Net income</Text>
-                      <Text style={{ fontSize: 20, fontWeight: 600, color: '#262626' }}>
-                        GHS {(netIncome / 1000).toFixed(3)}K
-                      </Text>
-                    </div>
-                  </Col>
-                </Row>
-                <div style={{ marginTop: 8 }}>
-                  <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 4 }}>Profit margin</Text>
-                  <Text style={{ fontSize: 24, fontWeight: 600, color: '#262626' }}>
-                    {profitMargin.toFixed(2)}%
-                  </Text>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">Net income</p>
+                  <p className="text-xl font-semibold text-foreground">₵ {(netIncome / 1000).toFixed(3)}K</p>
                 </div>
-              </Space>
-            </AntdCard>
-          </Col>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">Profit margin</p>
+                <p className="text-2xl font-semibold text-foreground">{profitMargin.toFixed(2)}%</p>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Card 2: Expense Chart */}
-          <Col xs={24} md={8}>
-            <AntdCard 
-              title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>Expense Breakdown</span>}
-              style={cardStyle}
-              bodyStyle={{ padding: '20px 24px' }}
-            >
+          <Card style={cardStyle}>
+            <CardHeader className="pb-2 px-4 md:px-6 pt-4 md:pt-6">
+              <CardTitle className="text-base font-semibold">Expense Breakdown</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6">
               {expenseData.length > 0 ? (
                 <ResponsiveContainer width="100%" height={180}>
                   <PieChart>
@@ -2458,238 +2849,225 @@ const Reports = () => {
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip 
-                      formatter={(value) => `GHS ${value.toLocaleString()}`}
+                    <RechartsTooltip 
+                      formatter={(value) => `₵ ${value.toLocaleString()}`}
                       contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
-                <div style={{ textAlign: 'center', padding: '60px 0', color: '#8c8c8c' }}>
-                  <Text type="secondary">No expense data available</Text>
-                </div>
+                <div className={`text-center ${emptyStateClassXL}`}>No expense data available</div>
               )}
-              <div style={{ marginTop: 20 }}>
+              <div className="mt-5">
                 {expenseData.length > 0 ? (
                   expenseData.slice(0, 3).map((item, idx) => (
-                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: idx < 2 ? 12 : 0 }}>
-                      <Space size={8}>
-                        <div style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: item.color }} />
-                        <Text style={{ fontSize: 13, color: '#595959' }}>{item.name}</Text>
-                      </Space>
-                      <Text style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>
-                        {expenses.totalExpenses > 0 ? ((item.value / expenses.totalExpenses) * 100).toFixed(0) : 0}% · GHS {(item.value / 1000).toFixed(3)}K
-                      </Text>
+                    <div key={idx} className="flex justify-between items-center mb-3 last:mb-0">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                        <span className="text-sm text-muted-foreground">{item.name}</span>
+                      </div>
+                      <span className="text-sm font-semibold text-foreground">
+                        {expenses.totalExpenses > 0 ? ((item.value / expenses.totalExpenses) * 100).toFixed(0) : 0}% · ₵ {(item.value / 1000).toFixed(3)}K
+                      </span>
                     </div>
                   ))
                 ) : (
-                  <Text type="secondary" style={{ fontSize: 12 }}>No expense data available for this period</Text>
+                  <p className="text-xs text-muted-foreground">No expense data available for this period</p>
                 )}
               </div>
-            </AntdCard>
-          </Col>
+            </CardContent>
+          </Card>
 
           {/* Card 3: Jobs/Sales Summary */}
-          <Col xs={24} md={8}>
-            <AntdCard style={cardStyle} bodyStyle={{ padding: '24px' }}>
-              <Space direction="vertical" size={16} style={{ width: '100%' }}>
-                <div>
-                  <Text style={{ fontSize: 13, color: '#8c8c8c', fontWeight: 400 }}>
-                    {isShop ? 'Total Sales' : 'Total Jobs'}
-                  </Text>
-                  <Title level={2} style={{ margin: '8px 0 0 0', fontSize: 32, fontWeight: 700, color: '#262626' }}>
-                    {isShop ? (sales?.totalSales || sales?.totalJobs || 0) : (sales?.totalJobs || 0)}
-                  </Title>
+          <Card style={cardStyle}>
+            <CardContent className="pt-4 md:pt-6 space-y-3 md:space-y-4">
+              <div>
+                <p className="text-sm text-muted-foreground">{terminology.salesLabel}</p>
+                <h2 className="text-3xl font-bold mt-2 text-foreground">
+                  {isShop || isPharmacy ? (sales?.totalJobs ?? 0) : (sales?.totalJobs ?? 0)}
+                </h2>
+              </div>
+              <Separator />
+              <div>
+                <p className="text-xs text-muted-foreground mb-1">{terminology.salesValueLabel}</p>
+                <p className="text-xl font-semibold text-foreground">
+                  ₵ {((isShop || isPharmacy ? (totalRevenue || parseFloat(sales?.totalSales) || 0) : totalRevenue) / 1000).toFixed(3)}K
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-2">{terminology.rateLabel}</p>
+                <div className="flex flex-col gap-1">
+                  {(() => {
+                    if (isShop || isPharmacy) {
+                      const totalValue = parseFloat(sales?.totalSales) || 0;
+                      const byPayment = sales?.byPaymentMethod ?? [];
+                      const paymentLabels = { cash: 'Cash', card: 'Card', credit_card: 'Card', mobile_money: 'MoMo', bank_transfer: 'Bank', credit: 'Credit', other: 'Other' };
+                      const cashAmount = byPayment.find(p => (p.paymentMethod || '').toLowerCase() === 'cash')?.totalAmount ?? 0;
+                      const cashValue = parseFloat(cashAmount);
+                      const cashRate = totalValue > 0 ? Math.round((cashValue / totalValue) * 100) : 0;
+                      const sortedByValue = [...byPayment]
+                        .map(p => ({ ...p, totalAmount: parseFloat(p.totalAmount || 0) }))
+                        .filter(p => p.totalAmount > 0)
+                        .sort((a, b) => b.totalAmount - a.totalAmount);
+                      return (
+                        <>
+                          <span className="text-2xl font-semibold text-foreground">{cashRate}%</span>
+                          {sortedByValue.length > 0 && (
+                            <div className="mt-1.5 space-y-1 text-xs text-muted-foreground">
+                              {sortedByValue.map((m) => {
+                                const label = paymentLabels[(m.paymentMethod || '').toLowerCase()] || m.paymentMethod || 'Other';
+                                const val = parseFloat(m.totalAmount || 0);
+                                const pct = totalValue > 0 ? Math.round((val / totalValue) * 100) : 0;
+                                return (
+                                  <div key={m.paymentMethod || label} className="flex justify-between items-center gap-2">
+                                    <span>{label}</span>
+                                    <span className="font-medium text-foreground">₵ {val.toLocaleString()} ({pct}%)</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </>
+                      );
+                    } else {
+                      const totalJobs = sales?.totalJobs || 0;
+                      const completedJobs = sales?.byStatus?.find(s => s.status === 'completed')?.jobCount || 0;
+                      const completionRate = totalJobs > 0 ? Math.round((completedJobs / totalJobs) * 100) : 0;
+                      return <span className="text-2xl font-semibold text-foreground">{completionRate}%</span>;
+                    }
+                  })()}
                 </div>
-                <Divider style={{ margin: '16px 0 12px 0', borderColor: '#f0f0f0' }} />
-                <div>
-                  <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 4 }}>
-                    {isShop ? 'Total Sales Value' : 'Total Job Value'}
-                  </Text>
-                  <Text style={{ fontSize: 20, fontWeight: 600, color: '#262626' }}>
-                    GHS {(totalRevenue / 1000).toFixed(3)}K
-                  </Text>
-                </div>
-                <div style={{ marginTop: 8 }}>
-                  <Text style={{ fontSize: 12, color: '#8c8c8c', display: 'block', marginBottom: 8 }}>
-                    {isShop ? 'Cash Sales Rate' : 'Completion Rate'}
-                  </Text>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    {(() => {
-                      if (isShop) {
-                        // For shop: show cash sales percentage
-                        const totalSalesCount = sales?.totalSales || sales?.totalJobs || 0;
-                        const cashSales = sales?.byPaymentMethod?.find(p => p.paymentMethod === 'cash')?.count || 0;
-                        const cashRate = totalSalesCount > 0 ? Math.round((cashSales / totalSalesCount) * 100) : 0;
-                        
-                        return (
-                          <>
-                            <Progress 
-                              type="circle" 
-                              percent={cashRate} 
-                              width={60} 
-                              strokeColor="#006d32"
-                              strokeWidth={8}
-                              trailColor="#f0f0f0"
-                            />
-                            <Text style={{ fontSize: 24, fontWeight: 600, color: '#262626' }}>{cashRate}%</Text>
-                          </>
-                        );
-                      } else {
-                        // For printing press: show completion rate
-                        const totalJobs = sales?.totalJobs || 0;
-                        const completedJobs = sales?.byStatus?.find(s => s.status === 'completed')?.jobCount || 0;
-                        const completionRate = totalJobs > 0 ? Math.round((completedJobs / totalJobs) * 100) : 0;
-                        
-                        return (
-                          <>
-                            <Progress 
-                              type="circle" 
-                              percent={completionRate} 
-                              width={60} 
-                              strokeColor="#006d32"
-                              strokeWidth={8}
-                              trailColor="#f0f0f0"
-                            />
-                            <Text style={{ fontSize: 24, fontWeight: 600, color: '#262626' }}>{completionRate}%</Text>
-                          </>
-                        );
-                      }
-                    })()}
-                  </div>
-                </div>
-              </Space>
-            </AntdCard>
-          </Col>
-        </Row>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* KPI, Top Customers, Pipeline Row */}
-        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-          {/* KPI Summary */}
-          <Col xs={24} md={8}>
-            <AntdCard title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>KPI Summary</span>} style={cardStyle} bodyStyle={{ padding: '20px 24px' }}>
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 13, color: '#8c8c8c' }}>Active customers</Text>
-                  <Text strong style={{ fontSize: 18, color: '#262626' }}>{kpiSummary?.activeCustomers ?? 0}</Text>
-                </div>
-                <Divider style={{ margin: '8px 0', borderColor: '#f0f0f0' }} />
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 13, color: '#8c8c8c' }}>Pending invoices</Text>
-                  <Text strong style={{ fontSize: 18, color: '#262626' }}>GHS {(kpiSummary?.pendingInvoices ?? 0).toLocaleString()}</Text>
-                </div>
-              </Space>
-            </AntdCard>
-          </Col>
-          {/* Top Customers */}
-          <Col xs={24} md={8}>
-            <AntdCard title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>Top Customers by Revenue</span>} style={cardStyle} bodyStyle={{ padding: '20px 24px' }}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-3 md:mb-4">
+          <Card style={cardStyle}>
+            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
+              <CardTitle className="text-base font-semibold">KPI Summary</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6 space-y-2 md:space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Active customers</span>
+                <span className="text-lg font-semibold text-foreground">{kpiSummary?.activeCustomers ?? 0}</span>
+              </div>
+              <Separator />
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Pending invoices</span>
+                <span className="text-lg font-semibold text-foreground">₵ {(kpiSummary?.pendingInvoices ?? 0).toLocaleString()}</span>
+              </div>
+            </CardContent>
+          </Card>
+          <Card style={cardStyle}>
+            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
+              <CardTitle className="text-base font-semibold">Top Customers by Revenue</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6">
               {(topCustomers && topCustomers.length > 0) ? (
-                <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                <div className="space-y-2">
                   {topCustomers.slice(0, 5).map((item, idx) => (
-                    <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: idx < 4 ? '1px solid #f5f5f5' : 'none' }}>
-                      <Text style={{ fontSize: 13, color: '#262626', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.customer?.name || item.customer?.company || 'Unknown'}</Text>
-                      <Text style={{ fontSize: 13, fontWeight: 600, color: '#006d32', marginLeft: 8 }}>GHS {parseFloat(item.totalRevenue || 0).toLocaleString()}</Text>
+                    <div key={idx} className="flex justify-between items-center py-1.5 border-b border-border last:border-0">
+                      <span className="text-sm text-foreground flex-1 truncate">{item.customer?.name || item.customer?.company || 'Unknown'}</span>
+                      <span className="text-sm font-semibold text-green-700 ml-2">₵ {parseFloat(item.totalRevenue || 0).toLocaleString()}</span>
                     </div>
                   ))}
-                </Space>
+                </div>
               ) : (
-                <div style={{ textAlign: 'center', padding: '24px 0', color: '#8c8c8c' }}>
-                  <Text type="secondary">No customer data for this period</Text>
-                </div>
+                <div className={`text-center ${emptyStateClass}`}>No customer data for this period</div>
               )}
-            </AntdCard>
-          </Col>
-          {/* Pipeline Summary (printing press: jobs/leads; shop/pharmacy: pending invoices only) */}
-          <Col xs={24} md={8}>
-            <AntdCard title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>{isPrintingPress ? 'Pipeline Summary' : 'Outstanding'}</span>} style={cardStyle} bodyStyle={{ padding: '20px 24px' }}>
-              <Space direction="vertical" size={12} style={{ width: '100%' }}>
-                {isPrintingPress && (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 13, color: '#8c8c8c' }}>Active jobs</Text>
-                      <Text strong style={{ fontSize: 18, color: '#262626' }}>{pipelineSummary?.activeJobs ?? 0}</Text>
-                    </div>
-                    <Divider style={{ margin: '8px 0', borderColor: '#f0f0f0' }} />
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <Text style={{ fontSize: 13, color: '#8c8c8c' }}>Open leads</Text>
-                      <Text strong style={{ fontSize: 18, color: '#262626' }}>{pipelineSummary?.openLeads ?? 0}</Text>
-                    </div>
-                    <Divider style={{ margin: '8px 0', borderColor: '#f0f0f0' }} />
-                  </>
-                )}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text style={{ fontSize: 13, color: '#8c8c8c' }}>Pending invoices (count)</Text>
-                  <Text strong style={{ fontSize: 18, color: '#262626' }}>{pipelineSummary?.pendingInvoices ?? 0}</Text>
-                </div>
-              </Space>
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+          <Card style={cardStyle}>
+            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
+              <CardTitle className="text-base font-semibold">{isStudio ? 'Pipeline Summary' : 'Outstanding'}</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6 space-y-2 md:space-y-3">
+              {isStudio && (
+                <>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Active jobs</span>
+                    <span className="text-lg font-semibold text-foreground">{pipelineSummary?.activeJobs ?? 0}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-muted-foreground">Open leads</span>
+                    <span className="text-lg font-semibold text-foreground">{pipelineSummary?.openLeads ?? 0}</span>
+                  </div>
+                  <Separator />
+                </>
+              )}
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-muted-foreground">Pending invoices (count)</span>
+                <span className="text-lg font-semibold text-foreground">{pipelineSummary?.pendingInvoices ?? 0}</span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Middle Row - 2 Cards */}
-        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-3 md:mb-4">
           {/* Card 4: Revenue Generated */}
-          <Col xs={24} md={16}>
-            <AntdCard style={cardStyle} bodyStyle={{ padding: '24px' }}>
-              <div style={{ marginBottom: 20 }}>
-                <Text style={{ fontSize: 13, color: '#8c8c8c', display: 'block', marginBottom: 8 }}>Total revenue generated</Text>
-                <Title level={2} style={{ margin: 0, color: '#006d32', fontSize: 28, fontWeight: 700 }}>
-                  GHS {totalRevenue.toFixed(3)}
-                </Title>
-              </div>
-              {dailyRevenueTrend.length > 0 ? (
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={dailyRevenueTrend} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-                    <defs>
-                      <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#006d32" stopOpacity={0.2}/>
-                        <stop offset="95%" stopColor="#006d32" stopOpacity={0.05}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                    <XAxis 
-                      dataKey="period" 
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: '#8c8c8c', fontSize: 12 }}
-                    />
-                    <YAxis 
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: '#8c8c8c', fontSize: 12 }}
-                      tickFormatter={(value) => `${value / 1000}k`}
-                    />
-                    <Tooltip 
-                      formatter={(value) => [`GHS ${value.toLocaleString()}`, 'Revenue']}
-                      contentStyle={{ borderRadius: 8, border: '1px solid #d9d9d9' }}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="revenue" 
-                      stroke="#006d32" 
-                      fill="url(#colorRevenue)"
-                      strokeWidth={3}
-                      dot={{ fill: '#006d32', r: 4 }}
-                      activeDot={{ r: 6 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
-                  <Text type="secondary">No revenue data available for this period</Text>
+          <div className="md:col-span-2">
+            <Card style={cardStyle}>
+              <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
+                <div className="mb-4 md:mb-5">
+                  <p className="text-sm text-muted-foreground mb-2">Total revenue generated</p>
+                  <h2 className="text-2xl font-bold text-green-700">₵ {totalRevenue.toFixed(3)}</h2>
                 </div>
-              )}
-            </AntdCard>
-          </Col>
+                {dailyRevenueTrend.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={220}>
+                    <LineChart data={dailyRevenueTrend} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
+                      <defs>
+                        <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#006d32" stopOpacity={0.2}/>
+                          <stop offset="95%" stopColor="#006d32" stopOpacity={0.05}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                      <XAxis 
+                        dataKey="period" 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#8c8c8c', fontSize: 12 }}
+                      />
+                      <YAxis 
+                        axisLine={false}
+                        tickLine={false}
+                        tick={{ fill: '#8c8c8c', fontSize: 12 }}
+                        tickFormatter={(value) => `${value / 1000}k`}
+                      />
+                      <RechartsTooltip 
+                        formatter={(value) => [`₵ ${value.toLocaleString()}`, 'Revenue']}
+                        contentStyle={{ borderRadius: 8, border: '1px solid #d9d9d9' }}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="revenue" 
+                        stroke="#006d32" 
+                        fill="url(#colorRevenue)"
+                        strokeWidth={3}
+                        dot={{ fill: '#006d32', r: 4 }}
+                        activeDot={{ r: 6 }}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className={`text-center ${emptyStateClassLarge}`}>No revenue data available for this period</div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Card 5: Jobs/Sales Trend */}
-          <Col xs={24} md={8}>
-            <AntdCard 
-              title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>{isShop ? 'Sales Trend' : 'Jobs Trend'}</span>}
-              style={cardStyle}
-              bodyStyle={{ padding: '20px 24px' }}
-            >
+          <Card 
+            style={cardStyle}
+          >
+            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
+              <CardTitle className="text-base font-semibold">{terminology.trendLabel}</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6">
               {isShop ? (
                 // For shop: show payment method breakdown or sales by day
                 (() => {
@@ -2726,7 +3104,7 @@ const Reports = () => {
                               <Cell key={`cell-${index}`} fill={PAYMENT_COLORS[index % PAYMENT_COLORS.length]} />
                             ))}
                           </Pie>
-                          <Tooltip 
+                          <RechartsTooltip 
                             formatter={(value, name) => [`${value} sales`, name]}
                             contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
                           />
@@ -2740,9 +3118,7 @@ const Reports = () => {
                   }
                   // Fallback to daily sales trend if no payment method data
                   return (
-                    <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
-                      <Text type="secondary">No sales data available for this period</Text>
-                    </div>
+                    <div className={`text-center ${emptyStateClassLarge}`}>No sales data available for this period</div>
                   );
                 })()
               ) : (
@@ -2762,36 +3138,33 @@ const Reports = () => {
                         tickLine={false}
                         tick={{ fill: '#8c8c8c', fontSize: 11 }}
                       />
-                      <Tooltip 
+                      <RechartsTooltip 
                         contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
                       />
                       <Legend 
                         wrapperStyle={{ fontSize: 12, paddingTop: 10 }}
                         iconType="circle"
                       />
-                      <Bar dataKey="incoming" fill="#006d32" name="Incoming jobs" radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="completed" fill="#91d5ff" name="Completed jobs" radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="incoming" fill="#006d32" name={terminology.incomingLabel} radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="completed" fill="#91d5ff" name={terminology.completedLabel} radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
-                    <Text type="secondary">No jobs data available for this period</Text>
-                  </div>
+                  <div className={`text-center ${emptyStateClassLarge}`}>No {terminology.sales.toLowerCase()} data available for this period</div>
                 )
               )}
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
 
         {/* Bottom Row - 2 Cards */}
-        <Row gutter={[16, 16]}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
           {/* Card 6: Top 5 Services/Customers */}
-          <Col xs={24} md={12}>
-            <AntdCard 
-              title={<span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>Top 5 Revenue Sources</span>}
-              style={cardStyle}
-              bodyStyle={{ padding: '20px 24px' }}
-            >
+          <Card style={cardStyle}>
+            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
+              <CardTitle className="text-base font-semibold">{terminology.topRevenueLabel}</CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6">
               {topServices.length > 0 ? (
                 <>
                   <ResponsiveContainer width="100%" height={220}>
@@ -2814,8 +3187,8 @@ const Reports = () => {
                         tick={{ fill: '#262626', fontSize: 12 }}
                         width={75}
                       />
-                      <Tooltip 
-                        formatter={(value) => `GHS ${(value / 1000).toFixed(2)}K`}
+                      <RechartsTooltip 
+                        formatter={(value) => `₵ ${(value / 1000).toFixed(2)}K`}
                         contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
                       />
                       <Bar 
@@ -2825,52 +3198,37 @@ const Reports = () => {
                       />
                     </BarChart>
                   </ResponsiveContainer>
-                  <Space direction="vertical" size={0} style={{ width: '100%', marginTop: 16 }}>
+                  <div className="space-y-0 mt-4">
                     {topServices.map((item, idx) => (
-                      <div key={idx} style={{ 
-                        display: 'flex', 
-                        justifyContent: 'space-between', 
-                        alignItems: 'center', 
-                        padding: '10px 0', 
-                        borderBottom: idx < topServices.length - 1 ? '1px solid #f5f5f5' : 'none' 
-                      }}>
-                        <div style={{ flex: 1 }}>
-                          <Text style={{ fontSize: 14, fontWeight: 500, color: '#262626', display: 'block', marginBottom: 4 }}>
-                            {item.name}
-                          </Text>
-                          <Text style={{ fontSize: 12, color: '#8c8c8c' }}>
+                      <div key={idx} className="flex justify-between items-center py-2.5 border-b border-border last:border-0">
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-foreground mb-1">{item.name}</p>
+                          <p className="text-xs text-muted-foreground">
                             {totalRevenue > 0 ? ((item.value / totalRevenue) * 100).toFixed(1) : 0}% of total revenue
-                          </Text>
+                          </p>
                         </div>
-                        <Text style={{ color: '#006d32', fontSize: 16, fontWeight: 700, marginLeft: 16 }}>
-                          GHS {(item.value / 1000).toFixed(2)}K
-                        </Text>
+                        <span className="text-green-700 font-bold ml-4">₵ {(item.value / 1000).toFixed(2)}K</span>
                       </div>
                     ))}
-                  </Space>
+                  </div>
                 </>
               ) : (
-                <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
-                  <Text type="secondary">No revenue sources data available</Text>
-                </div>
+                <div className={`text-center ${emptyStateClassLarge}`}>No revenue sources data available</div>
               )}
-            </AntdCard>
-          </Col>
+            </CardContent>
+          </Card>
 
           {/* Card 7: Revenue by Channel, or by payment method, or Revenue by Product (top products) when no channel data */}
-          <Col xs={24} md={12}>
-            <AntdCard 
-              title={
-                <span style={{ fontSize: 15, fontWeight: 600, color: '#262626' }}>
-                  {showRevenueByProduct ? 'Revenue by Product' : 'Revenue by Channel'}
-                  {revenueByChannel.length > 0 && channelFromPaymentMethod && (
-                    <Text type="secondary" style={{ fontSize: 12, fontWeight: 400, marginLeft: 6 }}>(by payment method)</Text>
-                  )}
-                </span>
-              }
-              style={cardStyle}
-              bodyStyle={{ padding: '20px 24px' }}
-            >
+          <Card style={cardStyle}>
+            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
+              <CardTitle className="text-base font-semibold">
+                {showRevenueByProduct ? 'Revenue by Product' : 'Revenue by Channel'}
+                {revenueByChannel.length > 0 && channelFromPaymentMethod && (
+                  <span className="text-muted-foreground text-xs font-normal ml-1.5">(by payment method)</span>
+                )}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6">
               {(revenueByChannel.length > 0 || showRevenueByProduct) ? (
                 (() => {
                   const chartData = revenueByChannel.length > 0 ? revenueByChannel : revenueByProduct;
@@ -2897,8 +3255,8 @@ const Reports = () => {
                             tick={{ fill: '#262626', fontSize: 12 }}
                             width={75}
                           />
-                          <Tooltip 
-                            formatter={(value) => `GHS ${(value / 1000).toFixed(2)}K`}
+                          <RechartsTooltip 
+                            formatter={(value) => `₵ ${(value / 1000).toFixed(2)}K`}
                             contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
                           />
                           <Bar 
@@ -2908,58 +3266,44 @@ const Reports = () => {
                           />
                         </BarChart>
                       </ResponsiveContainer>
-                      <Space direction="vertical" size={0} style={{ width: '100%', marginTop: 16 }}>
+                      <div className="space-y-0 mt-4">
                         {chartData.map((item, idx) => {
                           const percentage = totalForPct > 0 ? ((item.revenue / totalForPct) * 100) : 0;
                           return (
-                            <div key={idx} style={{ 
-                              display: 'flex', 
-                              justifyContent: 'space-between', 
-                              alignItems: 'center', 
-                              padding: '10px 0', 
-                              borderBottom: idx < chartData.length - 1 ? '1px solid #f5f5f5' : 'none' 
-                            }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <Text style={{ fontSize: 14, fontWeight: 500, color: '#262626', display: 'block', marginBottom: 4 }} className="truncate">
-                                  {item.channel}
-                                </Text>
-                                <Text style={{ fontSize: 12, color: '#8c8c8c' }}>
-                                  {percentage.toFixed(1)}% of total
-                                </Text>
+                            <div key={idx} className="flex justify-between items-center py-2.5 border-b border-border last:border-0">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-foreground mb-1 truncate">{item.channel}</p>
+                                <p className="text-xs text-muted-foreground">{percentage.toFixed(1)}% of total</p>
                               </div>
-                              <Text style={{ color: '#166534', fontSize: 16, fontWeight: 700, marginLeft: 16 }}>
-                                GHS {(item.revenue / 1000).toFixed(2)}K
-                              </Text>
+                              <span className="text-[#166534] font-bold ml-4">₵ {(item.revenue / 1000).toFixed(2)}K</span>
                             </div>
                           );
                         })}
-                      </Space>
+                      </div>
                     </>
                   );
                 })()
               ) : (
-                <div style={{ textAlign: 'center', padding: '40px 0', color: '#8c8c8c' }}>
-                  <Text type="secondary">No data available for this period</Text>
-                </div>
+                <div className={`text-center ${emptyStateClassLarge}`}>No data available for this period</div>
               )}
-            </AntdCard>
-          </Col>
-        </Row>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   };
 
-  // Report type options filtered by business type (printing_press: service analytics; shop/pharmacy: product analytics)
+  // Report type options filtered by business type (studio: service/repair analytics; shop/pharmacy: product analytics)
   const reportTypeOptions = useMemo(() => {
     const base = [
       { value: 'cashflow', label: 'Cashflow overview', description: 'Overall business health and financial performance' },
       { value: 'cost-analysis', label: 'Cost analysis', description: 'Detailed view of expenses and cost-saving opportunities' },
       { value: 'invoice-summary', label: 'Invoice summary', description: 'Overview of invoice statuses and payment trends' }
     ];
-    if (isPrintingPress) {
+    if (isStudio) {
       return [
         ...base.slice(0, 2),
-        { value: 'service-analytics', label: 'Service Analytics', description: 'Comprehensive analysis of service performance metrics' },
+        { value: 'service-analytics', label: terminology.analytics, description: terminology.analyticsDescription },
         ...base.slice(2)
       ];
     }
@@ -2977,7 +3321,7 @@ const Reports = () => {
       { value: 'product-analytics', label: 'Product Analytics', description: 'Product sales and inventory performance' },
       ...base.slice(2)
     ];
-  }, [isPrintingPress, isPharmacy]);
+  }, [isStudio, isPharmacy, terminology.analytics, terminology.analyticsDescription]);
 
   const renderGeneratedReports = () => {
     // Map report types to display names and icons
@@ -2987,11 +3331,11 @@ const Reports = () => {
       const typeMap = {
         'cost-analysis': { label: 'Cost analysis', icon: BarChart3 },
         'service-analytics': { label: 'Service overview', icon: Zap },
-        'cashflow': { label: 'Cashflow overview', icon: DollarSign },
+        'cashflow': { label: 'Cashflow overview', icon: Currency },
         'invoice-summary': { label: 'Invoice overview', icon: FileText },
         'product-analytics': { label: productLabel, icon: Zap },
         'prescription-summary': { label: 'Prescription summary', icon: FileText },
-        'inventory': { label: 'Inventory overview', icon: Zap },
+        'inventory': { label: 'Materials overview', icon: Zap },
         'fleet': { label: 'Fleet overview', icon: Zap }
       };
       return typeMap[reportType] || { label: reportType, icon: FileText };
@@ -3024,12 +3368,12 @@ const Reports = () => {
     };
 
     return (
-      <div className="space-y-6">
+      <div className={isMobile ? "space-y-4" : "space-y-6"}>
         {/* Loading State */}
         {aiLoading && (
           <Card>
-            <CardContent className="p-12">
-              <div className="space-y-6">
+            <CardContent className={isMobile ? "p-4" : "p-6 md:p-12"}>
+              <div className="space-y-4 md:space-y-6">
                 <div className="text-center">
                   <Skeleton className="h-12 w-12 mx-auto mb-4 rounded-full" />
                   <Skeleton className="h-6 w-64 mx-auto mb-2" />
@@ -3044,13 +3388,13 @@ const Reports = () => {
         {/* Empty State */}
         {savedReports.length === 0 && !aiLoading && (
           <Card>
-            <CardContent className="p-20">
+            <CardContent className={isMobile ? "p-4" : "p-8 md:p-20"}>
               <div className="text-center">
-                <FileText className="h-16 w-16 mx-auto mb-4 text-gray-300" />
-                <Title level={4}>No Reports Created Yet</Title>
-                <Paragraph type="secondary" style={{ maxWidth: 480, margin: '16px auto 24px' }}>
+                <FileText className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
+                <h4 className="text-lg font-semibold">No Reports Created Yet</h4>
+                <p className="text-muted-foreground max-w-[480px] mx-auto my-4">
                   Create custom reports with specific date ranges, report types, and configurations. These reports will be saved for future reference.
-                </Paragraph>
+                </p>
                 <ShadcnButton
                   onClick={handleOpenCreateReportModal}
                   className="bg-[#166534] hover:bg-[#14502a] text-white"
@@ -3065,16 +3409,13 @@ const Reports = () => {
 
         {/* Reports Table - table on desktop, cards on mobile */}
         {filteredReports.length > 0 && !aiLoading && (
-          <Card className="border border-gray-200 rounded-lg overflow-hidden">
-            <CardContent className="p-0">
-              {isMobile ? (
-                <div className="p-4 space-y-3">
-                  {filteredReports.map((report, index) => {
-                    const reportTypesList = getReportTypes(report);
-                    const status = getReportStatus(report);
-                    return (
-                      <Card key={index} className="border">
-                        <CardContent className="p-4">
+          isMobile ? (
+            <div className="space-y-2">
+              {filteredReports.map((report, index) => {
+                const reportTypesList = getReportTypes(report);
+                const status = getReportStatus(report);
+                return (
+                  <div key={index} className="border border-border rounded-lg p-4 bg-card">
                           <div className="flex justify-between items-start gap-2">
                             <div className="min-w-0 flex-1">
                               <p className="font-medium text-sm truncate">{report.title}</p>
@@ -3087,7 +3428,7 @@ const Reports = () => {
                                   size="sm"
                                   className="h-8 w-8 p-0 shrink-0 min-h-[44px] min-w-[44px]"
                                 >
-                                  <MoreVertical className="h-4 w-4 text-gray-600" />
+                                  <MoreVertical className="h-4 w-4 text-muted-foreground" />
                                 </ShadcnButton>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
@@ -3120,15 +3461,24 @@ const Reports = () => {
                                 <Badge
                                   key={idx}
                                   variant="secondary"
-                                  className="bg-gray-100 text-gray-700 border-0 flex items-center gap-1 px-2 py-1"
+                                  className="bg-muted text-foreground border-0 flex items-center gap-1 px-2 py-1"
                                 >
                                   <Icon className="h-3 w-3" />
                                   {typeDisplay.label}
                                 </Badge>
                               );
                             })}
+                            {reportTypesList.length > 2 && (
+                              <Badge
+                                variant="secondary"
+                                className="bg-muted text-muted-foreground border-0 flex items-center gap-1 px-2 py-1"
+                                title={reportTypesList.slice(2).map((t) => getReportTypeDisplay(t, report).label).join(', ')}
+                              >
+                                +{reportTypesList.length - 2}
+                              </Badge>
+                            )}
                           </div>
-                          <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100">
+                          <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">
                             <span className="text-xs text-muted-foreground">{report.generatedBy}</span>
                             <Badge
                               className={
@@ -3142,21 +3492,22 @@ const Reports = () => {
                               {status === 'ready' ? 'Ready' : status === 'processing' ? 'Processing' : 'Failed'}
                             </Badge>
                           </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })}
-                </div>
-              ) : (
-                <ShadcnTable>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <Card className="border border-border rounded-lg overflow-hidden">
+              <CardContent className="p-0">
+                <ShadcnTable className="min-w-[400px]">
                   <TableHeader>
-                    <TableRow className="border-b border-gray-200 bg-gray-50">
-                      <TableHead className="font-semibold text-gray-700 py-4 px-6">Report name</TableHead>
-                      <TableHead className="font-semibold text-gray-700 py-4 px-6">Date created</TableHead>
-                      <TableHead className="font-semibold text-gray-700 py-4 px-6">Type</TableHead>
-                      <TableHead className="font-semibold text-gray-700 py-4 px-6">Created by</TableHead>
-                      <TableHead className="font-semibold text-gray-700 py-4 px-6">Status</TableHead>
-                      <TableHead className="font-semibold text-gray-700 py-4 px-6 w-[50px]"></TableHead>
+                    <TableRow className="border-b border-border bg-muted/50">
+                      <TableHead className="font-semibold text-foreground py-4 px-6">Report name</TableHead>
+                      <TableHead className="font-semibold text-foreground py-4 px-6">Date created</TableHead>
+                      <TableHead className="font-semibold text-foreground py-4 px-6">Type</TableHead>
+                      <TableHead className="font-semibold text-foreground py-4 px-6">Created by</TableHead>
+                      <TableHead className="font-semibold text-foreground py-4 px-6">Status</TableHead>
+                      <TableHead className="font-semibold text-foreground py-4 px-6 w-[50px]"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -3164,9 +3515,9 @@ const Reports = () => {
                       const reportTypesList = getReportTypes(report);
                       const status = getReportStatus(report);
                       return (
-                        <TableRow key={index} className="border-b border-gray-100 hover:bg-gray-50">
+                        <TableRow key={index} className="border-b border-border hover:bg-muted/50">
                           <TableCell className="font-medium py-4 px-6">{report.title}</TableCell>
-                          <TableCell className="text-gray-600 py-4 px-6">
+                          <TableCell className="text-muted-foreground py-4 px-6">
                             {dayjs(report.generatedAt).format('D/MM/YYYY')}
                           </TableCell>
                           <TableCell className="py-4 px-6">
@@ -3178,16 +3529,25 @@ const Reports = () => {
                                   <Badge
                                     key={idx}
                                     variant="secondary"
-                                    className="bg-gray-100 text-gray-700 border-0 flex items-center gap-1 px-2 py-1"
+                                    className="bg-muted text-foreground border-0 flex items-center gap-1 px-2 py-1"
                                   >
                                     <Icon className="h-3 w-3" />
                                     {typeDisplay.label}
                                   </Badge>
                                 );
                               })}
+                              {reportTypesList.length > 2 && (
+                                <Badge
+                                  variant="secondary"
+                                  className="bg-muted text-muted-foreground border-0 flex items-center gap-1 px-2 py-1"
+                                  title={reportTypesList.slice(2).map((t) => getReportTypeDisplay(t, report).label).join(', ')}
+                                >
+                                  +{reportTypesList.length - 2}
+                                </Badge>
+                              )}
                             </div>
                           </TableCell>
-                          <TableCell className="text-gray-600 py-4 px-6">{report.generatedBy}</TableCell>
+                          <TableCell className="text-muted-foreground py-4 px-6">{report.generatedBy}</TableCell>
                           <TableCell className="py-4 px-6">
                             <Badge
                               className={
@@ -3207,9 +3567,9 @@ const Reports = () => {
                                 <ShadcnButton
                                   variant="ghost"
                                   size="sm"
-                                  className="h-8 w-8 p-0 hover:bg-gray-100"
+                                  className="h-8 w-8 p-0 hover:bg-muted"
                                 >
-                                  <MoreVertical className="h-4 w-4 text-gray-600" />
+                                  <MoreVertical className="h-4 w-4 text-muted-foreground" />
                                 </ShadcnButton>
                               </DropdownMenuTrigger>
                               <DropdownMenuContent align="end">
@@ -3239,9 +3599,9 @@ const Reports = () => {
                     })}
                   </TableBody>
                 </ShadcnTable>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )
         )}
       </div>
     );
@@ -3251,19 +3611,19 @@ const Reports = () => {
     return (
       <div>
         {/* Header */}
-        <div style={{ marginBottom: 24 }}>
-          <Title level={4} style={{ margin: 0 }}>
+        <div className="mb-4 md:mb-6">
+          <h4 className="text-lg font-semibold flex items-center gap-2">
             <Bot className="h-4 w-4" /> Smart Report
-          </Title>
-          <Text type="secondary">
+          </h4>
+          <p className="text-muted-foreground text-sm mt-1">
             Auto-generated monthly business intelligence report with AI-powered insights
-          </Text>
+          </p>
         </div>
 
         {/* Loading State */}
         {aiLoading && (
-          <AntdCard style={cardStyle}>
-            <div className="space-y-6 p-12">
+          <Card style={cardStyle}>
+            <div className="space-y-4 md:space-y-6 p-6 md:p-12">
               <div className="text-center">
                 <Skeleton className="h-12 w-12 mx-auto mb-4 rounded-full" />
                 <Skeleton className="h-6 w-64 mx-auto mb-2" />
@@ -3271,7 +3631,7 @@ const Reports = () => {
               </div>
               <Skeleton className="h-2 w-full" />
             </div>
-          </AntdCard>
+          </Card>
         )}
 
         {/* Report Content */}
@@ -3290,188 +3650,140 @@ const Reports = () => {
               </ShadcnButton>
             </div>
             {/* Report Header */}
-            <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
-              <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <Title level={2} style={{ margin: 0, fontSize: 28, fontWeight: 700 }}>
+            <Card style={{ ...cardStyle, marginBottom: 12 }}>
+              <CardContent className="space-y-2 p-4 md:p-6">
+                {/* Mobile: title row, subtitle row, buttons row. Desktop: title+subtitle left, buttons right */}
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-start sm:gap-4">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <h2 className="text-sm sm:text-2xl font-semibold sm:font-bold truncate whitespace-nowrap block" title={generatedReport.title}>
                       {generatedReport.title}
-                    </Title>
-                    <Text type="secondary" style={{ fontSize: 14 }}>
+                    </h2>
+                    <p className="text-muted-foreground text-sm block">
                       Prepared by {generatedReport.generatedBy} · {dayjs(generatedReport.generatedAt).format('MMM DD, YYYY HH:mm')}
-                    </Text>
+                    </p>
                   </div>
-                  <Space>
-                    <Button icon={<Eye className="h-4 w-4" />}>Print</Button>
-                    <Button type="primary" icon={<Download className="h-4 w-4" />}>
+                  <div className="flex gap-2 flex-shrink-0 sm:self-start">
+                    <ShadcnButton variant="outline" size="sm">
+                      <Eye className="h-4 w-4 mr-2" />
+                      Print
+                    </ShadcnButton>
+                    <ShadcnButton className="bg-[#166534] hover:bg-[#14502a] text-white" size="sm">
+                      <Download className="h-4 w-4 mr-2" />
                       Export
-                    </Button>
-                  </Space>
+                    </ShadcnButton>
+                  </div>
                 </div>
-                <Paragraph style={{ margin: '16px 0 0 0', fontSize: 14 }}>{generatedReport.greeting}</Paragraph>
-              </Space>
-            </AntdCard>
+                <p className="text-sm mt-4">{generatedReport.greeting}</p>
+              </CardContent>
+            </Card>
 
             {/* Performance Summary */}
             {generatedReport.insights.find(i => i.type === 'performance') && (
-              <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
+              <Card style={{ ...cardStyle, marginBottom: 12 }}>
+                <CardContent className="p-4 md:p-6">
                 {(() => {
                   const perfSection = generatedReport.insights.find(i => i.type === 'performance');
                   
                   return (
                     <>
-                      <Title level={4} style={{ marginBottom: 16 }}>{perfSection.title}</Title>
-                      <Row gutter={[24, 16]}>
+                      <h4 className="text-base font-semibold mb-3 md:mb-4">{perfSection.title}</h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
                         {perfSection.metrics.map((metric, idx) => {
                           const prevValue = metric.prevValue || 0;
                           const changeAmount = Math.abs(metric.value - prevValue);
                           
                           return (
-                            <Col xs={24} sm={8} key={idx}>
-                              <Tooltip
-                                title={
-                                  <div style={{ fontSize: 13 }}>
-                                    <div style={{ marginBottom: 8 }}><strong>Full Amount:</strong> GHS {metric.value.toLocaleString()}</div>
-                                    <div style={{ marginBottom: 8 }}><strong>Previous Period:</strong> GHS {prevValue.toLocaleString()}</div>
-                                    <div style={{ marginBottom: 8 }}><strong>Change Amount:</strong> GHS {changeAmount.toLocaleString()}</div>
-                                    <div style={{ marginBottom: 8 }}><strong>Change %:</strong> {metric.trend === 'up' ? '+' : '-'}{metric.change.toFixed(2)}%</div>
-                                    <div><strong>Period:</strong> {generatedReport.period}</div>
-                                  </div>
-                                }
-                                placement="top"
+                            <div key={idx} className="col-span-1">
+                              <div 
+                                className="p-4 md:p-5 bg-muted rounded-lg cursor-help"
+                                title={`Full Amount: ₵ ${metric.value.toLocaleString()}\nPrevious Period: ₵ ${prevValue.toLocaleString()}\nChange Amount: ₵ ${changeAmount.toLocaleString()}\nChange %: ${metric.trend === 'up' ? '+' : '-'}${metric.change.toFixed(2)}%\nPeriod: ${generatedReport.period}`}
                               >
-                                <div style={{ padding: '20px', background: '#fafafa', borderRadius: 8, cursor: 'help' }}>
-                                  <Text type="secondary" style={{ fontSize: 13, display: 'block', marginBottom: 8 }}>
-                                    {metric.label}
-                                  </Text>
-                                  <Title level={3} style={{ margin: '0 0 4px 0', fontSize: 28, fontWeight: 700, color: metric.color }}>
-                                    GHS {(metric.value / 1000).toFixed(1)}K
-                                  </Title>
-                                  <Text style={{ color: metric.color, fontSize: 13 }}>
-                                    {metric.trend === 'up' ? '↑' : '↓'} {metric.change.toFixed(2)}% from last month
-                                  </Text>
-                                </div>
-                              </Tooltip>
-                            </Col>
+                                <p className="text-sm text-muted-foreground mb-2">{metric.label}</p>
+                                <h3 className="text-2xl font-bold mb-1" style={{ color: metric.color }}>
+                                  ₵ {(metric.value / 1000).toFixed(1)}K
+                                </h3>
+                                <p className="text-sm" style={{ color: metric.color }}>
+                                  {metric.trend === 'up' ? '↑' : '↓'} {metric.change.toFixed(2)}% from last month
+                                </p>
+                              </div>
+                            </div>
                           );
                         })}
-                      </Row>
+                      </div>
                       {perfSection.note && (
-                        <Alert
-                          message={perfSection.note}
-                          type="success"
-                          showIcon
-                          style={{ marginTop: 16, borderRadius: 8 }}
-                        />
+                        <Alert className="mt-4">
+                          <AlertDescription>{perfSection.note}</AlertDescription>
+                        </Alert>
                       )}
                     </>
                   );
                 })()}
-              </AntdCard>
+                </CardContent>
+              </Card>
             )}
 
             {/* Service/Product Analytics Section */}
             {(generatedReport.insights.find(i => i.type === 'service-analytics') || generatedReport.insights.find(i => i.type === 'product-analytics')) && (
-              <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
+              <Card style={{ ...cardStyle, marginBottom: 12 }}>
+                <CardContent className="p-4 md:p-6">
                 {(() => {
                   const section = generatedReport.insights.find(i => i.type === 'service-analytics' || i.type === 'product-analytics');
                   const isProductAnalytics = section.type === 'product-analytics';
                   
                   return (
                     <>
-                      <Title level={4}>{section.title}</Title>
-                      <Text type="secondary" style={{ display: 'block', marginBottom: 20 }}>{section.description}</Text>
+                      <h4 className="text-base font-semibold">{section.title}</h4>
+                      <p className="text-muted-foreground text-sm mb-5">{section.description}</p>
                       
-                      <Table
-                        dataSource={section.data}
-                        pagination={false}
-                        size="small"
-                        style={{ marginBottom: 24 }}
-                        columns={isProductAnalytics ? [
-                          { 
-                            title: 'Product Name', 
-                            dataIndex: 'productName', 
-                            key: 'productName',
-                            render: (text, record) => (
-                              <Tooltip title={
-                                <div>
-                                  <div><strong>SKU:</strong> {record.sku || 'N/A'}</div>
-                                  <div><strong>Unit:</strong> {record.unit}</div>
-                                  <div><strong>Current Stock:</strong> {record.currentStock} {record.unit}</div>
-                                  <div><strong>Safety Stock:</strong> {record.safetyStock} {record.unit}</div>
-                                  <div><strong>Stock Status:</strong> {record.isLowStock ? 'Low Stock' : record.isHighRisk ? 'Overstocked' : 'Normal'}</div>
-                                </div>
-                              }>
-                                <span style={{ cursor: 'help' }}>{text}</span>
-                              </Tooltip>
-                            )
-                          },
-                          { title: 'Quantity Sold', dataIndex: 'quantitySold', key: 'quantitySold', align: 'right', render: (val, record) => `${val.toLocaleString()} ${record.unit || ''}` },
-                          { title: 'Revenue (GHS)', dataIndex: 'revenue', key: 'revenue', align: 'right', render: (val) => val.toLocaleString() },
-                          { 
-                            title: 'Stock', 
-                            dataIndex: 'currentStock', 
-                            key: 'stock', 
-                            align: 'right',
-                            render: (val, record) => (
-                              <Tooltip title={
-                                <div>
-                                  <div><strong>Current Stock:</strong> {val} {record.unit}</div>
-                                  <div><strong>Safety Level:</strong> {record.safetyStock} {record.unit}</div>
-                                  <div><strong>Stock %:</strong> {record.stockPercentage}%</div>
-                                  <div><strong>Status:</strong> {record.isLowStock ? '⚠️ Low Stock' : record.isHighRisk ? '⚠️ Overstocked' : '✓ Normal'}</div>
-                                </div>
-                              }>
-                                <span style={{ cursor: 'help', color: record.isLowStock ? '#cf1322' : record.isHighRisk ? '#faad14' : '#52c41a' }}>
-                                  {val} {record.unit}
-                                </span>
-                              </Tooltip>
-                            )
-                          }
-                        ] : [
-                          { 
-                            title: 'Service', 
-                            dataIndex: 'service', 
-                            key: 'service',
-                            render: (text, record) => (
-                              <Tooltip title={
-                                <div>
-                                  <div><strong>Service:</strong> {text}</div>
-                                  <div><strong>Units Sold:</strong> {record.quantitySold}</div>
-                                  <div><strong>Revenue:</strong> GHS {record.revenue.toLocaleString()}</div>
-                                  <div><strong>Average Price:</strong> GHS {record.averagePrice?.toLocaleString() || 'N/A'}</div>
-                                  <div><strong>Demand Level:</strong> {record.demand}</div>
-                                </div>
-                              }>
-                                <span style={{ cursor: 'help' }}>{text}</span>
-                              </Tooltip>
-                            )
-                          },
-                          { title: 'Units Sold', dataIndex: 'quantitySold', key: 'quantitySold', align: 'right' },
-                          { title: 'Revenue (GHS)', dataIndex: 'revenue', key: 'revenue', align: 'right', render: (val) => val.toLocaleString() },
-                          { 
-                            title: 'Demand', 
-                            dataIndex: 'demand', 
-                            key: 'demand', 
-                            render: (val) => (
-                              <Tooltip title={`Demand level: ${val}`}>
-                                <Tag color={val === 'High' ? 'green' : val === 'Medium' ? 'orange' : 'default'}>{val}</Tag>
-                              </Tooltip>
-                            )
-                          }
-                        ]}
-                        onRow={(record) => ({
-                          style: { cursor: 'pointer' },
-                          onMouseEnter: (e) => {
-                            // Enhanced hover will be handled by tooltips in columns
-                          }
-                        })}
-                      />
+                      <div className="overflow-x-auto mb-6">
+                      <ShadcnTable className="min-w-[500px]">
+                        <TableHeader>
+                          <TableRow>
+                            {isProductAnalytics ? (
+                              <>
+                                <TableHead>Product Name</TableHead>
+                                <TableHead className="text-right">Quantity Sold</TableHead>
+                                <TableHead className="text-right">Revenue (₵)</TableHead>
+                              </>
+                            ) : (
+                              <>
+                                <TableHead>Service</TableHead>
+                                <TableHead className="text-right">Units Sold</TableHead>
+                                <TableHead className="text-right">Revenue (₵)</TableHead>
+                                <TableHead>Demand</TableHead>
+                              </>
+                            )}
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(section.data || []).map((record, idx) => (
+                            <TableRow key={idx}>
+                              {isProductAnalytics ? (
+                                <>
+                                  <TableCell title={`SKU: ${record.sku || 'N/A'}\nUnit: ${record.unit}`} className="cursor-help">{record.productName}</TableCell>
+                                  <TableCell className="text-right">{record.quantitySold?.toLocaleString()} {record.unit || ''}</TableCell>
+                                  <TableCell className="text-right">{record.revenue?.toLocaleString()}</TableCell>
+                                </>
+                              ) : (
+                                <>
+                                  <TableCell title={`Revenue: ₵ ${record.revenue?.toLocaleString()}\nAvg Price: ₵ ${record.averagePrice?.toLocaleString() || 'N/A'}\nDemand: ${record.demand}`} className="cursor-help">{record.service}</TableCell>
+                                  <TableCell className="text-right">{record.quantitySold}</TableCell>
+                                  <TableCell className="text-right">{record.revenue?.toLocaleString()}</TableCell>
+                                  <TableCell>
+                                    <Badge variant={record.demand === 'High' ? 'default' : record.demand === 'Medium' ? 'secondary' : 'outline'}>{record.demand}</Badge>
+                                  </TableCell>
+                                </>
+                              )}
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </ShadcnTable>
+                      </div>
                       
-                      {/* Inventory Bar Chart for Shop/Pharmacy */}
+                      {/* Revenue Bar Chart for Product Sales (no inventory in this section) */}
                       {isProductAnalytics && section.data && section.data.length > 0 && (
-                        <div style={{ marginTop: 24, marginBottom: 24 }}>
-                          <Title level={5} style={{ marginBottom: 16 }}>Inventory Status</Title>
+                        <div className="mt-6 mb-6">
+                          <h5 className="text-sm font-semibold mb-4">Revenue by Product</h5>
                           <ResponsiveContainer width="100%" height={300}>
                             <BarChart data={section.data.slice(0, 10)}>
                               <CartesianGrid strokeDasharray="3 3" />
@@ -3483,19 +3795,120 @@ const Reports = () => {
                                 interval={0}
                               />
                               <YAxis />
-                              <Tooltip 
+                              <RechartsTooltip 
                                 content={({ active, payload }) => {
                                   if (active && payload && payload.length) {
                                     const data = payload[0].payload;
                                     return (
-                                      <div style={{ background: 'white', padding: '12px', border: '1px solid #ccc', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-                                        <p style={{ margin: 0, fontWeight: 'bold', marginBottom: '8px' }}>{data.productName}</p>
-                                        <p style={{ margin: '4px 0' }}><strong>Current Stock:</strong> {data.currentStock} {data.unit}</p>
-                                        <p style={{ margin: '4px 0' }}><strong>Safety Level:</strong> {data.safetyStock} {data.unit}</p>
-                                        <p style={{ margin: '4px 0' }}><strong>Stock %:</strong> {data.stockPercentage}%</p>
-                                        <p style={{ margin: '4px 0' }}><strong>Quantity Sold:</strong> {data.quantitySold} {data.unit}</p>
-                                        <p style={{ margin: '4px 0' }}><strong>Revenue:</strong> GHS {data.revenue.toLocaleString()}</p>
-                                        <p style={{ margin: '4px 0', color: data.isLowStock ? '#cf1322' : data.isHighRisk ? '#faad14' : '#52c41a' }}>
+                                      <div className="bg-card border border-border rounded p-3">
+                                        <p className="font-bold mb-2">{data.productName}</p>
+                                        <p className="my-1"><strong>Quantity Sold:</strong> {data.quantitySold} {data.unit}</p>
+                                        <p className="my-1"><strong>Revenue:</strong> ₵ {data.revenue?.toLocaleString()}</p>
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                }}
+                              />
+                              <Legend />
+                              <Bar dataKey="revenue" fill="#166534" name="Revenue (₵)" />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+
+                      {section.recommendations && section.recommendations.length > 0 && (
+                        <>
+                          <Separator className="my-4" />
+                          <h5 className="text-sm font-semibold mb-4">Recommendations</h5>
+                          {section.recommendations.map((rec, idx) => (
+                            <div key={idx} className="mb-5">
+                              <p className="text-sm leading-relaxed mb-2">
+                                <span className="font-semibold">{idx + 1}. </span>
+                                {rec.finding}
+                              </p>
+                              <p className="text-sm text-muted-foreground pl-4 leading-relaxed">
+                                <span className="font-semibold">Recommendation:</span> {rec.recommendation}
+                              </p>
+                            </div>
+                          ))}
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Materials Status Section (separate from Product Sales) */}
+            {generatedReport.insights.find(i => i.type === 'inventory-status') && (
+              <Card style={{ ...cardStyle, marginBottom: 12 }}>
+                <CardContent className="p-4 md:p-6">
+                  {(() => {
+                  const section = generatedReport.insights.find(i => i.type === 'inventory-status');
+                  const inventoryData = section.data || [];
+                  
+                  return (
+                    <>
+                      <h4 className="text-base font-semibold">{section.title}</h4>
+                      <p className="text-muted-foreground text-sm mb-5">{section.description}</p>
+                      
+                      <div className="overflow-x-auto mb-6">
+                      <ShadcnTable className="min-w-[400px]">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Product Name</TableHead>
+                            <TableHead className="text-right">Stock</TableHead>
+                            <TableHead>Status</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {inventoryData.map((record, idx) => (
+                            <TableRow key={idx}>
+                              <TableCell title={`SKU: ${record.sku || 'N/A'}\nUnit: ${record.unit}\nSafety: ${record.safetyStock} ${record.unit}`} className="cursor-help">{record.productName}</TableCell>
+                              <TableCell className="text-right">
+                                <span className={cn("cursor-help", record.isLowStock && "text-red-600", record.isHighRisk && "text-amber-600")} title={`Current: ${record.currentStock} ${record.unit}\nSafety: ${record.safetyStock} ${record.unit}\nStock %: ${record.stockPercentage}%`}>
+                                  {record.currentStock} {record.unit}
+                                </span>
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={record.isLowStock ? 'destructive' : record.isHighRisk ? 'secondary' : 'outline'}>
+                                  {record.isLowStock ? 'Low Stock' : record.isHighRisk ? 'Overstocked' : 'Normal'}
+                                </Badge>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </ShadcnTable>
+                      </div>
+                      
+                      {/* Inventory Bar Chart */}
+                      {inventoryData.length > 0 && (
+                        <div className="mt-6 mb-6">
+                          <h5 className="text-sm font-semibold mb-4">Stock vs Safety Level</h5>
+                          <ResponsiveContainer width="100%" height={300}>
+                            <BarChart data={inventoryData.slice(0, 10)}>
+                              <CartesianGrid strokeDasharray="3 3" />
+                              <XAxis 
+                                dataKey="productName" 
+                                angle={-45} 
+                                textAnchor="end" 
+                                height={100}
+                                interval={0}
+                              />
+                              <YAxis />
+                              <RechartsTooltip 
+                                content={({ active, payload }) => {
+                                  if (active && payload && payload.length) {
+                                    const data = payload[0].payload;
+                                    return (
+                                      <div className="bg-card border border-border rounded p-3">
+                                        <p className="font-bold mb-2">{data.productName}</p>
+                                        <p className="my-1"><strong>Current Stock:</strong> {data.currentStock} {data.unit}</p>
+                                        <p className="my-1"><strong>Safety Level:</strong> {data.safetyStock} {data.unit}</p>
+                                        <p className="my-1"><strong>Stock %:</strong> {data.stockPercentage}%</p>
+                                        <p className={`my-1 ${data.isLowStock ? 'text-destructive' : data.isHighRisk ? 'text-amber-600 dark:text-amber-400' : 'text-[#52c41a]'}`}>
                                           <strong>Status:</strong> {data.isLowStock ? '⚠️ Low Stock' : data.isHighRisk ? '⚠️ Overstocked' : '✓ Normal'}
                                         </p>
                                       </div>
@@ -3514,19 +3927,17 @@ const Reports = () => {
 
                       {section.recommendations && section.recommendations.length > 0 && (
                         <>
-                          <Divider />
-                          <Title level={5} style={{ marginBottom: 16 }}>Recommendations</Title>
+                          <Separator className="my-4" />
+                          <h5 className="text-sm font-semibold mb-4">Recommendations</h5>
                           {section.recommendations.map((rec, idx) => (
-                            <div key={idx} style={{ marginBottom: 20 }}>
-                              <Paragraph style={{ margin: 0, marginBottom: 8, fontSize: 14, lineHeight: 1.6 }}>
-                                <Text strong style={{ fontSize: 14 }}>{idx + 1}. </Text>
-                                <Text style={{ fontSize: 14 }}>{rec.finding}</Text>
-                              </Paragraph>
-                              <Paragraph style={{ margin: 0, paddingLeft: 16, fontSize: 14, lineHeight: 1.6 }}>
-                                <Text style={{ color: '#595959', fontSize: 14 }}>
-                                  <Text strong>Recommendation:</Text> {rec.recommendation}
-                                </Text>
-                              </Paragraph>
+                            <div key={idx} className="mb-5">
+                              <p className="text-sm leading-relaxed mb-2">
+                                <span className="font-semibold">{idx + 1}. </span>
+                                {rec.finding}
+                              </p>
+                              <p className="text-sm text-muted-foreground pl-4 leading-relaxed">
+                                <span className="font-semibold">Recommendation:</span> {rec.recommendation}
+                              </p>
                             </div>
                           ))}
                         </>
@@ -3534,12 +3945,14 @@ const Reports = () => {
                     </>
                   );
                 })()}
-              </AntdCard>
+                </CardContent>
+              </Card>
             )}
 
             {/* Cost Analysis Section */}
             {generatedReport.insights.find(i => i.type === 'cost-analysis') && (
-              <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
+              <Card style={{ ...cardStyle, marginBottom: 12 }}>
+                <CardContent className="p-4 md:p-6">
                 {(() => {
                   const section = generatedReport.insights.find(i => i.type === 'cost-analysis');
                   const chartData = section.data.map((item, index) => ({
@@ -3547,69 +3960,35 @@ const Reports = () => {
                     color: COLORS[index % COLORS.length]
                   }));
                   
+                  const costData = [...section.data, { category: 'Total cost', amount: section.totalCost, percentage: 100, isTotal: true }];
+                  
                   return (
                     <>
-                      <Title level={4}>{section.title}</Title>
-                      <Text type="secondary" style={{ display: 'block', marginBottom: 20 }}>{section.description}</Text>
+                      <h4 className="text-base font-semibold">{section.title}</h4>
+                      <p className="text-muted-foreground text-sm mb-5">{section.description}</p>
                       
-                      <Row gutter={24}>
-                        <Col xs={24} md={14}>
-                          <Table
-                            dataSource={[...section.data, { category: 'Total cost', amount: section.totalCost, percentage: 100, isTotal: true }]}
-                            pagination={false}
-                            size="small"
-                            columns={[
-                              { 
-                                title: 'Category', 
-                                dataIndex: 'category', 
-                                key: 'category', 
-                                render: (text, record) => (
-                                  <Tooltip title={
-                                    !record.isTotal ? (
-                                      <div>
-                                        <div><strong>Category:</strong> {text}</div>
-                                        <div><strong>Amount:</strong> GHS {record.amount.toLocaleString()}</div>
-                                        <div><strong>Percentage:</strong> {record.percentage.toFixed(1)}%</div>
-                                        <div><strong>Total Expenses:</strong> GHS {section.totalCost.toLocaleString()}</div>
-                                      </div>
-                                    ) : null
-                                  }>
-                                    <Text strong={record.isTotal} style={!record.isTotal ? { cursor: 'help' } : {}}>{text}</Text>
-                                  </Tooltip>
-                                )
-                              },
-                              { 
-                                title: 'Amount', 
-                                dataIndex: 'amount', 
-                                key: 'amount', 
-                                align: 'right', 
-                                render: (val, record) => (
-                                  <Tooltip title={!record.isTotal ? `Full amount: GHS ${val.toLocaleString()}` : null}>
-                                    <Text strong={record.isTotal} style={!record.isTotal ? { cursor: 'help' } : {}}>GHS {val.toLocaleString()}</Text>
-                                  </Tooltip>
-                                )
-                              },
-                              { 
-                                title: 'Percentage', 
-                                dataIndex: 'percentage', 
-                                key: 'percentage', 
-                                align: 'right', 
-                                render: (val, record) => (
-                                  <Tooltip title={!record.isTotal ? `Represents ${val.toFixed(1)}% of total expenses` : null}>
-                                    <Text strong={record.isTotal} style={!record.isTotal ? { cursor: 'help' } : {}}>{val.toFixed(1)}%</Text>
-                                  </Tooltip>
-                                )
-                              }
-                            ]}
-                            onRow={(record) => ({
-                              style: { cursor: record.isTotal ? 'default' : 'pointer' },
-                              onMouseEnter: (e) => {
-                                // Tooltip handled in column renderers
-                              }
-                            })}
-                          />
-                        </Col>
-                        <Col xs={24} md={10}>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+                        <div className="md:col-span-2 overflow-x-auto">
+                          <ShadcnTable className="min-w-[400px]">
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Category</TableHead>
+                                <TableHead className="text-right">Amount</TableHead>
+                                <TableHead className="text-right">Percentage</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {costData.map((record, idx) => (
+                                <TableRow key={idx} className={record.isTotal ? 'bg-muted/50 font-semibold' : ''}>
+                                  <TableCell title={!record.isTotal ? `Category: ${record.category}\nAmount: ₵ ${record.amount?.toLocaleString()}\nPercentage: ${record.percentage?.toFixed(1)}%` : undefined} className={!record.isTotal ? "cursor-help" : ""}>{record.category}</TableCell>
+                                  <TableCell className={cn("text-right", !record.isTotal && "cursor-help")} title={!record.isTotal ? `Full amount: ₵ ${record.amount?.toLocaleString()}` : undefined}>₵ {record.amount?.toLocaleString()}</TableCell>
+                                  <TableCell className={cn("text-right", !record.isTotal && "cursor-help")} title={!record.isTotal ? `Represents ${record.percentage?.toFixed(1)}% of total` : undefined}>{record.percentage?.toFixed(1)}%</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </ShadcnTable>
+                        </div>
+                        <div>
                           <ResponsiveContainer width="100%" height={250}>
                             <PieChart>
                               <Pie
@@ -3625,18 +4004,18 @@ const Reports = () => {
                                   <Cell key={`cell-${index}`} fill={entry.color} />
                                 ))}
                               </Pie>
-                              <Tooltip 
+                              <RechartsTooltip 
                                 content={({ active, payload }) => {
                                   if (active && payload && payload.length) {
                                     const data = payload[0].payload;
                                     const total = section.totalCost;
                                     const percentage = total > 0 ? ((data.amount / total) * 100).toFixed(1) : 0;
                                     return (
-                                      <div style={{ background: 'white', padding: '12px', border: '1px solid #ccc', borderRadius: '4px', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
-                                        <p style={{ margin: 0, fontWeight: 'bold', marginBottom: '8px' }}>{data.category}</p>
-                                        <p style={{ margin: '4px 0' }}><strong>Amount:</strong> GHS {data.amount.toLocaleString()}</p>
-                                        <p style={{ margin: '4px 0' }}><strong>Percentage:</strong> {percentage}%</p>
-                                        <p style={{ margin: '4px 0' }}><strong>Total Cost:</strong> GHS {total.toLocaleString()}</p>
+                                      <div className="bg-card border border-border rounded p-3">
+                                        <p className="font-bold mb-2">{data.category}</p>
+                                        <p className="my-1"><strong>Amount:</strong> ₵ {data.amount.toLocaleString()}</p>
+                                        <p className="my-1"><strong>Percentage:</strong> {percentage}%</p>
+                                        <p className="my-1"><strong>Total Cost:</strong> ₵ {total.toLocaleString()}</p>
                                       </div>
                                     );
                                   }
@@ -3644,28 +4023,26 @@ const Reports = () => {
                                 }}
                               />
                               <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle" style={{ fontSize: 18, fontWeight: 700 }}>
-                                GHS {(section.totalCost / 1000).toFixed(1)}K
+                                ₵ {(section.totalCost / 1000).toFixed(1)}K
                               </text>
                             </PieChart>
                           </ResponsiveContainer>
-                        </Col>
-                      </Row>
+                        </div>
+                      </div>
 
                       {section.recommendations && section.recommendations.length > 0 && (
                         <>
-                          <Divider />
-                          <Title level={5} style={{ marginBottom: 16 }}>Recommendations</Title>
+                          <Separator className="my-4" />
+                          <h5 className="text-sm font-semibold mb-4">Recommendations</h5>
                           {section.recommendations.map((rec, idx) => (
-                            <div key={idx} style={{ marginBottom: 20 }}>
-                              <Paragraph style={{ margin: 0, marginBottom: 8, fontSize: 14, lineHeight: 1.6 }}>
-                                <Text strong style={{ fontSize: 14 }}>{idx + 1}. </Text>
-                                <Text style={{ fontSize: 14 }}>{rec.finding}</Text>
-                              </Paragraph>
-                              <Paragraph style={{ margin: 0, paddingLeft: 16, fontSize: 14, lineHeight: 1.6 }}>
-                                <Text style={{ color: '#595959', fontSize: 14 }}>
-                                  <Text strong>Recommendation:</Text> {rec.recommendation}
-                                </Text>
-                              </Paragraph>
+                            <div key={idx} className="mb-5">
+                              <p className="text-sm leading-relaxed mb-2">
+                                <span className="font-semibold">{idx + 1}. </span>
+                                {rec.finding}
+                              </p>
+                              <p className="text-sm text-muted-foreground pl-4 leading-relaxed">
+                                <span className="font-semibold">Recommendation:</span> {rec.recommendation}
+                              </p>
                             </div>
                           ))}
                         </>
@@ -3673,47 +4050,56 @@ const Reports = () => {
                     </>
                   );
                 })()}
-              </AntdCard>
+                </CardContent>
+              </Card>
             )}
 
             {/* Invoice Summary Section */}
             {generatedReport.insights.find(i => i.type === 'invoice-summary') && (
-              <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
+              <Card style={{ ...cardStyle, marginBottom: 12 }}>
+                <CardContent className="p-4 md:p-6">
                 {(() => {
                   const section = generatedReport.insights.find(i => i.type === 'invoice-summary');
                   
                   return (
                     <>
-                      <Title level={4}>{section.title}</Title>
-                      <Text type="secondary" style={{ display: 'block', marginBottom: 20 }}>{section.description}</Text>
+                      <h4 className="text-base font-semibold">{section.title}</h4>
+                      <p className="text-muted-foreground text-sm mb-5">{section.description}</p>
                       
-                      <Table
-                        dataSource={[...section.data, { status: 'Total invoiced', amount: section.totalInvoiced, percentage: 100, isTotal: true }]}
-                        pagination={false}
-                        size="small"
-                        style={{ marginBottom: 24 }}
-                        columns={[
-                          { title: 'Invoice Status', dataIndex: 'status', key: 'status', render: (text, record) => <Text strong={record.isTotal}>{text}</Text> },
-                          { title: 'Amount', dataIndex: 'amount', key: 'amount', align: 'right', render: (val, record) => <Text strong={record.isTotal}>GHS {val.toLocaleString()}</Text> },
-                          { title: 'Percentage', dataIndex: 'percentage', key: 'percentage', align: 'right', render: (val, record) => <Text strong={record.isTotal}>{val}%</Text> }
-                        ]}
-                      />
+                      <div className="overflow-x-auto mb-6">
+                      <ShadcnTable className="min-w-[500px]">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Invoice Status</TableHead>
+                            <TableHead className="text-right">Amount</TableHead>
+                            <TableHead className="text-right">Percentage</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {[...section.data, { status: 'Total invoiced', amount: section.totalInvoiced, percentage: 100, isTotal: true }].map((record, idx) => (
+                            <TableRow key={idx} className={record.isTotal ? 'bg-muted/50 font-semibold' : ''}>
+                              <TableCell>{record.status}</TableCell>
+                              <TableCell className="text-right">₵ {record.amount?.toLocaleString()}</TableCell>
+                              <TableCell className="text-right">{record.percentage}%</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </ShadcnTable>
+                      </div>
 
                       {section.recommendations && section.recommendations.length > 0 && (
                         <>
-                          <Divider />
-                          <Title level={5} style={{ marginBottom: 16 }}>Recommendations</Title>
+                          <Separator className="my-4" />
+                          <h5 className="text-sm font-semibold mb-4">Recommendations</h5>
                           {section.recommendations.map((rec, idx) => (
-                            <div key={idx} style={{ marginBottom: 20 }}>
-                              <Paragraph style={{ margin: 0, marginBottom: 8, fontSize: 14, lineHeight: 1.6 }}>
-                                <Text strong style={{ fontSize: 14 }}>{idx + 1}. </Text>
-                                <Text style={{ fontSize: 14 }}>{rec.finding}</Text>
-                              </Paragraph>
-                              <Paragraph style={{ margin: 0, paddingLeft: 16, fontSize: 14, lineHeight: 1.6 }}>
-                                <Text style={{ color: '#595959', fontSize: 14 }}>
-                                  <Text strong>Recommendation:</Text> {rec.recommendation}
-                                </Text>
-                              </Paragraph>
+                            <div key={idx} className="mb-5">
+                              <p className="text-sm leading-relaxed mb-2">
+                                <span className="font-semibold">{idx + 1}. </span>
+                                {rec.finding}
+                              </p>
+                              <p className="text-sm text-muted-foreground pl-4 leading-relaxed">
+                                <span className="font-semibold">Recommendation:</span> {rec.recommendation}
+                              </p>
                             </div>
                           ))}
                         </>
@@ -3721,73 +4107,95 @@ const Reports = () => {
                     </>
                   );
                 })()}
-              </AntdCard>
+                </CardContent>
+              </Card>
             )}
 
             {/* Prescription Summary Section (pharmacy) */}
             {generatedReport.insights.find(i => i.type === 'prescription-summary') && (
-              <AntdCard style={{ ...cardStyle, marginBottom: 16 }}>
+              <Card style={{ ...cardStyle, marginBottom: 12 }}>
+                <CardContent className="p-4 md:p-6">
                 {(() => {
                   const section = generatedReport.insights.find(i => i.type === 'prescription-summary');
                   const data = section.data || [];
                   return (
                     <>
-                      <Title level={4}>{section.title}</Title>
-                      <Text type="secondary" style={{ display: 'block', marginBottom: 20 }}>{section.description}</Text>
-                      <Row gutter={24} style={{ marginBottom: 24 }}>
-                        <Col span={6}>
-                          <Statistic title="Total prescriptions" value={section.totalPrescriptions || 0} />
-                        </Col>
-                        <Col span={6}>
-                          <Statistic title="Prescription revenue" value={section.prescriptionRevenue || 0} formatter={(v) => `GHS ${Number(v).toLocaleString()}`} />
-                        </Col>
-                        <Col span={6}>
-                          <Statistic title="Fulfillment rate" value={section.fulfillmentRate || 0} suffix="%" />
-                        </Col>
-                      </Row>
+                      <h4 className="text-base font-semibold">{section.title}</h4>
+                      <p className="text-muted-foreground text-sm mb-5">{section.description}</p>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-4 md:mb-6">
+                        <Card>
+                          <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
+                            <p className="text-sm text-muted-foreground">Total prescriptions</p>
+                            <p className="text-2xl font-semibold">{section.totalPrescriptions || 0}</p>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="pt-6">
+                            <p className="text-sm text-muted-foreground">Prescription revenue</p>
+                            <p className="text-2xl font-semibold">₵ {Number(section.prescriptionRevenue || 0).toLocaleString()}</p>
+                          </CardContent>
+                        </Card>
+                        <Card>
+                          <CardContent className="pt-6">
+                            <p className="text-sm text-muted-foreground">Fulfillment rate</p>
+                            <p className="text-2xl font-semibold">{section.fulfillmentRate || 0}%</p>
+                          </CardContent>
+                        </Card>
+                      </div>
                       {data.length > 0 && (
-                        <Table
-                          dataSource={data}
-                          pagination={false}
-                          size="small"
-                          style={{ marginBottom: 24 }}
-                          columns={[
-                            { title: 'Status', dataIndex: 'status', key: 'status' },
-                            { title: 'Count', dataIndex: 'count', key: 'count', align: 'right' }
-                          ]}
-                        />
+                        <ShadcnTable className="mb-6 min-w-[500px]">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead>Status</TableHead>
+                              <TableHead className="text-right">Count</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {data.map((record, idx) => (
+                              <TableRow key={idx}>
+                                <TableCell>{record.status}</TableCell>
+                                <TableCell className="text-right">{record.count}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </ShadcnTable>
                       )}
                       {section.topDrugs && section.topDrugs.length > 0 && (
                         <>
-                          <Title level={5} style={{ marginBottom: 12 }}>Top drugs by quantity filled</Title>
-                          <Table
-                            dataSource={section.topDrugs}
-                            pagination={false}
-                            size="small"
-                            style={{ marginBottom: 24 }}
-                            columns={[
-                              { title: 'Drug', dataIndex: 'drugName', key: 'drugName' },
-                              { title: 'Quantity filled', dataIndex: 'quantityFilled', key: 'quantityFilled', align: 'right' },
-                              { title: 'Prescriptions', dataIndex: 'prescriptionCount', key: 'prescriptionCount', align: 'right' }
-                            ]}
-                          />
+                          <h5 className="text-sm font-semibold mb-3">Top drugs by quantity filled</h5>
+                          <ShadcnTable className="mb-6 min-w-[500px]">
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Drug</TableHead>
+                                <TableHead className="text-right">Quantity filled</TableHead>
+                                <TableHead className="text-right">Prescriptions</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {section.topDrugs.map((record, idx) => (
+                                <TableRow key={idx}>
+                                  <TableCell>{record.drugName}</TableCell>
+                                  <TableCell className="text-right">{record.quantityFilled}</TableCell>
+                                  <TableCell className="text-right">{record.prescriptionCount}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </ShadcnTable>
                         </>
                       )}
                       {section.recommendations && section.recommendations.length > 0 && (
                         <>
-                          <Divider />
-                          <Title level={5} style={{ marginBottom: 16 }}>Recommendations</Title>
+                          <Separator className="my-4" />
+                          <h5 className="text-sm font-semibold mb-4">Recommendations</h5>
                           {section.recommendations.map((rec, idx) => (
-                            <div key={idx} style={{ marginBottom: 20 }}>
-                              <Paragraph style={{ margin: 0, marginBottom: 8, fontSize: 14, lineHeight: 1.6 }}>
-                                <Text strong style={{ fontSize: 14 }}>{idx + 1}. </Text>
-                                <Text style={{ fontSize: 14 }}>{rec.finding}</Text>
-                              </Paragraph>
-                              <Paragraph style={{ margin: 0, paddingLeft: 16, fontSize: 14, lineHeight: 1.6 }}>
-                                <Text style={{ color: '#595959', fontSize: 14 }}>
-                                  <Text strong>Recommendation:</Text> {rec.recommendation}
-                                </Text>
-                              </Paragraph>
+                            <div key={idx} className="mb-5">
+                              <p className="text-sm leading-relaxed mb-2">
+                                <span className="font-semibold">{idx + 1}. </span>
+                                {rec.finding}
+                              </p>
+                              <p className="text-sm text-muted-foreground pl-4 leading-relaxed">
+                                <span className="font-semibold">Recommendation:</span> {rec.recommendation}
+                              </p>
                             </div>
                           ))}
                         </>
@@ -3795,17 +4203,18 @@ const Reports = () => {
                     </>
                   );
                 })()}
-              </AntdCard>
+                </CardContent>
+              </Card>
             )}
 
             {/* Footer */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 0', borderTop: '1px solid #f0f0f0' }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>
-                Powered by <Text strong style={{ color: '#166534' }}>ShopWISE Intelligence Systems</Text>
-              </Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 md:gap-0 py-4 md:py-5 border-t border-border">
+              <p className="text-xs text-muted-foreground">
+                Powered by <span className="font-semibold text-primary">ShopWISE Intelligence Systems</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
                 Copyright © {dayjs().year()} Nexus Creative Studio. Confidential and proprietary information.
-              </Text>
+              </p>
             </div>
           </div>
         )}
@@ -3937,8 +4346,10 @@ const Reports = () => {
                         }
                       }}
                       onKeyDown={(e) => e.key === 'Enter' && (document.activeElement === e.currentTarget ? (selectedReportTypes.includes(type.value) ? setSelectedReportTypes(selectedReportTypes.filter((t) => t !== type.value)) : setSelectedReportTypes([...selectedReportTypes, type.value])) : null)}
-                      className="flex items-center justify-between rounded-lg border border-gray-200 p-4 cursor-pointer transition-colors hover:bg-gray-50"
-                      style={{ background: selectedReportTypes.includes(type.value) ? '#dcfce7' : undefined }}
+                      className={cn(
+                      "flex items-center justify-between rounded-lg border p-4 cursor-pointer transition-colors",
+                      selectedReportTypes.includes(type.value) ? "border-primary bg-primary/10" : "border-border hover:bg-muted/50"
+                    )}
                     >
                       <div>
                         <p className="font-medium text-sm">{type.label}</p>
@@ -3964,7 +4375,7 @@ const Reports = () => {
                   Cancel
                 </ShadcnButton>
                 <ShadcnButton type="submit" size="lg" disabled={aiLoading} className="bg-[#166534] hover:bg-[#14502a]">
-                  {aiLoading ? 'Creating…' : 'Create'}
+                  {aiLoading ? 'Creating...' : 'Create'}
                 </ShadcnButton>
               </DialogFooter>
             </form>
@@ -3972,106 +4383,116 @@ const Reports = () => {
         </DialogContent>
       </Dialog>
 
-    <div style={{ background: '#fafafa', minHeight: '100vh', margin: '-24px', padding: '24px' }}>
-      <div style={{ 
-        marginBottom: 24, 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        flexWrap: 'wrap', 
-        gap: 16,
-        background: '#fff',
-        padding: '20px 24px',
-        borderRadius: '8px',
-        border: '1px solid #f4f4f4'
-      }}>
-        <Title level={2} style={{ margin: 0, fontSize: 24, fontWeight: 600 }}>Reports & Analytics</Title>
+    <div className="bg-background min-h-screen px-0 py-2 md:px-6 md:py-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 md:gap-4 mb-3 md:mb-6 bg-card p-2 md:p-5 rounded-lg border border-border">
+        <h2 className="text-2xl font-semibold">Reports & Analytics</h2>
         {showSmartReportList && (
           <div className="flex items-center gap-3">
             {/* Date Filter */}
-            <ShadcnButton
-              variant="outline"
-              className="border border-gray-300 bg-white"
-              onClick={() => {
-                // Date filter handler
-              }}
-            >
-              <Calendar className="h-4 w-4 mr-2" />
-              Last 6 months
-            </ShadcnButton>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ShadcnButton
+                  variant="outline"
+                  className="border-border bg-card"
+                  onClick={() => {
+                    // Date filter handler
+                  }}
+                >
+                  <Calendar className="h-4 w-4 mr-2" />
+                  Last 6 months
+                </ShadcnButton>
+              </TooltipTrigger>
+              <TooltipContent>Change date range for reports</TooltipContent>
+            </Tooltip>
 
             {/* Filter/Sort Button */}
-            <ShadcnButton
-              variant="outline"
-              className="border border-gray-300 bg-white"
-              onClick={() => {
-                // Filter/sort handler
-              }}
-            >
-              <SlidersHorizontal className="h-4 w-4" />
-            </ShadcnButton>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ShadcnButton
+                  variant="outline"
+                  className="border-border bg-card"
+                  onClick={() => {
+                    // Filter/sort handler
+                  }}
+                >
+                  <SlidersHorizontal className="h-4 w-4" />
+                </ShadcnButton>
+              </TooltipTrigger>
+              <TooltipContent>Filter or sort reports</TooltipContent>
+            </Tooltip>
 
             {/* All Badge with Count */}
-            <div className="flex items-center gap-2 border border-gray-300 rounded-md px-3 py-2 bg-white">
-              <span className="text-sm text-gray-700">All</span>
-              <Badge variant="secondary" className="bg-gray-100 text-gray-700">
+            <div className="flex items-center gap-2 border border-border rounded-md px-3 py-2 bg-card">
+              <span className="text-sm text-foreground">All</span>
+              <Badge variant="secondary" className="bg-muted text-foreground">
                 {savedReports.length}
               </Badge>
             </div>
 
             {/* Create Report Button */}
-            <ShadcnButton
-              onClick={handleOpenCreateReportModal}
-              className="bg-[#166534] hover:bg-[#14502a] text-white"
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Create report
-            </ShadcnButton>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ShadcnButton
+                  onClick={handleOpenCreateReportModal}
+                  className="bg-[#166534] hover:bg-[#14502a] text-white"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Create report
+                </ShadcnButton>
+              </TooltipTrigger>
+              <TooltipContent>Create a new report</TooltipContent>
+            </Tooltip>
           </div>
         )}
       </div>
 
-      <AntdCard 
-        style={{ 
-          borderRadius: '8px',
-          border: '1px solid #f4f4f4'
-        }}
-        bodyStyle={{ padding: '0' }}
-      >
-        {isSmartReport && generatedReport ? (
-          <div style={{ padding: '24px' }}>
-            {renderAIReportGenerator()}
-          </div>
-        ) : showSmartReportList ? (
-          <div style={{ padding: '24px' }}>
-            {renderGeneratedReports()}
-          </div>
-        ) : (
-          <div style={{ padding: '24px' }}>
-            {loading ? (
-              <div className="space-y-6">
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <Card key={i}>
-                      <CardContent className="pt-6">
-                        <Skeleton className="h-4 w-24 mb-2" />
-                        <Skeleton className="h-8 w-32" />
-                      </CardContent>
-                    </Card>
-                  ))}
+      {isMobile && showSmartReportList ? (
+        <div className="mt-0">
+          {renderGeneratedReports()}
+        </div>
+      ) : (
+        <Card className="rounded-lg border border-border">
+          <CardContent className="p-0">
+          {isCompliance ? (
+            <div className="p-4 md:p-6">
+              {renderComplianceView()}
+            </div>
+          ) : isSmartReport && generatedReport ? (
+            <div className="p-4 md:p-6">
+              {renderAIReportGenerator()}
+            </div>
+          ) : showSmartReportList ? (
+            <div className="p-0 md:p-6">
+              {renderGeneratedReports()}
+            </div>
+          ) : (
+            <div className="p-4 md:p-6">
+              {loading ? (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+                    {Array.from({ length: 4 }).map((_, i) => (
+                      <Card key={i}>
+                        <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
+                          <Skeleton className="h-4 w-24 mb-2" />
+                          <Skeleton className="h-8 w-32" />
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                  <Card>
+                    <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
+                      <TableSkeleton rows={8} cols={5} />
+                    </CardContent>
+                  </Card>
                 </div>
-                <Card>
-                  <CardContent className="pt-6">
-                    <TableSkeleton rows={8} cols={5} />
-                  </CardContent>
-                </Card>
-              </div>
-            ) : (
-              renderOverviewDashboard()
-            )}
-          </div>
-        )}
-      </AntdCard>
+              ) : (
+                renderOverviewDashboard()
+              )}
+            </div>
+          )}
+          </CardContent>
+        </Card>
+      )}
     </div>
     </>
   );

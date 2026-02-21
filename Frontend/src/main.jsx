@@ -41,20 +41,19 @@ const queryClient = new QueryClient({
 // - Reference data (categories, dropdowns): QUERY_CACHE.STALE_TIME_STABLE (5min) - rarely changes
 // Example: useQuery(['dashboard'], fetchDashboard, { staleTime: QUERY_CACHE.STALE_TIME_VOLATILE })
 
+// StrictMode disabled: React 18 double-mount breaks Radix Select/DropdownMenu/Popover (open state resets, so dropdowns appear not to open). Re-enable when Radix or React addresses this.
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-        <QueryClientProvider client={queryClient}>
-          <App />
-          <ToastContainer
-            position="bottom-right"
-            autoClose={5000}
-            hideProgressBar={false}
-            closeButton
-            newestOnTop
-            pauseOnHover
-            theme="light"
-            limit={4}
-          />
-    </QueryClientProvider>
-  </React.StrictMode>
+  <QueryClientProvider client={queryClient}>
+    <App />
+    <ToastContainer
+      position="bottom-right"
+      autoClose={5000}
+      hideProgressBar={false}
+      closeButton
+      newestOnTop
+      pauseOnHover
+      theme="light"
+      limit={4}
+    />
+  </QueryClientProvider>
 );

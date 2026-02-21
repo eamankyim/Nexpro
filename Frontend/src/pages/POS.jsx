@@ -13,7 +13,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
-import { RefreshCw, Users, Loader2, Camera, Smartphone, CreditCard, UserPlus, Phone } from 'lucide-react';
+import { RefreshCw, Users, Loader2, Camera, CreditCard, UserPlus, Phone } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -38,6 +39,7 @@ import POSScanMode from '../components/pos/POSScanMode';
 
 // Hooks and Services
 import { usePOSOffline } from '../hooks/usePOSOffline';
+import { usePOSConfig } from '../hooks/usePOSConfig';
 import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../hooks/useDebounce';
 import customerService from '../services/customerService';
@@ -142,7 +144,7 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
         </DialogHeader>
         <DialogBody>
         {/* Quick add customer: phone (required) + name */}
-        <div className="p-3 bg-gray-50 rounded-lg border border-gray-200 space-y-2">
+        <div className="p-3 bg-muted rounded-lg border border-border space-y-2">
           <p className="text-sm font-medium text-gray-700 flex items-center gap-2">
             <UserPlus className="h-4 w-4" />
             Quick add customer
@@ -207,7 +209,7 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
               {customers.map((customer) => (
                 <div
                   key={customer.id}
-                  className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer border border-transparent hover:border-gray-200"
+                  className="flex items-center gap-3 p-3 rounded-lg hover:bg-muted cursor-pointer border border-transparent hover:border-border"
                   onClick={() => {
                     onSelect(customer);
                     onClose();
@@ -219,7 +221,7 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
                     </span>
                   </div>
                   <div className="flex-1">
-                    <p className="font-medium text-gray-900">{customer.name}</p>
+                    <p className="font-medium text-foreground">{customer.name}</p>
                     <p className="text-sm text-gray-500">{customer.phone || customer.email}</p>
                   </div>
                   {customer.creditLimit > 0 && (
@@ -262,8 +264,12 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
 const POS = () => {
   const { activeTenant, activeTenantId, user } = useAuth();
   const businessType = activeTenant?.businessType || null;
+  const shopType = activeTenant?.metadata?.shopType || null;
   const isShop = businessType === 'shop';
+  const isRestaurant = shopType === 'restaurant';
   const tenantIdForProducts = activeTenantId || (typeof localStorage !== 'undefined' ? localStorage.getItem('activeTenantId') : null);
+
+  const { posConfig } = usePOSConfig();
 
   // Offline support hook
   const {
@@ -295,9 +301,17 @@ const POS = () => {
   // UI state
   const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentModalStayOpen, setPaymentModalStayOpen] = useState(() => {
+    try {
+      return localStorage.getItem('pos_payment_modal_stay_open') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [completedSale, setCompletedSale] = useState(null);
+  const [customerForReceipt, setCustomerForReceipt] = useState(null);
   
   // Scan Mode state
   const [scanModeOpen, setScanModeOpen] = useState(false);
@@ -431,6 +445,15 @@ const POS = () => {
   // Pre-add product when navigating from staff dashboard with state.addProductId
   const navigateRef = useNavigate();
   const location = useLocation();
+
+  // When navigating from dashboard "Add sale" with openModal, open scan mode and clear state
+  useEffect(() => {
+    if (location.state?.openModal) {
+      navigateRef(location.pathname, { replace: true, state: {} });
+      setScanModeOpen(true);
+    }
+  }, [location.state?.openModal, location.pathname, navigateRef]);
+
   useEffect(() => {
     const addProductId = location.state?.addProductId;
     if (!addProductId) return;
@@ -561,6 +584,9 @@ const POS = () => {
           mobileMoneyReference: paymentDetails.mobileMoneyReference
         }
       };
+      if (isRestaurant) {
+        saleData.sendToKitchen = paymentDetails.sendToKitchen ?? true;
+      }
 
       // Process sale (online or queue offline)
       const result = await processSale(saleData);
@@ -568,7 +594,7 @@ const POS = () => {
       if (result.success) {
         const saleObj = result.sale || {
           id: result.localId,
-          saleNumber: `OFFLINE-${result.localId}`,
+          saleNumber: `OFFLINE-${result.localId ?? Date.now()}`,
           total: cartTotals.total,
           change: paymentDetails.change || 0,
           items: cart,
@@ -576,11 +602,28 @@ const POS = () => {
         };
 
         setCompletedSale(saleObj);
-        setPaymentModalOpen(false);
-        setReceiptModalOpen(true);
+        if (!paymentModalStayOpen) {
+          setPaymentModalOpen(false);
+        }
+        // Capture customer/phone for receipt before clearCart wipes them
+        setCustomerForReceipt(
+          selectedCustomer ||
+          (quickCustomerPhone
+            ? { phone: quickCustomerPhone, name: quickCustomerName || '', email: '' }
+            : null)
+        );
+        // If auto_send and no SMS/WhatsApp/Email integrated, skip receipt modal - close immediately
+        const receiptChannelsAvailable = posConfig?.receiptChannelsAvailable || {};
+        const rawChannels = posConfig?.receipt?.channels || ['sms', 'print'];
+        const integratedSendChannels = rawChannels.filter((c) => c !== 'print' && receiptChannelsAvailable[c]);
+        const receiptMode = posConfig?.receipt?.mode || 'ask';
+        const skipReceiptModal = receiptMode === 'auto_send' && integratedSendChannels.length === 0;
+        setReceiptModalOpen(!skipReceiptModal);
 
         if (result.isQueued) {
           showSuccess('Sale saved offline. Will sync when connected.');
+        } else if (isRestaurant && saleObj?.saleNumber && (paymentDetails.sendToKitchen ?? true)) {
+          showSuccess(`Order placed! #${saleObj.saleNumber} has been sent to the kitchen.`);
         } else {
           showSuccess('Sale completed successfully!');
         }
@@ -594,7 +637,16 @@ const POS = () => {
     } finally {
       setIsProcessingPayment(false);
     }
-  }, [cart, selectedCustomer, cartTotals, processSale, clearCart]);
+  }, [cart, selectedCustomer, cartTotals, processSale, clearCart, isRestaurant, posConfig, paymentModalStayOpen]);
+
+  const handlePaymentModalStayOpenChange = useCallback((checked) => {
+    setPaymentModalStayOpen(checked);
+    try {
+      localStorage.setItem('pos_payment_modal_stay_open', String(checked));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // Handle send receipt
   const handleSendReceipt = useCallback(async ({ saleId, channels, phone, email }) => {
@@ -642,18 +694,18 @@ const POS = () => {
       <div className="p-4 md:p-6 space-y-4 md:space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Point of Sale</h1>
+            <h1 className="text-3xl font-bold text-foreground">Point of Sale</h1>
             <p className="text-gray-600 mt-1">Quick checkout and sales processing</p>
           </div>
         </div>
         <Card className="border border-gray-200">
           <CardContent className="p-12">
             <div className="flex flex-col items-center justify-center text-center space-y-4">
-              <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
+              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
                 <CreditCard className="h-10 w-10 text-gray-400" />
               </div>
               <div>
-                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Not Available</h2>
+                <h2 className="text-2xl font-semibold text-foreground mb-2">Not Available</h2>
                 <p className="text-gray-600 max-w-md">
                   POS is only available for shop business types.
                 </p>
@@ -666,26 +718,31 @@ const POS = () => {
   }
 
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col p-4 md:p-6 bg-gray-50">
+    <div className="h-[calc(100vh-4rem)] flex flex-col p-4 md:p-6 bg-muted/50">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Point of Sale</h1>
+          <h1 className="text-2xl font-bold text-foreground">Point of Sale</h1>
           <p className="text-gray-600 text-sm">Quick checkout and sales processing</p>
         </div>
         
         <div className="flex items-center gap-2 md:gap-3 mr-12">
           {/* Start Scanning Button - prominent on mobile */}
-          <Button
-            onClick={() => setScanModeOpen(true)}
-            className={`
-              bg-green-700 hover:bg-green-800 
-              ${isMobile ? 'h-12 px-4 text-base' : 'h-10'}
-            `}
-          >
-            <Camera className="h-5 w-5 mr-2" />
-            {isMobile ? 'Scan' : 'Start Scanning'}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                onClick={() => setScanModeOpen(true)}
+                className={`
+                  bg-green-700 hover:bg-green-800 
+                  ${isMobile ? 'h-12 px-4 text-base' : 'h-10'}
+                `}
+              >
+                <Camera className="h-5 w-5 mr-2" />
+                {isMobile ? 'Scan' : 'Start Scanning'}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Open barcode scanner for quick add</TooltipContent>
+          </Tooltip>
           
           <POSConnectionStatus
             isOnline={isOnline}
@@ -694,39 +751,22 @@ const POS = () => {
             lastSyncError={lastSyncError}
           />
           
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={handleRefreshProducts}
-            disabled={!isOnline || isSyncing}
-            className="hidden md:flex"
-          >
-            <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handleRefreshProducts}
+                disabled={!isOnline || isSyncing}
+                className="hidden md:flex"
+              >
+                <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh product list</TooltipContent>
+          </Tooltip>
         </div>
       </div>
-
-      {/* Mobile Scan Mode Prompt - show on mobile when cart is empty */}
-      {isMobile && cart.length === 0 && (
-        <div className="mb-4 p-4 bg-green-50 rounded-lg border border-green-200">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-              <Smartphone className="h-5 w-5 text-green-700" />
-            </div>
-            <div className="flex-1">
-              <p className="font-medium text-green-800">Quick Scan Mode</p>
-              <p className="text-sm text-green-600">Scan barcode or QR at POS</p>
-            </div>
-            <Button
-              onClick={() => setScanModeOpen(true)}
-              size="sm"
-              className="bg-green-700 hover:bg-green-800"
-            >
-              Start
-            </Button>
-          </div>
-        </div>
-      )}
 
       {/* Main content - Split layout */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-5 gap-4 min-h-0">
@@ -796,8 +836,12 @@ const POS = () => {
         total={cartTotals.total}
         items={cart}
         customer={selectedCustomer}
+        onRequestChangeCustomer={() => setCustomerDialogOpen(true)}
         onConfirmPayment={handleConfirmPayment}
         isProcessing={isProcessingPayment}
+        isRestaurant={isRestaurant}
+        stayOpenAfterSale={paymentModalStayOpen}
+        onStayOpenAfterSaleChange={handlePaymentModalStayOpenChange}
       />
 
       {/* Receipt modal */}
@@ -806,9 +850,10 @@ const POS = () => {
         onClose={() => {
           setReceiptModalOpen(false);
           setCompletedSale(null);
+          setCustomerForReceipt(null);
         }}
         sale={completedSale}
-        customer={selectedCustomer}
+        customer={customerForReceipt}
         organizationSettings={organizationSettings}
         onSendReceipt={handleSendReceipt}
       />
@@ -822,7 +867,9 @@ const POS = () => {
         onProcessSale={handleProcessSaleForScanMode}
         onFindOrCreateCustomer={handleFindOrCreateCustomer}
         onSendReceipt={handleSendReceiptForScanMode}
+        receiptChannelsAvailable={posConfig?.receiptChannelsAvailable || { sms: false, whatsapp: false, email: false }}
         isOnline={isOnline}
+        isRestaurant={isRestaurant}
       />
     </div>
   );

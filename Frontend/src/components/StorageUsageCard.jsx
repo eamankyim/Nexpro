@@ -1,21 +1,27 @@
 import { useState, useEffect } from 'react';
 import { Cloud, Info, Rocket, Database, Loader2 } from 'lucide-react';
 import inviteService from '../services/inviteService';
+import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { StatisticCard } from '@/components/ui/statistic-card';
+import DashboardStatsCard from './DashboardStatsCard';
 
 /**
  * Reusable component to display storage usage and limits
  */
 function StorageUsageCard({ style, showUpgradeButton = true }) {
+  const { activeTenantId } = useAuth();
   const [storageUsage, setStorageUsage] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!activeTenantId) {
+      setLoading(false);
+      return;
+    }
     const fetchStorageUsage = async () => {
       try {
         setLoading(true);
@@ -31,7 +37,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
     };
 
     fetchStorageUsage();
-  }, []);
+  }, [activeTenantId]);
 
   if (loading) {
     return (
@@ -109,19 +115,19 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
         ) : (
           <>
             <div className="grid grid-cols-3 gap-4 mb-6">
-              <StatisticCard
+              <DashboardStatsCard
                 title="Used"
                 value={parseFloat(currentGB || 0).toFixed(2)}
                 suffix=" GB"
                 prefix={<Database className="h-4 w-4 inline mr-1" />}
                 className={isAtLimit ? 'text-red-600' : 'text-green-600'}
               />
-              <StatisticCard
+              <DashboardStatsCard
                 title="Total Limit"
                 value={limitGB}
                 suffix=" GB"
               />
-              <StatisticCard
+              <DashboardStatsCard
                 title="Available"
                 value={parseFloat(remainingGB || 0).toFixed(2)}
                 suffix=" GB"
@@ -154,7 +160,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
                   {price100GB ? (
                     <span>
                       You've used {currentGB} GB of your {limitGB} GB limit. 
-                      Add more storage for <strong>GHS {price100GB} per 100GB</strong> or upgrade your plan.
+                      Add more storage for <strong>₵ {price100GB} per 100GB</strong> or upgrade your plan.
                     </span>
                   ) : (
                     <span>
@@ -191,7 +197,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
                       <div className="flex items-center gap-2 text-sm">
                         <Info className="h-4 w-4 text-[#166534]" />
                         <span>
-                          Need more storage? Add 100GB for <strong>GHS {price100GB}</strong>
+                          Need more storage? Add 100GB for <strong>₵ {price100GB}</strong>
                         </span>
                       </div>
                     </TooltipTrigger>

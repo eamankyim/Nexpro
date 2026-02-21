@@ -50,6 +50,10 @@ const ProductVariant = sequelize.define('ProductVariant', {
     type: DataTypes.BOOLEAN,
     defaultValue: true
   },
+  trackStock: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true
+  },
   metadata: {
     type: DataTypes.JSONB,
     defaultValue: {}

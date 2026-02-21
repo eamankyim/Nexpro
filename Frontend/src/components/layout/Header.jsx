@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Crown,
+  Lightbulb,
   LogOut,
   Settings,
   Link as LinkIcon,
@@ -20,22 +21,28 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Switch } from '@/components/ui/switch';
 import { useAuth } from '@/context/AuthContext';
+import { useHintMode } from '@/context/HintModeContext';
 import { useSmartSearch } from '@/context/SmartSearchContext';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useResponsive, useSafeAreaInsets } from '@/hooks/useResponsive';
 import { RESPONSIVE } from '@/constants';
 import { resolveImageUrl } from '@/utils/fileUtils';
 import NotificationBell from '@/components/NotificationBell';
+import TourButton from '@/components/tour/TourButton';
 import { MobileSidebar } from './Sidebar';
 import { cn } from '@/lib/utils';
 
 export function Header() {
   const navigate = useNavigate();
   const { user, logout, activeTenant } = useAuth();
+  const { hintMode, toggleHintMode } = useHintMode();
   const { placeholder, scope, searchValue, setSearchValue } = useSmartSearch();
   const { isMobile, isTablet } = useResponsive();
   const safeAreaInsets = useSafeAreaInsets();
   const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const searchInputRef = useRef(null);
   const searchContainerRef = useRef(null);
 
@@ -109,6 +116,16 @@ export function Header() {
 
   const userMenuItems = [
     {
+      label: 'Take Tour',
+      icon: null, // Will use TourButton component
+      isTourButton: true,
+    },
+    {
+      label: 'Hint Mode',
+      icon: Lightbulb,
+      isHintMode: true,
+    },
+    {
       label: 'Settings',
       icon: Settings,
       onClick: () => navigate('/settings'),
@@ -130,7 +147,7 @@ export function Header() {
 
   return (
     <header 
-      className="sticky top-0 z-40 w-full border-b border-gray-200 bg-white"
+      className="sticky top-0 z-40 w-full border-b border-border bg-card"
       style={{
         paddingTop: safeAreaInsets.top > 0 ? `${safeAreaInsets.top}px` : undefined,
       }}
@@ -139,17 +156,17 @@ export function Header() {
         ref={searchContainerRef}
         className={cn(
           "flex h-16 items-center justify-between gap-1.5 md:gap-2 lg:gap-4 transition-all duration-300",
-          // Responsive horizontal padding: mobile (12px), tablet (24px), desktop (40px)
-          "px-3 md:px-6 lg:px-10",
-          // When search is expanded on mobile, make header full-width for search
-          isMobile && isSearchExpanded && "px-2"
+          // Responsive horizontal padding: mobile (24px to match Login), tablet (24px), desktop (40px)
+          "px-6 md:px-6 lg:px-10",
+          // When search is expanded on mobile, keep consistent padding
+          isMobile && isSearchExpanded && "px-6"
         )}
         style={{
           paddingLeft: safeAreaInsets.left > 0 
-            ? `calc(0.75rem + ${safeAreaInsets.left}px)` 
+            ? `calc(1.5rem + ${safeAreaInsets.left}px)` 
             : undefined,
           paddingRight: safeAreaInsets.right > 0 
-            ? `calc(0.75rem + ${safeAreaInsets.right}px)` 
+            ? `calc(1.5rem + ${safeAreaInsets.right}px)` 
             : undefined,
         }}
       >
@@ -166,7 +183,7 @@ export function Header() {
           {isMobile ? (
             isSearchExpanded ? (
               // Expanded search on mobile
-              <div className="relative flex-1 w-full flex items-center gap-2">
+              <div className="relative flex-1 w-full flex items-center gap-2" data-tour="header-search">
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground z-10" />
                   <Input
@@ -183,9 +200,9 @@ export function Header() {
                   {searchValue && (
                     <button
                       onClick={() => setSearchValue('')}
-                      className="absolute right-3 top-1/2 transform -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full hover:bg-gray-200 transition-colors"
+                      className="absolute right-3 top-1/2 transform -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full hover:bg-muted transition-colors"
                     >
-                      <X className="h-3 w-3 text-gray-500" />
+                      <X className="h-3 w-3 text-muted-foreground" />
                     </button>
                   )}
                 </div>
@@ -211,9 +228,11 @@ export function Header() {
             )
           ) : (
             // Desktop/Tablet: Always show full search
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="relative flex-1 max-w-md" data-tour="header-search">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input
                 key={scope}
                 type="search"
                 placeholder={placeholder}
@@ -222,7 +241,10 @@ export function Header() {
                 className="pl-10 w-full"
                 style={{ borderRadius: '32px' }}
               />
-            </div>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Quick search across customers, products, sales, and more</TooltipContent>
+            </Tooltip>
           )}
         </div>
         
@@ -231,9 +253,11 @@ export function Header() {
           <div className="flex items-center gap-1.5 md:gap-2 lg:gap-3 flex-shrink-0">
             {/* Upgrade to Pro Button - Icon only on mobile, full text on tablet+ */}
             {activeTenant && (activeTenant.plan === 'trial' || activeTenant.plan === 'free') && (
-              <Button
-                size={isMobile ? "icon" : "sm"}
-                onClick={() => navigate('/checkout')}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size={isMobile ? "icon" : "sm"}
+                    onClick={() => navigate('/checkout')}
                 className={cn(
                   "bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-600 hover:to-amber-700 text-white",
                   isMobile ? "h-11 w-11" : "hidden sm:flex",
@@ -245,22 +269,31 @@ export function Header() {
                 <Crown className={cn("h-4 w-4", !isMobile && "mr-2")} />
                 {!isMobile && <span>Upgrade to Pro</span>}
               </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Upgrade your plan for more features and capacity</TooltipContent>
+              </Tooltip>
             )}
             
             {/* Notification Bell */}
-            <NotificationBell />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div data-tour="header-notifications" className="inline-flex">
+                  <NotificationBell />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">View order updates, low stock alerts, and other notifications</TooltipContent>
+            </Tooltip>
             
             {/* User Profile Dropdown */}
-            <DropdownMenu>
+            <DropdownMenu open={userMenuOpen} onOpenChange={setUserMenuOpen}>
               <DropdownMenuTrigger asChild>
                 <Button 
                   variant="ghost" 
                   className={cn(
-                    "flex items-center gap-2 h-auto hover:bg-gray-200",
+                    "flex items-center gap-2 h-auto hover:bg-muted rounded-[32px] bg-muted",
                     // Responsive padding: mobile (p-2), tablet+ (p-1.5)
                     isMobile ? "p-2 min-h-[44px] min-w-[44px]" : "p-1.5"
                   )}
-                  style={{ backgroundColor: '#f3f4f6', borderRadius: '32px' }}
                 >
                   <Avatar className="h-8 w-8">
                     <AvatarImage src={resolveImageUrl(user?.profilePicture || '') || undefined} />
@@ -269,13 +302,13 @@ export function Header() {
                     </AvatarFallback>
                   </Avatar>
                   <span className={cn(
-                    "text-sm text-gray-900 font-medium",
+                    "text-sm text-foreground font-medium",
                     isMobile ? "hidden" : "hidden sm:inline"
                   )}>
                     {user?.name || 'User'}
                   </span>
                   <ChevronDown className={cn(
-                    "h-4 w-4 text-gray-500",
+                    "h-4 w-4 text-muted-foreground",
                     isMobile ? "hidden" : "hidden sm:inline"
                   )} />
                 </Button>
@@ -283,15 +316,44 @@ export function Header() {
               <DropdownMenuContent align="end" className="w-56">
                 {userMenuItems.map((item, index) => (
                   <div key={index}>
-                    {index === 1 && <DropdownMenuSeparator />}
-                    <DropdownMenuItem 
-                      onClick={item.onClick}
-                      className="min-h-[44px]"
-                    >
-                      <item.icon className="mr-2 h-4 w-4" />
-                      <span>{item.label}</span>
-                    </DropdownMenuItem>
-                    {(index === 0 || index === 1) && <DropdownMenuSeparator />}
+                    {index === 2 && <DropdownMenuSeparator />}
+                    {item.isTourButton ? (
+                      <div
+                        className="px-2 py-1.5"
+                        onClick={() => setUserMenuOpen(false)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setUserMenuOpen(false); }}
+                        role="presentation"
+                      >
+                        <TourButton
+                          variant="ghost"
+                          className="w-full justify-start h-auto py-2"
+                        />
+                      </div>
+                    ) : item.isHintMode ? (
+                      <div className="flex items-center justify-between gap-3 px-2 py-2 min-h-[44px]">
+                        {item.icon && <item.icon className="h-4 w-4 text-muted-foreground shrink-0" />}
+                        <span className="text-sm font-medium flex-1">{item.label}</span>
+                        <Switch
+                          checked={hintMode}
+                          onCheckedChange={(checked) => {
+                            toggleHintMode(checked);
+                            setUserMenuOpen(false);
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <DropdownMenuItem 
+                        onClick={() => {
+                          setUserMenuOpen(false);
+                          item.onClick?.();
+                        }}
+                        className="min-h-[44px]"
+                      >
+                        {item.icon && <item.icon className="mr-2 h-4 w-4" />}
+                        <span>{item.label}</span>
+                      </DropdownMenuItem>
+                    )}
+                    {(index === 0 || index === 2) && <DropdownMenuSeparator />}
                   </div>
                 ))}
               </DropdownMenuContent>

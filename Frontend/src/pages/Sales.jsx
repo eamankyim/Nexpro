@@ -3,26 +3,30 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 
 const POS = lazy(() => import('./POS'));
 import { useDebounce } from '../hooks/useDebounce';
+import { usePOSConfig } from '../hooks/usePOSConfig';
 import { useResponsive } from '../hooks/useResponsive';
-import { ShoppingCart, Filter, RefreshCw, Printer, Receipt, FileText, Loader2, X, CheckCircle, Clock, XCircle, Download } from 'lucide-react';
-import { generatePDF } from '../utils/pdfUtils';
+import { ShoppingCart, Filter, RefreshCw, Printer, Receipt, FileText, Loader2, X, CheckCircle, Clock, XCircle, Download, Plus, Package } from 'lucide-react';
+import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
 import saleService from '../services/saleService';
 import customerService from '../services/customerService';
 import invoiceService from '../services/invoiceService';
 import settingsService from '../services/settingsService';
+import productService from '../services/productService';
 import { useAuth } from '../context/AuthContext';
 import { useQuery } from '@tanstack/react-query';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import PrintableReceipt from '../components/PrintableReceipt';
+import PrintableInvoice from '../components/PrintableInvoice';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
-import DetailSkeleton from '../components/DetailSkeleton';
 import DashboardTable from '../components/DashboardTable';
+import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError } from '../utils/toast';
+import { resolveImageUrl } from '../utils/fileUtils';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,6 +51,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Dialog,
   DialogContent,
@@ -55,6 +60,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 const Sales = () => {
   const navigate = useNavigate();
@@ -63,6 +78,7 @@ const Sales = () => {
   const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
+  const [totalSalesCount, setTotalSalesCount] = useState(0);
   const [filters, setFilters] = useState({ 
     status: 'all',
     customerId: 'all',
@@ -70,6 +86,7 @@ const Sales = () => {
     startDate: null,
     endDate: null
   });
+  const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingSale, setViewingSale] = useState(null);
@@ -81,9 +98,42 @@ const Sales = () => {
   const [loadingSaleDetails, setLoadingSaleDetails] = useState(false);
   const [refreshingSales, setRefreshingSales] = useState(false);
   const [posModalOpen, setPosModalOpen] = useState(false);
-  const { activeTenant } = useAuth();
+  const [loadingReceipt, setLoadingReceipt] = useState(false);
+  const [saleToDelete, setSaleToDelete] = useState(null);
+  const { activeTenant, activeTenantId } = useAuth();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isShop = businessType === 'shop';
+  const isRestaurant = isShop && activeTenant?.metadata?.shopType === 'restaurant';
+
+  // Check if tenant has products (to show appropriate empty state)
+  const { data: productsData } = useQuery({
+    queryKey: ['products', 'active', activeTenantId],
+    queryFn: () => productService.getAllActiveProducts(),
+    enabled: !!activeTenantId,
+    staleTime: 60 * 1000,
+  });
+  const hasProducts = useMemo(() => {
+    const products = Array.isArray(productsData) ? productsData : (productsData?.products ?? []);
+    return products.length > 0;
+  }, [productsData]);
+
+  // For restaurants: Pending = orders in kitchen (not completed); Completed = kitchen done or never sent
+  const KITCHEN_PENDING_STATUSES = ['received', 'preparing', 'ready'];
+  const completedCount = useMemo(() => {
+    if (isRestaurant) {
+      return sales.filter(s =>
+        s.orderStatus === 'completed' ||
+        (s.orderStatus == null && s.status === 'completed')
+      ).length;
+    }
+    return sales.filter(s => s.status === 'completed').length;
+  }, [sales, isRestaurant]);
+  const pendingCount = useMemo(() => {
+    if (isRestaurant) {
+      return sales.filter(s => KITCHEN_PENDING_STATUSES.includes(s.orderStatus)).length;
+    }
+    return sales.filter(s => s.status === 'pending').length;
+  }, [sales, isRestaurant]);
 
   const fetchSales = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -115,14 +165,13 @@ const Sales = () => {
 
       const response = await saleService.getSales(params);
       const data = response?.data?.data || response?.data || [];
+      const count = response?.data?.count ?? data.length;
       setSales(data);
+      setTotalSalesCount(count);
       if (response?.data?.pagination) {
-        setPagination(prev => ({
-          ...prev,
-          total: response.data.pagination.totalPages * pagination.pageSize
-        }));
+        setPagination(prev => ({ ...prev, total: count }));
       } else {
-        setPagination(prev => ({ ...prev, total: data.length }));
+        setPagination(prev => ({ ...prev, total: count }));
       }
     } catch (error) {
       showError(error, 'Failed to load sales');
@@ -138,7 +187,7 @@ const Sales = () => {
 
   const fetchCustomers = useCallback(async () => {
     try {
-      const response = await customerService.getAll({ limit: 1000 });
+      const response = await customerService.getAll({ limit: 100 });
       setCustomers(response.data || []);
     } catch (error) {
       console.error('Failed to load customers:', error);
@@ -150,11 +199,9 @@ const Sales = () => {
     try {
       const response = await saleService.getSaleById(saleId);
       const sale = response?.data?.data || response?.data || response;
-      setViewingSale(sale);
-      return sale;
+      setViewingSale((prev) => (prev?.id === saleId ? sale : prev));
     } catch (error) {
       showError(error, 'Failed to load sale details');
-      return null;
     } finally {
       setLoadingSaleDetails(false);
     }
@@ -182,6 +229,8 @@ const Sales = () => {
   });
 
   const organization = organizationData?.data || {};
+  const { posConfig } = usePOSConfig();
+  const printConfig = posConfig.print || { format: 'a4' };
 
   useEffect(() => {
     if (!isShop) {
@@ -208,13 +257,10 @@ const Sales = () => {
     }
   }, [searchParams, setSearchParams]);
 
-  const handleView = async (sale) => {
+  const handleView = (sale) => {
     setViewingSale(sale);
     setDrawerVisible(true);
-    const details = await fetchSaleDetails(sale.id);
-    if (details) {
-      setViewingSale(details);
-    }
+    fetchSaleDetails(sale.id);
   };
 
   const handleCloseDrawer = () => {
@@ -223,7 +269,14 @@ const Sales = () => {
     setSaleActivities([]);
   };
 
-  const handlePrintReceipt = async (sale) => {
+  const handlePrintReceipt = useCallback(async (sale) => {
+    // Use already-loaded viewingSale when drawer is open (avoids redundant fetch)
+    if (viewingSale?.id === sale.id && viewingSale.items && (!sale.invoiceId || viewingSale.invoice?.customer)) {
+      setReceiptData(viewingSale);
+      setPrintModalVisible(true);
+      return;
+    }
+    setLoadingReceipt(true);
     try {
       const response = await saleService.getSaleById(sale.id);
       const saleData = response?.data?.data || response?.data || response;
@@ -231,14 +284,32 @@ const Sales = () => {
       setPrintModalVisible(true);
     } catch (error) {
       showError(error, 'Failed to load receipt data');
+    } finally {
+      setLoadingReceipt(false);
     }
-  };
+  }, [viewingSale]);
 
   const handleViewInvoice = (sale) => {
     if (sale.invoiceId) {
       navigate(`/invoices?openInvoiceId=${sale.invoiceId}`);
     }
   };
+
+  const handleDeleteSale = useCallback(async (id) => {
+    try {
+      await saleService.deleteSale(id);
+      showSuccess('Sale deleted successfully');
+      fetchSales();
+      setSaleToDelete(null);
+      if (viewingSale?.id === id) {
+        setDrawerVisible(false);
+        setViewingSale(null);
+        setSaleActivities([]);
+      }
+    } catch (error) {
+      showError(error, 'Failed to delete sale');
+    }
+  }, [viewingSale?.id, fetchSales]);
 
   const handleStatusUpdate = async (sale, newStatus) => {
     try {
@@ -273,13 +344,13 @@ const Sales = () => {
     {
       key: 'saleNumber',
       label: 'Sale Number',
-      render: (_, record) => <span className="text-black font-medium">{record.saleNumber}</span>
+      render: (_, record) => <span className="text-foreground font-medium">{record.saleNumber}</span>
     },
     {
       key: 'customer',
       label: 'Customer',
       render: (_, record) => (
-        <span className="text-black">
+        <span className="text-foreground">
           {record.customer?.name || 'Walk-in Customer'}
         </span>
       )
@@ -288,8 +359,8 @@ const Sales = () => {
       key: 'total',
       label: 'Total',
       render: (_, record) => (
-        <span className="text-black font-medium">
-          GHS {parseFloat(record.total || 0).toFixed(2)}
+        <span className="text-foreground font-medium">
+          ₵ {parseFloat(record.total || 0).toFixed(2)}
         </span>
       )
     },
@@ -297,7 +368,7 @@ const Sales = () => {
       key: 'paymentMethod',
       label: 'Payment Method',
       render: (_, record) => (
-        <Badge variant="outline" className="text-black">
+        <Badge variant="outline" className="text-foreground">
           {paymentMethodLabels[record.paymentMethod] || record.paymentMethod}
         </Badge>
       )
@@ -311,7 +382,7 @@ const Sales = () => {
       key: 'createdAt',
       label: 'Date',
       render: (_, record) => (
-        <span className="text-black">
+        <span className="text-foreground">
           {dayjs(record.createdAt).format('MMM DD, YYYY')}
         </span>
       )
@@ -324,14 +395,7 @@ const Sales = () => {
           record={record}
           onView={handleView}
           extraActions={[
-            record.paymentMethod !== 'credit' && record.status === 'completed' && {
-              key: 'print-receipt',
-              label: 'Print Receipt',
-              variant: 'secondary',
-              icon: <Printer className="h-4 w-4" />,
-              onClick: () => handlePrintReceipt(record)
-            },
-            record.paymentMethod === 'credit' && record.invoiceId && {
+            record.invoiceId && {
               key: 'view-invoice',
               label: 'View Invoice',
               variant: 'secondary',
@@ -342,7 +406,7 @@ const Sales = () => {
         />
       )
     }
-  ], [handleView, handlePrintReceipt, handleViewInvoice]);
+  ], [handleView, handleViewInvoice]);
 
   const drawerFields = useMemo(() => viewingSale ? [
     { label: 'Sale Number', value: viewingSale.saleNumber },
@@ -370,31 +434,31 @@ const Sales = () => {
     },
     {
       label: 'Subtotal',
-      value: `GHS ${parseFloat(viewingSale.subtotal || 0).toFixed(2)}`
+      value: `₵ ${parseFloat(viewingSale.subtotal || 0).toFixed(2)}`
     },
     {
       label: 'Discount',
-      value: `GHS ${parseFloat(viewingSale.discount || 0).toFixed(2)}`
+      value: `₵ ${parseFloat(viewingSale.discount || 0).toFixed(2)}`
     },
     {
       label: 'Tax',
-      value: `GHS ${parseFloat(viewingSale.tax || 0).toFixed(2)}`
+      value: `₵ ${parseFloat(viewingSale.tax || 0).toFixed(2)}`
     },
     {
       label: 'Total',
       value: (
         <strong className="text-lg text-primary">
-          GHS {parseFloat(viewingSale.total || 0).toFixed(2)}
+          ₵ {parseFloat(viewingSale.total || 0).toFixed(2)}
         </strong>
       )
     },
     {
       label: 'Amount Paid',
-      value: `GHS ${parseFloat(viewingSale.amountPaid || 0).toFixed(2)}`
+      value: `₵ ${parseFloat(viewingSale.amountPaid || 0).toFixed(2)}`
     },
     viewingSale.change > 0 && {
       label: 'Change',
-      value: `GHS ${parseFloat(viewingSale.change || 0).toFixed(2)}`
+      value: `₵ ${parseFloat(viewingSale.change || 0).toFixed(2)}`
     },
     viewingSale.shop && {
       label: 'Shop',
@@ -425,10 +489,10 @@ const Sales = () => {
 
   if (!isShop) {
     return (
-      <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+      <div className="px-6 py-4 md:p-6 space-y-4 md:space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Sales</h1>
+            <h1 className="text-3xl font-bold text-foreground">Sales</h1>
             <p className="text-gray-600 mt-1">Track and manage your sales transactions</p>
           </div>
         </div>
@@ -436,11 +500,11 @@ const Sales = () => {
         <Card className="border border-gray-200">
           <CardContent className="p-12">
             <div className="flex flex-col items-center justify-center text-center space-y-4">
-              <div className="w-20 h-20 rounded-full bg-gray-100 flex items-center justify-center">
+              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
                 <ShoppingCart className="h-10 w-10 text-gray-400" />
               </div>
               <div>
-                <h2 className="text-2xl font-semibold text-gray-900 mb-2">Not Available</h2>
+                <h2 className="text-2xl font-semibold text-foreground mb-2">Not Available</h2>
                 <p className="text-gray-600 max-w-md">
                   Sales management is only available for shop business types.
                 </p>
@@ -460,55 +524,74 @@ const Sales = () => {
           subText="Track and manage your sales transactions."
         />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-            <Filter className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Filter</span>}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={() => fetchSales(true)}
-            disabled={refreshingSales}
-            size={isMobile ? "icon" : "default"}
-          >
-            {refreshingSales ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
-          <Button onClick={() => setPosModalOpen(true)} size={isMobile ? "icon" : "default"}>
-            <ShoppingCart className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Point of Sale</span>}
-          </Button>
+          <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+                <Filter className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Filter</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Filter sales by status, customer, or date</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                onClick={() => fetchSales(true)}
+                disabled={refreshingSales}
+                size={isMobile ? "icon" : "default"}
+              >
+                {refreshingSales ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Reload sales list</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={() => setPosModalOpen(true)} size={isMobile ? "icon" : "default"}>
+                <ShoppingCart className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Point of Sale</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Open Point of Sale to record a new sale or scan products</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <DashboardStatsCard
+          tooltip="Total number of sales matching the current filters"
           title="Total Sales"
-          value={sales.length}
+          value={totalSalesCount}
           icon={ShoppingCart}
           iconBgColor="rgba(22, 101, 52, 0.1)"
           iconColor="#166534"
         />
         <DashboardStatsCard
+          tooltip={isRestaurant ? 'Orders completed (kitchen done or not sent to kitchen)' : 'Sales that have been paid and completed'}
           title="Completed"
-          value={sales.filter(s => s.status === 'completed').length}
+          value={completedCount}
           icon={CheckCircle}
           iconBgColor="rgba(132, 204, 22, 0.1)"
           iconColor="#84cc16"
         />
         <DashboardStatsCard
-          title="Pending"
-          value={sales.filter(s => s.status === 'pending').length}
+          tooltip={isRestaurant ? 'Orders in kitchen (received, preparing, or ready)' : 'Sales awaiting payment'}
+          title={isRestaurant ? 'Pending (in kitchen)' : 'Pending'}
+          value={pendingCount}
           icon={Clock}
           iconBgColor="rgba(59, 130, 246, 0.1)"
           iconColor="#3b82f6"
         />
         <DashboardStatsCard
+          tooltip="Total amount from all sales in the current view"
           title="Total Revenue"
-          value={`GHS ${sales.reduce((sum, s) => sum + parseFloat(s.total || 0), 0).toFixed(2)}`}
+          value={`₵ ${sales.reduce((sum, s) => sum + parseFloat(s.total || 0), 0).toFixed(2)}`}
           icon={Receipt}
           iconBgColor="rgba(22, 101, 52, 0.1)"
           iconColor="#166534"
@@ -520,8 +603,17 @@ const Sales = () => {
         columns={tableColumns}
         loading={loading}
         title={null}
-        emptyIcon={<ShoppingCart className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No sales found"
+        emptyIcon={!hasProducts ? <Package className="h-12 w-12 text-muted-foreground" /> : <ShoppingCart className="h-12 w-12 text-muted-foreground" />}
+        emptyDescription={!hasProducts ? "You haven't added any products yet. Add your products first before you can start selling." : "No sales found"}
+        emptyAction={!hasProducts ? (
+          <Button
+            onClick={() => navigate('/products?add=1')}
+            className="bg-[#166534] hover:bg-[#14532d] text-white"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Add Your First Product
+          </Button>
+        ) : undefined}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);
@@ -530,9 +622,24 @@ const Sales = () => {
           current: pagination.current,
           total: pagination.total
         }}
+        viewMode={tableViewMode}
+        onViewModeChange={setTableViewMode}
+        getCardImage={(sale) => {
+          const firstItemWithImage = sale?.items?.find(
+            (i) => i?.product?.imageUrl
+          );
+          const url = firstItemWithImage?.product?.imageUrl;
+          return url ? resolveImageUrl(url) : null;
+        }}
       />
 
-      <Dialog open={posModalOpen} onOpenChange={setPosModalOpen}>
+      <Dialog
+        open={posModalOpen}
+        onOpenChange={(open) => {
+          setPosModalOpen(open);
+          if (!open) fetchSales();
+        }}
+      >
         <DialogContent
           className="!left-1/2 !top-1/2 !-translate-x-1/2 !-translate-y-1/2 !w-[98vw] !h-[98vh] !max-w-[98vw] !max-h-[98vh] !min-h-0 !p-0 !gap-0 overflow-hidden flex flex-col rounded-lg"
           aria-describedby={undefined}
@@ -556,7 +663,7 @@ const Sales = () => {
       </Dialog>
 
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto">
+        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto">
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Sales</SheetTitle>
           </SheetHeader>
@@ -660,16 +767,20 @@ const Sales = () => {
         onClose={handleCloseDrawer}
         title="Sale Details"
         width={720}
-        onPrint={viewingSale && viewingSale.paymentMethod !== 'credit' ? () => handlePrintReceipt(viewingSale) : null}
+        onPrint={viewingSale && viewingSale.status === 'completed' && ((viewingSale.invoiceId && viewingSale.invoice?.status === 'paid') || (viewingSale.paymentMethod !== 'credit' && !viewingSale.invoiceId)) ? () => handlePrintReceipt(viewingSale) : null}
+        printDisabled={loadingReceipt}
+        onDelete={viewingSale ? () => handleDeleteSale(viewingSale.id) : null}
+        deleteConfirmText="Are you sure you want to delete this sale? This action cannot be undone."
         extraActions={viewingSale ? [
-          viewingSale.paymentMethod !== 'credit' && viewingSale.status === 'completed' && {
+          (viewingSale.status === 'completed' && ((viewingSale.invoiceId && viewingSale.invoice?.status === 'paid') || (viewingSale.paymentMethod !== 'credit' && !viewingSale.invoiceId))) && {
             key: 'print-receipt',
-            label: 'Print Receipt',
-            variant: 'default',
-            icon: <Printer className="h-4 w-4" />,
-            onClick: () => handlePrintReceipt(viewingSale)
+            label: loadingReceipt ? 'Loading...' : 'Print Receipt',
+            variant: 'secondary',
+            icon: loadingReceipt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />,
+            onClick: () => handlePrintReceipt(viewingSale),
+            disabled: loadingReceipt
           },
-          viewingSale.paymentMethod === 'credit' && viewingSale.invoiceId && {
+          viewingSale.invoiceId && {
             key: 'view-invoice',
             label: 'View Invoice',
             variant: 'default',
@@ -681,14 +792,31 @@ const Sales = () => {
           {
             key: 'details',
             label: 'Summary',
-            content: loadingSaleDetails ? (
-              <DetailSkeleton />
-            ) : (
+            content: (
               <div className="space-y-6">
                 <DrawerSectionCard title="Sale summary">
+                  {(viewingSale.items || []).some((i) => i?.product?.imageUrl) && (
+                    <div className="flex flex-wrap gap-2 mb-4 pb-4 border-b border-gray-200">
+                      {viewingSale.items
+                        .filter((i) => i?.product?.imageUrl)
+                        .map((item) => (
+                          <div
+                            key={item.id}
+                            className="w-14 h-14 rounded-lg overflow-hidden border border-border bg-muted flex-shrink-0"
+                          >
+                            <img
+                              src={resolveImageUrl(item.product.imageUrl)}
+                              alt={item.name || item.product?.name || ''}
+                              className="w-full h-full object-cover"
+                              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                            />
+                          </div>
+                        ))}
+                    </div>
+                  )}
                   <div className="flex justify-between items-center mb-4">
                     <div>
-                      <div className="text-lg font-semibold text-gray-900">{viewingSale.saleNumber}</div>
+                      <div className="text-lg font-semibold text-foreground">{viewingSale.saleNumber}</div>
                       <div className="text-muted-foreground text-sm">
                         {dayjs(viewingSale.createdAt).format('MMM DD, YYYY [at] h:mm A')}
                       </div>
@@ -696,7 +824,7 @@ const Sales = () => {
                     <div className="text-right">
                       <div className="text-sm text-muted-foreground">Total Amount</div>
                       <div className="text-2xl font-bold text-primary">
-                        GHS {parseFloat(viewingSale.total || 0).toFixed(2)}
+                        ₵ {parseFloat(viewingSale.total || 0).toFixed(2)}
                       </div>
                     </div>
                   </div>
@@ -718,44 +846,60 @@ const Sales = () => {
               <DrawerSectionCard title="Itemized charges">
                 {(viewingSale.items || []).length ? (
                   <div className="space-y-0">
-                    <div className="grid grid-cols-12 gap-2 pb-2 border-b border-gray-200 text-sm font-semibold text-gray-900">
+                    <div className="grid grid-cols-12 gap-2 pb-2 border-b border-gray-200 text-sm font-semibold text-foreground">
                       <div className="col-span-6">Item</div>
                       <div className="col-span-2 text-right">Qty</div>
-                      <div className="col-span-2 text-right">Unit price (GHS)</div>
-                      <div className="col-span-2 text-right">Total (GHS)</div>
+                      <div className="col-span-2 text-right">Unit price (₵)</div>
+                      <div className="col-span-2 text-right">Total (₵)</div>
                     </div>
                     {viewingSale.items.map((item) => (
                       <div
                         key={item.id}
-                        className="grid grid-cols-12 gap-2 py-3 border-b border-gray-200/80 last:border-b-0 text-sm"
+                        className="grid grid-cols-12 gap-2 py-3 border-b border-gray-200/80 last:border-b-0 text-sm items-center"
                       >
-                        <div className="col-span-6">
-                          <div className="font-medium text-gray-900">{item.name || item.product?.name || 'Product'}</div>
-                          {item.sku && (
-                            <div className="text-muted-foreground text-xs mt-0.5">SKU: {item.sku}</div>
+                        <div className="col-span-6 flex items-center gap-3">
+                          {item?.product?.imageUrl ? (
+                            <div className="w-12 h-12 rounded-lg overflow-hidden border border-border bg-muted flex-shrink-0">
+                              <img
+                                src={resolveImageUrl(item.product.imageUrl)}
+                                alt={item.name || item.product?.name || ''}
+                                className="w-full h-full object-cover"
+                                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                              />
+                            </div>
+                          ) : (
+                            <div className="w-12 h-12 rounded-lg border border-border bg-muted flex-shrink-0 flex items-center justify-center">
+                              <ShoppingCart className="h-5 w-5 text-gray-400" />
+                            </div>
                           )}
+                          <div className="min-w-0">
+                            <div className="font-medium text-foreground">{item.name || item.product?.name || 'Product'}</div>
+                            {item.sku && (
+                              <div className="text-muted-foreground text-xs mt-0.5">SKU: {item.sku}</div>
+                            )}
+                          </div>
                         </div>
                         <div className="col-span-2 text-right text-gray-700">{item.quantity}</div>
                         <div className="col-span-2 text-right text-gray-700">{parseFloat(item.unitPrice || 0).toFixed(2)}</div>
-                        <div className="col-span-2 text-right font-medium text-gray-900">{parseFloat(item.total || 0).toFixed(2)}</div>
+                        <div className="col-span-2 text-right font-medium text-foreground">{parseFloat(item.total || 0).toFixed(2)}</div>
                       </div>
                     ))}
                     <div className="pt-3 mt-2 border-t border-gray-200 space-y-1 text-sm">
                       <div className="flex justify-between text-muted-foreground">
                         <span>Subtotal</span>
-                        <span className="text-gray-900 font-medium">GHS {parseFloat(viewingSale.subtotal || 0).toFixed(2)}</span>
+                        <span className="text-foreground font-medium">₵ {parseFloat(viewingSale.subtotal || 0).toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between text-muted-foreground">
                         <span>Discount</span>
-                        <span className="text-gray-900">-GHS {parseFloat(viewingSale.discount || 0).toFixed(2)}</span>
+                        <span className="text-foreground">-₵ {parseFloat(viewingSale.discount || 0).toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between text-muted-foreground">
                         <span>Tax</span>
-                        <span className="text-gray-900">GHS {parseFloat(viewingSale.tax || 0).toFixed(2)}</span>
+                        <span className="text-foreground">₵ {parseFloat(viewingSale.tax || 0).toFixed(2)}</span>
                       </div>
-                      <div className="flex justify-between text-base font-semibold text-gray-900 pt-2">
+                      <div className="flex justify-between text-base font-semibold text-foreground pt-2">
                         <span>Total</span>
-                        <span>GHS {parseFloat(viewingSale.total || 0).toFixed(2)}</span>
+                        <span>₵ {parseFloat(viewingSale.total || 0).toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -808,12 +952,12 @@ const Sales = () => {
                     <TimelineItem key={activity.id} isLast={isLast}>
                       <TimelineIndicator />
                       <TimelineContent>
-                        <TimelineTitle className="text-black">
+                        <TimelineTitle className="text-foreground">
                           {activity.createdByUser 
                             ? `${activity.createdByUser.name} created sale ${viewingSale.saleNumber}`
                             : `Sale ${viewingSale.saleNumber} created`}
                         </TimelineTitle>
-                        <TimelineTime className="text-black">
+                        <TimelineTime className="text-foreground">
                           {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
                         </TimelineTime>
                       </TimelineContent>
@@ -832,18 +976,18 @@ const Sales = () => {
                   <TimelineItem key={activity.id} isLast={isLast}>
                     <TimelineIndicator />
                     <TimelineContent>
-                      <TimelineTitle className="text-black">
+                      <TimelineTitle className="text-foreground">
                         {activityTypeLabels[activity.type] || activity.type.toUpperCase()} {activity.subject ? `- ${activity.subject}` : ''}
                       </TimelineTitle>
-                      <TimelineTime className="text-black">
+                      <TimelineTime className="text-foreground">
                         {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
                         {activity.createdByUser ? ` • ${activity.createdByUser.name}` : ''}
                       </TimelineTime>
                       {activity.notes && (
-                        <TimelineDescription className="text-black">{activity.notes}</TimelineDescription>
+                        <TimelineDescription className="text-foreground">{activity.notes}</TimelineDescription>
                       )}
                       {activity.metadata?.oldStatus && activity.metadata?.newStatus && (
-                        <TimelineDescription className="text-black">
+                        <TimelineDescription className="text-foreground">
                           Status: {activity.metadata.oldStatus} → {activity.metadata.newStatus}
                         </TimelineDescription>
                       )}
@@ -865,22 +1009,37 @@ const Sales = () => {
       />
 
       <Dialog open={printModalVisible} onOpenChange={setPrintModalVisible}>
-        <DialogContent className="!inset-0 !translate-x-0 !translate-y-0 !max-w-none w-screen h-screen flex flex-col p-0 !rounded-none">
-          <DialogHeader className="px-6 py-4 border-b flex-shrink-0">
-            <div className="flex items-center justify-between">
+        <DialogContent className="max-w-[95vw] sm:max-w-[920px] max-h-[90vh] flex flex-col p-0 rounded-2xl">
+          <DialogHeader className="px-4 sm:px-6 py-4 border-b flex-shrink-0 text-left no-print">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-0">
               <div>
                 <DialogTitle>Receipt Preview</DialogTitle>
                 <DialogDescription>
                   Review the receipt before downloading
                 </DialogDescription>
               </div>
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setPrintModalVisible(false)}>
-                  Close
+              <div className="flex gap-2 w-full sm:w-auto">
+                <Button
+                  variant="outline"
+                  className="flex-1 sm:flex-initial"
+                  onClick={() => {
+                    const wrapper = document.querySelector(
+                      receiptData?.invoice ? '.printable-invoice' : '.printable-receipt'
+                    )?.parentElement;
+                    if (wrapper && receiptData) {
+                      openPrintDialog(wrapper, `Receipt-${receiptData.saleNumber || 'receipt'}`);
+                    }
+                  }}
+                >
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print
                 </Button>
                 <Button 
+                  className="flex-1 sm:flex-initial"
                   onClick={async () => {
-                    const element = document.querySelector('.printable-receipt');
+                    const element = document.querySelector(
+                      receiptData?.invoice ? '.printable-invoice' : '.printable-receipt'
+                    );
                     if (element && receiptData) {
                       try {
                         await generatePDF(element, {
@@ -902,19 +1061,53 @@ const Sales = () => {
               </div>
             </div>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto bg-gray-100 p-4 md:p-8">
-            <div className="max-w-[900px] mx-auto" id="receipt-pdf-content">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden bg-muted/50 p-2 sm:p-4 md:p-8">
+            <div className="max-w-full sm:max-w-[900px] mx-auto w-full" id="receipt-pdf-content">
               {receiptData && (
-                <PrintableReceipt 
-                  key={receiptData.id || 'receipt'} 
-                  sale={receiptData} 
-                  organization={organization} 
-                />
+                receiptData.invoice ? (
+                  <PrintableInvoice
+                    key={receiptData.invoice.id || 'receipt'}
+                    invoice={receiptData.invoice}
+                    documentTitle="RECEIPT"
+                    saleNumber={receiptData.saleNumber}
+                    organization={organization}
+                    printConfig={printConfig}
+                  />
+                ) : (
+                  <PrintableReceipt
+                    key={receiptData.id || 'receipt'}
+                    sale={receiptData}
+                    organization={organization}
+                    printConfig={printConfig}
+                  />
+                )
               )}
             </div>
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!saleToDelete} onOpenChange={(open) => !open && setSaleToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete sale?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {saleToDelete
+                ? `Are you sure you want to delete sale "${saleToDelete.saleNumber || saleToDelete.id}"? This action cannot be undone.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => saleToDelete && handleDeleteSale(saleToDelete.id)}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

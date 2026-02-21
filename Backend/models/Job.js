@@ -9,7 +9,7 @@ const Job = sequelize.define('Job', {
   },
   tenantId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true, // Allow NULL for admin jobs
     references: {
       model: 'tenants',
       key: 'id'
@@ -23,7 +23,7 @@ const Job = sequelize.define('Job', {
   },
   customerId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true, // Allow NULL for admin jobs
     references: {
       model: 'customers',
       key: 'id'
@@ -122,16 +122,21 @@ const Job = sequelize.define('Job', {
   attachments: {
     type: DataTypes.JSONB,
     defaultValue: []
+  },
+  adminLeadId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'leads',
+      key: 'id'
+    }
   }
 }, {
   timestamps: true,
   tableName: 'jobs',
   indexes: [
-    {
-      unique: true,
-      fields: ['tenantId', 'jobNumber'],
-      name: 'jobs_tenantId_jobNumber_key'
-    }
+    // Note: Unique constraint is now handled via partial index in migration
+    // This allows NULL tenantId (admin jobs) to have duplicate jobNumbers
   ]
 });
 

@@ -4,19 +4,23 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { 
   Pill, Plus, Search, MoreHorizontal, Edit, Trash2, AlertTriangle, 
-  RefreshCw, Package, DollarSign, Calendar 
+  RefreshCw, Package, Currency, Calendar 
 } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
+import { PRODUCT_UNITS } from '../constants';
 
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
+import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogBody,
+  DialogFooter,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -243,7 +247,7 @@ const Drugs = () => {
         const isOut = qty <= 0;
         
         return (
-          <div className={`font-medium ${isOut ? 'text-red-600' : isLow ? 'text-orange-600' : 'text-gray-900'}`}>
+          <div className={`font-medium ${isOut ? 'text-red-600' : isLow ? 'text-orange-600' : 'text-foreground'}`}>
             {qty} {row.original.unit}
             {(isLow || isOut) && <AlertTriangle className="h-3 w-3 inline ml-1" />}
           </div>
@@ -255,7 +259,7 @@ const Drugs = () => {
       header: 'Price',
       cell: ({ row }) => (
         <span className="font-medium">
-          GHS {parseFloat(row.original.sellingPrice || 0).toFixed(2)}
+          ₵ {parseFloat(row.original.sellingPrice || 0).toFixed(2)}
         </span>
       ),
     },
@@ -398,36 +402,45 @@ const Drugs = () => {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Drugs</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-foreground">Drugs</h1>
           <p className="text-gray-600 mt-1">Manage your drug catalog with expiry tracking</p>
         </div>
-        <Button onClick={handleCreate} className="bg-[#166534] hover:bg-[#14532d] text-white">
-          <Plus className="h-4 w-4 mr-2" />
-          Add Drug
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button onClick={handleCreate} className="bg-[#166534] hover:bg-[#14532d] text-white">
+              <Plus className="h-4 w-4 mr-2" />
+              Add Drug
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Add a new drug to catalog</TooltipContent>
+        </Tooltip>
       </div>
       
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <DashboardStatsCard
+          tooltip="Total drugs in catalog"
           title="Total Drugs"
           value={stats.total}
           subtitle={`${stats.total} in catalog`}
           icon={Pill}
         />
         <DashboardStatsCard
+          tooltip="Drugs below minimum stock"
           title="Low Stock"
           value={stats.lowStock}
           subtitle={`${stats.lowStock} items`}
           icon={Package}
         />
         <DashboardStatsCard
+          tooltip="Drugs with zero stock"
           title="Out of Stock"
           value={stats.outOfStock}
           subtitle={`${stats.outOfStock} items`}
           icon={AlertTriangle}
         />
         <DashboardStatsCard
+          tooltip="Drugs expiring within 30 days"
           title="Expiring Soon"
           value={stats.expiringSoon}
           subtitle="Within 30 days"
@@ -463,10 +476,14 @@ const Drugs = () => {
                 </SelectContent>
               </Select>
             </div>
-            <SecondaryButton onClick={fetchDrugs} size={isMobile ? 'icon' : 'default'}>
-              <RefreshCw className="h-4 w-4" />
-              {!isMobile && <span className="ml-2">Refresh</span>}
-            </SecondaryButton>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SecondaryButton onClick={fetchDrugs} size={isMobile ? 'icon' : 'default'}>
+                  <RefreshCw className="h-4 w-4" />
+                </SecondaryButton>
+              </TooltipTrigger>
+              <TooltipContent>Refresh drugs list</TooltipContent>
+            </Tooltip>
           </div>
         </CardContent>
       </Card>
@@ -504,7 +521,7 @@ const Drugs = () => {
           </DialogHeader>
           <DialogBody>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <form id="drug-form" onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField
                 control={form.control}
                 name="name"
@@ -620,9 +637,20 @@ const Drugs = () => {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Unit</FormLabel>
-                      <FormControl>
-                        <Input placeholder="pcs" {...field} />
-                      </FormControl>
+                      <Select value={field.value || undefined} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select unit" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {PRODUCT_UNITS.map((u) => (
+                            <SelectItem key={u.value} value={u.value}>
+                              {u.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -635,7 +663,7 @@ const Drugs = () => {
                   name="costPrice"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Cost Price (GHS)</FormLabel>
+                      <FormLabel>Cost Price (₵)</FormLabel>
                       <FormControl>
                         <Input type="number" step="0.01" {...field} />
                       </FormControl>
@@ -649,7 +677,7 @@ const Drugs = () => {
                   name="sellingPrice"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Selling Price (GHS)</FormLabel>
+                      <FormLabel>Selling Price (₵)</FormLabel>
                       <FormControl>
                         <Input type="number" step="0.01" {...field} />
                       </FormControl>
@@ -748,22 +776,22 @@ const Drugs = () => {
                   </FormItem>
                 )}
               />
-              
-              <div className="flex justify-end gap-2 pt-4 sticky bottom-0 bg-white pb-2">
-                <SecondaryButton type="button" onClick={() => setIsModalOpen(false)}>
-                  Cancel
-                </SecondaryButton>
-                <Button 
-                  type="submit" 
-                  className="bg-[#166534] hover:bg-[#14532d] text-white"
-                  loading={isSubmitting}
-                >
-                  {editingDrug ? 'Update Drug' : 'Create Drug'}
-                </Button>
-              </div>
             </form>
           </Form>
           </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              type="submit" 
+              form="drug-form"
+              className="bg-[#166534] hover:bg-[#14532d] text-white"
+              loading={isSubmitting}
+            >
+              {editingDrug ? 'Update Drug' : 'Create Drug'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       

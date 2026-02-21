@@ -247,12 +247,12 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
               </div>
             ) : (
               <>
-                <div className="relative w-full rounded-lg overflow-hidden min-h-[200px] bg-gray-100 border border-gray-200">
+                <div className="relative w-full rounded-lg overflow-hidden min-h-[200px] bg-muted border border-border">
                   {isStarting && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-white/90 z-10">
+                    <div className="absolute inset-0 flex items-center justify-center bg-background/90 z-10">
                       <div className="text-center">
                         <Loader2 className="h-8 w-8 animate-spin text-[#166534] mx-auto" />
-                        <p className="text-sm text-gray-600 mt-2">Starting camera…</p>
+                        <p className="text-sm text-gray-600 mt-2">Starting camera...</p>
                       </div>
                     </div>
                   )}
@@ -275,7 +275,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
                     </Label>
                     <div className="flex gap-2">
                       <Input
-                        placeholder="Type or paste barcode number…"
+                        placeholder="Type or paste barcode number..."
                         value={barcodeInput}
                         onChange={(e) => setBarcodeInput(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleBarcodeLookup())}
@@ -295,7 +295,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
                     <Label>Search by name or SKU</Label>
                     <div className="flex gap-2">
                       <Input
-                        placeholder="Search product…"
+                        placeholder="Search product..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleSearch())}
@@ -310,7 +310,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
                           <li key={p.id}>
                             <button
                               type="button"
-                              className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm"
+                              className="w-full text-left px-3 py-2 hover:bg-muted text-sm"
                               onClick={() => selectProduct(p)}
                             >
                               <span className="font-medium">{p.name}</span>
@@ -335,14 +335,21 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
 
         {step === 'confirm' && product && (
           <div className="space-y-4">
-            <div className="p-3 rounded-lg border border-gray-200 bg-gray-50">
+            <div className="p-3 rounded-lg border border-border bg-muted">
               <p className="font-medium">{product.name}</p>
               {product.sku && <p className="text-sm text-gray-500">SKU: {product.sku}</p>}
               {product.barcode && <p className="text-sm text-gray-500">Barcode: {product.barcode}</p>}
-              <p className="text-sm mt-1">
-                Current stock: {displayQty.toLocaleString()} {product.unit || 'units'}
-              </p>
+              {product.trackStock === false ? (
+                <p className="text-sm mt-1 text-amber-700">
+                  Made to order – stock is not tracked. Cannot receive stock.
+                </p>
+              ) : (
+                <p className="text-sm mt-1">
+                  Current stock: {displayQty.toLocaleString()} {product.unit || 'units'}
+                </p>
+              )}
             </div>
+            {product.trackStock !== false && (
             <div className="space-y-2">
               <Label htmlFor="receive-qty">Quantity received</Label>
               <Input
@@ -361,6 +368,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
                 }}
               />
             </div>
+            )}
             <div className="flex flex-wrap gap-2 justify-end">
               <SecondaryButton onClick={handleAddAnother} disabled={loading}>
                 Add another
@@ -368,9 +376,11 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
               <SecondaryButton onClick={handleDone} disabled={loading}>
                 Done
               </SecondaryButton>
+              {product.trackStock !== false && (
               <Button onClick={handleAddToStock} loading={loading}>
                 Add to stock
               </Button>
+              )}
             </div>
           </div>
         )}

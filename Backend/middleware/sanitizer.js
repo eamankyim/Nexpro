@@ -32,6 +32,20 @@ const SKIP_FIELDS = [
 ];
 
 /**
+ * URL/path fields that must not be HTML-escaped (validator.escape turns / into &#x2F;)
+ * Escaping these breaks image and file URLs when stored and returned by the API.
+ */
+const URL_PATH_FIELDS = [
+  'imageUrl',
+  'logoUrl',
+  'profilePicture',
+  'fileUrl',
+  'url',
+  'avatar',
+  'photo',
+];
+
+/**
  * Fields that may contain HTML (sanitize but allow some formatting)
  */
 const HTML_FIELDS = [
@@ -81,6 +95,11 @@ const sanitizeValue = (value, key = '') => {
   if (SKIP_FIELDS.includes(key)) {
     return value;
   }
+
+  // Skip HTML-escaping for URL/path fields (validator.escape turns / into &#x2F; and breaks URLs)
+  if (URL_PATH_FIELDS.includes(key)) {
+    return xss(value.trim(), xssOptions);
+  }
   
   // Trim whitespace
   let sanitized = value.trim();
@@ -92,7 +111,7 @@ const sanitizeValue = (value, key = '') => {
     sanitized = xss(sanitized, xssOptions);
   }
   
-  // Escape potential injection characters (but not for HTML fields)
+  // Escape potential injection characters (but not for HTML or URL fields)
   if (!HTML_FIELDS.includes(key)) {
     sanitized = validator.escape(sanitized);
     // Unescape common characters that validator.escape() encodes

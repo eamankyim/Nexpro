@@ -58,15 +58,15 @@ const FEATURE_CATALOG = [
     }
   },
   {
-    key: 'inventory',
-    name: 'Inventory Tracking & Vendor Price Lists',
-    description: 'Manage inventory, stock levels, and vendor pricing',
+    key: 'materials',
+    name: 'Materials & Vendor Price Lists',
+    description: 'Manage materials, stock levels, and vendor pricing',
     category: 'operations',
-    routes: ['/inventory'],
+    routes: ['/materials'],
     requiredForModules: [],
     marketingCopy: {
-      highlight: 'Full inventory management with vendor price lists',
-      perk: 'Inventory controls & vendor pricing'
+      highlight: 'Full materials management with vendor price lists',
+      perk: 'Materials controls & vendor pricing'
     }
   },
   {
@@ -285,7 +285,7 @@ const getFeaturesForPlan = (planId) => {
   const planFeatures = {
     trial: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'reports', 'leadPipeline', 'roleManagement'],
     launch: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],
-    scale: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'inventory', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting'],
+    scale: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting'],
     enterprise: FEATURE_CATALOG.map(f => f.key) // all features
   };
   return planFeatures[planId] || [];

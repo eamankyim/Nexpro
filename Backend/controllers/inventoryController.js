@@ -10,6 +10,7 @@ const {
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { getPagination } = require('../utils/paginationUtils');
 
 const logInventoryDebug = (...args) => {
   if (config.nodeEnv === 'development') {
@@ -37,10 +38,96 @@ const buildItemInclude = () => ([
 
 exports.getInventoryCategories = async (req, res, next) => {
   try {
-    const categories = await InventoryCategory.findAll({
-      where: applyTenantFilter(req.tenantId, {}),
-      order: [['name', 'ASC']]
+    const tenant = req.tenant;
+    const { resolveBusinessType } = require('../config/businessTypes');
+    const rawBusinessType = tenant?.businessType ?? null;
+    const businessType = resolveBusinessType(rawBusinessType);
+    const studioType = tenant?.metadata?.studioType || null;
+    const shopType = tenant?.metadata?.shopType || null;
+
+    logInventoryDebug('getInventoryCategories', {
+      tenantId: req.tenantId,
+      rawBusinessType,
+      resolvedBusinessType: businessType,
+      studioType,
+      shopType,
+      why: shopType ? 'tenant has shopType – only type-matched categories should be returned' : (studioType ? 'tenant has studioType' : 'no specific type – legacy (null) + generic categories included')
     });
+
+    const baseWhere = {
+      ...applyTenantFilter(req.tenantId, {}),
+      isActive: true
+    };
+
+    let categories;
+    try {
+      const whereConditions = [];
+      // Legacy (businessType=null) only when tenant has no specific type — otherwise non‑restaurant
+      // shops would see old grocery/restaurant categories that were stored with null type.
+      const hasSpecificType = (businessType === 'shop' && shopType) || (businessType === 'studio' && studioType) || businessType === 'pharmacy';
+      if (!hasSpecificType) {
+        whereConditions.push({ ...baseWhere, businessType: null });
+      }
+      if (businessType === 'studio' && !studioType) {
+        whereConditions.push({ ...baseWhere, businessType: 'studio', studioType: null, shopType: null });
+      }
+      if (businessType === 'shop' && !shopType) {
+        whereConditions.push({ ...baseWhere, businessType: 'shop', studioType: null, shopType: null });
+      }
+      if (businessType === 'pharmacy') {
+        whereConditions.push({ ...baseWhere, businessType: 'pharmacy', studioType: null, shopType: null });
+      }
+      if (businessType === 'studio' && studioType) {
+        whereConditions.push({
+          ...baseWhere,
+          businessType: 'studio',
+          studioType,
+          shopType: null
+        });
+      }
+      if (businessType === 'shop' && shopType) {
+        whereConditions.push({
+          ...baseWhere,
+          businessType: 'shop',
+          shopType,
+          studioType: null
+        });
+      }
+
+      const conditionSummary = whereConditions.map((c) => ({
+        businessType: c.businessType ?? 'null',
+        studioType: c.studioType ?? 'null',
+        shopType: c.shopType ?? 'null'
+      }));
+      logInventoryDebug('getInventoryCategories whereConditions', { hasSpecificType, conditionSummary });
+
+      if (whereConditions.length === 0) {
+        categories = [];
+      } else {
+        categories = await InventoryCategory.findAll({
+          where: { [Op.or]: whereConditions },
+          order: [['name', 'ASC']]
+        });
+      }
+
+      logInventoryDebug('getInventoryCategories result', {
+        count: categories.length,
+        names: categories.map((c) => c.name),
+        perCategory: categories.map((c) => ({
+          name: c.name,
+          businessType: c.businessType ?? 'null',
+          studioType: c.studioType ?? 'null',
+          shopType: c.shopType ?? 'null'
+        }))
+      });
+    } catch (columnError) {
+      logInventoryDebug('getInventoryCategories columnError (fallback to baseWhere)', columnError?.message);
+      categories = await InventoryCategory.findAll({
+        where: baseWhere,
+        order: [['name', 'ASC']],
+        attributes: ['id', 'tenantId', 'name', 'description', 'isActive', 'metadata', 'createdAt', 'updatedAt']
+      });
+    }
     res.status(200).json({ success: true, data: categories });
   } catch (error) {
     next(error);
@@ -49,14 +136,30 @@ exports.getInventoryCategories = async (req, res, next) => {
 
 exports.createInventoryCategory = async (req, res, next) => {
   try {
-    const { name, description, metadata } = sanitizePayload(req.body || {});
+    const { name, description, metadata, businessType, studioType, shopType } = sanitizePayload(req.body || {});
     if (!name) {
       return res.status(400).json({ success: false, message: 'Category name is required' });
     }
+    const tenant = req.tenant;
+    const { resolveBusinessType } = require('../config/businessTypes');
+    const finalBusinessType = businessType || (tenant ? resolveBusinessType(tenant.businessType) : null);
+    const finalStudioType = studioType ?? (tenant?.metadata?.studioType || null);
+    const finalShopType = shopType ?? (tenant?.metadata?.shopType || null);
+
+    if (finalStudioType && finalBusinessType !== 'studio') {
+      return res.status(400).json({ success: false, message: 'studioType can only be set when businessType is "studio"' });
+    }
+    if (finalShopType && finalBusinessType !== 'shop') {
+      return res.status(400).json({ success: false, message: 'shopType can only be set when businessType is "shop"' });
+    }
+
     const category = await InventoryCategory.create({
       name,
       description: description || null,
       metadata: metadata || {},
+      businessType: finalBusinessType,
+      studioType: finalStudioType,
+      shopType: finalShopType,
       tenantId: req.tenantId
     });
     res.status(201).json({ success: true, data: category });
@@ -94,6 +197,7 @@ exports.getInventoryItems = async (req, res, next) => {
     const categoryId = req.query.categoryId;
     const status = req.query.status;
     const includeLowStock = req.query.lowStock === 'true';
+    const outOfStockOnly = req.query.outOfStock === 'true';
 
     const where = applyTenantFilter(req.tenantId, {});
 
@@ -115,7 +219,9 @@ exports.getInventoryItems = async (req, res, next) => {
       where.isActive = false;
     }
 
-    if (includeLowStock) {
+    if (outOfStockOnly) {
+      where.quantityOnHand = { [Op.lte]: 0 };
+    } else if (includeLowStock) {
       where[Op.and] = [
         Sequelize.literal(`"InventoryItem"."quantityOnHand" <= "InventoryItem"."reorderLevel"`)
       ];
@@ -330,6 +436,14 @@ exports.getInventorySummary = async (req, res, next) => {
         [
           Sequelize.fn('SUM', Sequelize.literal(`CASE WHEN "InventoryItem"."quantityOnHand" <= "InventoryItem"."reorderLevel" THEN 1 ELSE 0 END`)),
           'lowStockCount'
+        ],
+        [
+          Sequelize.fn('SUM', Sequelize.literal(`CASE WHEN "InventoryItem"."quantityOnHand" > 0 AND "InventoryItem"."quantityOnHand" > "InventoryItem"."reorderLevel" THEN 1 ELSE 0 END`)),
+          'inStockCount'
+        ],
+        [
+          Sequelize.fn('SUM', Sequelize.literal(`CASE WHEN "InventoryItem"."quantityOnHand" <= 0 THEN 1 ELSE 0 END`)),
+          'outOfStockCount'
         ]
       ],
       where: applyTenantFilter(req.tenantId, {})

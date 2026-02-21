@@ -77,6 +77,11 @@ const Sale = sequelize.define('Sale', {
     allowNull: false,
     defaultValue: 'completed'
   },
+  // Restaurant order tracking (received, preparing, ready, completed)
+  orderStatus: {
+    type: DataTypes.STRING(20),
+    allowNull: true
+  },
   // Invoice reference (if invoice was generated)
   invoiceId: {
     type: DataTypes.UUID,

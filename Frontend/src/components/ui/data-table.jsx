@@ -18,12 +18,15 @@ import {
 } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Empty } from "@/components/ui/empty"
 
 export function DataTable({
   columns,
   data,
   searchKey,
   searchPlaceholder = "Search...",
+  emptyDescription = "No results.",
+  emptyImage,
 }) {
   const [sorting, setSorting] = React.useState([])
   const [columnFilters, setColumnFilters] = React.useState([])
@@ -98,11 +101,8 @@ export function DataTable({
               ))
             ) : (
               <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="h-24 text-center"
-                >
-                  No results.
+                <TableCell colSpan={columns.length} className="p-0">
+                  <Empty description={emptyDescription} image={emptyImage} />
                 </TableCell>
               </TableRow>
             )}

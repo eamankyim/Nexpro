@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Search, Camera, X, Package, AlertCircle, Loader2, List, LayoutGrid, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -28,6 +29,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useResponsive } from '../../hooks/useResponsive';
 import { CURRENCY, DEBOUNCE_DELAYS } from '../../constants';
@@ -48,41 +50,44 @@ const formatCurrency = (amount) => {
  * Product search result item
  */
 const ProductItem = ({ product, onSelect, quantityInCart = 0 }) => {
+  const trackStock = product.trackStock !== false;
   const qty = Number(product.quantityOnHand);
   const reorderLevel = Number(product.reorderLevel);
   const quantityOnHand = Number.isFinite(qty) ? qty : 0;
   const reorder = Number.isFinite(reorderLevel) ? reorderLevel : 5;
-  const isLowStock = quantityOnHand <= reorder;
-  const isOutOfStock = quantityOnHand <= 0;
+  const isLowStock = trackStock && quantityOnHand <= reorder;
+  const isOutOfStock = trackStock && quantityOnHand <= 0;
   const inCart = quantityInCart > 0;
 
   return (
-    <div
-      className={cn(
-        'flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors border',
-        isOutOfStock
-          ? 'bg-gray-100 opacity-60 cursor-not-allowed border-gray-100'
-          : inCart
-            ? 'bg-green-50 border-green-300 hover:bg-green-100'
-            : 'border-transparent hover:bg-green-50 hover:border-green-200'
-      )}
-      onClick={() => !isOutOfStock && onSelect(product)}
-    >
-      {/* Product image or placeholder */}
-      <div className="w-12 h-12 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0 relative overflow-hidden">
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100 pointer-events-none" aria-hidden>
-          <Package className="h-6 w-6 text-gray-400" />
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className={cn(
+            'flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-colors border',
+            isOutOfStock
+              ? 'bg-muted opacity-60 cursor-not-allowed border-muted'
+              : inCart
+                ? 'bg-green-50 border-green-300 hover:bg-green-100'
+                : 'border-transparent hover:bg-green-50 hover:border-green-200'
+          )}
+          onClick={() => !isOutOfStock && onSelect(product)}
+        >
+      {/* Product image or placeholder - square */}
+      <div className="w-14 h-14 bg-muted rounded-lg flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+        <div className="absolute inset-0 flex items-center justify-center bg-muted pointer-events-none" aria-hidden>
+          <Package className="h-6 w-6 text-muted-foreground" />
         </div>
         {product.imageUrl && (
           <img
             src={resolveImageUrl(product.imageUrl) || ''}
             alt={product.name}
-            className="relative z-10 w-full h-full object-cover"
+            className="relative z-10 w-full h-full object-cover aspect-square"
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
         )}
         {inCart && (
-          <span className="absolute -top-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full bg-[#166534] text-white font-medium">
+          <span className="absolute -top-1 -right-1 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-[#166534] text-white font-medium">
             <Plus className="h-4 w-4" />
           </span>
         )}
@@ -90,8 +95,8 @@ const ProductItem = ({ product, onSelect, quantityInCart = 0 }) => {
 
       {/* Product details */}
       <div className="flex-1 min-w-0">
-        <p className="font-medium text-gray-900 truncate">{product.name}</p>
-        <div className="flex items-center gap-2 text-sm text-gray-500">
+        <p className="font-medium text-foreground truncate">{product.name}</p>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <span>SKU: {product.sku}</span>
           {product.barcode && (
             <>
@@ -114,20 +119,25 @@ const ProductItem = ({ product, onSelect, quantityInCart = 0 }) => {
           {formatCurrency(product.sellingPrice)}
         </p>
         <div className="flex items-center gap-1 justify-end">
-          {isOutOfStock ? (
+          {!trackStock ? (
+            <span className="text-xs text-muted-foreground">Made to order</span>
+          ) : isOutOfStock ? (
             <Badge variant="destructive" className="text-xs">Out of Stock</Badge>
           ) : isLowStock ? (
             <Badge variant="warning" className="text-xs bg-yellow-100 text-yellow-700">
               Low: {quantityOnHand}
             </Badge>
           ) : (
-            <span className="text-sm text-gray-500">
+            <span className="text-sm text-muted-foreground">
               Stock: {quantityOnHand}
             </span>
           )}
         </div>
       </div>
-    </div>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>Add to sale</TooltipContent>
+    </Tooltip>
   );
 };
 
@@ -135,51 +145,69 @@ const ProductItem = ({ product, onSelect, quantityInCart = 0 }) => {
  * Product card for grid view
  */
 const ProductCard = ({ product, onSelect, quantityInCart = 0 }) => {
+  const trackStock = product.trackStock !== false;
   const qty = Number(product.quantityOnHand);
   const reorderLevel = Number(product.reorderLevel);
   const quantityOnHand = Number.isFinite(qty) ? qty : 0;
   const reorder = Number.isFinite(reorderLevel) ? reorderLevel : 5;
-  const isLowStock = quantityOnHand <= reorder;
-  const isOutOfStock = quantityOnHand <= 0;
+  const isLowStock = trackStock && quantityOnHand <= reorder;
+  const isOutOfStock = trackStock && quantityOnHand <= 0;
   const inCart = quantityInCart > 0;
 
   return (
-    <div
-      className={cn(
-        'rounded-lg border p-3 flex flex-col transition-colors cursor-pointer min-h-[140px] relative',
-        isOutOfStock
-          ? 'border-gray-100 bg-gray-100 opacity-60 cursor-not-allowed'
-          : inCart
-            ? 'border-green-300 bg-green-50'
-            : 'border-gray-200 hover:border-green-300 hover:bg-green-50/50'
-      )}
-      onClick={() => !isOutOfStock && onSelect(product)}
-    >
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div
+          className={cn(
+            'rounded-lg border p-3 flex flex-col transition-colors cursor-pointer min-h-[140px] relative',
+            isOutOfStock
+              ? 'border-muted bg-muted opacity-60 cursor-not-allowed'
+              : inCart
+                ? 'border-green-300 bg-green-50'
+                : 'border-border hover:border-green-300 hover:bg-green-50/50 dark:hover:bg-green-950/30'
+          )}
+          onClick={() => !isOutOfStock && onSelect(product)}
+        >
       {inCart && (
-        <div className="absolute top-2 right-2 flex h-9 min-w-[36px] items-center justify-center gap-1 rounded-full bg-[#166534] px-2.5 text-white text-sm font-semibold">
+        <div className="absolute top-2 right-2 z-20 flex h-9 min-w-[36px] items-center justify-center gap-1 rounded-full bg-[#166534] px-2.5 text-white text-sm font-semibold">
           <Plus className="h-4 w-4" />
           {quantityInCart}
         </div>
       )}
-      <div className="w-full aspect-square max-h-20 bg-gray-100 rounded-md flex items-center justify-center flex-shrink-0 mb-2">
-        <Package className="h-8 w-8 text-gray-400" />
+      <div className="w-full aspect-square bg-muted rounded-md flex items-center justify-center flex-shrink-0 mb-2 relative overflow-hidden">
+        <div className="absolute inset-0 flex items-center justify-center bg-muted pointer-events-none" aria-hidden>
+          <Package className="h-8 w-8 text-muted-foreground" />
+        </div>
+        {product.imageUrl && (
+          <img
+            src={resolveImageUrl(product.imageUrl) || ''}
+            alt={product.name}
+            className="relative z-10 w-full h-full object-cover aspect-square"
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+          />
+        )}
       </div>
-      <p className="font-medium text-gray-900 text-sm truncate flex-1" title={product.name}>
+      <p className="font-medium text-foreground text-sm truncate flex-1" title={product.name}>
         {product.name}
       </p>
       <p className="font-semibold text-green-700 text-sm mt-1">
         {formatCurrency(product.sellingPrice)}
       </p>
       <div className="mt-1.5">
-        {isOutOfStock ? (
+        {!trackStock ? (
+          <span className="text-xs text-muted-foreground">Made to order</span>
+        ) : isOutOfStock ? (
           <Badge variant="destructive" className="text-xs">Out of Stock</Badge>
         ) : isLowStock ? (
           <Badge className="text-xs bg-yellow-100 text-yellow-700 border-0">Low: {quantityOnHand}</Badge>
         ) : (
-          <span className="text-xs text-gray-500">Stock: {quantityOnHand}</span>
+          <span className="text-xs text-muted-foreground">Stock: {quantityOnHand}</span>
         )}
       </div>
-    </div>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent>Add to sale</TooltipContent>
+    </Tooltip>
   );
 };
 
@@ -318,22 +346,13 @@ const QRCodeScanner = ({
           }
         }
 
-        // Dynamically import html5-qrcode (QR + barcode: EAN/UPC/CODE_128/39)
-        const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
+        // Dynamically import html5-qrcode (QR + barcode support)
+        const { Html5Qrcode } = await import('html5-qrcode');
 
         if (!mounted) return;
 
-        const html5Qrcode = new Html5Qrcode('pos-qr-scanner', {
-          formatsToSupport: [
-            Html5QrcodeSupportedFormats.QR_CODE,
-            Html5QrcodeSupportedFormats.EAN_13,
-            Html5QrcodeSupportedFormats.EAN_8,
-            Html5QrcodeSupportedFormats.UPC_A,
-            Html5QrcodeSupportedFormats.UPC_E,
-            Html5QrcodeSupportedFormats.CODE_128,
-            Html5QrcodeSupportedFormats.CODE_39,
-          ],
-        });
+        // Don't set formatsToSupport - let library scan all formats for best barcode/QR detection on web
+        const html5Qrcode = new Html5Qrcode('pos-qr-scanner');
         html5QrcodeRef.current = html5Qrcode;
         // Don't set scannerStartedRef yet - only set it after successful start
 
@@ -346,21 +365,21 @@ const QRCodeScanner = ({
         let cameraConfig = { facingMode: 'environment' };
         let startAttempted = false;
         
+        // Scan config: no qrbox = scan full frame (better for barcodes on web).
+        // Square viewfinder limits barcode detection; full frame improves EAN/UPC/QR scanning.
+        const scanConfig = {
+          fps: 15,
+          aspectRatio: 1.0,
+          // Omit qrbox to scan entire video frame - barcodes are rectangular and
+          // BarcodeDetector/Zxing work better with full-frame on desktop browsers
+        };
+        
         try {
-          // First attempt: back camera (QR only, square viewfinder)
-          console.log('[SCANNER] Attempting to start camera (QR only):', {
-            facingMode: 'environment',
-            fps: 10,
-            qrbox: { width: 260, height: 260 },
-            aspectRatio: 1.0
-          });
+          // First attempt: back camera
+          console.log('[SCANNER] Attempting to start camera (full-frame scan for QR + barcode):', scanConfig);
           await html5Qrcode.start(
             cameraConfig,
-            {
-              fps: 10,
-              qrbox: { width: 260, height: 260 },
-              aspectRatio: 1.0
-            },
+            scanConfig,
           (decodedText) => {
             if (scanCooldownRef.current) return;
             if (continuousMode && decodedText === lastScannedQRRef.current) return;
@@ -402,15 +421,11 @@ const QRCodeScanner = ({
             name: backCameraErr.name,
             stack: backCameraErr.stack
           });
-          console.log('[SCANNER] Attempting front camera...');
+            console.log('[SCANNER] Attempting front camera...');
           try {
             await html5Qrcode.start(
               { facingMode: 'user' },
-              {
-                fps: 10,
-                qrbox: { width: 260, height: 260 },
-                aspectRatio: 1.0
-              },
+              scanConfig,
               (decodedText) => {
                 if (scanCooldownRef.current) return;
                 if (continuousMode && decodedText === lastScannedQRRef.current) return;
@@ -470,11 +485,7 @@ const QRCodeScanner = ({
                 console.log('[SCANNER] Using first camera:', cameras[0].label || firstCameraId);
                 await html5Qrcode.start(
                   firstCameraId,
-                  {
-                    fps: 10,
-                    qrbox: { width: 260, height: 260 },
-                    aspectRatio: 1.0
-                  },
+                  scanConfig,
                   (decodedText) => {
                     if (scanCooldownRef.current) return;
                     if (continuousMode && decodedText === lastScannedQRRef.current) return;
@@ -676,6 +687,16 @@ const QRCodeScanner = ({
     startScanner();
   }, [hasStarted, isStarting, continuousMode, onScan, onClose]);
 
+  // Auto-start scanner when dialog opens
+  useEffect(() => {
+    if (isOpen && !hasStarted && !isStarting && !error) {
+      const timer = setTimeout(() => {
+        handleStartScanner();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, hasStarted, isStarting, error, handleStartScanner]);
+
   // Cleanup when component unmounts or scanner closes
   useEffect(() => {
     if (!isOpen) {
@@ -779,9 +800,9 @@ const QRCodeScanner = ({
   // For mobile in continuous mode, use full-screen layout
   if (isMobile && continuousMode) {
     return (
-      <div className={`fixed inset-0 z-50 bg-white flex flex-col ${isOpen ? '' : 'hidden'}`}>
+      <div className={`fixed inset-0 z-50 bg-background flex flex-col ${isOpen ? '' : 'hidden'}`}>
         {/* Header */}
-        <div className={`flex items-center justify-between ${isMobile ? 'px-3 py-2' : 'px-4 py-3'} border-b border-gray-200 bg-white`}>
+        <div className={`flex items-center justify-between ${isMobile ? 'px-3 py-2' : 'px-4 py-3'} border-b border-border bg-card`}>
           <Button
             variant="ghost"
             size="icon"
@@ -792,8 +813,8 @@ const QRCodeScanner = ({
           </Button>
           
             <div className="flex items-center gap-2">
-              <Camera className={`${isMobile ? 'h-4 w-4' : 'h-5 w-5'} text-gray-700`} />
-              <h1 className={`${isMobile ? 'text-base' : 'text-lg'} font-semibold text-gray-900`}>
+              <Camera className={`${isMobile ? 'h-4 w-4' : 'h-5 w-5'} text-muted-foreground`} />
+              <h1 className={`${isMobile ? 'text-base' : 'text-lg'} font-semibold text-foreground`}>
                 Scan Barcode / QR
               </h1>
             </div>
@@ -812,25 +833,30 @@ const QRCodeScanner = ({
             // Show start button before scanner starts (triggers permission request)
             <div className="flex-1 flex items-center justify-center px-4">
               <div className="text-center space-y-4 max-w-md">
-                <Camera className={`${isMobile ? 'h-16 w-16' : 'h-20 w-20'} text-gray-400 mx-auto`} />
+                <Camera className={`${isMobile ? 'h-16 w-16' : 'h-20 w-20'} text-muted-foreground mx-auto`} />
                 <div>
-                  <h2 className={`${isMobile ? 'text-lg' : 'text-xl'} font-semibold text-gray-900 mb-2`}>
+                  <h2 className={`${isMobile ? 'text-lg' : 'text-xl'} font-semibold text-foreground mb-2`}>
                     Ready to Scan
                   </h2>
                   <p className={`${isMobile ? 'text-sm' : 'text-base'} text-gray-600 mb-4`}>
                     Tap the button below to start scanning. You'll be asked to allow camera access.
                   </p>
                 </div>
-                <Button
-                  onClick={handleStartScanner}
-                  className={`${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} px-8`}
-                  loading={isStarting}
-                >
-                  <>
-                    <Camera className="h-5 w-5 mr-2" />
-                    Start Scanning
-                  </>
-                </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={handleStartScanner}
+                      className={`${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} px-8`}
+                      loading={isStarting}
+                    >
+                      <>
+                        <Camera className="h-5 w-5 mr-2" />
+                        Start Scanning
+                      </>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Scan barcode to add product</TooltipContent>
+                </Tooltip>
               </div>
             </div>
           ) : error ? (
@@ -843,10 +869,10 @@ const QRCodeScanner = ({
                 <p className={`${isMobile ? 'text-sm' : 'text-base'} text-red-600 mb-3`}>{error}</p>
                 {permissionDenied && (
                   <div className="space-y-2">
-                    <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600 mb-3`}>
+                    <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground mb-3`}>
                       To scan QR codes, please allow camera access:
                     </p>
-                    <ol className={`${isMobile ? 'text-xs' : 'text-sm'} text-left text-gray-700 space-y-1 mb-3`}>
+                    <ol className={`${isMobile ? 'text-xs' : 'text-sm'} text-left text-foreground space-y-1 mb-3`}>
                       <li>1. Tap the address bar</li>
                       <li>2. Look for the camera icon</li>
                       <li>3. Select "Allow" or "Always"</li>
@@ -861,7 +887,7 @@ const QRCodeScanner = ({
                   </div>
                 )}
                 {!permissionDenied && (
-                  <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-500`}>
+                  <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground`}>
                     Make sure you have granted camera permissions
                   </p>
                 )}
@@ -870,10 +896,10 @@ const QRCodeScanner = ({
           ) : (
             <>
               {isStarting && (
-                <div className="absolute inset-0 flex items-center justify-center bg-white z-10">
+                <div className="absolute inset-0 flex items-center justify-center bg-background z-10">
                   <div className="text-center">
                     <Loader2 className={`${isMobile ? 'h-8 w-8' : 'h-10 w-10'} animate-spin text-[#166534] mx-auto`} />
-                    <p className={`${isMobile ? 'text-sm' : 'text-base'} text-gray-600 mt-2`}>Starting camera...</p>
+                    <p className={`${isMobile ? 'text-sm' : 'text-base'} text-muted-foreground mt-2`}>Starting camera...</p>
                   </div>
                 </div>
               )}
@@ -894,15 +920,15 @@ const QRCodeScanner = ({
                 </div>
               )}
               
-              <p className={`${isMobile ? 'text-xs px-4 pb-2' : 'text-sm px-6 pb-4'} text-gray-500 text-center`}>
-                Scan barcode or QR. Tap Done when finished.
+              <p className={`${isMobile ? 'text-xs px-4 pb-2 mb-2' : 'text-sm px-6 pb-4 mb-2'} text-muted-foreground text-center`}>
+                Scan barcode or QR. Tap Done when finished. Hold steady with good lighting.
               </p>
             </>
           )}
         </div>
 
         {/* Footer Buttons */}
-        <div className={`${isMobile ? 'p-3 gap-2' : 'p-4 gap-3'} border-t border-gray-200 bg-white flex`}>
+        <div className={`${isMobile ? 'p-3 gap-2 mt-2' : 'p-4 gap-3 mt-2'} border-t border-border bg-card flex`}>
           <Button 
             variant="outline" 
             onClick={onClose}
@@ -910,13 +936,18 @@ const QRCodeScanner = ({
           >
             Cancel
           </Button>
-          <Button 
-            onClick={handleDone}
-            className={`flex-1 ${isMobile ? 'h-11' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
-            disabled={scannedCount === 0}
-          >
-            Done ({scannedCount})
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                onClick={handleDone}
+                className={`flex-1 ${isMobile ? 'h-11' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                disabled={scannedCount === 0}
+              >
+                Done ({scannedCount})
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Review cart and go to payment</TooltipContent>
+          </Tooltip>
         </div>
       </div>
     );
@@ -944,25 +975,30 @@ const QRCodeScanner = ({
           {!hasStarted && !error ? (
             // Show start button before scanner starts (triggers permission request)
             <div className="flex flex-col items-center justify-center py-8 px-4 space-y-4">
-              <Camera className={`${isMobile ? 'h-16 w-16' : 'h-20 w-20'} text-gray-400`} />
+              <Camera className={`${isMobile ? 'h-16 w-16' : 'h-20 w-20'} text-muted-foreground`} />
               <div className="text-center">
-                <h3 className={`${isMobile ? 'text-base' : 'text-lg'} font-semibold text-gray-900 mb-2`}>
+                <h3 className={`${isMobile ? 'text-base' : 'text-lg'} font-semibold text-foreground mb-2`}>
                   Ready to Scan
                 </h3>
                 <p className={`${isMobile ? 'text-sm' : 'text-base'} text-gray-600 mb-4`}>
                   Click the button below to start scanning. You'll be asked to allow camera access.
                 </p>
               </div>
-              <Button
-                onClick={handleStartScanner}
-                className={`${isMobile ? 'h-11 text-sm' : 'h-12 text-base'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} px-6`}
-                loading={isStarting}
-              >
-                <>
-                  <Camera className="h-4 w-4 mr-2" />
-                  Start Scanning
-                </>
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={handleStartScanner}
+                    className={`${isMobile ? 'h-11 text-sm' : 'h-12 text-base'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} px-6`}
+                    loading={isStarting}
+                  >
+                    <>
+                      <Camera className="h-4 w-4 mr-2" />
+                      Start Scanning
+                    </>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Scan barcode to add product</TooltipContent>
+              </Tooltip>
             </div>
           ) : error ? (
             <div className={`${isMobile ? 'p-3' : 'p-4'} bg-red-50 border border-red-200 ${isMobile ? 'rounded-md' : 'rounded-lg'} text-center`}>
@@ -973,7 +1009,7 @@ const QRCodeScanner = ({
               <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-red-600 mt-1`}>{error}</p>
               {permissionDenied ? (
                 <div className="mt-3 space-y-2">
-                  <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600`}>
+                  <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground`}>
                     To scan QR codes, please allow camera access in your browser settings.
                   </p>
                   <Button
@@ -992,10 +1028,10 @@ const QRCodeScanner = ({
           ) : (
             <>
               {isStarting && (
-                <div className="absolute inset-0 flex items-center justify-center bg-white/80 z-10">
+                <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
                   <div className="text-center">
                     <Loader2 className={`${isMobile ? 'h-8 w-8' : 'h-10 w-10'} animate-spin text-[#166534] mx-auto`} />
-                    <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600 mt-2`}>Starting camera...</p>
+                    <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground mt-2`}>Starting camera...</p>
                   </div>
                 </div>
               )}
@@ -1014,10 +1050,10 @@ const QRCodeScanner = ({
                 </div>
               )}
               
-              <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-500 text-center`}>
+              <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-500 text-center mb-2`}>
                 {continuousMode
-                  ? 'Scan barcode or QR. Tap Done when finished.'
-                  : 'Scan barcode or QR'
+                  ? 'Scan barcode or QR. Tap Done when finished. Hold steady with good lighting.'
+                  : 'Scan barcode or QR. Hold steady with good lighting.'
                 }
               </p>
             </>
@@ -1030,23 +1066,28 @@ const QRCodeScanner = ({
               <Button 
                 variant="outline" 
                 onClick={onClose}
-                className={`${isMobile ? 'h-11 flex-1' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                className={`${isMobile ? 'h-11 flex-1' : 'h-12'} border-border ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
               >
                 Cancel
               </Button>
-              <Button 
-                onClick={handleDone}
-                className={`${isMobile ? 'h-11 flex-1' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
-                disabled={scannedCount === 0}
-              >
-                Done ({scannedCount})
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    onClick={handleDone}
+                    className={`${isMobile ? 'h-11 flex-1' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                    disabled={scannedCount === 0}
+                  >
+                    Done ({scannedCount})
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Review cart and go to payment</TooltipContent>
+              </Tooltip>
             </>
           ) : (
             <Button 
               variant="outline" 
               onClick={onClose}
-              className={`${isMobile ? 'h-11 w-full' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+              className={`${isMobile ? 'h-11 w-full' : 'h-12'} border-border ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
             >
               Cancel
             </Button>
@@ -1084,13 +1125,15 @@ const POSProductSearch = ({
   cartQuantityByProductId = {},
   fillHeight = false
 }) => {
+  const navigate = useNavigate();
+  const { isMobile } = useResponsive();
   const [searchQuery, setSearchQuery] = useState('');
   const [results, setResults] = useState([]);
   const [isSearching, setIsSearching] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [searchError, setSearchError] = useState(null);
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const [viewMode, setViewMode] = useState('list');
+  const [viewMode, setViewMode] = useState('card');
   const inputRef = useRef(null);
 
   const debouncedQuery = useDebounce(searchQuery, DEBOUNCE_DELAYS.SEARCH);
@@ -1208,8 +1251,7 @@ const POSProductSearch = ({
 
   const handleSelectProduct = useCallback((product) => {
     onSelectProduct(product);
-    // Do NOT clear results – keep list visible so in-cart indicator updates
-    inputRef.current?.focus();
+    // Do NOT clear results or auto-focus – keep list visible so in-cart indicator updates
   }, [onSelectProduct]);
 
   const handleClearSearch = useCallback(() => {
@@ -1220,21 +1262,23 @@ const POSProductSearch = ({
   }, []);
 
   return (
-    <Card className={cn('border border-gray-200', fillHeight && 'flex flex-col min-h-0 flex-1')}>
+    <Card className={cn('border border-border', fillHeight && 'flex flex-col min-h-0 flex-1')}>
       <CardContent className={cn('p-4', fillHeight && 'flex flex-col flex-1 min-h-0')}>
         {/* Search input, filter, camera */}
         <div className="flex gap-2 flex-shrink-0 items-center">
-          <div className="relative flex-1 min-w-0">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <Input
-              ref={inputRef}
-              type="text"
-              placeholder="Search by name, SKU, or scan barcode/QR..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 pr-10 h-12 text-lg"
-              autoComplete="off"
-            />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="relative flex-1 min-w-0">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+                <Input
+                  ref={inputRef}
+                  type="text"
+                  placeholder="Search by name, SKU, or scan barcode/QR..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 pr-10 h-12 text-lg"
+                  autoComplete="off"
+                />
             {(searchQuery || isSearching) && (
               <Button
                 variant="ghost"
@@ -1243,15 +1287,18 @@ const POSProductSearch = ({
                 onClick={handleClearSearch}
               >
                 {isSearching ? (
-                  <Loader2 className="h-5 w-5 animate-spin text-gray-400" />
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 ) : (
-                  <X className="h-5 w-5 text-gray-400" />
+                  <X className="h-5 w-5 text-muted-foreground" />
                 )}
               </Button>
             )}
-          </div>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>Type product name or scan barcode</TooltipContent>
+          </Tooltip>
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-[140px] sm:w-[160px] h-12 flex-shrink-0 border border-gray-200">
+            <SelectTrigger className="w-[140px] sm:w-[160px] h-12 flex-shrink-0 border border-border">
               <SelectValue placeholder="All categories" />
             </SelectTrigger>
             <SelectContent>
@@ -1263,34 +1310,41 @@ const POSProductSearch = ({
               ))}
             </SelectContent>
           </Select>
-          <div className="flex items-center border border-gray-200 rounded-md overflow-hidden flex-shrink-0">
-            <Button
-              variant={viewMode === 'list' ? 'secondary' : 'ghost'}
-              size="icon"
-              className="h-12 w-10 rounded-none border-0 border-r border-gray-200"
-              onClick={() => setViewMode('list')}
-              title="List view"
-            >
-              <List className="h-5 w-5" />
-            </Button>
-            <Button
-              variant={viewMode === 'card' ? 'secondary' : 'ghost'}
-              size="icon"
-              className="h-12 w-10 rounded-none"
-              onClick={() => setViewMode('card')}
-              title="Card view"
-            >
-              <LayoutGrid className="h-5 w-5" />
-            </Button>
-          </div>
-          <Button
-            variant="outline"
-            size="icon"
-            className="h-12 w-12 flex-shrink-0"
-            onClick={() => setScannerOpen(true)}
-          >
-            <Camera className="h-5 w-5" />
-          </Button>
+          {!isMobile && (
+            <div className="flex items-center border border-border rounded-md overflow-hidden flex-shrink-0">
+              <Button
+                variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                size="icon"
+                className="h-12 w-10 rounded-none border-0 border-r border-border"
+                onClick={() => setViewMode('list')}
+                title="List view"
+              >
+                <List className="h-5 w-5" />
+              </Button>
+              <Button
+                variant={viewMode === 'card' ? 'secondary' : 'ghost'}
+                size="icon"
+                className="h-12 w-10 rounded-none"
+                onClick={() => setViewMode('card')}
+                title="Card view"
+              >
+                <LayoutGrid className="h-5 w-5" />
+              </Button>
+            </div>
+          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-12 w-12 flex-shrink-0"
+                onClick={() => setScannerOpen(true)}
+              >
+                <Camera className="h-5 w-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Scan barcode to add product</TooltipContent>
+          </Tooltip>
         </div>
 
         {/* Offline indicator */}
@@ -1317,7 +1371,7 @@ const POSProductSearch = ({
               fillHeight ? 'flex-1 min-h-0' : 'max-h-80'
             )}
           >
-            {viewMode === 'list' ? (
+            {(isMobile ? 'card' : viewMode) === 'list' ? (
               <div className="space-y-1">
                 {results.map((product) => (
                   <ProductItem
@@ -1345,7 +1399,7 @@ const POSProductSearch = ({
 
         {/* No results message - only when user has typed a search */}
         {searchQuery.trim() && !isSearching && results.length === 0 && !searchError && (
-          <div className="mt-4 text-center py-8 text-gray-500">
+          <div className="mt-4 text-center py-8 text-muted-foreground">
             <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
             <p>No products found for &quot;{searchQuery}&quot;</p>
           </div>
@@ -1354,20 +1408,32 @@ const POSProductSearch = ({
         {/* Loading state only when no products yet (avoid flash when adding to cart / refetch) */}
         {!searchQuery.trim() && productsLoading && (!allProducts || allProducts.length === 0) && (
           <div className="mt-4 text-center py-8 text-gray-500 flex flex-col items-center gap-2">
-            <Loader2 className="h-12 w-12 animate-spin text-gray-400" />
-            <p>Loading products…</p>
+            <Loader2 className="h-12 w-12 animate-spin text-muted-foreground" />
+            <p>Loading products...</p>
           </div>
         )}
 
         {/* Empty state when no products at all or no products in selected category */}
         {!searchQuery.trim() && !productsLoading && browseList.length === 0 && !isSearching && (
-          <div className="mt-4 text-center py-8 text-gray-500">
+          <div className="mt-4 text-center py-8 text-muted-foreground">
             <Package className="h-12 w-12 mx-auto mb-2 opacity-50" />
-            <p>
-              {categoryFilter && categoryFilter !== 'all'
-                ? 'No products in this category.'
-                : 'No products to show. Add products in Products, or refresh when online.'}
-            </p>
+            {categoryFilter && categoryFilter !== 'all' ? (
+              <p>No products in this category.</p>
+            ) : allProducts.length === 0 ? (
+              <div className="space-y-3">
+                <p>You haven't added any products yet.</p>
+                <p className="text-sm">Add your products first before you can start selling.</p>
+                <Button
+                  onClick={() => navigate('/products?add=1')}
+                  className="bg-[#166534] hover:bg-[#14532d] text-white"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Your First Product
+                </Button>
+              </div>
+            ) : (
+              <p>No products to show. Refresh when online.</p>
+            )}
           </div>
         )}
       </CardContent>

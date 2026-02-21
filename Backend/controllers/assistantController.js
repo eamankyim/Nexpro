@@ -162,14 +162,14 @@ exports.chat = async (req, res, next) => {
     if (error.code === 'OPENAI_NOT_CONFIGURED') {
       return res.status(503).json({
         success: false,
-        error: 'AI assistant is not configured. Set OPENAI_API_KEY in the backend .env to enable.',
+        error: 'AI assistant is not configured. Set ANTHROPIC_API_KEY in the backend .env to enable.',
         code: 'OPENAI_NOT_CONFIGURED'
       });
     }
     if (error.code === 'invalid_api_key' || error.status === 401) {
       return res.status(503).json({
         success: false,
-        error: 'Invalid OpenAI API key. Check OPENAI_API_KEY in Backend/.env, ensure no extra spaces or line breaks, and create a new key at https://platform.openai.com/api-keys if needed.',
+        error: 'Invalid Anthropic API key. Check ANTHROPIC_API_KEY in Backend/.env and create a key at https://console.anthropic.com/.',
         code: 'OPENAI_INVALID_KEY'
       });
     }

@@ -33,8 +33,8 @@ const Barcode = sequelize.define('Barcode', {
   },
   barcode: {
     type: DataTypes.STRING,
-    allowNull: false,
-    unique: true
+    allowNull: false
+    // Unique per tenant via migration idx_barcodes_tenant_barcode
   },
   barcodeType: {
     type: DataTypes.ENUM('EAN13', 'EAN8', 'UPC', 'CODE128', 'CODE39', 'QR', 'other'),
@@ -55,7 +55,7 @@ const Barcode = sequelize.define('Barcode', {
   indexes: [
     {
       unique: true,
-      fields: ['barcode']
+      fields: ['tenantId', 'barcode']
     },
     {
       fields: ['tenantId']

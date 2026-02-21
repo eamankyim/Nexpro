@@ -2,6 +2,7 @@ const { Prescription, PrescriptionItem, Drug, Customer, Pharmacy, Invoice, User,
 const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { sequelize } = require('../config/database');
 const crypto = require('crypto');
 
@@ -530,6 +531,12 @@ exports.generateInvoice = async (req, res, next) => {
       termsAndConditions: 'Payment is due upon receipt. Thank you for your business.',
       paymentToken: crypto.randomBytes(32).toString('hex')
     });
+
+    try {
+      await createInvoiceRevenueJournal(invoice, req.user?.id);
+    } catch (journalError) {
+      console.error('Failed to create accounting revenue entry for prescription invoice', journalError?.message);
+    }
 
     const createdInvoice = await Invoice.findByPk(invoice.id, {
       include: [

@@ -49,9 +49,16 @@ const errorHandler = (err, req, res, next) => {
     errorCode = 'DUPLICATE_ENTRY';
     message = 'Duplicate field value entered';
     if (err.errors && err.errors.length > 0) {
-      const field = err.errors[0].path;
-      message = `${field} already exists`;
-      details = { field, value: err.errors[0].value };
+      const field = err.errors[0].path || '';
+      const constraint = (err.parent?.constraint || err.parent?.detail || '').toLowerCase();
+      if (field.includes('email') || constraint.includes('email')) {
+        message = 'Email already exists';
+      } else if (field.includes('phone') || constraint.includes('phone')) {
+        message = 'Phone number already exists';
+      } else {
+        message = `${field || 'This value'} already exists`;
+      }
+      details = { field: field || 'email_or_phone', value: err.errors[0].value };
     }
   }
 

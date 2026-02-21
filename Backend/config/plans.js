@@ -64,7 +64,7 @@ const plans = [
         quoteAutomation: true,
         jobAutomation: true,
         paymentsExpenses: true,
-        inventory: false,
+        materials: false,
         reports: true,
         notifications: false,
         leadPipeline: true,
@@ -103,14 +103,14 @@ const plans = [
     highlights: [
       'Everything in Launch',
       'Advanced reporting & automation',
-      'Inventory controls & vendor price lists',
+      'Materials controls & vendor price lists',
       'Priority support with SLA'
     ],
     marketing: {
       enabled: true,
       perks: [
         'Up to 15 seats',
-        'Inventory controls & vendor price lists',
+        'Materials controls & vendor price lists',
         'Automated reminders & notifications',
         'Priority support'
       ],
@@ -119,7 +119,7 @@ const plans = [
         quoteAutomation: true,
         jobAutomation: true,
         paymentsExpenses: true,
-        inventory: true,
+        materials: true,
         reports: true,
         notifications: true,
         leadPipeline: true,
@@ -174,7 +174,7 @@ const plans = [
         quoteAutomation: true,
         jobAutomation: true,
         paymentsExpenses: true,
-        inventory: true,
+        materials: true,
         reports: true,
         notifications: true,
         leadPipeline: true,

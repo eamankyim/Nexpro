@@ -9,7 +9,7 @@ const LeadActivity = sequelize.define('LeadActivity', {
   },
   tenantId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true, // Allow NULL for admin lead activities
     references: {
       model: 'tenants',
       key: 'id'

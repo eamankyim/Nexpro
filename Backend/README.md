@@ -1,15 +1,15 @@
 # ShopWISE - Business Management System - Backend API
 
-A comprehensive backend API for managing printing press operations including customers, jobs, vendors, payments, expenses, and pricing.
+A comprehensive backend API for managing studio operations including customers, jobs, services, vendors, payments, expenses, and pricing.
 
 ## 🚀 Features
 
 - **Customer Management**: Track customer information, contact details, and balances
-- **Job Management**: Create and manage print jobs with detailed specifications
+- **Job Management**: Create and manage jobs and services with detailed specifications
 - **Vendor Management**: Manage suppliers and vendor relationships
 - **Payment Tracking**: Record and track both income and expense payments
 - **Expense Management**: Track business expenses with categorization
-- **Pricing Templates**: Create pricing templates for different print jobs
+- **Pricing Templates**: Create pricing templates for different jobs and services
 - **User Authentication**: JWT-based authentication with role-based access control
 - **Statistics & Reports**: Get insights on jobs, payments, and expenses
 
@@ -41,7 +41,7 @@ cp env.example .env
 ```env
 PORT=5000
 NODE_ENV=development
-DATABASE_URL=postgresql://username:password@localhost:5432/printing_press_db
+DATABASE_URL=postgresql://username:password@localhost:5432/shopwise_db
 JWT_SECRET=your_jwt_secret_key_here
 JWT_EXPIRE=7d
 CORS_ORIGIN=http://localhost:3000
@@ -186,6 +186,19 @@ Content-Type: application/json
 }
 ```
 
+### Compliance reports (revenue center / tax submission)
+
+Submission-ready financial statements (GET; query params: `startDate`, `endDate`; for financial-position only `endDate` as "as at" date). All require `Authorization: Bearer <token>` and tenant context.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/reports/income-expenditure` | Income (paid invoices) and expenditure by category |
+| `GET /api/reports/profit-loss/compliance` | Profit & loss with expense breakdown by category |
+| `GET /api/reports/financial-position` | Statement of financial position (IAS 1): debtors (trade receivables, 0 if none), inventory, equity |
+| `GET /api/reports/cashflow` | Cash flow statement (simplified: operating activities only) |
+
+Data sources: Invoice (revenue, debtors/trade receivables), Expense (by category), Product (inventory value). Reports are prepared in accordance with IAS and IFRS. Statement of financial position and cash flow use this operational data only (no double-entry/Accounting module required). Debtors show outstanding customer invoices (0 when none).
+
 ## 🔐 User Roles
 
 - **admin**: Full access to all resources
@@ -280,6 +293,20 @@ Backend/
 ├── server.js        # Entry point
 ├── package.json     # Dependencies
 └── README.md        # Documentation
+```
+
+## Data cleanup
+
+To delete **all** users, tenants, and business/transaction data (e.g. for a fresh start), run:
+
+```bash
+CONFIRM_DELETE_ALL=yes node scripts/delete-all-app-data.js
+```
+
+Platform configuration (subscription plans, platform admin roles/permissions) is **not** deleted. After running, create a superadmin again with:
+
+```bash
+node scripts/create-superadmin.js
 ```
 
 ## 🤝 Contributing

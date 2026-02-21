@@ -58,6 +58,42 @@ const reportService = {
     return await api.get(url);
   },
 
+  // Compliance / Revenue Center reports (submission-ready statements)
+  getIncomeExpenditureReport: async (startDate = null, endDate = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    const queryString = params.toString();
+    const url = queryString ? `/reports/income-expenditure?${queryString}` : '/reports/income-expenditure';
+    return await api.get(url);
+  },
+
+  getProfitLossComplianceReport: async (startDate = null, endDate = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    const queryString = params.toString();
+    const url = queryString ? `/reports/profit-loss/compliance?${queryString}` : '/reports/profit-loss/compliance';
+    return await api.get(url);
+  },
+
+  getFinancialPositionReport: async (endDate = null) => {
+    const params = new URLSearchParams();
+    if (endDate) params.append('endDate', endDate);
+    const queryString = params.toString();
+    const url = queryString ? `/reports/financial-position?${queryString}` : '/reports/financial-position';
+    return await api.get(url);
+  },
+
+  getCashFlowReport: async (startDate = null, endDate = null) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    const queryString = params.toString();
+    const url = queryString ? `/reports/cashflow?${queryString}` : '/reports/cashflow';
+    return await api.get(url);
+  },
+
   // Get service analytics report
   getServiceAnalyticsReport: async (startDate = null, endDate = null) => {
     const params = new URLSearchParams();
@@ -127,6 +163,18 @@ const reportService = {
     
     const queryString = params.toString();
     const url = queryString ? `/reports/revenue-by-channel?${queryString}` : '/reports/revenue-by-channel';
+    return await api.get(url);
+  },
+
+  // Get VAT/Tax report
+  getVatReport: async (startDate = null, endDate = null, groupBy = 'month') => {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    if (groupBy) params.append('groupBy', groupBy);
+    
+    const queryString = params.toString();
+    const url = queryString ? `/reports/vat?${queryString}` : '/reports/vat';
     return await api.get(url);
   },
 

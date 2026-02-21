@@ -23,6 +23,8 @@ const mapPlanForOnboarding = (plan) => ({
 const mapPlanForMarketing = (plan) => {
   const displayPrice =
     plan.marketing?.priceDisplay || plan.price?.display || null;
+  const cta = plan.marketing?.cta;
+  const ctaLabel = typeof cta === 'object' && cta?.label ? cta.label : (cta || 'Start trial');
 
   return {
     id: plan.id,
@@ -32,14 +34,17 @@ const mapPlanForMarketing = (plan) => {
     priceMeta: {
       amount: plan.price?.amount ?? null,
       currency: plan.price?.currency ?? null,
-      display: plan.price?.display ?? displayPrice
+      display: plan.price?.display ?? displayPrice,
+      billingDescription: plan.price?.billingDescription || null
     },
     billing: plan.marketing?.billing || plan.price?.billingDescription || null,
     perks: plan.marketing?.perks || [],
+    highlights: plan.highlights || [],
     features: plan.marketing?.featureFlags || {},
     popular: Boolean(plan.marketing?.popular),
     badge: plan.marketing?.badgeLabel || null,
-    cta: plan.marketing?.cta || null
+    cta: typeof cta === 'object' ? { ...cta, label: cta.label || ctaLabel } : { label: ctaLabel },
+    interval: plan.metadata?.interval || null
   };
 };
 

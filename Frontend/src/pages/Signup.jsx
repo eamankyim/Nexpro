@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { User, Mail, Loader2, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { GoogleLogin } from '@react-oauth/google';
+import { User, Mail, Loader2, Eye, EyeOff, RefreshCw, HelpCircle } from 'lucide-react';
 import authService from '../services/authService';
 import inviteService from '../services/inviteService';
 import { useAuth } from '../context/AuthContext';
@@ -13,7 +14,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { AlertCircle } from 'lucide-react';
 import { calculatePasswordStrength } from '../utils/passwordStrength';
 import africanWomanImage from '../assets/African focused woman.png';
@@ -24,27 +26,29 @@ import confetti from 'canvas-confetti';
 const MIN_LOADING_DISPLAY_MS = 5200;
 
 const signupSchema = z.object({
-  name: z.string().min(2, 'Please enter your full name'),
-  email: z.string().email('Please enter a valid email address'),
+  name: z.string().min(2, 'Enter your full name'),
+  email: z.string().email('Enter a valid email'),
 });
 
 const passwordSchema = z.object({
-  password: z.string().min(6, 'Password must be at least 6 characters'),
-  confirmPassword: z.string().min(6, 'Please confirm your password'),
+  password: z.string().min(6, 'Use at least 6 characters'),
+  confirmPassword: z.string().min(6, 'Confirm your password'),
 }).refine((data) => data.password === data.confirmPassword, {
-  message: "Passwords do not match!",
+  message: "Passwords don't match",
   path: ["confirmPassword"],
 });
 
 /** Invite step 2: Full name + Password + Confirm password */
 const inviteStep2Schema = z.object({
-  name: z.string().min(2, 'Please enter your full name'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
-  confirmPassword: z.string().min(6, 'Please confirm your password'),
+  name: z.string().min(2, 'Enter your full name'),
+  password: z.string().min(6, 'Use at least 6 characters'),
+  confirmPassword: z.string().min(6, 'Confirm your password'),
 }).refine((data) => data.password === data.confirmPassword, {
-  message: "Passwords do not match!",
+  message: "Passwords don't match",
   path: ["confirmPassword"],
 });
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
 const Signup = () => {
   const [loading, setLoading] = useState(false);
@@ -57,7 +61,8 @@ const Signup = () => {
   const [signupData, setSignupData] = useState({ name: '', email: '' });
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { tenantSignup, isAuthenticated, activeTenant } = useAuth();
+  const { tenantSignup, register: registerWithAuth, googleAuth, isAuthenticated, activeTenant } = useAuth();
+  const [registeredAsPlatformAdmin, setRegisteredAsPlatformAdmin] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
   const [welcomeStatus, setWelcomeStatus] = useState('loading'); // 'loading' | 'success' | 'error'
@@ -82,15 +87,15 @@ const Signup = () => {
   const modeCopy = {
     shop: {
       contextLine: "You're setting up ShopWISE for Shops",
-      subtext: "This workspace includes inventory, sales, and POS tools."
+      subtext: "This business includes inventory, sales, and POS tools."
     },
     studio: {
       contextLine: "You're setting up ShopWISE for Studios",
-      subtext: "This workspace includes print jobs, quotes, and production workflows."
+      subtext: "This business includes jobs, services, quotes, and production workflows."
     },
     pharmacy: {
       contextLine: "You're setting up ShopWISE for Pharmacies",
-      subtext: "This workspace includes prescriptions and drug inventory."
+      subtext: "This business includes prescriptions and drug inventory."
     }
   };
 
@@ -232,9 +237,11 @@ const Signup = () => {
         inviteToken: token,
       };
       const apiStart = Date.now();
-      await authService.register(registerData);
+      const response = await registerWithAuth(registerData);
       const apiMs = Date.now() - apiStart;
       console.log('[Signup] Invite register API responded in', apiMs, 'ms');
+      const data = response?.data ?? response;
+      setRegisteredAsPlatformAdmin(Boolean(data?.isPlatformAdmin));
       setWelcomeStatus('success');
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || 'Something went wrong. Please try again.';
@@ -256,7 +263,7 @@ const Signup = () => {
     try {
       const businessType = modeToBusinessType[selectedMode];
       const payload = {
-        companyName: signupData.name + "'s Workspace",
+        companyName: 'My Business', // Placeholder; user sets real business name in onboarding
         companyEmail: signupData.email,
         adminName: signupData.name,
         adminEmail: signupData.email,
@@ -279,9 +286,45 @@ const Signup = () => {
     }
   };
 
+  const handleGoogleSignupSuccess = useCallback(
+    async (credentialResponse) => {
+      const idToken = credentialResponse?.credential;
+      if (!idToken) return;
+      overlayStartTimeRef.current = Date.now();
+      setShowWelcomeScreen(true);
+      setWelcomeStatus('loading');
+      setWelcomeErrorMessage('');
+      setLoading(true);
+      setIsSubmitting(true);
+      try {
+        const businessType = modeToBusinessType[selectedMode];
+        await googleAuth(idToken, {
+          signUp: true,
+          businessType,
+          companyName: 'My Business',
+        });
+        setRegisteredAsPlatformAdmin(false);
+        setWelcomeStatus('success');
+      } catch (err) {
+        const msg = err?.response?.data?.message || err?.message || 'Google sign-up failed. Please try again.';
+        setWelcomeStatus('error');
+        setWelcomeErrorMessage(msg);
+      } finally {
+        setLoading(false);
+        setIsSubmitting(false);
+      }
+    },
+    [googleAuth, selectedMode]
+  );
+
+  const handleGoogleSignupError = useCallback(() => {
+    setWelcomeStatus('error');
+    setWelcomeErrorMessage('Google sign-up was cancelled or failed.');
+  }, []);
+
   if (validating) {
     return (
-      <div className="flex justify-center items-center min-h-screen bg-gray-100">
+      <div className="flex justify-center items-center min-h-screen bg-muted/50">
         <Loader2 className="h-8 w-8 animate-spin text-gray-600" />
       </div>
     );
@@ -289,7 +332,7 @@ const Signup = () => {
 
   if (error) {
     return (
-      <div className="flex justify-center items-center min-h-screen bg-gray-100 p-4">
+      <div className="flex justify-center items-center min-h-screen bg-muted/50 p-4">
         <Card className="w-full max-w-md">
           <CardHeader>
             <CardTitle>Invalid Invite</CardTitle>
@@ -314,12 +357,12 @@ const Signup = () => {
   }
 
   return (
-    <div className={`min-h-screen bg-white flex items-center justify-center ${isMobile ? 'p-0' : 'p-8'}`}>
+    <div className={`min-h-screen bg-background flex items-center justify-center ${isMobile ? 'p-0' : 'p-8'}`}>
       {/* Full-screen welcome overlay (loading / success / error) */}
       {showWelcomeScreen && (
-        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center text-white p-6" style={{ backgroundColor: '#0E1801' }}>
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center text-white p-4 sm:p-6 min-h-screen overflow-auto" style={{ backgroundColor: '#0E1801' }}>
           {overlayPhase === 'loading' && (
-            <div className="w-full flex flex-col items-center justify-center text-center space-y-4">
+            <div className="w-full max-w-lg flex flex-col items-center justify-center text-center space-y-4 px-2">
               <style>{`
                 @keyframes signupWelcomeLineInOut {
                   0% { opacity: 0; transform: translateY(16px); }
@@ -336,35 +379,44 @@ const Signup = () => {
                   animation: signupWelcomeLineInOut 2.6s ease-in-out 2.6s forwards;
                 }
               `}</style>
-              <h2 className="signup-welcome-line-1 text-3xl md:text-4xl font-semibold">Welcome to ShopWISE</h2>
-              <h2 className="signup-welcome-line-2 text-3xl md:text-4xl font-semibold text-white whitespace-nowrap">The one platform you will ever need to transform your business.</h2>
+              <h2 className="signup-welcome-line-1 text-2xl sm:text-3xl md:text-4xl font-semibold">Welcome to ShopWISE</h2>
+              <h2 className="signup-welcome-line-2 text-xl sm:text-2xl md:text-4xl font-semibold text-white text-pretty px-1">The one platform you will ever need to transform your business.</h2>
             </div>
           )}
           {overlayPhase === 'success' && (
-            <div className="text-center max-w-md space-y-6">
-              <h2 className="text-3xl md:text-4xl font-semibold">Account created.</h2>
-              <p className="text-lg text-gray-300">Continue to setup your workspace.</p>
+            <div className="text-center max-w-md space-y-6 px-4">
+              <h2 className="text-2xl sm:text-3xl md:text-4xl font-semibold">Account created.</h2>
+              {!registeredAsPlatformAdmin && (
+                <p className="text-base text-gray-400">We&apos;ve sent a verification link to your email. You can continue to setup now.</p>
+              )}
+              <p className="text-lg text-gray-300">
+                {registeredAsPlatformAdmin ? 'You can now access the Control Panel.' : 'Continue to setup your business.'}
+              </p>
               <Button
                 className="bg-[#166534] hover:bg-[#14532d] text-white px-8 py-3 text-base"
-                onClick={() => navigate('/onboarding', { replace: true })}
+                onClick={() => navigate(registeredAsPlatformAdmin ? '/admin' : '/onboarding', { replace: true })}
               >
-                Continue to setup
+                {registeredAsPlatformAdmin ? 'Go to Control Panel' : 'Continue to setup'}
               </Button>
             </div>
           )}
           {overlayPhase === 'error' && (
-            <div className="text-center max-w-md space-y-6">
-              <h2 className="text-3xl md:text-4xl font-semibold">We couldn&apos;t create your account.</h2>
+            <div className="text-center max-w-md space-y-6 px-4">
+              <h2 className="text-2xl sm:text-3xl md:text-4xl font-semibold">We couldn&apos;t create your account.</h2>
               <p className="text-lg text-gray-300">{welcomeErrorMessage}</p>
               <Button
-                className="bg-white text-black hover:bg-gray-100 px-8 py-3 text-base"
+                className="bg-primary text-primary-foreground hover:bg-primary/90 px-8 py-3 text-base"
                 onClick={() => {
+                  const isAlreadyExists = /already exists|sign in instead/i.test(welcomeErrorMessage || '');
                   setShowWelcomeScreen(false);
                   setWelcomeStatus('loading');
                   setWelcomeErrorMessage('');
+                  if (isAlreadyExists) {
+                    navigate('/login', { replace: true });
+                  }
                 }}
               >
-                Try again
+                {/already exists|sign in instead/i.test(welcomeErrorMessage || '') ? 'Sign in' : 'Try again'}
               </Button>
             </div>
           )}
@@ -372,7 +424,7 @@ const Signup = () => {
       )}
 
       {/* Main Content */}
-      <div className={`w-full ${isMobile ? 'h-screen' : 'max-w-6xl bg-white rounded-2xl border border-gray-200'} overflow-hidden flex flex-col ${isMobile ? '' : 'lg:flex-row'}`}>
+      <div className={`w-full ${isMobile ? 'h-screen' : 'max-w-6xl bg-card rounded-2xl border border-border'} overflow-hidden flex flex-col ${isMobile ? '' : 'lg:flex-row'}`}>
           {/* Left Section - Form */}
           <div className={`flex-1 ${isMobile ? 'px-6 py-4' : 'p-12'} flex flex-col justify-center ${isMobile ? 'min-h-screen overflow-y-auto' : ''}`}>
             <div className={`${isMobile ? 'w-full' : 'max-w-md'} mx-auto w-full`}>
@@ -380,15 +432,18 @@ const Signup = () => {
               <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-[#166534]`}>ShopWISE</h1>
               
               {/* Heading */}
-              <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-gray-900`}>
-                {token && inviteData ? 'Join ShopWISE workspace' : 'Sign up'}
+              <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-foreground`}>
+                {token && inviteData ? 'Join ShopWISE' : 'Sign up'}
               </h2>
               {!token && !inviteData && (
                 <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-gray-600`}>One place for your business.</p>
               )}
               {token && inviteData && (
                 <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-gray-600`}>
-                  You have been invited to join {inviteData.tenant?.name || 'this workspace'} as {inviteData.role ? String(inviteData.role).charAt(0).toUpperCase() + String(inviteData.role).slice(1) : 'a member'}.
+                  {!inviteData.tenant || inviteData.inviteType === 'platform_admin'
+                    ? 'You have been invited to join as a platform administrator. Set your name and password below.'
+                    : `You have been invited to join ${inviteData.tenant?.name || 'this business'} as ${inviteData.role ? String(inviteData.role).charAt(0).toUpperCase() + String(inviteData.role).slice(1) : 'a member'}.`
+                  }
                 </p>
               )}
 
@@ -403,7 +458,7 @@ const Signup = () => {
                     </TabsList>
                   </Tabs>
                   <div className="mt-3 w-full flex flex-col gap-0.5 rounded-lg border border-[#166534] bg-[#166534]/5 px-3 py-2 text-left">
-                    <span className="text-sm font-medium text-gray-900">
+                    <span className="text-sm font-medium text-foreground">
                       {modeCopy[selectedMode].contextLine}
                     </span>
                     <span className="text-xs text-gray-600">
@@ -438,7 +493,7 @@ const Signup = () => {
                             value={inviteData.email}
                             readOnly
                             disabled
-                            className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-gray-50 border text-gray-900 cursor-not-allowed`}
+                            className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-border ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-muted border text-foreground cursor-not-allowed`}
                           />
                         </div>
                       </div>
@@ -448,14 +503,28 @@ const Signup = () => {
                       name="name"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel className={`${isMobile ? 'text-sm' : ''} text-gray-700`}>Full Name</FormLabel>
+                          <div className="flex items-center gap-1.5">
+                            <FormLabel className={`${isMobile ? 'text-sm' : ''} text-gray-700`}>Full Name</FormLabel>
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex cursor-help text-gray-400 hover:text-gray-600" role="img" aria-label="Help">
+                                    <HelpCircle className={isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="right" className="max-w-xs">
+                                  Enter your full name (personal name, not business name). You&apos;ll set up your business details after account creation.
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </div>
                           <FormControl>
                             <div className="relative">
                               <User className={`absolute left-3 top-1/2 transform -translate-y-1/2 ${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-gray-400`} />
                               <Input
                                 {...field}
-                                className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-white border text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
-                                placeholder="Please enter your full name"
+                                className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                placeholder="e.g. John Doe"
                               />
                             </div>
                           </FormControl>
@@ -474,7 +543,7 @@ const Signup = () => {
                               <Input
                                 {...field}
                                 type={showPassword ? 'text' : 'password'}
-                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-white border text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
                                 placeholder="Password"
                               />
                               <button
@@ -515,7 +584,7 @@ const Signup = () => {
                               <Input
                                 {...field}
                                 type={showPassword ? 'text' : 'password'}
-                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-white border text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
                                 placeholder="Confirm Password"
                               />
                               <button
@@ -541,13 +610,18 @@ const Signup = () => {
                       >
                         Back
                       </Button>
-                      <Button
-                        type="submit"
-                        className={`flex-1 ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
-                        loading={loading}
-                      >
-                        Create Account
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="submit"
+                            className={`flex-1 ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
+                            loading={loading}
+                          >
+                            Create Account
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Create my account</TooltipContent>
+                      </Tooltip>
                     </div>
                   </form>
                 </Form>
@@ -561,14 +635,28 @@ const Signup = () => {
                         name="name"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel className={`${isMobile ? 'text-sm' : ''} text-gray-700`}>Full Name</FormLabel>
+                            <div className="flex items-center gap-1.5">
+                              <FormLabel className={`${isMobile ? 'text-sm' : ''} text-gray-700`}>Full Name</FormLabel>
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className="inline-flex cursor-help text-gray-400 hover:text-gray-600" role="img" aria-label="Help">
+                                      <HelpCircle className={isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="right" className="max-w-xs">
+                                    Enter your full name (personal name, not business name). You&apos;ll set up your business details after account creation.
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            </div>
                             <FormControl>
                               <div className="relative">
                                 <User className={`absolute left-3 top-1/2 transform -translate-y-1/2 ${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-gray-400`} />
                                 <Input
                                   {...field}
-                                  className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-white border text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
-                                  placeholder="Please enter your full name"
+                                  className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                  placeholder="e.g. John Doe"
                                 />
                               </div>
                             </FormControl>
@@ -587,7 +675,7 @@ const Signup = () => {
                                 <Mail className={`absolute left-3 top-1/2 transform -translate-y-1/2 ${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-gray-400`} />
                                 <Input
                                   {...field}
-                                  className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-white border text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                  className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
                                   placeholder="Please enter a valid email address"
                                 />
                               </div>
@@ -603,6 +691,30 @@ const Signup = () => {
                       >
                         Continue
                       </Button>
+                      {GOOGLE_CLIENT_ID && (
+                        <>
+                          <div className={`relative ${isMobile ? 'my-4' : 'my-6'}`}>
+                            <div className="absolute inset-0 flex items-center">
+                              <span className="w-full border-t border-border"></span>
+                            </div>
+                            <div className="relative flex justify-center text-xs uppercase">
+                              <span className="bg-card px-2 text-muted-foreground">Or</span>
+                            </div>
+                          </div>
+                          <div className="flex justify-center">
+                            <GoogleLogin
+                              onSuccess={handleGoogleSignupSuccess}
+                              onError={handleGoogleSignupError}
+                              useOneTap={false}
+                              theme="outline"
+                              size="large"
+                              type="standard"
+                              text="signup_with"
+                              shape="rectangular"
+                            />
+                          </div>
+                        </>
+                      )}
                     </form>
                   </Form>
                 </>
@@ -626,7 +738,7 @@ const Signup = () => {
                               <Input
                                 {...field}
                                 type={showPassword ? 'text' : 'password'}
-                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-white border text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
                                 placeholder="Password"
                               />
                               <button
@@ -667,7 +779,7 @@ const Signup = () => {
                               <Input
                                 {...field}
                                 type={showPassword ? 'text' : 'password'}
-                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-white border text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
                                 placeholder="Confirm Password"
                               />
                               <button
@@ -693,13 +805,18 @@ const Signup = () => {
                       >
                         Back
                       </Button>
-                      <Button
-                        type="submit"
-                        className={`flex-1 ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
-                        loading={loading}
-                      >
-                        Create Account
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="submit"
+                            className={`flex-1 ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
+                            loading={loading}
+                          >
+                            Create Account
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Create my account</TooltipContent>
+                      </Tooltip>
                     </div>
                   </form>
                 </Form>
@@ -729,9 +846,9 @@ const Signup = () => {
 
           {/* Right Section - Promotional - Hidden on mobile */}
           {!isMobile && (
-            <div className="flex-1 bg-white relative hidden lg:flex items-center justify-center p-12">
+            <div className="flex-1 bg-muted/30 relative hidden lg:flex items-center justify-center p-12">
               {/* Image Area - positioned relative to white container, ignoring padding */}
-              <div className="absolute top-2 left-2 right-2 bottom-2 bg-gray-50 rounded-xl flex items-center justify-center overflow-hidden">
+              <div className="absolute top-2 left-2 right-2 bottom-2 bg-muted rounded-xl flex items-center justify-center overflow-hidden">
                 <img 
                   src={africanWomanImage} 
                   alt="Business professional" 
@@ -742,22 +859,22 @@ const Signup = () => {
               <div className="relative w-full h-full z-10">
                 {/* Integration Cards Overlay */}
                 <div className="absolute top-8 right-8 space-y-3">
-                  <div className="bg-white border border-gray-200 p-4 w-48">
+                  <div className="bg-card border border-border p-4 w-48">
                     <div className="flex items-center gap-2 mb-2">
                       <div className="w-8 h-8 bg-[#166534] rounded flex items-center justify-center text-white font-bold text-sm">io</div>
-                      <div className="flex-1 h-px bg-gray-200"></div>
+                      <div className="flex-1 h-px bg-border"></div>
                     </div>
-                    <div className="text-2xl font-semibold text-gray-900">$1,200.00</div>
+                    <div className="text-2xl font-semibold text-foreground">₵1,200.00</div>
                   </div>
-                  <div className="bg-white border border-gray-200 p-4 w-48">
+                  <div className="bg-card border border-border p-4 w-48">
                     <div className="flex items-center gap-2 mb-2">
                       <div className="w-8 h-8 bg-[#a3e635] rounded flex items-center justify-center text-[#166534] font-bold text-sm">qb</div>
-                      <div className="flex-1 h-px bg-gray-200"></div>
+                      <div className="flex-1 h-px bg-border"></div>
                     </div>
-                    <div className="text-2xl font-semibold text-gray-900">$1,200.00</div>
+                    <div className="text-2xl font-semibold text-foreground">₵1,200.00</div>
                   </div>
                   <div className="flex justify-center mt-2">
-                    <div className="w-8 h-8 bg-white border border-gray-200 rounded-full flex items-center justify-center">
+                    <div className="w-8 h-8 bg-card border border-border rounded-full flex items-center justify-center">
                       <RefreshCw className="h-4 w-4 text-gray-600" />
                     </div>
                   </div>

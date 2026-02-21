@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { Product, ProductVariant, Shop, ProductCategory, Barcode } = require('../models');
+const { Product, ProductVariant, Shop, ProductCategory, Barcode, SaleItem, Sale, Customer, User } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
@@ -16,6 +16,7 @@ exports.getProducts = async (req, res, next) => {
     const search = req.query.search || '';
     const shopId = req.query.shopId;
     const categoryId = req.query.categoryId;
+    const isActive = req.query.isActive;
 
     const where = applyTenantFilter(req.tenantId, {});
     if (shopId) {
@@ -23,6 +24,9 @@ exports.getProducts = async (req, res, next) => {
     }
     if (categoryId) {
       where.categoryId = categoryId;
+    }
+    if (isActive !== undefined) {
+      where.isActive = isActive === 'true' || isActive === true;
     }
     if (search) {
       where[Op.or] = [
@@ -90,6 +94,58 @@ exports.getProduct = async (req, res, next) => {
   }
 };
 
+// @desc    Get sales/movement history for a product
+// @route   GET /api/products/:id/sales
+// @access  Private
+exports.getProductSales = async (req, res, next) => {
+  try {
+    const product = await Product.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      attributes: ['id', 'name']
+    });
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    const { page, limit, offset } = getPagination(req, { defaultPageSize: 20 });
+    const { count, rows } = await SaleItem.findAndCountAll({
+      where: { productId: req.params.id },
+      limit,
+      offset,
+      include: [
+        {
+          model: Sale,
+          as: 'sale',
+          required: true,
+          attributes: ['id', 'saleNumber', 'createdAt', 'status', 'total', 'soldBy'],
+          where: applyTenantFilter(req.tenantId),
+          include: [
+            { model: Customer, as: 'customer', attributes: ['id', 'name'], required: false },
+            { model: User, as: 'seller', attributes: ['id', 'name'], required: false }
+          ]
+        }
+      ],
+      order: [[{ model: Sale, as: 'sale' }, 'createdAt', 'DESC']]
+    });
+
+    res.status(200).json({
+      success: true,
+      count,
+      pagination: {
+        page,
+        limit,
+        totalPages: Math.ceil(count / limit)
+      },
+      data: rows
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Upload product image
 // @route   POST /api/products/upload-image
 // @access  Private
@@ -131,28 +187,71 @@ exports.uploadProductImage = async (req, res, next) => {
 exports.getProductCategories = async (req, res, next) => {
   const tenantId = req.tenantId;
   const tenant = req.tenant;
-  const businessType = tenant?.businessType || 'unknown';
+  const { resolveBusinessType } = require('../config/businessTypes');
+  const businessType = resolveBusinessType(tenant?.businessType);
+  const studioType = tenant?.metadata?.studioType || null;
   const shopType = tenant?.metadata?.shopType || null;
+
   try {
-    console.log('[getProductCategories] tenantId=%s businessType=%s shopType=%s', tenantId || 'missing', businessType, shopType || 'none');
+    console.log('[getProductCategories] tenantId=%s businessType=%s studioType=%s shopType=%s (product_categories)', tenantId || 'missing', businessType, studioType || 'none', shopType || 'none');
     if (!tenantId) {
       console.warn('[getProductCategories] No tenantId on request – categories may be empty');
     }
-    const whereClause = applyTenantFilter(tenantId, { isActive: true });
-    const categories = await ProductCategory.findAll({
-      where: whereClause,
-      order: [['name', 'ASC']]
-    });
+
+    // Base filter: tenant + active
+    const baseWhere = {
+      ...applyTenantFilter(tenantId, {}),
+      isActive: true
+    };
+
+    let categories;
+
+    try {
+      // Try full query with businessType/studioType/shopType (requires migration to have run)
+      const whereConditions = [
+        { ...baseWhere, businessType: null },
+        { ...baseWhere, businessType: businessType, studioType: null, shopType: null }
+      ];
+      if (businessType === 'studio' && studioType) {
+        whereConditions.push({
+          ...baseWhere,
+          businessType: 'studio',
+          studioType: studioType,
+          shopType: null
+        });
+      }
+      if (businessType === 'shop' && shopType) {
+        whereConditions.push({
+          ...baseWhere,
+          businessType: 'shop',
+          shopType: shopType,
+          studioType: null
+        });
+      }
+      categories = await ProductCategory.findAll({
+        where: { [Op.or]: whereConditions },
+        order: [['name', 'ASC']]
+      });
+    } catch (columnError) {
+      console.warn('[getProductCategories] businessType/studioType query failed (columns may not exist), falling back to tenant-only:', columnError?.message);
+      categories = await ProductCategory.findAll({
+        where: baseWhere,
+        order: [['name', 'ASC']],
+        attributes: ['id', 'tenantId', 'name', 'description', 'isActive', 'metadata', 'createdAt', 'updatedAt']
+      });
+    }
+
     console.log('[getProductCategories] tenantId=%s count=%d', tenantId || 'missing', categories.length);
     if (categories.length === 0) {
-      console.log('[getProductCategories] No product_categories for this tenant – run onboarding with shop type or create categories manually');
+      console.log('[getProductCategories] No product_categories for this tenant – run seed-default-product-categories migration');
     }
     res.status(200).json({ success: true, data: categories });
   } catch (error) {
     console.error('[getProductCategories] Error loading categories:', {
       tenantId,
       message: error?.message,
-      name: error?.name
+      name: error?.name,
+      stack: error?.stack
     });
     next(error);
   }
@@ -163,14 +262,52 @@ exports.getProductCategories = async (req, res, next) => {
 // @access  Private
 exports.createProductCategory = async (req, res, next) => {
   try {
-    const { name, description, metadata } = sanitizePayload(req.body || {});
+    const { name, description, metadata, businessType, studioType, shopType } = sanitizePayload(req.body || {});
     if (!name) {
       return res.status(400).json({ success: false, message: 'Category name is required' });
     }
+    
+    const tenant = req.tenant;
+    const { resolveBusinessType } = require('../config/businessTypes');
+    
+    // Check for duplicate category name within tenant
+    const existingCategory = await ProductCategory.findOne({
+      where: { tenantId: req.tenantId, name: name.trim() }
+    });
+    if (existingCategory) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Category "${name}" already exists` 
+      });
+    }
+    
+    // If businessType/studioType/shopType not provided, use tenant's values
+    const finalBusinessType = businessType || (tenant ? resolveBusinessType(tenant.businessType) : null);
+    const finalStudioType = studioType || (tenant?.metadata?.studioType || null);
+    const finalShopType = shopType ?? (tenant?.metadata?.shopType || null);
+    
+    // Validate: studioType only makes sense if businessType is 'studio'
+    if (finalStudioType && finalBusinessType !== 'studio') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'studioType can only be set when businessType is "studio"' 
+      });
+    }
+    // Validate: shopType only makes sense if businessType is 'shop'
+    if (finalShopType && finalBusinessType !== 'shop') {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'shopType can only be set when businessType is "shop"' 
+      });
+    }
+    
     const category = await ProductCategory.create({
-      name,
+      name: name.trim(),
       description: description || null,
       metadata: metadata || {},
+      businessType: finalBusinessType,
+      studioType: finalStudioType,
+      shopType: finalShopType,
       tenantId: req.tenantId
     });
     res.status(201).json({ success: true, data: category });
@@ -224,61 +361,63 @@ exports.updateProduct = async (req, res, next) => {
     await product.update(payload);
     invalidateProductListCache(req.tenantId);
 
-    const updatedProduct = await Product.findOne({
-      where: applyTenantFilter(req.tenantId, { id: product.id }),
+    await product.reload({
       include: [
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
         { model: ProductCategory, as: 'category', attributes: ['id', 'name'] }
       ]
     });
 
-    // Check for low stock alert
+    // Defer low stock alert so response is sent immediately
     if (reorderLevel > 0 && newQuantity <= reorderLevel && newQuantity < oldQuantity) {
-      try {
-        const whatsappService = require('../services/whatsappService');
-        const whatsappTemplates = require('../services/whatsappTemplates');
-        const { Tenant, UserTenant } = require('../models');
-        
-        // Get tenant to find admin/manager phone numbers
-        const tenant = await Tenant.findByPk(req.tenantId);
-        const config = await whatsappService.getConfig(req.tenantId);
-        
-        if (config && tenant) {
-          // Get admin/manager users for this tenant
-          const adminUsers = await UserTenant.findAll({
-            where: {
-              tenantId: req.tenantId,
-              role: { [Op.in]: ['admin', 'manager', 'owner'] }
-            },
-            include: [{ model: require('../models').User, as: 'user', attributes: ['id', 'name', 'phone'] }]
-          });
-          
-          // Send WhatsApp alerts to admins/managers
-          for (const adminUser of adminUsers) {
-            if (adminUser.user && adminUser.user.phone) {
-              const phoneNumber = whatsappService.validatePhoneNumber(adminUser.user.phone);
-              if (phoneNumber) {
-                const parameters = whatsappTemplates.prepareLowStockAlert(updatedProduct);
-                await whatsappService.sendMessage(
-                  req.tenantId,
-                  phoneNumber,
-                  'low_stock_alert',
-                  parameters
-                ).catch(error => {
-                  console.error('[Product] WhatsApp low stock alert failed:', error);
-                });
+      const productForAlert = product;
+      const tenantIdForAlert = req.tenantId;
+      setImmediate(() => {
+        (async () => {
+          try {
+            const whatsappService = require('../services/whatsappService');
+            const whatsappTemplates = require('../services/whatsappTemplates');
+            const { Tenant, UserTenant } = require('../models');
+
+            const tenant = await Tenant.findByPk(tenantIdForAlert);
+            const config = await whatsappService.getConfig(tenantIdForAlert);
+
+            if (config && tenant) {
+              const adminUsers = await UserTenant.findAll({
+                where: {
+                  tenantId: tenantIdForAlert,
+                  role: { [Op.in]: ['admin', 'manager', 'owner'] }
+                },
+                include: [{ model: require('../models').User, as: 'user', attributes: ['id', 'name', 'phone'] }]
+              });
+
+              for (const adminUser of adminUsers) {
+                if (adminUser.user && adminUser.user.phone) {
+                  const phoneNumber = whatsappService.validatePhoneNumber(adminUser.user.phone);
+                  if (phoneNumber) {
+                    const parameters = whatsappTemplates.prepareLowStockAlert(productForAlert);
+                    await whatsappService.sendMessage(
+                      tenantIdForAlert,
+                      phoneNumber,
+                      'low_stock_alert',
+                      parameters
+                    ).catch(error => {
+                      console.error('[Product] WhatsApp low stock alert failed:', error);
+                    });
+                  }
+                }
               }
             }
+          } catch (error) {
+            console.error('[Product] WhatsApp low stock alert error:', error);
           }
-        }
-      } catch (error) {
-        console.error('[Product] WhatsApp low stock alert error:', error);
-      }
+        })();
+      });
     }
 
     res.status(200).json({
       success: true,
-      data: updatedProduct
+      data: product
     });
   } catch (error) {
     next(error);

@@ -7,7 +7,10 @@ const { sequelize } = require('../config/database');
 const { getPagination } = require('../utils/paginationUtils');
 const { baseUploadDir } = require('../middleware/upload');
 const activityLogger = require('../services/activityLogger');
+const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { getJobItemCategories } = require('../config/jobItemCategories');
+const { getMaterialTypesForStudioType } = require('../config/studioTypes');
 
 // Generate unique job number with transaction support for advisory locks
 const generateJobNumber = async (tenantId, transaction = null) => {
@@ -299,6 +302,7 @@ const autoCreateInvoice = async (jobId, tenantId) => {
       invoiceDate: new Date(),
       dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days
       subtotal,
+      totalAmount: subtotal,
       taxRate: 0,
       discountType: 'fixed',
       discountValue: 0,
@@ -308,7 +312,13 @@ const autoCreateInvoice = async (jobId, tenantId) => {
       notes: null,
       termsAndConditions: 'Payment is due within the specified payment terms. Late payments may incur additional charges.'
     });
-    
+
+    try {
+      await createInvoiceRevenueJournal(invoice);
+    } catch (journalError) {
+      console.error('[AutoInvoice] Failed to create accounting revenue entry:', journalError?.message);
+    }
+
     console.log(`[AutoInvoice] ✅ Invoice created successfully: ${invoice.invoiceNumber} (ID: ${invoice.id})`);
 
     // Send webhook to Sabito (async, don't block)
@@ -353,6 +363,30 @@ const autoCreateInvoice = async (jobId, tenantId) => {
 // @desc    Get all jobs
 // @route   GET /api/jobs
 // @access  Private
+// @desc    Get job item categories for current tenant (based on studio type)
+// @route   GET /api/jobs/categories
+// @access  Private
+exports.getJobCategories = async (req, res, next) => {
+  try {
+    const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
+    const businessType = tenant?.businessType || 'printing_press';
+    const metadata = tenant?.metadata || {};
+    const studioType = metadata?.studioType || businessType;
+    const categories = getJobItemCategories(businessType, metadata);
+    const materialTypes = ['printing_press', 'mechanic', 'barber', 'salon'].includes(studioType)
+      ? getMaterialTypesForStudioType(studioType)
+      : getMaterialTypesForStudioType('printing_press');
+
+    res.status(200).json({
+      success: true,
+      data: categories,
+      materialTypes
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.getJobs = async (req, res, next) => {
   try {
     // Ensure tenantId is available (set by tenantContext middleware)
@@ -368,6 +402,8 @@ exports.getJobs = async (req, res, next) => {
     const status = req.query.status;
     const customerId = req.query.customerId;
     const assignedTo = req.query.assignedTo;
+    const priority = req.query.priority;
+    const dueDateFilter = req.query.dueDate;
 
     // Start with tenant filter - CRITICAL for data isolation
     const where = applyTenantFilter(req.tenantId, {});
@@ -387,6 +423,25 @@ exports.getJobs = async (req, res, next) => {
     }
     if (assignedTo) {
       where.assignedTo = assignedTo;
+    }
+    if (priority) {
+      where.priority = priority;
+    }
+    if (dueDateFilter) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      const nextWeek = new Date(today);
+      nextWeek.setDate(nextWeek.getDate() + 7);
+      
+      if (dueDateFilter === 'overdue') {
+        where.dueDate = { [Op.lt]: today };
+      } else if (dueDateFilter === 'today') {
+        where.dueDate = { [Op.between]: [today, tomorrow] };
+      } else if (dueDateFilter === 'this_week') {
+        where.dueDate = { [Op.between]: [today, nextWeek] };
+      }
     }
 
     const { count, rows } = await Job.findAndCountAll({

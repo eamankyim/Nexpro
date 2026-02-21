@@ -55,6 +55,12 @@ const User = sequelize.define('User', {
     unique: true,
     field: 'sabito_user_id'
   },
+  googleId: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    unique: true,
+    field: 'google_id'
+  },
   failedLoginAttempts: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -65,12 +71,20 @@ const User = sequelize.define('User', {
     type: DataTypes.DATE,
     allowNull: true,
     field: 'lockout_until'
+  },
+  emailVerifiedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+    field: 'email_verified_at'
   }
 }, {
   timestamps: true,
   tableName: 'users',
   hooks: {
     beforeCreate: async (user) => {
+      if (user.email && typeof user.email === 'string') {
+        user.email = user.email.trim().toLowerCase();
+      }
       if (user.password) {
         const rounds = parseInt(process.env.BCRYPT_ROUNDS, 10) || 10;
         const salt = await bcrypt.genSalt(rounds);
@@ -78,7 +92,10 @@ const User = sequelize.define('User', {
       }
     },
     beforeUpdate: async (user) => {
-      if (user.changed('password')) {
+      if (user.changed('email') && user.email && typeof user.email === 'string') {
+        user.email = user.email.trim().toLowerCase();
+      }
+      if (user.changed('password') && user.password) {
         const rounds = parseInt(process.env.BCRYPT_ROUNDS, 10) || 10;
         const salt = await bcrypt.genSalt(rounds);
         user.password = await bcrypt.hash(user.password, salt);

@@ -36,6 +36,7 @@ class ErrorBoundary extends React.Component {
       error: null,
       errorInfo: null,
     };
+    this._isHandlingError = false;
   }
 
   static getDerivedStateFromError(error) {
@@ -43,11 +44,30 @@ class ErrorBoundary extends React.Component {
   }
 
   componentDidCatch(error, errorInfo) {
+    // Prevent infinite loops by checking if we're already handling an error
+    if (this._isHandlingError) {
+      return;
+    }
+
+    this._isHandlingError = true;
     console.error('ErrorBoundary caught an error:', error, errorInfo);
-    this.setState({ error, errorInfo });
+    
+    // Use setTimeout to defer setState outside of the commit phase
+    // This prevents "Maximum update depth exceeded" errors
+    setTimeout(() => {
+      try {
+        this.setState({ error, errorInfo });
+      } catch (e) {
+        // If setState fails, log but don't crash
+        console.error('ErrorBoundary: Failed to update state:', e);
+      } finally {
+        this._isHandlingError = false;
+      }
+    }, 0);
   }
 
   handleReset = () => {
+    this._isHandlingError = false;
     this.setState({ hasError: false, error: null, errorInfo: null });
   };
 
@@ -71,21 +91,21 @@ class ErrorBoundary extends React.Component {
       : "We're sorry, but something unexpected happened. Our team has been notified and is working to fix the issue.";
 
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-gray-50">
+      <div className="min-h-screen flex items-center justify-center p-4 bg-muted/50">
         <Card className="max-w-2xl w-full border-red-200">
           <CardHeader>
             <div className="flex items-center gap-3">
               <div className="p-3 bg-red-100 rounded-full">
                 <AlertTriangle className="h-6 w-6 text-red-600" />
               </div>
-              <CardTitle className="text-2xl text-gray-900">{title}</CardTitle>
+              <CardTitle className="text-2xl text-foreground">{title}</CardTitle>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-gray-600">{message}</p>
 
             {process.env.NODE_ENV === 'development' && this.state.error && (
-              <div className="mt-4 p-4 bg-gray-100 rounded-lg">
+              <div className="mt-4 p-4 bg-muted rounded-lg">
                 <details className="text-sm">
                   <summary className="cursor-pointer font-semibold text-gray-700 mb-2">
                     Error Details (Development Only)

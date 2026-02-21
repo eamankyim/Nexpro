@@ -1,17 +1,5 @@
 import { useEffect, useState } from 'react';
 import {
-  Card,
-  Col,
-  Row,
-  Spin,
-  Statistic,
-  Typography,
-  Table,
-  Tag,
-  Empty,
-} from 'antd';
-import { useResponsive } from '../../hooks/useResponsive';
-import {
   PieChart,
   Pie,
   Cell,
@@ -25,13 +13,28 @@ import {
 } from 'recharts';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import { useResponsive } from '../../hooks/useResponsive';
 import adminService from '../../services/adminService';
+import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
 import StatusChip from '../../components/StatusChip';
-
-const { Title, Text } = Typography;
-const PLAN_COLORS = ['#27ae60', '#2f80ed', '#9b51e0'];
+import DashboardStatsCard from '../../components/DashboardStatsCard';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Empty } from '@/components/ui/empty';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Currency, Users, CreditCard } from 'lucide-react';
 
 dayjs.extend(relativeTime);
+
+const PLAN_COLORS = ['#27ae60', '#2f80ed', '#9b51e0'];
 
 const getPlanLabel = (plan) => {
   switch (plan) {
@@ -46,6 +49,7 @@ const getPlanLabel = (plan) => {
 
 const AdminBilling = () => {
   const { isMobile } = useResponsive();
+  const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [tenants, setTenants] = useState([]);
@@ -58,133 +62,100 @@ const AdminBilling = () => {
           adminService.getBillingSummary(),
           adminService.getBillingTenants(),
         ]);
-
-        if (summaryRes?.success) {
-          setSummary(summaryRes.data);
-        }
-        if (tenantsRes?.success) {
-          setTenants(tenantsRes.data || []);
-        }
+        if (summaryRes?.success) setSummary(summaryRes.data);
+        if (tenantsRes?.success) setTenants(tenantsRes.data || []);
       } catch (error) {
         console.error('Failed to load billing data', error);
       } finally {
         setLoading(false);
       }
     };
-
     loadData();
   }, []);
 
-  if (loading) {
+  // Check permission after all hooks
+  if (!permissionsLoading && !hasPermission('billing.view')) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
-        <Spin size="large" />
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <h3 className="text-lg font-semibold text-foreground mb-2">Access Denied</h3>
+          <p className="text-gray-600">You don't have permission to view billing.</p>
+        </div>
       </div>
     );
   }
 
-  const columns = [
-    {
-      title: 'Organization',
-      dataIndex: 'name',
-      key: 'name',
-      render: (text, record) => (
-        <div>
-          <Text strong>{text}</Text>
-          <br />
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            {record.metadata?.billingCustomerId || record.slug}
-          </Text>
-        </div>
-      ),
-    },
-    {
-      title: 'Plan',
-      dataIndex: 'plan',
-      key: 'plan',
-      render: (plan) => (
-        <Tag color={plan === 'pro' ? 'purple' : 'blue'}>{getPlanLabel(plan)}</Tag>
-      ),
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-      render: (status) => <StatusChip status={status} />,
-    },
-    {
-      title: 'Billing Method',
-      dataIndex: ['metadata', 'paymentMethod'],
-      key: 'paymentMethod',
-      render: (_, record) => record.metadata?.paymentMethod || 'Not on file',
-    },
-    {
-      title: 'Last Update',
-      dataIndex: 'updatedAt',
-      key: 'updatedAt',
-      render: (date) => dayjs(date).fromNow(),
-    },
-  ];
+  if (loading || permissionsLoading) {
+    return (
+      <div className="flex justify-center py-20">
+        <Skeleton className="h-12 w-48" />
+      </div>
+    );
+  }
 
   return (
     <div>
-      <div style={{ marginBottom: 24 }}>
-        <Title level={3} style={{ marginBottom: 8 }}>
-          Billing & Subscriptions
-        </Title>
-        <Text type="secondary">
+      <div className="mb-6">
+        <h2 className="text-2xl font-semibold text-foreground mb-1">Billing & Subscriptions</h2>
+        <p className="text-sm text-muted-foreground">
           Track revenue performance, plan mix, and paid tenants across the platform.
-        </Text>
+        </p>
       </div>
 
-      <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={12} lg={8}>
-          <Card>
-            <Statistic
-              title="Estimated MRR (GHS)"
-              value={summary?.estimatedMRR ?? 0}
-              precision={2}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={8}>
-          <Card>
-            <Statistic
-              title="Paying tenants"
-              value={summary?.payingTenants ?? 0}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={8}>
-          <Card>
-            <Statistic
-              title="Trialing tenants"
-              value={summary?.trialingTenants ?? 0}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+        <DashboardStatsCard
+          title="Estimated MRR (₵)"
+          value={
+            typeof summary?.estimatedMRR === 'number'
+              ? summary.estimatedMRR.toFixed(2)
+              : summary?.estimatedMRR ?? 0
+          }
+          icon={Currency}
+          iconBgColor="#dcfce7"
+          iconColor="#166534"
+        />
+        <DashboardStatsCard
+          title="Paying tenants"
+          value={summary?.payingTenants ?? 0}
+          icon={CreditCard}
+          iconBgColor="#dbeafe"
+          iconColor="#2563eb"
+        />
+        <DashboardStatsCard
+          title="Trialing tenants"
+          value={summary?.trialingTenants ?? 0}
+          icon={Users}
+          iconBgColor="#fef3c7"
+          iconColor="#d97706"
+        />
+      </div>
 
-      <Row gutter={[24, 24]} style={{ marginBottom: 24 }}>
-        <Col xs={24} lg={12}>
-          <Card title="Revenue by plan (GHS)">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <Card className="border border-gray-200">
+          <CardHeader>
+            <CardTitle className="text-base">Revenue by plan (₵)</CardTitle>
+          </CardHeader>
+          <CardContent>
             {summary?.planBreakdown?.length ? (
               <ResponsiveContainer width="100%" height={280}>
                 <BarChart data={summary.planBreakdown}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="plan" tickFormatter={getPlanLabel} />
                   <YAxis allowDecimals={false} />
-                  <Tooltip formatter={(value) => `GHS ${value}`} />
+                  <Tooltip formatter={(value) => `₵ ${value}`} />
                   <Bar dataKey="mrr" fill="#2f80ed" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
               <Empty description="No paying tenants yet" />
             )}
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="Plan mix">
+          </CardContent>
+        </Card>
+        <Card className="border border-gray-200">
+          <CardHeader>
+            <CardTitle className="text-base">Plan mix</CardTitle>
+          </CardHeader>
+          <CardContent>
             {summary?.planBreakdown?.length ? (
               <ResponsiveContainer width="100%" height={280}>
                 <PieChart>
@@ -203,62 +174,107 @@ const AdminBilling = () => {
                       />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value, name, props) => [`${value} tenants`, getPlanLabel(props.payload.plan)]} />
+                  <Tooltip
+                    formatter={(value, name, props) => [
+                      `${value} tenants`,
+                      getPlanLabel(props.payload.plan),
+                    ]}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
               <Empty description="No data yet" />
             )}
-          </Card>
-        </Col>
-      </Row>
+          </CardContent>
+        </Card>
+      </div>
 
-      <Card
-        title="Paying tenants"
-        extra={
-          <Text type="secondary">
+      <Card className="border border-gray-200">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base">Paying tenants</CardTitle>
+          <span className="text-sm text-muted-foreground">
             Showing {tenants.length} tenants on a paid plan
-          </Text>
-        }
-      >
-        {isMobile ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {tenants.length === 0 ? (
-              <Empty description="No paying tenants" />
-            ) : (
-              tenants.map((tenant) => (
-                <Card key={tenant.id} size="small" style={{ border: '1px solid #f0f0f0' }}>
-                  <div>
-                    <Text strong>{tenant.name}</Text>
-                    <br />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {tenant.metadata?.billingCustomerId || tenant.slug}
-                    </Text>
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12, paddingTop: 12, borderTop: '1px solid #f0f0f0' }}>
-                    <Tag color={tenant.plan === 'pro' ? 'purple' : 'blue'}>{getPlanLabel(tenant.plan)}</Tag>
-                    <StatusChip status={tenant.status} />
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {tenant.metadata?.paymentMethod || 'Not on file'}
-                    </Text>
-                    <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(tenant.updatedAt).fromNow()}</Text>
-                  </div>
-                </Card>
-              ))
-            )}
-          </div>
-        ) : (
-          <Table
-            rowKey="id"
-            columns={columns}
-            dataSource={tenants}
-            pagination={false}
-          />
-        )}
+          </span>
+        </CardHeader>
+        <CardContent>
+          {isMobile ? (
+            <div className="flex flex-col gap-4">
+              {tenants.length === 0 ? (
+                <Empty description="No paying tenants" />
+              ) : (
+                tenants.map((tenant) => (
+                  <Card key={tenant.id} className="border border-gray-200 p-4">
+                    <div>
+                      <p className="font-semibold text-foreground">{tenant.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {tenant.metadata?.billingCustomerId || tenant.slug}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
+                      <Badge variant={tenant.plan === 'pro' ? 'default' : 'secondary'}>
+                        {getPlanLabel(tenant.plan)}
+                      </Badge>
+                      <StatusChip status={tenant.status} />
+                      <span className="text-xs text-muted-foreground">
+                        {tenant.metadata?.paymentMethod || 'Not on file'}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {dayjs(tenant.updatedAt).fromNow()}
+                      </span>
+                    </div>
+                  </Card>
+                ))
+              )}
+            </div>
+          ) : (
+            <>
+              {tenants.length === 0 ? (
+                <Empty description="No paying tenants" className="py-12" />
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Organization</TableHead>
+                      <TableHead>Plan</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Billing Method</TableHead>
+                      <TableHead>Last Update</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {tenants.map((tenant) => (
+                      <TableRow key={tenant.id}>
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">{tenant.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {tenant.metadata?.billingCustomerId || tenant.slug}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={tenant.plan === 'pro' ? 'default' : 'secondary'}>
+                            {getPlanLabel(tenant.plan)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <StatusChip status={tenant.status} />
+                        </TableCell>
+                        <TableCell>
+                          {tenant.metadata?.paymentMethod || 'Not on file'}
+                        </TableCell>
+                        <TableCell>{dayjs(tenant.updatedAt).fromNow()}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </>
+          )}
+        </CardContent>
       </Card>
     </div>
   );
 };
 
 export default AdminBilling;
-

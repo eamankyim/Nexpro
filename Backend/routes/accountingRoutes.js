@@ -3,9 +3,12 @@ const {
   getAccounts,
   createAccount,
   updateAccount,
+  deleteAccount,
   getJournalEntries,
   getJournalEntry,
   createJournalEntry,
+  postJournalEntry,
+  deleteJournalEntry,
   getTrialBalance,
   getAccountSummary
 } = require('../controllers/accountingController');
@@ -24,7 +27,8 @@ router
 
 router
   .route('/accounts/:id')
-  .put(authorize('admin', 'manager'), updateAccount);
+  .put(authorize('admin', 'manager'), updateAccount)
+  .delete(authorize('admin', 'manager'), deleteAccount);
 
 router
   .route('/journal')
@@ -33,7 +37,10 @@ router
 
 router
   .route('/journal/:id')
-  .get(getJournalEntry);
+  .get(getJournalEntry)
+  .delete(authorize('admin', 'manager'), deleteJournalEntry);
+
+router.patch('/journal/:id/post', authorize('admin', 'manager'), postJournalEntry);
 
 router.get('/trial-balance', getTrialBalance);
 router.get('/accounts/summary', getAccountSummary);

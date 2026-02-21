@@ -1,5 +1,4 @@
 import { Navigate } from 'react-router-dom';
-import { Spin } from 'antd';
 import { useAuth } from '../context/AuthContext';
 
 const PlatformRoute = ({ children }) => {
@@ -7,8 +6,8 @@ const PlatformRoute = ({ children }) => {
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <Spin size="large" />
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#166534]" />
       </div>
     );
   }

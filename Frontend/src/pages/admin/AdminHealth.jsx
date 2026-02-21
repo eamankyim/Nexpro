@@ -1,176 +1,199 @@
 import { useEffect, useState } from 'react';
-import {
-  Card,
-  Col,
-  Row,
-  Spin,
-  Statistic,
-  Typography,
-  Timeline,
-  List,
-  Tag,
-} from 'antd';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
+import adminService from '../../services/adminService';
+import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
 import StatusChip from '../../components/StatusChip';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Timeline,
+  TimelineItem,
+  TimelineIndicator,
+  TimelineContent,
+  TimelineTitle,
+  TimelineDescription,
+} from '@/components/ui/timeline';
+import DashboardStatsCard from '../../components/DashboardStatsCard';
+import { Activity, Database, Bell, Users } from 'lucide-react';
 
 dayjs.extend(relativeTime);
 
-const { Title, Text } = Typography;
-
-const statusColor = (status) => {
-  switch (status) {
-    case 'online':
-      return 'green';
-    case 'warning':
-      return 'orange';
-    default:
-      return 'red';
-  }
-};
-
 const AdminHealth = () => {
+  const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
+
+  // Check permission after all hooks
+  if (!permissionsLoading && !hasPermission('health.view')) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <h3 className="text-lg font-semibold text-foreground mb-2">Access Denied</h3>
+          <p className="text-gray-600">You don't have permission to view system health.</p>
+        </div>
+      </div>
+    );
+  }
 
   useEffect(() => {
     const fetchHealth = async () => {
       setLoading(true);
       try {
         const response = await adminService.getSystemHealth();
-        if (response?.success) {
-          setData(response.data);
-        }
+        if (response?.success) setData(response.data);
       } catch (error) {
         console.error('Failed to load system health', error);
       } finally {
         setLoading(false);
       }
     };
-
     fetchHealth();
   }, []);
 
-  if (loading) {
+  // Check permission after all hooks
+  if (!permissionsLoading && !hasPermission('health.view')) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', padding: '80px 0' }}>
-        <Spin size="large" />
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <h3 className="text-lg font-semibold text-foreground mb-2">Access Denied</h3>
+          <p className="text-gray-600">You don't have permission to view system health.</p>
+        </div>
       </div>
     );
   }
 
+  if (loading || permissionsLoading) {
+    return (
+      <div className="flex justify-center py-20">
+        <Skeleton className="h-12 w-48" />
+      </div>
+    );
+  }
+
+  const indicatorColor = (status) => {
+    if (status === 'active') return 'bg-green-500';
+    if (status === 'paused') return 'bg-amber-500';
+    return 'bg-red-500';
+  };
+
   return (
     <div>
-      <div style={{ marginBottom: 24 }}>
-        <Title level={3} style={{ marginBottom: 8 }}>
-          System Health
-        </Title>
-        <Text type="secondary">
+      <div className="mb-6">
+        <h2 className="text-2xl font-semibold text-foreground mb-1">System Health</h2>
+        <p className="text-sm text-muted-foreground">
           Monitor backend uptime, database responsiveness, and recent events.
-        </Text>
+        </p>
       </div>
 
-      <Row gutter={[24, 24]}>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Server uptime"
-              value={data?.uptimeHuman || '—'}
-            />
-            <Text type="secondary">
-              Started {dayjs(data?.serverStartedAt).fromNow()}
-            </Text>
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Database latency"
-              value={data?.database?.latencyMs ?? 0}
-              suffix="ms"
-            />
-            <StatusChip status={data?.database?.status || 'online'} />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Pending notifications"
-              value={data?.counts?.pendingNotifications ?? 0}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} lg={6}>
-          <Card>
-            <Statistic
-              title="Platform admins"
-              value={data?.counts?.activeAdmins ?? 0}
-            />
-          </Card>
-        </Col>
-      </Row>
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <DashboardStatsCard
+          title="Server uptime"
+          value={data?.uptimeHuman || '—'}
+          icon={Activity}
+          iconBgColor="#dcfce7"
+          iconColor="#166534"
+        />
+        <Card className="border border-gray-200">
+          <CardContent className="pt-6">
+            <div className="flex justify-between items-start">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">Database latency</p>
+                <p className="text-2xl font-bold mt-1">
+                  {data?.database?.latencyMs ?? 0} ms
+                </p>
+                <StatusChip status={data?.database?.status || 'online'} />
+              </div>
+              <div className="rounded-full p-2 bg-blue-100">
+                <Database className="h-5 w-5 text-blue-600" />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <DashboardStatsCard
+          title="Pending notifications"
+          value={data?.counts?.pendingNotifications ?? 0}
+          icon={Bell}
+          iconBgColor="#fef3c7"
+          iconColor="#d97706"
+        />
+        <DashboardStatsCard
+          title="Platform admins"
+          value={data?.counts?.activeAdmins ?? 0}
+          icon={Users}
+          iconBgColor="#e0e7ff"
+          iconColor="#4f46e5"
+        />
+      </div>
 
-      <Row gutter={[24, 24]} style={{ marginTop: 24 }}>
-        <Col xs={24} lg={12}>
-          <Card title="Tenant status alerts">
+      <div className="mb-2 text-sm text-muted-foreground">
+        Started {dayjs(data?.serverStartedAt).fromNow()}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="border border-gray-200">
+          <CardHeader>
+            <CardTitle className="text-base">Recent tenants</CardTitle>
+          </CardHeader>
+          <CardContent>
             {data?.recentTenants?.length ? (
-              <Timeline
-                items={data.recentTenants.map((tenant) => ({
-                  color: tenant.status === 'active' ? 'green' : tenant.status === 'paused' ? 'orange' : 'red',
-                  children: (
-                    <div>
-                      <Text strong>{tenant.name}</Text>{' '}
-                      <Tag>{tenant.plan}</Tag>
-                      <div>
-                        <Text type="secondary">
-                          {tenant.status} • {dayjs(tenant.createdAt).fromNow()}
-                        </Text>
-                      </div>
-                    </div>
-                  ),
-                }))}
-              />
-            ) : (
-              <Text type="secondary">No recent tenants recorded.</Text>
-            )}
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="Recent notifications">
-            {data?.recentNotifications?.length ? (
-              <List
-                itemLayout="horizontal"
-                dataSource={data.recentNotifications}
-                renderItem={(item) => (
-                  <List.Item>
-                    <List.Item.Meta
-                      title={
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>{item.title}</span>
-                          <Tag color={item.isRead ? 'default' : 'blue'}>
-                            {item.type}
-                          </Tag>
-                        </div>
-                      }
-                      description={
-                        <Text type="secondary">
-                          Triggered {dayjs(item.createdAt).fromNow()}
-                        </Text>
-                      }
+              <Timeline>
+                {data.recentTenants.map((tenant, idx) => (
+                  <TimelineItem key={tenant.id} isLast={idx === data.recentTenants.length - 1}>
+                    <TimelineIndicator
+                      className={indicatorColor(tenant.status)}
                     />
-                  </List.Item>
-                )}
-              />
+                    <TimelineContent>
+                      <TimelineTitle className="flex items-center gap-2">
+                        {tenant.name}
+                        <Badge variant="secondary">{tenant.plan}</Badge>
+                      </TimelineTitle>
+                      <TimelineDescription>
+                        {tenant.status} • {dayjs(tenant.createdAt).fromNow()}
+                      </TimelineDescription>
+                    </TimelineContent>
+                  </TimelineItem>
+                ))}
+              </Timeline>
             ) : (
-              <Text type="secondary">No recent notifications logged.</Text>
+              <p className="text-sm text-muted-foreground">No recent tenants recorded.</p>
             )}
-          </Card>
-        </Col>
-      </Row>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-gray-200">
+          <CardHeader>
+            <CardTitle className="text-base">Recent notifications</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {data?.recentNotifications?.length ? (
+              <ul className="space-y-3">
+                {data.recentNotifications.map((item) => (
+                  <li
+                    key={item.id}
+                    className="py-2 border-b border-gray-100 last:border-0"
+                  >
+                    <div className="flex justify-between items-start">
+                      <span className="font-medium">{item.title}</span>
+                      <Badge variant={item.isRead ? 'secondary' : 'default'}>
+                        {item.type}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Triggered {dayjs(item.createdAt).fromNow()}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">No recent notifications logged.</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 };
 
 export default AdminHealth;
-
-

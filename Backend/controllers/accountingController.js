@@ -9,7 +9,6 @@ const {
 const accountingService = require('../services/accountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
-
 const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense', 'cogs', 'other'];
 
 const buildAccountWhere = (query) => {
@@ -110,6 +109,35 @@ exports.updateAccount = async (req, res, next) => {
 
     await account.update(payload);
     res.status(200).json({ success: true, data: account });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Delete an account. Fails if the account is used in any journal entry line.
+ */
+exports.deleteAccount = async (req, res, next) => {
+  try {
+    const account = await Account.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
+    if (!account) {
+      return res.status(404).json({ success: false, message: 'Account not found' });
+    }
+
+    const usedInJournal = await JournalEntryLine.count({
+      where: applyTenantFilter(req.tenantId, { accountId: req.params.id })
+    });
+    if (usedInJournal > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete account because it is used in one or more journal entries. Deactivate the account instead if you want to hide it.'
+      });
+    }
+
+    await account.destroy();
+    res.status(200).json({ success: true, message: 'Account deleted' });
   } catch (error) {
     next(error);
   }
@@ -240,6 +268,54 @@ exports.createJournalEntry = async (req, res, next) => {
     if (error.message && error.message.includes('tenant')) {
       return res.status(400).json({ success: false, message: error.message });
     }
+    next(error);
+  }
+};
+
+exports.postJournalEntry = async (req, res, next) => {
+  try {
+    const journal = await accountingService.postJournalEntry(
+      req.tenantId,
+      req.params.id,
+      req.user?.id || null
+    );
+    res.status(200).json({ success: true, data: journal });
+  } catch (error) {
+    if (error.message && error.message.includes('not found')) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    if (error.message && error.message.includes('already posted')) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    next(error);
+  }
+};
+
+/**
+ * Delete a journal entry. Allowed only when status is 'draft'.
+ */
+exports.deleteJournalEntry = async (req, res, next) => {
+  try {
+    const entry = await JournalEntry.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
+    if (!entry) {
+      return res.status(404).json({ success: false, message: 'Journal entry not found' });
+    }
+    const status = entry.status || 'draft';
+    if (status !== 'draft') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only draft journal entries can be deleted. Posted entries cannot be removed.'
+      });
+    }
+
+    await JournalEntryLine.destroy({
+      where: applyTenantFilter(req.tenantId, { journalEntryId: req.params.id })
+    });
+    await entry.destroy();
+    res.status(200).json({ success: true, message: 'Journal entry deleted' });
+  } catch (error) {
     next(error);
   }
 };

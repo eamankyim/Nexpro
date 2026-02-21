@@ -291,6 +291,46 @@ const FURNITURE_TEMPLATES = [
   { name: 'Filing Cabinet', unit: 'pcs', category: 'Office', suggestedCost: 250, suggestedPrice: 400 },
 ];
 
+// Restaurant Templates
+const RESTAURANT_TEMPLATES = [
+  // Appetizers
+  { name: 'Soup of the Day', unit: 'bowl', category: 'Appetizers', suggestedCost: 8, suggestedPrice: 15 },
+  { name: 'Salad', unit: 'portion', category: 'Appetizers', suggestedCost: 6, suggestedPrice: 12 },
+  { name: 'Spring Rolls', unit: 'portion', category: 'Appetizers', suggestedCost: 10, suggestedPrice: 18 },
+  { name: 'Chicken Wings', unit: 'portion', category: 'Appetizers', suggestedCost: 12, suggestedPrice: 22 },
+  { name: 'Fried Plantain', unit: 'portion', category: 'Appetizers', suggestedCost: 5, suggestedPrice: 10 },
+  // Main Courses
+  { name: 'Jollof Rice', unit: 'portion', category: 'Main Courses', suggestedCost: 15, suggestedPrice: 35 },
+  { name: 'Waakye', unit: 'portion', category: 'Main Courses', suggestedCost: 12, suggestedPrice: 28 },
+  { name: 'Banku with Fish', unit: 'portion', category: 'Main Courses', suggestedCost: 18, suggestedPrice: 40 },
+  { name: 'Fufu with Light Soup', unit: 'portion', category: 'Main Courses', suggestedCost: 15, suggestedPrice: 35 },
+  { name: 'Fried Rice', unit: 'portion', category: 'Main Courses', suggestedCost: 14, suggestedPrice: 30 },
+  { name: 'Grilled Chicken', unit: 'portion', category: 'Main Courses', suggestedCost: 20, suggestedPrice: 45 },
+  { name: 'Fried Fish', unit: 'portion', category: 'Main Courses', suggestedCost: 18, suggestedPrice: 40 },
+  // Sides
+  { name: 'Plantain', unit: 'portion', category: 'Sides', suggestedCost: 5, suggestedPrice: 10 },
+  { name: 'Coleslaw', unit: 'portion', category: 'Sides', suggestedCost: 4, suggestedPrice: 8 },
+  { name: 'Fried Egg', unit: 'pcs', category: 'Sides', suggestedCost: 3, suggestedPrice: 6 },
+  // Desserts
+  { name: 'Fruit Salad', unit: 'portion', category: 'Desserts', suggestedCost: 6, suggestedPrice: 14 },
+  { name: 'Ice Cream', unit: 'scoop', category: 'Desserts', suggestedCost: 4, suggestedPrice: 10 },
+  { name: 'Cake Slice', unit: 'pcs', category: 'Desserts', suggestedCost: 8, suggestedPrice: 18 },
+  // Beverages
+  { name: 'Coca-Cola', unit: 'bottle', category: 'Beverages', suggestedCost: 2, suggestedPrice: 5 },
+  { name: 'Fanta', unit: 'bottle', category: 'Beverages', suggestedCost: 2, suggestedPrice: 5 },
+  { name: 'Sprite', unit: 'bottle', category: 'Beverages', suggestedCost: 2, suggestedPrice: 5 },
+  { name: 'Water (Bottle)', unit: 'bottle', category: 'Beverages', suggestedCost: 1, suggestedPrice: 3 },
+  { name: 'Fresh Juice', unit: 'glass', category: 'Beverages', suggestedCost: 5, suggestedPrice: 12 },
+  // Hot Drinks
+  { name: 'Tea', unit: 'cup', category: 'Hot Drinks', suggestedCost: 2, suggestedPrice: 6 },
+  { name: 'Coffee', unit: 'cup', category: 'Hot Drinks', suggestedCost: 4, suggestedPrice: 10 },
+  { name: 'Milo', unit: 'cup', category: 'Hot Drinks', suggestedCost: 3, suggestedPrice: 8 },
+  // Alcoholic Drinks
+  { name: 'Beer (Local)', unit: 'bottle', category: 'Alcoholic Drinks', suggestedCost: 5, suggestedPrice: 12 },
+  { name: 'Beer (Imported)', unit: 'bottle', category: 'Alcoholic Drinks', suggestedCost: 8, suggestedPrice: 18 },
+  { name: 'Wine (Glass)', unit: 'glass', category: 'Alcoholic Drinks', suggestedCost: 15, suggestedPrice: 35 },
+];
+
 // Other/General Templates
 const OTHER_TEMPLATES = [
   { name: 'Product 1', unit: 'pcs', category: 'General', suggestedCost: 0, suggestedPrice: 0 },
@@ -309,6 +349,7 @@ export const PRODUCT_TEMPLATES = {
   [SHOP_TYPES.BOOKSTORE]: BOOKSTORE_TEMPLATES,
   [SHOP_TYPES.STATIONERY]: BOOKSTORE_TEMPLATES, // Same as bookstore
   [SHOP_TYPES.FURNITURE]: FURNITURE_TEMPLATES,
+  [SHOP_TYPES.RESTAURANT]: RESTAURANT_TEMPLATES,
   [SHOP_TYPES.SPORTS]: OTHER_TEMPLATES,
   [SHOP_TYPES.TOYS]: OTHER_TEMPLATES,
   [SHOP_TYPES.PET]: OTHER_TEMPLATES,

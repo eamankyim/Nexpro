@@ -43,13 +43,13 @@ import {
 } from '@/components/ui/form';
 
 const profileSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
-  email: z.string().email('Please enter a valid email'),
+  name: z.string().min(1, 'Enter your name'),
+  email: z.string().email('Enter a valid email'),
   profilePicture: z.string().optional(),
 });
 
 const inviteSchema = z.object({
-  email: z.string().email('Please enter a valid email'),
+  email: z.string().email('Enter a valid email'),
   role: z.enum(['admin', 'manager', 'staff']),
 });
 import {
@@ -139,7 +139,8 @@ const Users = () => {
   const [deletingUser, setDeletingUser] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(null);
   const [refreshingUsers, setRefreshingUsers] = useState(false);
-  const { user, isAdmin, isManager } = useAuth();
+  const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
+  const { user, isAdmin, isManager, activeTenantId } = useAuth();
 
   const profileForm = useForm({
     resolver: zodResolver(profileSchema),
@@ -182,14 +183,14 @@ const Users = () => {
   }, [searchValue]);
 
   useEffect(() => {
+    if (!activeTenantId) return;
     fetchUsers();
-  }, [pagination.current, pagination.pageSize, filters.role, filters.isActive, debouncedSearch]);
+  }, [activeTenantId, pagination.current, pagination.pageSize, filters.role, filters.isActive, debouncedSearch]);
 
   useEffect(() => {
-    if (isAdmin) {
-      fetchPendingInvites();
-    }
-  }, [isAdmin, fetchPendingInvites]);
+    if (!activeTenantId || !isAdmin) return;
+    fetchPendingInvites();
+  }, [activeTenantId, isAdmin, fetchPendingInvites]);
 
   // Calculate stats whenever users data changes
   useEffect(() => {
@@ -219,7 +220,7 @@ const Users = () => {
       }
       const params = {
         page: pagination.current,
-        limit: 1000, // Fetch more for client-side filtering
+        limit: pagination.pageSize, // Backend pagination
       };
       
       if (filters.role !== 'all') {
@@ -370,6 +371,10 @@ const Users = () => {
       showSuccess('Invite link generated successfully!');
       await fetchPendingInvites();
     } catch (error) {
+      if (error?.response?.data?.code === 'EMAIL_VERIFICATION_REQUIRED') {
+        showError(error?.response?.data?.message || 'Verify your email to invite team members.');
+        return;
+      }
       if (error?.response?.data?.message?.includes('already exists') ||
           error?.response?.data?.message?.includes('already invited') ||
           error?.response?.data?.data?.inviteUrl) {
@@ -415,21 +420,36 @@ const Users = () => {
     {
       key: 'avatar',
       label: 'Avatar',
-      render: (_, record) => (
-        <ShadcnAvatar>
-          <AvatarImage src={resolveImageUrl(record?.profilePicture || '') || undefined} />
-          <AvatarFallback>
-            <User className="h-4 w-4" />
-          </AvatarFallback>
-        </ShadcnAvatar>
-      )
+      render: (_, record) => {
+        const picUrl = resolveImageUrl(record?.profilePicture || '') || '';
+        return (
+          <ShadcnAvatar className={picUrl ? 'cursor-pointer' : ''}>
+            {picUrl ? (
+              <button
+                type="button"
+                onClick={() => setImagePreviewUrl(picUrl)}
+                className="w-full h-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset rounded-full"
+              >
+                <AvatarImage src={picUrl} />
+              </button>
+            ) : (
+              <>
+                <AvatarImage src={undefined} />
+                <AvatarFallback>
+                  <User className="h-4 w-4" />
+                </AvatarFallback>
+              </>
+            )}
+          </ShadcnAvatar>
+        );
+      }
     },
     {
       key: 'name',
       label: 'Name',
       render: (_, record) => (
         <div>
-          <div className="font-bold text-black">{record?.name || '—'}</div>
+          <div className="font-bold text-foreground">{record?.name || '—'}</div>
           {record?.email && (
             <div className="text-muted-foreground text-xs">{record.email}</div>
           )}
@@ -475,12 +495,12 @@ const Users = () => {
     {
       key: 'createdAt',
       label: 'Created',
-      render: (_, record) => <span className="text-black">{record?.createdAt ? dayjs(record.createdAt).format('MMM DD, YYYY') : '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.createdAt ? dayjs(record.createdAt).format('MMM DD, YYYY') : '—'}</span>
     },
     {
       key: 'lastLogin',
       label: 'Last Login',
-      render: (_, record) => <span className="text-black">{record?.lastLogin ? dayjs(record.lastLogin).format('MMM DD, YYYY') : 'Never'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.lastLogin ? dayjs(record.lastLogin).format('MMM DD, YYYY') : 'Never'}</span>
     },
     {
       key: 'actions',
@@ -528,29 +548,44 @@ const Users = () => {
         />
         {isAdmin && (
           <div className="flex items-center gap-2">
-            <SecondaryButton onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-              <Filter className="h-4 w-4" />
-              {!isMobile && <span className="ml-2">Filter</span>}
-            </SecondaryButton>
-            <SecondaryButton onClick={() => fetchUsers(true)} disabled={refreshingUsers} size={isMobile ? "icon" : "default"}>
-              {refreshingUsers ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4" />
-              )}
-              {!isMobile && <span className="ml-2">Refresh</span>}
-            </SecondaryButton>
-            <Button onClick={handleInviteUser}>
-              <Link className="h-4 w-4 mr-2" />
-              Invite User
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SecondaryButton onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+                  <Filter className="h-4 w-4" />
+                  {!isMobile && <span className="ml-2">Filter</span>}
+                </SecondaryButton>
+              </TooltipTrigger>
+              <TooltipContent>Filter users by role or status</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SecondaryButton onClick={() => fetchUsers(true)} disabled={refreshingUsers} size={isMobile ? "icon" : "default"}>
+                  {refreshingUsers ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4" />
+                  )}
+                </SecondaryButton>
+              </TooltipTrigger>
+              <TooltipContent>Refresh users list</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button onClick={handleInviteUser}>
+                  <Link className="h-4 w-4 mr-2" />
+                  Invite User
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Invite a new user to your workspace</TooltipContent>
+            </Tooltip>
           </div>
         )}
       </div>
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <DashboardStatsCard
+          tooltip="Total number of users in your workspace"
           title="Total Users"
           value={calculatedStats?.totals?.totalUsers || 0}
           icon={UsersIcon}
@@ -558,6 +593,7 @@ const Users = () => {
           iconColor="#166534"
         />
         <DashboardStatsCard
+          tooltip="Users with admin role"
           title="Admins"
           value={calculatedStats?.totals?.adminUsers || 0}
           icon={Crown}
@@ -565,6 +601,7 @@ const Users = () => {
           iconColor="#ef4444"
         />
         <DashboardStatsCard
+          tooltip="Users with manager role"
           title="Managers"
           value={calculatedStats?.totals?.managerUsers || 0}
           icon={Settings}
@@ -572,6 +609,7 @@ const Users = () => {
           iconColor="#8b5cf6"
         />
         <DashboardStatsCard
+          tooltip="Users with staff role"
           title="Staff"
           value={calculatedStats?.totals?.staffUsers || 0}
           icon={Shield}
@@ -601,7 +639,7 @@ const Users = () => {
               <div className="border border-gray-200 rounded-lg overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50">
+                    <tr className="border-b border-border bg-muted/50">
                       <th className="text-left font-medium py-3 px-4">Email</th>
                       <th className="text-left font-medium py-3 px-4">Role</th>
                       <th className="text-left font-medium py-3 px-4">Invited</th>
@@ -665,7 +703,13 @@ const Users = () => {
         loading={loading}
         title={null}
         emptyIcon={<UsersIcon className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No users found"
+        emptyDescription="No team members yet. Invite users to collaborate on your workspace."
+        emptyAction={
+          <Button onClick={handleInviteUser}>
+            <Link className="h-4 w-4 mr-2" />
+            Invite User
+          </Button>
+        }
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);
@@ -678,7 +722,7 @@ const Users = () => {
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Users</SheetTitle>
           </SheetHeader>
@@ -775,14 +819,29 @@ const Users = () => {
           { 
             label: 'Avatar', 
             value: viewingUser.profilePicture,
-            render: (picture) => (
-              <ShadcnAvatar className="h-20 w-20">
-                <AvatarImage src={resolveImageUrl(picture || '') || undefined} />
-                <AvatarFallback>
-                  <User className="h-10 w-10" />
-                </AvatarFallback>
-              </ShadcnAvatar>
-            )
+            render: (picture) => {
+              const picUrl = resolveImageUrl(picture || '') || '';
+              return (
+                <ShadcnAvatar className="h-20 w-20">
+                  {picUrl ? (
+                    <button
+                      type="button"
+                      onClick={() => setImagePreviewUrl(picUrl)}
+                      className="w-full h-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset rounded-full"
+                    >
+                      <AvatarImage src={picUrl} />
+                    </button>
+                  ) : (
+                    <>
+                      <AvatarImage src={undefined} />
+                      <AvatarFallback>
+                        <User className="h-10 w-10" />
+                      </AvatarFallback>
+                    </>
+                  )}
+                </ShadcnAvatar>
+              );
+            }
           },
           { label: 'Full Name', value: viewingUser.name },
           { label: 'Email', value: viewingUser.email },
@@ -945,6 +1004,21 @@ const Users = () => {
           </div>
         )}
           </DialogBody>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!imagePreviewUrl} onOpenChange={(open) => !open && setImagePreviewUrl(null)}>
+        <DialogContent className="max-w-[95vw] max-h-[95vh] w-auto p-0 overflow-hidden rounded-2xl">
+          <DialogHeader className="sr-only">
+            <DialogTitle>Image preview</DialogTitle>
+          </DialogHeader>
+          {imagePreviewUrl && (
+            <img
+              src={imagePreviewUrl}
+              alt="Profile preview"
+              className="w-full h-auto max-h-[85vh] object-contain"
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>

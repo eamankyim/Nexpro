@@ -1,13 +1,13 @@
-import { memo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
+import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
-import { Calendar, Plus, Filter, X } from 'lucide-react';
-import { DatePicker } from 'antd';
+import { Plus, Filter } from 'lucide-react';
+import { DateRangePicker } from '@/components/ui/date-range-picker';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useResponsive } from '@/hooks/useResponsive';
 import BottomSheet from './BottomSheet';
 import { cn } from '@/lib/utils';
-
-const { RangePicker } = DatePicker;
 
 /**
  * DateFilterButtons - Reusable date filter buttons component
@@ -38,6 +38,22 @@ const DateFilterButtons = memo(({
 }) => {
   const { isMobile } = useResponsive();
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
+
+  const rangeForPicker = useMemo(() => {
+    if (!dateRange || !dateRange[0] || !dateRange[1]) return undefined;
+    return { from: dateRange[0].toDate(), to: dateRange[1].toDate() };
+  }, [dateRange]);
+
+  const handleRangeSelect = (newRange) => {
+    if (!newRange?.from) {
+      onDateRangeChange?.(null);
+      return;
+    }
+    const from = dayjs(newRange.from);
+    const to = newRange.to ? dayjs(newRange.to) : from;
+    onDateRangeChange?.([from, to]);
+  };
+
   const handleFilterClick = (filterFn) => {
     filterFn();
     if (isMobile) {
@@ -59,27 +75,42 @@ const DateFilterButtons = memo(({
     return (
       <>
         <div className="flex items-center justify-between gap-2 mb-6">
-          <SecondaryButton
-            onClick={() => setFilterSheetOpen(true)}
-            className="flex items-center gap-2 min-h-[44px]"
-          >
-            <Filter className="h-4 w-4" />
-            <span>
-              {activeFilter 
-                ? filterButtons.find(b => b.active)?.label || 'Filter'
-                : 'Filter'}
-            </span>
-            {activeFilter && (
-              <span className="ml-1 h-2 w-2 rounded-full bg-[#166534]"></span>
-            )}
-          </SecondaryButton>
-          <Button
-            onClick={onAddClick}
-            className="bg-[#166534] hover:bg-[#14532d] text-white min-h-[44px] flex items-center gap-2"
-          >
-            <Plus className="h-4 w-4" />
-            <span>{addButtonLabel}</span>
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SecondaryButton
+                onClick={() => setFilterSheetOpen(true)}
+                className="flex items-center gap-2 min-h-[44px]"
+              >
+                <Filter className="h-4 w-4" />
+                <span>
+                  {activeFilter 
+                    ? filterButtons.find(b => b.active)?.label || 'Filter'
+                    : 'Filter'}
+                </span>
+                {activeFilter && (
+                  <span className="ml-1 h-2 w-2 rounded-full bg-[#166534]"></span>
+                )}
+              </SecondaryButton>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Filter dashboard by date range</TooltipContent>
+          </Tooltip>
+          {onAddClick && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={onAddClick}
+                  aria-label={addButtonLabel}
+                  className="bg-[#166534] hover:bg-[#14532d] text-white min-h-[44px] flex items-center gap-2 shrink-0"
+                >
+                  <Plus className="h-4 w-4 shrink-0" />
+                  <span className="whitespace-nowrap">{addButtonLabel}</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {addButtonLabel === 'Add sale' ? 'Open Point of Sale to record a new sale' : 'Create a new job or order'}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
 
         <BottomSheet
@@ -100,24 +131,22 @@ const DateFilterButtons = memo(({
               >
                 {filter.label}
                 {filter.active && (
-                  <span className="ml-auto h-2 w-2 rounded-full bg-white"></span>
+                  <span className="ml-auto h-2 w-2 rounded-full bg-primary-foreground"></span>
                 )}
               </Button>
             ))}
             
-            <div className="pt-2 border-t border-gray-200">
-              <div className="text-sm font-medium text-gray-700 mb-3">Custom Date Range</div>
+            <div className="pt-2 border-t border-border">
+              <div className="text-sm font-medium text-foreground mb-3">Custom Date Range</div>
               <div className="w-full">
-                <RangePicker
-                  onChange={(dates) => {
-                    onDateRangeChange(dates);
-                    if (dates && dates[0] && dates[1]) {
+                <DateRangePicker
+                  range={rangeForPicker}
+                  onSelect={(newRange) => {
+                    handleRangeSelect(newRange);
+                    if (newRange?.from && newRange?.to) {
                       setFilterSheetOpen(false);
                     }
                   }}
-                  value={dateRange}
-                  format="YYYY-MM-DD"
-                  style={{ width: '100%' }}
                   className="w-full"
                 />
               </div>
@@ -129,126 +158,40 @@ const DateFilterButtons = memo(({
   }
 
   // Desktop: Show all buttons inline
+  const filterBtnClass = (key) => cn(
+    'px-4 py-2 h-auto font-normal rounded-none border-y border-l border-r-0 last:border-r last:rounded-r-lg first:rounded-l-lg',
+    activeFilter === key ? 'bg-primary text-primary-foreground font-semibold border-primary' : 'bg-card text-muted-foreground border-border hover:bg-muted'
+  );
+
   return (
-    <div style={{ display: 'flex', gap: 0, marginBottom: 32, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-      <div style={{ display: 'flex', gap: 0, alignItems: 'center' }}>
-        <Button
-          onClick={onTodayClick}
-          style={{
-            backgroundColor: activeFilter === 'today' ? '#166534' : 'white',
-            color: activeFilter === 'today' ? 'white' : '#666',
-            border: activeFilter === 'today' ? 'none' : '1px solid #e5e7eb',
-            borderRadius: 0,
-            borderTopLeftRadius: 8,
-            borderBottomLeftRadius: 8,
-            fontWeight: activeFilter === 'today' ? 600 : 400,
-            padding: '8px 16px',
-            height: 'auto',
-            margin: 0,
-            borderRight: 'none'
-          }}
-        >
-          Today
-        </Button>
-        <Button
-          onClick={onWeekClick}
-          style={{
-            backgroundColor: activeFilter === 'week' ? '#166534' : 'white',
-            color: activeFilter === 'week' ? 'white' : '#666',
-            border: activeFilter === 'week' ? 'none' : '1px solid #e5e7eb',
-            borderRadius: 0,
-            fontWeight: activeFilter === 'week' ? 600 : 400,
-            padding: '8px 16px',
-            height: 'auto',
-            margin: 0,
-            borderRight: 'none'
-          }}
-        >
-          This week
-        </Button>
-        <Button
-          onClick={onMonthClick}
-          style={{
-            backgroundColor: activeFilter === 'month' ? '#166534' : 'white',
-            color: activeFilter === 'month' ? 'white' : '#666',
-            border: activeFilter === 'month' ? 'none' : '1px solid #e5e7eb',
-            borderRadius: 0,
-            fontWeight: activeFilter === 'month' ? 600 : 400,
-            padding: '8px 16px',
-            height: 'auto',
-            margin: 0,
-            borderRight: 'none'
-          }}
-        >
-          This month
-        </Button>
-        <Button
-          onClick={onYearClick}
-          style={{
-            backgroundColor: activeFilter === 'year' ? '#166534' : 'white',
-            color: activeFilter === 'year' ? 'white' : '#666',
-            border: activeFilter === 'year' ? 'none' : '1px solid #e5e7eb',
-            borderRadius: 0,
-            borderTopRightRadius: 8,
-            borderBottomRightRadius: 8,
-            fontWeight: activeFilter === 'year' ? 600 : 400,
-            padding: '8px 16px',
-            height: 'auto',
-            margin: 0
-          }}
-        >
-          This year
-        </Button>
-        <div style={{ display: 'none' }}>
-          <RangePicker
-            onChange={onDateRangeChange}
-            value={dateRange}
-            format="YYYY-MM-DD"
-          />
-        </div>
-        <Button
-          icon={<Calendar className="h-4 w-4" />}
-          onClick={() => {
-            // Open date picker
-            const rangePicker = document.querySelector('.ant-picker');
-            if (rangePicker) {
-              rangePicker.click();
-            }
-          }}
-          style={{
-            backgroundColor: 'white',
-            color: '#666',
-            border: '1px solid #e5e7eb',
-            borderRadius: 8,
-            padding: '8px 16px',
-            height: 'auto',
-            marginLeft: 8,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8
-          }}
-        >
-          Select date
-        </Button>
+    <div
+      className="flex flex-wrap items-center justify-between gap-2 mb-8"
+      data-tour="date-filters"
+    >
+      <div className="flex items-center">
+        <Button onClick={onTodayClick} variant="ghost" className={filterBtnClass('today')}>Today</Button>
+        <Button onClick={onWeekClick} variant="ghost" className={filterBtnClass('week')}>This week</Button>
+        <Button onClick={onMonthClick} variant="ghost" className={filterBtnClass('month')}>This month</Button>
+        <Button onClick={onYearClick} variant="ghost" className={filterBtnClass('year')}>This year</Button>
+        <DateRangePicker
+          range={rangeForPicker}
+          onSelect={handleRangeSelect}
+          className="ml-2 w-auto min-w-[180px] bg-card text-muted-foreground border-border hover:bg-muted"
+        />
       </div>
-      <Button
-        icon={<Plus className="h-4 w-4" />}
-        onClick={onAddClick}
-        style={{
-          backgroundColor: '#166534',
-          color: 'white',
-          border: 'none',
-          borderRadius: 8,
-          padding: '8px 16px',
-          height: 'auto',
-          fontWeight: 600,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8
-        }}
-      >
-        {addButtonLabel}
-      </Button>
+      {onAddClick && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button onClick={onAddClick} className="bg-primary hover:bg-primary/90 text-primary-foreground font-semibold">
+              <Plus className="h-4 w-4" />
+              {addButtonLabel}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom">
+            {addButtonLabel === 'Add sale' ? 'Open Point of Sale to record a new sale' : 'Create a new job or order'}
+          </TooltipContent>
+        </Tooltip>
+      )}
     </div>
   );
 });

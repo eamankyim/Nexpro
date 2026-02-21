@@ -21,7 +21,12 @@ import {
   Copy,
   Loader2,
   AlertCircle,
-  RefreshCw
+  RefreshCw,
+  User,
+  UserPlus,
+  ChefHat,
+  Lock,
+  Unlock
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -45,6 +50,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import POSNumpad from './POSNumpad';
 import { CURRENCY } from '../../constants';
 import { showSuccess, showError } from '../../utils/toast';
@@ -77,6 +84,14 @@ const MOBILE_MONEY_PROVIDERS = {
     borderColor: 'border-yellow-500',
     prefix: '+233' // Ghana
   },
+  telecel: {
+    name: 'Telecel Cash',
+    shortName: 'Telecel',
+    color: 'bg-red-600',
+    textColor: 'text-white',
+    borderColor: 'border-red-700',
+    prefix: '+233'
+  },
   airtel: {
     name: 'Airtel Money',
     shortName: 'Airtel',
@@ -97,24 +112,34 @@ const CashPayment = ({ total, onConfirm, isProcessing }) => {
   const change = Math.max(0, parsedAmount - total);
   const isValid = parsedAmount >= total;
 
-  // Quick amount buttons
+  // Smart quick amounts: round up to common note denominations
+  // e.g. ₵ 195.45 -> 200 (one 200), 250 (200+50), 300 (200+100), 500 (500 note)
+  // Avoids arbitrary +10, +20 (why hand 200+10 when 200 suffices?)
   const quickAmounts = useMemo(() => {
-    const amounts = [];
-    const baseAmount = Math.ceil(total / 10) * 10;
-    amounts.push(baseAmount);
-    amounts.push(baseAmount + 10);
-    amounts.push(baseAmount + 20);
-    amounts.push(baseAmount + 50);
-    amounts.push(Math.ceil(total / 100) * 100);
-    // Remove duplicates and sort
-    return [...new Set(amounts)].sort((a, b) => a - b).slice(0, 4);
+    const denoms = [5, 10, 20, 50, 100, 200, 500];
+    const amounts = new Set();
+    denoms.forEach((d) => {
+      const rounded = Math.ceil(total / d) * d;
+      if (rounded >= total) amounts.add(rounded);
+    });
+    let sorted = [...amounts].sort((a, b) => a - b);
+    const min = sorted[0] || Math.ceil(total / 10) * 10;
+    // Fill to 4 with sensible note combinations (min+50, min+100, etc.)
+    if (sorted.length < 4) {
+      [50, 100, 200, 500].forEach((add) => {
+        const next = min + add;
+        if (next >= total) amounts.add(next);
+      });
+      sorted = [...amounts].sort((a, b) => a - b);
+    }
+    return sorted.slice(0, 4);
   }, [total]);
 
   return (
     <div className="space-y-4">
       {/* Amount display */}
-      <div className="text-center p-4 bg-gray-50 rounded-lg">
-        <p className="text-sm text-gray-600">Amount to Pay</p>
+      <div className="text-center p-4 bg-muted rounded-lg">
+        <p className="text-sm text-muted-foreground">Amount to Pay</p>
         <p className="text-3xl font-bold text-green-700">{formatCurrency(total)}</p>
       </div>
 
@@ -135,7 +160,7 @@ const CashPayment = ({ total, onConfirm, isProcessing }) => {
       {/* Amount input */}
       <div>
         <Label>Amount Tendered</Label>
-        <div className="text-center mt-2 p-3 bg-white border rounded-lg">
+        <div className="text-center mt-2 p-3 bg-card border border-border rounded-lg">
           <span className="text-3xl font-bold">
             {CURRENCY.SYMBOL} {amountTendered || '0'}
           </span>
@@ -168,21 +193,26 @@ const CashPayment = ({ total, onConfirm, isProcessing }) => {
       )}
 
       {/* Confirm button */}
-      <Button
-        className="w-full h-14 text-lg bg-green-700 hover:bg-green-800"
-        disabled={!isValid}
-        loading={isProcessing}
-        onClick={() => onConfirm({
-          paymentMethod: 'cash',
-          amountPaid: parsedAmount,
-          change
-        })}
-      >
-        <>
-          <Check className="h-5 w-5 mr-2" />
-          Complete Sale
-        </>
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            className="w-full h-14 text-lg bg-green-700 hover:bg-green-800"
+            disabled={!isValid}
+            loading={isProcessing}
+            onClick={() => onConfirm({
+              paymentMethod: 'cash',
+              amountPaid: parsedAmount,
+              change
+            })}
+          >
+            <>
+              <Check className="h-5 w-5 mr-2" />
+              Complete Sale
+            </>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Confirm payment received</TooltipContent>
+      </Tooltip>
     </div>
   );
 };
@@ -217,8 +247,8 @@ const MobileMoneyPayment = ({ total, customer, onConfirm, isProcessing }) => {
   return (
     <div className="space-y-4">
       {/* Amount display */}
-      <div className="text-center p-4 bg-gray-50 rounded-lg">
-        <p className="text-sm text-gray-600">Amount to Pay</p>
+      <div className="text-center p-4 bg-muted rounded-lg">
+        <p className="text-sm text-muted-foreground">Amount to Pay</p>
         <p className="text-3xl font-bold text-green-700">{formatCurrency(total)}</p>
       </div>
 
@@ -227,21 +257,27 @@ const MobileMoneyPayment = ({ total, customer, onConfirm, isProcessing }) => {
         <Label>Select Provider</Label>
         <div className="grid grid-cols-2 gap-2 mt-2">
           {Object.entries(MOBILE_MONEY_PROVIDERS).map(([key, config]) => (
-            <Button
-              key={key}
-              variant="outline"
-              className={`
-                h-14 justify-center
-                ${provider === key 
-                  ? `${config.color} ${config.textColor} border-2 ${config.borderColor}` 
-                  : 'bg-white'
-                }
-              `}
-              onClick={() => setProvider(key)}
-            >
-              <Smartphone className="h-5 w-5 mr-2" />
-              {config.shortName}
-            </Button>
+            <Tooltip key={key}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={`
+                    h-14 justify-center
+                    ${provider === key 
+                      ? `${config.color} ${config.textColor} border-2 ${config.borderColor}` 
+                      : 'bg-card'
+                    }
+                  `}
+                  onClick={() => setProvider(key)}
+                >
+                  <Smartphone className="h-5 w-5 mr-2" />
+                  {config.shortName}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {key === 'mtn' ? 'Customer paid with MTN Mobile Money' : 'Customer paid with Airtel Money'}
+              </TooltipContent>
+            </Tooltip>
           ))}
         </div>
       </div>
@@ -309,7 +345,7 @@ const MobileMoneyPayment = ({ total, customer, onConfirm, isProcessing }) => {
           p-4 rounded-lg border-2 cursor-pointer transition-all
           ${paymentConfirmed 
             ? 'bg-green-50 border-green-500' 
-            : 'bg-gray-50 border-gray-200 hover:border-green-400'
+            : 'bg-muted border-border hover:border-green-400'
           }
         `}
         onClick={() => setPaymentConfirmed(!paymentConfirmed)}
@@ -317,34 +353,39 @@ const MobileMoneyPayment = ({ total, customer, onConfirm, isProcessing }) => {
         <div className="flex items-center gap-3">
           <div className={`
             w-6 h-6 rounded-full border-2 flex items-center justify-center
-            ${paymentConfirmed ? 'bg-green-500 border-green-500' : 'border-gray-300'}
+            ${paymentConfirmed ? 'bg-green-500 border-green-500' : 'border-border'}
           `}>
             {paymentConfirmed && <Check className="h-4 w-4 text-white" />}
           </div>
-          <span className={paymentConfirmed ? 'text-green-700 font-medium' : 'text-gray-700'}>
+          <span className={paymentConfirmed ? 'text-green-700 font-medium' : 'text-foreground'}>
             I confirm payment has been received
           </span>
         </div>
       </div>
 
       {/* Complete button */}
-      <Button
-        className="w-full h-14 text-lg bg-green-700 hover:bg-green-800"
-        disabled={!isPhoneValid || !paymentConfirmed}
-        loading={isProcessing}
-        onClick={() => onConfirm({
-          paymentMethod: 'mobile_money',
-          amountPaid: total,
-          mobileMoneyProvider: provider,
-          mobileMoneyPhone: phone,
-          mobileMoneyReference: reference
-        })}
-      >
-        <>
-          <Check className="h-5 w-5 mr-2" />
-          Complete Sale
-        </>
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            className="w-full h-14 text-lg bg-green-700 hover:bg-green-800"
+            disabled={!isPhoneValid || !paymentConfirmed}
+            loading={isProcessing}
+            onClick={() => onConfirm({
+              paymentMethod: 'mobile_money',
+              amountPaid: total,
+              mobileMoneyProvider: provider,
+              mobileMoneyPhone: phone,
+              mobileMoneyReference: reference
+            })}
+          >
+            <>
+              <Check className="h-5 w-5 mr-2" />
+              Complete Sale
+            </>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Confirm payment received</TooltipContent>
+      </Tooltip>
     </div>
   );
 };
@@ -358,8 +399,8 @@ const CardPayment = ({ total, onConfirm, isProcessing }) => {
   return (
     <div className="space-y-4">
       {/* Amount display */}
-      <div className="text-center p-4 bg-gray-50 rounded-lg">
-        <p className="text-sm text-gray-600">Amount to Pay</p>
+      <div className="text-center p-4 bg-muted rounded-lg">
+        <p className="text-sm text-muted-foreground">Amount to Pay</p>
         <p className="text-3xl font-bold text-green-700">{formatCurrency(total)}</p>
       </div>
 
@@ -381,7 +422,7 @@ const CardPayment = ({ total, onConfirm, isProcessing }) => {
           p-4 rounded-lg border-2 cursor-pointer transition-all
           ${paymentConfirmed 
             ? 'bg-green-50 border-green-500' 
-            : 'bg-gray-50 border-gray-200 hover:border-green-400'
+            : 'bg-muted border-border hover:border-green-400'
           }
         `}
         onClick={() => setPaymentConfirmed(!paymentConfirmed)}
@@ -389,31 +430,36 @@ const CardPayment = ({ total, onConfirm, isProcessing }) => {
         <div className="flex items-center gap-3">
           <div className={`
             w-6 h-6 rounded-full border-2 flex items-center justify-center
-            ${paymentConfirmed ? 'bg-green-500 border-green-500' : 'border-gray-300'}
+            ${paymentConfirmed ? 'bg-green-500 border-green-500' : 'border-border'}
           `}>
             {paymentConfirmed && <Check className="h-4 w-4 text-white" />}
           </div>
-          <span className={paymentConfirmed ? 'text-green-700 font-medium' : 'text-gray-700'}>
+          <span className={paymentConfirmed ? 'text-green-700 font-medium' : 'text-foreground'}>
             Card payment approved
           </span>
         </div>
       </div>
 
       {/* Complete button */}
-      <Button
-        className="w-full h-14 text-lg bg-green-700 hover:bg-green-800"
-        disabled={!paymentConfirmed}
-        loading={isProcessing}
-        onClick={() => onConfirm({
-          paymentMethod: 'card',
-          amountPaid: total
-        })}
-      >
-        <>
-          <Check className="h-5 w-5 mr-2" />
-          Complete Sale
-        </>
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            className="w-full h-14 text-lg bg-green-700 hover:bg-green-800"
+            disabled={!paymentConfirmed}
+            loading={isProcessing}
+            onClick={() => onConfirm({
+              paymentMethod: 'card',
+              amountPaid: total
+            })}
+          >
+            <>
+              <Check className="h-5 w-5 mr-2" />
+              Complete Sale
+            </>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Confirm payment received</TooltipContent>
+      </Tooltip>
     </div>
   );
 };
@@ -429,8 +475,8 @@ const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
   return (
     <div className="space-y-4">
       {/* Amount display */}
-      <div className="text-center p-4 bg-gray-50 rounded-lg">
-        <p className="text-sm text-gray-600">Amount to Credit</p>
+      <div className="text-center p-4 bg-muted rounded-lg">
+        <p className="text-sm text-muted-foreground">Amount to Credit</p>
         <p className="text-3xl font-bold text-green-700">{formatCurrency(total)}</p>
       </div>
 
@@ -448,26 +494,26 @@ const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
       ) : (
         <>
           {/* Customer credit info */}
-          <Card className="border-gray-200">
+          <Card className="border-border">
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-3">
-                <span className="text-gray-600">Customer</span>
+                <span className="text-muted-foreground">Customer</span>
                 <span className="font-medium">{customer.name}</span>
               </div>
               <Separator className="my-2" />
               <div className="flex items-center justify-between mb-2">
-                <span className="text-gray-600">Credit Limit</span>
+                <span className="text-muted-foreground">Credit Limit</span>
                 <span className="font-medium">{formatCurrency(customer.creditLimit || 0)}</span>
               </div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-gray-600">Current Balance</span>
+                <span className="text-muted-foreground">Current Balance</span>
                 <span className="font-medium text-orange-600">
                   {formatCurrency(customer.balance || 0)}
                 </span>
               </div>
               <Separator className="my-2" />
               <div className="flex items-center justify-between">
-                <span className="text-gray-600">Available Credit</span>
+                <span className="text-muted-foreground">Available Credit</span>
                 <span className={`font-bold ${canUseCredit ? 'text-green-600' : 'text-red-600'}`}>
                   {formatCurrency(creditAvailable)}
                 </span>
@@ -506,20 +552,25 @@ const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
       )}
 
       {/* Complete button */}
-      <Button
-        className="w-full h-14 text-lg bg-green-700 hover:bg-green-800"
-        disabled={!canUseCredit}
-        loading={isProcessing}
-        onClick={() => onConfirm({
-          paymentMethod: 'credit',
-          amountPaid: 0
-        })}
-      >
-        <>
-          <FileText className="h-5 w-5 mr-2" />
-          Create Credit Sale
-        </>
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            className="w-full h-14 text-lg bg-green-700 hover:bg-green-800"
+            disabled={!canUseCredit}
+            loading={isProcessing}
+            onClick={() => onConfirm({
+              paymentMethod: 'credit',
+              amountPaid: 0
+            })}
+          >
+            <>
+              <FileText className="h-5 w-5 mr-2" />
+              Create Credit Sale
+            </>
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Confirm payment received</TooltipContent>
+      </Tooltip>
     </div>
   );
 };
@@ -532,8 +583,12 @@ const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
  * @param {number} props.total - Total amount to pay
  * @param {Array} props.items - Cart items
  * @param {Object} [props.customer] - Selected customer
+ * @param {function} [props.onRequestChangeCustomer] - Called when user wants to change customer
  * @param {function} props.onConfirmPayment - Called when payment is confirmed
  * @param {boolean} props.isProcessing - Whether payment is being processed
+ * @param {boolean} [props.isRestaurant] - If true, show Send to kitchen option
+ * @param {boolean} [props.stayOpenAfterSale] - When true, modal stays open after each sale
+ * @param {function} [props.onStayOpenAfterSaleChange] - Called when stay-open toggle changes
  */
 const POSPaymentModal = ({
   isOpen,
@@ -541,49 +596,144 @@ const POSPaymentModal = ({
   total,
   items,
   customer,
+  onRequestChangeCustomer,
   onConfirmPayment,
-  isProcessing = false
+  isProcessing = false,
+  isRestaurant = false,
+  stayOpenAfterSale = false,
+  onStayOpenAfterSaleChange
 }) => {
   const [activeTab, setActiveTab] = useState('cash');
+  const [sendToKitchen, setSendToKitchen] = useState(true);
+
+  const handleConfirm = useCallback((details) => {
+    onConfirmPayment({ ...details, sendToKitchen });
+  }, [onConfirmPayment, sendToKitchen]);
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:w-[var(--modal-w-md)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            Payment
-            <Badge variant="outline" className="ml-2">
-              {formatCurrency(total)}
-            </Badge>
-          </DialogTitle>
+          <div className="flex items-center justify-between gap-2">
+            <DialogTitle className="flex items-center gap-2">
+              Payment
+              <Badge variant="outline" className="ml-2">
+                {formatCurrency(total)}
+              </Badge>
+            </DialogTitle>
+            {onStayOpenAfterSaleChange && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor="stay-open" className="text-xs text-muted-foreground cursor-pointer">
+                      Stay open
+                    </Label>
+                    <Switch
+                      id="stay-open"
+                      checked={stayOpenAfterSale}
+                      onCheckedChange={onStayOpenAfterSaleChange}
+                    />
+                    {stayOpenAfterSale ? (
+                      <Lock className="h-4 w-4 text-muted-foreground" aria-hidden />
+                    ) : (
+                      <Unlock className="h-4 w-4 text-muted-foreground" aria-hidden />
+                    )}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {stayOpenAfterSale
+                    ? 'Modal stays open after each sale (locked)'
+                    : 'Modal closes after each sale'}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
         </DialogHeader>
 
         <DialogBody>
+        {onRequestChangeCustomer && (
+          <div className="flex items-center justify-between p-3 mb-4 rounded-lg border border-border bg-muted">
+            <div className="flex items-center gap-2">
+              <User className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Customer:</span>
+              <span className="font-medium">{customer?.name || (customer?.company || 'Walk-in')}</span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onRequestChangeCustomer}
+              className="shrink-0"
+            >
+              <UserPlus className="h-4 w-4 mr-1" />
+              Change
+            </Button>
+          </div>
+        )}
+        {isRestaurant && (
+          <div className="flex items-center justify-between p-3 mb-4 rounded-lg border border-border bg-muted/50">
+            <div className="flex items-center gap-2 flex-1">
+              <ChefHat className="h-4 w-4 text-muted-foreground" />
+              <div>
+                <Label htmlFor="send-to-kitchen" className="text-sm font-medium cursor-pointer">
+                  Send to kitchen
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {sendToKitchen ? 'Order will appear in kitchen' : 'Skip kitchen (e.g. water only)'}
+                </p>
+              </div>
+            </div>
+            <Switch
+              id="send-to-kitchen"
+              checked={sendToKitchen}
+              onCheckedChange={setSendToKitchen}
+            />
+          </div>
+        )}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <TabsList className="grid grid-cols-4 w-full">
-            <TabsTrigger value="cash" className="flex items-center gap-1">
-              <Banknote className="h-4 w-4" />
-              <span className="hidden sm:inline">Cash</span>
-            </TabsTrigger>
-            <TabsTrigger value="mobile" className="flex items-center gap-1">
-              <Smartphone className="h-4 w-4" />
-              <span className="hidden sm:inline">Mobile</span>
-            </TabsTrigger>
-            <TabsTrigger value="card" className="flex items-center gap-1">
-              <CreditCard className="h-4 w-4" />
-              <span className="hidden sm:inline">Card</span>
-            </TabsTrigger>
-            <TabsTrigger value="credit" className="flex items-center gap-1">
-              <FileText className="h-4 w-4" />
-              <span className="hidden sm:inline">Credit</span>
-            </TabsTrigger>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabsTrigger value="cash" className="flex items-center gap-1">
+                  <Banknote className="h-4 w-4" />
+                  <span className="hidden sm:inline">Cash</span>
+                </TabsTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Customer paid with cash</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabsTrigger value="mobile" className="flex items-center gap-1">
+                  <Smartphone className="h-4 w-4" />
+                  <span className="hidden sm:inline">Mobile</span>
+                </TabsTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Customer paid with MTN Mobile Money or Airtel Money</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabsTrigger value="card" className="flex items-center gap-1">
+                  <CreditCard className="h-4 w-4" />
+                  <span className="hidden sm:inline">Card</span>
+                </TabsTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Customer paid with card</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <TabsTrigger value="credit" className="flex items-center gap-1">
+                  <FileText className="h-4 w-4" />
+                  <span className="hidden sm:inline">Credit</span>
+                </TabsTrigger>
+              </TooltipTrigger>
+              <TooltipContent>Sell now, collect money later</TooltipContent>
+            </Tooltip>
           </TabsList>
 
           <div className="mt-4">
             <TabsContent value="cash" className="m-0">
               <CashPayment
                 total={total}
-                onConfirm={onConfirmPayment}
+                onConfirm={handleConfirm}
                 isProcessing={isProcessing}
               />
             </TabsContent>
@@ -592,7 +742,7 @@ const POSPaymentModal = ({
               <MobileMoneyPayment
                 total={total}
                 customer={customer}
-                onConfirm={onConfirmPayment}
+                onConfirm={handleConfirm}
                 isProcessing={isProcessing}
               />
             </TabsContent>
@@ -600,7 +750,7 @@ const POSPaymentModal = ({
             <TabsContent value="card" className="m-0">
               <CardPayment
                 total={total}
-                onConfirm={onConfirmPayment}
+                onConfirm={handleConfirm}
                 isProcessing={isProcessing}
               />
             </TabsContent>
@@ -609,7 +759,7 @@ const POSPaymentModal = ({
               <CreditPayment
                 total={total}
                 customer={customer}
-                onConfirm={onConfirmPayment}
+                onConfirm={handleConfirm}
                 isProcessing={isProcessing}
               />
             </TabsContent>

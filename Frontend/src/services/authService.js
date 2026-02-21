@@ -94,6 +94,26 @@ const authService = {
     return await api.put('/auth/set-initial-password', { newPassword });
   },
 
+  // Forgot password (request reset email)
+  requestPasswordReset: async (email) => {
+    return await api.post('/auth/forgot-password', { email });
+  },
+
+  // Reset password with token (from email link)
+  resetPassword: async (token, newPassword) => {
+    return await api.post('/auth/reset-password', { token, newPassword });
+  },
+
+  // Verify email via token (from link in email)
+  verifyEmail: async (token) => {
+    return await api.get('/auth/verify-email', { params: { token } });
+  },
+
+  // Resend verification email (requires auth)
+  resendVerification: async () => {
+    return await api.post('/auth/resend-verification');
+  },
+
   // Logout
   logout: () => {
     clearAuthStorage();
@@ -110,6 +130,25 @@ const authService = {
   // Sabito SSO
   sabitoSSO: async (sabitoToken) => {
     const response = await api.post('/auth/sso/sabito', { sabitoToken });
+    const payload = response?.data || response || {};
+    persistAuthPayload(payload);
+    return { ...response, data: payload };
+  },
+
+  /**
+   * Google OAuth sign-in or sign-up.
+   * @param {string} idToken - Google ID token from credentialResponse.credential
+   * @param {Object} options - Optional: { signUp: boolean, businessType: string, companyName: string }
+   * @returns {Promise<{ data }>} - Same shape as login (user, token, memberships, defaultTenantId)
+   */
+  googleAuth: async (idToken, options = {}) => {
+    const { signUp = false, businessType, companyName } = options;
+    const response = await api.post('/auth/google', {
+      idToken,
+      signUp,
+      ...(businessType && { businessType }),
+      ...(companyName && { companyName }),
+    });
     const payload = response?.data || response || {};
     persistAuthPayload(payload);
     return { ...response, data: payload };

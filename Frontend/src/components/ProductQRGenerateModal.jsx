@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Button } from '@/components/ui/button';
+import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Package, Download, Printer, Loader2 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { buildProductQRPayload } from '../utils/productQR';
@@ -92,7 +92,7 @@ export default function ProductQRGenerateModal({ open, onClose, product }) {
 
         <DialogBody className="space-y-4">
           {product?.name && (
-            <div className="p-3 rounded-lg border border-gray-200 bg-gray-50">
+            <div className="p-3 rounded-lg border border-border bg-muted">
               <p className="font-medium">{product.name}</p>
               {product.sku && <p className="text-sm text-gray-500">SKU: {product.sku}</p>}
             </div>
@@ -101,7 +101,7 @@ export default function ProductQRGenerateModal({ open, onClose, product }) {
           {loading && (
             <div className="flex flex-col items-center justify-center py-8">
               <Loader2 className="h-8 w-8 animate-spin text-[#166534]" />
-              <p className="text-sm text-gray-500 mt-2">Generating QR…</p>
+              <p className="text-sm text-gray-500 mt-2">Generating QR...</p>
             </div>
           )}
 
@@ -128,7 +128,6 @@ export default function ProductQRGenerateModal({ open, onClose, product }) {
                 <Printer className="h-4 w-4 mr-2" />
                 Print label
               </SecondaryButton>
-              <Button onClick={onClose}>Done</Button>
             </div>
           )}
         </DialogBody>

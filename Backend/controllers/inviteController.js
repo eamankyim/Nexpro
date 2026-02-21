@@ -18,6 +18,16 @@ exports.generateInvite = async (req, res, next) => {
     const { email, role, name, expiresInDays } = req.body;
     console.log('[Invite] Generating invite for:', { email, role, name, expiresInDays });
 
+    const { User: UserModel } = require('../models');
+    const inviter = await UserModel.findByPk(req.user.id, { attributes: ['id', 'emailVerifiedAt'] });
+    if (inviter && !inviter.emailVerifiedAt) {
+      return res.status(403).json({
+        success: false,
+        code: 'EMAIL_VERIFICATION_REQUIRED',
+        message: 'Please verify your email to invite team members.',
+      });
+    }
+
     // Validate tenant context is available
     if (!req.tenantId) {
       console.log('[Invite] Missing tenant context');
@@ -36,9 +46,10 @@ exports.generateInvite = async (req, res, next) => {
       });
     }
 
-    // Check if user already exists
+    // Check if user already exists (email is case-insensitive)
+    const normalizedEmail = (email || '').trim().toLowerCase();
     const existingUser = await User.findOne({
-      where: { email }
+      where: { email: normalizedEmail }
     });
     if (existingUser) {
       console.log('[Invite] User already exists:', email);
@@ -48,10 +59,10 @@ exports.generateInvite = async (req, res, next) => {
       });
     }
 
-    // Check for existing unused invite
+    // Check for existing unused invite (email is case-insensitive)
     const existingInvite = await InviteToken.findOne({
       where: applyTenantFilter(req.tenantId, {
-        email,
+        email: normalizedEmail,
         used: false,
         expiresAt: {
           [Op.gt]: new Date()
@@ -98,10 +109,10 @@ exports.generateInvite = async (req, res, next) => {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + (expiresInDays || 7));
 
-    // Create invite
+    // Create invite (store email lowercase for case-insensitive matching)
     const invitePayload = sanitizePayload({
       token,
-      email,
+      email: normalizedEmail,
       role,
       name,
       createdBy: req.user.id,

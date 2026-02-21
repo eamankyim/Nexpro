@@ -2,12 +2,48 @@
  * Category Seeder Utility
  * 
  * Seeds default inventory categories and product categories based on business type and shop type.
- * Used during tenant onboarding so both Inventory (InventoryCategory) and Products (ProductCategory) have defaults.
+ * Used during tenant onboarding so both Materials (MaterialCategory) and Products (ProductCategory) have defaults.
+ * 
+ * PERFORMANCE OPTIMIZATIONS:
+ * - Uses bulkCreate instead of findOrCreate loops
+ * - Checks existing categories in single query before seeding
+ * - Uses in-memory cache to skip recently seeded tenants
+ * - Checks Tenant.categoriesSeeded flag before processing
  */
 
 const { Op } = require('sequelize');
-const { InventoryCategory, ProductCategory } = require('../models');
+const { MaterialCategory, ProductCategory, EquipmentCategory, Tenant } = require('../models');
 const { getDefaultCategoriesForShopType } = require('../config/shopTypes');
+const { getDefaultCategories } = require('../config/productCategories');
+const { resolveBusinessType } = require('../config/businessTypes');
+const { DEFAULT_EQUIPMENT_CATEGORIES } = require('../config/equipmentCategories');
+
+// In-memory cache to skip seeding for recently processed tenants (5 minute TTL)
+const SEEDING_CACHE = {
+  categories: new Map(),
+  equipment: new Map(),
+  TTL_MS: 5 * 60 * 1000
+};
+
+/**
+ * Check if tenant was recently seeded (from memory cache)
+ */
+function isRecentlySeeded(cacheMap, tenantId) {
+  const cached = cacheMap.get(tenantId);
+  if (!cached) return false;
+  if (Date.now() - cached > SEEDING_CACHE.TTL_MS) {
+    cacheMap.delete(tenantId);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Mark tenant as seeded in memory cache
+ */
+function markSeeded(cacheMap, tenantId) {
+  cacheMap.set(tenantId, Date.now());
+}
 
 /**
  * Default categories for printing press
@@ -37,14 +73,44 @@ const PHARMACY_CATEGORIES = [
   { name: 'First Aid', description: 'First aid supplies and bandages' }
 ];
 
+/** Old supermarket material category names (product-style). Deactivate these when backfilling so material categories become operational supplies. */
+const DEPRECATED_SUPERMARKET_MATERIAL_NAMES = [
+  'Bakery Items', 'Beverages', 'Canned Goods', 'Dairy Products', 'Fresh Produce',
+  'Frozen Foods', 'Household Items', 'Meat & Seafood', 'Personal Care', 'Snacks & Confectionery'
+];
+
 /**
- * Seed default inventory categories for a tenant
+ * Seed default inventory categories for a tenant using optimized bulk operations.
  * @param {string} tenantId - The tenant ID
- * @param {string} businessType - The business type ('printing_press', 'shop', 'pharmacy')
+ * @param {string} businessType - The business type ('shop', 'studio', 'pharmacy', or legacy 'printing_press', 'mechanic', 'barber', 'salon')
  * @param {string} shopType - The shop type (only if businessType is 'shop')
+ * @param {string} studioType - The studio type (optional, for studio business type)
+ * @param {boolean} force - Skip cache and flag checks (use during onboarding)
  * @returns {Promise<Array>} Array of created category IDs
  */
-async function seedDefaultCategories(tenantId, businessType, shopType = null) {
+async function seedDefaultCategories(tenantId, businessType, shopType = null, studioType = null, force = false) {
+  if (!tenantId) return [];
+
+  // Check memory cache first (skip if force)
+  if (!force && isRecentlySeeded(SEEDING_CACHE.categories, tenantId)) {
+    console.log('[seedDefaultCategories] Skipping - tenant %s was recently seeded (cached)', tenantId);
+    return [];
+  }
+
+  // Check database flag (skip if force)
+  if (!force) {
+    try {
+      const tenant = await Tenant.findByPk(tenantId, { attributes: ['categoriesSeeded'] });
+      if (tenant?.categoriesSeeded) {
+        markSeeded(SEEDING_CACHE.categories, tenantId);
+        console.log('[seedDefaultCategories] Skipping - tenant %s already has categoriesSeeded=true', tenantId);
+        return [];
+      }
+    } catch (err) {
+      console.warn('[seedDefaultCategories] Could not check tenant flag:', err.message);
+    }
+  }
+
   let categories = [];
 
   // Determine categories based on business type
@@ -71,79 +137,234 @@ async function seedDefaultCategories(tenantId, businessType, shopType = null) {
   // When seeding a specific shop type, deactivate the fallback categories so they don't appear in dropdowns
   if (businessType === 'shop' && shopType) {
     try {
-      await ProductCategory.update(
-        { isActive: false },
-        { where: { tenantId, name: { [Op.in]: FALLBACK_CATEGORY_NAMES } } }
-      );
-      await InventoryCategory.update(
-        { isActive: false },
-        { where: { tenantId, name: { [Op.in]: FALLBACK_CATEGORY_NAMES } } }
-      );
+      await Promise.all([
+        ProductCategory.update(
+          { isActive: false },
+          { where: { tenantId, name: { [Op.in]: FALLBACK_CATEGORY_NAMES } } }
+        ),
+        MaterialCategory.update(
+          { isActive: false },
+          { where: { tenantId, name: { [Op.in]: FALLBACK_CATEGORY_NAMES } } }
+        )
+      ]);
       console.log('[seedDefaultCategories] Deactivated fallback categories for tenant %s', tenantId);
     } catch (err) {
       console.error('[seedDefaultCategories] Error deactivating fallback categories:', err.message);
     }
   }
 
-  // Create inventory categories for tenant (Inventory page)
-  const createdCategories = [];
-  for (const category of categories) {
-    try {
-      const [createdCategory, created] = await InventoryCategory.findOrCreate({
-        where: {
-          tenantId,
-          name: category.name
-        },
-        defaults: {
-          tenantId,
-          name: category.name,
-          description: category.description || null,
-          isActive: true
-        }
-      });
+  const resolvedBusinessType = resolveBusinessType(businessType);
+  const resolvedShopType = resolvedBusinessType === 'shop' ? shopType : null;
+  const resolvedStudioType = resolvedBusinessType === 'studio' ? (studioType || (['printing_press', 'mechanic', 'barber', 'salon'].includes(businessType) ? businessType : null)) : null;
 
-      if (created) {
-        createdCategories.push(createdCategory);
-        console.log(`✅ Created inventory category: ${category.name} for tenant ${tenantId}`);
-      } else {
-        console.log(`ℹ️  Inventory category already exists: ${category.name} for tenant ${tenantId}`);
+  // For supermarket: deactivate old product-style material categories so new operational-supply categories are used
+  if (businessType === 'shop' && shopType === 'supermarket') {
+    try {
+      const [updated] = await MaterialCategory.update(
+        { isActive: false },
+        { where: { tenantId, shopType: 'supermarket', name: { [Op.in]: DEPRECATED_SUPERMARKET_MATERIAL_NAMES } } }
+      );
+      if (updated > 0) {
+        console.log('[seedDefaultCategories] Deactivated %d deprecated supermarket material categories for tenant %s', updated, tenantId);
       }
-    } catch (error) {
-      console.error(`❌ Error creating inventory category ${category.name}:`, error.message);
+    } catch (err) {
+      console.error('[seedDefaultCategories] Error deactivating deprecated supermarket categories:', err.message);
     }
+  }
+
+  // OPTIMIZATION: Get existing category names in single query
+  const existingMaterialNames = new Set(
+    (await MaterialCategory.findAll({
+      where: { tenantId },
+      attributes: ['name'],
+      raw: true
+    })).map(c => c.name)
+  );
+
+  // Filter to only new categories
+  const newMaterialCategories = categories
+    .filter(c => !existingMaterialNames.has(c.name))
+    .map(category => ({
+      tenantId,
+      name: category.name,
+      description: category.description || null,
+      businessType: resolvedBusinessType,
+      studioType: resolvedStudioType,
+      shopType: resolvedShopType,
+      isActive: true
+    }));
+
+  // OPTIMIZATION: Bulk create material categories
+  let createdMaterials = [];
+  if (newMaterialCategories.length > 0) {
+    try {
+      createdMaterials = await MaterialCategory.bulkCreate(newMaterialCategories, {
+        ignoreDuplicates: true,
+        returning: true
+      });
+      console.log(`✅ Bulk created ${createdMaterials.length} material categories for tenant ${tenantId}`);
+    } catch (err) {
+      console.error('[seedDefaultCategories] Bulk create materials error:', err.message);
+    }
+  } else {
+    console.log(`ℹ️  All material categories already exist for tenant ${tenantId}`);
   }
 
   // Create product categories for tenant (Products page dropdown)
-  for (const category of categories) {
-    try {
-      const [productCategory, created] = await ProductCategory.findOrCreate({
-        where: {
-          tenantId,
-          name: category.name
-        },
-        defaults: {
-          tenantId,
-          name: category.name,
-          description: category.description || null,
-          isActive: true
-        }
-      });
+  let finalStudioType = resolvedStudioType || studioType;
+  if (!finalStudioType && ['printing_press', 'mechanic', 'barber', 'salon'].includes(businessType)) {
+    finalStudioType = businessType;
+  }
+  
+  let productCategories = [];
+  if (resolvedBusinessType === 'shop' && shopType) {
+    productCategories = getDefaultCategories(resolvedBusinessType, null, shopType);
+  } else {
+    productCategories = getDefaultCategories(resolvedBusinessType, finalStudioType);
+  }
 
-      if (created) {
-        console.log(`✅ Created product category: ${category.name} for tenant ${tenantId}`);
-      } else {
-        console.log(`ℹ️  Product category already exists: ${category.name} for tenant ${tenantId}`);
+  const categoriesToUse = productCategories.length > 0 ? productCategories : categories;
+
+  // OPTIMIZATION: Get existing product category names in single query
+  const existingProductNames = new Set(
+    (await ProductCategory.findAll({
+      where: { tenantId },
+      attributes: ['name'],
+      raw: true
+    })).map(c => c.name)
+  );
+
+  // Filter to only new categories
+  const newProductCategories = categoriesToUse
+    .filter(c => !existingProductNames.has(c.name))
+    .map(category => ({
+      tenantId,
+      name: category.name,
+      description: category.description || null,
+      businessType: resolvedBusinessType,
+      studioType: resolvedBusinessType === 'studio' ? finalStudioType : null,
+      shopType: resolvedShopType,
+      isActive: true
+    }));
+
+  // OPTIMIZATION: Bulk create product categories
+  if (newProductCategories.length > 0) {
+    try {
+      const createdProducts = await ProductCategory.bulkCreate(newProductCategories, {
+        ignoreDuplicates: true,
+        returning: true
+      });
+      const scope = resolvedBusinessType === 'studio' ? finalStudioType : (resolvedBusinessType === 'shop' ? shopType : '');
+      console.log(`✅ Bulk created ${createdProducts.length} product categories for tenant ${tenantId} (${resolvedBusinessType}${scope ? `/${scope}` : ''})`);
+    } catch (err) {
+      console.error('[seedDefaultCategories] Bulk create products error:', err.message);
+    }
+  } else {
+    console.log(`ℹ️  All product categories already exist for tenant ${tenantId}`);
+  }
+
+  // Mark tenant as seeded in database and cache
+  try {
+    await Tenant.update({ categoriesSeeded: true }, { where: { id: tenantId } });
+    markSeeded(SEEDING_CACHE.categories, tenantId);
+    console.log('[seedDefaultCategories] Marked tenant %s as categoriesSeeded', tenantId);
+  } catch (err) {
+    console.warn('[seedDefaultCategories] Could not update tenant flag:', err.message);
+  }
+
+  return createdMaterials;
+}
+
+/**
+ * Seed default equipment categories for a tenant using optimized bulk operations.
+ * @param {string} tenantId - The tenant ID
+ * @param {boolean} force - Skip cache and flag checks (use during onboarding)
+ * @returns {Promise<number>} Number of categories created (existing ones are skipped)
+ */
+async function seedDefaultEquipmentCategories(tenantId, force = false) {
+  if (!tenantId) return 0;
+
+  // Check memory cache first (skip if force)
+  if (!force && isRecentlySeeded(SEEDING_CACHE.equipment, tenantId)) {
+    console.log('[seedDefaultEquipmentCategories] Skipping - tenant %s was recently seeded (cached)', tenantId);
+    return 0;
+  }
+
+  // Check database flag (skip if force)
+  if (!force) {
+    try {
+      const tenant = await Tenant.findByPk(tenantId, { attributes: ['equipmentCategoriesSeeded'] });
+      if (tenant?.equipmentCategoriesSeeded) {
+        markSeeded(SEEDING_CACHE.equipment, tenantId);
+        console.log('[seedDefaultEquipmentCategories] Skipping - tenant %s already has equipmentCategoriesSeeded=true', tenantId);
+        return 0;
       }
-    } catch (error) {
-      console.error(`❌ Error creating product category ${category.name}:`, error.message);
+    } catch (err) {
+      console.warn('[seedDefaultEquipmentCategories] Could not check tenant flag:', err.message);
     }
   }
 
-  return createdCategories;
+  // OPTIMIZATION: Get existing category names in single query
+  const existingNames = new Set(
+    (await EquipmentCategory.findAll({
+      where: { tenantId },
+      attributes: ['name'],
+      raw: true
+    })).map(c => c.name)
+  );
+
+  // Filter to only new categories
+  const newCategories = DEFAULT_EQUIPMENT_CATEGORIES
+    .filter(c => !existingNames.has(c.name))
+    .map(category => ({
+      tenantId,
+      name: category.name,
+      description: category.description || null,
+      isActive: true,
+      metadata: {}
+    }));
+
+  // OPTIMIZATION: Bulk create
+  let created = 0;
+  if (newCategories.length > 0) {
+    try {
+      const result = await EquipmentCategory.bulkCreate(newCategories, {
+        ignoreDuplicates: true,
+        returning: true
+      });
+      created = result.length;
+      console.log(`✅ Bulk created ${created} equipment categories for tenant ${tenantId}`);
+    } catch (err) {
+      console.error('[seedDefaultEquipmentCategories] Bulk create error:', err.message);
+    }
+  } else {
+    console.log(`ℹ️  All equipment categories already exist for tenant ${tenantId}`);
+  }
+
+  // Mark tenant as seeded in database and cache
+  try {
+    await Tenant.update({ equipmentCategoriesSeeded: true }, { where: { id: tenantId } });
+    markSeeded(SEEDING_CACHE.equipment, tenantId);
+    console.log('[seedDefaultEquipmentCategories] Marked tenant %s as equipmentCategoriesSeeded', tenantId);
+  } catch (err) {
+    console.warn('[seedDefaultEquipmentCategories] Could not update tenant flag:', err.message);
+  }
+
+  return created;
+}
+
+/**
+ * Clear the in-memory seeding cache (useful for testing)
+ */
+function clearSeedingCache() {
+  SEEDING_CACHE.categories.clear();
+  SEEDING_CACHE.equipment.clear();
 }
 
 module.exports = {
   seedDefaultCategories,
+  seedDefaultEquipmentCategories,
+  clearSeedingCache,
   PRINTING_PRESS_CATEGORIES,
   PHARMACY_CATEGORIES
 };

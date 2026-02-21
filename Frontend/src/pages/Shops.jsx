@@ -2,16 +2,17 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Store, Plus, Search, MoreHorizontal, Edit, Trash2, MapPin, Phone, Mail, User, RefreshCw } from 'lucide-react';
+import { Store, Plus, MoreHorizontal, Edit, Trash2, MapPin, Phone, Mail, User, RefreshCw } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext';
+import { useSmartSearch } from '../context/SmartSearchContext';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -19,6 +20,7 @@ import {
   DialogTitle,
   DialogDescription,
   DialogBody,
+  DialogFooter,
 } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -40,10 +42,9 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '
 import { Switch } from '@/components/ui/switch';
 import DashboardTable from '../components/DashboardTable';
 import DashboardStatsCard from '../components/DashboardStatsCard';
-import TableSkeleton from '../components/TableSkeleton';
 import { showSuccess, showError } from '../utils/toast';
 import api from '../services/api';
-import { STATUS_CHIP_CLASSES } from '../constants';
+import { STATUS_CHIP_CLASSES, SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 
 // Validation schema
 const shopSchema = z.object({
@@ -63,11 +64,12 @@ const shopSchema = z.object({
 const Shops = () => {
   const { activeTenant } = useAuth();
   const { isMobile } = useResponsive();
-  
+  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+
   // State
   const [shops, setShops] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchText, setSearchText] = useState('');
   const [pagination, setPagination] = useState({
     page: 1,
     pageSize: 10,
@@ -77,9 +79,7 @@ const Shops = () => {
   const [editingShop, setEditingShop] = useState(null);
   const [deleteShop, setDeleteShop] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  
-  const debouncedSearch = useDebounce(searchText, 500);
-  
+
   // Form
   const form = useForm({
     resolver: zodResolver(shopSchema),
@@ -110,110 +110,138 @@ const Shops = () => {
         },
       });
       
-      if (response.data.success) {
-        setShops(response.data.data);
-        setPagination(prev => ({
-          ...prev,
-          total: response.data.count,
-        }));
-      }
+      // Handle different response structures
+      const shopsData = Array.isArray(response?.data) 
+        ? response.data 
+        : (response?.data?.data || response?.data?.shops || []);
+      const total = response?.data?.count ?? response?.count ?? shopsData.length;
+      
+      setShops(shopsData);
+      setPagination(prev => ({
+        ...prev,
+        total: total,
+      }));
     } catch (error) {
       console.error('Error fetching shops:', error);
       showError('Failed to fetch shops');
+      setShops([]);
     } finally {
       setLoading(false);
     }
   }, [pagination.page, pagination.pageSize, debouncedSearch]);
   
   useEffect(() => {
+    setPageSearchConfig({ scope: 'shops', placeholder: SEARCH_PLACEHOLDERS.SHOPS });
+  }, [setPageSearchConfig]);
+
+  useEffect(() => {
     fetchShops();
   }, [fetchShops]);
-  
+
   // Stats
   const stats = useMemo(() => {
-    const total = shops.length;
+    const total = pagination.total;
     const active = shops.filter(s => s.isActive).length;
-    const inactive = total - active;
+    const inactive = shops.filter(s => !s.isActive).length;
     const cities = [...new Set(shops.map(s => s.city).filter(Boolean))].length;
     
     return { total, active, inactive, cities };
-  }, [shops]);
+  }, [shops, pagination.total]);
+
+  // Handlers (must be defined before columns that reference them)
+  const handleEdit = useCallback((shop) => {
+    setEditingShop(shop);
+    form.reset({
+      name: shop.name || '',
+      code: shop.code || '',
+      address: shop.address || '',
+      city: shop.city || '',
+      state: shop.state || '',
+      country: shop.country || 'Ghana',
+      postalCode: shop.postalCode || '',
+      phone: shop.phone || '',
+      email: shop.email || '',
+      managerName: shop.managerName || '',
+      isActive: shop.isActive ?? true,
+    });
+    setIsModalOpen(true);
+  }, [form]);
   
-  // Table columns
+  // Table columns - DashboardTable format: { key, label, render }
   const columns = useMemo(() => [
     {
-      accessorKey: 'name',
-      header: 'Shop Name',
-      cell: ({ row }) => (
+      key: 'name',
+      label: 'Shop Name',
+      render: (_, record) => (
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
             <Store className="h-4 w-4 text-green-700" />
           </div>
           <div>
-            <div className="font-medium">{row.original.name}</div>
-            {row.original.code && (
-              <div className="text-xs text-gray-500">{row.original.code}</div>
+            <div className="font-medium">{record?.name || '—'}</div>
+            {record?.code && (
+              <div className="text-xs text-gray-500">{record.code}</div>
             )}
           </div>
         </div>
       ),
     },
     {
-      accessorKey: 'city',
-      header: 'Location',
-      cell: ({ row }) => (
+      key: 'city',
+      label: 'Location',
+      render: (_, record) => (
         <div className="flex items-center gap-1 text-gray-600">
           <MapPin className="h-3 w-3" />
-          <span>{row.original.city || '-'}</span>
+          <span>{record?.city || '—'}</span>
         </div>
       ),
     },
     {
-      accessorKey: 'managerName',
-      header: 'Manager',
-      cell: ({ row }) => (
+      key: 'managerName',
+      label: 'Manager',
+      render: (_, record) => (
         <div className="flex items-center gap-1 text-gray-600">
           <User className="h-3 w-3" />
-          <span>{row.original.managerName || '-'}</span>
+          <span>{record?.managerName || '—'}</span>
         </div>
       ),
     },
     {
-      accessorKey: 'phone',
-      header: 'Contact',
-      cell: ({ row }) => (
+      key: 'phone',
+      label: 'Contact',
+      render: (_, record) => (
         <div className="text-sm">
-          {row.original.phone && (
+          {record?.phone && (
             <div className="flex items-center gap-1">
               <Phone className="h-3 w-3 text-gray-400" />
-              {row.original.phone}
+              {record.phone}
             </div>
           )}
-          {row.original.email && (
+          {record?.email && (
             <div className="flex items-center gap-1 text-gray-500">
               <Mail className="h-3 w-3 text-gray-400" />
-              {row.original.email}
+              {record.email}
             </div>
           )}
-          {!row.original.phone && !row.original.email && '-'}
+          {!record?.phone && !record?.email && '—'}
         </div>
       ),
     },
     {
-      accessorKey: 'isActive',
-      header: 'Status',
-      cell: ({ row }) => (
+      key: 'isActive',
+      label: 'Status',
+      render: (_, record) => (
         <span className={`px-2 py-1 rounded-full text-xs font-medium border ${
-          row.original.isActive ? STATUS_CHIP_CLASSES.active_flag : STATUS_CHIP_CLASSES.inactive_flag
+          record?.isActive ? STATUS_CHIP_CLASSES.active_flag : STATUS_CHIP_CLASSES.inactive_flag
         }`}>
-          {row.original.isActive ? 'Active' : 'Inactive'}
+          {record?.isActive ? 'Active' : 'Inactive'}
         </span>
       ),
     },
     {
-      id: 'actions',
-      header: 'Actions',
-      cell: ({ row }) => (
+      key: 'actions',
+      label: 'Actions',
+      render: (_, record) => (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon">
@@ -221,12 +249,12 @@ const Shops = () => {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => handleEdit(row.original)}>
+            <DropdownMenuItem onClick={() => handleEdit(record)}>
               <Edit className="h-4 w-4 mr-2" />
               Edit
             </DropdownMenuItem>
             <DropdownMenuItem 
-              onClick={() => setDeleteShop(row.original)}
+              onClick={() => setDeleteShop(record)}
               className="text-red-600"
             >
               <Trash2 className="h-4 w-4 mr-2" />
@@ -236,9 +264,8 @@ const Shops = () => {
         </DropdownMenu>
       ),
     },
-  ], []);
+  ], [handleEdit]);
   
-  // Handlers
   const handleCreate = () => {
     setEditingShop(null);
     form.reset({
@@ -253,24 +280,6 @@ const Shops = () => {
       email: '',
       managerName: '',
       isActive: true,
-    });
-    setIsModalOpen(true);
-  };
-  
-  const handleEdit = (shop) => {
-    setEditingShop(shop);
-    form.reset({
-      name: shop.name || '',
-      code: shop.code || '',
-      address: shop.address || '',
-      city: shop.city || '',
-      state: shop.state || '',
-      country: shop.country || 'Ghana',
-      postalCode: shop.postalCode || '',
-      phone: shop.phone || '',
-      email: shop.email || '',
-      managerName: shop.managerName || '',
-      isActive: shop.isActive ?? true,
     });
     setIsModalOpen(true);
   };
@@ -311,49 +320,73 @@ const Shops = () => {
     }
   };
   
-  const handlePageChange = (newPage) => {
-    setPagination(prev => ({ ...prev, page: newPage }));
-  };
-  
-  const handlePageSizeChange = (newPageSize) => {
-    setPagination(prev => ({ ...prev, pageSize: newPageSize, page: 1 }));
+  const handlePageChange = (newPagination) => {
+    // DashboardTable passes { current, pageSize } or just a number
+    if (typeof newPagination === 'number') {
+      setPagination(prev => ({ ...prev, page: newPagination }));
+    } else {
+      setPagination(prev => ({
+        ...prev,
+        page: newPagination.current ?? prev.page,
+        pageSize: newPagination.pageSize ?? prev.pageSize,
+      }));
+    }
   };
   
   return (
-    <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+    <div className="space-y-4 md:space-y-6">
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-900">Shops</h1>
+          <h1 className="text-2xl md:text-3xl font-bold text-foreground">Shops</h1>
           <p className="text-gray-600 mt-1">Manage your shop locations and branches</p>
         </div>
-        <Button onClick={handleCreate} className="bg-green-700 hover:bg-green-800">
-          <Plus className="h-4 w-4 mr-2" />
-          Add Shop
-        </Button>
+        <div className="flex gap-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SecondaryButton onClick={fetchShops} size={isMobile ? 'icon' : 'default'}>
+                <RefreshCw className="h-4 w-4" />
+              </SecondaryButton>
+            </TooltipTrigger>
+            <TooltipContent>Refresh shops list</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={handleCreate} className="bg-green-700 hover:bg-green-800">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Shop
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add a new shop location</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
       
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <DashboardStatsCard
+          tooltip="Total number of shop locations"
           title="Total Shops"
           value={stats.total}
           subtitle={`${stats.total} locations`}
           icon={Store}
         />
         <DashboardStatsCard
+          tooltip="Operational shop locations"
           title="Active"
           value={stats.active}
           subtitle={`${stats.active} operational`}
           icon={Store}
         />
         <DashboardStatsCard
+          tooltip="Closed shop locations"
           title="Inactive"
           value={stats.inactive}
           subtitle={`${stats.inactive} closed`}
           icon={Store}
         />
         <DashboardStatsCard
+          tooltip="Number of cities with shops"
           title="Cities"
           value={stats.cities}
           subtitle={`${stats.cities} locations`}
@@ -361,48 +394,23 @@ const Shops = () => {
         />
       </div>
       
-      {/* Search and Filters */}
-      <Card className="border border-gray-200">
-        <CardContent className="p-4">
-          <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-            <div className="relative w-full md:w-80">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <Input
-                placeholder="Search shops..."
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <SecondaryButton onClick={fetchShops} size={isMobile ? 'icon' : 'default'}>
-              <RefreshCw className="h-4 w-4" />
-              {!isMobile && <span className="ml-2">Refresh</span>}
-            </SecondaryButton>
-          </div>
-        </CardContent>
-      </Card>
-      
       {/* Data Table */}
-      <Card className="border border-gray-200">
-        <CardContent className="p-0">
-          {loading ? (
-            <TableSkeleton columns={6} rows={5} />
-          ) : (
-            <DashboardTable
-              columns={columns}
-              data={shops}
-              pagination={{
-                page: pagination.page,
-                pageSize: pagination.pageSize,
-                total: pagination.total,
-              }}
-              onPageChange={handlePageChange}
-              onPageSizeChange={handlePageSizeChange}
-              emptyMessage="No shops found"
-            />
-          )}
-        </CardContent>
-      </Card>
+      <DashboardTable
+        data={shops}
+        columns={columns}
+        loading={loading}
+        title={null}
+        emptyDescription="No shop locations yet. Set up your shop locations to manage inventory and sales."
+        emptyAction={
+          <Button onClick={handleCreate}>
+            <Plus className="h-4 w-4 mr-2" />
+            Add Shop
+          </Button>
+        }
+        pageSize={pagination.pageSize}
+        externalPagination={{ current: pagination.page, total: pagination.total }}
+        onPageChange={handlePageChange}
+      />
       
       {/* Create/Edit Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
@@ -417,7 +425,7 @@ const Shops = () => {
           </DialogHeader>
           <DialogBody>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+            <form id="shop-form" onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField
                 control={form.control}
                 name="name"
@@ -568,43 +576,44 @@ const Shops = () => {
                 control={form.control}
                 name="isActive"
                 render={({ field }) => (
-                  <FormItem className="flex items-center justify-between rounded-lg border p-4">
-                    <div className="space-y-0.5">
+                  <FormItem className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 rounded-lg border p-4">
+                    <div className="space-y-0.5 min-w-0 flex-1">
                       <FormLabel className="text-base">Active Status</FormLabel>
                       <p className="text-sm text-gray-500">
                         Set whether this shop is currently operational
                       </p>
                     </div>
                     <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                      />
+                      <div className="min-h-[44px] min-w-[44px] flex items-center justify-end shrink-0">
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </div>
                     </FormControl>
                   </FormItem>
                 )}
               />
-              
-              {/* Form Buttons */}
-              <div className="flex justify-end gap-2 pt-4 sticky bottom-0 bg-white pb-2">
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  onClick={() => setIsModalOpen(false)}
-                >
-                  Cancel
-                </Button>
-                <Button 
-                  type="submit" 
-                  className="bg-green-700 hover:bg-green-800"
-                  loading={isSubmitting}
-                >
-                  {editingShop ? 'Update Shop' : 'Create Shop'}
-                </Button>
-              </div>
             </form>
           </Form>
           </DialogBody>
+          <DialogFooter>
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={() => setIsModalOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button 
+              type="submit" 
+              form="shop-form"
+              className="bg-green-700 hover:bg-green-800"
+              loading={isSubmitting}
+            >
+              {editingShop ? 'Update Shop' : 'Create Shop'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
       

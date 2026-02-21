@@ -2,28 +2,20 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, DollarSign, FileText, Clock, CheckCircle, Printer, Download, Loader2, Filter, RefreshCw, Receipt, Share2 } from 'lucide-react';
-import { generatePDF } from '../utils/pdfUtils';
+import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { useDebounce } from '../hooks/useDebounce';
-import { useResponsive } from '../hooks/useResponsive';
-import { usePullToRefresh } from '../hooks/usePullToRefresh';
+import { useQuery } from '@tanstack/react-query';
 import invoiceService from '../services/invoiceService';
-import customerService from '../services/customerService';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
-import { useSmartSearch } from '../context/SmartSearchContext';
-import { useQuery } from '@tanstack/react-query';
 import ActionColumn from '../components/ActionColumn';
+import DashboardTable from '../components/DashboardTable';
+import ViewToggle from '../components/ViewToggle';
 import DetailsDrawer from '../components/DetailsDrawer';
-import DrawerSectionCard from '../components/DrawerSectionCard';
+import MobileFormDialog from '../components/MobileFormDialog';
 import PrintableInvoice from '../components/PrintableInvoice';
 import StatusChip from '../components/StatusChip';
-import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
-import DashboardTable from '../components/DashboardTable';
-import DashboardStatsCard from '../components/DashboardStatsCard';
-import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError } from '../utils/toast';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
@@ -31,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import DashboardStatsCard from '../components/DashboardStatsCard';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import { DatePicker } from '@/components/ui/date-picker';
 import {
@@ -42,19 +35,10 @@ import {
 } from '@/components/ui/select';
 import {
   Dialog,
-  DialogBody,
   DialogContent,
-  DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
 import {
   Form,
   FormControl,
@@ -63,7 +47,18 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { STUDIO_LIKE_TYPES } from '../constants';
 
 const paymentSchema = z.object({
   amount: z.number().min(0.01, 'Payment amount must be greater than 0'),
@@ -75,18 +70,10 @@ const paymentSchema = z.object({
 const Invoices = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
-  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
-  const { isMobile } = useResponsive();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [refreshingInvoices, setRefreshingInvoices] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
-  const [filters, setFilters] = useState({
-    status: 'all',
-    customerId: 'all',
-  });
-  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [filters, setFilters] = useState({ status: '' });
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingInvoice, setViewingInvoice] = useState(null);
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
@@ -95,9 +82,21 @@ const Invoices = () => {
   const { isManager, activeTenant } = useAuth();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
+  const isStudioLike = STUDIO_LIKE_TYPES.includes(businessType);
+  const [tableViewMode, setTableViewMode] = useState('table');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [markingAsPaid, setMarkingAsPaid] = useState(false);
   const [sendingInvoice, setSendingInvoice] = useState(false);
+  const [invoiceToDelete, setInvoiceToDelete] = useState(null);
+
+  // Organization branding for printable invoices
+  const { data: organizationData } = useQuery({
+    queryKey: ['settings', 'organization'],
+    queryFn: () => settingsService.getOrganization(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const organization = organizationData?.data || {};
 
   const paymentForm = useForm({
     resolver: zodResolver(paymentSchema),
@@ -109,94 +108,25 @@ const Invoices = () => {
     },
   });
 
-  // Fetch customers for filter
-  const { data: customersData = [] } = useQuery({
-    queryKey: ['customers', 'all'],
-    queryFn: async () => {
-      const response = await customerService.getAll({ limit: 1000 });
-      return response.data || [];
-    },
-    staleTime: 5 * 60 * 1000,
-  });
-
-  // Fetch organization settings for invoice branding
-  const { data: organizationData } = useQuery({
-    queryKey: ['settings', 'organization'],
-    queryFn: () => settingsService.getOrganization(),
-    staleTime: 5 * 60 * 1000, // 5 minutes
-  });
-
-  const organization = organizationData?.data || {};
-
-  useEffect(() => {
-    setPageSearchConfig({ scope: 'invoices', placeholder: SEARCH_PLACEHOLDERS.INVOICES });
-    return () => setPageSearchConfig(null);
-  }, [setPageSearchConfig]);
-
-  // Pull-to-refresh hook
-  const { isRefreshing, pullDistance, containerProps } = usePullToRefresh(
-    () => {
-      fetchInvoices(true);
-      fetchStats();
-    },
-    { enabled: isMobile }
-  );
-
-  useEffect(() => {
-    setPagination((prev) => ({ ...prev, current: 1 }));
-  }, [searchValue]);
-
-  const fetchInvoices = useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshingInvoices(true);
-    } else {
-      setLoading(true);
-    }
+  const fetchInvoices = useCallback(async () => {
+    setLoading(true);
     try {
-      const params = {
+      const cleanFilters = {};
+      if (filters.status) cleanFilters.status = filters.status;
+
+      const response = await invoiceService.getAll({
         page: pagination.current,
-        limit: 1000, // Fetch more for client-side filtering
-      };
-
-      if (filters.status !== 'all') {
-        params.status = filters.status;
-      }
-
-      if (filters.customerId !== 'all') {
-        params.customerId = filters.customerId;
-      }
-
-      if (debouncedSearch) {
-        params.search = debouncedSearch;
-      }
-
-      const response = await invoiceService.getAll(params);
-      setInvoices(response.data || []);
+        limit: pagination.pageSize,
+        ...cleanFilters,
+      });
+      setInvoices(response.data);
+      setPagination(prev => ({ ...prev, total: response.count }));
     } catch (error) {
       showError(error, 'Failed to load invoices');
-      setInvoices([]);
     } finally {
-      if (isRefresh) {
-        setRefreshingInvoices(false);
-      } else {
-        setLoading(false);
-      }
+      setLoading(false);
     }
-  }, [filters, pagination.current, debouncedSearch]);
-
-  // Apply client-side filtering
-  const filteredInvoices = useMemo(() => {
-    return invoices; // Backend already filters by status and customerId
-  }, [invoices, filters]);
-
-  // Paginate filtered invoices
-  const paginatedInvoices = useMemo(() => {
-    const start = (pagination.current - 1) * pagination.pageSize;
-    const end = start + pagination.pageSize;
-    return filteredInvoices.slice(start, end);
-  }, [filteredInvoices, pagination.current, pagination.pageSize]);
-
-  const invoicesCount = filteredInvoices.length;
+  }, [pagination.current, pagination.pageSize, filters]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -210,7 +140,7 @@ const Invoices = () => {
   useEffect(() => {
     fetchInvoices();
     fetchStats();
-  }, [fetchInvoices, fetchStats, refreshTrigger, filters]);
+  }, [fetchInvoices, fetchStats, refreshTrigger]);
 
   useEffect(() => {
     if (location.state?.openInvoiceId && invoices.length > 0) {
@@ -251,44 +181,40 @@ const Invoices = () => {
     setPrintModalVisible(true);
   };
 
-  const handlePrintInvoice = async () => {
-    if (!viewingInvoice) return;
-    
-    const element = document.querySelector('.printable-invoice');
-    if (element) {
-      try {
-        await generatePDF(element, {
-          filename: `Invoice-${viewingInvoice.invoiceNumber}.pdf`,
-          format: 'a4',
-          orientation: 'portrait',
-        });
-        showSuccess('Invoice PDF downloaded successfully');
-      } catch (error) {
-        console.error('PDF generation error:', error);
-        showError(null, 'Failed to generate PDF');
-      }
-    }
+  const handlePrintInvoice = () => {
+    window.print();
   };
 
   const handleDownloadInvoice = async () => {
     if (!viewingInvoice) return;
     
-    const element = document.querySelector('.printable-invoice');
-    if (!element) {
-      showError(null, 'Invoice not found');
-      return;
-    }
-    
     try {
-      await generatePDF(element, {
-        filename: `Invoice-${viewingInvoice.invoiceNumber}.pdf`,
-        format: 'a4',
-        orientation: 'portrait',
-      });
-      showSuccess('Invoice PDF downloaded successfully');
+      const html2pdf = (await import('html2pdf.js')).default;
+      const invoiceElement = document.querySelector('.printable-invoice');
+      
+      if (!invoiceElement) {
+        showError(null, 'Invoice not found');
+        return;
+      }
+      
+      const opt = {
+        margin: 0,
+        filename: `Invoice_${viewingInvoice.invoiceNumber}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+      
+      await html2pdf()
+        .set(opt)
+        .from(invoiceElement)
+        .save();
+      
+      showSuccess('PDF downloaded successfully!');
+      
     } catch (error) {
       console.error('Error generating PDF:', error);
-      showError(error, 'Failed to generate PDF');
+      showError(error, 'Failed to generate PDF. Please try again.');
     }
   };
 
@@ -365,85 +291,72 @@ const Invoices = () => {
     }
   };
 
+  const handleDeleteInvoice = async (id) => {
+    try {
+      await invoiceService.delete(id);
+      showSuccess('Draft invoice deleted');
+      setInvoiceToDelete(null);
+      setRefreshTrigger(prev => prev + 1);
+      if (viewingInvoice?.id === id) handleCloseDrawer();
+    } catch (error) {
+      showError(error, 'Failed to delete invoice');
+    }
+  };
 
-  // Calculate summary stats from invoices
-  const calculatedStats = useMemo(() => {
-    const totalRevenue = invoices
-      .filter(inv => inv.status === 'paid')
-      .reduce((sum, inv) => sum + parseFloat(inv.amountPaid || 0), 0);
-    
-    const outstandingAmount = invoices
-      .filter(inv => inv.status !== 'paid')
-      .reduce((sum, inv) => sum + parseFloat(inv.balance || 0), 0);
-    
-    const paidInvoices = invoices.filter(inv => inv.status === 'paid').length;
-    const overdueInvoices = invoices.filter(inv => inv.status === 'overdue').length;
-    
-    return {
-      totals: {
-        totalRevenue,
-        outstandingAmount,
-        paidInvoices,
-        overdueInvoices
-      }
-    };
-  }, [invoices]);
-
-  // Table columns for DashboardTable
   const tableColumns = useMemo(() => [
     {
       key: 'invoiceNumber',
       label: 'Invoice #',
-      render: (_, record) => <span className="font-medium text-black">{record?.invoiceNumber || '—'}</span>
+      render: (_, record) => record.invoiceNumber,
     },
     {
       key: 'customer',
       label: 'Customer',
       render: (_, record) => (
         <div>
-          <div className="text-black">{record?.customer?.name || '—'}</div>
-          {record?.customer?.company && (
+          <div>{record.customer?.name}</div>
+          {record.customer?.company && (
             <div className="text-muted-foreground text-xs">{record.customer.company}</div>
           )}
         </div>
-      )
+      ),
     },
     ...(isPrintingPress ? [{
       key: 'job',
       label: 'Job',
-      render: (_, record) => <span className="text-black">{record?.job?.jobNumber || '—'}</span>
+      render: (_, record) => record.job?.jobNumber || '-',
     }] : []),
     {
       key: 'invoiceDate',
       label: 'Invoice Date',
-      render: (_, record) => <span className="text-black">{record?.invoiceDate ? dayjs(record.invoiceDate).format('MMM DD, YYYY') : '—'}</span>
+      render: (_, record) => dayjs(record.invoiceDate).format('MMM DD, YYYY'),
     },
     {
       key: 'dueDate',
       label: 'Due Date',
-      render: (_, record) => <span className="text-black">{record?.dueDate ? dayjs(record.dueDate).format('MMM DD, YYYY') : '—'}</span>
+      render: (_, record) => dayjs(record.dueDate).format('MMM DD, YYYY'),
     },
     {
       key: 'totalAmount',
       label: 'Total',
-      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.totalAmount || 0).toFixed(2)}</span>
+      render: (_, record) => `₵ ${parseFloat(record.totalAmount || 0).toFixed(2)}`,
     },
     {
       key: 'balance',
       label: 'Balance',
       render: (_, record) => {
-        const balance = parseFloat(record?.balance || 0);
+        const balance = parseFloat(record.balance || 0);
         return (
           <span className={`font-bold ${balance > 0 ? 'text-orange-500' : 'text-green-500'}`}>
-            GHS {balance.toFixed(2)}
+            ₵ {balance.toFixed(2)}
           </span>
         );
-      }
+      },
     },
     {
       key: 'status',
       label: 'Status',
-      render: (_, record) => <StatusChip status={record?.status} />
+      render: (_, record) => <StatusChip status={record.status} />,
     },
     {
       key: 'actions',
@@ -454,209 +367,112 @@ const Invoices = () => {
           record={record}
           extraActions={[
             record.status !== 'paid' && record.status !== 'cancelled' && isManager && {
-              key: 'recordPayment',
               label: 'Record Payment',
-              variant: 'default',
-              onClick: () => handleRecordPayment(record)
+              onClick: () => handleRecordPayment(record),
+              type: 'primary'
             },
             parseFloat(record.balance || 0) > 0 && record.status !== 'cancelled' && isManager && {
-              key: 'markAsPaid',
               label: 'Mark as Paid',
-              variant: 'secondary',
               onClick: () => handleMarkAsPaid(record)
             },
             record.status === 'draft' && isManager && {
               key: 'send',
-              label: sendingInvoice ? 'Sending...' : 'Send',
-              variant: 'secondary',
-              icon: sendingInvoice ? <Loader2 className="h-4 w-4 animate-spin" /> : undefined,
-              onClick: () => handleSendInvoice(record.id),
-              disabled: sendingInvoice
+              label: 'Send',
+              onClick: () => handleSendInvoice(record.id)
             }
           ].filter(Boolean)}
         />
-      )
-    }
+      ),
+    },
   ], [isPrintingPress, isManager, handleView, handleRecordPayment, handleMarkAsPaid, handleSendInvoice]);
 
-  const handleClearFilters = () => {
-    setFilters({
-      status: 'all',
-      customerId: 'all'
-    });
-    setPagination({ ...pagination, current: 1 });
-  };
-
-  const hasActiveFilters = filters.status !== 'all' || filters.customerId !== 'all';
-
   return (
-    <div className="space-y-4 md:space-y-6">
+    <div className="space-y-6">
+      <h1 className="text-3xl font-bold">Invoices</h1>
+
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <DashboardStatsCard
+            tooltip="Total amount received from paid invoices"
+            title="Total Revenue"
+            value={parseFloat(stats.totalRevenue || 0).toFixed(2)}
+            valuePrefix="₵ "
+            prefix={<CheckCircle className="h-4 w-4 text-green-500 inline mr-1" />}
+          />
+          <DashboardStatsCard
+            tooltip="Amount still owed by customers"
+            title="Outstanding"
+            value={parseFloat(stats.outstandingAmount || 0).toFixed(2)}
+            valuePrefix="₵ "
+            prefix={<Clock className="h-4 w-4 text-orange-500 inline mr-1" />}
+          />
+          <DashboardStatsCard
+            tooltip="Invoices that have been fully paid"
+            title="Paid Invoices"
+            value={stats.paidInvoices || 0}
+            prefix={<FileText className="h-4 w-4 text-green-500 inline mr-1" />}
+          />
+          <DashboardStatsCard
+            tooltip="Invoices past due date"
+            title="Overdue"
+            value={stats.overdueInvoices || 0}
+            prefix={<FileText className="h-4 w-4 text-red-500 inline mr-1" />}
+          />
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <WelcomeSection
-          welcomeMessage="Invoices"
-          subText="Manage invoices, track payments, and monitor outstanding balances."
-        />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-            <Filter className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Filter</span>}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={async () => { 
-              await fetchInvoices(true); 
-              fetchStats(); 
-            }}
-            disabled={refreshingInvoices}
-            size={isMobile ? "icon" : "default"}
+          <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
+          <Select
+            value={filters.status}
+            onValueChange={(value) => setFilters({ ...filters, status: value || '' })}
           >
-            {refreshingInvoices ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="draft">Draft</SelectItem>
+              <SelectItem value="sent">Sent</SelectItem>
+              <SelectItem value="paid">Paid</SelectItem>
+              <SelectItem value="partial">Partial</SelectItem>
+              <SelectItem value="overdue">Overdue</SelectItem>
+              <SelectItem value="cancelled">Cancelled</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {/* Total Revenue Card */}
-        <DashboardStatsCard
-          title="Total Revenue"
-          value={calculatedStats?.totals?.totalRevenue || 0}
-          icon={DollarSign}
-          iconBgColor="rgba(132, 204, 22, 0.1)"
-          iconColor="#84cc16"
-        />
-
-        {/* Outstanding Card */}
-        <DashboardStatsCard
-          title="Outstanding"
-          value={calculatedStats?.totals?.outstandingAmount || 0}
-          icon={Clock}
-          iconBgColor="rgba(249, 115, 22, 0.1)"
-          iconColor="#f97316"
-        />
-
-        {/* Paid Invoices Card */}
-        <DashboardStatsCard
-          title="Paid Invoices"
-          value={calculatedStats?.totals?.paidInvoices || 0}
-          icon={CheckCircle}
-          iconBgColor="rgba(132, 204, 22, 0.1)"
-          iconColor="#84cc16"
-        />
-
-        {/* Overdue Card */}
-        <DashboardStatsCard
-          title="Overdue"
-          value={calculatedStats?.totals?.overdueInvoices || 0}
-          icon={FileText}
-          iconBgColor="rgba(239, 68, 68, 0.1)"
-          iconColor="#ef4444"
-        />
-      </div>
-
-      {/* Main Content Area with Pull-to-Refresh */}
-      <div {...containerProps} className="relative">
-        {/* Pull-to-refresh indicator */}
-        {isMobile && pullDistance > 0 && (
-          <div 
-            className="absolute top-0 left-0 right-0 flex items-center justify-center z-10 transition-opacity"
-            style={{
-              height: `${Math.min(pullDistance, 80)}px`,
-              opacity: Math.min(pullDistance / 80, 1),
-            }}
-          >
-            {isRefreshing ? (
-              <Loader2 className="h-6 w-6 animate-spin text-[#166534]" />
-            ) : (
-              <RefreshCw className="h-6 w-6 text-[#166534]" />
-            )}
-          </div>
-        )}
-        
-        <DashboardTable
-          data={paginatedInvoices}
-          columns={tableColumns}
-          loading={loading || (isMobile && isRefreshing)}
-          title={null}
-          emptyIcon={<Receipt className="h-12 w-12 text-muted-foreground" />}
-          emptyDescription="No invoices found"
-          pageSize={pagination.pageSize}
-          onPageChange={(newPagination) => {
-            setPagination(newPagination);
-          }}
-          externalPagination={{
-            current: pagination.current,
-            total: invoicesCount
-          }}
-        />
-      </div>
-
-      {/* Filter Drawer */}
-      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
-          <SheetHeader className="pb-4 border-b">
-            <SheetTitle>Filter Invoices</SheetTitle>
-          </SheetHeader>
-          <div className="space-y-6 mt-6">
-            <div className="space-y-2">
-              <Label>Status</Label>
-              <Select
-                value={filters.status}
-                onValueChange={(value) => setFilters({ ...filters, status: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Statuses</SelectItem>
-                  <SelectItem value="draft">Draft</SelectItem>
-                  <SelectItem value="sent">Sent</SelectItem>
-                  <SelectItem value="paid">Paid</SelectItem>
-                  <SelectItem value="partial">Partial</SelectItem>
-                  <SelectItem value="overdue">Overdue</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Customer</Label>
-              <Select
-                value={filters.customerId}
-                onValueChange={(value) => setFilters({ ...filters, customerId: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Customers</SelectItem>
-                  {customersData.map(customer => (
-                    <SelectItem key={customer.id} value={customer.id}>
-                      {customer.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {hasActiveFilters && (
-              <Button variant="outline" onClick={handleClearFilters} className="w-full">
-                Clear Filters
-              </Button>
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
+      <DashboardTable
+        data={invoices}
+        columns={tableColumns}
+        loading={loading}
+        title={null}
+        emptyIcon={<FileText className="h-12 w-12 text-muted-foreground" />}
+        emptyDescription={
+          isStudioLike
+            ? "No invoices yet. Invoices are automatically created when you complete a job and generate an invoice from it."
+            : "No invoices found. Create invoices from your sales or orders to track payments."
+        }
+        emptyAction={
+          isStudioLike && (
+            <Button onClick={() => navigate('/jobs')}>
+              Go to Jobs
+            </Button>
+          )
+        }
+        pageSize={pagination.pageSize}
+        externalPagination={{ current: pagination.current, total: pagination.total }}
+        onPageChange={(newPagination) => setPagination(prev => ({ ...prev, ...newPagination }))}
+        viewMode={tableViewMode}
+        onViewModeChange={setTableViewMode}
+      />
 
       <DetailsDrawer
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Invoice Details"
-        width={720}
+        width={900}
         onPrint={viewingInvoice ? () => handlePrint(viewingInvoice) : null}
         onMarkPaid={
           isManager &&
@@ -670,354 +486,321 @@ const Invoices = () => {
           handleCancelInvoice(viewingInvoice.id);
         } : null}
         cancelButtonText="Cancel Invoice"
-        deleteConfirmText="Are you sure you want to cancel this invoice?"
-        tabs={viewingInvoice ? [
-          {
-            key: 'details',
-            label: 'Details',
-            content: (
-              <div className="space-y-6">
-                <DrawerSectionCard title="Invoice details">
-                  <Descriptions column={1} className="space-y-0">
-                    <DescriptionItem label="Invoice Number">{viewingInvoice.invoiceNumber}</DescriptionItem>
-                    <DescriptionItem label="Status">
-                      <StatusChip status={viewingInvoice.status} />
-                    </DescriptionItem>
-                    <DescriptionItem label="Customer">{viewingInvoice.customer?.name}</DescriptionItem>
-                    <DescriptionItem label="Company">{viewingInvoice.customer?.company || '-'}</DescriptionItem>
-                    <DescriptionItem label="Email">{viewingInvoice.customer?.email || '-'}</DescriptionItem>
-                    <DescriptionItem label="Phone">{viewingInvoice.customer?.phone || '-'}</DescriptionItem>
-                    {isPrintingPress && (
-                      <>
-                        <DescriptionItem label="Job Number">{viewingInvoice.job?.jobNumber || '-'}</DescriptionItem>
-                        <DescriptionItem label="Job Title">{viewingInvoice.job?.title || '-'}</DescriptionItem>
-                      </>
-                    )}
-                    <DescriptionItem label="Invoice Date">
-                      {viewingInvoice.invoiceDate ? dayjs(viewingInvoice.invoiceDate).format('MMMM DD, YYYY') : '-'}
-                    </DescriptionItem>
-                    <DescriptionItem label="Due Date">
-                      {viewingInvoice.dueDate ? dayjs(viewingInvoice.dueDate).format('MMMM DD, YYYY') : '-'}
-                    </DescriptionItem>
-                    <DescriptionItem label="Payment Terms">{viewingInvoice.paymentTerms || '-'}</DescriptionItem>
-                  </Descriptions>
-                </DrawerSectionCard>
-                <DrawerSectionCard title="Amounts">
-                  <Descriptions column={1} className="space-y-0">
-                    <DescriptionItem label="Subtotal">
-                      GHS {parseFloat(viewingInvoice.subtotal || 0).toFixed(2)}
-                    </DescriptionItem>
-                    <DescriptionItem label="Tax">
-                      GHS {parseFloat(viewingInvoice.taxAmount || 0).toFixed(2)} ({viewingInvoice.taxRate || 0}%)
-                    </DescriptionItem>
-                    <DescriptionItem label="Discount">
-                      {!viewingInvoice.discountAmount || viewingInvoice.discountAmount == 0
-                        ? '-'
-                        : `GHS ${parseFloat(viewingInvoice.discountAmount || 0).toFixed(2)} ${viewingInvoice.discountType === 'percentage' ? `(${viewingInvoice.discountValue}%)` : ''}`
-                      }
-                    </DescriptionItem>
-                    <DescriptionItem label="Total Amount">
-                      <strong className="text-lg text-primary">GHS {parseFloat(viewingInvoice.totalAmount || 0).toFixed(2)}</strong>
-                    </DescriptionItem>
-                    <DescriptionItem label="Amount Paid">
-                      <span className="text-green-600">GHS {parseFloat(viewingInvoice.amountPaid || 0).toFixed(2)}</span>
-                    </DescriptionItem>
-                    <DescriptionItem label="Balance Due">
-                      <strong className={`text-lg ${viewingInvoice.balance > 0 ? 'text-orange-500' : 'text-green-600'}`}>
-                        GHS {parseFloat(viewingInvoice.balance || 0).toFixed(2)}
-                      </strong>
-                    </DescriptionItem>
-                    <DescriptionItem label="Notes">{viewingInvoice.notes || '-'}</DescriptionItem>
-                    <DescriptionItem label="Terms & Conditions">{viewingInvoice.termsAndConditions || '-'}</DescriptionItem>
-                    <DescriptionItem label="Sent Date">
-                      {viewingInvoice.sentDate ? dayjs(viewingInvoice.sentDate).format('MMMM DD, YYYY') : '-'}
-                    </DescriptionItem>
-                    <DescriptionItem label="Paid Date">
-                      {viewingInvoice.paidDate ? dayjs(viewingInvoice.paidDate).format('MMMM DD, YYYY') : '-'}
-                    </DescriptionItem>
-                    <DescriptionItem label="Created At">
-                      {viewingInvoice.createdAt ? dayjs(viewingInvoice.createdAt).format('MMMM DD, YYYY HH:mm') : '-'}
-                    </DescriptionItem>
-                  </Descriptions>
-                </DrawerSectionCard>
-              </div>
+        deleteConfirmText={viewingInvoice?.status === 'draft' ? 'Are you sure you want to delete this draft invoice? This cannot be undone.' : 'Are you sure you want to cancel this invoice?'}
+        onDelete={isManager && viewingInvoice?.status === 'draft' ? () => handleDeleteInvoice(viewingInvoice.id) : null}
+        fields={viewingInvoice ? [
+          { label: 'Invoice Number', value: viewingInvoice.invoiceNumber },
+          { 
+            label: 'Status', 
+            value: viewingInvoice.status,
+            render: (status) => (
+              <StatusChip status={status} />
             )
           },
+          { label: 'Customer', value: viewingInvoice.customer?.name },
+          { label: 'Company', value: viewingInvoice.customer?.company || '-' },
+          { label: 'Email', value: viewingInvoice.customer?.email || '-' },
+          { label: 'Phone', value: viewingInvoice.customer?.phone || '-' },
+          ...(isPrintingPress ? [
+            { label: 'Job Number', value: viewingInvoice.job?.jobNumber },
+            { label: 'Job Title', value: viewingInvoice.job?.title },
+          ] : []),
+          { 
+            label: 'Invoice Date', 
+            value: viewingInvoice.invoiceDate,
+            render: (date) => dayjs(date).format('MMMM DD, YYYY')
+          },
+          { 
+            label: 'Due Date', 
+            value: viewingInvoice.dueDate,
+            render: (date) => dayjs(date).format('MMMM DD, YYYY')
+          },
+          { label: 'Payment Terms', value: viewingInvoice.paymentTerms },
           {
-            key: 'items',
-            label: 'Items',
-            content: (
-              <DrawerSectionCard title="Itemized charges">
-                {!viewingInvoice.items || viewingInvoice.items.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground text-sm">
-                    No items found
-                  </div>
-                ) : (
-                  <div className="space-y-0">
-                    <div className="grid grid-cols-12 gap-2 pb-2 border-b border-gray-200 text-sm font-semibold text-gray-900">
-                      <div className="col-span-6">Item description</div>
-                      <div className="col-span-2 text-right">Quantity</div>
-                      <div className="col-span-2 text-right">Unit price (GHS)</div>
-                      <div className="col-span-2 text-right">Total (GHS)</div>
-                    </div>
-                    {viewingInvoice.items.map((item, idx) => (
-                      <div
-                        key={idx}
-                        className="grid grid-cols-12 gap-2 py-3 border-b border-gray-200/80 last:border-b-0 text-sm"
-                      >
-                        <div className="col-span-6">
-                          <div className="font-medium text-gray-900">{item.description || item.category || 'Item'}</div>
-                          {item.paperSize && (
-                            <div className="text-muted-foreground text-xs mt-0.5">Size: {item.paperSize}</div>
-                          )}
+            label: 'Invoice Items',
+            value: viewingInvoice.items,
+            render: (items) => {
+              if (!items || items.length === 0) return '-';
+              return (
+                <div className="mt-2 space-y-2">
+                  {items.map((item, idx) => (
+                    <Card key={idx}>
+                      <CardContent className="pt-6">
+                        <div className="grid grid-cols-12 gap-4">
+                          <div className="col-span-6">
+                            <div className="font-semibold">{item.description || item.category}</div>
+                            {item.paperSize && <div className="text-muted-foreground text-xs">Size: {item.paperSize}</div>}
+                          </div>
+                          <div className="col-span-2 text-right">
+                            Qty: {item.quantity}
+                          </div>
+                          <div className="col-span-2 text-right">
+                            ₵ {parseFloat(item.unitPrice || 0).toFixed(2)}
+                          </div>
+                          <div className="col-span-2 text-right">
+                            <strong>₵ {parseFloat(item.total || 0).toFixed(2)}</strong>
+                          </div>
                         </div>
-                        <div className="col-span-2 text-right text-gray-700">{item.quantity || 0}</div>
-                        <div className="col-span-2 text-right text-gray-700">{parseFloat(item.unitPrice || 0).toFixed(2)}</div>
-                        <div className="col-span-2 text-right font-medium text-gray-900">{parseFloat(item.total || 0).toFixed(2)}</div>
-                      </div>
-                    ))}
-                    <div className="pt-3 mt-2 border-t border-gray-200 space-y-1 text-sm">
-                      <div className="flex justify-between text-muted-foreground">
-                        <span>Subtotal</span>
-                        <span className="text-gray-900 font-medium">GHS {parseFloat(viewingInvoice.subtotal || 0).toFixed(2)}</span>
-                      </div>
-                      {viewingInvoice.taxAmount != null && Number(viewingInvoice.taxAmount) !== 0 && (
-                        <div className="flex justify-between text-muted-foreground">
-                          <span>Tax {viewingInvoice.taxRate || 0}%</span>
-                          <span className="text-gray-900">GHS {parseFloat(viewingInvoice.taxAmount || 0).toFixed(2)}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between text-base font-semibold text-gray-900 pt-2">
-                        <span>Grand total</span>
-                        <span>GHS {parseFloat(viewingInvoice.totalAmount || 0).toFixed(2)}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </DrawerSectionCard>
-            )
-          }
-        ] : null}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              );
+            }
+          },
+          { 
+            label: 'Subtotal', 
+            value: viewingInvoice.subtotal,
+            render: (val) => `₵ ${parseFloat(val || 0).toFixed(2)}`
+          },
+          { 
+            label: 'Tax', 
+            value: viewingInvoice.taxAmount,
+            render: (val) => `₵ ${parseFloat(val || 0).toFixed(2)} (${viewingInvoice.taxRate || 0}%)`
+          },
+          { 
+            label: 'Discount', 
+            value: viewingInvoice.discountAmount,
+            render: (val) => {
+              if (!val || val == 0) return '-';
+              return `₵ ${parseFloat(val || 0).toFixed(2)} ${viewingInvoice.discountType === 'percentage' ? `(${viewingInvoice.discountValue}%)` : ''}`;
+            }
+          },
+          { 
+            label: 'Total Amount', 
+            value: viewingInvoice.totalAmount,
+            render: (val) => <strong className="text-lg text-primary">₵ {parseFloat(val || 0).toFixed(2)}</strong>
+          },
+          { 
+            label: 'Amount Paid', 
+            value: viewingInvoice.amountPaid,
+            render: (val) => <span className="text-green-500">₵ {parseFloat(val || 0).toFixed(2)}</span>
+          },
+          { 
+            label: 'Balance Due', 
+            value: viewingInvoice.balance,
+            render: (val) => <strong className={`text-lg ${val > 0 ? 'text-orange-500' : 'text-green-500'}`}>₵ {parseFloat(val || 0).toFixed(2)}</strong>
+          },
+          { label: 'Notes', value: viewingInvoice.notes || '-' },
+          { label: 'Terms & Conditions', value: viewingInvoice.termsAndConditions || '-' },
+          { 
+            label: 'Sent Date', 
+            value: viewingInvoice.sentDate,
+            render: (date) => date ? dayjs(date).format('MMMM DD, YYYY') : '-'
+          },
+          { 
+            label: 'Paid Date', 
+            value: viewingInvoice.paidDate,
+            render: (date) => date ? dayjs(date).format('MMMM DD, YYYY') : '-'
+          },
+          { 
+            label: 'Created At', 
+            value: viewingInvoice.createdAt,
+            render: (date) => dayjs(date).format('MMMM DD, YYYY HH:mm')
+          },
+        ] : []}
       />
 
-      <Dialog open={paymentModalVisible} onOpenChange={setPaymentModalVisible}>
-        <DialogContent className="sm:w-[var(--modal-w-lg)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
-          <DialogHeader>
-            <DialogTitle>Record Payment</DialogTitle>
-            <DialogDescription>Record a payment for this invoice</DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-          {viewingInvoice && (
+      <MobileFormDialog
+        open={paymentModalVisible}
+        onOpenChange={setPaymentModalVisible}
+        title="Record Payment"
+        description="Record a payment for this invoice"
+        footer={
+          viewingInvoice ? (
             <>
-              <Descriptions column={2} className="mb-6">
-                <DescriptionItem label="Invoice">{viewingInvoice.invoiceNumber}</DescriptionItem>
-                <DescriptionItem label="Customer">{viewingInvoice.customer?.name}</DescriptionItem>
-                <DescriptionItem label="Total Amount">GHS {parseFloat(viewingInvoice.totalAmount).toFixed(2)}</DescriptionItem>
-                <DescriptionItem label="Amount Paid">GHS {parseFloat(viewingInvoice.amountPaid || 0).toFixed(2)}</DescriptionItem>
-                <DescriptionItem label="Balance Due" className="col-span-2">
-                  <strong className="text-lg text-orange-500">
-                    GHS {parseFloat(viewingInvoice.balance).toFixed(2)}
-                  </strong>
-                </DescriptionItem>
-              </Descriptions>
-
-              <Form {...paymentForm}>
-                <form onSubmit={paymentForm.handleSubmit(onPaymentSubmit)} className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <FormField
-                      control={paymentForm.control}
-                      name="amount"
-                      rules={[
-                        {
-                          validate: (value) => {
-                            if (value > parseFloat(viewingInvoice.balance || 0)) {
-                              return 'Amount exceeds balance due';
-                            }
-                            return true;
-                          }
-                        }
-                      ]}
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Payment Amount</FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
-                              <Input
-                                type="number"
-                                placeholder="0.00"
-                                min={0}
-                                max={parseFloat(viewingInvoice.balance)}
-                                step={0.01}
-                                value={field.value || ''}
-                                onChange={(e) => {
-                                  const value = parseFloat(e.target.value) || 0;
-                                  field.onChange(value);
-                                }}
-                                className="pl-12"
-                              />
-                            </div>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={paymentForm.control}
-                      name="paymentMethod"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Payment Method</FormLabel>
-                          <Select value={field.value} onValueChange={field.onChange}>
-                            <FormControl>
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                            </FormControl>
-                            <SelectContent>
-                              <SelectItem value="cash">Cash</SelectItem>
-                              <SelectItem value="check">Check</SelectItem>
-                              <SelectItem value="credit_card">Credit Card</SelectItem>
-                              <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                              <SelectItem value="momo">Mobile Money</SelectItem>
-                              <SelectItem value="other">Other</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <FormField
-                      control={paymentForm.control}
-                      name="paymentDate"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Payment Date</FormLabel>
-                          <FormControl>
-                            <DatePicker
-                              date={field.value}
-                              onSelect={(date) => field.onChange(date)}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={paymentForm.control}
-                      name="referenceNumber"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Reference Number (optional)</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="Transaction ref. number" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
-                  <DialogFooter>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setPaymentModalVisible(false)}
-                    >
-                      Cancel
-                    </Button>
-                    <Button type="submit" loading={paymentForm.formState.isSubmitting}>
-                      Record Payment
-                    </Button>
-                  </DialogFooter>
-                </form>
-              </Form>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setPaymentModalVisible(false)}
+              >
+                Cancel
+              </Button>
+              <Button form="payment-form" type="submit" disabled={paymentForm.formState.isSubmitting}>
+                {paymentForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Record Payment
+              </Button>
             </>
-          )}
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
+          ) : null
+        }
+      >
+        {viewingInvoice && (
+          <>
+            <Descriptions column={2} className="mb-6">
+              <DescriptionItem label="Invoice">{viewingInvoice.invoiceNumber}</DescriptionItem>
+              <DescriptionItem label="Customer">{viewingInvoice.customer?.name}</DescriptionItem>
+              <DescriptionItem label="Total Amount">₵ {parseFloat(viewingInvoice.totalAmount).toFixed(2)}</DescriptionItem>
+              <DescriptionItem label="Amount Paid">₵ {parseFloat(viewingInvoice.amountPaid || 0).toFixed(2)}</DescriptionItem>
+              <DescriptionItem label="Balance Due" className="col-span-2">
+                <strong className="text-lg text-orange-500">
+                  ₵ {parseFloat(viewingInvoice.balance).toFixed(2)}
+                </strong>
+              </DescriptionItem>
+            </Descriptions>
+
+            <Form {...paymentForm}>
+              <form id="payment-form" onSubmit={paymentForm.handleSubmit(onPaymentSubmit)} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <FormField
+                    control={paymentForm.control}
+                    name="amount"
+                    rules={[
+                      {
+                        validate: (value) => {
+                          if (value > parseFloat(viewingInvoice.balance || 0)) {
+                            return 'Amount exceeds balance due';
+                          }
+                          return true;
+                        }
+                      }
+                    ]}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Payment Amount</FormLabel>
+                        <FormControl>
+                          <div className="relative">
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">₵ </span>
+                            <Input
+                              type="number"
+                              min={0}
+                              max={parseFloat(viewingInvoice.balance)}
+                              step={0.01}
+                              placeholder="0.00"
+                              className="pl-8"
+                              value={field.value === 0 ? '' : field.value}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                field.onChange(val === '' ? 0 : parseFloat(val) || 0);
+                              }}
+                            />
+                          </div>
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={paymentForm.control}
+                    name="paymentMethod"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Payment Method</FormLabel>
+                        <Select value={field.value} onValueChange={field.onChange}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="cash">Cash</SelectItem>
+                            <SelectItem value="check">Check</SelectItem>
+                            <SelectItem value="credit_card">Credit Card</SelectItem>
+                            <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                            <SelectItem value="momo">Mobile Money</SelectItem>
+                            <SelectItem value="other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <FormField
+                    control={paymentForm.control}
+                    name="paymentDate"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Payment Date</FormLabel>
+                        <FormControl>
+                          <DatePicker
+                            date={field.value}
+                            onSelect={(date) => field.onChange(date)}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={paymentForm.control}
+                    name="referenceNumber"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Reference Number</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="Transaction ref. number" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </form>
+            </Form>
+          </>
+        )}
+      </MobileFormDialog>
 
       <Dialog open={printModalVisible} onOpenChange={setPrintModalVisible}>
-        <DialogContent className="!inset-0 !translate-x-0 !translate-y-0 !max-w-none w-screen h-screen flex flex-col p-0 !rounded-none">
-          <DialogHeader className="px-6 py-4 border-b flex-shrink-0 no-print">
-            <div className="flex items-center justify-between">
-              <div>
-                <DialogTitle>Invoice Preview</DialogTitle>
-                <DialogDescription>
-                  Review the invoice before printing or downloading
-                </DialogDescription>
-              </div>
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center justify-between w-full">
+              <span>Print Invoice</span>
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    if (navigator.share && viewingInvoice) {
-                      try {
-                        await navigator.share({
-                          title: `Invoice ${viewingInvoice.invoiceNumber}`,
-                          text: `Invoice ${viewingInvoice.invoiceNumber} for ${viewingInvoice.customer?.name}`,
-                          url: window.location.href
-                        });
-                      } catch (err) {
-                        if (err.name !== 'AbortError') {
-                          await navigator.clipboard.writeText(window.location.href);
-                          showSuccess('Link copied to clipboard');
-                        }
-                      }
-                    } else {
-                      try {
-                        await navigator.clipboard.writeText(window.location.href);
-                        showSuccess('Link copied to clipboard');
-                      } catch (err) {
-                        showError(null, 'Failed to copy link');
-                      }
-                    }
-                  }}
-                >
-                  <Share2 className="h-4 w-4 mr-2" />
-                  Share
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
                   onClick={handleDownloadInvoice}
                 >
                   <Download className="h-4 w-4 mr-2" />
                   Download
                 </Button>
                 <Button
-                  size="sm"
                   onClick={handlePrintInvoice}
                 >
                   <Printer className="h-4 w-4 mr-2" />
                   Print
                 </Button>
               </div>
-            </div>
+            </DialogTitle>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto bg-gray-100 p-4 md:p-8 print-content-wrapper">
-            <div className="max-w-[850px] mx-auto bg-white rounded-lg shadow-sm">
-              {viewingInvoice && (
-                <PrintableInvoice
-                  invoice={viewingInvoice}
-                  organization={organization}
-                  onClose={() => {
-                    setPrintModalVisible(false);
-                    if (!drawerVisible) {
-                      setViewingInvoice(null);
-                    }
-                  }}
-                />
-              )}
-            </div>
-          </div>
+          {viewingInvoice && (
+            <PrintableInvoice
+              invoice={viewingInvoice}
+              organization={organization}
+              onClose={() => {
+                setPrintModalVisible(false);
+                if (!drawerVisible) {
+                  setViewingInvoice(null);
+                }
+              }}
+            />
+          )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!invoiceToDelete} onOpenChange={(open) => !open && setInvoiceToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete draft invoice?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {invoiceToDelete
+                ? `Are you sure you want to delete draft invoice "${invoiceToDelete.invoiceNumber || invoiceToDelete.id}"? This cannot be undone.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => invoiceToDelete && handleDeleteInvoice(invoiceToDelete.id)}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

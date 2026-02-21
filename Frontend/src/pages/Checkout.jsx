@@ -1,216 +1,271 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   CreditCard,
-  Smartphone,
   CheckCircle,
   ArrowLeft,
-  Loader2
+  Loader2,
+  Zap,
+  Crown,
+  Building2,
+  Check
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import settingsService from '../services/settingsService';
+import authService from '../services/authService';
 import { showSuccess, showError } from '../utils/toast';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Separator } from '@/components/ui/separator';
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import { Info } from 'lucide-react';
+const planNames = {
+  starter: 'Starter',
+  professional: 'Professional',
+  enterprise: 'Enterprise'
+};
 
-const cardSchema = z.object({
-  cardNumber: z.string()
-    .min(13, 'Card number must be at least 13 digits')
-    .max(19, 'Card number must be at most 19 digits')
-    .regex(/^\d+$/, 'Card number must contain only digits'),
-  expMonth: z.string()
-    .length(2, 'Month must be 2 digits')
-    .regex(/^(0[1-9]|1[0-2])$/, 'Invalid month (01-12)'),
-  expYear: z.string()
-    .length(4, 'Year must be 4 digits')
-    .regex(/^\d{4}$/, 'Invalid year'),
-  cardName: z.string().min(1, 'Please enter cardholder name'),
-  cvv: z.string()
-    .min(3, 'CVV must be at least 3 digits')
-    .max(4, 'CVV must be at most 4 digits')
-    .regex(/^\d+$/, 'CVV must contain only digits'),
-});
+const monthlyPrice = {
+  starter: 129,
+  professional: 250,
+  enterprise: null
+};
 
-const momoSchema = z.object({
-  phoneNumber: z.string()
-    .regex(/^0\d{9}$/, 'Invalid MoMo number (e.g., 0244123456)')
-    .length(10, 'Phone number must be 10 digits'),
-});
+const yearlyPrice = {
+  starter: 99 * 12,
+  professional: 199 * 12,
+  enterprise: null
+};
+
+const PLANS = [
+  { id: 'starter', name: 'Starter', icon: Zap, monthly: 129, yearlyPerMonth: 99 },
+  { id: 'professional', name: 'Professional', icon: Crown, monthly: 250, yearlyPerMonth: 199, popular: true },
+  { id: 'enterprise', name: 'Enterprise', icon: Building2, contactSales: true }
+];
 
 const Checkout = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { activeTenant } = useAuth();
-  const [paymentMethod, setPaymentMethod] = useState('card');
-  const [loading, setLoading] = useState(false);
+  const [searchParams] = useSearchParams();
+  const queryClient = useQueryClient();
+  const { activeTenant, user, refreshAuthState } = useAuth();
+  const [verifying, setVerifying] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [verified, setVerified] = useState(false);
+  const verifyStartedRef = useRef(false);
 
-  // Get plan details from navigation state
-  const planData = location.state || {
-    plan: 'starter',
-    billingPeriod: 'monthly',
-    price: 99
-  };
+  const initialData = location.state || { plan: 'starter', billingPeriod: 'monthly' };
+  const [selectedPlan, setSelectedPlan] = useState(initialData.plan || 'starter');
+  const [billingPeriod, setBillingPeriod] = useState(initialData.billingPeriod || 'monthly');
 
-  const { plan, billingPeriod, price } = planData;
+  const plan = selectedPlan;
+  const finalPrice = billingPeriod === 'yearly' && plan !== 'enterprise'
+    ? (plan === 'starter' ? 99 * 12 : 199 * 12)
+    : monthlyPrice[plan];
+  const isEnterprise = plan === 'enterprise';
 
-  // Calculate prices
-  const monthlyPrice = {
-    starter: 99,
-    professional: 199,
-    enterprise: 299
-  };
+  const reference = searchParams.get('reference');
 
-  const yearlyPrice = {
-    starter: Math.round(monthlyPrice.starter * 12 * 0.8), // 950
-    professional: Math.round(monthlyPrice.professional * 12 * 0.8), // 1910
-    enterprise: Math.round(monthlyPrice.enterprise * 12 * 0.8) // 2870
-  };
-
-  const finalPrice = billingPeriod === 'yearly' ? yearlyPrice[plan] : monthlyPrice[plan];
-  const planNames = {
-    starter: 'Starter',
-    professional: 'Professional',
-    enterprise: 'Enterprise'
-  };
-
-  const form = useForm({
-    resolver: zodResolver(paymentMethod === 'card' ? cardSchema : momoSchema),
-    defaultValues: paymentMethod === 'card' ? {
-      cardNumber: '',
-      expMonth: '',
-      expYear: '',
-      cardName: '',
-      cvv: '',
-    } : {
-      phoneNumber: '',
-    },
-  });
-
-  // Reset form when payment method changes
-  useEffect(() => {
-    form.reset(paymentMethod === 'card' ? {
-      cardNumber: '',
-      expMonth: '',
-      expYear: '',
-      cardName: '',
-      cvv: '',
-    } : {
-      phoneNumber: '',
-    });
-  }, [paymentMethod, form]);
-
-  const upgradeMutation = useMutation({
-    mutationFn: async (payload) => {
-      return await settingsService.updateSubscription(payload);
-    },
+  const verifyMutation = useMutation({
+    mutationFn: (ref) => settingsService.verifySubscriptionPayment(ref),
     onSuccess: () => {
-      showSuccess('Subscription upgraded successfully!');
-      navigate('/settings?tab=subscription');
+      setVerified(true);
+      showSuccess('Payment successful! Your subscription is now active.');
+      queryClient.invalidateQueries({ queryKey: ['settings', 'subscription'] });
+      setTimeout(() => navigate('/settings?tab=subscription'), 2000);
     },
     onError: (error) => {
-      showError(error, error?.response?.data?.message || 'Failed to upgrade subscription');
+      showError(error, error?.response?.data?.message || 'Payment verification failed');
+      setVerifying(false);
     }
   });
 
-  const onSubmit = async (values) => {
-    try {
-      setLoading(true);
-      
-      // Calculate subscription end date
-      const currentDate = new Date();
-      const periodEnd = new Date(currentDate);
-      
-      if (billingPeriod === 'yearly') {
-        periodEnd.setFullYear(periodEnd.getFullYear() + 1);
+  const payMutation = useMutation({
+    mutationFn: (payload) => settingsService.initializeSubscriptionPayment(payload),
+    onSuccess: (result) => {
+      const url = result?.data?.authorization_url;
+      if (url) {
+        window.location.href = url;
       } else {
-        periodEnd.setMonth(periodEnd.getMonth() + 1);
+        showError(null, result?.message || 'Failed to initialize payment');
       }
-
-      const payload = {
-        plan: plan,
-        status: 'active',
-        billingPeriod: billingPeriod,
-        currentPeriodEnd: periodEnd.toISOString(),
-        paymentMethod: {
-          type: paymentMethod,
-          ...(paymentMethod === 'card' ? {
-            brand: 'visa', // Could be determined from card number
-            last4: values.cardNumber?.slice(-4) || '0000',
-            expMonth: values.expMonth || '12',
-            expYear: values.expYear || '2025'
-          } : {
-            phone: values.phoneNumber || ''
-          })
-        },
-        amount: finalPrice,
-        currency: 'GHS'
-      };
-
-      await upgradeMutation.mutateAsync(payload);
-    } catch (error) {
-      console.error('Checkout error:', error);
-    } finally {
-      setLoading(false);
+    },
+    onError: (error) => {
+      showError(error, error?.response?.data?.message || 'Failed to initialize payment');
     }
-  };
+  });
 
-  if (!plan || !billingPeriod) {
+  useEffect(() => {
+    if (reference && !verifyStartedRef.current) {
+      verifyStartedRef.current = true;
+      setVerifying(true);
+      verifyMutation.mutate(reference);
+    }
+  }, [reference]);
+
+  const handleResendVerification = useCallback(async () => {
+    setResendLoading(true);
+    try {
+      await authService.resendVerification();
+      showSuccess('Verification email sent. Check your inbox.');
+      await refreshAuthState();
+    } catch (err) {
+      showError(err, err?.response?.data?.message || 'Failed to send.');
+    } finally {
+      setResendLoading(false);
+    }
+  }, [refreshAuthState]);
+
+  const handlePay = useCallback(() => {
+    if (!plan || !billingPeriod || isEnterprise) return;
+    payMutation.mutate({ plan, billingPeriod });
+  }, [plan, billingPeriod, isEnterprise, payMutation]);
+
+  if (!reference && user && !user.emailVerifiedAt) {
     return (
-      <div className="flex items-center justify-center min-h-[400px] p-12">
-        <Alert className="max-w-md">
-          <Info className="h-4 w-4" />
-          <AlertTitle>No Plan Selected</AlertTitle>
-          <AlertDescription className="mt-2">
-            Please select a plan from the pricing page to continue.
-            <Button 
-              onClick={() => navigate('/settings?tab=subscription')}
-              className="mt-4"
-            >
-              Go to Pricing
-            </Button>
-          </AlertDescription>
-        </Alert>
+      <div className="min-h-screen overflow-y-auto">
+        <div className="max-w-md mx-auto p-4 md:p-6 flex flex-col items-center justify-center min-h-[300px] gap-4 text-center">
+          <h2 className="text-xl font-semibold">Verify your email to upgrade your plan</h2>
+          <p className="text-muted-foreground text-sm">
+            We need to verify your email before you can subscribe. Check your inbox for the verification link, or resend it below.
+          </p>
+          <Button
+            onClick={handleResendVerification}
+            disabled={resendLoading}
+            className="bg-[#166534] hover:bg-[#14532d] text-white"
+          >
+            {resendLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+            Resend verification email
+          </Button>
+          <Button variant="outline" onClick={() => navigate('/dashboard')}>
+            Back to dashboard
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (reference) {
+    return (
+      <div className="min-h-screen overflow-y-auto">
+        <div className="max-w-5xl mx-auto p-4 md:p-6 flex flex-col items-center justify-center min-h-[300px] gap-4">
+          {verifying || verifyMutation.isPending ? (
+            <>
+              <Loader2 className="h-12 w-12 animate-spin text-primary" />
+              <p className="text-muted-foreground">Verifying your payment...</p>
+            </>
+          ) : verified ? (
+            <>
+              <CheckCircle className="h-16 w-16 text-green-600" />
+              <h2 className="text-xl font-semibold">Payment Successful!</h2>
+              <p className="text-muted-foreground">Redirecting to settings...</p>
+            </>
+          ) : (
+            <Alert variant="destructive" className="max-w-md">
+              <AlertTitle>Verification failed</AlertTitle>
+              <AlertDescription>
+                <Button
+                  variant="outline"
+                  onClick={() => navigate('/settings?tab=subscription')}
+                  className="mt-2"
+                >
+                  Back to Settings
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-5xl mx-auto p-6">
+    <div className="min-h-screen overflow-y-auto">
+      <div className="max-w-5xl mx-auto p-4 md:p-6 pb-12">
       <Button
         variant="ghost"
         onClick={() => navigate(-1)}
-        className="mb-6"
+        className="mb-6 min-h-[44px]"
       >
         <ArrowLeft className="h-4 w-4 mr-2" />
         Back
       </Button>
 
-      <h1 className="text-3xl font-bold mb-2">Checkout</h1>
-      <p className="text-muted-foreground mb-8">
-        Complete your subscription upgrade
+      <h1 className="text-2xl md:text-3xl font-bold mb-2">Checkout</h1>
+      <p className="text-muted-foreground mb-6 text-sm md:text-base">
+        Choose your plan and complete your subscription upgrade
       </p>
 
+      {/* Plan Selection */}
+      <Card className="border border-gray-200 mb-8">
+        <CardHeader>
+          <CardTitle>Choose Your Plan</CardTitle>
+          <CardDescription>Select a plan before completing your purchase</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium">Billing</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBillingPeriod('monthly')}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium ${
+                  billingPeriod === 'monthly' ? 'bg-[#166534] text-white' : 'bg-muted text-foreground hover:bg-muted/80'
+                }`}
+              >
+                Monthly
+              </button>
+              <button
+                type="button"
+                onClick={() => setBillingPeriod('yearly')}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium ${
+                  billingPeriod === 'yearly' ? 'bg-[#166534] text-white' : 'bg-muted text-foreground hover:bg-muted/80'
+                }`}
+              >
+                Yearly
+              </button>
+              <span className="text-xs text-green-600 font-medium">Save up to 23%</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {PLANS.map((p) => {
+              const Icon = p.icon;
+              const isSelected = plan === p.id;
+              const priceDisplay = p.contactSales
+                ? "Let's talk"
+                : billingPeriod === 'yearly'
+                  ? `₵ ${p.yearlyPerMonth}/mo`
+                  : `₵ ${p.monthly}/mo`;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setSelectedPlan(p.id)}
+                  className={`text-left p-4 rounded-lg border-2 transition-all ${
+                    isSelected ? 'border-[#166534] bg-[#166534]/5' : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <Icon className="h-5 w-5 text-[#166534]" />
+                      <span className="font-semibold">{p.name}</span>
+                    </div>
+                    {isSelected && <Check className="h-5 w-5 text-[#166534]" />}
+                  </div>
+                  <div className="text-lg font-bold">{priceDisplay}</div>
+                  {p.popular && (
+                    <span className="inline-block mt-2 text-xs font-medium text-[#166534]">Most Popular</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-1 lg:grid-cols-[40%_60%] gap-6">
-        {/* Order Summary */}
-        <Card>
+        <Card className="border border-gray-200">
           <CardHeader>
             <CardTitle>Order Summary</CardTitle>
           </CardHeader>
@@ -224,10 +279,10 @@ const Checkout = () => {
                 <span className="font-semibold">Billing:</span>
                 <span>{billingPeriod === 'yearly' ? 'Yearly' : 'Monthly'}</span>
               </div>
-              {billingPeriod === 'yearly' && (
+              {billingPeriod === 'yearly' && !isEnterprise && (
                 <div className="flex justify-between text-green-600">
-                  <span>Savings:</span>
-                  <span>20% off</span>
+                  <span>Discount:</span>
+                  <span>{plan === 'starter' ? '₵ 99/mo' : '₵ 199/mo'}</span>
                 </div>
               )}
             </div>
@@ -237,231 +292,80 @@ const Checkout = () => {
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <span className="text-lg font-semibold">Total:</span>
-                <span className="text-2xl font-bold text-primary">
-                  GHS {finalPrice}
-                </span>
+                {isEnterprise ? (
+                  <span className="text-lg font-medium text-muted-foreground">Contact sales</span>
+                ) : (
+                  <span className="text-2xl font-bold text-primary">
+                    ₵ {finalPrice}
+                  </span>
+                )}
               </div>
-              <p className="text-sm text-muted-foreground">
-                {billingPeriod === 'yearly' 
-                  ? `Billed annually (GHS ${Math.round(finalPrice / 12)}/month)` 
-                  : 'Billed monthly'}
-              </p>
+              {!isEnterprise && (
+                <p className="text-sm text-muted-foreground">
+                  {billingPeriod === 'yearly'
+                    ? `Billed annually (₵ ${plan === 'starter' ? 99 : 199}/month)`
+                    : 'Billed monthly'}
+                </p>
+              )}
             </div>
-
-            <Alert>
-              <Info className="h-4 w-4" />
-              <AlertTitle>14-Day Free Trial</AlertTitle>
-              <AlertDescription>
-                Your subscription includes a 14-day free trial. You won't be charged until the trial period ends.
-              </AlertDescription>
-            </Alert>
           </CardContent>
         </Card>
 
-        {/* Payment Form */}
-        <Card>
+        <Card className="border border-gray-200">
           <CardHeader>
-            <CardTitle>Payment Information</CardTitle>
+            <CardTitle>{isEnterprise ? 'Contact Sales' : 'Payment'}</CardTitle>
           </CardHeader>
-          <CardContent>
-            <Form {...form}>
-              <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                <FormField
-                  control={form.control}
-                  name={paymentMethod === 'card' ? 'cardNumber' : 'phoneNumber'}
-                  render={() => (
-                    <FormItem>
-                      <FormLabel>Payment Method</FormLabel>
-                      <FormControl>
-                        <RadioGroup
-                          value={paymentMethod}
-                          onValueChange={setPaymentMethod}
-                          className="space-y-3"
-                        >
-                          <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-accent cursor-pointer">
-                            <RadioGroupItem value="card" id="card" />
-                            <Label htmlFor="card" className="flex items-center gap-2 cursor-pointer flex-1">
-                              <CreditCard className="h-4 w-4" />
-                              <span>Credit/Debit Card</span>
-                            </Label>
-                          </div>
-                          <div className="flex items-center space-x-2 p-4 border rounded-lg hover:bg-accent cursor-pointer">
-                            <RadioGroupItem value="momo" id="momo" />
-                            <Label htmlFor="momo" className="flex items-center gap-2 cursor-pointer flex-1">
-                              <Smartphone className="h-4 w-4" />
-                              <span>Mobile Money (MoMo)</span>
-                            </Label>
-                          </div>
-                        </RadioGroup>
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-
-                {paymentMethod === 'card' && (
-                  <>
-                    <FormField
-                      control={form.control}
-                      name="cardNumber"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Card Number</FormLabel>
-                          <FormControl>
-                            <div className="relative">
-                              <CreditCard className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                              <Input
-                                {...field}
-                                placeholder="1234 5678 9012 3456"
-                                maxLength={19}
-                                className="pl-10"
-                                onChange={(e) => {
-                                  const value = e.target.value.replace(/\D/g, '');
-                                  field.onChange(value);
-                                }}
-                              />
-                            </div>
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <div className="grid grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="expMonth"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Expiry Month</FormLabel>
-                            <FormControl>
-                              <Input
-                                {...field}
-                                placeholder="MM"
-                                maxLength={2}
-                                onChange={(e) => {
-                                  const value = e.target.value.replace(/\D/g, '').slice(0, 2);
-                                  field.onChange(value);
-                                }}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="expYear"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Expiry Year</FormLabel>
-                            <FormControl>
-                              <Input
-                                {...field}
-                                placeholder="YYYY"
-                                maxLength={4}
-                                onChange={(e) => {
-                                  const value = e.target.value.replace(/\D/g, '').slice(0, 4);
-                                  field.onChange(value);
-                                }}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-
-                    <FormField
-                      control={form.control}
-                      name="cardName"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Cardholder Name</FormLabel>
-                          <FormControl>
-                            <Input {...field} placeholder="John Doe" />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="cvv"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>CVV</FormLabel>
-                          <FormControl>
-                            <Input
-                              {...field}
-                              type="password"
-                              placeholder="123"
-                              maxLength={4}
-                              onChange={(e) => {
-                                const value = e.target.value.replace(/\D/g, '').slice(0, 4);
-                                field.onChange(value);
-                              }}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </>
-                )}
-
-                {paymentMethod === 'momo' && (
-                  <FormField
-                    control={form.control}
-                    name="phoneNumber"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Mobile Money Number</FormLabel>
-                        <FormControl>
-                          <div className="relative">
-                            <Smartphone className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                            <Input
-                              {...field}
-                              placeholder="0244123456"
-                              maxLength={10}
-                              className="pl-10"
-                              onChange={(e) => {
-                                const value = e.target.value.replace(/\D/g, '').slice(0, 10);
-                                field.onChange(value);
-                              }}
-                            />
-                          </div>
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                )}
-
-                <Separator />
-
+          <CardContent className="space-y-6">
+            {isEnterprise ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Enterprise plans include unlimited team members and custom configuration. Contact our sales team for pricing and setup.
+                </p>
                 <Button
-                  type="submit"
-                  className="w-full h-12 text-base font-semibold bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700"
-                  disabled={loading || upgradeMutation.isPending}
+                  variant="outline"
+                  className="w-full min-h-[44px]"
+                  onClick={() => window.open('mailto:contact@nexpro.com?subject=Enterprise%20Plan%20Inquiry', '_blank')}
                 >
-                  {loading || upgradeMutation.isPending ? (
+                  Contact Sales
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  Pay securely with Paystack. You can use Card, Bank Transfer, or Mobile Money (MoMo).
+                </p>
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      onClick={handlePay}
+                      className="w-full min-h-[44px] h-12 text-base font-semibold"
+                      disabled={payMutation.isPending}
+                    >
+                  {payMutation.isPending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Processing...
+                      Redirecting to Paystack...
                     </>
                   ) : (
-                    `Complete Purchase - GHS ${finalPrice}`
+                    <>
+                      <CreditCard className="mr-2 h-4 w-4" />
+                      Pay ₵ {finalPrice} with Paystack
+                    </>
                   )}
-                </Button>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Complete payment with Paystack</TooltipContent>
+                </Tooltip>
 
                 <p className="text-xs text-muted-foreground text-center">
                   By completing this purchase, you agree to our Terms of Service and Privacy Policy
                 </p>
-              </form>
-            </Form>
+              </>
+            )}
           </CardContent>
         </Card>
+      </div>
       </div>
     </div>
   );

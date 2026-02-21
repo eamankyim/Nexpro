@@ -22,13 +22,13 @@ import ReactCountryFlag from 'react-country-flag';
 
 const onboardingSchema = z.object({
   shopType: z.string().optional(),
-  companyName: z.string().min(1, 'Company name is required'),
+  companyName: z.string().min(1, 'Enter your business name'),
   companyLogo: z.any().optional(),
   companyAddress: z.string().optional().or(z.literal('')),
   industry: z.string().optional(),
-  companyEmail: z.string().email('Please enter a valid email').optional().or(z.literal('')),
-  phoneCountryCode: z.string().min(1, 'Country code is required'),
-  companyPhone: z.string().min(1, 'Phone number is required'),
+  companyEmail: z.string().email('Enter a valid email').optional().or(z.literal('')),
+  phoneCountryCode: z.string().min(1, 'Select country code'),
+  companyPhone: z.string().min(1, 'Enter phone number'),
   companyWebsite: z.string().refine(
     (val) => {
       if (!val || val === '') return true;
@@ -41,7 +41,7 @@ const onboardingSchema = z.object({
         return false;
       }
     },
-    { message: 'Please enter a valid URL' }
+    { message: 'Enter a valid URL' }
   ).optional().or(z.literal(''))
 });
 
@@ -69,7 +69,7 @@ const businessTypes = [
   {
     value: 'printing_press',
     label: 'Studio Management',
-    description: 'Manage print jobs, quotes, and production workflows'
+    description: 'Manage jobs, services, quotes, and production workflows'
   },
   {
     value: 'pharmacy',
@@ -92,6 +92,7 @@ const shopTypes = [
   { value: 'toys', label: 'Toy Store' },
   { value: 'pet', label: 'Pet Store' },
   { value: 'stationery', label: 'Stationery Store' },
+  { value: 'restaurant', label: 'Restaurant' },
   { value: 'other', label: 'Other' }
 ];
 
@@ -142,7 +143,11 @@ const Onboarding = () => {
       formData.append('businessType', businessType);
       
       if (isShop && values.shopType) {
-        formData.append('shopType', values.shopType);
+        // If "other" is selected, use the custom value; otherwise use the selected value
+        const shopTypeValue = values.shopType === 'other' && shopTypeOtherValue.trim() 
+          ? shopTypeOtherValue.trim() 
+          : values.shopType;
+        formData.append('shopType', shopTypeValue);
       }
       if (values.companyName) formData.append('companyName', values.companyName);
       if (values.companyEmail) formData.append('companyEmail', values.companyEmail);
@@ -291,6 +296,10 @@ const Onboarding = () => {
   const [shopTypeSearch, setShopTypeSearch] = useState('');
   const [countryCodeSearch, setCountryCodeSearch] = useState('');
   
+  // State for "other" shop type input
+  const [showShopTypeOtherInput, setShowShopTypeOtherInput] = useState(false);
+  const [shopTypeOtherValue, setShopTypeOtherValue] = useState('');
+  
   // Filter shop types based on search
   const filteredShopTypes = shopTypes.filter(shopType =>
     shopType.label.toLowerCase().includes(shopTypeSearch.toLowerCase())
@@ -314,6 +323,10 @@ const Onboarding = () => {
     // Check required fields
     const allRequiredFieldsFilled = requiredFields.every(field => {
       const value = watchedValues[field];
+      // Special handling for shopType: if "other" is selected, require custom input
+      if (field === 'shopType' && value === 'other') {
+        return shopTypeOtherValue.trim().length > 0;
+      }
       return value !== undefined && value !== '';
     });
     
@@ -383,15 +396,15 @@ const Onboarding = () => {
           width: 8px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
-          background: #f3f4f6;
+          background: rgba(22, 101, 52, 0.12);
           border-radius: 4px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: #d1d5db;
+          background: var(--color-primary);
           border-radius: 4px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: #9ca3af;
+          background: var(--color-primary-dark);
         }
         
         @keyframes blockDrop {
@@ -437,9 +450,9 @@ const Onboarding = () => {
         .building-block.block-6 { animation-delay: 0.6s, 1.6s; }
       `}</style>
       
-      {/* Creating Workspace Modal */}
+      {/* Creating Business Modal */}
       <Dialog open={loading} onOpenChange={() => {}}>
-        <DialogContent className="sm:w-[var(--modal-w-sm)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)] border-0 bg-white shadow-xl [&>button]:hidden">
+        <DialogContent className="sm:w-[var(--modal-w-sm)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)] border-0 bg-card border border-border [&>button]:hidden">
           <div className="flex flex-col items-center justify-center py-8 px-6">
             <div className="mb-6">
               <div className="relative w-48 h-48 flex items-end justify-center">
@@ -447,25 +460,25 @@ const Onboarding = () => {
                 <div className="absolute bottom-0 flex flex-col items-center space-y-1">
                   {/* Bottom row - 3 blocks */}
                   <div className="flex space-x-1">
-                    <div className="building-block block-1 w-12 h-12 bg-[#166534] rounded-lg shadow-lg"></div>
-                    <div className="building-block block-2 w-12 h-12 bg-[#a3e635] rounded-lg shadow-lg"></div>
-                    <div className="building-block block-3 w-12 h-12 bg-[#166534] rounded-lg shadow-lg"></div>
+                    <div className="building-block block-1 w-12 h-12 bg-primary rounded-lg border border-border"></div>
+                    <div className="building-block block-2 w-12 h-12 bg-lime-400 rounded-lg border border-border"></div>
+                    <div className="building-block block-3 w-12 h-12 bg-primary rounded-lg border border-border"></div>
                   </div>
                   {/* Middle row - 2 blocks */}
                   <div className="flex space-x-1">
-                    <div className="building-block block-4 w-12 h-12 bg-[#a3e635] rounded-lg shadow-lg"></div>
-                    <div className="building-block block-5 w-12 h-12 bg-[#166534] rounded-lg shadow-lg"></div>
+                    <div className="building-block block-4 w-12 h-12 bg-lime-400 rounded-lg border border-border"></div>
+                    <div className="building-block block-5 w-12 h-12 bg-primary rounded-lg border border-border"></div>
                   </div>
                   {/* Top row - 1 block */}
                   <div className="flex">
-                    <div className="building-block block-6 w-12 h-12 bg-[#a3e635] rounded-lg shadow-lg"></div>
+                    <div className="building-block block-6 w-12 h-12 bg-lime-400 rounded-lg border border-border"></div>
                   </div>
                 </div>
               </div>
             </div>
             
-            <DialogTitle className="text-2xl font-bold text-gray-900 mb-2 text-center">
-              Creating Your Workspace
+            <DialogTitle className="text-2xl font-bold text-foreground mb-2 text-center">
+              Creating Your Business
             </DialogTitle>
             <DialogDescription className="text-gray-600 text-center">
               We're setting everything up for you...
@@ -474,18 +487,18 @@ const Onboarding = () => {
         </DialogContent>
       </Dialog>
 
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-green-50">
+    <div className="min-h-screen bg-gradient-to-br from-muted/80 via-background to-muted/50">
       {/* Welcome Message */}
       <div className="pt-8 pb-4 text-center">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Let's set up your workspace</h1>
+        <h1 className="text-3xl font-bold text-foreground mb-2">Let's set up your business</h1>
         <p className="text-gray-600">You can skip this and finish later.</p>
       </div>
 
       <div className="flex max-w-7xl mx-auto px-8 pb-16">
         {/* Left Sidebar - Timeline (30%) */}
         <div className="w-[30%] pt-8">
-          <div className="bg-white rounded-l-xl p-6 border-t border-l border-b border-gray-200 h-[600px] flex flex-col">
-            <h2 className="text-lg font-semibold text-gray-900 mb-6">Getting Started</h2>
+          <div className="bg-card rounded-l-xl p-6 border-t border-l border-b border-border h-[600px] flex flex-col">
+            <h2 className="text-lg font-semibold text-foreground mb-6">Getting Started</h2>
             <div className="relative flex-1 overflow-y-auto custom-scrollbar">
               {timelineSteps.map((step, index) => {
                 const status = getTimelineStepStatus(step.id);
@@ -498,15 +511,15 @@ const Onboarding = () => {
                       {/* Icon Circle */}
                       <div className={`relative flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center border z-10 ${
                         status === 'completed'
-                          ? 'bg-[#166534] border-[#166534]'
+                          ? 'bg-primary border-primary'
                           : status === 'current'
-                          ? 'bg-white border-[#166534]'
-                          : 'bg-white border-gray-300'
+                          ? 'bg-card border-primary'
+                          : 'bg-card border-border'
                       }`}>
                         {status === 'completed' ? (
                           <Check className="h-3 w-3 text-white" />
                         ) : status === 'current' ? (
-                          <div className="w-1.5 h-1.5 rounded-full bg-[#166534]" />
+                          <div className="w-1.5 h-1.5 rounded-full bg-primary" />
                         ) : null}
                       </div>
                       
@@ -514,9 +527,9 @@ const Onboarding = () => {
                       <div className="flex-1 pt-1">
                         <div className={`text-sm font-medium ${
                           status === 'completed'
-                            ? 'text-[#166534]'
+                            ? 'text-primary'
                             : status === 'current'
-                            ? 'text-gray-900'
+                            ? 'text-foreground'
                             : 'text-gray-500'
                         }`}>
                           {step.label}
@@ -527,7 +540,7 @@ const Onboarding = () => {
                     {/* Connecting Line */}
                     {!isLast && (
                       <div className={`absolute left-[10px] top-5 w-0.5 ${
-                        status === 'completed' ? 'bg-[#166534]' : 'bg-gray-300'
+                        status === 'completed' ? 'bg-primary' : 'bg-border'
                       }`} style={{ height: 'calc(100% - 0.5rem)' }} />
                     )}
                   </div>
@@ -538,11 +551,11 @@ const Onboarding = () => {
         </div>
 
         {/* Vertical Divider */}
-        <div className="w-px bg-gray-200 h-[600px] mt-8"></div>
+        <div className="w-px bg-border h-[600px] mt-8"></div>
 
         {/* Right Content - Form (70%) */}
         <div className="w-[70%] pt-8">
-          <div className="bg-white rounded-r-xl p-8 max-w-3xl border-t border-r border-b border-gray-200 h-[600px] flex flex-col">
+          <div className="bg-card rounded-r-xl p-8 max-w-3xl border-t border-r border-b border-border h-[600px] flex flex-col">
             <div className="flex-1 overflow-y-auto custom-scrollbar">
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -550,7 +563,7 @@ const Onboarding = () => {
                 {currentStep === 0 && currentStepData.id === 'shopType' && (
                   <div className="space-y-6">
                     <div className="mb-8">
-                      <h2 className="text-2xl font-bold text-gray-900 mb-3">
+                      <h2 className="text-2xl font-bold text-foreground mb-3">
                         {currentStepData.title}
                       </h2>
                       <p className="text-base text-gray-600 font-normal">
@@ -565,21 +578,29 @@ const Onboarding = () => {
                           <FormLabel className="text-gray-700">Shop Type</FormLabel>
                           <FormControl>
                             <Select
-                              onValueChange={field.onChange}
+                              onValueChange={(value) => {
+                                field.onChange(value);
+                                if (value === 'other') {
+                                  setShowShopTypeOtherInput(true);
+                                } else {
+                                  setShowShopTypeOtherInput(false);
+                                  setShopTypeOtherValue('');
+                                }
+                              }}
                               value={field.value || ''}
                             >
-                              <SelectTrigger className="h-12 text-base border-[1px] border-gray-300 rounded-lg bg-gray-50 text-gray-900 focus:border-[1px] focus:border-[#166534] focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[1px] focus-visible:border-[#166534]">
+                              <SelectTrigger className="h-12 text-base border-[1px] border-border rounded-lg bg-muted text-foreground focus:border-[1px] focus:border-primary focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[1px] focus-visible:border-primary">
                                 <SelectValue placeholder="Select shop type" />
                               </SelectTrigger>
-                              <SelectContent className="bg-white border-gray-200 p-0">
-                                <div className="p-2 border-b border-gray-200 sticky top-0 bg-white z-10">
+                              <SelectContent className="bg-card border-border p-0">
+                                <div className="p-2 border-b border-border sticky top-0 bg-card z-10">
                                   <div className="relative">
                                     <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                                     <Input
                                       placeholder="Search shop types..."
                                       value={shopTypeSearch}
                                       onChange={(e) => setShopTypeSearch(e.target.value)}
-                                      className="pl-8 h-9 text-sm border-gray-300 rounded-md bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                                      className="pl-8 h-9 text-sm border-border rounded-md bg-muted text-foreground placeholder:text-muted-foreground focus:border-primary focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
                                       onClick={(e) => e.stopPropagation()}
                                       onKeyDown={(e) => e.stopPropagation()}
                                     />
@@ -591,7 +612,7 @@ const Onboarding = () => {
                                       <SelectItem 
                                         key={shopType.value} 
                                         value={shopType.value}
-                                        className="!text-gray-900 focus:!bg-gray-100 focus:!text-gray-900 hover:!bg-gray-100 hover:!text-gray-900 data-[highlighted]:!bg-gray-100 data-[highlighted]:!text-gray-900 cursor-pointer"
+                                        className="!text-foreground focus:!bg-muted focus:!text-foreground hover:!bg-muted hover:!text-foreground data-[highlighted]:!bg-muted data-[highlighted]:!text-foreground cursor-pointer"
                                       >
                                         {shopType.label}
                                       </SelectItem>
@@ -603,6 +624,17 @@ const Onboarding = () => {
                               </SelectContent>
                             </Select>
                           </FormControl>
+                          {showShopTypeOtherInput && (
+                            <div className="mt-4">
+                              <FormLabel className="text-gray-700">Specify shop type</FormLabel>
+                              <Input
+                                value={shopTypeOtherValue}
+                                onChange={(e) => setShopTypeOtherValue(e.target.value)}
+                                placeholder="Enter your shop type"
+                                className="h-12 text-base border-border rounded-lg bg-muted text-foreground placeholder:text-muted-foreground focus:border-primary focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-primary focus-visible:border mt-2"
+                              />
+                            </div>
+                          )}
                           <FormMessage />
                         </FormItem>
                       )}
@@ -614,7 +646,7 @@ const Onboarding = () => {
                 {currentStepData.id === 'businessInfo' && (
                   <div className="space-y-6">
                     <div className="mb-8">
-                      <h2 className="text-2xl font-bold text-gray-900 mb-3">
+                      <h2 className="text-2xl font-bold text-foreground mb-3">
                         {currentStepData.title}
                       </h2>
                       <p className="text-base text-gray-600 font-normal">
@@ -632,7 +664,7 @@ const Onboarding = () => {
                             <div className="flex items-center gap-4">
                               <div className="relative">
                                 {value ? (
-                                  <div className="w-20 h-20 rounded-full border border-gray-300 overflow-hidden bg-gray-100">
+                                  <div className="w-20 h-20 rounded-full border border-border overflow-hidden bg-muted">
                                     <img 
                                       src={value instanceof File ? URL.createObjectURL(value) : value} 
                                       alt="Logo preview" 
@@ -640,7 +672,7 @@ const Onboarding = () => {
                                     />
                                   </div>
                                 ) : (
-                                  <div className="w-20 h-20 rounded-full border border-gray-300 bg-gray-100 flex items-center justify-center">
+                                  <div className="w-20 h-20 rounded-full border border-border bg-muted flex items-center justify-center">
                                     <span className="text-gray-400 text-sm">Logo</span>
                                   </div>
                                 )}
@@ -660,7 +692,7 @@ const Onboarding = () => {
                                 <button
                                   type="button"
                                   onClick={() => fileInputRef.current?.click()}
-                                  className="absolute bottom-0 right-0 w-6 h-6 bg-[#166534] rounded-full flex items-center justify-center text-white hover:bg-[#14532d] transition-colors shadow-md"
+                                  className="absolute bottom-0 right-0 w-6 h-6 bg-primary rounded-full flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors border border-border"
                                 >
                                   <Camera className="w-3.5 h-3.5" />
                                 </button>
@@ -681,7 +713,7 @@ const Onboarding = () => {
                           <FormControl>
                             <Input
                               {...field}
-                              className="h-12 text-base border-gray-300 rounded-lg bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border"
+                              className="h-12 text-base border-border rounded-lg bg-muted text-foreground placeholder:text-gray-400 focus:border-primary focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-primary focus-visible:border"
                               placeholder="Enter your company name"
                             />
                           </FormControl>
@@ -699,7 +731,7 @@ const Onboarding = () => {
                           <FormControl>
                             <Input
                               {...field}
-                              className="h-12 text-base border-gray-300 rounded-lg bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border"
+                              className="h-12 text-base border-border rounded-lg bg-muted text-foreground placeholder:text-gray-400 focus:border-primary focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-primary focus-visible:border"
                               placeholder="Enter your business address"
                             />
                           </FormControl>
@@ -714,7 +746,7 @@ const Onboarding = () => {
                 {currentStepData.id === 'contactInfo' && (
                   <div className="space-y-6">
                     <div className="mb-8">
-                      <h2 className="text-2xl font-bold text-gray-900 mb-3">
+                      <h2 className="text-2xl font-bold text-foreground mb-3">
                         {currentStepData.title}
                       </h2>
                       <p className="text-base text-gray-600 font-normal">
@@ -735,7 +767,7 @@ const Onboarding = () => {
                             <Input
                               {...field}
                               type="email"
-                              className="h-12 text-base border-gray-300 rounded-lg bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border"
+                              className="h-12 text-base border-border rounded-lg bg-muted text-foreground placeholder:text-gray-400 focus:border-primary focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-primary focus-visible:border"
                               placeholder="business@company.com"
                             />
                           </FormControl>
@@ -762,7 +794,7 @@ const Onboarding = () => {
                                       value={codeField.value}
                                     >
                                       <FormControl>
-                                        <SelectTrigger className="h-12 text-base border-[1px] border-gray-300 rounded-lg bg-gray-50 text-gray-900 focus:border-[1px] focus:border-[#166534] focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[1px] focus-visible:border-[#166534]">
+                                        <SelectTrigger className="h-12 text-base border-[1px] border-border rounded-lg bg-muted text-foreground focus:border-[1px] focus:border-primary focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[1px] focus-visible:border-primary">
                                           <div className="flex items-center gap-2 flex-1">
                                             {codeField.value && (() => {
                                               const selected = countryCodes.find(c => c.code === codeField.value);
@@ -783,15 +815,15 @@ const Onboarding = () => {
                                           </div>
                                         </SelectTrigger>
                                       </FormControl>
-                                      <SelectContent className="bg-white border-gray-200 p-0">
-                                        <div className="p-2 border-b border-gray-200 sticky top-0 bg-white z-10">
+                                      <SelectContent className="bg-card border-border p-0">
+                                        <div className="p-2 border-b border-border sticky top-0 bg-card z-10">
                                           <div className="relative">
                                             <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                                             <Input
                                               placeholder="Search country..."
                                               value={countryCodeSearch}
                                               onChange={(e) => setCountryCodeSearch(e.target.value)}
-                                              className="pl-8 h-9 text-sm border-gray-300 rounded-md bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                                              className="pl-8 h-9 text-sm border-border rounded-md bg-muted text-foreground placeholder:text-muted-foreground focus:border-primary focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
                                               onClick={(e) => e.stopPropagation()}
                                               onKeyDown={(e) => e.stopPropagation()}
                                             />
@@ -803,7 +835,7 @@ const Onboarding = () => {
                                               <SelectItem 
                                                 key={country.code} 
                                                 value={country.code}
-                                                className="!text-gray-900 focus:!bg-gray-100 focus:!text-gray-900 hover:!bg-gray-100 hover:!text-gray-900 data-[highlighted]:!bg-gray-100 data-[highlighted]:!text-gray-900 cursor-pointer"
+                                                className="!text-foreground focus:!bg-muted focus:!text-foreground hover:!bg-muted hover:!text-foreground data-[highlighted]:!bg-muted data-[highlighted]:!text-foreground cursor-pointer"
                                               >
                                                 <div className="flex items-center gap-2">
                                                   <ReactCountryFlag 
@@ -827,7 +859,7 @@ const Onboarding = () => {
                               <Input
                                 {...field}
                                 type="tel"
-                                className="h-12 text-base border-gray-300 rounded-lg bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border flex-1"
+                                className="h-12 text-base border-border rounded-lg bg-muted text-foreground placeholder:text-gray-400 focus:border-primary focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-primary focus-visible:border flex-1"
                                 placeholder="123 456 7890"
                               />
                             </div>
@@ -847,7 +879,7 @@ const Onboarding = () => {
                             <Input
                               {...field}
                               type="url"
-                              className="h-12 text-base border-gray-300 rounded-lg bg-gray-50 text-gray-900 placeholder:text-gray-400 focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border"
+                              className="h-12 text-base border-border rounded-lg bg-muted text-foreground placeholder:text-gray-400 focus:border-primary focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-primary focus-visible:border"
                               placeholder="https://www.company.com"
                             />
                           </FormControl>
@@ -869,7 +901,7 @@ const Onboarding = () => {
                 variant="ghost"
                 onClick={handleSkip}
                 disabled={loading}
-                className="text-gray-600 hover:text-gray-900"
+                className="text-gray-600 hover:text-foreground"
               >
                 Skip for now
               </Button>
@@ -880,7 +912,7 @@ const Onboarding = () => {
                     variant="outline"
                     onClick={handleBack}
                     disabled={loading}
-                    className="border-[#166534] text-[#166534] bg-transparent hover:bg-transparent hover:text-[#166534] hover:border-[#166534] transition-colors"
+                    className="border-primary text-primary bg-transparent hover:bg-transparent hover:text-primary hover:border-primary transition-colors"
                   >
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back
@@ -891,7 +923,7 @@ const Onboarding = () => {
                   onClick={handleNext}
                   disabled={!canProceed()}
                   loading={loading}
-                  className="bg-[#166534] hover:bg-[#14532d] text-white font-medium text-base px-6 py-2"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-base px-6 py-2"
                 >
                   {currentStep === steps.length - 1 ? (
                     'Finish setup'

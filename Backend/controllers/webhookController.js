@@ -1,6 +1,8 @@
 const { Customer, Tenant, SabitoTenantMapping } = require('../models');
 const { verifySabitoWebhook } = require('../middleware/webhookAuth');
 const whatsappService = require('../services/whatsappService');
+const paystackService = require('../services/paystackService');
+const { applySubscriptionFromTransaction } = require('./subscriptionController');
 
 /**
  * Handle WhatsApp webhook from Meta
@@ -336,6 +338,155 @@ exports.handleSabitoCustomerWebhook = async (req, res) => {
       message: 'Internal server error',
       error: error.message
     });
+  }
+};
+
+/**
+ * Handle Paystack webhook (charge.success, etc.)
+ * POST /api/webhooks/paystack
+ */
+exports.handlePaystackWebhook = async (req, res) => {
+  try {
+    const signature = req.headers['x-paystack-signature'];
+    const rawBody = req.rawBody || (req.body ? JSON.stringify(req.body) : '');
+    const body = typeof req.body === 'object' ? req.body : {};
+
+    if (!paystackService.secretKey) {
+      console.error('[Paystack Webhook] PAYSTACK_SECRET_KEY not configured');
+      return res.status(503).send('Service unavailable');
+    }
+
+    if (signature && rawBody) {
+      const isValid = paystackService.verifyWebhookSignature(signature, rawBody);
+      if (!isValid) {
+        console.error('[Paystack Webhook] Invalid signature');
+        return res.status(401).send('Invalid signature');
+      }
+    }
+
+    const event = body.event;
+    const data = body.data || {};
+
+    if (event === 'charge.success') {
+      const reference = data.reference;
+      if (!reference) {
+        console.error('[Paystack Webhook] charge.success missing reference');
+        return res.status(400).send('Missing reference');
+      }
+
+      const result = await paystackService.verifyTransaction(reference);
+      if (!result.status || !result.data) {
+        console.error('[Paystack Webhook] Verify failed:', result.message);
+        return res.status(400).send('Verification failed');
+      }
+
+      const tx = result.data;
+      const metadata = typeof tx.metadata === 'string' ? JSON.parse(tx.metadata || '{}') : (tx.metadata || {});
+
+      // POS sale: metadata has sale_id and tenant_id (no plan)
+      if (metadata.sale_id && metadata.tenant_id && !metadata.plan) {
+        const { Sale, Tenant } = require('../models');
+        const sale = await Sale.findOne({
+          where: { id: metadata.sale_id, tenantId: metadata.tenant_id }
+        });
+        if (sale && sale.status === 'pending') {
+          const amount = parseFloat(tx.amount || 0) / 100;
+          const tenant = await Tenant.findByPk(metadata.tenant_id);
+          const pc = tenant?.metadata?.paymentCollection || {};
+          const isMoMo = pc.settlementType === 'momo' && pc.momoPhone;
+
+          await sale.update({
+            status: 'completed',
+            paymentMethod: sale.paymentMethod || 'mobile_money',
+            amountPaid: amount,
+            metadata: {
+              ...(sale.metadata || {}),
+              paystackRef: reference,
+              paystackCompletedAt: new Date().toISOString()
+            }
+          });
+
+          // MoMo settlement: transfer tenant share to their MoMo
+          if (isMoMo) {
+            try {
+              const platformFeePercent = parseFloat(process.env.PAYSTACK_PLATFORM_FEE_PERCENT || '2');
+              const tenantShare = amount * (1 - platformFeePercent / 100);
+              const tenantSharePesewas = Math.round(tenantShare * 100);
+              if (tenantSharePesewas >= 100) {
+                let recipientCode = pc.paystackTransferRecipientCode;
+                if (!recipientCode) {
+                  const momoAccount = (pc.momoPhone || '').replace(/^\+?233/, '0');
+                  const recipientRes = await paystackService.createTransferRecipient({
+                    type: 'mobile_money',
+                    name: tenant?.name || 'Business',
+                    account_number: momoAccount || pc.momoPhone,
+                    bank_code: paystackService.getMoMoBankCode(pc.momoProvider),
+                    currency: 'GHS'
+                  });
+                  recipientCode = recipientRes?.data?.recipient_code;
+                  if (recipientCode && tenant) {
+                    tenant.metadata = tenant.metadata || {};
+                    tenant.metadata.paymentCollection = tenant.metadata.paymentCollection || {};
+                    tenant.metadata.paymentCollection.paystackTransferRecipientCode = recipientCode;
+                    await tenant.save();
+                  }
+                }
+                if (recipientCode) {
+                  const transferRef = `sale_${metadata.sale_id}_${Date.now()}`.slice(0, 50);
+                  await paystackService.initiateTransfer({
+                    amount: tenantSharePesewas,
+                    recipient: recipientCode,
+                    reference: transferRef,
+                    reason: `POS sale ${sale.saleNumber}`
+                  });
+                  console.log('[Paystack Webhook] MoMo transfer initiated for sale:', metadata.sale_id);
+                }
+              }
+            } catch (transferErr) {
+              console.error('[Paystack Webhook] MoMo transfer failed for sale:', metadata.sale_id, transferErr?.response?.data || transferErr.message);
+            }
+          }
+
+          try {
+            const { autoCreateInvoiceFromSale } = require('./saleController');
+            await autoCreateInvoiceFromSale(sale.id, metadata.tenant_id);
+          } catch (invErr) {
+            console.error('[Paystack Webhook] Auto-invoice failed for POS sale:', invErr.message);
+          }
+          const { emitNewSale } = require('../services/websocketService');
+          try {
+            emitNewSale(metadata.tenant_id, sale);
+          } catch (e) {
+            console.error('[Paystack Webhook] WebSocket emit error:', e);
+          }
+          console.log('[Paystack Webhook] POS sale completed:', metadata.sale_id);
+        }
+      } else if (metadata.tenant_id && metadata.plan) {
+        // Subscription payment
+        await applySubscriptionFromTransaction(tx, 'webhook');
+        console.log('[Paystack Webhook] Subscription updated for tenant:', metadata.tenant_id);
+      }
+    } else if (event === 'subscription.create') {
+      const sub = data;
+      if (sub?.subscription_code && sub?.plan?.plan_code) {
+        console.log('[Paystack Webhook] subscription.create:', sub.subscription_code);
+      }
+    } else if (event === 'subscription.disable') {
+      const sub = data;
+      if (sub?.subscription_code) {
+        console.log('[Paystack Webhook] subscription.disable:', sub.subscription_code);
+      }
+    } else if (event === 'invoice.payment_failed') {
+      const inv = data;
+      if (inv?.subscription) {
+        console.log('[Paystack Webhook] invoice.payment_failed for subscription:', inv.subscription);
+      }
+    }
+
+    return res.status(200).send('OK');
+  } catch (error) {
+    console.error('[Paystack Webhook] Error:', error);
+    return res.status(500).send('Internal error');
   }
 };
 

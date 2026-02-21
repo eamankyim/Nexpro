@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useResponsive } from '../hooks/useResponsive';
 // Removed Ant Design imports - using shadcn/ui only
-import { Plus, RefreshCw, Loader2, DollarSign, Calendar, Users, FileText } from 'lucide-react';
+import { Plus, RefreshCw, Loader2, Currency, Calendar, Users, FileText } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import payrollService from '../services/payrollService';
@@ -17,6 +17,7 @@ const payrollRunSchema = z.object({
   payDate: z.date({ required_error: 'Pay date is required' }),
   employeeIds: z.array(z.string()).min(1, 'Select at least one employee'),
 });
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -28,6 +29,7 @@ import DashboardTable from '../components/DashboardTable';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import DetailsDrawer from '../components/DetailsDrawer';
+import MobileFormDialog from '../components/MobileFormDialog';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import ActionColumn from '../components/ActionColumn';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
@@ -39,15 +41,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   Form,
   FormControl,
@@ -131,14 +124,15 @@ const Payroll = () => {
   const runs = runsQuery.data?.data || [];
   const employees = employeesQuery.data?.data || [];
 
-  const handleViewRun = useCallback(async (record) => {
-    try {
-      const response = await payrollService.getRun(record.id);
-      setViewingRun(response.data || response);
-      setDrawerVisible(true);
-    } catch (error) {
-      showError(null, 'Failed to load payroll run');
-    }
+  const handleViewRun = useCallback((record) => {
+    setViewingRun(record);
+    setDrawerVisible(true);
+    payrollService.getRun(record.id)
+      .then((response) => {
+        const data = response?.data || response;
+        setViewingRun((prev) => (prev?.id === record.id ? data : prev));
+      })
+      .catch(() => showError(null, 'Failed to load payroll run'));
   }, []);
 
   const handlePostRun = useCallback((id) => {
@@ -150,27 +144,27 @@ const Payroll = () => {
     {
       key: 'period',
       label: 'Period',
-      render: (_, record) => <span className="text-black">{`${dayjs(record?.periodStart).format('MMM DD')} - ${dayjs(record?.periodEnd).format('MMM DD, YYYY')}`}</span>
+      render: (_, record) => <span className="text-foreground">{`${dayjs(record?.periodStart).format('MMM DD')} - ${dayjs(record?.periodEnd).format('MMM DD, YYYY')}`}</span>
     },
     {
       key: 'payDate',
       label: 'Pay Date',
-      render: (_, record) => <span className="text-black">{record?.payDate ? dayjs(record.payDate).format('MMM DD, YYYY') : '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.payDate ? dayjs(record.payDate).format('MMM DD, YYYY') : '—'}</span>
     },
     {
       key: 'totalEmployees',
       label: 'Employees',
-      render: (_, record) => <span className="text-black">{record?.totalEmployees || 0}</span>
+      render: (_, record) => <span className="text-foreground">{record?.totalEmployees || 0}</span>
     },
     {
       key: 'totalGross',
       label: 'Gross',
-      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.totalGross || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.totalGross || 0).toFixed(2)}</span>
     },
     {
       key: 'totalNet',
       label: 'Net',
-      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.totalNet || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.totalNet || 0).toFixed(2)}</span>
     },
     {
       key: 'status',
@@ -209,12 +203,15 @@ const Payroll = () => {
     };
   }, [runs]);
 
-  const handleOpenRunModal = () => {
+  const handleOpenRunModal = async () => {
+    await employeesQuery.refetch();
+    const list = employeesQuery.data?.data || [];
+    const ids = list.map((emp) => String(emp.id));
     form.reset({
       periodStart: dayjs().startOf('month').toDate(),
       periodEnd: dayjs().endOf('month').toDate(),
       payDate: dayjs().endOf('month').toDate(),
-      employeeIds: employees.map((emp) => emp.id),
+      employeeIds: ids,
     });
     setRunModalVisible(true);
   };
@@ -224,7 +221,7 @@ const Payroll = () => {
       periodStart: dayjs(values.periodStart).format('YYYY-MM-DD'),
       periodEnd: dayjs(values.periodEnd).format('YYYY-MM-DD'),
       payDate: dayjs(values.payDate).format('YYYY-MM-DD'),
-      employeeIds: values.employeeIds,
+      employeeIds: (values.employeeIds || []).map((id) => String(id)),
     };
     createRunMutation.mutate(payload);
   };
@@ -352,13 +349,13 @@ const Payroll = () => {
               </DescriptionItem>
               <DescriptionItem label="Total Employees">{viewingRun.totalEmployees}</DescriptionItem>
               <DescriptionItem label="Total Gross">
-                <strong className="text-base">GHS {parseFloat(viewingRun.totalGross || 0).toFixed(2)}</strong>
+                <strong className="text-base">₵ {parseFloat(viewingRun.totalGross || 0).toFixed(2)}</strong>
               </DescriptionItem>
               <DescriptionItem label="Total Tax">
-                GHS {parseFloat(viewingRun.totalTax || 0).toFixed(2)}
+                ₵ {parseFloat(viewingRun.totalTax || 0).toFixed(2)}
               </DescriptionItem>
               <DescriptionItem label="Total Net">
-                <strong className="text-base text-green-600">GHS {parseFloat(viewingRun.totalNet || 0).toFixed(2)}</strong>
+                <strong className="text-base text-green-600">₵ {parseFloat(viewingRun.totalNet || 0).toFixed(2)}</strong>
               </DescriptionItem>
               {viewingRun.notes && (
                 <DescriptionItem label="Notes">{viewingRun.notes}</DescriptionItem>
@@ -394,7 +391,7 @@ const Payroll = () => {
                 key: 'gross',
                 align: 'right',
                 width: 120,
-                render: (value) => <strong>GHS {parseFloat(value || 0).toFixed(2)}</strong>
+                render: (value) => <strong>₵ {parseFloat(value || 0).toFixed(2)}</strong>
               },
               {
                 title: 'Allowances',
@@ -404,9 +401,9 @@ const Payroll = () => {
                 render: (_, entry) => {
                   const totalAllowances = (entry.allowances || []).reduce((sum, a) => sum + parseFloat(a.amount || 0), 0);
                   return totalAllowances > 0 ? (
-                    <span className="text-green-600">+ GHS {totalAllowances.toFixed(2)}</span>
+                    <span className="text-green-600">+ ₵ {totalAllowances.toFixed(2)}</span>
                   ) : (
-                    <span className="text-muted-foreground">GHS 0.00</span>
+                    <span className="text-muted-foreground">₵ 0.00</span>
                   );
                 }
               },
@@ -418,9 +415,9 @@ const Payroll = () => {
                 render: (_, entry) => {
                   const totalDeductions = (entry.deductions || []).reduce((sum, d) => sum + parseFloat(d.amount || 0), 0);
                   return totalDeductions > 0 ? (
-                    <span className="text-red-600">- GHS {totalDeductions.toFixed(2)}</span>
+                    <span className="text-red-600">- ₵ {totalDeductions.toFixed(2)}</span>
                   ) : (
-                    <span className="text-muted-foreground">GHS 0.00</span>
+                    <span className="text-muted-foreground">₵ 0.00</span>
                   );
                 }
               },
@@ -432,9 +429,9 @@ const Payroll = () => {
                 render: (_, entry) => {
                   const totalTaxes = (entry.taxes || []).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
                   return totalTaxes > 0 ? (
-                    <span className="text-orange-600">GHS {totalTaxes.toFixed(2)}</span>
+                    <span className="text-orange-600">₵ {totalTaxes.toFixed(2)}</span>
                   ) : (
-                    <span className="text-muted-foreground">GHS 0.00</span>
+                    <span className="text-muted-foreground">₵ 0.00</span>
                   );
                 }
               },
@@ -447,7 +444,7 @@ const Payroll = () => {
                 fixed: 'right',
                 render: (value) => (
                   <strong className="text-base text-green-600">
-                    GHS {parseFloat(value || 0).toFixed(2)}
+                    ₵ {parseFloat(value || 0).toFixed(2)}
                   </strong>
                 )
               }
@@ -471,7 +468,7 @@ const Payroll = () => {
                       <strong>Total ({pageData.length} employees)</strong>
                     </TableCell>
                     <TableCell style={{ textAlign: 'right' }}>
-                      <strong>GHS {totalGross.toFixed(2)}</strong>
+                      <strong>₵ {totalGross.toFixed(2)}</strong>
                     </TableCell>
                     <TableCell style={{ textAlign: 'right' }}>
                       <span className="text-muted-foreground">—</span>
@@ -480,11 +477,11 @@ const Payroll = () => {
                       <span className="text-muted-foreground">—</span>
                     </TableCell>
                     <TableCell style={{ textAlign: 'right' }}>
-                      <strong className="text-orange-600">GHS {totalTaxes.toFixed(2)}</strong>
+                      <strong className="text-orange-600">₵ {totalTaxes.toFixed(2)}</strong>
                     </TableCell>
                     <TableCell style={{ textAlign: 'right' }}>
                       <strong className="text-base text-green-600">
-                        GHS {totalNet.toFixed(2)}
+                        ₵ {totalNet.toFixed(2)}
                       </strong>
                     </TableCell>
                   </>
@@ -505,32 +502,49 @@ const Payroll = () => {
           subText="Generate payroll runs, review summaries, and post to the ledger."
         />
         <div className="flex gap-2">
-          <Button 
-            variant="outline" 
-            onClick={async () => {
-              setRefreshingPayroll(true);
-              await queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
-              setRefreshingPayroll(false);
-            }}
-            disabled={refreshingPayroll}
-            size={isMobile ? "icon" : "default"}
-          >
-            {refreshingPayroll ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
-          <Button onClick={handleOpenRunModal}>
-            <Plus className="h-4 w-4 mr-2" />
-            Generate Payroll Run
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                onClick={async () => {
+                  setRefreshingPayroll(true);
+                  await queryClient.invalidateQueries({ queryKey: ['payrollRuns'] });
+                  setRefreshingPayroll(false);
+                }}
+                disabled={refreshingPayroll}
+                size={isMobile ? "icon" : "default"}
+              >
+                {refreshingPayroll ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh payroll runs</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                onClick={handleOpenRunModal}
+                disabled={employeesQuery.isLoading}
+              >
+                {employeesQuery.isLoading ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4 mr-2" />
+                )}
+                Generate Payroll Run
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Generate a new payroll run</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <DashboardStatsCard
+          tooltip="Total payroll runs generated"
           title="Total Runs"
           value={summaryStats?.totals?.totalRuns || 0}
           icon={FileText}
@@ -538,6 +552,7 @@ const Payroll = () => {
           iconColor="#166534"
         />
         <DashboardStatsCard
+          tooltip="Payroll runs this month"
           title="This Month"
           value={summaryStats?.totals?.thisMonth || 0}
           icon={Calendar}
@@ -545,6 +560,7 @@ const Payroll = () => {
           iconColor="#3b82f6"
         />
         <DashboardStatsCard
+          tooltip="Total employees paid across all runs"
           title="Employees Paid"
           value={summaryStats?.totals?.employeesPaid || 0}
           icon={Users}
@@ -552,9 +568,10 @@ const Payroll = () => {
           iconColor="#84cc16"
         />
         <DashboardStatsCard
+          tooltip="Total payroll amount paid"
           title="Total Amount"
           value={summaryStats?.totals?.totalAmount || 0}
-          icon={DollarSign}
+          icon={Currency}
           iconBgColor="rgba(249, 115, 22, 0.1)"
           iconColor="#f97316"
         />
@@ -567,7 +584,7 @@ const Payroll = () => {
         loading={runsQuery.isLoading}
         title={null}
         emptyIcon={<FileText className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No payroll runs found"
+        emptyDescription="No payroll runs yet. Select employees below and click 'Run Payroll' to process your first payroll."
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);
@@ -578,19 +595,26 @@ const Payroll = () => {
         }}
       />
 
-      <Dialog open={runModalVisible} onOpenChange={(open) => {
-        if (!open) setRunModalVisible(false);
-      }}>
-        <DialogContent className="sm:w-[var(--modal-w-lg)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
-          <DialogHeader>
-            <DialogTitle>Generate Payroll Run</DialogTitle>
-            <DialogDescription>
-              Create a new payroll run for selected employees
-            </DialogDescription>
-          </DialogHeader>
-          <DialogBody>
+      <MobileFormDialog
+        open={runModalVisible}
+        onOpenChange={(open) => {
+          if (!open) setRunModalVisible(false);
+        }}
+        title="Generate Payroll Run"
+        description="Create a new payroll run for selected employees"
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setRunModalVisible(false)}>
+              Cancel
+            </Button>
+            <Button form="payroll-run-form" type="submit" loading={createRunMutation.isLoading}>
+              Generate Payroll Run
+            </Button>
+          </>
+        }
+      >
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmitRun)} className="space-y-4">
+            <form id="payroll-run-form" onSubmit={form.handleSubmit(onSubmitRun)} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
@@ -644,66 +668,74 @@ const Payroll = () => {
               <FormField
                 control={form.control}
                 name="employeeIds"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Employees</FormLabel>
-                    <FormControl>
-                      <div className="border rounded-md p-4 max-h-60 overflow-y-auto space-y-2">
-                        <div className="flex items-center justify-between mb-2">
-                          <Label className="text-sm font-medium">
-                            Select employees ({field.value?.length || 0} selected)
-                          </Label>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => field.onChange(employees.map(e => e.id))}
-                          >
-                            Select All
-                          </Button>
-                        </div>
-                        {employees.map((emp) => (
-                          <div key={emp.id} className="flex items-center space-x-2">
-                            <Checkbox
-                              id={`emp-${emp.id}`}
-                              checked={field.value?.includes(emp.id) || false}
-                              onCheckedChange={(checked) => {
-                                const current = field.value || [];
-                                if (checked) {
-                                  field.onChange([...current, emp.id]);
-                                } else {
-                                  field.onChange(current.filter(id => id !== emp.id));
-                                }
-                              }}
-                              className="h-4 w-4 rounded-md border-2 border-gray-300 data-[state=checked]:bg-[#166534] data-[state=checked]:border-[#166534] data-[state=checked]:text-white focus-visible:ring-[#166534] focus-visible:ring-2 focus-visible:ring-offset-2 transition-all duration-200 hover:border-[#166534]"
-                            />
-                            <label
-                              htmlFor={`emp-${emp.id}`}
-                              className="text-sm cursor-pointer flex-1"
-                            >
-                              {emp.firstName} {emp.lastName} — {emp.jobTitle || '—'}
-                            </label>
+                render={({ field }) => {
+                  const selectedIds = (field.value || []).map((id) => String(id));
+                  return (
+                    <FormItem>
+                      <FormLabel>Employees</FormLabel>
+                      <FormControl>
+                        <div className="border rounded-md p-4 max-h-60 overflow-y-auto space-y-2">
+                          <div className="flex items-center justify-between mb-2">
+                            <Label className="text-sm font-medium">
+                              Select employees ({selectedIds.length} selected)
+                            </Label>
+                            {employees.length > 0 && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => field.onChange(employees.map((e) => String(e.id)))}
+                              >
+                                Select All
+                              </Button>
+                            )}
                           </div>
-                        ))}
-                      </div>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+                          {employeesQuery.isLoading ? (
+                            <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm">
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                              Loading employees...
+                            </div>
+                          ) : employees.length === 0 ? (
+                            <p className="py-4 text-muted-foreground text-sm">
+                              No active employees found. Add employees on the Employees page first.
+                            </p>
+                          ) : (
+                            employees.map((emp) => {
+                              const idStr = String(emp.id);
+                              const isChecked = selectedIds.includes(idStr);
+                              return (
+                                <div key={emp.id} className="flex items-center space-x-2" onClick={(e) => e.stopPropagation()}>
+                                  <Checkbox
+                                    id={`emp-${emp.id}`}
+                                    checked={isChecked}
+                                    onCheckedChange={(checked) => {
+                                      const next = checked === true
+                                        ? [...selectedIds, idStr]
+                                        : selectedIds.filter((id) => id !== idStr);
+                                      field.onChange(next);
+                                    }}
+                                    className="h-4 w-4 rounded-md border-2 border-gray-300 data-[state=checked]:bg-[#166534] data-[state=checked]:border-[#166534] data-[state=checked]:text-white focus-visible:ring-[#166534] focus-visible:ring-2 focus-visible:ring-offset-2 transition-all duration-200 hover:border-[#166534]"
+                                  />
+                                  <label
+                                    htmlFor={`emp-${emp.id}`}
+                                    className="text-sm cursor-pointer flex-1"
+                                  >
+                                    {emp.firstName} {emp.lastName} — {emp.jobTitle || '—'}
+                                  </label>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  );
+                }}
               />
-              <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setRunModalVisible(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" loading={createRunMutation.isLoading}>
-                  Generate Payroll Run
-                </Button>
-              </DialogFooter>
             </form>
           </Form>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
+      </MobileFormDialog>
 
       <DetailsDrawer
         open={drawerVisible}

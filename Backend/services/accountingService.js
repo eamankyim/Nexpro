@@ -176,9 +176,68 @@ const getAccountByCode = async (tenantId, code) => {
   return Account.findOne({ where: applyTenantFilter(tenantId, { code }) });
 };
 
+/**
+ * Post a draft journal entry: set status to 'posted' and update account balances.
+ * @param {string} tenantId - Tenant ID
+ * @param {string} journalEntryId - Journal entry ID
+ * @param {string} [approvedBy] - User ID of approver (optional)
+ * @returns {Promise<Object>} Updated journal entry with lines
+ */
+const postJournalEntry = async (tenantId, journalEntryId, approvedBy = null) => {
+  if (!tenantId || !journalEntryId) {
+    throw new Error('Tenant and journal entry ID are required');
+  }
+
+  const entry = await JournalEntry.findOne({
+    where: applyTenantFilter(tenantId, { id: journalEntryId }),
+    include: [{ model: JournalEntryLine, as: 'lines', where: applyTenantFilter(tenantId, {}), required: false }]
+  });
+
+  if (!entry) {
+    throw new Error('Journal entry not found');
+  }
+  if (entry.status === 'posted') {
+    throw new Error('Journal entry is already posted');
+  }
+
+  const transaction = await JournalEntry.sequelize.transaction();
+  try {
+    await entry.update({ status: 'posted', approvedBy: approvedBy || entry.approvedBy }, { transaction });
+    await updateAccountBalances(tenantId, journalEntryId, transaction);
+    await transaction.commit();
+  } catch (err) {
+    await transaction.rollback();
+    throw err;
+  }
+
+  return JournalEntry.findOne({
+    where: applyTenantFilter(tenantId, { id: journalEntryId }),
+    include: [
+      {
+        model: JournalEntryLine,
+        as: 'lines',
+        where: applyTenantFilter(tenantId, {}),
+        required: false,
+        include: [
+          {
+            model: Account,
+            as: 'account',
+            attributes: ['id', 'code', 'name', 'type'],
+            where: applyTenantFilter(tenantId, {}),
+            required: false
+          }
+        ]
+      },
+      { model: User, as: 'creator', attributes: ['id', 'name'] },
+      { model: User, as: 'approver', attributes: ['id', 'name'] }
+    ]
+  });
+};
+
 module.exports = {
   createJournalEntry,
   getAccountByCode,
+  postJournalEntry,
   sumLines,
   updateAccountBalances
 };

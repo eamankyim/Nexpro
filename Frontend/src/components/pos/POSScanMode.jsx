@@ -17,6 +17,7 @@ import {
   User, 
   Phone,
   Check,
+  ChevronDown,
   ChevronUp,
   Minus,
   Plus,
@@ -27,7 +28,8 @@ import {
   ArrowLeft,
   Banknote,
   Smartphone,
-  CreditCard
+  CreditCard,
+  ChefHat
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -36,7 +38,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Switch } from '@/components/ui/switch';
 import { parseProductQRPayload } from '../../utils/productQR';
+import { resolveImageUrl } from '../../utils/fileUtils';
 import { QRCodeScanner } from './POSProductSearch';
 import POSNumpad from './POSNumpad';
 import { useResponsive } from '../../hooks/useResponsive';
@@ -80,17 +86,27 @@ const PAYMENT_METHODS = [
 ];
 
 /**
- * Cart Item Component for Review Screen
+ * Cart Item Component for Review Screen – with image
  */
 const CartItemRow = ({ item, onUpdateQuantity, onRemove }) => {
   const { isMobile } = useResponsive();
   const itemTotal = item.unitPrice * item.quantity;
+  const imageSrc = item.imageUrl ? resolveImageUrl(item.imageUrl) : null;
 
   return (
-    <div className={`flex items-center ${isMobile ? 'gap-2 py-2' : 'gap-3 py-3'} border-b border-gray-100 last:border-0`}>
+    <div className={`flex items-center ${isMobile ? 'gap-2 py-2' : 'gap-3 py-3'} border-b border-border last:border-0`}>
+      <div className={`${isMobile ? 'w-12 h-12' : 'w-14 h-14'} flex-shrink-0 rounded-lg overflow-hidden bg-muted border border-border`}>
+        {imageSrc ? (
+          <img src={imageSrc} alt={item.name} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none'; }} />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <ShoppingCart className={`${isMobile ? 'h-5 w-5' : 'h-6 w-6'} text-muted-foreground`} />
+          </div>
+        )}
+      </div>
       <div className="flex-1 min-w-0">
-        <p className={`font-medium text-gray-900 truncate ${isMobile ? 'text-xs' : 'text-sm'}`}>{item.name}</p>
-        <p className={`${isMobile ? 'text-xs' : 'text-xs'} text-gray-500`}>
+        <p className={`font-medium text-foreground truncate ${isMobile ? 'text-xs' : 'text-sm'}`}>{item.name}</p>
+        <p className={`${isMobile ? 'text-xs' : 'text-xs'} text-muted-foreground`}>
           {formatCurrency(item.unitPrice)} each
         </p>
       </div>
@@ -99,7 +115,7 @@ const CartItemRow = ({ item, onUpdateQuantity, onRemove }) => {
         <Button
           variant="outline"
           size="icon"
-          className={`${isMobile ? 'h-9 w-9' : 'h-8 w-8'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+          className={`${isMobile ? 'h-9 w-9' : 'h-8 w-8'} border-border ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
           onClick={() => onUpdateQuantity(item.id, Math.max(1, item.quantity - 1))}
         >
           <Minus className={`${isMobile ? 'h-3 w-3' : 'h-3 w-3'}`} />
@@ -108,7 +124,7 @@ const CartItemRow = ({ item, onUpdateQuantity, onRemove }) => {
         <Button
           variant="outline"
           size="icon"
-          className={`${isMobile ? 'h-9 w-9' : 'h-8 w-8'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+          className={`${isMobile ? 'h-9 w-9' : 'h-8 w-8'} border-border ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
           onClick={() => onUpdateQuantity(item.id, item.quantity + 1)}
         >
           <Plus className={`${isMobile ? 'h-3 w-3' : 'h-3 w-3'}`} />
@@ -116,13 +132,13 @@ const CartItemRow = ({ item, onUpdateQuantity, onRemove }) => {
       </div>
 
       <div className={`flex items-center ${isMobile ? 'gap-1.5' : 'gap-2'}`}>
-        <span className={`font-semibold text-gray-900 ${isMobile ? 'text-xs w-16' : 'text-sm w-20'} text-right`}>
+        <span className={`font-semibold text-foreground ${isMobile ? 'text-xs w-16' : 'text-sm w-20'} text-right`}>
           {formatCurrency(itemTotal)}
         </span>
         <Button
           variant="ghost"
           size="icon"
-          className={`${isMobile ? 'h-9 w-9' : 'h-8 w-8'} text-gray-400 hover:text-red-600`}
+          className={`${isMobile ? 'h-9 w-9' : 'h-8 w-8'} text-muted-foreground hover:text-red-600`}
           onClick={() => onRemove(item.id)}
         >
           <Trash2 className={`${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'}`} />
@@ -143,7 +159,9 @@ const CartItemRow = ({ item, onUpdateQuantity, onRemove }) => {
  * @param {function} props.onProcessSale - Process sale function (saleData) => Promise<result>
  * @param {function} props.onFindOrCreateCustomer - Find or create customer (phone, name) => Promise<customer>
  * @param {function} props.onSendReceipt - Send receipt function (saleId, options) => Promise
+ * @param {Object} props.receiptChannelsAvailable - { sms, whatsapp, email } booleans for which channels are integrated
  * @param {boolean} props.isOnline - Whether device is online
+ * @param {boolean} props.isRestaurant - If true, show Send to kitchen option
  */
 const POSScanMode = ({
   isOpen,
@@ -153,7 +171,9 @@ const POSScanMode = ({
   onProcessSale,
   onFindOrCreateCustomer,
   onSendReceipt,
-  isOnline = true
+  receiptChannelsAvailable = { sms: false, whatsapp: false, email: false },
+  isOnline = true,
+  isRestaurant = false
 }) => {
   const { isMobile } = useResponsive();
   // Step state
@@ -170,7 +190,7 @@ const POSScanMode = ({
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
   const [customerSearchResults, setCustomerSearchResults] = useState([]);
   const [customerSearching, setCustomerSearching] = useState(false);
-  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
+  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
 
   const debouncedCustomerSearch = useDebounce(customerSearchQuery, 400);
 
@@ -178,6 +198,7 @@ const POSScanMode = ({
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [amountTendered, setAmountTendered] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [sendToKitchen, setSendToKitchen] = useState(true);
   
   // Result state
   const [completedSale, setCompletedSale] = useState(null);
@@ -198,6 +219,7 @@ const POSScanMode = ({
       setAmountTendered('');
       setCompletedSale(null);
       setReceiptSent(false);
+      setSendToKitchen(true);
     }
   }, [isOpen]);
 
@@ -205,7 +227,6 @@ const POSScanMode = ({
   useEffect(() => {
     if (!debouncedCustomerSearch.trim()) {
       setCustomerSearchResults([]);
-      setShowCustomerDropdown(false);
       return;
     }
     let cancelled = false;
@@ -216,7 +237,6 @@ const POSScanMode = ({
         const body = res?.data ?? res;
         const list = body?.data ?? (Array.isArray(body) ? body : []);
         setCustomerSearchResults(Array.isArray(list) ? list : []);
-        setShowCustomerDropdown(true);
       })
       .catch(() => {
         if (!cancelled) setCustomerSearchResults([]);
@@ -244,7 +264,7 @@ const POSScanMode = ({
     setSelectedCustomerId(customer.id);
     setCustomerSearchQuery('');
     setCustomerSearchResults([]);
-    setShowCustomerDropdown(false);
+    setCustomerSearchOpen(false);
   }, []);
 
   const clearCustomerSelection = useCallback(() => {
@@ -253,7 +273,7 @@ const POSScanMode = ({
     setCustomerPhone('');
     setCustomerSearchQuery('');
     setCustomerSearchResults([]);
-    setShowCustomerDropdown(false);
+    setCustomerSearchOpen(true);
   }, []);
 
   // Update cart item quantity
@@ -301,6 +321,7 @@ const POSScanMode = ({
             productVariantId: null,
             name: product.name,
             sku: product.sku,
+            imageUrl: product.imageUrl,
             unitPrice: product.sellingPrice,
             quantity: 1,
             discount: 0,
@@ -363,6 +384,9 @@ const POSScanMode = ({
           customerName
         }
       };
+      if (isRestaurant) {
+        saleData.sendToKitchen = sendToKitchen;
+      }
 
       // Process sale
       const result = await onProcessSale(saleData);
@@ -378,18 +402,16 @@ const POSScanMode = ({
         setCompletedSale(saleObj);
         setCurrentStep(STEPS.SUCCESS);
 
-        // Auto-send receipt via SMS if phone provided
-        if (customerPhone && saleObj.id && onSendReceipt) {
-          try {
-            await onSendReceipt(saleObj.id, {
-              channels: ['sms'],
-              phone: customerPhone
+        // Auto-send receipt via SMS only if SMS is integrated (do not block – user can close immediately)
+        if (customerPhone && saleObj.id && onSendReceipt && receiptChannelsAvailable?.sms) {
+          onSendReceipt(saleObj.id, {
+            channels: ['sms'],
+            phone: customerPhone
+          })
+            .then(() => setReceiptSent(true))
+            .catch((receiptErr) => {
+              console.warn('Failed to send receipt:', receiptErr);
             });
-            setReceiptSent(true);
-          } catch (receiptErr) {
-            console.warn('Failed to send receipt:', receiptErr);
-            // Don't fail the sale if receipt fails
-          }
         }
 
         if (result.isQueued) {
@@ -414,7 +436,10 @@ const POSScanMode = ({
     totals.total,
     onFindOrCreateCustomer,
     onProcessSale,
-    onSendReceipt
+    onSendReceipt,
+    receiptChannelsAvailable,
+    isRestaurant,
+    sendToKitchen
   ]);
 
   // Handle new sale
@@ -441,19 +466,20 @@ const POSScanMode = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-white flex flex-col">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 md:p-4 md:bg-black/50">
+      <div className="w-full h-full md:max-w-[800px] md:max-h-[90vh] md:rounded-lg md:overflow-hidden bg-background flex flex-col">
       {/* Header */}
-      <div className={`flex items-center justify-between ${isMobile ? 'px-3 py-2' : 'px-4 py-3'} border-b border-gray-200 bg-white`}>
+      <div className={`flex items-center justify-between ${isMobile ? 'px-3 py-2' : 'px-4 py-3'} border-b border-border bg-card`}>
         <Button
           variant="ghost"
           size="icon"
-          onClick={currentStep === STEPS.SCANNING ? onClose : () => {
+          onClick={currentStep === STEPS.SUCCESS ? onClose : currentStep === STEPS.SCANNING ? onClose : () => {
             if (currentStep === STEPS.REVIEW) setCurrentStep(STEPS.SCANNING);
             else if (currentStep === STEPS.PAYMENT) setCurrentStep(STEPS.REVIEW);
           }}
           className={isMobile ? 'h-11 w-11' : 'h-10 w-10'}
         >
-          {currentStep === STEPS.SCANNING ? (
+          {currentStep === STEPS.SCANNING || currentStep === STEPS.SUCCESS ? (
             <X className={`${isMobile ? 'h-5 w-5' : 'h-5 w-5'}`} />
           ) : (
             <ArrowLeft className={`${isMobile ? 'h-5 w-5' : 'h-5 w-5'}`} />
@@ -490,129 +516,190 @@ const POSScanMode = ({
           />
         )}
 
-        {/* REVIEW STEP */}
+        {/* REVIEW STEP – Items left, Customer right */}
         {currentStep === STEPS.REVIEW && (
           <div className="h-full flex flex-col">
-            {/* Cart Items */}
-            <ScrollArea className="flex-1" style={{ paddingLeft: isMobile ? '0.75rem' : '1rem', paddingRight: isMobile ? '0.75rem' : '1rem' }}>
-              <div className={isMobile ? "py-3" : "py-4"}>
-                <h3 className={`font-medium text-gray-700 ${isMobile ? 'mb-2 text-sm' : 'mb-3'}`}>
-                  Items ({totals.itemCount})
-                </h3>
-                <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-500 mb-2`}>
-                  Adjust quantity below if needed.
-                </p>
-                {cart.map(item => (
-                  <CartItemRow
-                    key={item.id}
-                    item={item}
-                    onUpdateQuantity={updateCartItemQuantity}
-                    onRemove={removeCartItem}
-                  />
-                ))}
+            <div className={`flex-1 overflow-hidden flex flex-col ${isMobile ? '' : 'lg:flex-row'}`}>
+              {/* LEFT: Cart Items with images */}
+              <div className={`flex-1 flex flex-col min-w-0 ${isMobile ? '' : 'lg:border-r lg:border-border'}`}>
+                <div className={`${isMobile ? 'px-3' : 'px-4'} pt-3 pb-2 border-b border-border`}>
+                  <h3 className={`font-medium text-foreground ${isMobile ? 'text-sm' : 'text-base'}`}>
+                    Items ({totals.itemCount})
+                  </h3>
+                  <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground`}>
+                    Adjust quantity below if needed.
+                  </p>
+                </div>
+                <ScrollArea className="flex-1" style={{ paddingLeft: isMobile ? '0.75rem' : '1rem', paddingRight: isMobile ? '0.75rem' : '1rem' }}>
+                  <div className={isMobile ? 'py-2' : 'py-3'}>
+                    {cart.map(item => (
+                      <CartItemRow
+                        key={item.id}
+                        item={item}
+                        onUpdateQuantity={updateCartItemQuantity}
+                        onRemove={removeCartItem}
+                      />
+                    ))}
+                  </div>
+                </ScrollArea>
               </div>
 
-              {/* Customer Section – select or enter; SMS receipt after sale */}
-              <div className={`${isMobile ? 'py-3' : 'py-4'} border-t border-gray-100`}>
-                <h3 className={`font-medium text-gray-700 ${isMobile ? 'mb-2 text-sm' : 'mb-3'} flex items-center gap-2`}>
-                  <User className={`${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'}`} />
-                  Customer
-                </h3>
-                <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-500 mb-2`}>
-                  Select or enter customer name and phone. Receipt will be sent via SMS after sale.
-                </p>
+              {/* RIGHT: Customer selection */}
+              <div className={`flex-shrink-0 flex flex-col ${isMobile ? 'border-t border-border' : 'lg:w-[320px] lg:min-w-[280px]'}`}>
+                <div className={`${isMobile ? 'px-3 py-3' : 'px-4 py-4'}`}>
+                  <h3 className={`font-medium text-foreground ${isMobile ? 'mb-2 text-sm' : 'mb-3'} flex items-center gap-2`}>
+                    <User className={`${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'}`} />
+                    Customer
+                  </h3>
+                  <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground mb-3`}>
+                    Select or enter customer name and phone. Receipt will be sent via SMS after sale.
+                  </p>
 
-                {selectedCustomerId ? (
-                  <div className={`${isMobile ? 'p-2' : 'p-3'} bg-green-50 border border-green-200 ${isMobile ? 'rounded-md' : 'rounded-lg'} flex items-center justify-between`}>
-                    <div>
-                      <p className={`font-medium text-gray-900 ${isMobile ? 'text-sm' : ''}`}>{customerName || 'Customer'}</p>
-                      <p className={`text-gray-600 ${isMobile ? 'text-xs' : 'text-sm'}`}>{customerPhone}</p>
-                    </div>
-                    <Button type="button" variant="outline" size="sm" onClick={clearCustomerSelection} className="border-gray-300">
-                      Change
-                    </Button>
-                  </div>
-                ) : (
-                  <>
-                    <div className="relative mb-2">
-                      <Label className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600`}>Search existing customer</Label>
-                      <Input
-                        placeholder="Search by name or phone"
-                        value={customerSearchQuery}
-                        onChange={(e) => setCustomerSearchQuery(e.target.value)}
-                        onFocus={() => customerSearchResults.length > 0 && setShowCustomerDropdown(true)}
-                        className={`${isMobile ? 'h-11 mt-1' : 'h-11 mt-1'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
-                      />
-                      {customerSearching && (
-                        <div className="absolute right-3 top-1/2 -translate-y-1/2 mt-1">
-                          <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
-                        </div>
-                      )}
-                      {showCustomerDropdown && customerSearchResults.length > 0 && (
-                        <ul className="absolute z-10 w-full mt-1 border border-gray-200 bg-white rounded-lg shadow-lg max-h-40 overflow-y-auto">
-                          {customerSearchResults.map((c) => (
-                            <li key={c.id}>
-                              <button
-                                type="button"
-                                className="w-full text-left px-3 py-2 hover:bg-gray-50 text-sm flex flex-col"
-                                onClick={() => selectCustomer(c)}
-                              >
-                                <span className="font-medium text-gray-900">{c.name || 'No name'}</span>
-                                {c.phone && <span className="text-gray-500 text-xs">{c.phone}</span>}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                    <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600 mb-1`}>Or enter new</p>
-                    <div className={isMobile ? 'space-y-2' : 'space-y-3'}>
+                  {selectedCustomerId ? (
+                    <div className={`${isMobile ? 'p-2' : 'p-3'} bg-green-50 border border-green-200 ${isMobile ? 'rounded-md' : 'rounded-lg'} flex items-center justify-between`}>
                       <div>
-                        <Label className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600`}>Name</Label>
-                        <Input
-                          placeholder="Customer name"
-                          value={customerName}
-                          onChange={(e) => { setCustomerName(e.target.value); setSelectedCustomerId(null); }}
-                          className={`${isMobile ? 'h-11 mt-1' : 'h-11 mt-1'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
-                        />
+                        <p className={`font-medium text-foreground ${isMobile ? 'text-sm' : ''}`}>{customerName || 'Customer'}</p>
+                        <p className={`text-muted-foreground ${isMobile ? 'text-xs' : 'text-sm'}`}>{customerPhone}</p>
                       </div>
+                      <Button type="button" variant="outline" size="sm" onClick={clearCustomerSelection} className="border-border">
+                        Change
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
                       <div>
-                        <Label className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600`}>Phone Number</Label>
-                        <div className="relative mt-1">
-                          <Phone className={`absolute left-3 top-1/2 -translate-y-1/2 ${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-gray-400`} />
+                        <Label className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground`}>Search existing customer</Label>
+                        <Popover open={customerSearchOpen} onOpenChange={setCustomerSearchOpen}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={customerSearchOpen}
+                              className={`w-full justify-between ${isMobile ? 'h-10 mt-1' : 'h-11 mt-1'} font-normal border-border ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                            >
+                              <span className="text-muted-foreground truncate">
+                                {customerSearchQuery || 'Search by name or phone...'}
+                              </span>
+                              {customerSearching ? (
+                                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                              ) : (
+                                <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${customerSearchOpen ? 'rotate-180' : ''}`} />
+                              )}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                            <div className="p-2 border-b border-border">
+                              <Input
+                                placeholder="Search by name or phone"
+                                value={customerSearchQuery}
+                                onChange={(e) => setCustomerSearchQuery(e.target.value)}
+                                className="h-9 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                                autoFocus
+                              />
+                            </div>
+                            <ScrollArea className="max-h-48">
+                              {customerSearching ? (
+                                <div className="py-6 flex justify-center">
+                                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                                </div>
+                              ) : customerSearchResults.length === 0 ? (
+                                <div className="py-6 text-center text-sm text-muted-foreground">
+                                  {customerSearchQuery ? 'No customers found' : 'Type to search'}
+                                </div>
+                              ) : (
+                                <ul className="p-1">
+                                  {customerSearchResults.map((c) => (
+                                    <li key={c.id}>
+                                      <button
+                                        type="button"
+                                        className="w-full text-left px-3 py-2 hover:bg-muted rounded-md text-sm flex flex-col"
+                                        onClick={() => selectCustomer(c)}
+                                      >
+                                        <span className="font-medium text-foreground">{c.name || 'No name'}</span>
+                                        {c.phone && <span className="text-muted-foreground text-xs">{c.phone}</span>}
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </ScrollArea>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                      <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground`}>Or enter new</p>
+                      <div className="space-y-3">
+                        <div>
+                          <Label className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground`}>Name</Label>
                           <Input
-                            type="tel"
-                            placeholder="0XX XXX XXXX"
-                            value={customerPhone}
-                            onChange={(e) => { setCustomerPhone(e.target.value); setSelectedCustomerId(null); }}
-                            className={`${isMobile ? 'h-11 pl-9' : 'h-11 pl-10'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                            placeholder="Customer name"
+                            value={customerName}
+                            onChange={(e) => { setCustomerName(e.target.value); setSelectedCustomerId(null); }}
+                            className={`${isMobile ? 'h-10 mt-1' : 'h-11 mt-1'} border-border ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                           />
                         </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Enter phone to send receipt via SMS after sale
-                        </p>
+                        <div>
+                          <Label className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground`}>Phone Number</Label>
+                          <div className="relative mt-1">
+                            <Phone className={`absolute left-3 top-1/2 -translate-y-1/2 ${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-muted-foreground`} />
+                            <Input
+                              type="tel"
+                              placeholder="0XX XXX XXXX"
+                              value={customerPhone}
+                              onChange={(e) => { setCustomerPhone(e.target.value); setSelectedCustomerId(null); }}
+                              className={`${isMobile ? 'h-10 pl-9' : 'h-11 pl-10'} border-border ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                            />
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Enter phone to send receipt via SMS after sale
+                          </p>
+                        </div>
                       </div>
                     </div>
-                  </>
-                )}
+                  )}
+                </div>
               </div>
-            </ScrollArea>
+            </div>
 
             {/* Bottom Checkout Section */}
-            <div className={`${isMobile ? 'p-3' : 'p-4'} bg-gray-50 border-t border-gray-200`}>
+            <div className={`${isMobile ? 'p-3' : 'p-4'} bg-muted border-t border-border`}>
+              {isRestaurant && (
+                <div className="flex items-center justify-between mb-3 p-3 rounded-lg border border-border bg-background">
+                  <div className="flex items-center gap-2">
+                    <ChefHat className="h-4 w-4 text-muted-foreground" />
+                    <div>
+                      <Label htmlFor="scan-send-to-kitchen" className="text-sm font-medium cursor-pointer">
+                        Send to kitchen
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        {sendToKitchen ? 'Order will appear in kitchen' : 'Skip kitchen (e.g. water only)'}
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    id="scan-send-to-kitchen"
+                    checked={sendToKitchen}
+                    onCheckedChange={setSendToKitchen}
+                  />
+                </div>
+              )}
               <div className={`flex justify-between items-center ${isMobile ? 'mb-3' : 'mb-4'}`}>
-                <span className={`${isMobile ? 'text-sm' : ''} text-gray-600`}>Total</span>
+                <span className={`${isMobile ? 'text-sm' : ''} text-muted-foreground`}>Total</span>
                 <span className={`${isMobile ? 'text-xl' : 'text-2xl'} font-bold text-green-700`}>
                   {formatCurrency(totals.total)}
                 </span>
               </div>
               
-              <Button
-                className={`w-full ${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} font-semibold bg-[#166534] hover:bg-[#14532d] ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
-                onClick={handleProceedToPayment}
-              >
-                Continue to Payment
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    className={`w-full ${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} font-semibold bg-[#166534] hover:bg-[#14532d] ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                    onClick={handleProceedToPayment}
+                  >
+                    Continue to Payment
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Go to payment</TooltipContent>
+              </Tooltip>
             </div>
           </div>
         )}
@@ -623,7 +710,7 @@ const POSScanMode = ({
             <ScrollArea className="flex-1" style={{ paddingLeft: isMobile ? '0.75rem' : '1rem', paddingRight: isMobile ? '0.75rem' : '1rem' }}>
               <div className={`${isMobile ? 'py-3 space-y-4' : 'py-4 space-y-6'}`}>
                 {/* Amount to Pay */}
-                <div className={`text-center ${isMobile ? 'p-3' : 'p-4'} bg-gray-50 ${isMobile ? 'rounded-md' : 'rounded-lg'}`}>
+                <div className={`text-center ${isMobile ? 'p-3' : 'p-4'} bg-muted ${isMobile ? 'rounded-md' : 'rounded-lg'}`}>
                   <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600`}>Amount to Pay</p>
                   <p className={`${isMobile ? 'text-2xl' : 'text-3xl'} font-bold text-green-700`}>
                     {formatCurrency(totals.total)}
@@ -638,7 +725,7 @@ const POSScanMode = ({
                       <Button
                         key={method.id}
                         variant={paymentMethod === method.id ? 'default' : 'outline'}
-                        className={`${isMobile ? 'h-12' : 'h-14'} flex-col gap-1 border-gray-300 ${
+                        className={`${isMobile ? 'h-12' : 'h-14'} flex-col gap-1 border-border ${
                           paymentMethod === method.id ? 'bg-[#166534] hover:bg-[#14532d]' : ''
                         } ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                         onClick={() => setPaymentMethod(method.id)}
@@ -654,7 +741,7 @@ const POSScanMode = ({
                 {paymentMethod === 'cash' && (
                   <div>
                     <Label className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600 ${isMobile ? 'mb-1.5' : 'mb-2'} block`}>Amount Received</Label>
-                    <div className={`text-center ${isMobile ? 'p-2' : 'p-3'} bg-white border border-gray-300 ${isMobile ? 'rounded-md mb-2' : 'rounded-lg mb-3'}`}>
+                    <div className={`text-center ${isMobile ? 'p-2' : 'p-3'} bg-card border border-border ${isMobile ? 'rounded-md mb-2' : 'rounded-lg mb-3'}`}>
                       <span className={`${isMobile ? 'text-xl' : 'text-2xl'} font-bold`}>
                         {CURRENCY.SYMBOL} {amountTendered || '0'}
                       </span>
@@ -704,18 +791,23 @@ const POSScanMode = ({
             </ScrollArea>
 
             {/* Confirm Payment Button */}
-            <div className={`${isMobile ? 'p-3' : 'p-4'} bg-gray-50 border-t border-gray-200`}>
-              <Button
-                className={`w-full ${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} font-semibold bg-[#166534] hover:bg-[#14532d] ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
-                disabled={paymentMethod === 'cash' && !isPaymentValid}
-                loading={isProcessing}
-                onClick={handleConfirmPayment}
-              >
-                <>
-                  <Check className={`${isMobile ? 'h-4 w-4' : 'h-5 w-5'} mr-2`} />
-                  {isMobile ? `Complete - ${formatCurrency(totals.total)}` : `Complete Sale - ${formatCurrency(totals.total)}`}
-                </>
-              </Button>
+            <div className={`${isMobile ? 'p-3' : 'p-4'} bg-muted border-t border-border`}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    className={`w-full ${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} font-semibold bg-[#166534] hover:bg-[#14532d] ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                    disabled={paymentMethod === 'cash' && !isPaymentValid}
+                    loading={isProcessing}
+                    onClick={handleConfirmPayment}
+                  >
+                    <>
+                      <Check className={`${isMobile ? 'h-4 w-4' : 'h-5 w-5'} mr-2`} />
+                      {isMobile ? `Complete - ${formatCurrency(totals.total)}` : `Complete Sale - ${formatCurrency(totals.total)}`}
+                    </>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Finish sale and take payment</TooltipContent>
+              </Tooltip>
             </div>
           </div>
         )}
@@ -727,7 +819,7 @@ const POSScanMode = ({
               <CheckCircle className={`${isMobile ? 'h-10 w-10' : 'h-12 w-12'} text-green-600`} />
             </div>
             
-            <h2 className={`${isMobile ? 'text-xl' : 'text-2xl'} font-bold text-gray-900 ${isMobile ? 'mb-1' : 'mb-2'}`}>Sale Complete!</h2>
+            <h2 className={`${isMobile ? 'text-xl' : 'text-2xl'} font-bold text-foreground ${isMobile ? 'mb-1' : 'mb-2'}`}>Sale Complete!</h2>
             
             {completedSale && (
               <p className={`${isMobile ? 'text-sm' : ''} text-gray-600 ${isMobile ? 'mb-1' : 'mb-2'}`}>
@@ -742,7 +834,7 @@ const POSScanMode = ({
             {/* Receipt / SMS Status */}
             {customerPhone && (
               <div className={`${isMobile ? 'p-3' : 'p-4'} border ${isMobile ? 'rounded-md mb-4' : 'rounded-lg mb-6'} w-full max-w-sm ${
-                receiptSent ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'
+                receiptSent ? 'bg-green-500/10 border-green-500/30' : 'bg-muted border-border'
               }`}>
                 {receiptSent ? (
                   <div className={`flex items-center justify-center gap-2 ${isMobile ? 'text-sm' : ''} text-green-700`}>
@@ -752,13 +844,13 @@ const POSScanMode = ({
                 ) : (
                   <div className={`flex items-center justify-center gap-2 ${isMobile ? 'text-sm' : ''} text-gray-600`}>
                     <Loader2 className={`${isMobile ? 'h-4 w-4' : 'h-5 w-5'} animate-spin`} />
-                    <span>Sending receipt via SMS...</span>
+                    <span>Sending receipt via SMS... You can close anytime.</span>
                   </div>
                 )}
               </div>
             )}
             {!customerPhone && (
-              <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-500 mb-2`}>
+              <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground mb-2`}>
                 Add customer phone next time to receive receipt via SMS
               </p>
             )}
@@ -772,14 +864,14 @@ const POSScanMode = ({
               </div>
             )}
 
-            {/* Action Buttons */}
+            {/* Action Buttons – Close allows SMS to continue in background */}
             <div className={`flex ${isMobile ? 'gap-2' : 'gap-3'} w-full max-w-sm`}>
               <Button
                 variant="outline"
-                className={`flex-1 ${isMobile ? 'h-11' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                className={`flex-1 ${isMobile ? 'h-11' : 'h-12'} border-border ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                 onClick={onClose}
               >
-                View Sales
+                Close
               </Button>
               <Button
                 className={`flex-1 ${isMobile ? 'h-11' : 'h-12'} bg-[#166534] hover:bg-[#14532d] ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
@@ -790,6 +882,7 @@ const POSScanMode = ({
             </div>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

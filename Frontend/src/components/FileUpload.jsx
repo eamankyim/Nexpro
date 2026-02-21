@@ -155,8 +155,8 @@ const FileUpload = ({
         onDragLeave={handleDragLeave}
         className={cn(
           'flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer transition-colors',
-          isDragging ? 'border-[#166534] bg-[#166534]/5' : 'border-gray-300 bg-white',
-          (disabled || uploading) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-50'
+          isDragging ? 'border-[#166534] bg-[#166534]/5' : 'border-border bg-card',
+          (disabled || uploading) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-muted'
         )}
       >
         {uploading ? (
@@ -196,11 +196,11 @@ const FileUpload = ({
                 return (
                   <div
                     key={fileId}
-                    className="flex items-center justify-between p-3 border rounded-md bg-white"
+                    className="flex items-center justify-between p-3 border rounded-md bg-card"
                   >
                     <div className="flex items-center gap-3 flex-1 min-w-0">
                       <div className="flex-shrink-0">
-                        <div className="w-10 h-10 rounded bg-gray-100 flex items-center justify-center">
+                        <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
                           <span className="text-xs font-medium text-gray-600">
                             {getFileTypeLabel(fileName).charAt(0)}
                           </span>
@@ -212,7 +212,7 @@ const FileUpload = ({
                             href={fileUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-sm font-medium text-black hover:underline block truncate"
+                            className="text-sm font-medium text-foreground hover:underline block truncate"
                             onClick={(e) => {
                               if (onFileView) {
                                 e.preventDefault();
@@ -223,7 +223,7 @@ const FileUpload = ({
                             {fileName}
                           </a>
                         ) : (
-                          <span className="text-sm font-medium text-black block truncate">
+                          <span className="text-sm font-medium text-foreground block truncate">
                             {fileName}
                           </span>
                         )}

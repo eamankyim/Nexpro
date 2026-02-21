@@ -9,7 +9,7 @@ const ExpenseActivity = sequelize.define('ExpenseActivity', {
   },
   tenantId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true,
     references: {
       model: 'tenants',
       key: 'id'

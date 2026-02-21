@@ -1,23 +1,39 @@
 /**
  * Business Type Feature Mapping
- * 
- * Defines which features are available for each business type.
- * Features are filtered by both subscription plan AND business type.
+ *
+ * Only 3 business types: shop, studio, pharmacy.
+ * Studio types (printing_press, mechanic, barber, salon) are in metadata.studioType.
  */
 
 const BUSINESS_TYPE_FEATURES = {
-  printing_press: [
+  shop: [
+    'crm',
+    'materials',
+    'paymentsExpenses',
+    'reports',
+    'shopManagement',
+    'pos',
+    'materialsTracking',
+    'payments',
+    'expenses',
+    'invoicing',
+    'basicReports',
+    'salesReports',
+    'arReports',
+    'profitLossReports'
+  ],
+  studio: [
     'crm',
     'quoteAutomation',
     'jobAutomation',
     'paymentsExpenses',
-    'inventory',
+    'materials',
     'reports',
     'leadPipeline',
     'quoteBuilder',
     'pricingTemplates',
     'jobWorkflow',
-    'inventoryTracking',
+    'materialsTracking',
     'vendorPriceLists',
     'payments',
     'expenses',
@@ -28,30 +44,14 @@ const BUSINESS_TYPE_FEATURES = {
     'arReports',
     'profitLossReports'
   ],
-  shop: [
-    'crm',
-    'inventory',
-    'paymentsExpenses',
-    'reports',
-    'shopManagement',
-    'pos',
-    'inventoryTracking',
-    'payments',
-    'expenses',
-    'invoicing',
-    'basicReports',
-    'salesReports',
-    'arReports',
-    'profitLossReports'
-  ],
   pharmacy: [
     'crm',
-    'inventory',
+    'materials',
     'paymentsExpenses',
     'reports',
     'pharmacyManagement',
     'prescriptions',
-    'inventoryTracking',
+    'materialsTracking',
     'payments',
     'expenses',
     'invoicing',
@@ -62,50 +62,55 @@ const BUSINESS_TYPE_FEATURES = {
   ]
 };
 
+// Legacy: map old businessType values to new (for tenants not yet migrated)
+const LEGACY_TO_STUDIO = ['printing_press', 'mechanic', 'barber', 'salon'];
+
+/**
+ * Resolve effective business type (handles legacy values)
+ * @param {string} businessType - From tenant
+ * @returns {string} 'shop' | 'studio' | 'pharmacy'
+ */
+const resolveBusinessType = (businessType) => {
+  if (!businessType) return 'shop';
+  if (LEGACY_TO_STUDIO.includes(businessType)) return 'studio';
+  if (['shop', 'studio', 'pharmacy'].includes(businessType)) return businessType;
+  return 'shop';
+};
+
 /**
  * Get features available for a business type
- * @param {string} businessType - The business type ('printing_press', 'shop', 'pharmacy')
+ * @param {string} businessType - The business type
  * @returns {string[]} Array of feature keys
  */
 const getFeaturesForBusinessType = (businessType) => {
-  if (!businessType) {
-    // Return all features for backward compatibility
-    return Object.values(BUSINESS_TYPE_FEATURES).flat();
-  }
-  return BUSINESS_TYPE_FEATURES[businessType] || [];
+  const resolved = resolveBusinessType(businessType);
+  return BUSINESS_TYPE_FEATURES[resolved] || [];
 };
 
 /**
  * Check if a feature is available for a business type
- * @param {string} businessType - The business type
- * @param {string} featureKey - The feature key to check
- * @returns {boolean} True if feature is available
  */
 const isFeatureAvailableForBusinessType = (businessType, featureKey) => {
-  if (!businessType) {
-    // For backward compatibility, allow all features if businessType is not set
-    return true;
-  }
   const features = getFeaturesForBusinessType(businessType);
   return features.includes(featureKey);
 };
 
 /**
  * Get business type display name
- * @param {string} businessType - The business type key
- * @returns {string} Display name
  */
 const getBusinessTypeDisplayName = (businessType) => {
+  const resolved = resolveBusinessType(businessType);
   const displayNames = {
-    printing_press: 'Printing Press',
     shop: 'Shop',
+    studio: 'Studio',
     pharmacy: 'Pharmacy'
   };
-  return displayNames[businessType] || businessType;
+  return displayNames[resolved] || businessType;
 };
 
 module.exports = {
   BUSINESS_TYPE_FEATURES,
+  resolveBusinessType,
   getFeaturesForBusinessType,
   isFeatureAvailableForBusinessType,
   getBusinessTypeDisplayName

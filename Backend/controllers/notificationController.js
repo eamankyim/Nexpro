@@ -2,6 +2,8 @@ const { Op } = require('sequelize');
 const { Notification, User } = require('../models');
 const config = require('../config/config');
 const { applyTenantFilter } = require('../utils/tenantUtils');
+const { getPagination } = require('../utils/paginationUtils');
+const { invalidateNotificationsCache } = require('../middleware/cache');
 
 exports.getNotifications = async (req, res, next) => {
   try {
@@ -25,16 +27,18 @@ exports.getNotifications = async (req, res, next) => {
       offset,
       limit,
       order: [['createdAt', 'DESC']],
+      attributes: ['id', 'title', 'message', 'type', 'priority', 'link', 'isRead', 'readAt', 'createdAt', 'triggeredBy'],
       include: [
         {
           model: User,
           as: 'actor',
-          attributes: ['id', 'name', 'email']
+          attributes: ['id', 'name', 'email'],
+          required: false
         }
       ]
     });
 
-    console.log('[Notifications] getNotifications', {
+    if (config.nodeEnv === 'development') console.log('[Notifications] getNotifications', {
       userId: req.user.id,
       page,
       limit,
@@ -77,8 +81,9 @@ exports.markNotificationRead = async (req, res, next) => {
         isRead: true,
         readAt: new Date()
       });
+      invalidateNotificationsCache(req.tenantId, req.user.id);
 
-      console.log('[Notifications] markNotificationRead', {
+      if (config.nodeEnv === 'development') console.log('[Notifications] markNotificationRead', {
         notificationId: notification.id,
         userId: req.user.id
       });
@@ -101,8 +106,9 @@ exports.markAllNotificationsRead = async (req, res, next) => {
         })
       }
     );
+    invalidateNotificationsCache(req.tenantId, req.user.id);
 
-    console.log('[Notifications] markAllNotificationsRead', {
+    if (config.nodeEnv === 'development') console.log('[Notifications] markAllNotificationsRead', {
       userId: req.user.id,
       updated
     });
@@ -118,36 +124,30 @@ exports.markAllNotificationsRead = async (req, res, next) => {
 
 exports.getNotificationSummary = async (req, res, next) => {
   try {
-    const totals = await Notification.findAll({
-      where: applyTenantFilter(req.tenantId, { userId: req.user.id }),
-      attributes: [
-        [Notification.sequelize.fn('COUNT', Notification.sequelize.col('id')), 'total'],
-        [
-          Notification.sequelize.fn('SUM', Notification.sequelize.literal(`CASE WHEN "isRead" = false THEN 1 ELSE 0 END`)),
-          'unread'
-        ]
-      ]
-    });
-
+    const { sequelize } = require('../config/database');
     const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
 
-    const recent = await Notification.count({
-      where: applyTenantFilter(req.tenantId, {
-        userId: req.user.id,
-        createdAt: {
-          [Op.gte]: fortyEightHoursAgo
-        }
-      })
-    });
+    const [summaryRow] = await sequelize.query(
+      `SELECT
+         COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE "isRead" = false)::int AS unread,
+         COUNT(*) FILTER (WHERE "createdAt" >= :cutoff)::int AS recent
+       FROM notifications
+       WHERE "tenantId" = :tenantId AND "userId" = :userId`,
+      {
+        replacements: { tenantId: req.tenantId, userId: req.user.id, cutoff: fortyEightHoursAgo },
+        type: sequelize.QueryTypes.SELECT
+      }
+    );
 
-    const summary = totals[0]?.toJSON() || { total: 0, unread: 0 };
+    const summary = summaryRow || { total: 0, unread: 0, recent: 0 };
 
     res.status(200).json({
       success: true,
       data: {
-        total: parseInt(summary.total, 10) || 0,
-        unread: parseInt(summary.unread, 10) || 0,
-        recent
+        total: summary.total ?? 0,
+        unread: summary.unread ?? 0,
+        recent: summary.recent ?? 0
       }
     });
   } catch (error) {

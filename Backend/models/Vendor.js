@@ -86,7 +86,35 @@ const Vendor = sequelize.define('Vendor', {
   }
 }, {
   timestamps: true,
-  tableName: 'vendors'
+  tableName: 'vendors',
+  hooks: {
+    beforeCreate: (vendor) => {
+      if (vendor.email && typeof vendor.email === 'string') {
+        vendor.email = vendor.email.trim().toLowerCase();
+      }
+      if (vendor.phone && typeof vendor.phone === 'string') {
+        try {
+          const { formatToE164 } = require('../utils/phoneUtils');
+          const e164 = formatToE164(vendor.phone.trim());
+          if (e164) vendor.phone = e164;
+          else vendor.phone = vendor.phone.trim();
+        } catch { vendor.phone = vendor.phone.trim(); }
+      }
+    },
+    beforeUpdate: (vendor) => {
+      if (vendor.changed('email') && vendor.email && typeof vendor.email === 'string') {
+        vendor.email = vendor.email.trim().toLowerCase();
+      }
+      if (vendor.changed('phone') && vendor.phone && typeof vendor.phone === 'string') {
+        try {
+          const { formatToE164 } = require('../utils/phoneUtils');
+          const e164 = formatToE164(vendor.phone.trim());
+          if (e164) vendor.phone = e164;
+          else vendor.phone = vendor.phone.trim();
+        } catch { vendor.phone = vendor.phone.trim(); }
+      }
+    }
+  }
 });
 
 module.exports = Vendor;

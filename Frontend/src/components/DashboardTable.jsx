@@ -10,8 +10,10 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Empty } from '@/components/ui/empty';
+import { EmptyState } from '@/components/ui/empty-state';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useResponsive } from '@/hooks/useResponsive';
+import { useResponsive, BREAKPOINTS } from '@/hooks/useResponsive';
+import { cn } from '@/lib/utils';
 import TableSkeleton from './TableSkeleton';
 import MobileCardView from './MobileCardView';
 
@@ -22,27 +24,43 @@ import MobileCardView from './MobileCardView';
  * @param {Array} columns - Array of column definitions with { key, label, render }
  * @param {boolean} loading - Loading state
  * @param {string} title - Table title
- * @param {React.ReactNode} emptyIcon - Icon to show when empty
- * @param {string} emptyDescription - Description text when empty
+ * @param {Object} emptyState - EmptyState config { icon, title, description, primaryAction, secondaryAction }
+ * @param {React.ReactNode} emptyIcon - (Legacy) Icon to show when empty
+ * @param {string} emptyDescription - (Legacy) Description text when empty
+ * @param {string} emptyTitle - (Legacy) Title text when empty
+ * @param {React.ReactNode} emptyAction - Optional action button/content to show when empty
  * @param {number} pageSize - Number of items per page (default: 10)
  * @param {Function} onPageChange - Callback when page changes (optional, for external pagination)
  * @param {Object} externalPagination - External pagination state { current, total } (optional)
  * @param {Function} onCardClick - Optional callback when card is clicked (mobile only)
+ * @param {string} viewMode - 'table' | 'grid' (when provided with onViewModeChange, toggle is rendered by parent)
+ * @param {Function} onViewModeChange - Callback when view mode changes (parent controls toggle placement)
+ * @param {Function} getCardImage - Optional function(record) => imageUrl for card thumbnail in grid/card view
  */
 const DashboardTable = memo(({
   data = [],
   columns = [],
   loading = false,
   title = 'Table',
+  emptyState,
   emptyIcon,
   emptyDescription = 'No items found',
+  emptyTitle,
+  emptyAction,
   pageSize = 10,
   onPageChange,
   externalPagination,
-  onCardClick
+  onCardClick,
+  viewMode: controlledViewMode,
+  onViewModeChange,
+  getCardImage
 }) => {
-  const { isMobile } = useResponsive();
+  // Use 1024 breakpoint for card vs table - matches MainLayout sidebar (cards when sidebar hidden)
+  const { isMobile } = useResponsive({ mobileBreakpoint: BREAKPOINTS.TABLET });
   const [internalPagination, setInternalPagination] = useState({ current: 1, pageSize });
+  const [internalViewMode, setInternalViewMode] = useState('table');
+  const viewMode = onViewModeChange ? (controlledViewMode ?? 'table') : internalViewMode;
+  const setViewMode = onViewModeChange || setInternalViewMode;
   
   // Use external pagination if provided, otherwise use internal
   const pagination = externalPagination || internalPagination;
@@ -75,23 +93,30 @@ const DashboardTable = memo(({
     setPagination(prev => ({ ...prev, current: newPage, pageSize }));
   };
 
-  // On mobile, use card view
-  if (isMobile) {
+  // Use card view when: grid mode selected OR mobile
+  const useCardView = viewMode === 'grid' || isMobile;
+
+  if (useCardView) {
     return (
       <div>
         {title !== null && title !== undefined && title !== '' && (
-          <h2 className="text-lg font-semibold mb-4 px-1">{title}</h2>
+          <h2 className={cn("text-lg font-semibold", isMobile ? "mb-2 px-0" : "mb-4 px-1")}>{title}</h2>
         )}
         <MobileCardView
           data={data}
           columns={columns}
           loading={loading}
+          emptyState={emptyState}
           emptyIcon={emptyIcon}
+          emptyTitle={emptyTitle}
           emptyDescription={emptyDescription}
+          emptyAction={emptyAction}
           pageSize={pageSize}
           onPageChange={onPageChange}
           externalPagination={externalPagination}
           onCardClick={onCardClick}
+          gridLayout={viewMode === 'grid'}
+          getCardImage={getCardImage}
         />
       </div>
     );
@@ -99,28 +124,42 @@ const DashboardTable = memo(({
 
   // On desktop/tablet, use table view
   return (
-    <Card>
+    <Card className={cn(!isMobile && "mt-6")}>
       {title !== null && title !== undefined && title !== '' && (
         <CardHeader>
           <CardTitle>{title}</CardTitle>
         </CardHeader>
       )}
-      <CardContent className="p-0">
+      <CardContent className={title ? undefined : "pt-6"}>
         {loading ? (
           <div className="p-4">
             <TableSkeleton rows={pageSize} cols={columns.length || 6} />
           </div>
         ) : paginatedData.length === 0 ? (
           <div className="flex items-center justify-center p-8">
-            <Empty
-              description={emptyDescription}
-              image={emptyIcon}
-            />
+            {emptyState ? (
+              <EmptyState
+                icon={emptyState.icon}
+                title={emptyState.title}
+                description={emptyState.description}
+                primaryAction={emptyState.primaryAction}
+                secondaryAction={emptyState.secondaryAction}
+              />
+            ) : (
+              <div className="text-center space-y-3">
+                {emptyTitle && <h3 className="text-lg font-medium">{emptyTitle}</h3>}
+                <Empty
+                  description={emptyDescription}
+                  image={emptyIcon}
+                />
+                {emptyAction}
+              </div>
+            )}
           </div>
         ) : (
           <>
-            <div className="border-b overflow-hidden">
-              <Table>
+            <div className="border-b overflow-x-auto">
+              <Table className="min-w-[720px]">
                 <TableHeader>
                   <TableRow className="border-b">
                     {columns.map((column) => (
@@ -144,7 +183,7 @@ const DashboardTable = memo(({
 
             {/* Pagination */}
             {totalItems > 0 && (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 py-3 rounded-b-md px-4">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 py-3 rounded-b-md">
                 <div className="text-sm text-muted-foreground text-center sm:text-left">
                   Showing {startIndex} to {endIndex} of {totalItems} items
                 </div>
@@ -154,7 +193,7 @@ const DashboardTable = memo(({
                     size="sm"
                     onClick={() => handlePageChange(pagination.current - 1)}
                     disabled={pagination.current === 1 || loading}
-                    className="min-h-[44px]"
+                    className="min-h-[44px] min-w-[44px]"
                   >
                     <ChevronLeft className="h-4 w-4" />
                     <span className="hidden sm:inline ml-1">Previous</span>
@@ -167,7 +206,7 @@ const DashboardTable = memo(({
                     size="sm"
                     onClick={() => handlePageChange(pagination.current + 1)}
                     disabled={pagination.current === totalPages || loading}
-                    className="min-h-[44px]"
+                    className="min-h-[44px] min-w-[44px]"
                   >
                     <span className="hidden sm:inline mr-1">Next</span>
                     <ChevronRight className="h-4 w-4" />

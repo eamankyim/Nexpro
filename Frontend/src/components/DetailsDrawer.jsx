@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Pencil, Trash2, Printer, CheckCircle, Download, X, FileText, Share2, Archive } from 'lucide-react';
+import { useResponsive } from '@/hooks/useResponsive';
+import { Pencil, Trash2, Printer, CheckCircle, Download, X, FileText, Share2, Archive, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { 
@@ -29,11 +30,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 /**
  * Reusable Details Drawer Component using shadcn/ui
  * @param {Boolean} open - Whether the drawer is visible
  * @param {Function} onClose - Callback function when drawer is closed
+ * @param {Function} onOpenChange - Callback with (open: boolean) when drawer open state changes (e.g. setDrawerVisible)
  * @param {String} title - Drawer title
  * @param {Array} fields - Array of field objects with { label, value, span, render }
  * @param {Array} tabs - Array of tab objects with { key, label, content } (optional)
@@ -42,12 +46,17 @@ import {
  * @param {Function} onEdit - Callback function when edit button is clicked
  * @param {Function} onDelete - Callback function when delete is confirmed
  * @param {Function} onPrint - Callback function when print button is clicked
+ * @param {Boolean} printDisabled - When true, disables the View PDF button (e.g. while loading)
  * @param {Boolean} showActions - Whether to show edit/delete actions (default: true)
- * @param {String} deleteConfirmText - Custom delete confirmation text
+ * @param {String} deleteConfirmTitle - Custom delete confirmation title (default: 'Archive this item?')
+ * @param {String} deleteConfirmText - Custom delete confirmation description
+ * @param {String} deleteButtonLabel - Custom delete button label (default: 'Archive')
+ * @param {String} cancelButtonLabel - Custom cancel button label (default: 'Cancel')
  */
 const DetailsDrawer = ({ 
   open, 
-  onClose, 
+  onClose,
+  onOpenChange,
   title, 
   fields = [], 
   tabs = null,
@@ -58,11 +67,16 @@ const DetailsDrawer = ({
   onPrint,
   onDownload,
   onMarkPaid,
+  printDisabled = false,
   extraActions = [],
   extra = null,
   showActions = true,
-  deleteConfirmText = 'Are you sure you want to delete this item?'
+  deleteConfirmTitle = 'Archive this item?',
+  deleteConfirmText = 'You can restore it anytime from filters.',
+  deleteButtonLabel = 'Archive',
+  cancelButtonLabel = 'Cancel'
 }) => {
+  const { isMobile } = useResponsive();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [activeTab, setActiveTab] = useState(null);
 
@@ -92,16 +106,20 @@ const DetailsDrawer = ({
     <>
       <Sheet open={open} onOpenChange={(isOpen) => {
         if (!isOpen) {
-          onClose();
+          onClose?.();
+          onOpenChange?.(false);
         }
       }}>
         <SheetContent 
           side="right" 
-          className="shadow-none p-0 rounded-lg flex flex-col overflow-x-hidden"
+          className={cn(
+            "shadow-none p-0 rounded-lg flex flex-col overflow-x-hidden",
+            isMobile && "w-full max-w-[calc(100vw-16px)]"
+          )}
           style={{ 
-            width: typeof width === 'string' ? width : `${width}px`, 
-            minWidth: '30vw',
-            maxWidth: 'calc(90vw - 16px)',
+            width: isMobile ? '100%' : (typeof width === 'string' ? width : `${width}px`), 
+            minWidth: isMobile ? undefined : '30vw',
+            maxWidth: isMobile ? 'calc(100vw - 16px)' : 'calc(90vw - 16px)',
             marginLeft: '8px',
             marginRight: '8px',
             marginTop: '8px',
@@ -159,38 +177,58 @@ const DetailsDrawer = ({
           </div>
 
           {showActions && (onEdit || onDelete || onDownload || onPrint || onMarkPaid || extraActions.length > 0) && (
-            <div className="flex-shrink-0 bg-background">
-              <div className="border-t border-gray-200 w-full" aria-hidden />
+            <div className="flex-shrink-0 bg-background border-t border-border">
               <div className="p-6 flex flex-wrap gap-2 justify-end">
                 {onDownload && (
-                  <SecondaryButton onClick={onDownload}>
-                    <Download className="h-4 w-4 mr-2" />
-                    Download
-                  </SecondaryButton>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <SecondaryButton onClick={onDownload}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Download
+                      </SecondaryButton>
+                    </TooltipTrigger>
+                    <TooltipContent>Save or download this to your phone</TooltipContent>
+                  </Tooltip>
                 )}
                 {onPrint && (
-                  <Button
-                    variant="default"
-                    onClick={onPrint}
-                  >
-                    <FileText className="h-4 w-4 mr-2" />
-                    View PDF
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="outline" onClick={onPrint} disabled={printDisabled}>
+                        {printDisabled ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            Loading...
+                          </>
+                        ) : (
+                          <>
+                            <FileText className="h-4 w-4 mr-2" />
+                            View PDF
+                          </>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Open printable receipt or invoice</TooltipContent>
+                  </Tooltip>
                 )}
                 {onMarkPaid && (
-                  <Button
-                    onClick={onMarkPaid}
-                  >
-                    <CheckCircle className="h-4 w-4 mr-2" />
-                    Mark as Paid
-                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        onClick={onMarkPaid}
+                      >
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                        Mark as Paid
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Record that customer has paid</TooltipContent>
+                  </Tooltip>
                 )}
                 {extraActions
                   ?.filter(Boolean)
                   .map((action, index) => (
                     <Button
                       key={action.key || index}
-                      variant={action.variant || 'default'}
+                      variant={action.variant === 'secondary' ? 'secondaryStroke' : (action.variant || 'default')}
                       onClick={action.onClick}
                       disabled={action.disabled}
                     >
@@ -199,28 +237,38 @@ const DetailsDrawer = ({
                     </Button>
                   ))}
                 {onEdit && (
-                  <SecondaryButton onClick={onEdit}>
-                    <Pencil className="h-4 w-4 mr-2" />
-                    Edit
-                  </SecondaryButton>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <SecondaryButton onClick={onEdit}>
+                        <Pencil className="h-4 w-4 mr-2" />
+                        Edit
+                      </SecondaryButton>
+                    </TooltipTrigger>
+                    <TooltipContent>Change details</TooltipContent>
+                  </Tooltip>
                 )}
                 {onDelete && (
                   <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-                    <AlertDialogTrigger asChild>
-                      <SecondaryButton>
-                        <Archive className="h-4 w-4 mr-2" />
-                        Archive
-                      </SecondaryButton>
-                    </AlertDialogTrigger>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <AlertDialogTrigger asChild>
+                          <SecondaryButton>
+                            <Archive className="h-4 w-4 mr-2" />
+                            {deleteButtonLabel}
+                          </SecondaryButton>
+                        </AlertDialogTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>Hide from list</TooltipContent>
+                    </Tooltip>
                     <AlertDialogContent>
                       <AlertDialogHeader>
-                        <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                        <AlertDialogTitle>{deleteConfirmTitle}</AlertDialogTitle>
                         <AlertDialogDescription>
                           {deleteConfirmText}
                         </AlertDialogDescription>
                       </AlertDialogHeader>
                       <AlertDialogFooter>
-                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogCancel>{cancelButtonLabel}</AlertDialogCancel>
                         <AlertDialogAction
                           onClick={() => {
                             onDelete();
@@ -228,7 +276,7 @@ const DetailsDrawer = ({
                           }}
                           className="bg-secondary text-secondary-foreground hover:bg-secondary/90"
                         >
-                          Archive
+                          {deleteButtonLabel}
                         </AlertDialogAction>
                       </AlertDialogFooter>
                     </AlertDialogContent>

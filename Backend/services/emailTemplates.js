@@ -563,6 +563,56 @@ ${companyName}
 };
 
 /**
+ * Email verification template (after signup)
+ * @param {Object} user - User data
+ * @param {string} verifyLink - Verification link (FRONTEND_URL/verify-email?token=...)
+ * @param {Object} company - Company/tenant data
+ * @returns {Object} - { subject, html, text }
+ */
+const emailVerification = (user, verifyLink, company = {}) => {
+  const userName = user?.name || 'User';
+  const companyName = company.name || 'ShopWISE';
+
+  const content = `
+    <h2 style="margin-top: 0;">Verify your email</h2>
+    
+    <p>Dear ${userName},</p>
+    
+    <p>Thanks for signing up for ${companyName}. Please verify your email address by clicking the button below.</p>
+    
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="${verifyLink}" class="button">Verify email</a>
+    </div>
+    
+    <p style="color: #666; font-size: 14px;">
+      This link will expire in 24 hours. If you did not create an account, you can safely ignore this email.
+    </p>
+  `;
+
+  const text = `
+Verify your email
+
+Dear ${userName},
+
+Thanks for signing up for ${companyName}. Verify your email here: ${verifyLink}
+
+This link will expire in 24 hours.
+
+${companyName}
+  `.trim();
+
+  return {
+    subject: `Verify your email - ${companyName}`,
+    html: baseTemplate(content, {
+      companyName,
+      companyLogo: company.logo,
+      primaryColor: company.primaryColor || '#166534'
+    }),
+    text
+  };
+};
+
+/**
  * Low stock alert email template
  * @param {Array} items - Array of low stock items
  * @param {Object} company - Company/tenant data
@@ -640,5 +690,6 @@ module.exports = {
   paymentReminder,
   welcomeEmail,
   passwordReset,
+  emailVerification,
   lowStockAlert
 };

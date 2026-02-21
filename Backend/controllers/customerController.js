@@ -1,8 +1,39 @@
+const { sequelize } = require('../config/database');
 const { Customer, Job, CustomerActivity, User } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateCustomerListCache } = require('../middleware/cache');
+
+// @desc    Get customer stats (counts for summary cards) – single query, no row fetch
+// @route   GET /api/customers/stats
+// @access  Private
+exports.getCustomerStats = async (req, res, next) => {
+  try {
+    const tenantId = req.tenantId;
+    const [result] = await sequelize.query(
+      `SELECT
+        COUNT(*)::int AS "totalCustomers",
+        COUNT(*) FILTER (WHERE "isActive" = true)::int AS "activeCustomers",
+        COUNT(*) FILTER (WHERE "isActive" = false)::int AS "inactiveCustomers",
+        COUNT(*) FILTER (WHERE "isActive" = true AND COALESCE(balance, 0) > 0)::int AS "returningCustomers"
+      FROM customers WHERE "tenantId" = :tenantId`,
+      { replacements: { tenantId }, type: sequelize.QueryTypes.SELECT }
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalCustomers: result?.totalCustomers ?? 0,
+        activeCustomers: result?.activeCustomers ?? 0,
+        inactiveCustomers: result?.inactiveCustomers ?? 0,
+        returningCustomers: result?.returningCustomers ?? 0,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 // @desc    Get all customers
 // @route   GET /api/customers
@@ -127,20 +158,6 @@ exports.updateCustomer = async (req, res, next) => {
     const payload = sanitizePayload(req.body);
     await customer.update(payload);
     invalidateCustomerListCache(req.tenantId);
-
-    try {
-      await CustomerActivity.create({
-        customerId: customer.id,
-        tenantId: req.tenantId,
-        type: 'note',
-        subject: 'Customer Updated',
-        notes: 'Details were updated',
-        createdBy: req.user?.id || null,
-        metadata: {}
-      });
-    } catch (activityErr) {
-      console.error('Failed to create customer activity:', activityErr);
-    }
 
     res.status(200).json({
       success: true,

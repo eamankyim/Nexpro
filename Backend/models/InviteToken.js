@@ -9,11 +9,18 @@ const InviteToken = sequelize.define('InviteToken', {
   },
   tenantId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true,
     references: {
       model: 'tenants',
       key: 'id'
-    }
+    },
+    comment: 'Null for platform_admin invites'
+  },
+  inviteType: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: 'tenant',
+    comment: 'tenant | platform_admin'
   },
   token: {
     type: DataTypes.STRING,
@@ -67,10 +74,27 @@ const InviteToken = sequelize.define('InviteToken', {
     type: DataTypes.STRING,
     allowNull: true,
     comment: 'Optional name to pre-fill in signup form'
+  },
+  platformAdminRoleName: {
+    type: DataTypes.STRING(100),
+    allowNull: true,
+    comment: 'For inviteType=platform_admin: PlatformAdminRole name to assign (e.g. Marketing, Operations)'
   }
 }, {
   timestamps: true,
-  tableName: 'invite_tokens'
+  tableName: 'invite_tokens',
+  hooks: {
+    beforeCreate: (invite) => {
+      if (invite.email && typeof invite.email === 'string') {
+        invite.email = invite.email.trim().toLowerCase();
+      }
+    },
+    beforeUpdate: (invite) => {
+      if (invite.changed('email') && invite.email && typeof invite.email === 'string') {
+        invite.email = invite.email.trim().toLowerCase();
+      }
+    }
+  }
 });
 
 module.exports = InviteToken;

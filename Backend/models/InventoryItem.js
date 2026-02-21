@@ -20,8 +20,8 @@ const InventoryItem = sequelize.define('InventoryItem', {
     allowNull: false
   },
   sku: {
-    type: DataTypes.STRING,
-    unique: true
+    type: DataTypes.STRING
+    // Unique per tenant via migration idx_inventory_items_tenant_sku
   },
   description: {
     type: DataTypes.TEXT
@@ -75,7 +75,15 @@ const InventoryItem = sequelize.define('InventoryItem', {
   }
 }, {
   tableName: 'inventory_items',
-  timestamps: true
+  timestamps: true,
+  indexes: [
+    { fields: ['tenantId'] },
+    {
+      unique: true,
+      fields: ['tenantId', 'sku'],
+      where: { sku: { [require('sequelize').Op.ne]: null } }
+    }
+  ]
 });
 
 module.exports = InventoryItem;

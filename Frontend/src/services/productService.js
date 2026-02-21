@@ -55,6 +55,22 @@ const productService = {
   },
 
   /**
+   * Get sales/movement history for a product
+   * @param {string} productId - Product ID
+   * @param {Object} params - { page, limit }
+   * @returns {Promise<Object>} - { data: saleItems[], count, pagination }
+   */
+  getProductSales: async (productId, params = {}) => {
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      searchParams.append(key, value);
+    });
+    const query = searchParams.toString();
+    return api.get(`/products/${productId}/sales${query ? `?${query}` : ''}`);
+  },
+
+  /**
    * Get product by barcode
    * @param {string} barcode - Barcode string
    * @returns {Promise<Object>} - Product object
@@ -65,14 +81,24 @@ const productService = {
 
   /**
    * Resolve product from parsed QR payload (product QR code JSON).
-   * Tries barcode lookup first, then search by SKU for exact match.
-   * @param {Object} qrData - Parsed QR data { name, sku?, barcode? }
+   * Tries id first (from our generated QR), then barcode, then SKU, then name.
+   * @param {Object} qrData - Parsed QR data { id?, name, sku?, barcode? }
    * @returns {Promise<Object|null>} - Product or null
    */
   resolveProductFromQRPayload: async (qrData) => {
     if (!qrData || typeof qrData !== 'object') return null;
+    const id = (qrData.id || '').trim();
     const barcode = (qrData.barcode || '').trim();
     const sku = (qrData.sku || '').trim();
+    const name = (qrData.name || '').trim();
+
+    if (id) {
+      try {
+        const res = await api.get(`/products/${encodeURIComponent(id)}`);
+        const product = res?.data?.data ?? res?.data?.product ?? res?.product ?? res?.data;
+        if (product?.id) return product;
+      } catch (_) {}
+    }
 
     if (barcode) {
       try {
@@ -84,9 +110,18 @@ const productService = {
 
     if (sku) {
       try {
-        const res = await api.get(`/products?search=${encodeURIComponent(sku)}&limit=20`);
+        const res = await api.get(`/products?search=${encodeURIComponent(sku)}&limit=50`);
         const list = Array.isArray(res?.data?.data) ? res.data.data : (res?.data?.products ?? res?.products ?? []);
         const exact = list.find((p) => (p.sku || '').trim() === sku);
+        if (exact?.id) return exact;
+      } catch (_) {}
+    }
+
+    if (name) {
+      try {
+        const res = await api.get(`/products?search=${encodeURIComponent(name)}&limit=50`);
+        const list = Array.isArray(res?.data?.data) ? res.data.data : (res?.data?.products ?? res?.products ?? []);
+        const exact = list.find((p) => (p.name || '').trim().toLowerCase() === name.toLowerCase());
         if (exact?.id) return exact;
       } catch (_) {}
     }
@@ -227,11 +262,13 @@ const productService = {
   },
 
   /**
-   * Get product categories
+   * Get product categories (from product_categories table, NOT inventory_categories)
    * @returns {Promise<Array>} - Array of categories
    */
   getCategories: async () => {
-    return api.get('/products/categories');
+    const res = await api.get('/products/categories');
+    console.log('[productService.getCategories] GET /products/categories (product_categories)');
+    return res;
   },
 
   /**

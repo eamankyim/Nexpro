@@ -1,19 +1,29 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useSearchParams, useNavigate } from 'react-router-dom';
 import { useEffect, lazy, Suspense } from 'react';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { HintModeProvider } from './context/HintModeContext';
+import { ThemeProvider } from './context/ThemeContext';
+import { PWAInstallProvider } from './context/PWAInstallContext';
+import { PlatformAdminPermissionsProvider } from './context/PlatformAdminPermissionsContext';
 import PrivateRoute from './components/PrivateRoute';
 import PlatformRoute from './components/PlatformRoute';
 import MainLayout from './layouts/MainLayout';
 import AdminLayout from './layouts/AdminLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import TableSkeleton from './components/TableSkeleton';
+import PWAInstallBanner from './components/PWAInstallBanner';
 import { useSwipeBack } from './hooks/useSwipeBack';
 import { useIOSKeyboardFix } from './hooks/useKeyboardHandling';
 import Products from './pages/Products';
+import TourProvider from './components/tour/TourProvider';
 
 // Lazy load heavy pages for code splitting (Products is static to avoid duplicate React)
 const Login = lazy(() => import('./pages/Login'));
 const Signup = lazy(() => import('./pages/Signup'));
+const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Customers = lazy(() => import('./pages/Customers'));
@@ -24,7 +34,8 @@ const Quotes = lazy(() => import('./pages/Quotes'));
 const Expenses = lazy(() => import('./pages/Expenses'));
 const Pricing = lazy(() => import('./pages/Pricing'));
 const Reports = lazy(() => import('./pages/Reports'));
-const Inventory = lazy(() => import('./pages/Inventory'));
+const Materials = lazy(() => import('./pages/Materials'));
+const Equipment = lazy(() => import('./pages/Equipment'));
 const Leads = lazy(() => import('./pages/Leads'));
 const Users = lazy(() => import('./pages/Users'));
 const Profile = lazy(() => import('./pages/Profile'));
@@ -34,6 +45,7 @@ const Payroll = lazy(() => import('./pages/Payroll'));
 const Accounting = lazy(() => import('./pages/Accounting'));
 const Checkout = lazy(() => import('./pages/Checkout'));
 const Sales = lazy(() => import('./pages/Sales'));
+const Orders = lazy(() => import('./pages/Orders'));
 const Shops = lazy(() => import('./pages/Shops'));
 const Pharmacies = lazy(() => import('./pages/Pharmacies'));
 const Drugs = lazy(() => import('./pages/Drugs'));
@@ -41,10 +53,17 @@ const Prescriptions = lazy(() => import('./pages/Prescriptions'));
 const FootTraffic = lazy(() => import('./pages/FootTraffic'));
 const AdminOverview = lazy(() => import('./pages/admin/AdminOverview'));
 const AdminTenants = lazy(() => import('./pages/admin/AdminTenants'));
+const AdminLeads = lazy(() => import('./pages/admin/AdminLeads'));
+const AdminJobs = lazy(() => import('./pages/admin/AdminJobs'));
+const AdminExpenses = lazy(() => import('./pages/admin/AdminExpenses'));
+const AdminRoles = lazy(() => import('./pages/admin/AdminRoles'));
 const AdminBilling = lazy(() => import('./pages/admin/AdminBilling'));
 const AdminReports = lazy(() => import('./pages/admin/AdminReports'));
 const AdminHealth = lazy(() => import('./pages/admin/AdminHealth'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
+const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
+const AdminCustomers = lazy(() => import('./pages/admin/AdminCustomers'));
+const Workspace = lazy(() => import('./pages/Workspace'));
 
 // Loading fallback component
 const PageLoader = () => (
@@ -134,10 +153,14 @@ function AppContent() {
     >
       <MobileEnhancements />
       <SSOHandler />
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
+      <TourProvider>
+        <Suspense fallback={<PageLoader />}>
+          <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
+          <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/verify-email" element={<VerifyEmail />} />
           <Route
             path="/onboarding"
             element={
@@ -157,10 +180,12 @@ function AppContent() {
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
+            <Route path="workspace" element={<Workspace />} />
             <Route path="customers" element={<Customers />} />
             <Route path="vendors" element={<Vendors />} />
             <Route path="jobs" element={<Jobs />} />
             <Route path="sales" element={<Sales />} />
+            <Route path="orders" element={<Orders />} />
             <Route path="quotes" element={<Quotes />} />
             <Route path="invoices" element={<Invoices />} />
             <Route path="expenses" element={<Expenses />} />
@@ -170,8 +195,12 @@ function AppContent() {
               <Route index element={<Navigate to="/reports/overview" replace />} />
               <Route path="overview" element={<Reports />} />
               <Route path="smart-report" element={<Reports />} />
+              <Route path="compliance" element={<Reports />} />
             </Route>
-            <Route path="inventory" element={<Inventory />} />
+            <Route path="materials" element={<Materials />} />
+            <Route path="inventory" element={<Navigate to="/materials" replace />} />
+            <Route path="assets" element={<Navigate to="/materials" replace />} />
+            <Route path="equipment" element={<Equipment />} />
             <Route path="employees" element={<Employees />} />
             <Route path="payroll" element={<Payroll />} />
             <Route path="accounting" element={<Accounting />} />
@@ -192,37 +221,52 @@ function AppContent() {
             element={
               <PrivateRoute>
                 <PlatformRoute>
-                  <AdminLayout />
+                  <PlatformAdminPermissionsProvider>
+                    <AdminLayout />
+                  </PlatformAdminPermissionsProvider>
                 </PlatformRoute>
               </PrivateRoute>
             }
           >
             <Route index element={<AdminOverview />} />
             <Route path="tenants" element={<AdminTenants />} />
+            <Route path="customers" element={<AdminCustomers />} />
+            <Route path="users" element={<AdminUsers />} />
+            <Route path="leads" element={<AdminLeads />} />
+            <Route path="jobs" element={<AdminJobs />} />
+            <Route path="expenses" element={<AdminExpenses />} />
             <Route path="billing" element={<AdminBilling />} />
+            <Route path="roles" element={<Navigate to="/admin/settings?tab=roles" replace />} />
             <Route path="reports" element={<AdminReports />} />
             <Route path="health" element={<AdminHealth />} />
             <Route path="settings" element={<AdminSettings />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
-      </Suspense>
+          </Routes>
+        </Suspense>
+      </TourProvider>
     </Router>
   );
 }
 
-function App() {
-  useEffect(() => {
-    // Add dark class to html element for dark mode
-    document.documentElement.classList.add('dark');
-  }, []);
+const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 
+function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <AppContent />
-      </AuthProvider>
+      <GoogleOAuthProvider clientId={googleClientId}>
+        <ThemeProvider>
+          <PWAInstallProvider>
+            <AuthProvider>
+              <HintModeProvider>
+                <AppContent />
+                <PWAInstallBanner />
+              </HintModeProvider>
+            </AuthProvider>
+          </PWAInstallProvider>
+        </ThemeProvider>
+      </GoogleOAuthProvider>
     </ErrorBoundary>
   );
 }

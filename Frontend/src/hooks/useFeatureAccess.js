@@ -8,8 +8,8 @@ import api from '../services/api';
  * Usage:
  * const { hasFeature, features, loading } = useFeatureAccess();
  * 
- * if (hasFeature('inventory')) {
- *   // Show inventory features
+ * if (hasFeature('materials')) {
+ *   // Show materials features
  * }
  */
 export const useFeatureAccess = () => {
@@ -90,8 +90,8 @@ export const useFeatureAccess = () => {
  * Component wrapper to conditionally render based on feature access
  * 
  * Usage:
- * <FeatureGate feature="inventory">
- *   <InventoryComponent />
+ * <FeatureGate feature="materials">
+ *   <MaterialsComponent />
  * </FeatureGate>
  */
 export const FeatureGate = ({ feature, features, fallback = null, children }) => {

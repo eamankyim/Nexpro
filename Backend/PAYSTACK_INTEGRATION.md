@@ -16,7 +16,18 @@ This guide explains how to integrate Paystack for subscription management. Plans
 
 ## Setup Steps
 
-### 1. Create Plans in Paystack Dashboard
+### 1. Create Plans in Paystack (via script)
+
+Run the sync script to create plans in Paystack and get plan codes:
+
+```bash
+cd Backend
+node scripts/sync-paystack-plans.js
+```
+
+Add the output to your `.env` file. Plans are created automatically with the correct amounts and intervals.
+
+**Alternatively**, create plans manually in Paystack Dashboard:
 
 1. Log in to [Paystack Dashboard](https://dashboard.paystack.com)
 2. Go to **Settings → Plans**
@@ -73,12 +84,14 @@ This guide explains how to integrate Paystack for subscription management. Plans
 ```env
 PAYSTACK_SECRET_KEY=sk_test_xxxxx
 PAYSTACK_PUBLIC_KEY=pk_test_xxxxx
+# Optional: Subaccount for split payments (platform fee)
+PAYSTACK_SUBACCOUNT_CODE=ACCT_xxxxx
 ```
 
 ### 3. Set Up Webhook URL
 
 1. In Paystack Dashboard, go to **Settings → API Keys & Webhooks**
-2. Add webhook URL: `https://your-backend.vercel.app/api/webhooks/paystack`
+2. Add webhook URL: `https://your-backend-domain.com/api/webhooks/paystack`
 3. Select events to listen for:
    - `subscription.create`
    - `subscription.disable`

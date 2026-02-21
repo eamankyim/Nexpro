@@ -1,5 +1,6 @@
 const express = require('express');
 const {
+  getCustomerStats,
   getCustomers,
   getCustomer,
   createCustomer,
@@ -27,6 +28,10 @@ router.use(tenantContext);
 router.route('/')
   .get(cacheMiddleware(60, generateCustomerListKey), getCustomers)
   .post(authorize('admin', 'manager', 'staff'), createCustomer);
+
+// Stats endpoint - must be before /:id to avoid route conflict
+router.route('/stats')
+  .get(getCustomerStats);
 
 // Export endpoint - must be before /:id to avoid route conflict
 router.route('/export')

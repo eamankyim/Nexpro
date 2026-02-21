@@ -1,7 +1,7 @@
 const { Invoice, Job, Customer, JobItem, Payment, Sale, Prescription, SaleActivity } = require('../models');
 const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
-const { createInvoicePaymentJournal } = require('../services/invoiceAccountingService');
+const { createInvoicePaymentJournal, createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { invalidateInvoiceListCache } = require('../middleware/cache');
 const activityLogger = require('../services/activityLogger');
@@ -349,6 +349,13 @@ exports.createInvoice = async (req, res, next) => {
       await updateCustomerBalance(invoice.customerId);
     } catch (error) {
       console.error('Failed to update customer balance:', error);
+    }
+
+    // Revenue recognition (Dr AR Cr Revenue) for accounting
+    try {
+      await createInvoiceRevenueJournal(createdInvoice, req.user?.id);
+    } catch (journalError) {
+      console.error('Failed to create accounting revenue entry for invoice', journalError);
     }
 
     // Send webhook to Sabito (async, don't block response)

@@ -2,6 +2,7 @@ const express = require('express');
 const {
   getProducts,
   getProduct,
+  getProductSales,
   createProduct,
   updateProduct,
   deleteProduct,
@@ -67,6 +68,9 @@ router.route('/variants/:variantId')
 router.route('/:id/variants')
   .get(getProductVariants)
   .post(authorize('admin', 'manager', 'staff'), createProductVariant);
+
+router.route('/:id/sales')
+  .get(getProductSales);
 
 router.route('/:id')
   .get(getProduct)

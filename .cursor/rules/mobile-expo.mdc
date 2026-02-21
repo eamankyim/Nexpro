@@ -1,0 +1,68 @@
+---
+description: Expo/React Native mobile app - setup, dependencies, structure, API
+globs: "**/mobile/**/*.{js,jsx,ts,tsx}"
+alwaysApply: false
+---
+
+# Mobile App (Expo) — Setup & Implementation
+
+**ALWAYS follow these when working in `mobile/`.**
+
+## Reference Docs
+
+- **Build guide:** `docs/MOBILE_APP_BUILD_GUIDE.md` — dependencies, env, path aliases, CORS, errors
+- **Plan:** `.cursor/plans/mobile_app_implementation_strategy.plan.md` — phases, order, files
+- **Design refs:** `docs/mobile-design-references.md` — Revolut, Fuse patterns
+
+## Dependencies
+
+- Use `npx expo install <pkg>` for Expo packages (expo-secure-store, expo-router, expo-blur, etc.)
+- Use `npm install` for non-Expo (axios, @tanstack/react-query, @gorhom/bottom-sheet)
+- **DO NOT** add packages that require native code not in Expo Go unless using dev build
+
+## Imports & Path Aliases
+
+- Use `@/` alias: `import { api } from '@/services/api'`
+- Requires `babel-plugin-module-resolver` + `tsconfig.json` paths (see build guide)
+- Import order: 1) React/Expo, 2) services/hooks, 3) components, 4) constants
+
+## API & Auth
+
+- API URL: `process.env.EXPO_PUBLIC_API_URL` or `Constants.expoConfig?.extra?.apiUrl`
+- Token storage: `expo-secure-store` (not AsyncStorage for production)
+- Same backend endpoints as web; reuse API structure from `Frontend/src/services/`
+
+## Structure
+
+- `app/` — Expo Router file-based routes; `(tabs)/` for tab navigator
+- `services/` — api.ts, auth.ts
+- `context/` — AuthContext, ThemeContext
+- `components/` — reusable UI
+
+## UI (React Native)
+
+- Use React Native primitives: `View`, `Text`, `Pressable`, `ScrollView`, `FlatList`/`FlashList`
+- **DO NOT** use shadcn/ui or web components — they are for Frontend only
+- Use `@expo/vector-icons` or `lucide-react-native` for icons
+
+## Mobile App — Out of Scope (Web Only)
+
+**DO NOT implement these screens in the mobile app.** They are web-only; use the web app for these features.
+
+- Leads
+- Vendors
+- Employees
+- Payroll
+- Users / Team management
+- Prescriptions (pharmacy)
+- Drugs (pharmacy)
+- Foot Traffic
+- Accounting
+
+## Rules from .cursorrules (Adapted)
+
+- **No shadows** — use borders, flat design
+- **Primary color** #166534
+- **Button order** — secondary before primary
+- **Business type** — check `activeTenant?.businessType` for center tab action (Camera vs Plus)
+- **Constants** — define in `constants/` instead of magic strings

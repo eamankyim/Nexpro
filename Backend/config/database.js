@@ -7,11 +7,11 @@ require('dotenv').config();
 
 const sequelize = new Sequelize(process.env.DATABASE_URL, {
   dialect: 'postgres',
-  logging: process.env.NODE_ENV === 'development' ? console.log : false,
+  logging: process.env.SQL_DEBUG === 'true' ? console.log : false,
   pool: {
-    max: 10, // Increased from 5 to 10 for better concurrency
-    min: 2, // Increased from 0 to 2 to maintain warm connections
-    acquire: 60000, // Increased timeout for connection acquisition
+    max: 15, // Higher concurrency for remote DB
+    min: 3, // Keep warm connections to reduce setup latency
+    acquire: 60000,
     idle: 10000
   },
   dialectOptions: {

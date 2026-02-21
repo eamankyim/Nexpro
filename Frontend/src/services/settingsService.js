@@ -40,6 +40,7 @@ const uploadProfilePicture = async (file) => {
 };
 
 const getOrganization = async () => api.get('/settings/organization');
+const getOrganizationSettings = getOrganization;
 
 const updateOrganization = async (payload) => api.put('/settings/organization', payload);
 
@@ -57,14 +58,33 @@ const getSubscription = async () => api.get('/settings/subscription');
 
 const updateSubscription = async (payload) => api.put('/settings/subscription', payload);
 
+const getPOSConfig = async () => api.get('/settings/pos-config');
+
+const updatePOSConfig = async (payload) => api.put('/settings/pos-config', payload);
+
+const getCustomerSources = async () => {
+  const res = await api.get('/settings/customer-sources');
+  return res?.data ?? [];
+};
+
+const getLeadSources = async () => {
+  const res = await api.get('/settings/lead-sources');
+  return res?.data ?? [];
+};
+
 export default {
   getProfile,
   updateProfile,
   uploadProfilePicture,
   getOrganization,
+  getOrganizationSettings,
   updateOrganization,
   uploadOrganizationLogo,
   getSubscription,
-  updateSubscription
+  updateSubscription,
+  getPOSConfig,
+  updatePOSConfig,
+  getCustomerSources,
+  getLeadSources
 };
 

@@ -6,8 +6,8 @@ import api from './api';
  * @returns {Promise<{ success: boolean, message: string }>} API response with assistant message
  */
 const chat = async (messages) => {
-  const { data } = await api.post('/assistant/chat', { messages });
-  return data;
+  const response = await api.post('/assistant/chat', { messages });
+  return response;
 };
 
 const assistantService = {

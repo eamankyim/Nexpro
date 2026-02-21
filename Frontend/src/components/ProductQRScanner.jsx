@@ -106,12 +106,12 @@ export default function ProductQRScanner({ open, onClose, onProductData }) {
             </div>
           ) : (
             <>
-              <div className="relative w-full rounded-lg overflow-hidden min-h-[260px] bg-gray-100 border border-gray-200">
+              <div className="relative w-full rounded-lg overflow-hidden min-h-[260px] bg-muted border border-border">
                 {isStarting && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-white/90 z-10">
+                  <div className="absolute inset-0 flex items-center justify-center bg-background/90 z-10">
                     <div className="text-center">
                       <Loader2 className="h-8 w-8 animate-spin text-[#166534] mx-auto" />
-                      <p className="text-sm text-gray-600 mt-2">Starting camera…</p>
+                      <p className="text-sm text-gray-600 mt-2">Starting camera...</p>
                     </div>
                   </div>
                 )}

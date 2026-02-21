@@ -1,11 +1,16 @@
+const fs = require('fs');
+const path = require('path');
 const { Expense, Vendor, Job, User } = require('../models');
 const ExpenseActivity = require('../models/ExpenseActivity');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { getExpenseCategories } = require('../config/expenseCategories');
 const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
+const { createExpenseJournal } = require('../services/expenseAccountingService');
 const { invalidateAfterMutation } = require('../middleware/cache');
+const { baseUploadDir, ensureDirExists } = require('../middleware/upload');
 
 /**
  * Generate unique expense number with optional transaction for advisory lock (prevents race conditions).
@@ -13,7 +18,7 @@ const { invalidateAfterMutation } = require('../middleware/cache');
  * @param {Object} [transaction] - Sequelize transaction (when provided, uses advisory lock and sees uncommitted rows)
  * @returns {Promise<string>} - e.g. EXP-202601-0001
  */
-const generateExpenseNumber = async (tenantId, transaction = null) => {
+exports.generateExpenseNumber = async (tenantId, transaction = null) => {
   const date = new Date();
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -89,8 +94,220 @@ const generateExpenseNumber = async (tenantId, transaction = null) => {
   }
 };
 
-// @desc    Get all expenses for the tenant (all users)
-// @route   GET /api/expenses
+/**
+ * Generate unique expense number for internal (platform) admin expenses.
+ * @param {Object} [transaction] - Sequelize transaction
+ * @returns {Promise<string>} - e.g. ADMIN-EXP-202602-0001
+ */
+exports.generateAdminExpenseNumber = async (transaction = null) => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const pattern = `ADMIN-EXP-${year}${month}-%`;
+
+  try {
+    if (transaction) {
+      const lockId = `admin_expense_number_${year}${month}`.replace(/-/g, '_').substring(0, 63);
+      const [lockHash] = await sequelize.query(
+        'SELECT hashtext(:lockId) AS lock_hash',
+        {
+          replacements: { lockId },
+          type: sequelize.QueryTypes.SELECT,
+          transaction
+        }
+      );
+      const lockKey = Math.abs(lockHash?.lock_hash || 0);
+      await sequelize.query('SELECT pg_advisory_xact_lock(:lockKey)', {
+        replacements: { lockKey },
+        type: sequelize.QueryTypes.SELECT,
+        transaction
+      });
+    }
+
+    const queryResults = await sequelize.query(
+      `SELECT "expenseNumber",
+              CAST(SPLIT_PART("expenseNumber", '-', 4) AS INTEGER) AS sequence
+       FROM expenses
+       WHERE "tenantId" IS NULL
+         AND "expenseNumber" LIKE :pattern
+         AND SPLIT_PART("expenseNumber", '-', 4) ~ '^[0-9]+$'
+       ORDER BY CAST(SPLIT_PART("expenseNumber", '-', 4) AS INTEGER) DESC
+       LIMIT 1`,
+      {
+        replacements: { pattern },
+        type: sequelize.QueryTypes.SELECT,
+        transaction: transaction || undefined
+      }
+    );
+
+    let sequence = 1;
+    const result = Array.isArray(queryResults) && queryResults.length > 0 ? queryResults[0] : null;
+    if (result && result.sequence != null) {
+      const maxSeq = parseInt(result.sequence, 10);
+      if (!Number.isNaN(maxSeq) && maxSeq >= 1) {
+        sequence = maxSeq + 1;
+      }
+    }
+
+    return `ADMIN-EXP-${year}${month}-${String(sequence).padStart(4, '0')}`;
+  } catch (err) {
+    console.error('[AdminExpenseNumber] Error:', err.message);
+    const timestamp = Date.now().toString().slice(-6);
+    return `ADMIN-EXP-${year}${month}-${timestamp}`;
+  }
+};
+
+/**
+ * @desc    Upload expense receipt (image or PDF)
+ * @route   POST /api/expenses/upload-receipt
+ * @access  Private
+ */
+exports.uploadExpenseReceipt = async (req, res, next) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+    const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+
+    if (isServerless) {
+      const mime = req.file.mimetype || 'image/jpeg';
+      const base64 = req.file.buffer.toString('base64');
+      const receiptUrl = `data:${mime};base64,${base64}`;
+      return res.status(200).json({ success: true, receiptUrl });
+    }
+
+    const tenantId = req.tenantId;
+    const subDir = path.join('expenses', tenantId);
+    const uploadPath = path.join(baseUploadDir, subDir);
+    ensureDirExists(uploadPath);
+    const ext = path.extname(req.file.originalname) || '.jpg';
+    const sanitized = req.file.originalname.replace(/[^a-zA-Z0-9.\-_]/g, '_').replace(/\.[^.]+$/, '') || 'receipt';
+    const filename = `${Date.now()}-${sanitized}${ext}`;
+    const filePath = path.join(uploadPath, filename);
+    fs.writeFileSync(filePath, req.file.buffer);
+    const receiptUrl = `/uploads/expenses/${tenantId}/${filename}`;
+    res.status(200).json({ success: true, receiptUrl });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get expense categories for current tenant (based on business type, shop/studio type, and custom)
+// @route   GET /api/expenses/categories
+// @access  Private
+exports.getExpenseCategories = async (req, res, next) => {
+  try {
+    const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
+    const businessType = tenant?.businessType || 'shop';
+    const metadata = tenant?.metadata || {};
+    const defaultCategories = getExpenseCategories(businessType, metadata);
+    const custom = Array.isArray(metadata.customExpenseCategories) ? metadata.customExpenseCategories : [];
+    const merged = [...new Set([...defaultCategories, ...custom])].sort();
+
+    res.status(200).json({
+      success: true,
+      data: merged,
+      custom
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Add a custom expense category for the current tenant
+ * @route   POST /api/expenses/categories
+ * @access  Private (admin, manager, staff)
+ */
+exports.addCustomExpenseCategory = async (req, res, next) => {
+  try {
+    const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
+    if (!tenant) {
+      return res.status(404).json({ success: false, error: 'Tenant not found' });
+    }
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Category name is required' });
+    }
+    const metadata = tenant.metadata || {};
+    const custom = Array.isArray(metadata.customExpenseCategories) ? [...metadata.customExpenseCategories] : [];
+    if (custom.includes(name)) {
+      const defaultCategories = getExpenseCategories(tenant.businessType || 'shop', metadata);
+      const merged = [...new Set([...defaultCategories, ...custom])].sort();
+      return res.status(200).json({
+        success: true,
+        data: merged,
+        custom,
+        message: 'Category already exists'
+      });
+    }
+    custom.push(name);
+    custom.sort();
+    metadata.customExpenseCategories = custom;
+    tenant.metadata = metadata;
+    await tenant.save();
+
+    const defaultCategories = getExpenseCategories(tenant.businessType || 'shop', metadata);
+    const merged = [...new Set([...defaultCategories, ...custom])].sort();
+
+    res.status(201).json({
+      success: true,
+      data: merged,
+      custom,
+      message: 'Custom category added'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Remove a custom expense category for the current tenant
+ * @route   DELETE /api/expenses/categories
+ * @access  Private (admin, manager, staff)
+ */
+exports.removeCustomExpenseCategory = async (req, res, next) => {
+  try {
+    const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
+    if (!tenant) {
+      return res.status(404).json({ success: false, error: 'Tenant not found' });
+    }
+    const name = typeof req.query?.name === 'string' ? req.query.name.trim() : '';
+    if (!name) {
+      return res.status(400).json({ success: false, error: 'Category name (query param "name") is required' });
+    }
+    const metadata = tenant.metadata || {};
+    const custom = Array.isArray(metadata.customExpenseCategories) ? [...metadata.customExpenseCategories] : [];
+    const idx = custom.indexOf(name);
+    if (idx === -1) {
+      const defaultCategories = getExpenseCategories(tenant.businessType || 'shop', metadata);
+      const merged = [...new Set([...defaultCategories, ...custom])].sort();
+      return res.status(200).json({
+        success: true,
+        data: merged,
+        custom,
+        message: 'Category not in custom list'
+      });
+    }
+    custom.splice(idx, 1);
+    metadata.customExpenseCategories = custom;
+    tenant.metadata = metadata;
+    await tenant.save();
+
+    const defaultCategories = getExpenseCategories(tenant.businessType || 'shop', metadata);
+    const merged = [...new Set([...defaultCategories, ...custom])].sort();
+
+    res.status(200).json({
+      success: true,
+      data: merged,
+      custom,
+      message: 'Custom category removed'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @access  Private
 // @note    Returns expenses from all users in the tenant, not filtered by current user
 exports.getExpenses = async (req, res, next) => {
@@ -100,6 +317,7 @@ exports.getExpenses = async (req, res, next) => {
     const status = req.query.status;
     const jobId = req.query.jobId;
     const approvalStatus = req.query.approvalStatus;
+    const viewType = req.query.viewType;
     const includeArchived = req.query.includeArchived === 'true';
 
     // Filter by tenant only - returns expenses from all users in the tenant
@@ -108,6 +326,8 @@ exports.getExpenses = async (req, res, next) => {
     if (status && status !== 'null') where.status = status;
     if (jobId && jobId !== 'null') where.jobId = jobId;
     if (approvalStatus && approvalStatus !== 'null') where.approvalStatus = approvalStatus;
+    if (viewType === 'general') where.jobId = null;
+    if (viewType === 'job-specific') where.jobId = { [Op.ne]: null };
     // Exclude archived expenses by default
     if (!includeArchived) {
       where.isArchived = false;
@@ -190,7 +410,7 @@ exports.createExpense = async (req, res, next) => {
     const transaction = await sequelize.transaction();
     try {
       const payload = sanitizePayload(req.body);
-      const expenseNumber = await generateExpenseNumber(req.tenantId, transaction);
+      const expenseNumber = await exports.generateExpenseNumber(req.tenantId, transaction);
 
       if (payload.vendorId) {
         const vendor = await Vendor.findOne({
@@ -262,6 +482,14 @@ exports.createExpense = async (req, res, next) => {
 
       await transaction.commit();
       invalidateAfterMutation(req.tenantId);
+
+      if (isAdmin) {
+        try {
+          await createExpenseJournal(expenseWithDetails, req.userId);
+        } catch (journalError) {
+          console.error('Failed to create accounting entry for auto-approved expense', journalError?.message);
+        }
+      }
 
       return res.status(201).json({
         success: true,
@@ -394,7 +622,7 @@ exports.createBulkExpenses = async (req, res, next) => {
         }
       }
 
-      const expenseNumber = await generateExpenseNumber(req.tenantId, transaction);
+      const expenseNumber = await exports.generateExpenseNumber(req.tenantId, transaction);
 
       const expense = await Expense.create({
         ...finalExpenseData,
@@ -452,6 +680,16 @@ exports.createBulkExpenses = async (req, res, next) => {
       }
     } catch (error) {
       console.error('Failed to create expense activities:', error);
+    }
+
+    if (isAdmin) {
+      for (const exp of expensesWithDetails) {
+        try {
+          await createExpenseJournal(exp, req.userId);
+        } catch (journalError) {
+          console.error('Failed to create accounting entry for auto-approved expense', exp.expenseNumber, journalError?.message);
+        }
+      }
     }
 
     res.status(201).json({
@@ -594,6 +832,14 @@ exports.updateExpense = async (req, res, next) => {
     // Invalidate cache after updating expense
     invalidateAfterMutation(req.tenantId);
 
+    if (updatePayload.approvalStatus === 'approved' && previousStatus !== 'approved') {
+      try {
+        await createExpenseJournal(updatedExpense, req.user?.id);
+      } catch (journalError) {
+        console.error('Failed to create accounting entry for approved expense', journalError?.message);
+      }
+    }
+
     res.status(200).json({
       success: true,
       data: updatedExpense
@@ -728,7 +974,15 @@ exports.getExpenseStats = async (req, res, next) => {
 
     const thisMonthExpensesRaw = await Expense.sum('amount', { where: monthlyWhereClause }) || 0;
     const thisMonthExpenses = Number(parseFloat(thisMonthExpensesRaw).toFixed(2));
-    
+
+    const categoryCount = stats?.length ?? 0;
+    const pendingRequests = await Expense.count({
+      where: { ...baseFilters, approvalStatus: 'pending_approval' }
+    });
+    const approvedCount = await Expense.count({
+      where: { ...baseFilters, approvalStatus: 'approved', isArchived: false }
+    });
+
     // Get job-specific expenses if jobId is provided
     let jobExpenses = null;
     if (jobId) {
@@ -747,6 +1001,16 @@ exports.getExpenseStats = async (req, res, next) => {
         categoryStats: stats,
         totalExpenses,
         thisMonthExpenses,
+        categoryCount,
+        pendingRequests,
+        approvedCount,
+        totals: {
+          totalExpenses,
+          categoryCount,
+          thisMonth: thisMonthExpenses,
+          pendingRequests,
+          approvedCount
+        },
         jobExpenses
       }
     });
@@ -916,7 +1180,7 @@ exports.approveExpense = async (req, res, next) => {
     // Log activity
     try {
       await activityLogger.logExpenseApproved(updatedExpense, req.user?.id || null);
-      
+
       // Create ExpenseActivity record
       await ExpenseActivity.create({
         expenseId: expense.id,
@@ -933,6 +1197,13 @@ exports.approveExpense = async (req, res, next) => {
       });
     } catch (error) {
       console.error('Failed to log expense approval activity:', error);
+    }
+
+    // Post to accounting (Dr Expense Cr Cash/Bank)
+    try {
+      await createExpenseJournal(updatedExpense, req.userId);
+    } catch (journalError) {
+      console.error('Failed to create accounting entry for approved expense', journalError?.message);
     }
 
     res.status(200).json({

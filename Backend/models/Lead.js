@@ -9,7 +9,7 @@ const Lead = sequelize.define('Lead', {
   },
   tenantId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true, // Allow NULL for admin leads
     references: {
       model: 'tenants',
       key: 'id'
@@ -94,7 +94,40 @@ const Lead = sequelize.define('Lead', {
   }
 }, {
   tableName: 'leads',
-  timestamps: true
+  timestamps: true,
+  hooks: {
+    beforeValidate: (lead) => {
+      if (lead.email === '' || (typeof lead.email === 'string' && !lead.email.trim())) {
+        lead.email = null;
+      }
+    },
+    beforeCreate: (lead) => {
+      if (lead.email && typeof lead.email === 'string') {
+        lead.email = lead.email.trim().toLowerCase();
+      }
+      if (lead.phone && typeof lead.phone === 'string') {
+        try {
+          const { formatToE164 } = require('../utils/phoneUtils');
+          const e164 = formatToE164(lead.phone.trim());
+          if (e164) lead.phone = e164;
+          else lead.phone = lead.phone.trim();
+        } catch { lead.phone = lead.phone.trim(); }
+      }
+    },
+    beforeUpdate: (lead) => {
+      if (lead.changed('email') && lead.email && typeof lead.email === 'string') {
+        lead.email = lead.email.trim().toLowerCase();
+      }
+      if (lead.changed('phone') && lead.phone && typeof lead.phone === 'string') {
+        try {
+          const { formatToE164 } = require('../utils/phoneUtils');
+          const e164 = formatToE164(lead.phone.trim());
+          if (e164) lead.phone = e164;
+          else lead.phone = lead.phone.trim();
+        } catch { lead.phone = lead.phone.trim(); }
+      }
+    }
+  }
 });
 
 module.exports = Lead;

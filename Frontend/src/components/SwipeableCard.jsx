@@ -139,7 +139,7 @@ const SwipeableCard = ({
     <div className="relative overflow-hidden" ref={containerRef}>
       {/* Left Actions */}
       {hasLeftActions && (
-        <div className="absolute left-0 top-0 bottom-0 flex items-center bg-gray-100 z-10">
+        <div className="absolute left-0 top-0 bottom-0 flex items-center bg-muted z-10">
           {leftActions.map((action, index) => (
             <Button
               key={index}
@@ -148,7 +148,7 @@ const SwipeableCard = ({
               onClick={(e) => handleActionClick(action, e)}
               className={cn(
                 "h-full min-w-[60px] rounded-none",
-                action.color || "text-gray-700 hover:bg-gray-200"
+                action.color || "text-foreground hover:bg-muted"
               )}
               style={{ backgroundColor: action.bgColor || 'transparent' }}
             >
@@ -163,7 +163,7 @@ const SwipeableCard = ({
 
       {/* Right Actions */}
       {hasRightActions && (
-        <div className="absolute right-0 top-0 bottom-0 flex items-center bg-gray-100 z-10">
+        <div className="absolute right-0 top-0 bottom-0 flex items-center bg-muted z-10">
           {rightActions.map((action, index) => (
             <Button
               key={index}
@@ -172,7 +172,7 @@ const SwipeableCard = ({
               onClick={(e) => handleActionClick(action, e)}
               className={cn(
                 "h-full min-w-[60px] rounded-none",
-                action.color || "text-gray-700 hover:bg-gray-200"
+                action.color || "text-foreground hover:bg-muted"
               )}
               style={{ backgroundColor: action.bgColor || 'transparent' }}
             >
@@ -189,7 +189,7 @@ const SwipeableCard = ({
       <div
         ref={cardRef}
         className={cn(
-          "relative transition-transform duration-200 ease-out bg-white",
+          "relative transition-transform duration-200 ease-out bg-card",
           isSwiping && "transition-none"
         )}
         style={{

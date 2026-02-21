@@ -1,12 +1,13 @@
 import { toast } from 'react-toastify';
 
 /**
- * Extracts a clear, user-friendly error message from an error object
+ * Extracts a clear, user-friendly error message from an error object.
+ * Messages follow UX best practices: answer "What went wrong?" + "How to fix it?"
  * @param {Error|Object} error - The error object from API or catch block
  * @param {string} defaultMessage - Default message if error extraction fails
  * @returns {string} - Clear error message for the user
  */
-export const getErrorMessage = (error, defaultMessage = 'An error occurred. Please try again.') => {
+export const getErrorMessage = (error, defaultMessage = 'Something went wrong. Please try again.') => {
   // If error is already a string, return it
   if (typeof error === 'string') {
     return error;
@@ -48,10 +49,10 @@ export const getErrorMessage = (error, defaultMessage = 'An error occurred. Plea
 
   // Check for error message directly
   if (error?.message) {
-    // Don't show technical error messages to users
+    // Don't show technical error messages to users - use friendly versions
     const technicalErrors = ['Network Error', 'Request failed', 'timeout'];
     if (technicalErrors.some(te => error.message.includes(te))) {
-      return 'Unable to connect to server. Please check your internet connection and try again.';
+      return 'Connection lost. Check your internet and try again.';
     }
     return error.message;
   }
@@ -63,12 +64,12 @@ export const getErrorMessage = (error, defaultMessage = 'An error occurred. Plea
 
   // Check for network errors
   if (error?.code === 'NETWORK_ERROR' || error?.message === 'Network Error') {
-    return 'Unable to connect to server. Please check your internet connection.';
+    return 'Connection lost. Check your internet and try again.';
   }
 
   // Check for timeout errors
   if (error?.code === 'ECONNABORTED' || error?.message?.includes('timeout')) {
-    return 'Request timed out. Please try again.';
+    return 'Taking longer than expected. Try again or check your connection.';
   }
 
   // Return default message
@@ -94,7 +95,7 @@ export const showSuccess = (msg, duration = 3) => {
  * @param {string} defaultMessage - Default message if error extraction fails
  * @param {number} duration - Duration in seconds (default: 5)
  */
-export const showError = (error, defaultMessage = 'An error occurred. Please try again.', duration = 5) => {
+export const showError = (error, defaultMessage = 'Something went wrong. Please try again.', duration = 5) => {
   const errorMessage = getErrorMessage(error, defaultMessage);
   toast.error(errorMessage, {
     autoClose: duration > 0 ? duration * 1000 : 5000,
@@ -144,11 +145,12 @@ export const showLoading = (msg = 'Loading...', duration = 0) => {
 };
 
 /**
- * Handles API errors with appropriate user-friendly messages
+ * Handles API errors with appropriate user-friendly messages.
+ * Messages follow UX pattern: "Couldn't {action}. Please try again."
  * @param {Error} error - The error from API call
  * @param {Object} options - Options for error handling
  * @param {string} options.defaultMessage - Default error message
- * @param {string} options.context - Context of the error (e.g., 'creating user', 'fetching data')
+ * @param {string} options.context - Context of the error (e.g., 'create user', 'load data')
  * @param {boolean} options.logError - Whether to log error to console (default: true)
  */
 export const handleApiError = (error, options = {}) => {
@@ -162,9 +164,9 @@ export const handleApiError = (error, options = {}) => {
   // Build context-aware default message
   let message = defaultMessage;
   if (context && !defaultMessage) {
-    message = `Failed to ${context}. Please try again.`;
+    message = `Couldn't ${context}. Please try again.`;
   } else if (!defaultMessage) {
-    message = 'An error occurred. Please try again.';
+    message = 'Something went wrong. Please try again.';
   }
 
   // Show error toast

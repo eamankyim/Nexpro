@@ -2,6 +2,26 @@ const { Vendor, Expense } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
+const { getVendorCategories } = require('../config/vendorCategories');
+
+// @desc    Get vendor categories for current tenant (based on business type and shop/studio type)
+// @route   GET /api/vendors/categories
+// @access  Private
+exports.getVendorCategories = async (req, res, next) => {
+  try {
+    const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
+    const businessType = tenant?.businessType || 'shop';
+    const metadata = tenant?.metadata || {};
+    const categories = getVendorCategories(businessType, metadata);
+
+    res.status(200).json({
+      success: true,
+      data: categories
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 // @desc    Get all vendors
 // @route   GET /api/vendors
@@ -10,14 +30,22 @@ exports.getVendors = async (req, res, next) => {
   try {
     const { page, limit, offset } = getPagination(req);
     const search = req.query.search || '';
+    const category = req.query.category;
+    const isActive = req.query.isActive;
 
     const where = applyTenantFilter(req.tenantId, {});
+    if (typeof isActive === 'string' && (isActive === 'true' || isActive === 'false')) {
+      where.isActive = isActive === 'true';
+    }
     if (search) {
       where[Op.or] = [
         { name: { [Op.iLike]: `%${search}%` } },
         { company: { [Op.iLike]: `%${search}%` } },
         { email: { [Op.iLike]: `%${search}%` } }
       ];
+    }
+    if (category) {
+      where.category = category;
     }
 
     const { count, rows } = await Vendor.findAndCountAll({

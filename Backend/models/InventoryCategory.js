@@ -24,6 +24,21 @@ const InventoryCategory = sequelize.define('InventoryCategory', {
   description: {
     type: DataTypes.TEXT
   },
+  businessType: {
+    type: DataTypes.ENUM('shop', 'studio', 'pharmacy'),
+    allowNull: true,
+    comment: 'Business type this category belongs to (null = applies to all)'
+  },
+  studioType: {
+    type: DataTypes.ENUM('printing_press', 'mechanic', 'barber', 'salon'),
+    allowNull: true,
+    comment: 'Studio type (only relevant when businessType is studio)'
+  },
+  shopType: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    comment: 'Shop type (only relevant when businessType is shop)'
+  },
   isActive: {
     type: DataTypes.BOOLEAN,
     defaultValue: true

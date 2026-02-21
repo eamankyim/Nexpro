@@ -1,49 +1,54 @@
 import axios from 'axios';
 
+/** Production API URL when app is served from ShopWISE Africa domains */
+const SHOPWISE_AFRICA_API_URL = 'https://api.shopwiseafrica.com';
+
 const deriveApiBaseUrl = () => {
-  if (typeof window !== 'undefined') {
-    const { hostname, origin } = window.location;
-    const isProduction = hostname.includes('vercel.app') || 
-                        hostname.includes('netlify.app') || 
-                        (hostname !== 'localhost' && !hostname.startsWith('127.0.0.1') && !hostname.startsWith('192.168.') && !hostname.startsWith('10.'));
-    const isLan = hostname.startsWith('192.168.') || hostname.startsWith('10.');
-
-    // When on LAN (phone testing), always use same origin so Vite proxy works
-    if (isLan) {
-      console.log(`[API] Using base URL (LAN): ${origin}`);
-      return origin;
-    }
-
-    if (isProduction) {
-      const envUrl = import.meta.env.VITE_API_URL;
-      if (!envUrl) {
-        const errorMsg = '❌ VITE_API_URL environment variable is not set! Please configure it in your Vercel project settings.';
-        console.error(errorMsg);
-        if (typeof document !== 'undefined') {
-          const errorDiv = document.createElement('div');
-          errorDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff4444;color:white;padding:1rem;text-align:center;z-index:9999;font-weight:bold;';
-          errorDiv.textContent = errorMsg;
-          document.body.appendChild(errorDiv);
-        }
-        return '';
-      }
-      let url = envUrl.trim().replace(/\/$/, '');
-      if (url && !url.match(/^https?:\/\//i)) {
-        url = `https://${url}`;
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl) {
+    let url = envUrl.trim().replace(/\/$/, '');
+    // Ensure URL has a protocol (http:// or https://)
+    if (url && !url.match(/^https?:\/\//i)) {
+      // Default to https for production URLs
+      url = `https://${url}`;
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
         console.warn(`VITE_API_URL missing protocol, auto-added https://. Original: ${envUrl}, Fixed: ${url}`);
       }
+    }
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
       console.log(`[API] Using base URL: ${url}`);
-      return url;
+    }
+    return url;
+  }
+
+  // In production, use appropriate API URL
+  if (typeof window !== 'undefined') {
+    const { hostname } = window.location;
+    // ShopWISE Africa production: app at myapp.shopwiseafrica.com or shopwiseafrica.com → API at api.shopwiseafrica.com
+    if (hostname === 'myapp.shopwiseafrica.com' || hostname === 'shopwiseafrica.com') {
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
+        console.log(`[API] Using base URL: ${SHOPWISE_AFRICA_API_URL}`);
+      }
+      return SHOPWISE_AFRICA_API_URL;
+    }
+    const isProduction = hostname.includes('vercel.app') ||
+                        hostname.includes('netlify.app') ||
+                        (hostname !== 'localhost' && !hostname.startsWith('127.0.0.1') && !hostname.startsWith('192.168.'));
+
+    if (isProduction) {
+      // Other production without VITE_API_URL
+      const errorMsg = '❌ VITE_API_URL environment variable is not set! Please configure it in your project settings.';
+      console.error(errorMsg);
+      if (typeof document !== 'undefined') {
+        const errorDiv = document.createElement('div');
+        errorDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff4444;color:white;padding:1rem;text-align:center;z-index:9999;font-weight:bold;';
+        errorDiv.textContent = errorMsg;
+        document.body.appendChild(errorDiv);
+      }
+      return '';
     }
 
-    // Localhost dev: use VITE_API_URL or fallback to backend port
-    const envUrl = import.meta.env.VITE_API_URL;
-    if (envUrl) {
-      let url = envUrl.trim().replace(/\/$/, '');
-      if (url && !url.match(/^https?:\/\//i)) url = `https://${url}`;
-      console.log(`[API] Using base URL: ${url}`);
-      return url;
-    }
+    // Development fallback: use localhost
     const fallbackPort = import.meta.env.VITE_API_PORT ?? '5001';
     return `http://localhost:${fallbackPort}`;
   }
@@ -130,15 +135,16 @@ api.interceptors.request.use(
       config.headers.Authorization = `Bearer ${token}`;
     }
     
-    // Skip tenantId check for public endpoints (signup, login, register)
+    // Skip tenantId check for public endpoints and user-scoped endpoints
     const isPublicEndpoint = config.url?.includes('/tenants/signup') ||
                             config.url?.includes('/auth/login') ||
                             config.url?.includes('/auth/register') ||
                             config.url?.includes('/auth/sso') ||
                             config.url?.includes('/invites/validate');
+    const isUserScopedEndpoint = config.url?.includes('/user-workspace');
     
-    if (isPublicEndpoint) {
-      // Don't add tenant-id header for public endpoints
+    if (isPublicEndpoint || isUserScopedEndpoint) {
+      // Don't add tenant-id header for public or user-scoped endpoints
       return config;
     }
     
@@ -149,53 +155,29 @@ api.interceptors.request.use(
       try {
         // Storage key is 'tenantMemberships' (from authService.STORAGE_KEYS.memberships)
         const membershipsStr = localStorage.getItem('tenantMemberships') || '[]';
-        console.log('[API] 🔍 Checking memberships for tenantId:', {
-          hasMembershipsStr: !!membershipsStr,
-          membershipsStrLength: membershipsStr.length,
-          membershipsStr: membershipsStr.substring(0, 200) // First 200 chars
-        });
-        
         const memberships = JSON.parse(membershipsStr);
-        console.log('[API] 🔍 Parsed memberships:', {
-          isArray: Array.isArray(memberships),
-          length: memberships?.length || 0,
-          firstMembership: memberships?.[0]
-        });
-        
+
         if (memberships && Array.isArray(memberships) && memberships.length > 0) {
           const defaultTenantId = memberships.find(m => m.isDefault)?.tenantId || memberships[0]?.tenantId;
-          console.log('[API] 🔍 Found tenantId from memberships:', {
-            defaultTenantId,
-            hasDefaultTenantId: !!defaultTenantId,
-            allTenantIds: memberships.map(m => m.tenantId)
-          });
-          
           if (defaultTenantId) {
-            console.log('[API] 🔧 Setting activeTenantId from memberships:', defaultTenantId);
             localStorage.setItem('activeTenantId', defaultTenantId);
             tenantId = defaultTenantId;
           }
-        } else {
-          console.warn('[API] ⚠️ No memberships found or empty array');
         }
       } catch (e) {
-        console.error('[API] ❌ Error parsing memberships from localStorage:', e);
+        if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
+          console.error('[API] Error parsing memberships from localStorage:', e);
+        }
       }
     }
     
     if (tenantId) {
       config.headers['x-tenant-id'] = tenantId;
-      console.log('[API] ✅ Adding x-tenant-id header:', tenantId);
     } else {
       delete config.headers['x-tenant-id'];
-      console.error('[API] ❌ No activeTenantId available - request will likely fail');
-      console.log('[API] 🔍 localStorage contents:', {
-        hasToken: !!localStorage.getItem('token'),
-        hasUser: !!localStorage.getItem('user'),
-        hasMemberships: !!localStorage.getItem('tenantMemberships'),
-        hasActiveTenantId: !!localStorage.getItem('activeTenantId'),
-        allKeys: Object.keys(localStorage)
-      });
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
+        console.warn('[API] No activeTenantId available - request may fail');
+      }
     }
     return config;
   },
@@ -220,7 +202,9 @@ api.interceptors.response.use(
       config.__retryCount += 1;
       const delay = getRetryDelay(config.__retryCount - 1);
 
-      console.log(`[API] Retrying request (attempt ${config.__retryCount}/${MAX_RETRIES}) after ${delay}ms:`, config.url);
+      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
+        console.log(`[API] Retrying request (attempt ${config.__retryCount}/${MAX_RETRIES}) after ${delay}ms:`, config.url);
+      }
 
       // Wait before retrying
       await new Promise(resolve => setTimeout(resolve, delay));

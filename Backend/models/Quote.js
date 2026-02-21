@@ -17,8 +17,8 @@ const Quote = sequelize.define('Quote', {
   },
   quoteNumber: {
     type: DataTypes.STRING,
-    unique: true,
     allowNull: false
+    // Unique per tenant via migration idx_quotes_tenant_quote_number
   },
   customerId: {
     type: DataTypes.UUID,

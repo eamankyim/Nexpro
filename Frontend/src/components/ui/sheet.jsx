@@ -16,7 +16,7 @@ const SheetPortal = SheetPrimitive.Portal
 const SheetOverlay = React.forwardRef(({ className, ...props }, ref) => (
   <SheetPrimitive.Overlay
     className={cn(
-      "fixed inset-0 z-50 bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-[110] bg-black/80  data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className
     )}
     {...props}
@@ -26,7 +26,7 @@ const SheetOverlay = React.forwardRef(({ className, ...props }, ref) => (
 SheetOverlay.displayName = SheetPrimitive.Overlay.displayName
 
 const sheetVariants = cva(
-  "fixed z-50 gap-4 bg-background p-6 shadow-lg transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500",
+  "fixed z-[110] gap-4 border-border bg-background p-6 transition ease-in-out data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:duration-300 data-[state=open]:duration-500",
   {
     variants: {
       side: {
@@ -57,7 +57,7 @@ const SheetContent = React.forwardRef(({ side = "right", className, children, sh
       {...props}
     >
       {children}
-      <SheetPrimitive.Close className="absolute right-4 top-4 rounded-full bg-gray-100 w-8 h-8 flex items-center justify-center transition-all duration-200 hover:bg-gray-200 hover:scale-110 opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none group">
+      <SheetPrimitive.Close className="absolute right-4 top-4 rounded-full bg-muted w-8 h-8 flex items-center justify-center transition-all duration-200 hover:bg-muted/80 hover:scale-110 opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none group">
         <X className="h-4 w-4 transition-transform duration-200 group-hover:rotate-[-90deg]" />
         <span className="sr-only">Close</span>
       </SheetPrimitive.Close>
@@ -86,7 +86,7 @@ const SheetFooter = ({
 }) => (
   <div
     className={cn(
-      "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
+      "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2 flex-shrink-0 pt-4 border-t border-border bg-background",
       className
     )}
     {...props}

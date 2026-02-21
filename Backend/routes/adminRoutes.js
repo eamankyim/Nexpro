@@ -1,5 +1,6 @@
 const express = require('express');
 const { protect, requirePlatformAdmin } = require('../middleware/auth');
+const { loadPlatformAdminPermissions, requirePlatformAdminPermission, requireAnyPlatformAdminPermission } = require('../middleware/platformAdminPermissions');
 const {
   getPlatformSummary,
   getTenants,
@@ -7,12 +8,54 @@ const {
   getTenantMetrics,
   getPlatformAlerts,
   getTenantById,
+  getTenantVendors,
+  getTenantJobs,
   updateTenantStatus,
   getBillingSummary,
   getBillingTenants,
   getSystemHealth,
   updateTenantBranding
 } = require('../controllers/adminController');
+const {
+  getAdminKpiSummary,
+  getAdminRevenueReport,
+  getAdminExpenseReport,
+  getAdminPipelineSummary,
+  getAdminTopCustomers
+} = require('../controllers/adminReportController');
+const {
+  getAdminLeads,
+  getAdminLead,
+  createAdminLead,
+  updateAdminLead,
+  deleteAdminLead,
+  addAdminLeadActivity,
+  getAdminLeadStats,
+  convertAdminLeadToJob
+} = require('../controllers/adminLeadController');
+const {
+  getAdminJobs,
+  getAdminJob,
+  createAdminJob,
+  updateAdminJob,
+  assignAdminJob,
+  deleteAdminJob,
+  getAdminJobStats
+} = require('../controllers/adminJobController');
+const {
+  getAdminExpenseCategories,
+  getAdminExpenses,
+  getAdminExpense,
+  getAdminExpenseStats,
+  createAdminExpense
+} = require('../controllers/adminExpenseController');
+const {
+  getAdminCustomers,
+  getAdminCustomer,
+  createAdminCustomer,
+  updateAdminCustomer,
+  deleteAdminCustomer
+} = require('../controllers/adminCustomerController');
 
 const router = express.Router();
 
@@ -56,6 +99,7 @@ router.post('/bootstrap', bootstrapPlatformAdmin);
 
 router.use(protect);
 router.use(requirePlatformAdmin);
+router.use(loadPlatformAdminPermissions); // Load permissions for all admin routes
 
 /**
  * @swagger
@@ -69,7 +113,7 @@ router.use(requirePlatformAdmin);
  *       200:
  *         description: Aggregate metrics across all tenants.
  */
-router.get('/summary', getPlatformSummary);
+router.get('/summary', requirePlatformAdminPermission('overview.view'), getPlatformSummary);
 
 /**
  * @swagger
@@ -144,7 +188,9 @@ router.get('/alerts', getPlatformAlerts);
  *       404:
  *         description: Tenant not found.
  */
-router.get('/tenants/:id', getTenantById);
+router.get('/tenants/:id/vendors', requirePlatformAdminPermission('expenses.manage'), getTenantVendors);
+router.get('/tenants/:id/jobs', requirePlatformAdminPermission('expenses.manage'), getTenantJobs);
+router.get('/tenants/:id', requirePlatformAdminPermission('tenants.view'), getTenantById);
 
 /**
  * @swagger
@@ -179,7 +225,7 @@ router.get('/tenants/:id', getTenantById);
  *       404:
  *         description: Tenant not found.
  */
-router.patch('/tenants/:id/status', updateTenantStatus);
+router.patch('/tenants/:id/status', requirePlatformAdminPermission('tenants.manage_status'), updateTenantStatus);
 
 /**
  * @swagger
@@ -193,7 +239,7 @@ router.patch('/tenants/:id/status', updateTenantStatus);
  *       200:
  *         description: Estimated MRR and plan breakdown.
  */
-router.get('/billing/summary', getBillingSummary);
+router.get('/billing/summary', requirePlatformAdminPermission('billing.view'), getBillingSummary);
 
 /**
  * @swagger
@@ -207,7 +253,7 @@ router.get('/billing/summary', getBillingSummary);
  *       200:
  *         description: Tenants with paid plans.
  */
-router.get('/billing/tenants', getBillingTenants);
+router.get('/billing/tenants', requirePlatformAdminPermission('billing.view'), getBillingTenants);
 
 /**
  * @swagger
@@ -221,7 +267,57 @@ router.get('/billing/tenants', getBillingTenants);
  *       200:
  *         description: Uptime, database status, and recent alerts.
  */
-router.get('/health', getSystemHealth);
+router.get('/health', requirePlatformAdminPermission('health.view'), getSystemHealth);
+
+/**
+ * Platform-wide report endpoints (aggregate across all tenants)
+ */
+router.get('/reports/kpi-summary', requirePlatformAdminPermission('reports.view'), getAdminKpiSummary);
+router.get('/reports/revenue', requirePlatformAdminPermission('reports.view'), getAdminRevenueReport);
+router.get('/reports/expenses', requirePlatformAdminPermission('reports.view'), getAdminExpenseReport);
+router.get('/reports/pipeline-summary', requirePlatformAdminPermission('reports.view'), getAdminPipelineSummary);
+router.get('/reports/top-customers', requirePlatformAdminPermission('reports.view'), getAdminTopCustomers);
+
+/**
+ * Admin Leads routes (for tracking potential customers/businesses)
+ */
+router.get('/leads', getAdminLeads);
+router.get('/leads/stats', getAdminLeadStats);
+router.get('/leads/:id', getAdminLead);
+router.post('/leads', createAdminLead);
+router.put('/leads/:id', updateAdminLead);
+router.delete('/leads/:id', deleteAdminLead);
+router.post('/leads/:id/activities', addAdminLeadActivity);
+router.post('/leads/:id/convert-to-job', convertAdminLeadToJob);
+
+/**
+ * Admin Jobs routes (for tracking software projects)
+ */
+router.get('/jobs', getAdminJobs);
+router.get('/jobs/stats', getAdminJobStats);
+router.get('/jobs/:id', getAdminJob);
+router.post('/jobs', createAdminJob);
+router.put('/jobs/:id', updateAdminJob);
+router.patch('/jobs/:id/assign', assignAdminJob);
+router.delete('/jobs/:id', deleteAdminJob);
+
+/**
+ * Admin Expenses routes (platform-wide expense tracking)
+ */
+router.get('/expenses/categories', requirePlatformAdminPermission('expenses.view'), getAdminExpenseCategories);
+router.get('/expenses', requirePlatformAdminPermission('expenses.view'), getAdminExpenses);
+router.post('/expenses', requirePlatformAdminPermission('expenses.manage'), createAdminExpense);
+router.get('/expenses/stats', requirePlatformAdminPermission('expenses.view'), getAdminExpenseStats);
+router.get('/expenses/:id', requirePlatformAdminPermission('expenses.view'), getAdminExpense);
+
+/**
+ * Admin Customers routes (platform's own customers, e.g. for jobs like website design)
+ */
+router.get('/customers', requirePlatformAdminPermission('tenants.view'), getAdminCustomers);
+router.post('/customers', requirePlatformAdminPermission('tenants.view'), createAdminCustomer);
+router.get('/customers/:id', requirePlatformAdminPermission('tenants.view'), getAdminCustomer);
+router.put('/customers/:id', requirePlatformAdminPermission('tenants.view'), updateAdminCustomer);
+router.delete('/customers/:id', requirePlatformAdminPermission('tenants.view'), deleteAdminCustomer);
 
 /**
  * @swagger
@@ -251,7 +347,7 @@ router.get('/health', getSystemHealth);
  *       200:
  *         description: Tenant branding updated.
  */
-router.patch('/tenants/:id/branding', updateTenantBranding);
+router.patch('/tenants/:id/branding', requirePlatformAdminPermission('tenants.update'), updateTenantBranding);
 
 module.exports = router;
 

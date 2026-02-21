@@ -2,6 +2,7 @@ const express = require('express');
 const {
   getVendors,
   getVendor,
+  getVendorCategories,
   createVendor,
   updateVendor,
   deleteVendor
@@ -16,6 +17,8 @@ const priceListRoutes = require('./vendorPriceListRoutes');
 
 router.use(protect);
 router.use(tenantContext);
+
+router.get('/categories', getVendorCategories);
 
 router.route('/')
   .get(getVendors)

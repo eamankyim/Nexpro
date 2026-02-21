@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { generatePDF } from '../utils/pdfUtils';
 import dayjs from 'dayjs';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import quoteService from '../services/quoteService';
 import customerService from '../services/customerService';
 import settingsService from '../services/settingsService';
@@ -35,6 +35,7 @@ import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
 import DetailSkeleton from '../components/DetailSkeleton';
 import DashboardTable from '../components/DashboardTable';
+import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError } from '../utils/toast';
@@ -46,6 +47,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -53,11 +55,13 @@ import {
   Select,
   SelectContent,
   SelectItem,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -107,6 +111,13 @@ const quoteItemSchema = z.object({
   discountAmount: z.number().min(0, 'Discount must be at least 0').default(0),
 });
 
+const quickCustomerSchema = z.object({
+  name: z.string().min(1, 'Customer name is required'),
+  company: z.string().optional(),
+  email: z.string().optional(),
+  phone: z.string().optional(),
+});
+
 const quoteSchema = z.object({
   customerId: z.string().min(1, 'Customer is required'),
   title: z.string().min(1, 'Quote title is required'),
@@ -125,6 +136,7 @@ const Quotes = () => {
   const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({ status: 'all', customerId: 'all' });
+  const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingQuote, setViewingQuote] = useState(null);
@@ -134,6 +146,7 @@ const Quotes = () => {
   const [converting, setConverting] = useState(false);
   const [refreshingQuotes, setRefreshingQuotes] = useState(false);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [printModalVisible, setPrintModalVisible] = useState(false);
   const [quotePrintable, setQuotePrintable] = useState(null);
   const [pendingDownload, setPendingDownload] = useState(false);
@@ -141,6 +154,17 @@ const Quotes = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [quoteActivities, setQuoteActivities] = useState([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
+  const [customerAddModalOpen, setCustomerAddModalOpen] = useState(false);
+  const [addingCustomer, setAddingCustomer] = useState(false);
+
+  // Organization branding for printable quotes
+  const { data: organizationData } = useQuery({
+    queryKey: ['settings', 'organization'],
+    queryFn: () => settingsService.getOrganization(),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const organization = organizationData?.data || {};
 
   const form = useForm({
     resolver: zodResolver(quoteSchema),
@@ -160,6 +184,44 @@ const Quotes = () => {
     name: 'items',
   });
 
+  const customerForm = useForm({
+    resolver: zodResolver(quickCustomerSchema),
+    defaultValues: { name: '', company: '', email: '', phone: '' },
+  });
+
+  const fetchCustomers = useCallback(async () => {
+    try {
+      const customersResponse = await customerService.getAll({ limit: 100 });
+      setCustomers(customersResponse.data || []);
+    } catch (error) {
+      console.error('Failed to load customers', error);
+      showError(error, 'Failed to load customers');
+    }
+  }, []);
+
+  const handleAddCustomerSubmit = useCallback(async (values) => {
+    setAddingCustomer(true);
+    try {
+      const response = await customerService.create({
+        name: values.name,
+        company: values.company || undefined,
+        email: values.email || undefined,
+        phone: values.phone || undefined,
+      });
+      const newCustomer = response?.data ?? response;
+      if (!newCustomer?.id) throw new Error('Invalid customer response');
+      await fetchCustomers();
+      setCustomerAddModalOpen(false);
+      customerForm.reset({ name: '', company: '', email: '', phone: '' });
+      showSuccess('Customer created successfully');
+      form.setValue('customerId', newCustomer.id);
+    } catch (error) {
+      showError(error, error?.response?.data?.message || 'Failed to create customer');
+    } finally {
+      setAddingCustomer(false);
+    }
+  }, [form, fetchCustomers, customerForm]);
+
   const buildPrintableQuote = (quote) => {
     if (!quote) return null;
     return {
@@ -176,6 +238,8 @@ const Quotes = () => {
       totalAmount: parseFloat(quote.totalAmount || 0),
       amountPaid: 0,
       balance: parseFloat(quote.totalAmount || 0),
+      // Show quote notes in the printable as Terms & Conditions / notes section
+      termsAndConditions: quote.notes || quote.description || '',
       items: (quote.items || []).map((item) => ({
         ...item,
         description: item.description,
@@ -192,6 +256,28 @@ const Quotes = () => {
     return () => setPageSearchConfig(null);
   }, [setPageSearchConfig]);
 
+  // Handle ?add=1 query param from quick actions
+  useEffect(() => {
+    if (searchParams.get('add') === '1') {
+      setEditingQuote(null);
+      form.reset({
+        customerId: '',
+        title: '',
+        description: '',
+        status: 'draft',
+        validUntil: null,
+        notes: '',
+        items: [{ description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+      });
+      setQuoteModalVisible(true);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('add');
+        return next;
+      }, { replace: true });
+    }
+  }, [searchParams, setSearchParams, form]);
+
   useEffect(() => {
     setPagination((prev) => ({ ...prev, current: 1 }));
   }, [searchValue]);
@@ -206,7 +292,7 @@ const Quotes = () => {
     try {
       const params = {
         page: pagination.current,
-        limit: 1000, // Fetch more for client-side filtering
+        limit: pagination.pageSize, // Backend pagination
         _ts: Date.now(),
       };
 
@@ -267,9 +353,7 @@ const Quotes = () => {
     try {
       const response = await quoteService.getById(quoteId);
       const data = response?.data ?? response;
-      setViewingQuote(data);
-      
-      // Fetch activities
+      setViewingQuote((prev) => (prev?.id === quoteId ? data : prev));
       try {
         setLoadingActivities(true);
         const activitiesResponse = await quoteService.getActivities(quoteId);
@@ -281,7 +365,7 @@ const Quotes = () => {
       } finally {
         setLoadingActivities(false);
       }
-      
+      // Return full quote details so callers (e.g. edit flow) can use them
       return data;
     } catch (error) {
       console.error(`Failed to fetch quote ${quoteId}:`, error);
@@ -290,13 +374,10 @@ const Quotes = () => {
     }
   };
 
-  const handleView = async (quote) => {
+  const handleView = (quote) => {
     setViewingQuote(quote);
     setDrawerVisible(true);
-    const details = await fetchQuoteDetails(quote.id);
-    if (details) {
-      setViewingQuote(details);
-    }
+    fetchQuoteDetails(quote.id);
   };
 
   const handleCloseDrawer = () => {
@@ -340,7 +421,8 @@ const Quotes = () => {
     }
 
     form.reset({
-      customerId: details.customerId,
+      // Prefer explicit customerId from API; fall back to nested customer.id
+      customerId: details.customerId || details.customer?.id || '',
       title: details.title,
       description: details.description || '',
       status: details.status,
@@ -495,22 +577,11 @@ const Quotes = () => {
     }
   }, [quotePrintable]);
 
-  const handlePrintQuote = async () => {
+  const handlePrintQuote = () => {
     if (!quotePrintable) return;
-    
-    const element = document.querySelector('.printable-invoice');
-    if (element) {
-      try {
-        await generatePDF(element, {
-          filename: `Quote-${quotePrintable.quoteNumber}.pdf`,
-          format: 'a4',
-          orientation: 'portrait',
-        });
-        showSuccess('Quote PDF downloaded successfully');
-      } catch (error) {
-        console.error('PDF generation error:', error);
-        showError(null, 'Failed to generate PDF');
-      }
+    const wrapper = document.querySelector('.printable-invoice')?.parentElement;
+    if (wrapper) {
+      openPrintDialog(wrapper, `Quote-${quotePrintable.quoteNumber}`);
     }
   };
 
@@ -528,17 +599,17 @@ const Quotes = () => {
     {
       key: 'quoteNumber',
       label: 'Quote #',
-      render: (_, record) => <span className="font-medium text-black">{record?.quoteNumber || '—'}</span>
+      render: (_, record) => <span className="font-medium text-foreground">{record?.quoteNumber || '—'}</span>
     },
     {
       key: 'title',
       label: 'Title',
-      render: (_, record) => <span className="text-black">{record?.title || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.title || '—'}</span>
     },
     {
       key: 'customer',
       label: 'Customer',
-      render: (_, record) => <span className="text-black">{record?.customer?.name || '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.customer?.name || '—'}</span>
     },
     {
       key: 'status',
@@ -548,12 +619,12 @@ const Quotes = () => {
     {
       key: 'validUntil',
       label: 'Valid Until',
-      render: (_, record) => <span className="text-black">{record?.validUntil ? dayjs(record.validUntil).format('MMM DD, YYYY') : '—'}</span>
+      render: (_, record) => <span className="text-foreground">{record?.validUntil ? dayjs(record.validUntil).format('MMM DD, YYYY') : '—'}</span>
     },
     {
       key: 'totalAmount',
       label: 'Total',
-      render: (_, record) => <span className="text-black font-medium">GHS {parseFloat(record?.totalAmount || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.totalAmount || 0).toFixed(2)}</span>
     },
     {
       key: 'actions',
@@ -585,19 +656,12 @@ const Quotes = () => {
               variant: 'secondary',
               icon: <FileText className="h-4 w-4" />,
               onClick: () => handleEditQuote(record)
-            },
-            {
-              key: 'delete',
-              label: 'Delete',
-              variant: 'destructive',
-              icon: <X className="h-4 w-4" />,
-              onClick: () => handleDeleteQuote(record)
             }
           ].filter(Boolean)}
         />
       )
     }
-  ], [converting, handleView, handleConvertToJob, handleConvertToSale, handleEditQuote, handleDeleteQuote, isShop]);
+  ], [converting, handleView, handleConvertToJob, handleConvertToSale, handleEditQuote, isShop]);
 
   const handleClearFilters = () => {
     setFilters({
@@ -637,7 +701,7 @@ const Quotes = () => {
       label: 'Total Amount',
       value: (
         <strong className="text-lg text-primary">
-          GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
+          ₵ {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
         </strong>
       )
     },
@@ -659,33 +723,49 @@ const Quotes = () => {
           subText="Create and manage quotes for your customers."
         />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-            <Filter className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Filter</span>}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={() => fetchQuotes(true)}
-            disabled={refreshingQuotes}
-            size={isMobile ? "icon" : "default"}
-          >
-            {refreshingQuotes ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
-          <Button onClick={handleAddQuote} size={isMobile ? "icon" : "default"}>
-            <Plus className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">New Quote</span>}
-          </Button>
+          <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+                <Filter className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Filter</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Filter quotes by status or customer</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                onClick={() => fetchQuotes(true)}
+                disabled={refreshingQuotes}
+                size={isMobile ? "icon" : "default"}
+              >
+                {refreshingQuotes ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh quotes list</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={handleAddQuote} size={isMobile ? "icon" : "default"}>
+                <Plus className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">New Quote</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Create a new quote</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-6">
         {/* Total Quotes Card */}
         <DashboardStatsCard
+          tooltip="Total number of quotes created"
           title="Total Quotes"
           value={summaryStats?.totals?.totalQuotes || 0}
           icon={FileText}
@@ -695,6 +775,7 @@ const Quotes = () => {
 
         {/* Draft Card */}
         <DashboardStatsCard
+          tooltip="Quotes that are still in draft"
           title="Draft"
           value={summaryStats?.totals?.draftQuotes || 0}
           icon={FilePlus}
@@ -704,6 +785,7 @@ const Quotes = () => {
 
         {/* Sent Card */}
         <DashboardStatsCard
+          tooltip="Quotes sent to customers"
           title="Sent"
           value={summaryStats?.totals?.sentQuotes || 0}
           icon={CheckCircle}
@@ -713,6 +795,7 @@ const Quotes = () => {
 
         {/* Accepted Card */}
         <DashboardStatsCard
+          tooltip="Quotes accepted by customers"
           title="Accepted"
           value={summaryStats?.totals?.acceptedQuotes || 0}
           icon={Receipt}
@@ -728,7 +811,13 @@ const Quotes = () => {
         loading={loading}
         title={null}
         emptyIcon={<FileText className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No quotes found"
+        emptyDescription="No quotes yet. Create quotes to send pricing estimates to customers."
+        emptyAction={
+          <Button onClick={handleAddQuote}>
+            <Plus className="h-4 w-4 mr-2" />
+            Create First Quote
+          </Button>
+        }
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);
@@ -737,11 +826,13 @@ const Quotes = () => {
           current: pagination.current,
           total: quotesCount
         }}
+        viewMode={tableViewMode}
+        onViewModeChange={setTableViewMode}
       />
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-[400px] sm:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Quotes</SheetTitle>
           </SheetHeader>
@@ -802,6 +893,10 @@ const Quotes = () => {
         width={720}
         onPrint={viewingQuote ? () => openPrintableQuote(viewingQuote) : null}
         onEdit={viewingQuote ? () => handleEditQuote(viewingQuote) : null}
+        onDelete={viewingQuote ? () => handleDeleteQuote(viewingQuote) : null}
+        deleteConfirmTitle="Delete this quote?"
+        deleteConfirmText="This can't be undone."
+        deleteButtonLabel="Delete"
         extraActions={viewingQuote && viewingQuote.status !== 'accepted' && viewingQuote.status !== 'declined' && viewingQuote.status !== 'expired' ? [
           !isShop && {
             key: 'convert-job',
@@ -829,13 +924,13 @@ const Quotes = () => {
                 <DrawerSectionCard title="Quote summary">
                   <div className="flex justify-between items-center mb-4">
                     <div>
-                      <div className="text-lg font-semibold text-gray-900">{viewingQuote.title}</div>
+                      <div className="text-lg font-semibold text-foreground">{viewingQuote.title}</div>
                       <div className="text-muted-foreground text-sm">{viewingQuote.quoteNumber}</div>
                     </div>
                     <div className="text-right">
                       <div className="text-sm text-muted-foreground">Total Amount</div>
                       <div className="text-2xl font-bold text-primary">
-                        GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
+                        ₵ {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}
                       </div>
                     </div>
                   </div>
@@ -857,11 +952,11 @@ const Quotes = () => {
               <DrawerSectionCard title="Line items">
                 {(viewingQuote.items || []).length ? (
                   <div className="space-y-0">
-                    <div className="grid grid-cols-12 gap-2 pb-2 border-b border-gray-200 text-sm font-semibold text-gray-900">
+                    <div className="grid grid-cols-12 gap-2 pb-2 border-b border-gray-200 text-sm font-semibold text-foreground">
                       <div className="col-span-6">Description</div>
                       <div className="col-span-2 text-right">Qty</div>
-                      <div className="col-span-2 text-right">Unit price (GHS)</div>
-                      <div className="col-span-2 text-right">Total (GHS)</div>
+                      <div className="col-span-2 text-right">Unit price (₵)</div>
+                      <div className="col-span-2 text-right">Total (₵)</div>
                     </div>
                     {viewingQuote.items.map((item) => (
                       <div
@@ -869,7 +964,7 @@ const Quotes = () => {
                         className="grid grid-cols-12 gap-2 py-3 border-b border-gray-200/80 last:border-b-0 text-sm"
                       >
                         <div className="col-span-6">
-                          <div className="font-medium text-gray-900">{item.description}</div>
+                          <div className="font-medium text-foreground">{item.description}</div>
                           {item.metadata && Object.keys(item.metadata || {}).length > 0 && (
                             <div className="text-muted-foreground text-xs mt-0.5">
                               {JSON.stringify(item.metadata)}
@@ -878,21 +973,21 @@ const Quotes = () => {
                         </div>
                         <div className="col-span-2 text-right text-gray-700">{item.quantity}</div>
                         <div className="col-span-2 text-right text-gray-700">{parseFloat(item.unitPrice || 0).toFixed(2)}</div>
-                        <div className="col-span-2 text-right font-medium text-gray-900">{parseFloat(item.total || 0).toFixed(2)}</div>
+                        <div className="col-span-2 text-right font-medium text-foreground">{parseFloat(item.total || 0).toFixed(2)}</div>
                       </div>
                     ))}
                     <div className="pt-3 mt-2 border-t border-gray-200 space-y-1 text-sm">
                       <div className="flex justify-between text-muted-foreground">
                         <span>Subtotal</span>
-                        <span className="text-gray-900 font-medium">GHS {parseFloat(viewingQuote.subtotal || 0).toFixed(2)}</span>
+                        <span className="text-foreground font-medium">₵ {parseFloat(viewingQuote.subtotal || 0).toFixed(2)}</span>
                       </div>
                       <div className="flex justify-between text-muted-foreground">
                         <span>Total Discount</span>
-                        <span className="text-gray-900">-GHS {parseFloat(viewingQuote.discountTotal || 0).toFixed(2)}</span>
+                        <span className="text-foreground">-₵ {parseFloat(viewingQuote.discountTotal || 0).toFixed(2)}</span>
                       </div>
-                      <div className="flex justify-between text-base font-semibold text-gray-900 pt-2">
+                      <div className="flex justify-between text-base font-semibold text-foreground pt-2">
                         <span>Grand Total</span>
-                        <span>GHS {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}</span>
+                        <span>₵ {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}</span>
                       </div>
                     </div>
                   </div>
@@ -945,12 +1040,12 @@ const Quotes = () => {
                     <TimelineItem key={activity.id} isLast={isLast}>
                       <TimelineIndicator />
                       <TimelineContent>
-                        <TimelineTitle className="text-black">
+                        <TimelineTitle className="text-foreground">
                           {activity.createdByUser 
                             ? `${activity.createdByUser.name} created quote ${viewingQuote.quoteNumber}`
                             : `Quote ${viewingQuote.quoteNumber} created`}
                         </TimelineTitle>
-                        <TimelineTime className="text-black">
+                        <TimelineTime className="text-foreground">
                           {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
                         </TimelineTime>
                       </TimelineContent>
@@ -968,28 +1063,28 @@ const Quotes = () => {
                   <TimelineItem key={activity.id} isLast={isLast}>
                     <TimelineIndicator />
                     <TimelineContent>
-                      <TimelineTitle className="text-black">
+                      <TimelineTitle className="text-foreground">
                         {activityTypeLabels[activity.type] || activity.type.toUpperCase()} {activity.subject ? `- ${activity.subject}` : ''}
                       </TimelineTitle>
-                      <TimelineTime className="text-black">
+                      <TimelineTime className="text-foreground">
                         {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
                         {activity.createdByUser ? ` • ${activity.createdByUser.name}` : ''}
                       </TimelineTime>
                       {activity.notes && (
-                        <TimelineDescription className="text-black">{activity.notes}</TimelineDescription>
+                        <TimelineDescription className="text-foreground">{activity.notes}</TimelineDescription>
                       )}
                       {activity.metadata?.oldStatus && activity.metadata?.newStatus && (
-                        <TimelineDescription className="text-black">
+                        <TimelineDescription className="text-foreground">
                           Status: {activity.metadata.oldStatus} → {activity.metadata.newStatus}
                         </TimelineDescription>
                       )}
                       {activity.metadata?.jobNumber && (
-                        <TimelineDescription className="text-black">
+                        <TimelineDescription className="text-foreground">
                           Converted to job: {activity.metadata.jobNumber}
                         </TimelineDescription>
                       )}
                       {activity.metadata?.saleNumber && (
-                        <TimelineDescription className="text-black">
+                        <TimelineDescription className="text-foreground">
                           Converted to sale: {activity.metadata.saleNumber}
                         </TimelineDescription>
                       )}
@@ -1055,6 +1150,13 @@ const Quotes = () => {
                             {customer.name} {customer.company ? `(${customer.company})` : ''}
                           </SelectItem>
                         ))}
+                        <SelectSeparator className="my-2" />
+                        <div className="px-2 py-1.5" onPointerDown={(e) => e.preventDefault()}>
+                          <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setCustomerAddModalOpen(true)}>
+                            <Plus className="h-4 w-4 mr-2" />
+                            Create customer
+                          </Button>
+                        </div>
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -1133,7 +1235,10 @@ const Quotes = () => {
                 )}
               />
 
-              <Separator>Quote Items</Separator>
+              <div className="pt-2 pb-1">
+                <Separator className="mb-3" />
+                <div className="text-sm font-medium text-muted-foreground">Quote Items</div>
+              </div>
 
               {fields.map((field, index) => (
                 <Card key={field.id}>
@@ -1302,8 +1407,8 @@ const Quotes = () => {
               </div>
             </div>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto bg-gray-100 p-4 md:p-8 print-content-wrapper">
-            <div className="max-w-[850px] mx-auto bg-white rounded-lg shadow-sm">
+          <div className="flex-1 overflow-y-auto bg-muted/50 p-4 md:p-8 print-content-wrapper">
+            <div className="max-w-[850px] mx-auto bg-card rounded-lg border border-border">
               {quotePrintable && (
                 <PrintableInvoice
                   invoice={buildPrintableQuote(quotePrintable)}
@@ -1314,6 +1419,85 @@ const Quotes = () => {
               )}
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={customerAddModalOpen} onOpenChange={(open) => {
+        if (!open) { setCustomerAddModalOpen(false); customerForm.reset({ name: '', company: '', email: '', phone: '' }); }
+      }}>
+        <DialogContent>
+          <Form {...customerForm}>
+            <form onSubmit={customerForm.handleSubmit(handleAddCustomerSubmit)} className="flex flex-col min-h-0 flex-1">
+              <DialogHeader>
+                <DialogTitle>Create Customer</DialogTitle>
+                <DialogDescription>Add a new customer without leaving the form.</DialogDescription>
+              </DialogHeader>
+              <DialogBody>
+                <div className="space-y-4">
+                  <FormField
+                    control={customerForm.control}
+                    name="name"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Customer Name</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="e.g. John Doe" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={customerForm.control}
+                    name="company"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Company (optional)</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="Company name" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={customerForm.control}
+                    name="email"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Email (optional)</FormLabel>
+                        <FormControl>
+                          <Input type="email" {...field} placeholder="email@example.com" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={customerForm.control}
+                    name="phone"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Phone (optional)</FormLabel>
+                        <FormControl>
+                          <Input {...field} placeholder="Phone number" />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </DialogBody>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => { setCustomerAddModalOpen(false); customerForm.reset({ name: '', company: '', email: '', phone: '' }); }}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={addingCustomer}>
+                  {addingCustomer ? 'Creating...' : 'Create Customer'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </Form>
         </DialogContent>
       </Dialog>
 

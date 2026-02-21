@@ -359,7 +359,7 @@ const createVarianceAlerts = async (tenantId, alerts) => {
       // Create in-app notification
       const notification = await Notification.create({
         tenantId,
-        type: 'inventory',
+        type: 'materials',
         title: alert.type === 'shrinkage' 
           ? 'Stock Shrinkage Detected' 
           : 'Suspicious Pattern Alert',

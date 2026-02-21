@@ -62,6 +62,30 @@ const Shop = sequelize.define('Shop', {
 }, {
   tableName: 'shops',
   timestamps: true,
+  hooks: {
+    beforeCreate: (shop) => {
+      if (shop.email && typeof shop.email === 'string') shop.email = shop.email.trim().toLowerCase();
+      if (shop.phone && typeof shop.phone === 'string') {
+        try {
+          const { formatToE164 } = require('../utils/phoneUtils');
+          const e164 = formatToE164(shop.phone.trim());
+          if (e164) shop.phone = e164;
+          else shop.phone = shop.phone.trim();
+        } catch { shop.phone = shop.phone.trim(); }
+      }
+    },
+    beforeUpdate: (shop) => {
+      if (shop.changed('email') && shop.email && typeof shop.email === 'string') shop.email = shop.email.trim().toLowerCase();
+      if (shop.changed('phone') && shop.phone && typeof shop.phone === 'string') {
+        try {
+          const { formatToE164 } = require('../utils/phoneUtils');
+          const e164 = formatToE164(shop.phone.trim());
+          if (e164) shop.phone = e164;
+          else shop.phone = shop.phone.trim();
+        } catch { shop.phone = shop.phone.trim(); }
+      }
+    }
+  },
   indexes: [
     {
       fields: ['tenantId']

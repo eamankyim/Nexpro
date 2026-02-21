@@ -8,15 +8,15 @@ import { cn } from '@/lib/utils';
  */
 const WelcomeSection = memo(({ welcomeMessage, subText }) => {
   return (
-    <div className="mb-4 md:mb-8">
+    <div className="mb-4 md:mb-8" data-tour="welcome-section">
       <h1 className={cn(
         "font-bold text-2xl md:text-3xl lg:text-4xl",
-        "mb-2 text-gray-900"
+        "mb-2 text-foreground"
       )}>
         {welcomeMessage}
       </h1>
       <p className={cn(
-        "text-sm md:text-base text-gray-600 m-0"
+        "text-sm md:text-base text-muted-foreground m-0"
       )}>
         {subText}
       </p>

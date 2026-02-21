@@ -14,10 +14,14 @@ const QuoteItem = require('./QuoteItem');
 const JobStatusHistory = require('./JobStatusHistory');
 const Invoice = require('./Invoice');
 const InviteToken = require('./InviteToken');
+const PasswordResetToken = require('./PasswordResetToken');
+const EmailVerificationToken = require('./EmailVerificationToken');
 const Notification = require('./Notification');
-const InventoryCategory = require('./InventoryCategory');
-const InventoryItem = require('./InventoryItem');
-const InventoryMovement = require('./InventoryMovement');
+const MaterialCategory = require('./MaterialCategory');
+const MaterialItem = require('./MaterialItem');
+const MaterialMovement = require('./MaterialMovement');
+const EquipmentCategory = require('./EquipmentCategory');
+const Equipment = require('./Equipment');
 const Lead = require('./Lead');
 const LeadActivity = require('./LeadActivity');
 const CustomerActivity = require('./CustomerActivity');
@@ -56,6 +60,16 @@ const ExpiryAlert = require('./ExpiryAlert');
 const FootTraffic = require('./FootTraffic');
 const StockCount = require('./StockCount');
 const StockCountItem = require('./StockCountItem');
+// Platform Admin Roles
+const PlatformAdminRole = require('./PlatformAdminRole');
+const PlatformAdminPermission = require('./PlatformAdminPermission');
+const PlatformAdminRolePermission = require('./PlatformAdminRolePermission');
+const PlatformAdminUserRole = require('./PlatformAdminUserRole');
+const UserTodo = require('./UserTodo');
+const UserWeekFocus = require('./UserWeekFocus');
+const UserTask = require('./UserTask');
+const UserChecklist = require('./UserChecklist');
+const UserChecklistItem = require('./UserChecklistItem');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -142,14 +156,14 @@ VendorPriceList.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 Tenant.hasMany(CustomDropdownOption, { foreignKey: 'tenantId', as: 'customDropdownOptions' });
 CustomDropdownOption.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
-Tenant.hasMany(InventoryCategory, { foreignKey: 'tenantId', as: 'inventoryCategories' });
-InventoryCategory.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Tenant.hasMany(MaterialCategory, { foreignKey: 'tenantId', as: 'materialCategories' });
+MaterialCategory.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
-Tenant.hasMany(InventoryItem, { foreignKey: 'tenantId', as: 'inventoryItems' });
-InventoryItem.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Tenant.hasMany(MaterialItem, { foreignKey: 'tenantId', as: 'materialItems' });
+MaterialItem.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
-Tenant.hasMany(InventoryMovement, { foreignKey: 'tenantId', as: 'inventoryMovements' });
-InventoryMovement.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Tenant.hasMany(MaterialMovement, { foreignKey: 'tenantId', as: 'materialMovements' });
+MaterialMovement.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
 Customer.hasMany(Job, { foreignKey: 'customerId', as: 'jobs' });
 Job.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
@@ -226,25 +240,65 @@ User.hasOne(InviteToken, { foreignKey: 'usedBy', as: 'inviteUsed' });
 InviteToken.belongsTo(User, { foreignKey: 'usedBy', as: 'user' });
 InviteToken.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
+User.hasMany(PasswordResetToken, { foreignKey: 'userId', as: 'passwordResetTokens' });
+PasswordResetToken.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+User.hasMany(EmailVerificationToken, { foreignKey: 'userId', as: 'emailVerificationTokens' });
+EmailVerificationToken.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+
 User.hasMany(Notification, { foreignKey: 'userId', as: 'notifications' });
 Notification.belongsTo(User, { foreignKey: 'userId', as: 'recipient' });
+
+User.hasMany(UserTodo, { foreignKey: 'userId', as: 'todos' });
+UserTodo.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+
+User.hasMany(UserWeekFocus, { foreignKey: 'userId', as: 'weekFocus' });
+UserWeekFocus.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+
+Tenant.hasMany(UserTask, { foreignKey: 'tenantId', as: 'workspaceTasks' });
+UserTask.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+User.hasMany(UserTask, { foreignKey: 'userId', as: 'workspaceTasks' });
+UserTask.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+User.hasMany(UserTask, { foreignKey: 'assigneeId', as: 'assignedWorkspaceTasks' });
+UserTask.belongsTo(User, { foreignKey: 'assigneeId', as: 'assignee' });
+
+Tenant.hasMany(UserChecklist, { foreignKey: 'tenantId', as: 'workspaceChecklists' });
+UserChecklist.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+User.hasMany(UserChecklist, { foreignKey: 'userId', as: 'workspaceChecklists' });
+UserChecklist.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+
+UserChecklist.hasMany(UserChecklistItem, { foreignKey: 'checklistId', as: 'items' });
+UserChecklistItem.belongsTo(UserChecklist, { foreignKey: 'checklistId', as: 'checklist' });
+User.hasMany(UserChecklistItem, { foreignKey: 'userId', as: 'workspaceChecklistItems' });
+UserChecklistItem.belongsTo(User, { foreignKey: 'userId', as: 'user' });
 Notification.belongsTo(User, { foreignKey: 'triggeredBy', as: 'actor' });
 Notification.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
-InventoryCategory.hasMany(InventoryItem, { foreignKey: 'categoryId', as: 'items' });
-InventoryItem.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' });
+MaterialCategory.hasMany(MaterialItem, { foreignKey: 'categoryId', as: 'items' });
+MaterialItem.belongsTo(MaterialCategory, { foreignKey: 'categoryId', as: 'category' });
 
-Vendor.hasMany(InventoryItem, { foreignKey: 'preferredVendorId', as: 'inventoryItems' });
-InventoryItem.belongsTo(Vendor, { foreignKey: 'preferredVendorId', as: 'preferredVendor' });
+Vendor.hasMany(MaterialItem, { foreignKey: 'preferredVendorId', as: 'materialItems' });
+MaterialItem.belongsTo(Vendor, { foreignKey: 'preferredVendorId', as: 'preferredVendor' });
 
-InventoryItem.hasMany(InventoryMovement, { foreignKey: 'itemId', as: 'movements' });
-InventoryMovement.belongsTo(InventoryItem, { foreignKey: 'itemId', as: 'item' });
+MaterialItem.hasMany(MaterialMovement, { foreignKey: 'itemId', as: 'movements' });
+MaterialMovement.belongsTo(MaterialItem, { foreignKey: 'itemId', as: 'item' });
 
-Job.hasMany(InventoryMovement, { foreignKey: 'jobId', as: 'inventoryMovements' });
-InventoryMovement.belongsTo(Job, { foreignKey: 'jobId', as: 'job' });
+Tenant.hasMany(EquipmentCategory, { foreignKey: 'tenantId', as: 'equipmentCategories' });
+EquipmentCategory.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
-User.hasMany(InventoryMovement, { foreignKey: 'createdBy', as: 'inventoryMovementsCreated' });
-InventoryMovement.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
+Tenant.hasMany(Equipment, { foreignKey: 'tenantId', as: 'equipment' });
+Equipment.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+EquipmentCategory.hasMany(Equipment, { foreignKey: 'categoryId', as: 'equipment' });
+Equipment.belongsTo(EquipmentCategory, { foreignKey: 'categoryId', as: 'category' });
+
+Vendor.hasMany(Equipment, { foreignKey: 'vendorId', as: 'equipment' });
+Equipment.belongsTo(Vendor, { foreignKey: 'vendorId', as: 'vendor' });
+
+Job.hasMany(MaterialMovement, { foreignKey: 'jobId', as: 'materialMovements' });
+MaterialMovement.belongsTo(Job, { foreignKey: 'jobId', as: 'job' });
+
+User.hasMany(MaterialMovement, { foreignKey: 'createdBy', as: 'materialMovementsCreated' });
+MaterialMovement.belongsTo(User, { foreignKey: 'createdBy', as: 'createdByUser' });
 
 User.hasMany(Lead, { foreignKey: 'assignedTo', as: 'assignedLeads' });
 Lead.belongsTo(User, { foreignKey: 'assignedTo', as: 'assignee' });
@@ -275,6 +329,46 @@ Customer.hasMany(Lead, { foreignKey: 'convertedCustomerId', as: 'relatedLeads' }
 Lead.belongsTo(Customer, { foreignKey: 'convertedCustomerId', as: 'convertedCustomer' });
 Job.hasMany(Lead, { foreignKey: 'convertedJobId', as: 'linkedLeads' });
 Lead.belongsTo(Job, { foreignKey: 'convertedJobId', as: 'convertedJob' });
+
+// Admin job to admin lead relationship
+Lead.hasMany(Job, { foreignKey: 'adminLeadId', as: 'adminJobs' });
+Job.belongsTo(Lead, { foreignKey: 'adminLeadId', as: 'adminLead' });
+
+// Platform Admin Roles relationships
+PlatformAdminRole.belongsToMany(PlatformAdminPermission, {
+  through: PlatformAdminRolePermission,
+  foreignKey: 'roleId',
+  otherKey: 'permissionId',
+  as: 'permissions'
+});
+
+PlatformAdminPermission.belongsToMany(PlatformAdminRole, {
+  through: PlatformAdminRolePermission,
+  foreignKey: 'permissionId',
+  otherKey: 'roleId',
+  as: 'roles'
+});
+
+// Platform Admin User Roles relationships
+User.hasMany(PlatformAdminUserRole, { foreignKey: 'userId', as: 'platformAdminUserRoles' });
+PlatformAdminUserRole.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+
+PlatformAdminRole.hasMany(PlatformAdminUserRole, { foreignKey: 'roleId', as: 'userRoles' });
+PlatformAdminUserRole.belongsTo(PlatformAdminRole, { foreignKey: 'roleId', as: 'role' });
+
+User.belongsToMany(PlatformAdminRole, {
+  through: PlatformAdminUserRole,
+  foreignKey: 'userId',
+  otherKey: 'roleId',
+  as: 'platformAdminRoles'
+});
+
+PlatformAdminRole.belongsToMany(User, {
+  through: PlatformAdminUserRole,
+  foreignKey: 'roleId',
+  otherKey: 'userId',
+  as: 'users'
+});
 
 User.hasMany(Employee, { foreignKey: 'userId', as: 'linkedEmployee' });
 Employee.belongsTo(User, { foreignKey: 'userId', as: 'userAccount' });
@@ -388,8 +482,8 @@ Tenant.hasMany(Drug, { foreignKey: 'tenantId', as: 'drugs' });
 Drug.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 Drug.belongsTo(Pharmacy, { foreignKey: 'pharmacyId', as: 'pharmacy' });
 Pharmacy.hasMany(Drug, { foreignKey: 'pharmacyId', as: 'drugs' });
-Drug.belongsTo(InventoryCategory, { foreignKey: 'categoryId', as: 'category' });
-InventoryCategory.hasMany(Drug, { foreignKey: 'categoryId', as: 'drugs' });
+Drug.belongsTo(MaterialCategory, { foreignKey: 'categoryId', as: 'category' });
+MaterialCategory.hasMany(Drug, { foreignKey: 'categoryId', as: 'drugs' });
 
 Tenant.hasMany(Prescription, { foreignKey: 'tenantId', as: 'prescriptions' });
 Prescription.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -444,15 +538,20 @@ module.exports = {
   JobStatusHistory,
   Invoice,
   InviteToken,
+  PasswordResetToken,
+  EmailVerificationToken,
   Notification,
-  InventoryCategory,
-  InventoryItem,
-  InventoryMovement,
+  MaterialCategory,
+  MaterialItem,
+  MaterialMovement,
+  EquipmentCategory,
+  Equipment,
   Lead,
   LeadActivity,
   CustomerActivity,
   QuoteActivity,
   SaleActivity,
+  ExpenseActivity,
   Setting,
   Employee,
   EmployeeDocument,
@@ -486,7 +585,17 @@ module.exports = {
   // Retail Intelligence
   FootTraffic,
   StockCount,
-  StockCountItem
+  StockCountItem,
+  // Platform Admin Roles
+  PlatformAdminRole,
+  PlatformAdminPermission,
+  PlatformAdminRolePermission,
+  PlatformAdminUserRole,
+  UserTodo,
+  UserWeekFocus,
+  UserTask,
+  UserChecklist,
+  UserChecklistItem
 };
 
 

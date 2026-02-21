@@ -97,7 +97,36 @@ const Customer = sequelize.define('Customer', {
   }
 }, {
   timestamps: true,
-  tableName: 'customers'
+  tableName: 'customers',
+  indexes: [{ fields: ['tenantId'] }],
+  hooks: {
+    beforeCreate: (customer) => {
+      if (customer.email && typeof customer.email === 'string') {
+        customer.email = customer.email.trim().toLowerCase();
+      }
+      if (customer.phone && typeof customer.phone === 'string') {
+        try {
+          const { formatToE164 } = require('../utils/phoneUtils');
+          const e164 = formatToE164(customer.phone.trim());
+          if (e164) customer.phone = e164;
+          else customer.phone = customer.phone.trim();
+        } catch { customer.phone = customer.phone.trim(); }
+      }
+    },
+    beforeUpdate: (customer) => {
+      if (customer.changed('email') && customer.email && typeof customer.email === 'string') {
+        customer.email = customer.email.trim().toLowerCase();
+      }
+      if (customer.changed('phone') && customer.phone && typeof customer.phone === 'string') {
+        try {
+          const { formatToE164 } = require('../utils/phoneUtils');
+          const e164 = formatToE164(customer.phone.trim());
+          if (e164) customer.phone = e164;
+          else customer.phone = customer.phone.trim();
+        } catch { customer.phone = customer.phone.trim(); }
+      }
+    }
+  }
 });
 
 module.exports = Customer;

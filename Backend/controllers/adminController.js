@@ -4,7 +4,7 @@ const { Op, QueryTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const { getPagination } = require('../utils/paginationUtils');
-const { Tenant, User, UserTenant, Notification } = require('../models');
+const { Tenant, User, UserTenant, Notification, Vendor, Job } = require('../models');
 
 const PLAN_PRICING = {
   trial: 0,
@@ -368,6 +368,41 @@ exports.getPlatformAlerts = async (req, res, next) => {
         }))
       }
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getTenantVendors = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id);
+    if (!tenant) {
+      return res.status(404).json({ success: false, message: 'Tenant not found' });
+    }
+    const vendors = await Vendor.findAll({
+      where: { tenantId: tenant.id },
+      attributes: ['id', 'name', 'company'],
+      order: [['name', 'ASC']]
+    });
+    res.status(200).json({ success: true, data: vendors });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getTenantJobs = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id);
+    if (!tenant) {
+      return res.status(404).json({ success: false, message: 'Tenant not found' });
+    }
+    const jobs = await Job.findAll({
+      where: { tenantId: tenant.id },
+      attributes: ['id', 'jobNumber', 'title'],
+      order: [['jobNumber', 'DESC']],
+      limit: 200
+    });
+    res.status(200).json({ success: true, data: jobs });
   } catch (error) {
     next(error);
   }

@@ -9,7 +9,7 @@ const JobStatusHistory = sequelize.define('JobStatusHistory', {
   },
   tenantId: {
     type: DataTypes.UUID,
-    allowNull: false,
+    allowNull: true, // Allow NULL for admin job status history
     references: {
       model: 'tenants',
       key: 'id'

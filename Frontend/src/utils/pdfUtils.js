@@ -115,8 +115,39 @@ export const printPDF = async (element, options = {}) => {
   return pdf;
 };
 
+/**
+ * Open native print dialog with the given element's content (no PDF download)
+ * @param {HTMLElement} element - Element containing printable content (with styles if needed)
+ * @param {string} [title='Print'] - Document title for the print window
+ */
+export const openPrintDialog = (element, title = 'Print') => {
+  if (!element) return;
+  const content = element.innerHTML;
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) return;
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <title>${title}</title>
+        <meta charset="utf-8">
+        <style>
+          body { margin: 0; padding: 8px; font-family: Arial, sans-serif; }
+          @media print { body { padding: 0; } }
+        </style>
+      </head>
+      <body>${content}</body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+  printWindow.onafterprint = () => printWindow.close();
+};
+
 export default {
   generatePDF,
   generatePDFFromSelector,
   printPDF,
+  openPrintDialog,
 };

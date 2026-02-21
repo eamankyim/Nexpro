@@ -690,9 +690,7 @@ exports.convertQuoteToSale = async (req, res, next) => {
     const quoteItems = await QuoteItem.findAll({
       where: applyTenantFilter(req.tenantId, { quoteId: quote.id }),
       transaction
-    });
-
-    // Get payment method from request body (default to 'credit' for quote conversions)
+    });    // Get payment method from request body (default to 'credit' for quote conversions)
     const paymentMethod = req.body.paymentMethod || 'credit';
     const shopId = req.body.shopId || null;
 
@@ -761,9 +759,7 @@ exports.convertQuoteToSale = async (req, res, next) => {
           // Skip items without productId - in production, you might want to handle this differently
           console.warn(`Skipping quote item ${quoteItem.id} - no productId found`);
           continue;
-        }
-
-        const itemSubtotal = parseFloat(quoteItem.quantity || 0) * parseFloat(quoteItem.unitPrice || 0);
+        }        const itemSubtotal = parseFloat(quoteItem.quantity || 0) * parseFloat(quoteItem.unitPrice || 0);
         const itemDiscount = parseFloat(quoteItem.discountAmount || 0);
         const itemTax = 0;
         const itemTotal = itemSubtotal - itemDiscount + itemTax;
@@ -792,9 +788,7 @@ exports.convertQuoteToSale = async (req, res, next) => {
     await quote.update({
       status: 'accepted',
       acceptedAt: new Date()
-    }, { transaction });
-
-    // Create activity for quote-to-sale conversion
+    }, { transaction });    // Create activity for quote-to-sale conversion
     await QuoteActivity.create({
       quoteId: quote.id,
       tenantId: req.tenantId,
@@ -807,9 +801,7 @@ exports.convertQuoteToSale = async (req, res, next) => {
         saleNumber: saleNumber,
         paymentMethod: paymentMethod
       }
-    }, { transaction });
-
-    // Create activity for sale creation
+    }, { transaction });    // Create activity for sale creation
     await SaleActivity.create({
       saleId: sale.id,
       tenantId: req.tenantId,
@@ -838,9 +830,7 @@ exports.convertQuoteToSale = async (req, res, next) => {
       } catch (invoiceError) {
         console.error('[ConvertQuoteToSale] ❌ Failed to auto-create invoice:', invoiceError);
       }
-    }
-
-    // Fetch sale with relations
+    }    // Fetch sale with relations
     const createdSale = await Sale.findByPk(sale.id, {
       include: [
         { model: Customer, as: 'customer' },

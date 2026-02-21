@@ -119,7 +119,35 @@ const Employee = sequelize.define(
   },
   {
     tableName: 'employees',
-    timestamps: true
+    timestamps: true,
+    hooks: {
+      beforeCreate: (emp) => {
+        if (emp.email && typeof emp.email === 'string') {
+          emp.email = emp.email.trim().toLowerCase();
+        }
+        if (emp.phone && typeof emp.phone === 'string') {
+          try {
+            const { formatToE164 } = require('../utils/phoneUtils');
+            const e164 = formatToE164(emp.phone.trim());
+            if (e164) emp.phone = e164;
+            else emp.phone = emp.phone.trim();
+          } catch { emp.phone = emp.phone.trim(); }
+        }
+      },
+      beforeUpdate: (emp) => {
+        if (emp.changed('email') && emp.email && typeof emp.email === 'string') {
+          emp.email = emp.email.trim().toLowerCase();
+        }
+        if (emp.changed('phone') && emp.phone && typeof emp.phone === 'string') {
+          try {
+            const { formatToE164 } = require('../utils/phoneUtils');
+            const e164 = formatToE164(emp.phone.trim());
+            if (e164) emp.phone = e164;
+            else emp.phone = emp.phone.trim();
+          } catch { emp.phone = emp.phone.trim(); }
+        }
+      }
+    }
   }
 );
 

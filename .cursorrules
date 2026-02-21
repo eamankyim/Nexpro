@@ -1,5 +1,16 @@
 # Cursor Rules for ShopWISE
 
+## Mobile App (Expo)
+
+When working in `mobile/` (Expo/React Native app):
+- **Setup & implementation:** Follow `.cursor/rules/mobile-expo.mdc` — dependencies, imports, API, structure
+- **Design:** Follow `.cursor/rules/mobile-app-design.mdc` — navigation, UX, touch targets
+- **Build guide:** `docs/MOBILE_APP_BUILD_GUIDE.md` — install steps, env, CORS, common errors
+- **Plan:** `.cursor/plans/mobile_app_implementation_strategy.plan.md` — phases and order
+- **Out of scope (web only):** Leads, Vendors, Employees, Payroll, Users/Team, Prescriptions, Drugs, Foot Traffic, Accounting — do not implement these in mobile
+
+---
+
 ## Design Guidelines
 
 ### Shadows
@@ -9,7 +20,7 @@
 
 ## Code Style
 
-### UI Components
+### UI Components (Frontend/web only; for mobile see .cursor/rules/mobile-expo.mdc)
 - **USE shadcn/ui components ONLY** - DO NOT use Ant Design components
 - Use shadcn/ui components with Tailwind CSS (Table, Dialog, Select, etc. from @/components/ui)
 - DO NOT import or use components from 'antd' package
@@ -166,9 +177,10 @@
 ### Multi-Tenant Business Types
 - **ALWAYS check business type** before rendering business-type-specific features
 - Use: `const { activeTenant } = useAuth(); const businessType = activeTenant?.businessType || 'printing_press';`
-- Use: `const isPrintingPress = businessType === 'printing_press';`
-- Conditionally render job-related features only for `printing_press`
-- Use conditional rendering: `{isPrintingPress && <JobRelatedComponent />}`
+- For Job/Quote/Invoice features, use: `const isStudioLike = ['printing_press', 'mechanic', 'barber', 'salon'].includes(businessType);`
+- Or import: `import { STUDIO_LIKE_TYPES } from '../constants';` and use `STUDIO_LIKE_TYPES.includes(businessType)`
+- Conditionally render job-related features for studio-like types (printing_press, mechanic, barber, salon)
+- Use conditional rendering: `{isStudioLike && <JobRelatedComponent />}`
 - Use spread operator for conditional array items: `[...(isPrintingPress ? [item] : [])]`
 
 ## Import Organization

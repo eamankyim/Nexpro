@@ -114,15 +114,22 @@ export const useSafeAreaInsets = () => {
         testEl.style.paddingBottom = 'env(safe-area-inset-bottom)';
         testEl.style.paddingLeft = 'env(safe-area-inset-left)';
         document.body.appendChild(testEl);
-        
+
         const computed = window.getComputedStyle(testEl);
         const top = parseInt(computed.paddingTop) || 0;
         const right = parseInt(computed.paddingRight) || 0;
         const bottom = parseInt(computed.paddingBottom) || 0;
         const left = parseInt(computed.paddingLeft) || 0;
-        
-        document.body.removeChild(testEl);
-        
+
+        // Safely remove - avoid NotFoundError when React/StrictMode conflicts with DOM
+        try {
+          if (testEl.parentNode) {
+            testEl.parentNode.removeChild(testEl);
+          }
+        } catch {
+          // Ignore - element may have been removed by React reconciliation
+        }
+
         setInsets({ top, right, bottom, left });
       }
     };

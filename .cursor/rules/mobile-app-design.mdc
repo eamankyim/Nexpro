@@ -1,0 +1,42 @@
+---
+description: Mobile app design - navigation, UX, Fuse/Revolut patterns
+globs: "**/Frontend/**/*.{jsx,tsx}", "**/mobile/**/*.{jsx,tsx}"
+alwaysApply: false
+---
+
+# Mobile App Design Guidelines
+
+**Reference images:** `docs/mobile-design-references.md`, `docs/mobile-design-references/` (Revolut Analytics, Fuse Wallet)
+
+**Expo setup:** When in `mobile/`, also follow `.cursor/rules/mobile-expo.mdc`
+
+## Bottom Navigation
+
+- **5-tab bottom nav** as primary navigation
+- **Center action** contextual: Camera (shops/pharmacies) or Plus (studios)
+- Use `activeTenant?.businessType` to choose center action
+
+## Reports on Mobile
+
+- **AI chat only** — no chart-heavy or table-heavy report pages
+- Single "Ask about your business" chat UI
+
+## Header
+
+- Notification bell → link to `/notifications`
+- Avatar → link to `/profile`
+- Minimal header; tap targets ≥ 44px
+
+## Fuse/Revolut UX Patterns
+
+- **Modals:** Blurred background (`expo-blur` BlurView or `backdrop-blur`)
+- **Empty states:** Clear copy + primary CTA
+- **Feedback:** Brief pills ("Copied", "Saved"); toast for actions
+- **Layout:** Card-based, generous white space, flat design (no shadows)
+- **Revolut-style:** Filter pills with icons, large amount + label, simple bar charts, "See all" links
+
+## Touch & Accessibility
+
+- Min touch target: **44px**
+- Borders for separation (no shadows)
+- Primary color: #166534

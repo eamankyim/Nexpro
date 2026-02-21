@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Tag, Row, Col } from 'antd';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import WelcomeSection from '../components/WelcomeSection';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import DashboardTable from '../components/DashboardTable';
+import ViewToggle from '../components/ViewToggle';
 import FloatingActionButton from '../components/FloatingActionButton';
 import {
   Plus,
@@ -106,24 +106,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, PRIORITY_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS } from '../constants';
-
-const leadSourceOptions = [
-  { value: 'Social Media - Facebook', label: 'Social Media - Facebook' },
-  { value: 'Social Media - Instagram', label: 'Social Media - Instagram' },
-  { value: 'Online - Google', label: 'Online - Google' },
-  { value: 'Online - Website', label: 'Online - Website' },
-  { value: 'Referral', label: 'Referral' },
-  { value: 'Walk-in', label: 'Walk-in' },
-  { value: 'Phone Call', label: 'Phone Call' },
-  { value: 'Email', label: 'Email' },
-  { value: 'Event/Exhibition', label: 'Event/Exhibition' },
-  { value: 'Cold Call', label: 'Cold Call' }
-];
+import settingsService from '../services/settingsService';
+import { useQuery } from '@tanstack/react-query';
 
 const leadSchema = z.object({
-  name: z.string().min(1, 'Lead name is required'),
-  email: z.string().min(1, 'Email is required').email('Please enter a valid email'),
+  name: z.string().min(1, 'Enter lead name'),
+  email: z.string().email('Enter a valid email').optional().or(z.literal('')),
   company: z.string().optional(),
   phone: z.string().optional(),
   source: z.string().optional(),
@@ -149,7 +139,7 @@ const statusSchema = z.object({
 });
 
 const Leads = () => {
-  const { activeTenant } = useAuth();
+  const { activeTenant, activeTenantId } = useAuth();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
@@ -177,6 +167,7 @@ const Leads = () => {
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [convertingLead, setConvertingLead] = useState(false);
   const [customLeadSources, setCustomLeadSources] = useState([]);
+  const [savingLeadSource, setSavingLeadSource] = useState(false);
   const [showLeadSourceOtherInput, setShowLeadSourceOtherInput] = useState(false);
   const [leadSourceOtherValue, setLeadSourceOtherValue] = useState('');
   const [archiveLeadId, setArchiveLeadId] = useState(null);
@@ -184,6 +175,7 @@ const Leads = () => {
   const [archivingLead, setArchivingLead] = useState(false);
   const [convertLeadId, setConvertLeadId] = useState(null);
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
+  const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [updateStatusDialogOpen, setUpdateStatusDialogOpen] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
@@ -250,6 +242,27 @@ const Leads = () => {
     };
     loadCustomSources();
   }, []);
+
+  const { data: leadSourceOptionsApi = [] } = useQuery({
+    queryKey: ['settings', 'lead-sources', activeTenantId],
+    queryFn: () => settingsService.getLeadSources(),
+    enabled: !!activeTenantId,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const leadSourceOptions = useMemo(() => {
+    const apiOpts = Array.isArray(leadSourceOptionsApi) ? leadSourceOptionsApi : [];
+    const mapped = apiOpts.map(s => ({ value: s.value, label: s.label || s.value }));
+    return mapped.length > 0 ? mapped : [
+      { value: 'Online - Website', label: 'Online - Website' },
+      { value: 'Referral', label: 'Referral' },
+      { value: 'Walk-in', label: 'Walk-in' },
+      { value: 'Phone Call', label: 'Phone Call' },
+      { value: 'Email', label: 'Email' },
+      { value: 'Event/Exhibition', label: 'Event/Exhibition' },
+      { value: 'Cold Call', label: 'Cold Call' }
+    ];
+  }, [leadSourceOptionsApi]);
 
   // Pull-to-refresh hook
   const { isRefreshing, pullDistance, containerProps } = usePullToRefresh(
@@ -432,17 +445,18 @@ const Leads = () => {
     }
   };
 
-  const handleViewLead = async (record) => {
+  const handleViewLead = (record) => {
     setViewingLead(record);
     setDrawerVisible(true);
-    try {
-      const response = await leadService.getById(record.id);
-      const data = response?.data || response;
-      setViewingLead(data || record);
-    } catch (error) {
-      console.error('Failed to fetch lead', error);
-      showError(error, 'Failed to load lead details');
-    }
+    leadService.getById(record.id)
+      .then((response) => {
+        const data = response?.data || response;
+        setViewingLead((prev) => (prev?.id === record.id ? (data || prev) : prev));
+      })
+      .catch((error) => {
+        console.error('Failed to fetch lead', error);
+        showError(error, 'Failed to load lead details');
+      });
   };
 
   const handleConvertLead = (leadRecord = null) => {
@@ -600,8 +614,8 @@ const Leads = () => {
       render: (_, record) =>
         record.email ? (
           <div className="flex items-center gap-2">
-            <Mail className="h-4 w-4 text-black" />
-            <a href={`mailto:${record.email}`} className="text-black hover:underline">{record.email}</a>
+            <Mail className="h-4 w-4 text-foreground" />
+            <a href={`mailto:${record.email}`} className="text-foreground hover:underline">{record.email}</a>
           </div>
         ) : (
           '—'
@@ -613,7 +627,7 @@ const Leads = () => {
       render: (_, record) =>
         record.phone ? (
           <div className="flex items-center gap-2">
-            <Phone className="h-4 w-4 text-black" />
+            <Phone className="h-4 w-4 text-foreground" />
             <span>{record.phone}</span>
           </div>
         ) : (
@@ -675,20 +689,15 @@ const Leads = () => {
             },
             {
               label: 'Edit',
+              variant: 'secondary',
               onClick: () => openLeadModal(record),
               icon: <UserCog className="h-4 w-4" />
-            },
-            {
-              label: 'Archive',
-              onClick: () => handleArchiveLead(record),
-              icon: <Users className="h-4 w-4" />,
-              danger: true
             }
           ].filter(Boolean)}
         />
       )
     }
-  ], [handleViewLead, handleConvertLead, openLeadModal, handleArchiveLead]);
+  ], [handleViewLead, handleConvertLead, openLeadModal]);
 
 
   const drawerTabs = useMemo(() => {
@@ -713,12 +722,12 @@ const Leads = () => {
           <TimelineItem key={activity.id} isLast={isLast}>
             <TimelineIndicator />
             <TimelineContent>
-              <TimelineTitle className="text-black">
+              <TimelineTitle className="text-foreground">
                 {activity.createdByUser 
                   ? `${activity.createdByUser.name} added a new lead, ${viewingLead.name}`
                   : `Added a new lead, ${viewingLead.name}`}
               </TimelineTitle>
-              <TimelineTime className="text-black">
+              <TimelineTime className="text-foreground">
                 {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
               </TimelineTime>
             </TimelineContent>
@@ -730,21 +739,21 @@ const Leads = () => {
         <TimelineItem key={activity.id} isLast={isLast}>
           <TimelineIndicator />
           <TimelineContent>
-            <TimelineTitle className="text-black">
+            <TimelineTitle className="text-foreground">
               {activity.type.toUpperCase()} {activity.subject ? `- ${activity.subject}` : ''}
             </TimelineTitle>
-            <TimelineTime className="text-black">
+            <TimelineTime className="text-foreground">
               {dayjs(activity.createdAt).format('MMM DD, YYYY [at] h:mm A')}
               {activity.createdByUser ? ` • ${activity.createdByUser.name}` : ''}
             </TimelineTime>
             {activity.notes && (
-              <TimelineDescription className="text-black">{activity.notes}</TimelineDescription>
+              <TimelineDescription className="text-foreground">{activity.notes}</TimelineDescription>
             )}
             {activity.nextStep && (
-              <TimelineDescription className="text-black">Next Step: {activity.nextStep}</TimelineDescription>
+              <TimelineDescription className="text-foreground">Next Step: {activity.nextStep}</TimelineDescription>
             )}
             {activity.followUpDate && (
-              <TimelineDescription className="text-black">
+              <TimelineDescription className="text-foreground">
                 Follow-up: {dayjs(activity.followUpDate).format('MMM DD, YYYY hh:mm A')}
               </TimelineDescription>
             )}
@@ -772,7 +781,7 @@ const Leads = () => {
               )}
               <Descriptions column={1} className="space-y-0">
                 <DescriptionItem label="Name">
-                  <span className="text-black">{viewingLead.name}</span>
+                  <span className="text-foreground">{viewingLead.name}</span>
                 </DescriptionItem>
                 <DescriptionItem label="Status">
                   <StatusChip status={viewingLead.status} />
@@ -786,27 +795,27 @@ const Leads = () => {
                   </Badge>
                 </DescriptionItem>
                 <DescriptionItem label="Company">
-                  <span className="text-black">{viewingLead.company || '—'}</span>
+                  <span className="text-foreground">{viewingLead.company || '—'}</span>
                 </DescriptionItem>
                 <DescriptionItem label="Email">
-                  <span className="text-black">{viewingLead.email || '—'}</span>
+                  <span className="text-foreground">{viewingLead.email || '—'}</span>
                 </DescriptionItem>
                 <DescriptionItem label="Phone">
-                  <span className="text-black">{viewingLead.phone || '—'}</span>
+                  <span className="text-foreground">{viewingLead.phone || '—'}</span>
                 </DescriptionItem>
                 <DescriptionItem label="Source">
-                  <span className="text-black">{viewingLead.source || '—'}</span>
+                  <span className="text-foreground">{viewingLead.source || '—'}</span>
                 </DescriptionItem>
                 <DescriptionItem label="Assigned To">
-                  <span className="text-black">{viewingLead.assignee?.name || 'Unassigned'}</span>
+                  <span className="text-foreground">{viewingLead.assignee?.name || 'Unassigned'}</span>
                 </DescriptionItem>
                 <DescriptionItem label="Next Follow-Up">
-                  <span className="text-black">
+                  <span className="text-foreground">
                     {viewingLead.nextFollowUp ? dayjs(viewingLead.nextFollowUp).format('MMM DD, YYYY hh:mm A') : '—'}
                   </span>
                 </DescriptionItem>
                 <DescriptionItem label="Last Contacted">
-                  <span className="text-black">
+                  <span className="text-foreground">
                     {viewingLead.lastContactedAt ? dayjs(viewingLead.lastContactedAt).format('MMM DD, YYYY hh:mm A') : '—'}
                   </span>
                 </DescriptionItem>
@@ -815,7 +824,7 @@ const Leads = () => {
                     <div className="flex items-center gap-2">
                       <Badge variant="outline">{viewingLead.convertedCustomer.name}</Badge>
                       {viewingLead.convertedCustomer.company && (
-                        <span className="text-black">{viewingLead.convertedCustomer.company}</span>
+                        <span className="text-foreground">{viewingLead.convertedCustomer.company}</span>
                       )}
                     </div>
                   </DescriptionItem>
@@ -824,17 +833,17 @@ const Leads = () => {
                   <DescriptionItem label="Linked Job">
                     <div className="flex items-center gap-2">
                       <Badge variant="default">{viewingLead.convertedJob.jobNumber}</Badge>
-                      <span className="text-black">{viewingLead.convertedJob.title}</span>
+                      <span className="text-foreground">{viewingLead.convertedJob.title}</span>
                     </div>
                   </DescriptionItem>
                 )}
                 <DescriptionItem label="Tags">
                   {(viewingLead.tags || []).length
                     ? viewingLead.tags.map((tag) => <Badge key={tag} variant="outline" className="mr-1">{tag}</Badge>)
-                    : <span className="text-black">—</span>}
+                    : <span className="text-foreground">—</span>}
                 </DescriptionItem>
                 <DescriptionItem label="Notes">
-                  <span className="text-black">{viewingLead.notes || '—'}</span>
+                  <span className="text-foreground">{viewingLead.notes || '—'}</span>
                 </DescriptionItem>
               </Descriptions>
             </div>
@@ -872,86 +881,97 @@ const Leads = () => {
           subText="Track prospects and follow-ups for customer service and marketing."
         />
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
-            <Filter className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Filter</span>}
-          </Button>
-          <Button 
-            variant="outline" 
-            onClick={async () => { 
-              await fetchLeads(true); 
-              fetchSummary(); 
-            }}
-            disabled={refreshingLeads}
-            size={isMobile ? "icon" : "default"}
-          >
-            {refreshingLeads ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {!isMobile && <span className="ml-2">Refresh</span>}
-          </Button>
-          <Button onClick={() => openLeadModal()} size={isMobile ? "icon" : "default"}>
-            <Plus className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">New Lead</span>}
-          </Button>
+          <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+                <Filter className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Filter</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Filter leads by status, priority, source, or assignee</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button 
+                variant="outline" 
+                onClick={async () => { 
+                  await fetchLeads(true); 
+                  fetchSummary(); 
+                }}
+                disabled={refreshingLeads}
+                size={isMobile ? "icon" : "default"}
+              >
+                {refreshingLeads ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-4 w-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Refresh leads list</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={() => openLeadModal()} size={isMobile ? "icon" : "default"}>
+                <Plus className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">New Lead</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Add a new lead</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         {/* Total Leads Card */}
-        <Col xs={24} sm={12} lg={6}>
-          <div style={{ opacity: summaryLoading ? 0.5 : 1 }}>
-            <DashboardStatsCard
-              title="Total Leads"
-              value={summary?.totals?.totalLeads || 0}
-              icon={Users}
-              iconBgColor="rgba(22, 101, 52, 0.1)"
-              iconColor="#166534"
-            />
-          </div>
-        </Col>
+        <div className={summaryLoading ? 'opacity-50' : ''}>
+          <DashboardStatsCard
+            tooltip="Total number of leads in your pipeline"
+            title="Total Leads"
+            value={summary?.totals?.totalLeads || 0}
+            icon={Users}
+            iconBgColor="rgba(22, 101, 52, 0.1)"
+            iconColor="#166534"
+          />
+        </div>
 
         {/* Qualified Card */}
-        <Col xs={24} sm={12} lg={6}>
-          <div style={{ opacity: summaryLoading ? 0.5 : 1 }}>
-            <DashboardStatsCard
-              title="Qualified"
-              value={summary?.totals?.qualifiedLeads || 0}
-              icon={CheckCircle}
-              iconBgColor="rgba(59, 130, 246, 0.1)"
-              iconColor="#166534"
-            />
-          </div>
-        </Col>
+        <div className={summaryLoading ? 'opacity-50' : ''}>
+          <DashboardStatsCard
+            tooltip="Leads that have been qualified and are ready for conversion"
+            title="Qualified"
+            value={summary?.totals?.qualifiedLeads || 0}
+            icon={CheckCircle}
+            iconBgColor="rgba(59, 130, 246, 0.1)"
+            iconColor="#166534"
+          />
+        </div>
 
         {/* Converted Card */}
-        <Col xs={24} sm={12} lg={6}>
-          <div style={{ opacity: summaryLoading ? 0.5 : 1 }}>
-            <DashboardStatsCard
-              title="Converted"
-              value={summary?.totals?.convertedLeads || 0}
-              icon={TrendingUp}
-              iconBgColor="rgba(132, 204, 22, 0.1)"
-              iconColor="#84cc16"
-            />
-          </div>
-        </Col>
+        <div className={summaryLoading ? 'opacity-50' : ''}>
+          <DashboardStatsCard
+            tooltip="Leads that have been converted to customers"
+            title="Converted"
+            value={summary?.totals?.convertedLeads || 0}
+            icon={TrendingUp}
+            iconBgColor="rgba(132, 204, 22, 0.1)"
+            iconColor="#84cc16"
+          />
+        </div>
 
         {/* Lost Card */}
-        <Col xs={24} sm={12} lg={6}>
-          <div style={{ opacity: summaryLoading ? 0.5 : 1 }}>
-            <DashboardStatsCard
-              title="Lost"
-              value={summary?.totals?.lostLeads || 0}
-              icon={XCircle}
-              iconBgColor="rgba(239, 68, 68, 0.1)"
-              iconColor="#ef4444"
-            />
-          </div>
-        </Col>
-      </Row>
+        <div className={summaryLoading ? 'opacity-50' : ''}>
+          <DashboardStatsCard
+            tooltip="Leads that did not convert or were disqualified"
+            title="Lost"
+            value={summary?.totals?.lostLeads || 0}
+            icon={XCircle}
+            iconBgColor="rgba(239, 68, 68, 0.1)"
+            iconColor="#ef4444"
+          />
+        </div>
+      </div>
 
       {/* Main Content Area with Pull-to-Refresh */}
       <div {...containerProps} className="relative">
@@ -978,12 +998,20 @@ const Leads = () => {
           loading={loading || (isMobile && isRefreshing)}
           title={null}
           emptyIcon={<Users className="h-12 w-12 text-muted-foreground" />}
-          emptyDescription="No leads found"
+          emptyDescription="No leads yet. Track potential customers and grow your business."
+          emptyAction={
+            <Button onClick={() => openLeadModal()}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add First Lead
+            </Button>
+          }
           pageSize={pagination.pageSize}
           externalPagination={{ current: pagination.current, total: pagination.total }}
           onPageChange={(newPagination) => {
             setPagination(newPagination);
           }}
+          viewMode={tableViewMode}
+          onViewModeChange={setTableViewMode}
         />
       </div>
 
@@ -992,6 +1020,7 @@ const Leads = () => {
         onClick={() => openLeadModal()}
         icon={Plus}
         label="Add Lead"
+        tooltip="Add a new lead"
         show={isMobile}
       />
 

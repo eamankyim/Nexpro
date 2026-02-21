@@ -12,7 +12,6 @@ import {
   Filter,
   RefreshCw,
   Percent,
-  DollarSign,
   Eye
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,6 +41,7 @@ import { Empty } from '@/components/ui/empty';
 import DateFilterButtons from '../components/DateFilterButtons';
 import TableSkeleton from '../components/TableSkeleton';
 import DashboardTable from '../components/DashboardTable';
+import ViewToggle from '../components/ViewToggle';
 import { showSuccess, showError } from '../utils/toast';
 import footTrafficService from '../services/footTrafficService';
 import { useAuth } from '../context/AuthContext';
@@ -88,6 +88,7 @@ const FootTraffic = () => {
   const [dateRange, setDateRange] = useState(null);
   const [activeFilter, setActiveFilter] = useState('month');
   const [groupBy, setGroupBy] = useState('day');
+  const [tableViewMode, setTableViewMode] = useState('table');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
@@ -243,7 +244,7 @@ const FootTraffic = () => {
       key: 'entryMethod',
       label: 'Method',
       render: (_, record) => (
-        <Badge className={ENTRY_METHODS[record.entryMethod]?.color || 'bg-gray-100'}>
+        <Badge className={ENTRY_METHODS[record.entryMethod]?.color || 'bg-muted text-muted-foreground'}>
           {ENTRY_METHODS[record.entryMethod]?.label || record.entryMethod}
         </Badge>
       )
@@ -264,17 +265,16 @@ const FootTraffic = () => {
   }
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-4 md:space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Customer Traffic</h1>
+          <h1 className="text-2xl font-bold text-foreground">Customer Traffic</h1>
           <p className="text-gray-500 mt-1">Track and analyze customer visits to your shop</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={handleRefresh}>
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
+          <Button variant="outline" size="icon" onClick={handleRefresh}>
+            <RefreshCw className="h-4 w-4" />
           </Button>
           <Button variant="outline" onClick={handleQuickCheckIn}>
             <Plus className="h-4 w-4 mr-2" />
@@ -288,7 +288,7 @@ const FootTraffic = () => {
       </div>
 
       {/* Today's Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Today's Visitors</CardTitle>
@@ -339,23 +339,6 @@ const FootTraffic = () => {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Today's Revenue</CardTitle>
-            <DollarSign className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {todayLoading ? (
-              <Skeleton className="h-8 w-24" />
-            ) : (
-              <>
-                <div className="text-2xl font-bold">{formatCurrency(todaySummary?.revenue)}</div>
-                <p className="text-xs text-muted-foreground">Total sales revenue</p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Avg. per Visitor</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
@@ -383,6 +366,7 @@ const FootTraffic = () => {
           onFilterChange={handleFilterChange}
         />
         <div className="flex items-center gap-2">
+          <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <span className="text-sm text-gray-500">Group by:</span>
           <Select value={groupBy} onValueChange={setGroupBy}>
             <SelectTrigger className="w-[120px]">
@@ -561,8 +545,16 @@ const FootTraffic = () => {
           loading={trafficLoading}
           title="Recent Traffic Records"
           emptyIcon={<Users className="h-12 w-12 text-gray-400" />}
-          emptyDescription="No traffic records found"
+          emptyDescription="No foot traffic recorded yet. Start tracking customer visits to analyze patterns."
+          emptyAction={
+            <Button onClick={() => setIsAddDialogOpen(true)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Record First Visit
+            </Button>
+          }
           pageSize={10}
+          viewMode={tableViewMode}
+          onViewModeChange={setTableViewMode}
         />
       )}
 

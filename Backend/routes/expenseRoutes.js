@@ -2,6 +2,9 @@ const express = require('express');
 const {
   getExpenses,
   getExpense,
+  getExpenseCategories,
+  addCustomExpenseCategory,
+  removeCustomExpenseCategory,
   createExpense,
   createBulkExpenses,
   updateExpense,
@@ -12,16 +15,21 @@ const {
   approveExpense,
   rejectExpense,
   getExpenseActivities,
-  addExpenseActivity
+  addExpenseActivity,
+  uploadExpenseReceipt
 } = require('../controllers/expenseController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { expenseReceiptUploader, checkStorageLimit } = require('../middleware/upload');
 
 const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
 
+router.get('/categories', getExpenseCategories);
+router.post('/categories', authorize('admin', 'manager', 'staff'), addCustomExpenseCategory);
+router.delete('/categories', authorize('admin', 'manager', 'staff'), removeCustomExpenseCategory);
 router.get('/stats/overview', getExpenseStats);
 router.get('/by-job/:jobId', getExpensesByJob);
 
@@ -30,6 +38,14 @@ router.route('/')
   .post(authorize('admin', 'manager', 'staff'), createExpense);
 
 router.post('/bulk', authorize('admin', 'manager', 'staff'), createBulkExpenses);
+
+router.post(
+  '/upload-receipt',
+  authorize('admin', 'manager', 'staff'),
+  checkStorageLimit,
+  expenseReceiptUploader.single('file'),
+  uploadExpenseReceipt
+);
 
 router.route('/:id')
   .get(getExpense)

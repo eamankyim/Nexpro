@@ -1,10 +1,18 @@
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
-const { User, InviteToken, UserTenant, Tenant } = require('../models');
+const { OAuth2Client } = require('google-auth-library');
+const { User, InviteToken, UserTenant, Tenant, PlatformAdminRole, PlatformAdminUserRole, PasswordResetToken, EmailVerificationToken, Setting } = require('../models');
 const config = require('../config/config');
+const { sequelize } = require('../config/database');
 const { invalidateUserCache } = require('../middleware/cache');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
+const emailService = require('../services/emailService');
+const { passwordReset: passwordResetEmailTemplate, emailVerification: emailVerificationTemplate } = require('../services/emailTemplates');
+const { seedDefaultCategories, seedDefaultEquipmentCategories } = require('../utils/categorySeeder');
+const { seedDefaultChartOfAccounts } = require('../utils/seedAccountingAccounts');
+const { resolveBusinessType } = require('../config/businessTypes');
 
 // Slug utility functions (copied from tenantController)
 const slugify = (value = '') => {
@@ -110,18 +118,52 @@ exports.register = async (req, res, next) => {
       });
     }
 
-    // Ensure invite has a tenantId
-    if (!invite.tenantId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid invite: missing tenant information'
+    const isPlatformAdminInvite = !invite.tenantId || invite.inviteType === 'platform_admin';
+
+    if (isPlatformAdminInvite) {
+      // Platform admin invite: create user with isPlatformAdmin, assign invited platform role, no tenant
+      const user = await User.create({
+        name,
+        email: (email || '').trim().toLowerCase(),
+        password,
+        role: 'admin',
+        isPlatformAdmin: true
+      });
+
+      const roleToAssign = invite.platformAdminRoleName
+        ? await PlatformAdminRole.findOne({ where: { name: invite.platformAdminRoleName } })
+        : null;
+      const fallbackRole = roleToAssign || await PlatformAdminRole.findOne({
+        where: { isDefault: true },
+        order: [['createdAt', 'ASC']]
+      }) || await PlatformAdminRole.findOne({ order: [['createdAt', 'ASC']] });
+      if (fallbackRole) {
+        await PlatformAdminUserRole.create({ userId: user.id, roleId: fallbackRole.id });
+      }
+
+      await invite.update({
+        used: true,
+        usedAt: new Date(),
+        usedBy: user.id
+      });
+
+      const token = generateToken(user.id);
+      return res.status(201).json({
+        success: true,
+        data: {
+          user: user.toJSON(),
+          token,
+          memberships: [],
+          defaultTenantId: null,
+          isPlatformAdmin: true
+        }
       });
     }
 
-    // Create user with role from invite
+    // Tenant invite: create user and UserTenant membership
     const user = await User.create({
       name,
-      email,
+      email: (email || '').trim().toLowerCase(),
       password,
       role: invite.role
     });
@@ -130,7 +172,6 @@ exports.register = async (req, res, next) => {
       where: { userId: user.id }
     });
 
-    // Create UserTenant relationship - this makes the user a member of the tenant's organization
     await UserTenant.create({
       userId: user.id,
       tenantId: invite.tenantId,
@@ -142,7 +183,6 @@ exports.register = async (req, res, next) => {
       joinedAt: new Date()
     });
 
-    // Mark invite as used
     await invite.update({
       used: true,
       usedAt: new Date(),
@@ -200,8 +240,9 @@ exports.login = async (req, res, next) => {
       });
     }
 
-    // Check for user
-    const user = await User.findOne({ where: { email } });
+    // Check for user (email is case-insensitive)
+    const normalizedEmail = (email || '').trim().toLowerCase();
+    const user = await User.findOne({ where: { email: normalizedEmail } });
 
     if (!user) {
       return res.status(401).json({
@@ -306,6 +347,267 @@ exports.login = async (req, res, next) => {
   }
 };
 
+/**
+ * Verify Google ID token and either log in existing user or create account (sign-up).
+ * @route   POST /api/auth/google
+ * @access  Public
+ * @body    { string } idToken - Google ID token from frontend
+ * @body    { boolean } [signUp] - If true and user not found, create user + tenant. If false, return 404.
+ * @body    { string } [businessType] - For sign-up: 'shop' | 'printing_press' | 'pharmacy'
+ * @body    { string } [companyName] - For sign-up: optional business name (default 'My Business')
+ */
+exports.googleAuth = async (req, res, next) => {
+  try {
+    const googleClientId = process.env.GOOGLE_CLIENT_ID;
+    if (!googleClientId) {
+      return res.status(503).json({
+        success: false,
+        message: 'Google sign-in is not configured',
+      });
+    }
+
+    const { idToken, signUp = false, businessType = 'shop', companyName } = req.body || {};
+    if (!idToken) {
+      return res.status(400).json({
+        success: false,
+        message: 'Google ID token is required',
+      });
+    }
+
+    const client = new OAuth2Client(googleClientId);
+    let payload;
+    try {
+      const ticket = await client.verifyIdToken({ idToken, audience: googleClientId });
+      payload = ticket.getPayload();
+    } catch (verifyErr) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid or expired Google token',
+      });
+    }
+
+    const googleId = payload.sub;
+    const email = (payload.email || '').trim().toLowerCase();
+    const name = (payload.name || payload.email || 'User').trim();
+    const picture = payload.picture || null;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Google account must have an email',
+      });
+    }
+
+    let user = await User.findOne({
+      where: {
+        [Op.or]: [
+          { googleId },
+          { email },
+        ],
+      },
+    });
+
+    if (user) {
+      if (!user.isActive) {
+        return res.status(401).json({
+          success: false,
+          message: 'Account is inactive',
+        });
+      }
+      if (!user.googleId) {
+        await user.update({ googleId, lastLogin: new Date() });
+      } else {
+        await user.update({ lastLogin: new Date() });
+      }
+      if (picture && !user.profilePicture) {
+        await user.update({ profilePicture: picture });
+      }
+
+      const token = generateToken(user.id);
+      const memberships = await UserTenant.findAll({
+        where: { userId: user.id, status: 'active' },
+        include: [{ model: Tenant, as: 'tenant' }],
+        order: [
+          ['isDefault', 'DESC'],
+          ['createdAt', 'ASC'],
+        ],
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          user: user.toJSON ? user.toJSON() : user,
+          token,
+          memberships,
+          defaultTenantId: memberships[0]?.tenantId || null,
+        },
+      });
+    }
+
+    if (!signUp) {
+      return res.status(404).json({
+        success: false,
+        code: 'GOOGLE_USER_NOT_FOUND',
+        message: 'No account found with this Google account. Sign up to create one.',
+        email,
+        name,
+      });
+    }
+
+    const existingByEmail = await User.findOne({ where: { email } });
+    if (existingByEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'An account with this email already exists. Sign in with password or link Google in settings.',
+      });
+    }
+
+    let newUser;
+    let tenant;
+    let finalBusinessType;
+    let metadata = {};
+    const transaction = await sequelize.transaction();
+    try {
+      const trimmedCompanyName = (companyName || 'My Business').trim();
+      const slug = await generateUniqueSlug(trimmedCompanyName, transaction);
+      const trialEndDate = dayjs().add(1, 'month').toDate();
+      finalBusinessType = resolveBusinessType(businessType);
+      metadata = {
+        signupSource: 'google_oauth',
+      };
+      if (['printing_press', 'mechanic', 'barber', 'salon'].includes(businessType)) {
+        metadata.studioType = businessType;
+      }
+
+      tenant = await Tenant.create(
+        {
+          name: trimmedCompanyName,
+          slug,
+          plan: 'trial',
+          businessType: finalBusinessType,
+          status: 'active',
+          metadata,
+          trialEndsAt: trialEndDate,
+        },
+        { transaction }
+      );
+
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      newUser = await User.create(
+        {
+          name,
+          email,
+          password: randomPassword,
+          role: 'admin',
+          googleId,
+          profilePicture: picture,
+          emailVerifiedAt: new Date(),
+        },
+        { transaction }
+      );
+
+      await UserTenant.create(
+        {
+          tenantId: tenant.id,
+          userId: newUser.id,
+          role: 'owner',
+          status: 'active',
+          isDefault: true,
+          invitedBy: null,
+          invitedAt: new Date(),
+          joinedAt: new Date(),
+        },
+        { transaction }
+      );
+
+      await Setting.bulkCreate(
+        [
+          {
+            tenantId: tenant.id,
+            key: 'organization',
+            value: {
+              name: trimmedCompanyName,
+              legalName: trimmedCompanyName,
+              email,
+              phone: '',
+              website: '',
+              logoUrl: '',
+              address: { line1: '', city: '', state: '', country: '', postalCode: '' },
+              tax: { vatNumber: '', tin: '' },
+              invoiceFooter: 'Thank you for doing business with us.',
+            },
+            description: 'Organization profile',
+          },
+          {
+            tenantId: tenant.id,
+            key: 'subscription',
+            value: {
+              plan: 'trial',
+              status: 'trialing',
+              trialEndsAt: trialEndDate,
+              paymentMethod: null,
+              seats: 1,
+            },
+            description: 'Subscription and billing information',
+          },
+          {
+            tenantId: tenant.id,
+            key: 'payroll',
+            value: {
+              payeRate: 0.1,
+              ssnitRate: 0.135,
+              currency: 'GHS',
+              payCycle: 'monthly',
+            },
+            description: 'Default payroll configuration',
+          },
+        ],
+        { transaction }
+      );
+
+      await transaction.commit();
+    } catch (txErr) {
+      await transaction.rollback();
+      throw txErr;
+    }
+
+    user = await User.findByPk(newUser.id);
+    const shopType = metadata?.shopType || null;
+    const studioType = metadata?.studioType || null;
+    seedDefaultCategories(tenant.id, finalBusinessType, shopType, studioType, true)
+      .then(() => console.log(`[Google Auth] Seeded default categories for tenant ${tenant.id}`))
+      .catch((err) => console.error('[Google Auth] seedDefaultCategories error:', err.message));
+    seedDefaultChartOfAccounts(tenant.id, true)
+      .then(({ created }) => { if (created) console.log(`[Google Auth] Seeded accounting accounts for tenant ${tenant.id}`); })
+      .catch((err) => console.error('[Google Auth] seedDefaultChartOfAccounts error:', err.message));
+    seedDefaultEquipmentCategories(tenant.id, true)
+      .then((created) => { if (created) console.log(`[Google Auth] Seeded equipment categories for tenant ${tenant.id}`); })
+      .catch((err) => console.error('[Google Auth] seedDefaultEquipmentCategories error:', err.message));
+
+    const token = generateToken(user.id);
+    const memberships = await UserTenant.findAll({
+      where: { userId: user.id, status: 'active' },
+      include: [{ model: Tenant, as: 'tenant' }],
+      order: [
+        ['isDefault', 'DESC'],
+        ['createdAt', 'ASC'],
+      ],
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        user: user.toJSON ? user.toJSON() : user,
+        token,
+        memberships,
+        defaultTenantId: memberships[0]?.tenantId || null,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Get current logged in user
 // @route   GET /api/auth/me
 // @access  Private
@@ -348,12 +650,22 @@ exports.getMe = async (req, res, next) => {
 // @access  Private
 exports.updateDetails = async (req, res, next) => {
   try {
+    const user = await User.findByPk(req.user.id);
+    const newEmail = req.body.email != null ? String(req.body.email).trim().toLowerCase() : null;
+    const isChangingEmail = newEmail && user.email && newEmail !== user.email.trim().toLowerCase();
+
+    if (isChangingEmail && !user.emailVerifiedAt) {
+      return res.status(403).json({
+        success: false,
+        code: 'EMAIL_VERIFICATION_REQUIRED',
+        message: 'Please verify your email before changing it.',
+      });
+    }
+
     const fieldsToUpdate = {
       name: req.body.name,
       email: req.body.email
     };
-
-    const user = await User.findByPk(req.user.id);
     await user.update(fieldsToUpdate);
 
     res.status(200).json({
@@ -428,6 +740,218 @@ exports.setInitialPassword = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: { user, token }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Request password reset (forgot password)
+// @route   POST /api/auth/forgot-password
+// @access  Public
+exports.requestPasswordReset = async (req, res, next) => {
+  try {
+    const email = (req.body.email || '').trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const user = await User.findOne({
+      where: { email },
+      attributes: ['id', 'name', 'email']
+    });
+
+    // Always return same response to avoid leaking whether email exists
+    const message = 'If an account exists with that email, you will receive a password reset link shortly.';
+
+    if (!user) {
+      return res.status(200).json({ success: true, message });
+    }
+
+    // Remove any existing reset tokens for this user
+    await PasswordResetToken.destroy({ where: { userId: user.id } });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    await PasswordResetToken.create({
+      userId: user.id,
+      token,
+      expiresAt
+    });
+
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const resetLink = `${frontendUrl}/reset-password?token=${token}`;
+
+    // Send via platform email (we pay). Do not use tenant SMTP for system emails.
+    try {
+      const company = { name: process.env.APP_NAME || 'ShopWISE' };
+      const { subject, html, text } = passwordResetEmailTemplate(user, resetLink, company);
+      const result = await emailService.sendPlatformMessage(user.email, subject, html, text);
+      if (!result.success) {
+        console.error('[Auth] Password reset email failed:', result.error);
+      }
+    } catch (emailErr) {
+      console.error('[Auth] Password reset email failed:', emailErr.message);
+      // Still return success - don't reveal that email failed
+    }
+
+    return res.status(200).json({ success: true, message });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Reset password with token (from email link)
+// @route   POST /api/auth/reset-password
+// @access  Public
+exports.resetPassword = async (req, res, next) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token and new password are required'
+      });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password must be at least 6 characters'
+      });
+    }
+
+    const resetRecord = await PasswordResetToken.findOne({
+      where: { token },
+      include: [{ model: User, as: 'user', attributes: ['id'] }]
+    });
+
+    if (!resetRecord || !resetRecord.user) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired reset link. Please request a new password reset.'
+      });
+    }
+    if (new Date() > new Date(resetRecord.expiresAt)) {
+      await PasswordResetToken.destroy({ where: { token } });
+      return res.status(400).json({
+        success: false,
+        message: 'This reset link has expired. Please request a new password reset.'
+      });
+    }
+
+    const user = await User.findByPk(resetRecord.userId);
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'User not found' });
+    }
+
+    user.password = newPassword;
+    await user.save();
+    await PasswordResetToken.destroy({ where: { token } });
+    invalidateUserCache(user.id);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Password has been reset. You can now sign in with your new password.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Verify email via token (from link in email)
+// @route   GET /api/auth/verify-email?token=...
+// @access  Public
+exports.verifyEmail = async (req, res, next) => {
+  try {
+    const token = req.query.token || req.body?.token;
+    if (!token) {
+      return res.status(400).json({
+        success: false,
+        message: 'Verification token is required',
+      });
+    }
+
+    const record = await EmailVerificationToken.findOne({
+      where: { token },
+      include: [{ model: User, as: 'user', attributes: ['id', 'email', 'name'] }],
+    });
+
+    if (!record || !record.user) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired verification link. Please request a new verification email.',
+      });
+    }
+    if (new Date() > new Date(record.expiresAt)) {
+      await EmailVerificationToken.destroy({ where: { token } });
+      return res.status(400).json({
+        success: false,
+        message: 'This verification link has expired. Please request a new verification email.',
+      });
+    }
+
+    const user = await User.findByPk(record.userId);
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'User not found' });
+    }
+
+    await user.update({ emailVerifiedAt: new Date() });
+    await EmailVerificationToken.destroy({ where: { token } });
+    invalidateUserCache(user.id);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Email verified successfully. You can now sign in.',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Resend verification email (protected)
+// @route   POST /api/auth/resend-verification
+// @access  Private
+exports.resendVerification = async (req, res, next) => {
+  try {
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    if (user.emailVerifiedAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is already verified.',
+      });
+    }
+
+    await EmailVerificationToken.destroy({ where: { userId: user.id } });
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = dayjs().add(24, 'hour').toDate();
+    await EmailVerificationToken.create({
+      userId: user.id,
+      token: verificationToken,
+      expiresAt,
+    });
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const verifyLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
+    const company = { name: 'ShopWISE' };
+    const { subject, html, text } = emailVerificationTemplate(user, verifyLink, company);
+    const result = await emailService.sendPlatformMessage(user.email, subject, html, text);
+
+    if (!result?.success) {
+      return res.status(503).json({
+        success: false,
+        message: result?.error || 'Failed to send verification email. Please try again later.',
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Verification email sent. Check your inbox.',
     });
   } catch (error) {
     next(error);

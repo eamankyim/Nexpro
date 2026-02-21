@@ -9,8 +9,10 @@ import settingsService from '../services/settingsService';
 import whatsappService from '../services/whatsappService';
 import smsService from '../services/smsService';
 import emailService from '../services/emailService';
-import { Camera, User, Mail, UserCog, Loader2, Eye, Trash2 } from 'lucide-react';
+import { Camera, User, Mail, UserCog, Loader2, Eye, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
+import { useHintMode } from '../context/HintModeContext';
 import { showSuccess, showError } from '../utils/toast';
 import inviteService from '../services/inviteService';
 import PhoneNumberInput from '../components/PhoneNumberInput';
@@ -27,6 +29,7 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -40,10 +43,18 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import { SHOP_TYPE_LABELS } from '../constants';
+import { SHOP_TYPE_LABELS, CURRENCIES } from '../constants';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 const profileSchema = z.object({
-  name: z.string().min(1, 'Please enter your name'),
+  name: z.string().min(1, 'Enter your name'),
   email: z.string().email().optional(),
   profilePicture: z.string().optional(),
   currentPassword: z.string().optional(),
@@ -54,18 +65,22 @@ const profileSchema = z.object({
   }
   return true;
 }, {
-  message: 'Enter current password to set a new password',
+  message: 'Enter current password to set a new one',
   path: ['currentPassword'],
 });
 
 const organizationSchema = z.object({
-  name: z.string().min(1, 'Organization name is required'),
+  name: z.string().min(1, 'Enter organization name'),
   legalName: z.string().optional(),
   email: z.string().email().optional(),
   phone: z.string().optional(),
   website: z.string().url().optional().or(z.literal('')),
   logoUrl: z.string().optional(),
   invoiceFooter: z.string().optional(),
+  defaultPaymentTerms: z.string().optional(),
+  defaultTermsAndConditions: z.string().optional(),
+  supportEmail: z.string().email().optional().or(z.literal('')),
+  currency: z.string().optional(),
   address: z.object({
     line1: z.string().optional(),
     line2: z.string().optional(),
@@ -125,6 +140,23 @@ const subscriptionSchema = z.object({
   notes: z.string().optional(),
 });
 
+const posConfigSchema = z.object({
+  receipt: z.object({
+    mode: z.enum(['ask', 'auto_send', 'auto_print', 'auto_both']),
+    channels: z.array(z.enum(['sms', 'whatsapp', 'email', 'print'])),
+  }),
+  print: z.object({
+    format: z.enum(['a4', 'thermal_58', 'thermal_80']),
+    showLogo: z.boolean().optional(),
+    color: z.boolean().optional(),
+    fontSize: z.enum(['normal', 'small']).optional(),
+  }),
+  customer: z.object({
+    phoneRequired: z.boolean(),
+    nameRequired: z.boolean(),
+  }),
+});
+
 // Helper function to resolve file URLs (handles base64, relative paths, and absolute URLs)
 const resolveFileUrl = (url) => {
   if (!url) return '';
@@ -179,15 +211,18 @@ const Settings = () => {
   }, [searchParams, setSearchParams]);
   const [profilePreview, setProfilePreview] = useState('');
   const [profileEditing, setProfileEditing] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
   const [profilePreviewVisible, setProfilePreviewVisible] = useState(false);
   const [profileUploading, setProfileUploading] = useState(false);
   const [organizationLogoPreview, setOrganizationLogoPreview] = useState('');
   const [organizationEditing, setOrganizationEditing] = useState(false);
   const [organizationLogoPreviewVisible, setOrganizationLogoPreviewVisible] = useState(false);
   const [organizationLogoUploading, setOrganizationLogoUploading] = useState(false);
+  const [posConfigEditing, setPosConfigEditing] = useState(false);
   const [seatUsage, setSeatUsage] = useState(null);
   const [storageUsage, setStorageUsage] = useState(null);
   const [loadingUsage, setLoadingUsage] = useState(true);
+  const [whatsappTemplateLearnMoreOpen, setWhatsappTemplateLearnMoreOpen] = useState(false);
   const { user, updateUser, activeTenant } = useAuth();
   const canManageOrganization = ['admin', 'manager'].includes(user?.role);
 
@@ -218,6 +253,9 @@ const Settings = () => {
       website: '',
       logoUrl: '',
       invoiceFooter: '',
+      defaultPaymentTerms: '',
+      defaultTermsAndConditions: '',
+      supportEmail: '',
       address: {
         line1: '',
         line2: '',
@@ -290,6 +328,15 @@ const Settings = () => {
     },
   });
 
+  const posConfigForm = useForm({
+    resolver: zodResolver(posConfigSchema),
+    defaultValues: {
+      receipt: { mode: 'ask', channels: ['sms', 'print'] },
+      print: { format: 'a4', showLogo: true, color: true, fontSize: 'normal' },
+      customer: { phoneRequired: false, nameRequired: false },
+    },
+  });
+
   const {
     data: profileData,
     isLoading: loadingProfile
@@ -338,6 +385,15 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'email'],
     queryFn: emailService.getSettings,
+    enabled: canManageOrganization
+  });
+
+  const {
+    data: posConfigData,
+    isLoading: loadingPOSConfig
+  } = useQuery({
+    queryKey: ['settings', 'pos-config'],
+    queryFn: settingsService.getPOSConfig,
     enabled: canManageOrganization
   });
 
@@ -390,6 +446,33 @@ const Settings = () => {
   }, [emailData, emailForm, canManageOrganization]);
 
   useEffect(() => {
+    const config = posConfigData?.data?.data ?? posConfigData?.data;
+    if (config && canManageOrganization) {
+      const mode = config.receipt?.mode || 'ask';
+      let channels = config.receipt?.channels || ['sms', 'print'];
+      if (mode === 'auto_print') {
+        channels = ['print'];
+      } else if (mode === 'auto_send') {
+        channels = channels.filter((c) => ['sms', 'whatsapp', 'email'].includes(c));
+        if (channels.length === 0) channels = ['sms'];
+      }
+      posConfigForm.reset({
+        receipt: { mode, channels },
+        print: {
+          format: config.print?.format || 'a4',
+          showLogo: config.print?.showLogo !== false,
+          color: config.print?.color !== false,
+          fontSize: config.print?.fontSize || 'normal',
+        },
+        customer: {
+          phoneRequired: config.customer?.phoneRequired || false,
+          nameRequired: config.customer?.nameRequired || false,
+        },
+      });
+    }
+  }, [posConfigData, posConfigForm, canManageOrganization]);
+
+  useEffect(() => {
     if (organizationData?.data) {
       const organization = organizationData.data;
       organizationForm.reset({
@@ -400,6 +483,10 @@ const Settings = () => {
         website: organization.website || '',
         logoUrl: organization.logoUrl || '',
         invoiceFooter: organization.invoiceFooter || '',
+        defaultPaymentTerms: organization.defaultPaymentTerms || '',
+        defaultTermsAndConditions: organization.defaultTermsAndConditions || '',
+        supportEmail: organization.supportEmail || '',
+        currency: organization.currency || 'GHS',
         address: {
           line1: organization.address?.line1 || '',
           line2: organization.address?.line2 || '',
@@ -528,11 +615,14 @@ const Settings = () => {
         profileForm.reset({
           name: response.data.name,
           email: response.data.email,
-          profilePicture: response.data.profilePicture || ''
+          profilePicture: response.data.profilePicture || '',
+          currentPassword: '',
+          newPassword: ''
         });
         setProfilePreview(response.data.profilePicture || '');
         updateUser(response.data);
         setProfileEditing(false);
+        setShowChangePassword(false);
       }
     },
     onError: (error) => {
@@ -639,6 +729,27 @@ const Settings = () => {
     }
   });
 
+  const updatePOSConfigMutation = useMutation({
+    mutationFn: settingsService.updatePOSConfig,
+    onSuccess: async (response) => {
+      showSuccess('Configuration saved successfully');
+      await queryClient.invalidateQueries({ queryKey: ['settings', 'pos-config'] });
+      const data = response?.data ?? response;
+      if (data) {
+        posConfigForm.reset({
+          receipt: { ...posConfigForm.getValues('receipt'), ...(data.receipt || {}) },
+          print: { ...posConfigForm.getValues('print'), ...(data.print || {}) },
+          customer: { ...posConfigForm.getValues('customer'), ...(data.customer || {}) },
+        });
+      }
+      setPosConfigEditing(false);
+    },
+    onError: (error) => {
+      const errMsg = error?.response?.data?.message || 'Failed to update configuration';
+      showError(error, errMsg);
+    },
+  });
+
   const onProfileSubmit = async (values) => {
     const payload = {
       name: values.name,
@@ -664,6 +775,9 @@ const Settings = () => {
       // Only include logoUrl if it's a URL (not base64) to avoid "request too large" errors
       ...(values.logoUrl && !values.logoUrl.startsWith('data:') ? { logoUrl: values.logoUrl } : {}),
       invoiceFooter: values.invoiceFooter || '',
+      defaultPaymentTerms: values.defaultPaymentTerms || '',
+      defaultTermsAndConditions: values.defaultTermsAndConditions || '',
+      supportEmail: values.supportEmail || '',
       address: {
         line1: values.address?.line1 || '',
         line2: values.address?.line2 || '',
@@ -749,6 +863,23 @@ const Settings = () => {
   const onEmailSubmit = async (values) => {
     const payload = { ...values };
     updateEmailMutation.mutate(payload);
+  };
+
+  const onPOSConfigSubmit = async (values) => {
+    const mode = values.receipt?.mode || 'ask';
+    let channels = values.receipt?.channels || [];
+    if (mode === 'auto_print') {
+      channels = ['print'];
+    } else if (mode === 'auto_send') {
+      channels = channels.filter((c) => ['sms', 'whatsapp', 'email'].includes(c));
+      if (channels.length === 0) channels = ['sms'];
+    }
+    const payload = {
+      receipt: { ...values.receipt, mode, channels },
+      print: values.print || {},
+      customer: values.customer || {}
+    };
+    updatePOSConfigMutation.mutate(payload);
   };
 
   const handleTestEmail = () => {
@@ -848,11 +979,11 @@ const Settings = () => {
     const isTrialOrFree = subscription.plan === 'trial' || subscription.plan === 'free';
     const statusColor = subscription.status === 'active' ? 'text-green-600' : subscription.status === 'trialing' ? 'text-yellow-600' : 'text-red-600';
     return (
-      <div className="mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="mb-3 md:mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
           <ShadcnCard>
-            <CardContent className="pt-6">
-              <h4 className="text-lg font-semibold mb-2">
+            <CardContent className="pt-4 md:pt-6 px-3 md:px-6 pb-4 md:pb-6">
+              <h4 className="text-base md:text-lg font-semibold mb-2">
                 {subscription.plan?.toUpperCase() || 'FREE'}
               </h4>
               <p className={statusColor}>
@@ -893,10 +1024,10 @@ const Settings = () => {
             </CardContent>
           </ShadcnCard>
           <ShadcnCard>
-            <CardContent className="pt-6">
-              <p className="text-sm text-muted-foreground">Notes</p>
-              <div className="mt-3">
-                <p>{subscription.notes || '—'}</p>
+            <CardContent className="pt-4 md:pt-6 px-3 md:px-6 pb-4 md:pb-6">
+              <p className="text-xs md:text-sm text-muted-foreground">Notes</p>
+              <div className="mt-2 md:mt-3">
+                <p className="text-sm">{subscription.notes || '—'}</p>
               </div>
             </CardContent>
           </ShadcnCard>
@@ -905,26 +1036,124 @@ const Settings = () => {
     );
   }, [subscriptionData, navigate]);
 
+  const { theme, setTheme } = useTheme();
+  const { hintMode, setHintMode } = useHintMode();
+
+  const organization = organizationData?.data || {};
+  const organizationLogo = organizationLogoPreview || organization.logoUrl || '';
+  const mockInvoice = useMemo(() => ({
+    invoiceNumber: 'INV-2024-001',
+    invoiceDate: new Date(),
+    dueDate: dayjs().add(30, 'days').toDate(),
+    customer: {
+      name: 'Customer name',
+      company: 'Company name',
+      email: 'customer@example.com',
+      phone: '+233 XX XXX XXXX',
+      address: '123 Sample Street',
+      city: 'Sample City',
+      state: 'Sample State',
+      zipCode: 'SAMPLE-123'
+    },
+    items: [
+      { description: 'Sample Product/Service 1', quantity: 2, unitPrice: 100.00, total: 200.00 },
+      { description: 'Sample Product/Service 2', quantity: 1, unitPrice: 150.00, total: 150.00 }
+    ],
+    subtotal: 350.00,
+    taxRate: 12.5,
+    taxAmount: 43.75,
+    discountAmount: 0,
+    totalAmount: 393.75,
+    balance: 393.75,
+    paymentTerms: organization.defaultPaymentTerms || 'Net 30',
+    termsAndConditions: organization.defaultTermsAndConditions || 'Payment is due within 30 days of invoice date.'
+  }), [organization.defaultPaymentTerms, organization.defaultTermsAndConditions]);
+
+  const appearanceTab = (
+    <ShadcnCard>
+      <CardHeader>
+        <CardTitle>Appearance</CardTitle>
+        <CardDescription>
+          Customize how the app looks on your device.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Moon className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <p className="font-medium">Dark mode</p>
+              <p className="text-sm text-muted-foreground">
+                Use dark theme for a more comfortable view in low light.
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={theme === 'dark'}
+            onCheckedChange={(checked) => setTheme(checked ? 'dark' : 'light')}
+          />
+        </div>
+
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Lightbulb className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <p className="font-medium">Hint Mode</p>
+              <p className="text-sm text-muted-foreground">
+                Show hints when hovering over buttons, icons, and stats.
+              </p>
+            </div>
+          </div>
+          <Switch
+            checked={hintMode}
+            onCheckedChange={setHintMode}
+          />
+        </div>
+
+        <Separator />
+
+        <div>
+          <h3 className="text-sm font-medium mb-4">Invoice Preview</h3>
+          <p className="text-sm text-muted-foreground mb-4">
+            Preview how your invoice will look with your current branding
+          </p>
+          <div className="border rounded-lg p-4 bg-card" style={{ maxHeight: '800px', overflow: 'auto' }}>
+            <PrintableInvoice
+              invoice={mockInvoice}
+              organization={{
+                ...organization,
+                logoUrl: organizationLogo || organization.logoUrl
+              }}
+            />
+          </div>
+        </div>
+      </CardContent>
+    </ShadcnCard>
+  );
+
   const profileTab = (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 md:gap-4">
       <div className="lg:col-span-2">
         <ShadcnCard>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle>Personal Information</CardTitle>
-              <div className="flex gap-2">
+          <CardHeader className="px-3 md:px-6 pt-3 md:pt-6 pb-3 md:pb-6">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2 md:gap-0">
+              <CardTitle className="text-lg md:text-xl">Personal Information</CardTitle>
+              <div className="flex gap-1.5 md:gap-2 w-full md:w-auto">
                 <Button
-                  variant="secondary"
+                  variant="secondaryStroke"
                   onClick={() => {
                     if (profileEditing) {
                       if (profileData?.data) {
                         profileForm.reset({
                           name: profileData.data.name,
                           email: profileData.data.email,
-                          profilePicture: profileData.data.profilePicture || ''
+                          profilePicture: profileData.data.profilePicture || '',
+                          currentPassword: '',
+                          newPassword: ''
                         });
                         setProfilePreview(profileData.data.profilePicture || '');
                       }
+                      setShowChangePassword(false);
                     }
                     setProfileEditing((prev) => !prev);
                   }}
@@ -939,10 +1168,10 @@ const Settings = () => {
               </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-3 md:px-6 pb-3 md:pb-6">
           <Form {...profileForm}>
-            <form onSubmit={profileForm.handleSubmit(onProfileSubmit)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <form onSubmit={profileForm.handleSubmit(onProfileSubmit)} className="space-y-3 md:space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
                 <FormField
                   control={profileForm.control}
                   name="name"
@@ -965,6 +1194,9 @@ const Settings = () => {
                       <FormControl>
                         <Input type="email" disabled {...field} />
                       </FormControl>
+                      {user && !user.emailVerifiedAt && (
+                        <p className="text-xs text-muted-foreground">Verify your email to change your account email.</p>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )}
@@ -984,8 +1216,8 @@ const Settings = () => {
               />
 
               <Separator />
-              <h3 className="text-lg font-semibold mb-4">Profile Picture</h3>
-              <div className="flex items-center gap-6 mb-6">
+              <h3 className="text-base md:text-lg font-semibold mb-3 md:mb-4">Profile Picture</h3>
+              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 md:gap-6 mb-4 md:mb-6">
                 <div className="relative">
                   <Avatar 
                     className="h-24 w-24 cursor-pointer" 
@@ -996,7 +1228,7 @@ const Settings = () => {
                   </Avatar>
                   <label
                     htmlFor="profile-picture-upload"
-                    className="absolute bottom-0 right-0 bg-primary text-primary-foreground rounded-full p-2 cursor-pointer hover:bg-primary/90 border-2 border-background shadow-sm"
+                    className="absolute bottom-0 right-0 bg-primary text-primary-foreground rounded-full p-2 cursor-pointer hover:bg-primary/90 border-2 border-background"
                     title="Upload profile picture"
                     onClick={(e) => {
                       // Enable edit mode if not already enabled
@@ -1067,40 +1299,66 @@ const Settings = () => {
               </div>
 
               <Separator />
-              <h3 className="text-lg font-semibold mb-4">Change Password</h3>
+              <h3 className="text-base md:text-lg font-semibold mb-3 md:mb-4">Change Password</h3>
 
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={profileForm.control}
-                  name="currentPassword"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Current Password</FormLabel>
-                      <FormControl>
-                        <Input type="password" placeholder="Enter current password" disabled={!profileEditing} {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={profileForm.control}
-                  name="newPassword"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>New Password</FormLabel>
-                      <FormControl>
-                        <Input type="password" placeholder="Enter new password" disabled={!profileEditing} {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
+              {!showChangePassword ? (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowChangePassword(true);
+                    if (!profileEditing) setProfileEditing(true);
+                  }}
+                  className="w-full md:w-auto"
+                >
+                  Change Password
+                </Button>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+                  <FormField
+                    control={profileForm.control}
+                    name="currentPassword"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Current Password</FormLabel>
+                        <FormControl>
+                          <Input type="password" placeholder="Enter current password" disabled={!profileEditing} {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={profileForm.control}
+                    name="newPassword"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>New Password</FormLabel>
+                        <FormControl>
+                          <Input type="password" placeholder="Enter new password" disabled={!profileEditing} {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <div className="col-span-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowChangePassword(false);
+                        profileForm.setValue('currentPassword', '');
+                        profileForm.setValue('newPassword', '');
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
 
               <Separator />
-              <h3 className="text-lg font-semibold mb-4">Account Information</h3>
-              <div className="grid grid-cols-2 gap-4">
+              <h3 className="text-base md:text-lg font-semibold mb-3 md:mb-4">Account Information</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
                 <div>
                   <Label className="text-sm font-medium text-muted-foreground">Role</Label>
                   <div className="flex items-center gap-2 mt-1">
@@ -1121,48 +1379,6 @@ const Settings = () => {
     </div>
   );
 
-  const organization = organizationData?.data || {};
-  const organizationLogo = organizationLogoPreview || organization.logoUrl || '';
-
-  // Mock invoice data for preview
-  const mockInvoice = useMemo(() => ({
-    invoiceNumber: 'INV-2024-001',
-    invoiceDate: new Date(),
-    dueDate: dayjs().add(30, 'days').toDate(),
-    customer: {
-      name: 'Sample Customer',
-      company: 'Sample Company Ltd.',
-      email: 'customer@example.com',
-      phone: '+233 XX XXX XXXX',
-      address: '123 Sample Street',
-      city: 'Sample City',
-      state: 'Sample State',
-      zipCode: 'SAMPLE-123'
-    },
-    items: [
-      {
-        description: 'Sample Product/Service 1',
-        quantity: 2,
-        unitPrice: 100.00,
-        total: 200.00
-      },
-      {
-        description: 'Sample Product/Service 2',
-        quantity: 1,
-        unitPrice: 150.00,
-        total: 150.00
-      }
-    ],
-    subtotal: 350.00,
-    taxRate: 12.5,
-    taxAmount: 43.75,
-    discountAmount: 0,
-    totalAmount: 393.75,
-    balance: 393.75,
-    paymentTerms: 'Net 30',
-    termsAndConditions: 'Payment is due within 30 days of invoice date.'
-  }), []);
-
   // Map businessType to display names
   const getWorkspaceTypeDisplay = (businessType) => {
     const mapping = {
@@ -1177,7 +1393,7 @@ const Settings = () => {
     const descriptions = {
       shop: 'Optimized for retail sales, inventory, and customer management',
       pharmacy: 'Optimized for pharmaceutical operations and inventory',
-      printing_press: 'Optimized for print jobs, quotes, and production workflows',
+      printing_press: 'Optimized for jobs, services, quotes, and production workflows',
     };
     return descriptions[businessType] || descriptions.printing_press;
   };
@@ -1209,10 +1425,10 @@ const Settings = () => {
           </div>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="px-3 md:px-6 pb-3 md:pb-6">
         <Form {...organizationForm}>
-          <form onSubmit={organizationForm.handleSubmit(onOrganizationSubmit)} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <form onSubmit={organizationForm.handleSubmit(onOrganizationSubmit)} className="space-y-3 md:space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
               <FormField
                 control={organizationForm.control}
                 name="name"
@@ -1220,7 +1436,7 @@ const Settings = () => {
                   <FormItem>
                     <FormLabel>Display Name</FormLabel>
                     <FormControl>
-                      <Input placeholder="Nexus Printing Press" {...field} />
+                      <Input placeholder="Nexus Studio" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -1328,10 +1544,38 @@ const Settings = () => {
               />
             )}
 
-        <Separator className="my-6">
-          <span className="text-sm font-medium">Branding</span>
-        </Separator>
-        <div className="mb-6">
+            <FormField
+              control={organizationForm.control}
+              name="currency"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Currency</FormLabel>
+                  <Select
+                    value={field.value || 'GHS'}
+                    onValueChange={field.onChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select currency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CURRENCIES.map((curr) => (
+                        <SelectItem key={curr.code} value={curr.code}>
+                          {curr.symbol} - {curr.name} ({curr.code})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    Currency used for invoices, quotes, and all financial displays.
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+        <div className="border-t border-border pt-6 mt-6 -mx-6 px-6">
+          <h3 className="text-sm font-medium mb-4">Branding</h3>
+          <div className="mb-6">
           <FileUpload
             onFileSelect={handleOrganizationLogoUpload}
             disabled={false}
@@ -1354,12 +1598,12 @@ const Settings = () => {
             emptyMessage="No organization logo uploaded yet."
           />
           <p className="text-sm text-muted-foreground mt-2">Upload a high-resolution image for invoices and quotes.</p>
+          </div>
         </div>
 
-        <Separator className="my-6">
-          <span className="text-sm font-medium">Address</span>
-        </Separator>
-        <div className="space-y-4">
+        <div className="border-t border-border pt-6 mt-6 -mx-6 px-6">
+          <h3 className="text-sm font-medium mb-4">Address</h3>
+          <div className="space-y-4">
           <FormField
             control={organizationForm.control}
             name="address.line1"
@@ -1367,7 +1611,7 @@ const Settings = () => {
               <FormItem>
                 <FormLabel>Street Address</FormLabel>
                 <FormControl>
-                  <Input placeholder="123 Printing Ave" {...field} />
+                  <Input placeholder="123 Main St" {...field} />
                 </FormControl>
                 <FormMessage />
               </FormItem>
@@ -1442,11 +1686,11 @@ const Settings = () => {
             )}
           />
         </div>
+        </div>
 
-        <Separator className="my-6">
-          <span className="text-sm font-medium">Tax & Compliance</span>
-        </Separator>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="border-t border-border pt-6 mt-6 -mx-6 px-6">
+          <h3 className="text-sm font-medium mb-4">Tax & Compliance</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <FormField
             control={organizationForm.control}
             name="tax.vatNumber"
@@ -1474,20 +1718,65 @@ const Settings = () => {
             )}
           />
         </div>
+        </div>
 
-        <FormField
+        <div className="border-t border-border pt-6 mt-6 -mx-6 px-6">
+          <FormField
           control={organizationForm.control}
           name="invoiceFooter"
           render={({ field }) => (
             <FormItem>
               <FormLabel>Invoice & Quote Footer</FormLabel>
               <FormControl>
-                <Textarea rows={4} placeholder="Thank you for doing business with us." {...field} />
+                <Textarea rows={4} placeholder="Enter your custom footer message" {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+          <FormField
+            control={organizationForm.control}
+            name="defaultPaymentTerms"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Default Payment Terms</FormLabel>
+                <FormControl>
+                  <Input placeholder="e.g. Net 30, Due on Receipt" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={organizationForm.control}
+            name="defaultTermsAndConditions"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Default Terms & Conditions</FormLabel>
+                <FormControl>
+                  <Input placeholder="e.g. Payment due within 30 days" {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+        <FormField
+          control={organizationForm.control}
+          name="supportEmail"
+          render={({ field }) => (
+            <FormItem className="mt-4">
+              <FormLabel>Support / Contact Email</FormLabel>
+              <FormControl>
+                <Input type="email" placeholder="Used for Contact support link" {...field} />
+              </FormControl>
+              <FormDescription>Email address used when users click &quot;Contact support&quot;</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        </div>
           </form>
         </Form>
       </CardContent>
@@ -1499,6 +1788,7 @@ const Settings = () => {
           <CardTitle>Organization Profile</CardTitle>
           {canManageOrganization && (
             <Button
+              variant="secondaryStroke"
               onClick={() => {
                 organizationForm.reset(organization);
                 setOrganizationLogoPreview(organization.logoUrl || '');
@@ -1530,10 +1820,9 @@ const Settings = () => {
               )}
             </ShadcnDescriptions>
 
-      <Separator className="my-6">
-        <span className="text-sm font-medium">Branding</span>
-      </Separator>
-      <div className="flex items-center gap-6 mb-6">
+      <div className="border-t border-border pt-6 mt-6 -mx-6 px-6">
+        <h3 className="text-sm font-medium mb-4">Branding</h3>
+        <div className="flex items-center gap-6">
         <div
           style={{
             width: 120,
@@ -1588,12 +1877,12 @@ const Settings = () => {
             }}
           />
         </div>
+        </div>
       </div>
 
-      <Separator className="my-6">
-        <span className="text-sm font-medium">Address</span>
-      </Separator>
-      <ShadcnDescriptions>
+      <div className="border-t border-border pt-6 mt-6 -mx-6 px-6">
+        <h3 className="text-sm font-medium mb-4">Address</h3>
+        <ShadcnDescriptions>
         <DescriptionItem label="Street Address">{organization.address?.line1 || 'Not set'}</DescriptionItem>
         {organization.address?.line2 && (
           <DescriptionItem label="Address Line 2">{organization.address.line2}</DescriptionItem>
@@ -1603,19 +1892,19 @@ const Settings = () => {
         <DescriptionItem label="Postal Code">{organization.address?.postalCode || 'Not set'}</DescriptionItem>
         <DescriptionItem label="Country">{organization.address?.country || 'Not set'}</DescriptionItem>
       </ShadcnDescriptions>
+      </div>
 
-      <Separator className="my-6">
-        <span className="text-sm font-medium">Tax & Compliance</span>
-      </Separator>
-      <ShadcnDescriptions>
+      <div className="border-t border-border pt-6 mt-6 -mx-6 px-6">
+        <h3 className="text-sm font-medium mb-4">Tax & Compliance</h3>
+        <ShadcnDescriptions>
         <DescriptionItem label="VAT Number">{organization.tax?.vatNumber || 'Not set'}</DescriptionItem>
         <DescriptionItem label="TIN">{organization.tax?.tin || 'Not set'}</DescriptionItem>
       </ShadcnDescriptions>
+      </div>
 
-      <Separator className="my-6">
-        <span className="text-sm font-medium">Invoice & Quote Footer</span>
-      </Separator>
-      {organization.invoiceFooter ? (
+      <div className="border-t border-border pt-6 mt-6">
+        <h3 className="text-sm font-medium mb-4">Invoice & Quote Footer</h3>
+        {organization.invoiceFooter ? (
         <p>{organization.invoiceFooter}</p>
       ) : (
         <div className="flex items-center gap-2">
@@ -1635,38 +1924,20 @@ const Settings = () => {
           )}
         </div>
       )}
-
-      <Separator className="my-6">
-        <span className="text-sm font-medium">Invoice Preview</span>
-      </Separator>
-      <div className="mb-6">
-        <p className="text-sm text-muted-foreground mb-4">
-          Preview how your invoice will look with your current branding
-        </p>
-        <div className="border rounded-lg p-4 bg-white" style={{ maxHeight: '800px', overflow: 'auto' }}>
-          <PrintableInvoice
-            invoice={mockInvoice}
-            organization={{
-              ...organization,
-              logoUrl: organizationLogo || organization.logoUrl
-            }}
-          />
-        </div>
       </div>
 
-      <Separator className="my-6">
-        <span className="text-sm font-medium">Workspace</span>
-      </Separator>
-      <div className="space-y-4">
+      <div className="border-t border-border pt-6 mt-6 -mx-6 px-6">
+        <h3 className="text-sm font-medium mb-4">Business</h3>
+        <div className="space-y-4">
         <div>
-          <Label className="text-sm font-medium text-muted-foreground">Workspace Type</Label>
+          <Label className="text-sm font-medium text-muted-foreground">Business Type</Label>
           <div className="mt-2">
             <div className="text-base font-semibold">{workspaceTypeDisplay}</div>
             <p className="text-sm text-muted-foreground mt-1">{workspaceDescription}</p>
           </div>
         </div>
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold">Workspace Actions</h3>
+          <h3 className="text-sm font-semibold">Business Actions</h3>
           <div className="flex flex-col gap-3">
             <Button
               variant="outline"
@@ -1675,19 +1946,23 @@ const Settings = () => {
               }}
               className="w-full sm:w-auto"
             >
-              Add another workspace
+              Add another business
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                window.open('mailto:support@shopwise.com?subject=Workspace Inquiry', '_blank');
-              }}
-              className="w-full sm:w-auto"
-            >
-              Contact support
-            </Button>
+            {(organization.supportEmail || organization.email) && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  const email = organization.supportEmail || organization.email;
+                  window.open(`mailto:${email}?subject=Business Inquiry`, '_blank');
+                }}
+                className="w-full sm:w-auto"
+              >
+                Contact support
+              </Button>
+            )}
           </div>
         </div>
+      </div>
       </div>
           </>
         )}
@@ -1765,22 +2040,22 @@ const Settings = () => {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Active Users</span>
-                  <span className="font-bold text-black" style={{ fontSize: '14px' }}>{seatUsage.current}</span>
+                  <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{seatUsage.current}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Total Seats</span>
-                  <span className="font-bold text-black" style={{ fontSize: '14px' }}>{seatUsage.isUnlimited ? 'Unlimited' : `${seatUsage.limit} seats`}</span>
+                  <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{seatUsage.isUnlimited ? 'Unlimited' : `${seatUsage.limit} seats`}</span>
                 </div>
                 {!seatUsage.isUnlimited && (
                   <>
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Available</span>
-                      <span className="font-bold text-black" style={{ fontSize: '14px' }}>{seatUsage.remaining} seats</span>
+                      <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{seatUsage.remaining} seats</span>
                     </div>
                     <div className="space-y-1">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Seat Usage</span>
-                        <span className="font-bold text-black" style={{ fontSize: '14px' }}>{seatUsage.current} of {seatUsage.limit} ({seatUsage.percentageUsed}%)</span>
+                        <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{seatUsage.current} of {seatUsage.limit} ({seatUsage.percentageUsed}%)</span>
                       </div>
                       <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
                         <div
@@ -1808,22 +2083,22 @@ const Settings = () => {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Used</span>
-                  <span className="font-bold text-black" style={{ fontSize: '14px' }}>{parseFloat(storageUsage.currentGB || 0).toFixed(2)} GB</span>
+                  <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{parseFloat(storageUsage.currentGB || 0).toFixed(2)} GB</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Total Limit</span>
-                  <span className="font-bold text-black" style={{ fontSize: '14px' }}>{storageUsage.isUnlimited ? 'Unlimited' : `${storageUsage.limitGB} GB`}</span>
+                  <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{storageUsage.isUnlimited ? 'Unlimited' : `${storageUsage.limitGB} GB`}</span>
                 </div>
                 {!storageUsage.isUnlimited && (
                   <>
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Available</span>
-                      <span className="font-bold text-black" style={{ fontSize: '14px' }}>{parseFloat(storageUsage.remainingGB || 0).toFixed(2)} GB</span>
+                      <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{parseFloat(storageUsage.remainingGB || 0).toFixed(2)} GB</span>
                     </div>
                     <div className="space-y-1">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Storage Usage</span>
-                        <span className="font-bold text-black" style={{ fontSize: '14px' }}>{storageUsage.currentGB} GB of {storageUsage.limitGB} GB ({storageUsage.percentageUsed}%)</span>
+                        <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{storageUsage.currentGB} GB of {storageUsage.limitGB} GB ({storageUsage.percentageUsed}%)</span>
                       </div>
                       <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
                         <div
@@ -1964,7 +2239,7 @@ const Settings = () => {
                             {entry.date ? dayjs(entry.date).format('MMM DD, YYYY HH:mm') : '—'}
                           </p>
                           {entry.amount && (
-                            <p>Amount: GHS {parseFloat(entry.amount).toFixed(2)}</p>
+                            <p>Amount: ₵ {parseFloat(entry.amount).toFixed(2)}</p>
                           )}
                           {entry.metadata && (
                             <p className="text-sm text-muted-foreground">Details: {JSON.stringify(entry.metadata)}</p>
@@ -2181,9 +2456,79 @@ const Settings = () => {
             <Alert variant="destructive" className="mt-4">
               <AlertTitle>Template Setup Required</AlertTitle>
               <AlertDescription>
-                You need to create and approve the following message templates in Meta Business Manager before they can be used: invoice_notification, quote_delivery, order_confirmation, payment_reminder, low_stock_alert
+                <div className="space-y-3">
+                  <p>
+                    You need to create and approve the following message templates in Meta Business Manager before they can be used: invoice_notification, quote_delivery, order_confirmation, payment_reminder, low_stock_alert
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 border-destructive/50 text-destructive hover:bg-destructive/10"
+                    onClick={() => setWhatsappTemplateLearnMoreOpen(true)}
+                  >
+                    <HelpCircle className="h-4 w-4" />
+                    Learn More
+                  </Button>
+                </div>
               </AlertDescription>
             </Alert>
+            <Dialog open={whatsappTemplateLearnMoreOpen} onOpenChange={setWhatsappTemplateLearnMoreOpen}>
+              <DialogContent className="sm:max-w-[32rem] sm:max-h-[85vh]">
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <HelpCircle className="h-5 w-5" />
+                    How to Set Up WhatsApp Templates
+                  </DialogTitle>
+                </DialogHeader>
+                <DialogBody className="overflow-y-auto space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Create these templates in Meta Business Manager so your shop can send customers bills, receipts, quotes, and stock alerts via WhatsApp. Template approval usually takes 24–48 hours.
+                  </p>
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium">Where to go</p>
+                    <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
+                      <li>Go to <a href="https://developers.facebook.com/" target="_blank" rel="noopener noreferrer" className="text-primary underline hover:no-underline">Meta for Developers</a></li>
+                      <li>Open your WhatsApp app or create one</li>
+                      <li>Go to WhatsApp → Message Templates</li>
+                      <li>Create each template below (use exact names)</li>
+                    </ol>
+                  </div>
+                  <div className="space-y-3">
+                    <p className="text-sm font-medium">Template names</p>
+                    <ul className="text-sm text-muted-foreground space-y-2">
+                      <li><strong>invoice_notification</strong> – Bill/receipt with Mobile Money link</li>
+                      <li><strong>quote_delivery</strong> – Quote/proposal</li>
+                      <li><strong>order_confirmation</strong> – Order confirmation for shop</li>
+                      <li><strong>payment_reminder</strong> – Reminder for overdue bills</li>
+                      <li><strong>low_stock_alert</strong> – Stock running low alert</li>
+                    </ul>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Use Category: <strong>UTILITY</strong> and Language: <strong>English</strong> for all templates. Use the exact placeholder format (e.g. {'{{1}}'}, {'{{2}}'}) as shown in Meta.
+                  </p>
+                  <div className="rounded-lg border border-border bg-muted/50 p-3">
+                    <p className="text-xs text-muted-foreground">
+                      Need help? Visit Meta&apos;s Business Help Centre for step-by-step guides.
+                    </p>
+                    <a
+                      href="https://www.facebook.com/business/help"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 mt-2 text-sm text-primary hover:underline"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Open Meta Business Help Centre
+                    </a>
+                  </div>
+                </DialogBody>
+                <DialogFooter>
+                  <Button onClick={() => setWhatsappTemplateLearnMoreOpen(false)}>
+                    Got it
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </>
         )}
       </CardContent>
@@ -2781,6 +3126,348 @@ const Settings = () => {
     </ShadcnCard>
   );
 
+  const configData = posConfigData?.data?.data ?? posConfigData?.data;
+  const modeLabels = { ask: 'Ask staff', auto_send: 'Auto send', auto_print: 'Auto print', auto_both: 'Auto send + print' };
+  const formatLabels = { a4: 'A4 (full page)', thermal_58: '58mm Thermal', thermal_80: '80mm Thermal' };
+  const channelLabels = { sms: 'SMS', whatsapp: 'WhatsApp', email: 'Email', print: 'Print' };
+
+  const configurationsTab = canManageOrganization ? (
+    <ShadcnCard>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle>POS & Checkout Configuration</CardTitle>
+            <CardDescription>
+              Configure receipt delivery, print format, and customer requirements for checkout
+            </CardDescription>
+          </div>
+          {!loadingPOSConfig && !posConfigEditing && (
+            <Button
+              variant="secondaryStroke"
+              onClick={() => {
+                const cfg = configData;
+                if (cfg) {
+                  const mode = cfg.receipt?.mode || 'ask';
+                  let channels = cfg.receipt?.channels || ['sms', 'print'];
+                  if (mode === 'auto_print') channels = ['print'];
+                  else if (mode === 'auto_send') {
+                    channels = channels.filter((c) => ['sms', 'whatsapp', 'email'].includes(c));
+                    if (channels.length === 0) channels = ['sms'];
+                  }
+                  posConfigForm.reset({
+                    receipt: { mode, channels },
+                    print: { format: cfg.print?.format || 'a4', showLogo: cfg.print?.showLogo !== false, color: cfg.print?.color !== false, fontSize: cfg.print?.fontSize || 'normal' },
+                    customer: { phoneRequired: cfg.customer?.phoneRequired || false, nameRequired: cfg.customer?.nameRequired || false },
+                  });
+                }
+                setPosConfigEditing(true);
+              }}
+            >
+              Edit
+            </Button>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loadingPOSConfig ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin" />
+          </div>
+        ) : posConfigEditing ? (
+          <Form {...posConfigForm}>
+            <form onSubmit={posConfigForm.handleSubmit(onPOSConfigSubmit)} className="space-y-6">
+              <ShadcnCard className="border">
+                <CardHeader>
+                  <CardTitle className="text-base">Receipt Delivery</CardTitle>
+                  <CardDescription>
+                    Configure how receipts are sent or printed after a sale
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <FormField
+                    control={posConfigForm.control}
+                    name="receipt.mode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>After sale</FormLabel>
+                        <Select
+                          onValueChange={(value) => {
+                            field.onChange(value);
+                            if (value === 'auto_print') {
+                              posConfigForm.setValue('receipt.channels', ['print']);
+                            } else if (value === 'auto_send') {
+                              const current = posConfigForm.getValues('receipt.channels') || [];
+                              const sendChannels = current.filter((c) => ['sms', 'whatsapp', 'email'].includes(c));
+                              posConfigForm.setValue('receipt.channels', sendChannels.length ? sendChannels : ['sms']);
+                            }
+                          }}
+                          value={field.value}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select behavior" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="ask">Ask staff</SelectItem>
+                            <SelectItem value="auto_send">Auto send</SelectItem>
+                            <SelectItem value="auto_print">Auto print</SelectItem>
+                            <SelectItem value="auto_both">Auto send + print</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {{
+                            ask: 'Staff will choose how to send or print the receipt after each sale.',
+                            auto_send: 'Receipt will automatically be sent to customers via the enabled channels (SMS, WhatsApp, Email) after each sale.',
+                            auto_print: 'Receipt will automatically be printed for the customer after each sale.',
+                            auto_both: 'Receipt will automatically be sent to customers and printed for the customer after each sale.'
+                          }[posConfigForm.watch('receipt.mode')] || 'Choose how receipts are handled after each sale.'}
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={posConfigForm.control}
+                    name="receipt.channels"
+                    render={({ field }) => {
+                      const mode = posConfigForm.watch('receipt.mode');
+                      const allChannels = [
+                        { id: 'sms', label: 'SMS' },
+                        { id: 'whatsapp', label: 'WhatsApp' },
+                        { id: 'email', label: 'Email' },
+                        { id: 'print', label: 'Print' },
+                      ];
+                      const selectableChannels = mode === 'auto_print'
+                        ? allChannels.filter((c) => c.id === 'print')
+                        : mode === 'auto_send'
+                          ? allChannels.filter((c) => ['sms', 'whatsapp', 'email'].includes(c.id))
+                          : allChannels;
+                      const channelDescription = mode === 'auto_print'
+                        ? 'Print only — receipt will be printed automatically.'
+                        : mode === 'auto_send'
+                          ? 'Select channels for sending receipts automatically (SMS, WhatsApp, Email).'
+                          : mode === 'auto_both'
+                            ? 'Select channels for send + print (SMS, WhatsApp, Email, Print).'
+                            : 'Select which channels staff can choose from.';
+                      return (
+                      <FormItem>
+                        <div className="mb-2">
+                          <FormLabel>Enable channels</FormLabel>
+                          <FormDescription>
+                            {channelDescription}
+                          </FormDescription>
+                        </div>
+                        <div className="flex flex-wrap gap-4">
+                          {selectableChannels.map((item) => (
+                            <div key={item.id} className="flex items-center space-x-2">
+                              <Checkbox
+                                id={`channel-${item.id}`}
+                                checked={field.value?.includes(item.id)}
+                                disabled={mode === 'auto_print'}
+                                onCheckedChange={(checked) => {
+                                  const next = checked
+                                    ? [...(field.value || []), item.id]
+                                    : (field.value || []).filter((c) => c !== item.id);
+                                  field.onChange(next);
+                                }}
+                              />
+                              <Label htmlFor={`channel-${item.id}`} className="font-normal cursor-pointer">
+                                {item.label}
+                              </Label>
+                            </div>
+                          ))}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    );
+                    }}
+                  />
+                </CardContent>
+              </ShadcnCard>
+
+              <ShadcnCard className="border">
+                <CardHeader>
+                  <CardTitle className="text-base">Print Format</CardTitle>
+                  <CardDescription>
+                    Receipt and invoice print layout. Thermal printers use black and white, no logo, small font.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <FormField
+                    control={posConfigForm.control}
+                    name="print.format"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Receipt/Invoice print format</FormLabel>
+                        <Select onValueChange={field.onChange} value={field.value}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select format" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="a4">A4 (full page)</SelectItem>
+                            <SelectItem value="thermal_58">58mm Thermal</SelectItem>
+                            <SelectItem value="thermal_80">80mm Thermal</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          58mm/80mm: black and white, no logo, small font for thermal receipt printers
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </CardContent>
+              </ShadcnCard>
+
+              <ShadcnCard className="border">
+                <CardHeader>
+                  <CardTitle className="text-base">Customer at Checkout</CardTitle>
+                  <CardDescription>
+                    Require customer details before completing checkout
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <FormField
+                    control={posConfigForm.control}
+                    name="customer.phoneRequired"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Require phone number</FormLabel>
+                          <FormDescription>
+                            Block checkout until customer phone is provided
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={posConfigForm.control}
+                    name="customer.nameRequired"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Require customer name</FormLabel>
+                          <FormDescription>
+                            Block checkout until customer name is provided
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </CardContent>
+              </ShadcnCard>
+
+              <Alert className="mb-4">
+                <AlertDescription>
+                  Ensure SMS, WhatsApp, and Email are configured in the Integration tab when using those channels.
+                </AlertDescription>
+              </Alert>
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    const cfg = configData;
+                    if (cfg) {
+                      const mode = cfg.receipt?.mode || 'ask';
+                      let channels = cfg.receipt?.channels || ['sms', 'print'];
+                      if (mode === 'auto_print') channels = ['print'];
+                      else if (mode === 'auto_send') {
+                        channels = channels.filter((c) => ['sms', 'whatsapp', 'email'].includes(c));
+                        if (channels.length === 0) channels = ['sms'];
+                      }
+                      posConfigForm.reset({
+                        receipt: { mode, channels },
+                        print: { format: cfg.print?.format || 'a4', showLogo: cfg.print?.showLogo !== false, color: cfg.print?.color !== false, fontSize: cfg.print?.fontSize || 'normal' },
+                        customer: { phoneRequired: cfg.customer?.phoneRequired || false, nameRequired: cfg.customer?.nameRequired || false },
+                      });
+                    }
+                    setPosConfigEditing(false);
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" loading={updatePOSConfigMutation.isLoading}>
+                  Save Configuration
+                </Button>
+              </div>
+            </form>
+          </Form>
+        ) : (
+          <div className="space-y-6">
+            <ShadcnCard className="border">
+              <CardHeader>
+                <CardTitle className="text-base">Receipt Delivery</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ShadcnDescriptions>
+                  <DescriptionItem label="After sale">{modeLabels[configData?.receipt?.mode] || configData?.receipt?.mode || '—'}</DescriptionItem>
+                  <DescriptionItem label="Enabled channels">
+                    {(configData?.receipt?.channels || []).map((c) => channelLabels[c] || c).join(', ') || '—'}
+                  </DescriptionItem>
+                </ShadcnDescriptions>
+              </CardContent>
+            </ShadcnCard>
+            <ShadcnCard className="border">
+              <CardHeader>
+                <CardTitle className="text-base">Print Format</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ShadcnDescriptions>
+                  <DescriptionItem label="Format">{formatLabels[configData?.print?.format] || configData?.print?.format || '—'}</DescriptionItem>
+                </ShadcnDescriptions>
+              </CardContent>
+            </ShadcnCard>
+            <ShadcnCard className="border">
+              <CardHeader>
+                <CardTitle className="text-base">Customer at Checkout</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ShadcnDescriptions>
+                  <DescriptionItem label="Require phone number">{configData?.customer?.phoneRequired ? 'Yes' : 'No'}</DescriptionItem>
+                  <DescriptionItem label="Require customer name">{configData?.customer?.nameRequired ? 'Yes' : 'No'}</DescriptionItem>
+                </ShadcnDescriptions>
+              </CardContent>
+            </ShadcnCard>
+            <Alert>
+              <AlertDescription>
+                Ensure SMS, WhatsApp, and Email are configured in the Integration tab when using those channels.
+              </AlertDescription>
+            </Alert>
+          </div>
+        )}
+      </CardContent>
+    </ShadcnCard>
+  ) : (
+    <ShadcnCard>
+      <CardContent className="pt-6">
+        <Alert variant="destructive">
+          <AlertTitle>Access Restricted</AlertTitle>
+          <AlertDescription>
+            You need admin or manager permissions to configure POS settings.
+          </AlertDescription>
+        </Alert>
+      </CardContent>
+    </ShadcnCard>
+  );
+
   const integrationTab = canManageOrganization ? (
     <ShadcnCard>
       <CardHeader>
@@ -2794,7 +3481,7 @@ const Settings = () => {
           setIntegrationSubTab(key);
           setSearchParams({ tab: 'integration', subtab: key });
         }}>
-          <TabsList>
+          <TabsList className="overflow-x-auto w-full flex-nowrap">
             <TabsTrigger value="whatsapp">WhatsApp</TabsTrigger>
             <TabsTrigger value="sms">SMS</TabsTrigger>
             <TabsTrigger value="email">Email</TabsTrigger>
@@ -2825,22 +3512,22 @@ const Settings = () => {
   );
 
   return (
-    <div>
-      <div className="mb-6">
-        <h2 className="text-2xl font-semibold mb-2">Settings</h2>
-        <p className="text-sm text-muted-foreground">
+    <div className="px-2 md:px-0">
+      <div className="mb-4 md:mb-6">
+        <h2 className="text-xl md:text-2xl font-semibold mb-1 md:mb-2">Settings</h2>
+        <p className="text-xs md:text-sm text-muted-foreground">
           Manage your personal account, organization profile, and subscription information.
         </p>
       </div>
 
       {showOnboardingBanner && (
-        <ShadcnCard className="mb-6 border-[#166534] bg-green-50">
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between gap-4 flex-wrap">
+        <ShadcnCard className="mb-4 md:mb-6 border-[#166534] bg-green-50">
+          <CardContent className="p-3 md:p-6">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3 md:gap-4">
               <div className="flex-1 min-w-0">
-                <h3 className="text-lg font-semibold text-gray-900 mb-1">Complete onboarding</h3>
+                <h3 className="text-lg font-semibold text-foreground mb-1">Complete onboarding</h3>
                 <p className="text-sm text-gray-600">
-                  Finish setting up your workspace to get the most out of ShopWISE.
+                  Finish setting up your business to get the most out of ShopWISE.
                 </p>
               </div>
               <Button
@@ -2876,15 +3563,19 @@ const Settings = () => {
           setSearchParams({ tab: key });
         }
       }}>
-        <TabsList>
-          <TabsTrigger value="profile">Profile</TabsTrigger>
-          <TabsTrigger value="organization">Organization</TabsTrigger>
-          <TabsTrigger value="subscription">Subscription & Billing</TabsTrigger>
-          <TabsTrigger value="integration">Integration</TabsTrigger>
+        <TabsList className="overflow-x-auto w-full flex-nowrap mb-3 md:mb-4">
+          <TabsTrigger value="profile" className="text-xs md:text-sm">Profile</TabsTrigger>
+          <TabsTrigger value="appearance" className="text-xs md:text-sm">Appearance</TabsTrigger>
+          <TabsTrigger value="organization" className="text-xs md:text-sm">Organization</TabsTrigger>
+          <TabsTrigger value="subscription" className="text-xs md:text-sm">Subscription & Billing</TabsTrigger>
+          <TabsTrigger value="configurations" className="text-xs md:text-sm">Configurations</TabsTrigger>
+          <TabsTrigger value="integration" className="text-xs md:text-sm">Integration</TabsTrigger>
         </TabsList>
         <TabsContent value="profile">{profileTab}</TabsContent>
+        <TabsContent value="appearance">{appearanceTab}</TabsContent>
         <TabsContent value="organization">{organizationTab}</TabsContent>
         <TabsContent value="subscription">{subscriptionTab}</TabsContent>
+        <TabsContent value="configurations">{configurationsTab}</TabsContent>
         <TabsContent value="integration">{integrationTab}</TabsContent>
       </Tabs>
 

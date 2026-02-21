@@ -46,7 +46,7 @@ const Drug = sequelize.define('Drug', {
     type: DataTypes.UUID,
     allowNull: true,
     references: {
-      model: 'inventory_categories',
+      model: 'materials_categories',
       key: 'id'
     }
   },

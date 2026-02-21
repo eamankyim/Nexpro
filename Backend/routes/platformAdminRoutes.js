@@ -3,7 +3,11 @@ const { protect, requirePlatformAdmin } = require('../middleware/auth');
 const {
   listPlatformAdmins,
   createPlatformAdmin,
-  updatePlatformAdmin
+  updatePlatformAdmin,
+  getPlatformAdminInviteRoles,
+  generatePlatformAdminInvite,
+  getPlatformAdminInvites,
+  revokePlatformAdminInvite
 } = require('../controllers/platformAdminController');
 
 const router = express.Router();
@@ -31,6 +35,11 @@ router.use(requirePlatformAdmin);
  *         description: Array of platform admins.
  */
 router.get('/', listPlatformAdmins);
+
+router.get('/invite-roles', getPlatformAdminInviteRoles);
+router.post('/invite', generatePlatformAdminInvite);
+router.get('/invites', getPlatformAdminInvites);
+router.delete('/invites/:id', revokePlatformAdminInvite);
 
 /**
  * @swagger

@@ -1,14 +1,22 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Spin } from 'antd';
 
 const PrivateRoute = ({ children }) => {
   const { isAuthenticated, loading } = useAuth();
+  const location = useLocation();
+
+  if (import.meta.env.DEV) {
+    console.log('[PrivateRoute] render:', {
+      pathname: location.pathname,
+      isAuthenticated,
+      loading,
+    });
+  }
 
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <Spin size="large" />
+      <div className="flex justify-center items-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#166534]" />
       </div>
     );
   }
