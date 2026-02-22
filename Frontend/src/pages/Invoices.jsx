@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2 } from 'lucide-react';
+import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2, Share2, Copy } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import invoiceService from '../services/invoiceService';
@@ -96,7 +96,7 @@ const Invoices = () => {
     staleTime: 5 * 60 * 1000,
   });
 
-  const organization = organizationData?.data || {};
+  const organization = organizationData?.data?.data || organizationData?.data || {};
 
   const paymentForm = useForm({
     resolver: zodResolver(paymentSchema),
@@ -271,14 +271,30 @@ const Invoices = () => {
     try {
       setSendingInvoice(true);
       await invoiceService.send(id);
-      showSuccess('Invoice marked as sent');
+      showSuccess('Invoice sent. Payment link is ready to share.');
       setRefreshTrigger(prev => prev + 1);
+      if (viewingInvoice?.id === id) {
+        const updated = await invoiceService.getById(id);
+        const inv = updated?.data ?? updated;
+        if (inv) setViewingInvoice(inv);
+      }
     } catch (error) {
       showError(error, 'Failed to send invoice');
     } finally {
       setSendingInvoice(false);
     }
   };
+
+  const paymentLink = useMemo(() => {
+    if (!viewingInvoice?.paymentToken) return null;
+    const base = typeof window !== 'undefined' ? window.location.origin : '';
+    return `${base}/pay-invoice/${viewingInvoice.paymentToken}`;
+  }, [viewingInvoice?.paymentToken]);
+
+  const handleCopyPaymentLink = useCallback(() => {
+    if (!paymentLink) return;
+    navigator.clipboard.writeText(paymentLink).then(() => showSuccess('Payment link copied to clipboard')).catch(() => showError('Could not copy link'));
+  }, [paymentLink]);
 
   const handleCancelInvoice = async (id) => {
     try {
@@ -375,9 +391,9 @@ const Invoices = () => {
               label: 'Mark as Paid',
               onClick: () => handleMarkAsPaid(record)
             },
-            record.status === 'draft' && isManager && {
-              key: 'send',
-              label: 'Send',
+            (record.status === 'draft' || record.status === 'sent') && isManager && {
+              key: 'share',
+              label: record.status === 'draft' ? 'Send' : 'Share invoice',
               onClick: () => handleSendInvoice(record.id)
             }
           ].filter(Boolean)}
@@ -474,6 +490,26 @@ const Invoices = () => {
         title="Invoice Details"
         width={900}
         onPrint={viewingInvoice ? () => handlePrint(viewingInvoice) : null}
+        extraActions={[
+          isManager &&
+          viewingInvoice &&
+          viewingInvoice.status !== 'paid' &&
+          viewingInvoice.status !== 'cancelled' && {
+            key: 'share',
+            label: sendingInvoice ? 'Sending...' : 'Share invoice',
+            icon: <Share2 className="h-4 w-4" />,
+            onClick: () => handleSendInvoice(viewingInvoice.id),
+            disabled: sendingInvoice,
+            variant: 'outline'
+          },
+          paymentLink && {
+            key: 'copyLink',
+            label: 'Copy payment link',
+            icon: <Copy className="h-4 w-4" />,
+            onClick: handleCopyPaymentLink,
+            variant: 'outline'
+          }
+        ].filter(Boolean)}
         onMarkPaid={
           isManager &&
           viewingInvoice &&
@@ -598,6 +634,19 @@ const Invoices = () => {
             value: viewingInvoice.createdAt,
             render: (date) => dayjs(date).format('MMMM DD, YYYY HH:mm')
           },
+          ...(paymentLink ? [{
+            label: 'Payment link',
+            value: paymentLink,
+            render: () => (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-mono text-muted-foreground break-all">{paymentLink}</span>
+                <Button type="button" variant="outline" size="sm" onClick={handleCopyPaymentLink}>
+                  <Copy className="h-4 w-4 mr-1" />
+                  Copy
+                </Button>
+              </div>
+            )
+          }] : []),
         ] : []}
       />
 
@@ -728,7 +777,7 @@ const Invoices = () => {
                     name="referenceNumber"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Reference Number</FormLabel>
+                        <FormLabel>Reference Number (optional)</FormLabel>
                         <FormControl>
                           <Input {...field} placeholder="Transaction ref. number" />
                         </FormControl>

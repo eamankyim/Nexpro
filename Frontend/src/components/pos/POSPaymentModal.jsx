@@ -57,10 +57,13 @@ import { CURRENCY } from '../../constants';
 import { showSuccess, showError } from '../../utils/toast';
 
 /**
- * Format currency value
+ * Format currency value (handles string/number/object from API or form state)
  */
 const formatCurrency = (amount) => {
-  return `${CURRENCY.SYMBOL} ${(amount || 0).toFixed(CURRENCY.DECIMAL_PLACES)}`;
+  const num = typeof amount === 'number' && Number.isFinite(amount) ? amount : Number(amount);
+  const value = Number.isFinite(num) ? num : 0;
+  const decimals = typeof CURRENCY?.DECIMAL_PLACES === 'number' ? CURRENCY.DECIMAL_PLACES : 2;
+  return `${CURRENCY?.SYMBOL ?? '₵'} ${value.toFixed(decimals)}`;
 };
 
 /**
@@ -157,14 +160,18 @@ const CashPayment = ({ total, onConfirm, isProcessing }) => {
         ))}
       </div>
 
-      {/* Amount input */}
+      {/* Amount input - type or use numpad */}
       <div>
         <Label>Amount Tendered</Label>
-        <div className="text-center mt-2 p-3 bg-card border border-border rounded-lg">
-          <span className="text-3xl font-bold">
-            {CURRENCY.SYMBOL} {amountTendered || '0'}
-          </span>
-        </div>
+        <Input
+          type="number"
+          step="0.01"
+          min="0"
+          placeholder="0"
+          className="text-center text-2xl font-bold h-12 mt-2"
+          value={amountTendered}
+          onChange={(e) => setAmountTendered(e.target.value)}
+        />
       </div>
 
       {/* Numpad */}
@@ -469,15 +476,21 @@ const CardPayment = ({ total, onConfirm, isProcessing }) => {
  */
 const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
   const hasCustomer = !!customer;
-  const creditAvailable = customer?.creditLimit ? (customer.creditLimit - (customer.balance || 0)) : 0;
-  const canUseCredit = hasCustomer && creditAvailable >= total;
+  const totalNum = Number(total);
+  const totalSafe = Number.isFinite(totalNum) ? totalNum : 0;
+  const creditLimit = Number(customer?.creditLimit);
+  const balance = Number(customer?.balance);
+  const hasLimit = Number.isFinite(creditLimit) && creditLimit > 0;
+  const creditAvailable = hasLimit ? (creditLimit - (Number.isFinite(balance) ? balance : 0)) : null;
+  // No limit enforced: any customer can use credit (pay later). Limit is optional for those who use it.
+  const canUseCredit = hasCustomer;
 
   return (
     <div className="space-y-4">
       {/* Amount display */}
       <div className="text-center p-4 bg-muted rounded-lg">
         <p className="text-sm text-muted-foreground">Amount to Credit</p>
-        <p className="text-3xl font-bold text-green-700">{formatCurrency(total)}</p>
+        <p className="text-3xl font-bold text-green-700">{formatCurrency(totalSafe)}</p>
       </div>
 
       {!hasCustomer ? (
@@ -493,7 +506,7 @@ const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
         </Card>
       ) : (
         <>
-          {/* Customer credit info */}
+          {/* Customer info */}
           <Card className="border-border">
             <CardContent className="p-4">
               <div className="flex items-center justify-between mb-3">
@@ -502,52 +515,53 @@ const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
               </div>
               <Separator className="my-2" />
               <div className="flex items-center justify-between mb-2">
-                <span className="text-muted-foreground">Credit Limit</span>
-                <span className="font-medium">{formatCurrency(customer.creditLimit || 0)}</span>
-              </div>
-              <div className="flex items-center justify-between mb-2">
                 <span className="text-muted-foreground">Current Balance</span>
                 <span className="font-medium text-orange-600">
-                  {formatCurrency(customer.balance || 0)}
+                  {formatCurrency(Number.isFinite(balance) ? balance : 0)}
                 </span>
               </div>
-              <Separator className="my-2" />
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Available Credit</span>
-                <span className={`font-bold ${canUseCredit ? 'text-green-600' : 'text-red-600'}`}>
-                  {formatCurrency(creditAvailable)}
-                </span>
-              </div>
+              {hasLimit && (
+                <>
+                  <Separator className="my-2" />
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-muted-foreground">Credit Limit</span>
+                    <span className="font-medium">{formatCurrency(creditLimit)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Available Credit</span>
+                    <span className="font-bold text-green-600">
+                      {formatCurrency(creditAvailable)}
+                    </span>
+                  </div>
+                </>
+              )}
+              {!hasLimit && (
+                <>
+                  <Separator className="my-2" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Credit</span>
+                    <span className="font-medium text-green-600">Unlimited (pay later)</span>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
-          {!canUseCredit && (
-            <div className="p-4 bg-red-50 rounded-lg text-center">
-              <AlertCircle className="h-8 w-8 text-red-500 mx-auto mb-2" />
-              <p className="text-red-700 font-medium">Insufficient Credit</p>
-              <p className="text-sm text-red-600 mt-1">
-                Customer does not have enough available credit for this sale.
-              </p>
-            </div>
-          )}
-
           {/* Invoice notice */}
-          {canUseCredit && (
-            <Card className="border-blue-200 bg-blue-50">
-              <CardContent className="p-4">
-                <div className="flex items-start gap-3">
-                  <FileText className="h-5 w-5 text-blue-500 mt-0.5" />
-                  <div>
-                    <h4 className="font-medium text-blue-800">Invoice Will Be Generated</h4>
-                    <p className="text-sm text-blue-600 mt-1">
-                      An invoice will be automatically created for this credit sale
-                      and added to the customer's balance.
-                    </p>
-                  </div>
+          <Card className="border-blue-200 bg-blue-50">
+            <CardContent className="p-4">
+              <div className="flex items-start gap-3">
+                <FileText className="h-5 w-5 text-blue-500 mt-0.5" />
+                <div>
+                  <h4 className="font-medium text-blue-800">Invoice Will Be Generated</h4>
+                  <p className="text-sm text-blue-600 mt-1">
+                    An invoice will be automatically created for this credit sale
+                    and added to the customer's balance.
+                  </p>
                 </div>
-              </CardContent>
-            </Card>
-          )}
+              </div>
+            </CardContent>
+          </Card>
         </>
       )}
 

@@ -1,0 +1,71 @@
+---
+description: Marketing site design style - green palette, borders not shadows, one font, section layout
+globs: "marketing-site/**/*.{tsx,ts,css}"
+alwaysApply: false
+---
+
+# Marketing Site Design Style
+
+**Copy this rule to other projects:** change `globs` or set `alwaysApply: true` so agents use this style.
+
+## Colors (single green palette)
+
+- **Primary:** `#166534` — buttons, links, focus ring, hover borders, scrollbar thumb
+- **Primary hover:** `#14532d`
+- **Secondary / accent on dark:** `#a3e635` (lime) — hero headline accent, pills; hover `#84cc16`; text on lime `#14532d`
+- **Accent bg:** `#dcfce7` (light green)
+- **Neutrals:** white, `gray-50` sections, `gray-900` headings, `gray-600`/`gray-700` body, `gray-200` borders
+- **Footer:** `bg-black`, `text-gray-300`, divider `border-gray-900`
+
+Use CSS vars from `app/globals.css` (`--primary`, `--ring`, etc.) or explicit hex when overriding. Do not use purple/blue gradients or multiple accent colors.
+
+## Typography
+
+- **One font only:** Inter (no second “display” font)
+- **Scale:** Hero `text-4xl sm:text-5xl md:text-6xl`; section titles `text-2xl sm:text-3xl md:text-4xl`; subtitles `text-xl`; body `text-base`/`text-sm`
+- Headings `text-gray-900`, body `text-gray-600` or `text-gray-700`
+
+## Layout
+
+- **Section (consistent across site):** Use responsive padding so mobile has less: `py-10 sm:py-20 px-4 sm:px-6 lg:px-8`. Content `max-w-7xl mx-auto`. Section title blocks: `mb-8 sm:mb-12`; grids: `gap-6 sm:gap-8`.
+- **Hero / page top:** `pt-24 sm:pt-32 pb-8 sm:pb-20` (or `pb-8 sm:pb-12` for short tops); same horizontal padding.
+- **Page top (below fixed header, no hero):** `pt-24 sm:pt-32 pb-8 sm:pb-12` then same horizontal padding.
+- Keep this pattern on every page (home, shops, pharmacies, studios, smart-report, contact, pricing) for consistency.
+
+## Cards
+
+- **Base:** `rounded-xl border border-gray-200`; **no box-shadow** (use `shadow-none` if needed)
+- **Hover:** `hover:border-[#166534]` (or `border-[#166534]` for selected/popular). Do not add shadow on hover
+- Padding: `p-6`, content `pt-0`
+
+## Buttons
+
+- Primary: `bg-[#166534] hover:bg-[#14532d]`. On dark hero: `bg-[#a3e635] hover:bg-[#84cc16] text-[#14532d]`
+- CTA size: `size="lg"` with `px-8 py-6 text-base`
+- In button groups: place primary button **last** (e.g. [Contact Sales] [Start Free Trial])
+- Focus: `focus-visible:ring-2 focus-visible:ring-[#166534] focus-visible:ring-offset-2`
+
+## Hero
+
+- Background: solid dark green `#166534` only; custom SVG with curved bottom (path), fill `#166534`; optional subtle grid (lines, not gradients). No gradients, gradient mesh, or abstract blobs
+- Trust pills: `rounded-full bg-[#a3e635]/20` + lime border, `backdrop-blur-sm`
+- Headline: white with one phrase in lime
+
+## Motion
+
+- Stagger: CSS `.section-fade-in` with `animationDelay` (0.1s, 0.2s, …) or Framer `delay: index * 0.1`
+- Scroll: `whileInView`, `viewport={{ once: true }}`, duration 0.5–0.8
+- Hover: small lift (`y: -8`) and/or `scale: 1.02`, border change; no heavy shadows
+
+## Header
+
+- `fixed`, `bg-white/80 backdrop-blur-md`, `border-b border-gray-200`
+- Nav links: `text-sm font-medium text-gray-700 hover:text-gray-900`
+
+## Lists
+
+- Check list: circle `w-5 h-5 rounded-full bg-[#166534]` with white Check icon; `flex items-start`, `space-y-2` or `space-y-3`
+
+## Avoid
+
+- All gradients (use solid #166534 for green areas). No gradient meshes, second “fancy” font, heavy card/button shadows, parallax/3D, generic AI hero (blobs/mesh)

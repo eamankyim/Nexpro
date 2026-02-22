@@ -383,6 +383,11 @@ exports.handlePaystackWebhook = async (req, res) => {
       const tx = result.data;
       const metadata = typeof tx.metadata === 'string' ? JSON.parse(tx.metadata || '{}') : (tx.metadata || {});
 
+      // Log for debugging Paystack webhook (invoice payments)
+      if (metadata.type === 'invoice') {
+        console.log('[Paystack Webhook] charge.success for invoice payment', { reference, paymentToken: metadata.paymentToken, invoiceId: metadata.invoiceId });
+      }
+
       // POS sale: metadata has sale_id and tenant_id (no plan)
       if (metadata.sale_id && metadata.tenant_id && !metadata.plan) {
         const { Sale, Tenant } = require('../models');
@@ -460,6 +465,106 @@ exports.handlePaystackWebhook = async (req, res) => {
             console.error('[Paystack Webhook] WebSocket emit error:', e);
           }
           console.log('[Paystack Webhook] POS sale completed:', metadata.sale_id);
+        }
+      } else if (metadata.type === 'invoice') {
+        // Public invoice payment via pay-invoice link (find by paymentToken or fallback to invoiceId)
+        const { Invoice, Customer, Payment, Sale, SaleActivity } = require('../models');
+        const activityLogger = require('../services/activityLogger');
+        const { updateCustomerBalance } = require('../services/customerBalanceService');
+
+        let invoice = null;
+        if (metadata.paymentToken) {
+          invoice = await Invoice.findOne({
+            where: { paymentToken: metadata.paymentToken },
+            include: [{ model: Customer, as: 'customer' }]
+          });
+        }
+        if (!invoice && metadata.invoiceId && metadata.tenantId) {
+          invoice = await Invoice.findOne({
+            where: { id: metadata.invoiceId, tenantId: metadata.tenantId },
+            include: [{ model: Customer, as: 'customer' }]
+          });
+          if (invoice) {
+            console.log('[Paystack Webhook] Invoice found by invoiceId fallback:', invoice.invoiceNumber);
+          }
+        }
+        if (invoice && invoice.status !== 'cancelled' && invoice.status !== 'paid') {
+          // Idempotency: skip if we already recorded this Paystack reference (e.g. duplicate webhook)
+          const existingPayment = await Payment.findOne({
+            where: { referenceNumber: reference, tenantId: invoice.tenantId }
+          });
+          if (existingPayment) {
+            console.log('[Paystack Webhook] Invoice payment already recorded for reference:', reference, '- skipping duplicate');
+            return res.status(200).send('OK');
+          }
+
+          const paymentAmount = parseFloat(tx.amount || 0) / 100;
+          const totalAmount = parseFloat(invoice.totalAmount || 0);
+          const newAmountPaid = parseFloat(invoice.amountPaid || 0) + paymentAmount;
+          const newBalance = Math.max(totalAmount - newAmountPaid, 0);
+
+          const updatePayload = {
+            amountPaid: newAmountPaid,
+            balance: newBalance
+          };
+          if (newBalance <= 0) {
+            updatePayload.status = 'paid';
+            updatePayload.paidDate = new Date();
+          } else if (invoice.status === 'draft') {
+            updatePayload.status = 'sent';
+          } else if (invoice.status === 'sent' && newAmountPaid > 0) {
+            updatePayload.status = 'partial';
+          }
+          await invoice.update(updatePayload);
+
+          const paymentNumber = `PAY-${Date.now()}`;
+          const paymentData = {
+            paymentNumber,
+            type: 'income',
+            customerId: invoice.customerId,
+            tenantId: invoice.tenantId,
+            amount: paymentAmount,
+            paymentMethod: 'credit_card',
+            paymentDate: new Date(),
+            referenceNumber: reference,
+            status: 'completed',
+            notes: `Paystack payment for invoice ${invoice.invoiceNumber}`
+          };
+          if (invoice.jobId) paymentData.jobId = invoice.jobId;
+          if (invoice.saleId) paymentData.saleId = invoice.saleId;
+          if (invoice.prescriptionId) paymentData.prescriptionId = invoice.prescriptionId;
+          await Payment.create(paymentData);
+
+          if (invoice.saleId && newAmountPaid >= totalAmount) {
+            const sale = await Sale.findByPk(invoice.saleId);
+            if (sale && sale.status === 'pending') {
+              await sale.update({ status: 'completed' });
+              await SaleActivity.create({
+                saleId: sale.id,
+                tenantId: invoice.tenantId,
+                type: 'payment',
+                subject: 'Payment Received',
+                notes: `Paystack payment for invoice ${invoice.invoiceNumber}`,
+                createdBy: null,
+                metadata: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, paymentAmount, paystackRef: reference }
+              });
+            }
+          }
+          try {
+            await activityLogger.logInvoicePaid(invoice, null);
+          } catch (e) {
+            console.error('[Paystack Webhook] activityLogger error:', e.message);
+          }
+          try {
+            if (invoice.customerId) await updateCustomerBalance(invoice.customerId);
+          } catch (e) {
+            console.error('[Paystack Webhook] updateCustomerBalance error:', e.message);
+          }
+          console.log('[Paystack Webhook] Invoice payment completed – invoice updated to paid:', invoice.invoiceNumber, 'reference:', reference);
+        } else if (metadata.type === 'invoice' && invoice) {
+          console.log('[Paystack Webhook] Invoice already paid or cancelled, skipping:', invoice.invoiceNumber);
+        } else if (metadata.type === 'invoice' && !invoice) {
+          console.error('[Paystack Webhook] Invoice not found for payment – paymentToken:', metadata.paymentToken, 'invoiceId:', metadata.invoiceId);
         }
       } else if (metadata.tenant_id && metadata.plan) {
         // Subscription payment

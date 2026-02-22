@@ -97,7 +97,7 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
     enabled: isOpen
   });
 
-  const customers = customersData?.data?.customers || customersData?.customers || [];
+  const customers = Array.isArray(customersData?.data) ? customersData.data : (customersData?.data?.customers || customersData?.customers || []);
 
   const handleQuickAdd = useCallback(async () => {
     const phone = (quickPhone || '').trim();
@@ -186,7 +186,7 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
           </div>
         </div>
 
-        <p className="text-xs text-gray-500">Or search existing</p>
+        <p className="text-xs text-gray-500 py-3">Or search existing</p>
         <Input
           placeholder="Search customers..."
           value={searchQuery}
@@ -217,12 +217,12 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
                 >
                   <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
                     <span className="text-green-700 font-semibold">
-                      {customer.name?.charAt(0)?.toUpperCase() || '?'}
+                      {(customer.name || customer.company || '?').charAt(0).toUpperCase()}
                     </span>
                   </div>
-                  <div className="flex-1">
-                    <p className="font-medium text-foreground">{customer.name}</p>
-                    <p className="text-sm text-gray-500">{customer.phone || customer.email}</p>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-foreground truncate">{customer.name || customer.company || 'No name'}</p>
+                    <p className="text-sm text-gray-500 truncate">{customer.phone || customer.email || ''}</p>
                   </div>
                   {customer.creditLimit > 0 && (
                     <div className="text-right">
@@ -360,7 +360,8 @@ const POS = () => {
     staleTime: QUERY_CACHE.STALE_TIME_STABLE
   });
 
-  const organizationSettings = orgSettingsData?.data?.organization || orgSettingsData?.organization || {};
+  // API returns { success, data: organization }; axios wraps as { data: { success, data: organization } }
+  const organizationSettings = orgSettingsData?.data?.data || orgSettingsData?.data?.organization || orgSettingsData?.data || {};
 
   // Fetch customers list for cart dropdown (Select existing)
   const { data: customersData } = useQuery({
@@ -592,12 +593,14 @@ const POS = () => {
       const result = await processSale(saleData);
 
       if (result.success) {
+        // Use backend sale (includes invoice, paymentMethod) when online; fallback for offline/queued
         const saleObj = result.sale || {
           id: result.localId,
           saleNumber: `OFFLINE-${result.localId ?? Date.now()}`,
           total: cartTotals.total,
           change: paymentDetails.change || 0,
           items: cart,
+          paymentMethod: paymentDetails.paymentMethod,
           ...saleData
         };
 
@@ -785,8 +788,8 @@ const POS = () => {
           />
         </div>
 
-        {/* Right side - Cart (40%) */}
-        <div className="lg:col-span-2 min-h-0">
+        {/* Right side - Cart (40%) - scrollable when content overflows */}
+        <div className="lg:col-span-2 min-h-0 overflow-y-auto">
           <POSCart
             items={cart}
             onUpdateQuantity={updateCartItemQuantity}

@@ -60,7 +60,11 @@ import {
   SlidersHorizontal,
   MoreVertical,
   ArrowLeft,
-  Loader2
+  Loader2,
+  AlertTriangle,
+  Check,
+  TrendingUp,
+  TrendingDown
 } from 'lucide-react';
 import {
   LineChart,
@@ -3702,8 +3706,9 @@ const Reports = () => {
                                 <h3 className="text-2xl font-bold mb-1" style={{ color: metric.color }}>
                                   ₵ {(metric.value / 1000).toFixed(1)}K
                                 </h3>
-                                <p className="text-sm" style={{ color: metric.color }}>
-                                  {metric.trend === 'up' ? '↑' : '↓'} {metric.change.toFixed(2)}% from last month
+                                <p className="text-sm flex items-center gap-1" style={{ color: metric.color }}>
+                                  {metric.trend === 'up' ? <TrendingUp className="h-4 w-4 shrink-0" /> : <TrendingDown className="h-4 w-4 shrink-0" />}
+                                  {metric.change.toFixed(2)}% from last month
                                 </p>
                               </div>
                             </div>
@@ -3908,8 +3913,9 @@ const Reports = () => {
                                         <p className="my-1"><strong>Current Stock:</strong> {data.currentStock} {data.unit}</p>
                                         <p className="my-1"><strong>Safety Level:</strong> {data.safetyStock} {data.unit}</p>
                                         <p className="my-1"><strong>Stock %:</strong> {data.stockPercentage}%</p>
-                                        <p className={`my-1 ${data.isLowStock ? 'text-destructive' : data.isHighRisk ? 'text-amber-600 dark:text-amber-400' : 'text-[#52c41a]'}`}>
-                                          <strong>Status:</strong> {data.isLowStock ? '⚠️ Low Stock' : data.isHighRisk ? '⚠️ Overstocked' : '✓ Normal'}
+                                        <p className={`my-1 flex items-center gap-1.5 ${data.isLowStock ? 'text-destructive' : data.isHighRisk ? 'text-amber-600 dark:text-amber-400' : 'text-[#52c41a]'}`}>
+                                          <strong>Status:</strong>
+                                          {data.isLowStock ? <><AlertTriangle className="h-4 w-4 shrink-0" /> Low Stock</> : data.isHighRisk ? <><AlertTriangle className="h-4 w-4 shrink-0" /> Overstocked</> : <><Check className="h-4 w-4 shrink-0" /> Normal</>}
                                         </p>
                                       </div>
                                     );

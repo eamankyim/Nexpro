@@ -9,7 +9,7 @@ import settingsService from '../services/settingsService';
 import whatsappService from '../services/whatsappService';
 import smsService from '../services/smsService';
 import emailService from '../services/emailService';
-import { Camera, User, Mail, UserCog, Loader2, Eye, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle } from 'lucide-react';
+import { Camera, User, Mail, UserCog, Loader2, Eye, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useHintMode } from '../context/HintModeContext';
@@ -155,6 +155,14 @@ const posConfigSchema = z.object({
     phoneRequired: z.boolean(),
     nameRequired: z.boolean(),
   }),
+});
+
+const paymentCollectionSchema = z.object({
+  business_name: z.string().min(1, 'Business / account name is required'),
+  bank_code: z.string().min(1, 'Bank is required'),
+  bank_name: z.string().optional(),
+  account_number: z.string().min(8, 'Account number must be at least 8 characters'),
+  primary_contact_email: z.string().email().optional().or(z.literal('')),
 });
 
 // Helper function to resolve file URLs (handles base64, relative paths, and absolute URLs)
@@ -337,6 +345,17 @@ const Settings = () => {
     },
   });
 
+  const paymentCollectionForm = useForm({
+    resolver: zodResolver(paymentCollectionSchema),
+    defaultValues: {
+      business_name: '',
+      bank_code: '',
+      bank_name: '',
+      account_number: '',
+      primary_contact_email: '',
+    },
+  });
+
   const {
     data: profileData,
     isLoading: loadingProfile
@@ -394,6 +413,21 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'pos-config'],
     queryFn: settingsService.getPOSConfig,
+    enabled: canManageOrganization
+  });
+
+  const {
+    data: paymentCollectionData,
+    isLoading: loadingPaymentCollection
+  } = useQuery({
+    queryKey: ['settings', 'payment-collection'],
+    queryFn: settingsService.getPaymentCollectionSettings,
+    enabled: canManageOrganization
+  });
+
+  const { data: paymentCollectionBanks = [] } = useQuery({
+    queryKey: ['settings', 'payment-collection-banks'],
+    queryFn: settingsService.getPaymentCollectionBanks,
     enabled: canManageOrganization
   });
 
@@ -471,6 +505,19 @@ const Settings = () => {
       });
     }
   }, [posConfigData, posConfigForm, canManageOrganization]);
+
+  useEffect(() => {
+    const pc = paymentCollectionData?.data ?? paymentCollectionData;
+    if (pc && canManageOrganization && !pc.hasSubaccount) {
+      paymentCollectionForm.reset({
+        business_name: pc.business_name || '',
+        bank_code: pc.bank_code || '',
+        bank_name: pc.bank_name || '',
+        account_number: '',
+        primary_contact_email: pc.primary_contact_email || '',
+      });
+    }
+  }, [paymentCollectionData, canManageOrganization]);
 
   useEffect(() => {
     if (organizationData?.data) {
@@ -729,6 +776,17 @@ const Settings = () => {
     }
   });
 
+  const updatePaymentCollectionMutation = useMutation({
+    mutationFn: settingsService.updatePaymentCollectionSettings,
+    onSuccess: async (response) => {
+      showSuccess(response?.message || 'Bank account linked successfully');
+      await queryClient.invalidateQueries({ queryKey: ['settings', 'payment-collection'] });
+    },
+    onError: (error) => {
+      showError(error?.response?.data?.message || error?.message || 'Failed to link bank account');
+    },
+  });
+
   const updatePOSConfigMutation = useMutation({
     mutationFn: settingsService.updatePOSConfig,
     onSuccess: async (response) => {
@@ -863,6 +921,17 @@ const Settings = () => {
   const onEmailSubmit = async (values) => {
     const payload = { ...values };
     updateEmailMutation.mutate(payload);
+  };
+
+  const onPaymentCollectionSubmit = async (values) => {
+    const bank = Array.isArray(paymentCollectionBanks) ? paymentCollectionBanks.find((b) => b.code === values.bank_code) : null;
+    updatePaymentCollectionMutation.mutate({
+      business_name: values.business_name.trim(),
+      bank_code: values.bank_code,
+      bank_name: bank?.name || values.bank_name || '',
+      account_number: String(values.account_number).replace(/\s/g, ''),
+      primary_contact_email: values.primary_contact_email?.trim() || undefined,
+    });
   };
 
   const onPOSConfigSubmit = async (values) => {
@@ -1447,7 +1516,7 @@ const Settings = () => {
                 name="legalName"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Legal Name</FormLabel>
+                    <FormLabel>Legal Name (optional)</FormLabel>
                     <FormControl>
                       <Input placeholder="Legal registered name" {...field} />
                     </FormControl>
@@ -1463,7 +1532,7 @@ const Settings = () => {
                 name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Email</FormLabel>
+                    <FormLabel>Email (optional)</FormLabel>
                     <FormControl>
                       <Input type="email" placeholder="info@company.com" {...field} />
                     </FormControl>
@@ -1476,7 +1545,7 @@ const Settings = () => {
                 name="phone"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Phone</FormLabel>
+                    <FormLabel>Phone (optional)</FormLabel>
                     <FormControl>
                       <PhoneNumberInput placeholder="Enter phone number" {...field} />
                     </FormControl>
@@ -1492,7 +1561,7 @@ const Settings = () => {
                 name="website"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Website</FormLabel>
+                    <FormLabel>Website (optional)</FormLabel>
                     <FormControl>
                       <Input placeholder="https://nexuspress.com" {...field} />
                     </FormControl>
@@ -1519,7 +1588,7 @@ const Settings = () => {
                 name="shopType"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Shop type</FormLabel>
+                    <FormLabel>Shop type (optional)</FormLabel>
                     <Select
                       value={field.value || ''}
                       onValueChange={field.onChange}
@@ -1549,7 +1618,7 @@ const Settings = () => {
               name="currency"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Currency</FormLabel>
+                  <FormLabel>Currency (optional)</FormLabel>
                   <Select
                     value={field.value || 'GHS'}
                     onValueChange={field.onChange}
@@ -1609,7 +1678,7 @@ const Settings = () => {
             name="address.line1"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Street Address</FormLabel>
+                <FormLabel>Street Address (optional)</FormLabel>
                 <FormControl>
                   <Input placeholder="123 Main St" {...field} />
                 </FormControl>
@@ -1622,7 +1691,7 @@ const Settings = () => {
             name="address.line2"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Address Line 2</FormLabel>
+                <FormLabel>Address Line 2 (optional)</FormLabel>
                 <FormControl>
                   <Input placeholder="Suite / Landmark" {...field} />
                 </FormControl>
@@ -1638,7 +1707,7 @@ const Settings = () => {
             name="address.city"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>City</FormLabel>
+                <FormLabel>City (optional)</FormLabel>
                 <FormControl>
                   <Input {...field} />
                 </FormControl>
@@ -1651,7 +1720,7 @@ const Settings = () => {
             name="address.state"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>State / Region</FormLabel>
+                <FormLabel>State / Region (optional)</FormLabel>
                 <FormControl>
                   <Input {...field} />
                 </FormControl>
@@ -1664,7 +1733,7 @@ const Settings = () => {
             name="address.postalCode"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Postal Code</FormLabel>
+                <FormLabel>Postal Code (optional)</FormLabel>
                 <FormControl>
                   <Input {...field} />
                 </FormControl>
@@ -1677,7 +1746,7 @@ const Settings = () => {
             name="address.country"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Country</FormLabel>
+                <FormLabel>Country (optional)</FormLabel>
                 <FormControl>
                   <Input placeholder="Ghana" {...field} />
                 </FormControl>
@@ -1696,7 +1765,7 @@ const Settings = () => {
             name="tax.vatNumber"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>VAT Number</FormLabel>
+                <FormLabel>VAT Number (optional)</FormLabel>
                 <FormControl>
                   <Input {...field} />
                 </FormControl>
@@ -1709,7 +1778,7 @@ const Settings = () => {
             name="tax.tin"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>TIN</FormLabel>
+                <FormLabel>TIN (optional)</FormLabel>
                 <FormControl>
                   <Input {...field} />
                 </FormControl>
@@ -1726,7 +1795,7 @@ const Settings = () => {
           name="invoiceFooter"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Invoice & Quote Footer</FormLabel>
+              <FormLabel>Invoice & Quote Footer (optional)</FormLabel>
               <FormControl>
                 <Textarea rows={4} placeholder="Enter your custom footer message" {...field} />
               </FormControl>
@@ -1740,7 +1809,7 @@ const Settings = () => {
             name="defaultPaymentTerms"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Default Payment Terms</FormLabel>
+                <FormLabel>Default Payment Terms (optional)</FormLabel>
                 <FormControl>
                   <Input placeholder="e.g. Net 30, Due on Receipt" {...field} />
                 </FormControl>
@@ -1753,7 +1822,7 @@ const Settings = () => {
             name="defaultTermsAndConditions"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Default Terms & Conditions</FormLabel>
+                <FormLabel>Default Terms & Conditions (optional)</FormLabel>
                 <FormControl>
                   <Input placeholder="e.g. Payment due within 30 days" {...field} />
                 </FormControl>
@@ -1767,7 +1836,7 @@ const Settings = () => {
           name="supportEmail"
           render={({ field }) => (
             <FormItem className="mt-4">
-              <FormLabel>Support / Contact Email</FormLabel>
+              <FormLabel>Support / Contact Email (optional)</FormLabel>
               <FormControl>
                 <Input type="email" placeholder="Used for Contact support link" {...field} />
               </FormControl>
@@ -3511,6 +3580,136 @@ const Settings = () => {
     </ShadcnCard>
   );
 
+  const pc = paymentCollectionData?.data ?? paymentCollectionData;
+  const hasPaymentSubaccount = pc?.hasSubaccount === true;
+  const banksList = Array.isArray(paymentCollectionBanks) ? paymentCollectionBanks : (paymentCollectionBanks?.data ?? []);
+
+  const paymentsTab = canManageOrganization ? (
+    <ShadcnCard>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <CreditCard className="h-5 w-5" />
+          Receive payments
+        </CardTitle>
+        <CardDescription>
+          Link a bank account to receive your share of card and mobile money (MoMo) payments from invoice and POS. A small platform fee applies.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {loadingPaymentCollection ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin" />
+          </div>
+        ) : hasPaymentSubaccount ? (
+          <div className="space-y-4">
+            <Alert>
+              <AlertTitle>Bank account linked</AlertTitle>
+              <AlertDescription>
+                Your share of Paystack payments is settled to your account. Business: {pc?.business_name || '—'}. Account: {pc?.account_number_masked || '—'}. Contact support to change.
+              </AlertDescription>
+            </Alert>
+          </div>
+        ) : (
+          <Form {...paymentCollectionForm}>
+            <form onSubmit={paymentCollectionForm.handleSubmit(onPaymentCollectionSubmit)} className="space-y-4">
+              <FormField
+                control={paymentCollectionForm.control}
+                name="business_name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Business / account name *</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder="e.g. Aseda Supermarket" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={paymentCollectionForm.control}
+                name="bank_code"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Bank *</FormLabel>
+                    <Select
+                      onValueChange={(value) => {
+                        field.onChange(value);
+                        const bank = banksList.find((b) => b.code === value);
+                        if (bank) paymentCollectionForm.setValue('bank_name', bank.name || '');
+                      }}
+                      value={field.value || undefined}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select bank" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {banksList.map((bank) => (
+                          <SelectItem key={bank.code || bank.id} value={String(bank.code)}>
+                            {bank.name || bank.code}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={paymentCollectionForm.control}
+                name="account_number"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Account number *</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="text" inputMode="numeric" placeholder="e.g. 0123456789" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={paymentCollectionForm.control}
+                name="primary_contact_email"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Contact email (optional)</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="email" placeholder="you@example.com" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <Button type="submit" disabled={updatePaymentCollectionMutation.isPending}>
+                {updatePaymentCollectionMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Linking…
+                  </>
+                ) : (
+                  'Link bank account'
+                )}
+              </Button>
+            </form>
+          </Form>
+        )}
+      </CardContent>
+    </ShadcnCard>
+  ) : (
+    <ShadcnCard>
+      <CardContent className="pt-6">
+        <Alert variant="destructive">
+          <AlertTitle>Access Restricted</AlertTitle>
+          <AlertDescription>
+            You need admin or manager permissions to configure payment collection.
+          </AlertDescription>
+        </Alert>
+      </CardContent>
+    </ShadcnCard>
+  );
+
   return (
     <div className="px-2 md:px-0">
       <div className="mb-4 md:mb-6">
@@ -3569,6 +3768,7 @@ const Settings = () => {
           <TabsTrigger value="organization" className="text-xs md:text-sm">Organization</TabsTrigger>
           <TabsTrigger value="subscription" className="text-xs md:text-sm">Subscription & Billing</TabsTrigger>
           <TabsTrigger value="configurations" className="text-xs md:text-sm">Configurations</TabsTrigger>
+          <TabsTrigger value="payments" className="text-xs md:text-sm">Receive payments</TabsTrigger>
           <TabsTrigger value="integration" className="text-xs md:text-sm">Integration</TabsTrigger>
         </TabsList>
         <TabsContent value="profile">{profileTab}</TabsContent>
@@ -3576,6 +3776,7 @@ const Settings = () => {
         <TabsContent value="organization">{organizationTab}</TabsContent>
         <TabsContent value="subscription">{subscriptionTab}</TabsContent>
         <TabsContent value="configurations">{configurationsTab}</TabsContent>
+        <TabsContent value="payments">{paymentsTab}</TabsContent>
         <TabsContent value="integration">{integrationTab}</TabsContent>
       </Tabs>
 

@@ -1357,7 +1357,7 @@ const Leads = () => {
               name="statusComment"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Comment</FormLabel>
+                  <FormLabel>Comment (optional)</FormLabel>
                   <FormControl>
                     <Textarea rows={3} placeholder="Add an optional comment for this status update" {...field} />
                   </FormControl>
@@ -1414,7 +1414,7 @@ const Leads = () => {
                 name="company"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Company</FormLabel>
+                    <FormLabel>Company (optional)</FormLabel>
                     <FormControl>
                       <Input {...field} placeholder="Company" />
                     </FormControl>
@@ -1430,7 +1430,7 @@ const Leads = () => {
                 name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Email</FormLabel>
+                    <FormLabel>Email (optional)</FormLabel>
                     <FormControl>
                       <Input {...field} type="email" placeholder="Email address" />
                     </FormControl>
@@ -1443,7 +1443,7 @@ const Leads = () => {
                 name="phone"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Phone</FormLabel>
+                    <FormLabel>Phone (optional)</FormLabel>
                     <FormControl>
                       <PhoneNumberInput {...field} placeholder="Enter phone number" />
                     </FormControl>
@@ -1484,7 +1484,7 @@ const Leads = () => {
                   name="assignedTo"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Assigned To</FormLabel>
+                      <FormLabel>Assigned To (optional)</FormLabel>
                       <Select value={field.value} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger>
@@ -1582,7 +1582,7 @@ const Leads = () => {
                   name="nextFollowUp"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Next Follow-up</FormLabel>
+                      <FormLabel>Next Follow-up (optional)</FormLabel>
                       <FormControl>
                         <DatePicker
                           date={field.value}
@@ -1598,7 +1598,7 @@ const Leads = () => {
                   name="tags"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Tags</FormLabel>
+                      <FormLabel>Tags (optional)</FormLabel>
                       <FormControl>
                         <Input
                           {...field}
@@ -1621,7 +1621,7 @@ const Leads = () => {
                 name="notes"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Notes</FormLabel>
+                    <FormLabel>Notes (optional)</FormLabel>
                     <FormControl>
                       <Textarea {...field} rows={3} placeholder="Internal notes or context" />
                     </FormControl>
@@ -1685,7 +1685,7 @@ const Leads = () => {
               name="subject"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Subject</FormLabel>
+                  <FormLabel>Subject (optional)</FormLabel>
                   <FormControl>
                     <Input {...field} placeholder="Short subject or summary" />
                   </FormControl>
@@ -1698,7 +1698,7 @@ const Leads = () => {
               name="notes"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Notes</FormLabel>
+                  <FormLabel>Notes (optional)</FormLabel>
                   <FormControl>
                     <Textarea {...field} rows={3} placeholder="Details of the interaction" />
                   </FormControl>
@@ -1711,7 +1711,7 @@ const Leads = () => {
               name="nextStep"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Next Step</FormLabel>
+                  <FormLabel>Next Step (optional)</FormLabel>
                   <FormControl>
                     <Input {...field} placeholder="Optional next step" />
                   </FormControl>
@@ -1724,7 +1724,7 @@ const Leads = () => {
               name="followUpDate"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Follow-up Date</FormLabel>
+                  <FormLabel>Follow-up Date (optional)</FormLabel>
                   <FormControl>
                     <DatePicker
                       date={field.value}

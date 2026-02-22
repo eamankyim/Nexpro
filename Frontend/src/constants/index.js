@@ -639,8 +639,8 @@ export const SHOP_TYPE_FIELDS = {
   // Pet store (pet food similar to supermarket)
   [SHOP_TYPES.PET]: ['expiryDate', 'isPerishable', 'batchNumber'],
   
-  // Restaurant (size for pizza, etc.: small, medium, large, XL; hasVariants for size-based pricing)
-  [SHOP_TYPES.RESTAURANT]: ['expiryDate', 'isPerishable', 'allergens', 'size', 'hasVariants'],
+  // Restaurant (size for pizza, etc.: small, medium, large, XL; hasVariants for size-based pricing; optionalFoods = add-ons)
+  [SHOP_TYPES.RESTAURANT]: ['expiryDate', 'isPerishable', 'allergens', 'optionalFoods', 'size', 'hasVariants'],
   
   [SHOP_TYPES.OTHER]: [],
 };
@@ -755,6 +755,7 @@ export const PRODUCT_FIELD_LABELS = {
   publisher: 'Publisher (optional)',
   assemblyRequired: 'Assembly Required (optional)',
   allergens: 'Allergens (optional)',
+  optionalFoods: 'Optional foods / add-ons (optional)',
   size: 'Size (optional)',
   ageRange: 'Age Range (optional)',
   batteryRequired: 'Battery Required (optional)',

@@ -63,7 +63,7 @@ export const useFeatureAccess = () => {
       return true;
     }
 
-    // For now, return true for trial/launch/scale plans
+    // For now, return true for trial/starter/professional plans
     // In production, this would check against the actual plan features
     return true; // TODO: Implement actual feature checking
   };

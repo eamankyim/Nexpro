@@ -11,7 +11,8 @@ const {
   sendReceipt,
   addSaleActivity,
   getSaleActivities,
-  updateOrderStatus
+  updateOrderStatus,
+  initializePaystackForSale
 } = require('../controllers/saleController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
@@ -45,6 +46,9 @@ router.route('/:id/receipt')
 
 router.route('/:id/send-receipt')
   .post(authorize('admin', 'manager', 'staff'), sendReceipt);
+
+router.route('/:id/initialize-paystack')
+  .post(authorize('admin', 'manager', 'staff'), initializePaystackForSale);
 
 router.route('/:id/activities')
   .get(getSaleActivities)

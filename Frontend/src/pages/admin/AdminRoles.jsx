@@ -25,7 +25,8 @@ import {
   CheckSquare,
   Square,
   UserPlus,
-  Eye
+  Eye,
+  Circle
 } from 'lucide-react';
 import {
   Select,
@@ -624,8 +625,9 @@ const AdminRoles = () => {
                         <h4 className="font-medium text-sm mb-2 capitalize">{category}</h4>
                         <div className="space-y-1">
                           {rolePerms.map(perm => (
-                            <div key={perm.id} className="text-sm text-gray-700">
-                              • {perm.name}
+                            <div key={perm.id} className="text-sm text-gray-700 flex items-center gap-1.5">
+                              <Circle className="h-1.5 w-1.5 shrink-0" />
+                              {perm.name}
                             </div>
                           ))}
                         </div>

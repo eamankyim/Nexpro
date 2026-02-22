@@ -1,3 +1,8 @@
+/** Single source of truth: prices from Paystack (see config/paystackPlans.js) */
+const { PLAN_DEFINITIONS } = require('./paystackPlans');
+
+const pesewasToGhs = (p) => (p == null ? null : p / 100);
+
 const plans = [
   {
     id: 'trial',
@@ -34,16 +39,16 @@ const plans = [
     }
   },
   {
-    id: 'launch',
+    id: 'starter',
     order: 20,
-    name: 'Launch',
-    description: 'For growing shops modernizing their quoting and job tracking.',
+    name: 'Starter',
+    description: (PLAN_DEFINITIONS.starter?.description?.monthly) || 'Up to 5 team members.',
     price: {
-      amount: 799,
+      amount: pesewasToGhs(PLAN_DEFINITIONS.starter?.monthly ?? 12900),
       currency: 'GHS',
-      display: 'GHS 799/mo',
+      display: `GHS ${pesewasToGhs(PLAN_DEFINITIONS.starter?.monthly ?? 12900)}/mo`,
       billingPeriodLabel: 'per month',
-      billingDescription: 'GHS 799 per month, billed annually'
+      billingDescription: `GHS ${pesewasToGhs(PLAN_DEFINITIONS.starter?.yearly ?? 118800) / 12} per month when billed annually`
     },
     highlights: [
       'Unlimited invoices & jobs',
@@ -71,7 +76,7 @@ const plans = [
         roleManagement: true
       },
       popular: false,
-      priceDisplay: 'GHS 799',
+      priceDisplay: `GHS ${pesewasToGhs(PLAN_DEFINITIONS.starter?.monthly ?? 12900)}`,
       billing: 'per month, billed annually',
       badgeLabel: null,
       cta: {
@@ -83,25 +88,25 @@ const plans = [
     onboarding: {
       enabled: true,
       subtitle: 'Recommended',
-      ctaLabel: 'Choose Launch',
+      ctaLabel: 'Choose Starter',
       badge: null,
       isDefault: false
     }
   },
   {
-    id: 'scale',
+    id: 'professional',
     order: 30,
-    name: 'Scale',
-    description: 'End-to-end visibility for multi-press teams that need deeper controls.',
+    name: 'Professional',
+    description: (PLAN_DEFINITIONS.professional?.description?.monthly) || 'Up to 20 team members.',
     price: {
-      amount: 1299,
+      amount: pesewasToGhs(PLAN_DEFINITIONS.professional?.monthly ?? 25000),
       currency: 'GHS',
-      display: 'GHS 1,299/mo',
+      display: `GHS ${pesewasToGhs(PLAN_DEFINITIONS.professional?.monthly ?? 25000)}/mo`,
       billingPeriodLabel: 'per month',
-      billingDescription: 'GHS 1,299 per month, billed annually'
+      billingDescription: `GHS ${pesewasToGhs(PLAN_DEFINITIONS.professional?.yearly ?? 238800) / 12} per month when billed annually`
     },
     highlights: [
-      'Everything in Launch',
+      'Everything in Starter',
       'Advanced reporting & automation',
       'Materials controls & vendor price lists',
       'Priority support with SLA'
@@ -126,7 +131,7 @@ const plans = [
         roleManagement: true
       },
       popular: true,
-      priceDisplay: 'GHS 1,299',
+      priceDisplay: `GHS ${pesewasToGhs(PLAN_DEFINITIONS.professional?.monthly ?? 25000)}`,
       billing: 'per month, billed annually',
       badgeLabel: 'Recommended',
       cta: {
@@ -137,8 +142,8 @@ const plans = [
     },
     onboarding: {
       enabled: true,
-      subtitle: 'Scale-ready',
-      ctaLabel: 'Choose Scale',
+      subtitle: 'Growth-ready',
+      ctaLabel: 'Choose Professional',
       badge: 'Popular',
       isDefault: false
     }

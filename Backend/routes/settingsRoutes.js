@@ -23,7 +23,10 @@ const {
   getPOSConfig,
   updatePOSConfig,
   uploadProfilePicture,
-  uploadOrganizationLogo
+  uploadOrganizationLogo,
+  getPaymentCollectionBanks,
+  getPaymentCollectionSettings,
+  updatePaymentCollectionSettings
 } = require('../controllers/settingsController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
@@ -133,6 +136,12 @@ router
   .route('/pos-config')
   .get(getPOSConfig)
   .put(authorize('admin', 'manager'), updatePOSConfig);
+
+router.get('/payment-collection/banks', getPaymentCollectionBanks);
+router
+  .route('/payment-collection')
+  .get(getPaymentCollectionSettings)
+  .put(authorize('admin', 'manager'), updatePaymentCollectionSettings);
 
 module.exports = router;
 

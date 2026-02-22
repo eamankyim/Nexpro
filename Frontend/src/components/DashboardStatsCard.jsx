@@ -1,6 +1,7 @@
 import { memo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { TrendingUp, TrendingDown, ArrowRight } from 'lucide-react';
 import { useHintMode } from '@/context/HintModeContext';
 import { cn } from '@/lib/utils';
 
@@ -49,6 +50,7 @@ const DashboardStatsCard = memo(({
 
   const trendDisplay = trend && trendValue;
   const trendColorClass = trend === 'up' ? 'text-green-600' : trend === 'down' ? 'text-red-600' : 'text-muted-foreground';
+  const TrendIcon = trend === 'up' ? TrendingUp : trend === 'down' ? TrendingDown : ArrowRight;
 
   const card = (
     <Card className={cn("dashboard-stats-card rounded-xl border-border", className)}>
@@ -58,9 +60,9 @@ const DashboardStatsCard = memo(({
           {(Icon || trendDisplay) ? (
             <div className="flex items-center gap-1 shrink-0">
               {trendDisplay && (
-                <span className={cn("text-xs font-medium", trendColorClass)}>
-                  {trend === 'up' && '↑'}
-                  {trend === 'down' && '↓'}
+                <span className={cn("text-xs font-medium flex items-center gap-1", trendColorClass)}>
+                  {trend === 'up' && <TrendingUp className="h-3.5 w-3.5 shrink-0" />}
+                  {trend === 'down' && <TrendingDown className="h-3.5 w-3.5 shrink-0" />}
                   {trendValue}
                 </span>
               )}
@@ -86,6 +88,7 @@ const DashboardStatsCard = memo(({
             className={cn("text-[10px] md:text-xs flex items-center gap-1 font-medium")}
             style={{ color: comparisonColor }}
           >
+            {trend && <TrendIcon className="h-3.5 w-3.5 shrink-0" />}
             {displayComparison}
           </div>
         )}

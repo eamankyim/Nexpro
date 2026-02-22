@@ -1,4 +1,4 @@
-const { Invoice, Job, Customer, JobItem, Payment, Sale, Prescription, SaleActivity } = require('../models');
+const { Invoice, Job, Customer, JobItem, Payment, Sale, Prescription, SaleActivity, Tenant } = require('../models');
 const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
 const { createInvoicePaymentJournal, createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
@@ -1064,6 +1064,9 @@ exports.getInvoiceByToken = async (req, res, next) => {
       });
     }
 
+    // Prevent caching so payment link always shows current status (e.g. after paid)
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+
     // Return invoice data (without sensitive tenant info)
     res.status(200).json({
       success: true,
@@ -1271,6 +1274,105 @@ exports.processPublicPayment = async (req, res, next) => {
           paymentMethod: payment.paymentMethod,
           paymentDate: payment.paymentDate
         }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Initialize Paystack payment for public invoice link
+// @route   POST /api/public/invoices/:token/initialize-paystack
+// @access  Public
+exports.initializePaystackForInvoice = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    const { email } = sanitizePayload(req.body);
+
+    const invoice = await Invoice.findOne({
+      where: { paymentToken: token },
+      include: [{ model: Customer, as: 'customer' }]
+    });
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found or invalid payment link'
+      });
+    }
+    if (invoice.status === 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'This invoice has been cancelled'
+      });
+    }
+    if (invoice.status === 'paid') {
+      return res.status(400).json({
+        success: false,
+        message: 'This invoice has already been paid'
+      });
+    }
+
+    const balance = parseFloat(invoice.balance ?? invoice.totalAmount ?? 0);
+    if (balance <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'No balance due on this invoice'
+      });
+    }
+
+    const customerEmail = email || invoice.customer?.email;
+    if (!customerEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required to pay with Paystack. Please enter your email.'
+      });
+    }
+
+    const paystackService = require('../services/paystackService');
+    if (!paystackService.secretKey) {
+      return res.status(503).json({
+        success: false,
+        message: 'Online payment is not configured'
+      });
+    }
+
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+    const callbackUrl = `${frontendUrl}/pay-invoice/${token}?paystack=1`;
+    const reference = `INV-${invoice.id}-${Date.now()}`.slice(0, 50);
+    const amountPesewas = Math.round(balance * 100);
+
+    const tenant = await Tenant.findByPk(invoice.tenantId);
+    const subaccount = tenant?.paystackSubaccountCode || null;
+
+    const result = await paystackService.initializeTransaction({
+      email: customerEmail,
+      amount: amountPesewas,
+      currency: 'GHS',
+      callback_url: callbackUrl,
+      reference,
+      metadata: {
+        type: 'invoice',
+        paymentToken: token,
+        invoiceId: invoice.id,
+        tenantId: invoice.tenantId
+      },
+      ...(subaccount ? { subaccount } : {})
+    });
+
+    if (!result.status || !result.data?.authorization_url) {
+      return res.status(502).json({
+        success: false,
+        message: result.message || 'Failed to initialize payment'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        authorization_url: result.data.authorization_url,
+        reference: result.data.reference,
+        access_code: result.data.access_code
       }
     });
   } catch (error) {

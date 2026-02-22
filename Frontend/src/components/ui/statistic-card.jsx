@@ -5,6 +5,7 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { TrendingUp, TrendingDown } from "lucide-react"
 
 export function StatisticCard({
   title,
@@ -23,14 +24,14 @@ export function StatisticCard({
         {trend && (
           <span
             className={cn(
-              "text-xs",
+              "text-xs flex items-center gap-1",
               trend === "up" && "text-green-500",
               trend === "down" && "text-red-500",
               trend === "neutral" && "text-muted-foreground"
             )}
           >
-            {trend === "up" && "↑"}
-            {trend === "down" && "↓"}
+            {trend === "up" && <TrendingUp className="h-3.5 w-3.5 shrink-0" />}
+            {trend === "down" && <TrendingDown className="h-3.5 w-3.5 shrink-0" />}
             {trendValue}
           </span>
         )}

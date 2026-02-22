@@ -169,8 +169,8 @@ const handleNumberChange = (e, onChange) => {
 const numberInputValue = (v) => (v === '' ? '' : v);
 
 const FormLabelWithInfo = ({ label, hint }) => (
-  <div className="flex items-center gap-1.5">
-    <FormLabel>{label}</FormLabel>
+  <div className="flex items-center gap-1.5 min-h-[1.25rem]">
+    <FormLabel className="min-h-0">{label}</FormLabel>
     {hint && (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -312,6 +312,7 @@ const productSchema = z.object({
   assemblyRequired: z.boolean().optional(),
   // Restaurant
   allergens: z.string().optional(),
+  optionalFoods: z.string().optional(),
   // Clothing/Beauty
   sizes: z.string().optional(),
   colors: z.string().optional(),
@@ -503,6 +504,7 @@ const Products = () => {
       publisher: '',
       assemblyRequired: false,
       allergens: '',
+      optionalFoods: '',
       sizes: '',
       colors: '',
       size: '',
@@ -1048,6 +1050,7 @@ const Products = () => {
       publisher: product.metadata?.publisher || '',
       assemblyRequired: product.metadata?.assemblyRequired || false,
       allergens: product.metadata?.allergens || '',
+      optionalFoods: product.metadata?.optionalFoods || '',
       sizes: product.metadata?.sizes || '',
       colors: product.metadata?.colors || '',
       size: product.metadata?.size || '',
@@ -1095,6 +1098,7 @@ const Products = () => {
       publisher: '',
       assemblyRequired: false,
       allergens: '',
+      optionalFoods: '',
       sizes: '',
       colors: '',
       size: '',
@@ -1146,6 +1150,7 @@ const Products = () => {
         publisher: data.publisher || '',
         assemblyRequired: data.assemblyRequired ?? false,
         allergens: data.allergens || '',
+        optionalFoods: data.optionalFoods || '',
         sizes: data.sizes || '',
         colors: data.colors || '',
         size: data.size || '',
@@ -1279,7 +1284,7 @@ const Products = () => {
         'warrantyPeriod', 'specifications', 'dimensions', 'weight',
         'material', 'partNumber', 'compatibility', 'vehicleModels',
         'isbn', 'author', 'publisher', 'assemblyRequired',
-        'allergens', 'sizes', 'colors', 'size', 'ageRange', 'batteryRequired',
+        'allergens', 'optionalFoods', 'sizes', 'colors', 'size', 'ageRange', 'batteryRequired',
       ];
       
       const metadata = {};
@@ -1809,6 +1814,30 @@ const Products = () => {
                     );
                   })}
                 </div>
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      );
+    }
+
+    // Restaurant: optional foods / add-ons
+    if (shopTypeFields.includes('optionalFoods')) {
+      fields.push(
+        <FormField
+          key="optionalFoods"
+          control={form.control}
+          name="optionalFoods"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{PRODUCT_FIELD_LABELS.optionalFoods}</FormLabel>
+              <FormControl>
+                <Textarea
+                  placeholder="e.g. Extra cheese, Bacon, Avocado"
+                  className="min-h-[80px] resize-y"
+                  {...field}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -2484,7 +2513,9 @@ const Products = () => {
                     name="costPrice"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Cost Price *</FormLabel>
+                        <FormLabel>
+                          Cost Price {shopType === SHOP_TYPES.RESTAURANT ? '(optional)' : '*'}
+                        </FormLabel>
                         <FormControl>
                           <Input
                             type="number"
@@ -2558,7 +2589,7 @@ const Products = () => {
                       <FormItem>
                         <FormLabel>SKU (optional)</FormLabel>
                         <FormControl>
-                          <Input placeholder="Enter SKU" {...field} />
+                          <Input placeholder="Enter SKU" className="h-10 min-h-[44px] md:min-h-[40px]" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -2571,7 +2602,7 @@ const Products = () => {
                       <FormItem>
                         <FormLabelWithInfo label="Barcode (optional)" hint="Scan barcode at POS. No barcode? Use Generate QR to print and attach." />
                         <FormControl>
-                          <Input placeholder="Scan or enter barcode" {...field} />
+                          <Input placeholder="Scan or enter barcode" className="h-10 min-h-[44px] md:min-h-[40px]" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -2584,7 +2615,7 @@ const Products = () => {
                       <FormItem>
                         <FormLabel>Brand (optional)</FormLabel>
                         <FormControl>
-                          <Input placeholder="Enter brand name" {...field} />
+                          <Input placeholder="Enter brand name" className="h-10 min-h-[44px] md:min-h-[40px]" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -2601,6 +2632,7 @@ const Products = () => {
                             type="number"
                             step="0.01"
                             min="0"
+                            className="h-10 min-h-[44px] md:min-h-[40px]"
                             {...field}
                             value={numberInputValue(field.value)}
                             onChange={(e) => handleNumberChange(e, field.onChange)}
@@ -2618,7 +2650,7 @@ const Products = () => {
                         <FormLabel>Unit *</FormLabel>
                         <Select value={field.value || undefined} onValueChange={field.onChange}>
                           <FormControl>
-                            <SelectTrigger>
+                            <SelectTrigger className="h-10 min-h-[44px] md:min-h-[40px]">
                               <SelectValue placeholder="Select unit" />
                             </SelectTrigger>
                           </FormControl>
@@ -2645,6 +2677,7 @@ const Products = () => {
                             type="number"
                             step="0.01"
                             min="0"
+                            className="h-10 min-h-[44px] md:min-h-[40px]"
                             {...field}
                             value={numberInputValue(field.value)}
                             onChange={(e) => handleNumberChange(e, field.onChange)}
@@ -2665,6 +2698,7 @@ const Products = () => {
                             type="number"
                             step="0.01"
                             min="0"
+                            className="h-10 min-h-[44px] md:min-h-[40px]"
                             {...field}
                             value={numberInputValue(field.value)}
                             onChange={(e) => handleNumberChange(e, field.onChange)}
@@ -2692,7 +2726,7 @@ const Products = () => {
                               onOpenChange={setVendorSelectOpen}
                             >
                               <FormControl>
-                                <SelectTrigger>
+                                <SelectTrigger className="h-10 min-h-[44px] md:min-h-[40px]">
                                   <SelectValue placeholder="Select supplier/vendor" />
                                 </SelectTrigger>
                               </FormControl>
@@ -3233,6 +3267,16 @@ const Products = () => {
                   {selectedProduct.metadata.author && (
                     <DescriptionItem label="Author">
                       {selectedProduct.metadata.author}
+                    </DescriptionItem>
+                  )}
+                  {selectedProduct.metadata.allergens && (
+                    <DescriptionItem label="Allergens">
+                      {selectedProduct.metadata.allergens}
+                    </DescriptionItem>
+                  )}
+                  {selectedProduct.metadata.optionalFoods && (
+                    <DescriptionItem label="Optional foods / add-ons">
+                      {selectedProduct.metadata.optionalFoods}
                     </DescriptionItem>
                   )}
                 </Descriptions>

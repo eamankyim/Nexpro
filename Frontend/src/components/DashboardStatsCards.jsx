@@ -31,45 +31,44 @@ const DashboardStatsCards = memo(({
   const comparingColor = '#666';
   const showComparing = comparisonLoading;
 
-  const revenueComparison = showComparing
-    ? COMPARING_LABEL
-    : (comparisonData?.revenue
-        ? formatComparisonText(comparisonData.revenue, comparisonData.label, '₵ ')
-        : null);
+  const revenueFormatted = comparisonData?.revenue
+    ? formatComparisonText(comparisonData.revenue, comparisonData.label, '₵ ')
+    : null;
+  const revenueComparison = showComparing ? COMPARING_LABEL : (revenueFormatted?.text ?? null);
+  const revenueTrend = showComparing ? null : (revenueFormatted?.direction ?? null);
   const revenueComparisonColor = showComparing
     ? comparingColor
     : (comparisonData?.revenue
         ? (comparisonData.revenue.isPositive ? '#166534' : comparisonData.revenue.isNegative ? '#ef4444' : '#666')
         : '#166534');
 
-  const expenseComparison = showComparing
-    ? COMPARING_LABEL
-    : (comparisonData?.expenses
-        ? formatComparisonText(comparisonData.expenses, comparisonData.label, '₵ ')
-        : null);
+  const expenseFormatted = comparisonData?.expenses
+    ? formatComparisonText(comparisonData.expenses, comparisonData.label, '₵ ')
+    : null;
+  const expenseComparison = showComparing ? COMPARING_LABEL : (expenseFormatted?.text ?? null);
+  const expenseTrend = showComparing ? null : (expenseFormatted?.direction ?? null);
   const expenseComparisonColor = showComparing
     ? comparingColor
     : (comparisonData?.expenses
         ? (comparisonData.expenses.isPositive ? '#ef4444' : comparisonData.expenses.isNegative ? '#166534' : '#666')
         : '#ef4444');
 
-  const profitComparison = showComparing
-    ? COMPARING_LABEL
-    : (comparisonData?.profit
-        ? formatComparisonText(comparisonData.profit, comparisonData.label, '₵ ')
-        : null);
+  const profitFormatted = comparisonData?.profit
+    ? formatComparisonText(comparisonData.profit, comparisonData.label, '₵ ')
+    : null;
+  const profitComparison = showComparing ? COMPARING_LABEL : (profitFormatted?.text ?? null);
+  const profitTrend = showComparing ? null : (profitFormatted?.direction ?? null);
   const profitComparisonColor = showComparing
     ? comparingColor
     : (comparisonData?.profit
         ? (comparisonData.profit.isPositive ? '#166534' : comparisonData.profit.isNegative ? '#ef4444' : '#666')
         : (profitValue < 0 ? '#ef4444' : '#166534'));
 
-  const periodLabel = comparisonData?.label || 'vs yesterday';
-  const newCustomersComparison = showComparing
-    ? COMPARING_LABEL
-    : (comparisonData?.newCustomers
-        ? formatComparisonText(comparisonData.newCustomers, comparisonData.label, '')
-        : null);
+  const newCustomersFormatted = comparisonData?.newCustomers
+    ? formatComparisonText(comparisonData.newCustomers, comparisonData.label, '')
+    : null;
+  const newCustomersComparison = showComparing ? COMPARING_LABEL : (newCustomersFormatted?.text ?? null);
+  const newCustomersTrend = showComparing ? null : (newCustomersFormatted?.direction ?? null);
   const newCustomersComparisonColor = showComparing
     ? comparingColor
     : (comparisonData?.newCustomers
@@ -92,6 +91,7 @@ const DashboardStatsCards = memo(({
         iconColor="#166534"
         comparisonText={revenueComparison}
         comparisonColor={revenueComparisonColor}
+        trend={revenueTrend}
       />
 
       {/* Total Expenses Card */}
@@ -105,6 +105,7 @@ const DashboardStatsCards = memo(({
         iconColor="#f97316"
         comparisonText={expenseComparison}
         comparisonColor={expenseComparisonColor}
+        trend={expenseTrend}
       />
 
       {/* Profit Made Card */}
@@ -118,6 +119,7 @@ const DashboardStatsCards = memo(({
         iconColor="#84cc16"
         comparisonText={profitComparison}
         comparisonColor={profitComparisonColor}
+        trend={profitTrend}
       />
 
       {/* New Customers Card */}
@@ -130,6 +132,7 @@ const DashboardStatsCards = memo(({
         iconColor="#166534"
         comparisonText={newCustomersComparison}
         comparisonColor={newCustomersComparisonColor}
+        trend={newCustomersTrend}
       />
     </div>
   );

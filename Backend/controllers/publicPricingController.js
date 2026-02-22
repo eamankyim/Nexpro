@@ -1,8 +1,11 @@
 const { plans: configPlans, lastUpdated: configLastUpdated } = require('../config/plans');
+const { PLAN_DEFINITIONS } = require('../config/paystackPlans');
 const { SubscriptionPlan } = require('../models');
 
 const sortPlans = (collection = []) =>
   [...collection].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+
+const pesewasToGhs = (p) => (p == null ? null : p / 100);
 
 const mapPlanForOnboarding = (plan) => ({
   id: plan.id,
@@ -20,9 +23,11 @@ const mapPlanForOnboarding = (plan) => ({
   priceMeta: plan.price || null
 });
 
-const mapPlanForMarketing = (plan) => {
+const mapPlanForMarketing = (plan, opts = {}) => {
+  const { interval = null, priceOverride = null } = opts;
+  const price = priceOverride ?? plan.price;
   const displayPrice =
-    plan.marketing?.priceDisplay || plan.price?.display || null;
+    plan.marketing?.priceDisplay || price?.display || null;
   const cta = plan.marketing?.cta;
   const ctaLabel = typeof cta === 'object' && cta?.label ? cta.label : (cta || 'Start trial');
 
@@ -32,21 +37,60 @@ const mapPlanForMarketing = (plan) => {
     description: plan.description,
     price: displayPrice,
     priceMeta: {
-      amount: plan.price?.amount ?? null,
-      currency: plan.price?.currency ?? null,
-      display: plan.price?.display ?? displayPrice,
-      billingDescription: plan.price?.billingDescription || null
+      amount: price?.amount ?? null,
+      currency: price?.currency ?? 'GHS',
+      display: price?.display ?? displayPrice,
+      billingDescription: price?.billingDescription || null
     },
-    billing: plan.marketing?.billing || plan.price?.billingDescription || null,
+    billing: plan.marketing?.billing || price?.billingDescription || null,
     perks: plan.marketing?.perks || [],
     highlights: plan.highlights || [],
     features: plan.marketing?.featureFlags || {},
     popular: Boolean(plan.marketing?.popular),
     badge: plan.marketing?.badgeLabel || null,
     cta: typeof cta === 'object' ? { ...cta, label: cta.label || ctaLabel } : { label: ctaLabel },
-    interval: plan.metadata?.interval || null
+    interval
   };
 };
+
+/** Map legacy plan ids to Paystack ids for price lookup */
+const PLAN_ID_TO_PAYSTACK = { launch: 'starter', scale: 'professional' };
+
+/** Expand Paystack-backed plans (starter, professional) into monthly + yearly rows for marketing */
+function expandMarketingPlansWithPaystack(plans) {
+  const expanded = [];
+  const paystackIds = ['starter', 'professional'];
+  for (const plan of plans) {
+    const id = (plan.id || '').toLowerCase();
+    const paystackId = PLAN_ID_TO_PAYSTACK[id] || id;
+    if (paystackIds.includes(paystackId) && PLAN_DEFINITIONS[paystackId] && !PLAN_DEFINITIONS[paystackId].contactSales) {
+      const def = PLAN_DEFINITIONS[paystackId];
+      const monthlyAmount = pesewasToGhs(def.monthly);
+      const yearlyAmount = pesewasToGhs(def.yearly);
+      expanded.push(mapPlanForMarketing(plan, {
+        interval: 'monthly',
+        priceOverride: {
+          amount: monthlyAmount,
+          currency: 'GHS',
+          display: `GHS ${monthlyAmount}/mo`,
+          billingDescription: `GHS ${monthlyAmount} per month`
+        }
+      }));
+      expanded.push(mapPlanForMarketing(plan, {
+        interval: 'annually',
+        priceOverride: {
+          amount: yearlyAmount,
+          currency: 'GHS',
+          display: `GHS ${(yearlyAmount / 12).toFixed(0)}/mo`,
+          billingDescription: `GHS ${(yearlyAmount / 12).toFixed(0)} per month when billed annually`
+        }
+      }));
+    } else {
+      expanded.push(mapPlanForMarketing(plan));
+    }
+  }
+  return expanded;
+}
 
 exports.getPublicPlans = async (req, res) => {
   try {
@@ -92,11 +136,13 @@ exports.getPublicPlans = async (req, res) => {
 
     let dataset;
     switch (channel) {
-      case 'marketing':
-        dataset = sortPlans(
+      case 'marketing': {
+        const marketingPlans = sortPlans(
           plans.filter((plan) => plan.marketing?.enabled !== false)
-        ).map(mapPlanForMarketing);
+        );
+        dataset = expandMarketingPlansWithPaystack(marketingPlans);
         break;
+      }
       case 'onboarding':
         dataset = sortPlans(
           plans.filter((plan) => plan.onboarding?.enabled !== false)

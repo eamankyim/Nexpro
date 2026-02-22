@@ -72,6 +72,21 @@ const getLeadSources = async () => {
   return res?.data ?? [];
 };
 
+const getPaymentCollectionBanks = async () => {
+  const res = await api.get('/settings/payment-collection/banks');
+  return res?.data ?? res;
+};
+
+const getPaymentCollectionSettings = async () => {
+  const res = await api.get('/settings/payment-collection');
+  return res?.data ?? res;
+};
+
+const updatePaymentCollectionSettings = async (payload) => {
+  const res = await api.put('/settings/payment-collection', payload);
+  return res?.data ?? res;
+};
+
 export default {
   getProfile,
   updateProfile,
@@ -85,6 +100,9 @@ export default {
   getPOSConfig,
   updatePOSConfig,
   getCustomerSources,
-  getLeadSources
+  getLeadSources,
+  getPaymentCollectionBanks,
+  getPaymentCollectionSettings,
+  updatePaymentCollectionSettings
 };
 

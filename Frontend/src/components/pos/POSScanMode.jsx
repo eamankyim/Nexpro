@@ -737,15 +737,19 @@ const POSScanMode = ({
                   </div>
                 </div>
 
-                {/* Amount Tendered (for cash) */}
+                {/* Amount Tendered (for cash) - type or use numpad */}
                 {paymentMethod === 'cash' && (
                   <div>
                     <Label className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600 ${isMobile ? 'mb-1.5' : 'mb-2'} block`}>Amount Received</Label>
-                    <div className={`text-center ${isMobile ? 'p-2' : 'p-3'} bg-card border border-border ${isMobile ? 'rounded-md mb-2' : 'rounded-lg mb-3'}`}>
-                      <span className={`${isMobile ? 'text-xl' : 'text-2xl'} font-bold`}>
-                        {CURRENCY.SYMBOL} {amountTendered || '0'}
-                      </span>
-                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      placeholder="0"
+                      className={`text-center font-bold ${isMobile ? 'h-10 text-lg' : 'h-12 text-2xl'} mb-2`}
+                      value={amountTendered}
+                      onChange={(e) => setAmountTendered(e.target.value)}
+                    />
                     <POSNumpad
                       value={amountTendered}
                       onChange={setAmountTendered}

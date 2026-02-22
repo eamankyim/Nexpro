@@ -60,7 +60,7 @@ const MODULES = [
         name: 'Pricing Templates',
         description: 'Automated pricing with templates and calculators',
         routes: ['/pricing'],
-        limits: { trial: 5, launch: 25, scale: 100, enterprise: null },
+        limits: { trial: 5, starter: 25, professional: 100, enterprise: null, launch: 25, scale: 100 },
         marketingCopy: {
           highlight: 'Smart pricing calculator with templates',
           perk: 'Pricing templates & calculators'
@@ -399,7 +399,7 @@ const MODULES = [
         name: 'Employee Records',
         description: 'Manage employee profiles and documents',
         routes: ['/employees'],
-        limits: { trial: 5, launch: 20, scale: 50, enterprise: null },
+        limits: { trial: 5, starter: 20, professional: 50, enterprise: null, launch: 20, scale: 50 },
         marketingCopy: {
           highlight: 'Employee record management',
           perk: 'Employee profiles & documents'
@@ -567,7 +567,7 @@ const MODULES = [
         name: 'Email Notifications',
         description: 'Email alerts for key events',
         routes: [],
-        limits: { trial: 0, launch: 50, scale: 500, enterprise: null },
+        limits: { trial: 0, starter: 50, professional: 500, enterprise: null, launch: 50, scale: 500 },
         marketingCopy: {
           highlight: 'Automated email notifications',
           perk: 'Email alerts & updates'
@@ -578,7 +578,7 @@ const MODULES = [
         name: 'SMS Notifications',
         description: 'SMS alerts for critical events',
         routes: [],
-        limits: { trial: 0, launch: 0, scale: 100, enterprise: null },
+        limits: { trial: 0, starter: 0, professional: 100, enterprise: null, launch: 0, scale: 100 },
         marketingCopy: {
           highlight: 'SMS alerts for urgent updates',
           perk: 'SMS notification service'

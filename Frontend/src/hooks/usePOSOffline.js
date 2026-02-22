@@ -276,9 +276,11 @@ export const usePOSOffline = () => {
     if (navigator.onLine) {
       try {
         const response = await saleService.createSale(saleData);
+        // Backend returns { success, data: createdSale }; createdSale includes invoice, paymentMethod
+        const sale = response?.data ?? response?.sale ?? response;
         return {
           success: true,
-          sale: response.data?.sale || response.sale,
+          sale: sale && typeof sale === 'object' && (sale.id || sale.saleNumber) ? sale : null,
           isQueued: false
         };
       } catch (error) {

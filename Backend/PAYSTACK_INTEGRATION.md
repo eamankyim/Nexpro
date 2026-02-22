@@ -84,9 +84,19 @@ Add the output to your `.env` file. Plans are created automatically with the cor
 ```env
 PAYSTACK_SECRET_KEY=sk_test_xxxxx
 PAYSTACK_PUBLIC_KEY=pk_test_xxxxx
-# Optional: Subaccount for split payments (platform fee)
-PAYSTACK_SUBACCOUNT_CODE=ACCT_xxxxx
+# Optional: Platform fee when tenants use their own bank (split payments)
+# Percentage the platform keeps; tenant receives the rest (e.g. 2 = 2% platform, 98% tenant)
+PAYSTACK_PLATFORM_FEE_PERCENT=2
 ```
+
+### Split payments (tenant bank accounts)
+
+When tenants add their bank details in **Settings → Receive payments**, the app creates a Paystack **subaccount** for that tenant. For invoice and POS card/MoMo payments:
+
+- The platform keeps the percentage set by `PAYSTACK_PLATFORM_FEE_PERCENT` (default 2%).
+- The rest is settled by Paystack to the tenant’s linked bank account.
+
+So the split is: **platform fee %** (e.g. 2%) vs **tenant share** (e.g. 98%). Tenants do not set the split; they only provide business name, bank, and account number. The platform fee is configured by the env var above.
 
 ### 3. Set Up Webhook URL
 

@@ -88,12 +88,14 @@ async function getTenantStorageLimit(tenantId) {
     };
   }
 
-  // Fallback to default limits
+  // Fallback to default limits (Paystack plan names: starter, professional)
   const DEFAULT_LIMITS = {
-    trial: { limitMB: 1024, price100GB: null },      // 1 GB
-    launch: { limitMB: 10240, price100GB: 15 },      // 10 GB
-    scale: { limitMB: 51200, price100GB: 12 },       // 50 GB
-    enterprise: { limitMB: null, price100GB: null }  // Unlimited
+    trial: { limitMB: 1024, price100GB: null },           // 1 GB
+    starter: { limitMB: 10240, price100GB: 15 },          // 10 GB
+    professional: { limitMB: 51200, price100GB: 12 },      // 50 GB
+    enterprise: { limitMB: null, price100GB: null },     // Unlimited
+    launch: { limitMB: 10240, price100GB: 15 },          // legacy → same as starter
+    scale: { limitMB: 51200, price100GB: 12 }            // legacy → same as professional
   };
 
   const limit = DEFAULT_LIMITS[tenant.plan] || DEFAULT_LIMITS.trial;

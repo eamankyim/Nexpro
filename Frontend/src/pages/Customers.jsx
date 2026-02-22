@@ -448,7 +448,8 @@ const Customers = () => {
     // Load organization settings for receipt printing
     settingsService.getOrganization()
       .then((response) => {
-        const org = response?.data || response;
+        const body = response?.data || response;
+        const org = body?.data || body;
         setOrganization(org);
       })
       .catch((error) => console.error('Failed to load organization:', error));
@@ -837,7 +838,7 @@ const Customers = () => {
                 name="company"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Company</FormLabel>
+                    <FormLabel>Company (optional)</FormLabel>
                     <FormControl>
                       <Input {...field} placeholder="Enter company name" />
                     </FormControl>
@@ -866,7 +867,7 @@ const Customers = () => {
                 name="phone"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Phone</FormLabel>
+                    <FormLabel>Phone (optional)</FormLabel>
                     <FormControl>
                       <PhoneNumberInput {...field} placeholder="Enter phone number" />
                     </FormControl>
@@ -881,7 +882,7 @@ const Customers = () => {
                 name="address"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Address</FormLabel>
+                    <FormLabel>Address (optional)</FormLabel>
                     <FormControl>
                       <Textarea {...field} rows={2} placeholder="Enter street address" />
                     </FormControl>
@@ -967,7 +968,7 @@ const Customers = () => {
                 name="referralName" 
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Referral Name</FormLabel>
+                    <FormLabel>Referral Name (optional)</FormLabel>
                     <FormControl>
                       <Input {...field} placeholder="Enter referral name" />
                     </FormControl>

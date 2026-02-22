@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Plus } from 'lucide-react';
+import { Loader2, Plus, Check, Pause, Circle } from 'lucide-react';
 
 import userWorkspaceService from '../services/userWorkspaceService';
 import { showError } from '../utils/toast';
@@ -346,13 +346,13 @@ const Workspace = () => {
                         disabled={updateTaskMutation.isPending}
                       >
                         {task.status === 'completed' ? (
-                          <span className="text-xs font-semibold">✓</span>
+                          <Check className="h-4 w-4" />
                         ) : task.status === 'in_progress' ? (
-                          <span className="text-xs font-semibold">…</span>
+                          <Loader2 className="h-4 w-4 animate-spin" />
                         ) : task.status === 'on_hold' ? (
-                          <span className="text-xs font-semibold">⏸</span>
+                          <Pause className="h-4 w-4" />
                         ) : (
-                          <span className="text-xs font-semibold">○</span>
+                          <Circle className="h-4 w-4" />
                         )}
                       </Button>
                       <div className="flex-1 min-w-0">

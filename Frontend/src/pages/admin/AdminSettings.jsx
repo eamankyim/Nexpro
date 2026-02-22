@@ -1290,7 +1290,7 @@ const AdminSettings = () => {
                       <FormControl>
                         <Input placeholder="trial" disabled={Boolean(editingPlan)} {...field} />
                       </FormControl>
-                      <FormDescription>Unique identifier (e.g., trial, launch, scale)</FormDescription>
+                      <FormDescription>Unique identifier (e.g., trial, starter, professional, enterprise)</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}

@@ -44,10 +44,13 @@ import { showSuccess, showError } from '../../utils/toast';
 import { normalizePhone, validatePhone } from '../../utils/phoneUtils';
 
 /**
- * Format currency value
+ * Format currency value (handles string/number from API or form state)
  */
 const formatCurrency = (amount) => {
-  return `${CURRENCY.SYMBOL} ${(amount || 0).toFixed(CURRENCY.DECIMAL_PLACES)}`;
+  const num = Number(amount);
+  const value = Number.isFinite(num) ? num : 0;
+  const decimals = typeof CURRENCY?.DECIMAL_PLACES === 'number' ? CURRENCY.DECIMAL_PLACES : 2;
+  return `${CURRENCY?.SYMBOL ?? '₵'} ${value.toFixed(decimals)}`;
 };
 
 /**
@@ -141,6 +144,9 @@ const POSReceiptModal = ({
   }, [rawChannels, receiptChannelsAvailable]);
   const printConfig = posConfig.print || { format: 'a4' };
 
+  const isCreditSale = sale?.paymentMethod === 'credit';
+  const docLabel = isCreditSale ? 'Invoice' : 'Receipt';
+
   // Delivery options state
   const [deliveryOptions, setDeliveryOptions] = useState({
     print: false,
@@ -196,12 +202,12 @@ const POSReceiptModal = ({
   const selectedCount = Object.values(deliveryOptions).filter(Boolean).length;
   const sendButtonLabel = useMemo(() => {
     if (selectedCount > 1) return 'Continue';
-    if (deliveryOptions.print) return 'Print Receipt';
-    if (deliveryOptions.sms) return 'Send SMS';
-    if (deliveryOptions.whatsapp) return 'Send WhatsApp';
-    if (deliveryOptions.email) return 'Send Email';
-    return 'Send Receipt';
-  }, [selectedCount, deliveryOptions.print, deliveryOptions.sms, deliveryOptions.whatsapp, deliveryOptions.email]);
+    if (deliveryOptions.print) return isCreditSale ? 'Print Invoice' : 'Print Receipt';
+    if (deliveryOptions.sms) return isCreditSale ? 'Send SMS Invoice' : 'Send SMS';
+    if (deliveryOptions.whatsapp) return isCreditSale ? 'Send WhatsApp Invoice' : 'Send WhatsApp';
+    if (deliveryOptions.email) return isCreditSale ? 'Send Email Invoice' : 'Send Email';
+    return isCreditSale ? 'Send Invoice' : 'Send Receipt';
+  }, [selectedCount, isCreditSale, deliveryOptions.print, deliveryOptions.sms, deliveryOptions.whatsapp, deliveryOptions.email]);
 
   // Toggle delivery option
   const toggleOption = useCallback((option, value) => {
@@ -213,11 +219,12 @@ const POSReceiptModal = ({
     if (printRef.current) {
       const printContent = printRef.current.innerHTML;
       const printWindow = window.open('', '_blank');
+      const docType = sale?.paymentMethod === 'credit' ? 'Invoice' : 'Receipt';
       printWindow.document.write(`
         <!DOCTYPE html>
         <html>
           <head>
-            <title>Receipt - ${sale?.saleNumber || ''}</title>
+            <title>${docType} - ${sale?.saleNumber || ''}</title>
             <style>
               body { font-family: 'Courier New', monospace; padding: 20px; }
               @media print {
@@ -231,7 +238,7 @@ const POSReceiptModal = ({
       printWindow.document.close();
       printWindow.print();
     }
-  }, [sale]);
+  }, [sale?.paymentMethod, sale?.saleNumber]);
 
   // Auto modes: execute and close
   const integratedSendChannels = useMemo(() => enabledChannels.filter((c) => c !== 'print'), [enabledChannels]);
@@ -264,7 +271,7 @@ const POSReceiptModal = ({
               phone: ['sms', 'whatsapp'].some((c) => integratedSendChannels.includes(c)) ? (normalizePhone(phone || customer?.phone) || phone || customer?.phone) : undefined,
               email: integratedSendChannels.includes('email') ? (email || customer?.email) : undefined,
             });
-            if (!cancelled) showSuccess('Receipt sent');
+            if (!cancelled) showSuccess(sale?.paymentMethod === 'credit' ? 'Invoice sent' : 'Receipt sent');
           } catch (e) {
             if (!cancelled) showError(e);
           }
@@ -282,7 +289,7 @@ const POSReceiptModal = ({
               phone: ['sms', 'whatsapp'].some((c) => integratedSendChannels.includes(c)) ? (normalizePhone(phone || customer?.phone) || phone || customer?.phone) : undefined,
               email: integratedSendChannels.includes('email') ? (email || customer?.email) : undefined,
             });
-            if (!cancelled) showSuccess('Receipt sent');
+            if (!cancelled) showSuccess(sale?.paymentMethod === 'credit' ? 'Invoice sent' : 'Receipt sent');
           } catch (e) {
             if (!cancelled) showError(e);
           }
@@ -338,12 +345,12 @@ const POSReceiptModal = ({
             results[ch] = 'sent';
           });
 
-          showSuccess(`Receipt sent via ${channels.join(', ')}`);
+          showSuccess(sale?.paymentMethod === 'credit' ? `Invoice sent via ${channels.join(', ')}` : `Receipt sent via ${channels.join(', ')}`);
         } catch (err) {
           channels.forEach(ch => {
             results[ch] = 'failed';
           });
-          showError(`Failed to send receipt: ${err.message}`);
+          showError(sale?.paymentMethod === 'credit' ? `Failed to send invoice: ${err.message}` : `Failed to send receipt: ${err.message}`);
         }
       }
 
@@ -364,11 +371,6 @@ const POSReceiptModal = ({
     }
   }, [deliveryOptions, phone, email, sale, needsPhone, needsEmail, handlePrint, onSendReceipt, onClose, sendStatus]);
 
-  // Skip receipt and close
-  const handleSkip = useCallback(() => {
-    onClose();
-  }, [onClose]);
-
   // Receipt data for preview
   const receiptData = useMemo(() => {
     if (!sale) return null;
@@ -383,27 +385,35 @@ const POSReceiptModal = ({
     || receiptMode === 'auto_both'
     || (receiptMode === 'auto_send' && hasContactForSend);
 
+  const printDocumentTitle = isCreditSale ? 'INVOICE' : 'RECEIPT';
+  const renderPrintableContent = () => {
+    if (!receiptData) return null;
+    if (receiptData.invoice) {
+      return (
+        <PrintableInvoice
+          invoice={receiptData.invoice}
+          documentTitle={printDocumentTitle}
+          saleNumber={receiptData.saleNumber}
+          organization={organizationSettings}
+          printConfig={printConfig}
+        />
+      );
+    }
+    return (
+      <PrintableReceipt
+        sale={receiptData}
+        documentTitle={printDocumentTitle}
+        organization={organizationSettings}
+        printConfig={printConfig}
+      />
+    );
+  };
+
   if (canAutoExecute && isOpen) {
     return (
       <div className="hidden" aria-hidden="true">
         <div ref={printRef}>
-          {receiptData && (
-            receiptData.invoice ? (
-              <PrintableInvoice
-                invoice={receiptData.invoice}
-                documentTitle="RECEIPT"
-                saleNumber={receiptData.saleNumber}
-                organization={organizationSettings}
-                printConfig={printConfig}
-              />
-            ) : (
-              <PrintableReceipt
-                sale={receiptData}
-                organization={organizationSettings}
-                printConfig={printConfig}
-              />
-            )
-          )}
+          {renderPrintableContent()}
         </div>
       </div>
     );
@@ -449,14 +459,14 @@ const POSReceiptModal = ({
 
         {/* Delivery options - only show enabled channels */}
         <div className="space-y-3">
-          <h4 className="font-medium text-foreground">Send Receipt</h4>
+          <h4 className="font-medium text-foreground">Send {docLabel}</h4>
           
           {enabledChannels.includes('print') && (
             <DeliveryOption
               id="print"
               icon={Printer}
-              label="Print Receipt"
-              description="Print a physical receipt"
+              label={isCreditSale ? 'Print Invoice' : 'Print Receipt'}
+              description={isCreditSale ? 'Print invoice for customer to pay later' : 'Print a physical receipt'}
               checked={deliveryOptions.print}
               onChange={(v) => toggleOption('print', v)}
               status={sendStatus.print}
@@ -467,8 +477,8 @@ const POSReceiptModal = ({
             <DeliveryOption
               id="sms"
               icon={MessageSquare}
-              label="SMS Receipt"
-              description="Send receipt via SMS"
+              label={isCreditSale ? 'SMS Invoice' : 'SMS Receipt'}
+              description={isCreditSale ? 'Send invoice via SMS' : 'Send receipt via SMS'}
               checked={deliveryOptions.sms}
               onChange={(v) => toggleOption('sms', v)}
               status={sendStatus.sms}
@@ -479,8 +489,8 @@ const POSReceiptModal = ({
             <DeliveryOption
               id="whatsapp"
               icon={Phone}
-              label="WhatsApp Receipt"
-              description="Send receipt via WhatsApp"
+              label={isCreditSale ? 'WhatsApp Invoice' : 'WhatsApp Receipt'}
+              description={isCreditSale ? 'Send invoice via WhatsApp' : 'Send receipt via WhatsApp'}
               checked={deliveryOptions.whatsapp}
               onChange={(v) => toggleOption('whatsapp', v)}
               status={sendStatus.whatsapp}
@@ -491,8 +501,8 @@ const POSReceiptModal = ({
             <DeliveryOption
               id="email"
               icon={Mail}
-              label="Email Receipt"
-              description="Send receipt via email"
+              label={isCreditSale ? 'Email Invoice' : 'Email Receipt'}
+              description={isCreditSale ? 'Send invoice via email' : 'Send receipt via email'}
               checked={deliveryOptions.email}
               onChange={(v) => toggleOption('email', v)}
               status={sendStatus.email}
@@ -537,38 +547,14 @@ const POSReceiptModal = ({
           </div>
         )}
 
-        {/* Hidden printable receipt (uses invoice when available for unified layout) */}
+        {/* Hidden printable content: invoice for credit sales, receipt otherwise */}
         <div className="hidden">
           <div ref={printRef}>
-            {receiptData && (
-              receiptData.invoice ? (
-                <PrintableInvoice
-                  invoice={receiptData.invoice}
-                  documentTitle="RECEIPT"
-                  saleNumber={receiptData.saleNumber}
-                  organization={organizationSettings}
-                  printConfig={printConfig}
-                />
-              ) : (
-                <PrintableReceipt
-                  sale={receiptData}
-                  organization={organizationSettings}
-                  printConfig={printConfig}
-                />
-              )
-            )}
+            {renderPrintableContent()}
           </div>
         </div>
         </DialogBody>
         <DialogFooter className="flex-col sm:flex-row gap-2">
-          <Button
-            variant="outline"
-            onClick={handleSkip}
-            disabled={isSending}
-            className="w-full sm:w-auto"
-          >
-            Skip
-          </Button>
           <Button
             onClick={handleSendReceipt}
             disabled={!canSend}

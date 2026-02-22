@@ -1,5 +1,10 @@
 # Cursor Rules for ShopWISE
 
+## Marketing Site
+
+When working in `marketing-site/`:
+- **Design style:** Follow `.cursor/rules/marketing-design-style.mdc` — colors, typography, cards, hero, motion, layout. Copy this rule to other projects and set globs or `alwaysApply: true` so agents use the same style.
+
 ## Mobile App (Expo)
 
 When working in `mobile/` (Expo/React Native app):
@@ -34,6 +39,11 @@ When working in `mobile/` (Expo/React Native app):
 - Use inline styles only when necessary for dynamic values
 - Maintain consistent spacing using Tailwind's spacing scale
 - Use borders (1px solid #e5e7eb) for card separation instead of shadows
+
+### Form Labels for Optional Fields
+- **Label optional fields with " (optional)"** so users know they can skip them
+- Any form field that is optional in the zod schema (e.g. `.optional()`, `.or(z.literal(''))`) should have " (optional)" in its FormLabel
+- Example: `<FormLabel>Phone (optional)</FormLabel>` for optional phone; required fields do not get the suffix
 
 ### Button Ordering
 - **ALWAYS place primary buttons LAST** in button groups

@@ -7,13 +7,13 @@ const { sequelize } = require('../config/database');
 const { Tenant } = require('../models');
 const { Op } = require('sequelize');
 
-// Plan pricing (GHS/month) - from config/plans.js
+// Plan pricing (GHS/month) - from Paystack (config/paystackPlans.js)
 const PLAN_PRICING = {
   trial: 0,
-  launch: 799,
-  scale: 1299,
+  starter: 129,
+  professional: 250,
   enterprise: 0, // contact sales
-  standard: 799, pro: 1299 // legacy aliases
+  launch: 129, scale: 250 // legacy aliases for existing DB data
 };
 
 const hasDateFilter = (dateFilter) => {

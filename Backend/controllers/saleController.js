@@ -1,4 +1,4 @@
-const { Sale, SaleItem, Product, ProductVariant, Customer, Shop, Invoice, User, SaleActivity } = require('../models');
+const { Sale, SaleItem, Product, ProductVariant, Customer, Shop, Invoice, User, SaleActivity, Tenant } = require('../models');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { createSaleCogsJournal, createSaleRevenueJournal } = require('../services/saleAccountingService');
 const { Op } = require('sequelize');
@@ -1347,3 +1347,78 @@ exports.deleteSale = async (req, res, next) => {
 
 // Export autoCreateInvoiceFromSale for use in other controllers
 exports.autoCreateInvoiceFromSale = autoCreateInvoiceFromSale;
+
+// @desc    Initialize Paystack payment for a pending sale (POS card/MoMo)
+// @route   POST /api/sales/:id/initialize-paystack
+// @access  Private
+exports.initializePaystackForSale = async (req, res, next) => {
+  try {
+    const saleId = req.params.id;
+    const { email, callbackUrl } = sanitizePayload(req.body || {});
+
+    const sale = await Sale.findOne({
+      where: applyTenantFilter(req.tenantId, { id: saleId })
+    });
+    if (!sale) {
+      return res.status(404).json({ success: false, message: 'Sale not found' });
+    }
+    if (sale.status !== 'pending') {
+      return res.status(400).json({ success: false, message: 'Sale is not pending payment' });
+    }
+
+    const totalAmount = parseFloat(sale.total || 0);
+    if (totalAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Sale total must be greater than zero' });
+    }
+
+    const customerEmail = email && String(email).trim() ? String(email).trim() : null;
+    if (!customerEmail) {
+      return res.status(400).json({ success: false, message: 'Email is required for card/MoMo payment' });
+    }
+
+    const paystackService = require('../services/paystackService');
+    if (!paystackService.secretKey) {
+      return res.status(503).json({ success: false, message: 'Paystack is not configured' });
+    }
+
+    const reference = `SALE-${sale.id}-${Date.now()}`.slice(0, 50);
+    const amountPesewas = Math.round(totalAmount * 100);
+    const callback = callbackUrl && String(callbackUrl).trim() ? String(callbackUrl).trim() : null;
+
+    const tenant = await Tenant.findByPk(sale.tenantId);
+    const subaccount = tenant?.paystackSubaccountCode || null;
+
+    const result = await paystackService.initializeTransaction({
+      email: customerEmail,
+      amount: amountPesewas,
+      currency: 'GHS',
+      callback_url: callback || undefined,
+      reference,
+      metadata: {
+        sale_id: sale.id,
+        tenant_id: sale.tenantId
+      },
+      ...(subaccount ? { subaccount } : {})
+    });
+
+    if (!result.status || !result.data?.authorization_url) {
+      return res.status(502).json({
+        success: false,
+        message: result.message || 'Failed to initialize payment'
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        authorization_url: result.data.authorization_url,
+        authorizationUrl: result.data.authorization_url,
+        reference: result.data.reference,
+        access_code: result.data.access_code,
+        accessCode: result.data.access_code
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};

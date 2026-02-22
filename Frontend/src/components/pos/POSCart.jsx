@@ -262,7 +262,7 @@ const POSCart = ({
   const isEmpty = items.length === 0;
 
   return (
-    <Card className="h-full flex flex-col border border-border">
+    <Card className="min-h-full flex flex-col border border-border">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2">
@@ -295,10 +295,10 @@ const POSCart = ({
         <div className="mt-3">
           {customer ? (
             <div className="flex items-center justify-between p-2 bg-green-50 rounded-lg border border-green-200">
-              <div className="flex items-center gap-2">
-                <User className="h-4 w-4 text-green-700" />
-                <span className="text-sm font-medium text-green-800">
-                  {customer.name}
+              <div className="flex items-center gap-2 min-w-0">
+                <User className="h-4 w-4 text-green-700 shrink-0" />
+                <span className="text-sm font-medium text-green-800 truncate">
+                  {customer.name || customer.company || 'No name'}
                 </span>
                 {customer.phone && (
                   <span className="text-xs text-green-600">

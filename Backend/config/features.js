@@ -242,36 +242,40 @@ const FEATURE_CATEGORIES = {
   support: 'Support'
 };
 
-// Seat limits by plan (null = unlimited)
+// Seat limits by plan (null = unlimited) — Paystack naming: starter, professional
 const DEFAULT_PLAN_SEAT_LIMITS = {
   trial: 5,
-  launch: 5,
-  scale: 15,
-  enterprise: null // unlimited
+  starter: 5,
+  professional: 15,
+  enterprise: null, // unlimited
+  launch: 5, scale: 15 // legacy aliases
 };
 
 // Seat pricing (additional cost per seat beyond base limit)
 const PLAN_SEAT_PRICING = {
-  trial: null,      // Cannot add seats
-  launch: 25,       // GHS 25 per additional seat
-  scale: 32,        // GHS 32 per additional seat
-  enterprise: null  // Custom pricing
+  trial: null,
+  starter: 25,       // GHS 25 per additional seat
+  professional: 32,  // GHS 32 per additional seat
+  enterprise: null,
+  launch: 25, scale: 32 // legacy aliases
 };
 
 // Storage limits by plan (in MB, null = unlimited)
 const DEFAULT_STORAGE_LIMITS = {
-  trial: 1024,       // 1 GB
-  launch: 10240,     // 10 GB
-  scale: 51200,      // 50 GB
-  enterprise: null   // Unlimited
+  trial: 1024,
+  starter: 10240,     // 10 GB
+  professional: 51200, // 50 GB
+  enterprise: null,
+  launch: 10240, scale: 51200 // legacy aliases
 };
 
 // Storage pricing (cost per 100GB beyond base limit)
 const STORAGE_PRICING = {
-  trial: null,       // Cannot add storage
-  launch: 15,        // GHS 15 per 100GB
-  scale: 12,         // GHS 12 per 100GB (volume discount)
-  enterprise: null   // Custom pricing
+  trial: null,
+  starter: 15,
+  professional: 12,
+  enterprise: null,
+  launch: 15, scale: 12 // legacy aliases
 };
 
 // Helper functions
@@ -280,13 +284,13 @@ const getFeatureByKey = (key) => {
 };
 
 const getFeaturesForPlan = (planId) => {
-  // This would typically fetch from database
-  // For now, return based on plan hierarchy
   const planFeatures = {
     trial: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'reports', 'leadPipeline', 'roleManagement'],
-    launch: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],
-    scale: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting'],
-    enterprise: FEATURE_CATALOG.map(f => f.key) // all features
+    starter: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],
+    professional: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting'],
+    enterprise: FEATURE_CATALOG.map(f => f.key),
+    launch: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],       // legacy → starter
+    scale: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting']  // legacy → professional
   };
   return planFeatures[planId] || [];
 };

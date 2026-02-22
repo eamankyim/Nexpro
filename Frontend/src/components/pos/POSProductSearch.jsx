@@ -8,7 +8,7 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Camera, X, Package, AlertCircle, Loader2, List, LayoutGrid, Plus } from 'lucide-react';
+import { Search, Camera, X, Package, AlertCircle, Loader2, List, LayoutGrid, Plus, Circle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -100,7 +100,7 @@ const ProductItem = ({ product, onSelect, quantityInCart = 0 }) => {
           <span>SKU: {product.sku}</span>
           {product.barcode && (
             <>
-              <span>•</span>
+              <Circle className="h-1.5 w-1.5 shrink-0" />
               <span>{product.barcode}</span>
             </>
           )}

@@ -196,11 +196,18 @@ const Invoice = sequelize.define('Invoice', {
       invoice.totalAmount = parseFloat(invoice.subtotal) + parseFloat(invoice.taxAmount) - parseFloat(invoice.discountAmount);
       
       // Calculate balance
-      invoice.balance = parseFloat(invoice.totalAmount) - parseFloat(invoice.amountPaid || 0);
-      
+      const total = parseFloat(invoice.totalAmount) || 0;
+      const paid = parseFloat(invoice.amountPaid) || 0;
+      invoice.balance = Math.max(0, total - paid);
+
+      // Tolerance for "fully paid" (rounding: totalAmount can differ slightly from sum of parts)
+      const PAID_TOLERANCE = 0.01;
+      const isFullyPaid = paid > 0 && (invoice.balance <= PAID_TOLERANCE || paid >= total - PAID_TOLERANCE);
+
       // Update status based on payment
-      if (invoice.balance <= 0 && invoice.amountPaid > 0) {
+      if (isFullyPaid) {
         invoice.status = 'paid';
+        invoice.balance = 0;
         if (!invoice.paidDate) {
           invoice.paidDate = new Date();
         }

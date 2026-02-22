@@ -164,7 +164,7 @@ const Quotes = () => {
     staleTime: 5 * 60 * 1000,
   });
 
-  const organization = organizationData?.data || {};
+  const organization = organizationData?.data?.data || organizationData?.data || {};
 
   const form = useForm({
     resolver: zodResolver(quoteSchema),
@@ -1322,7 +1322,7 @@ const Quotes = () => {
                         name={`items.${index}.discountAmount`}
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Discount</FormLabel>
+                            <FormLabel>Discount (optional)</FormLabel>
                             <FormControl>
                               <div className="relative">
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>

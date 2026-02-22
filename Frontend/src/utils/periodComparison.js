@@ -147,22 +147,21 @@ export const calculateComparison = (current, previous) => {
 };
 
 /**
- * Format comparison text for display
+ * Format comparison text for display (no arrow; use direction for icon)
  * @param {Object} comparison - Comparison object from calculateComparison
  * @param {string} label - Period label (e.g., "vs yesterday")
  * @param {string} prefix - Value prefix (e.g., "GHS ")
- * @returns {string} Formatted comparison text
+ * @returns {{ direction: 'up'|'down'|'neutral', text: string }}
  */
 export const formatComparisonText = (comparison, label, prefix = '') => {
   const { percentage, absolute, isPositive, isNeutral } = comparison;
-  const arrow = isNeutral ? '→' : (isPositive ? '↑' : '↓');
+  const direction = isNeutral ? 'neutral' : (isPositive ? 'up' : 'down');
   const sign = isPositive ? '+' : '';
-  
+  let text;
   if (prefix) {
-    // For currency values
-    return `${arrow} ${sign}${percentage}% ${label} (${prefix}${Math.abs(absolute).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
+    text = `${sign}${percentage}% ${label} (${prefix}${Math.abs(absolute).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`;
   } else {
-    // For count values
-    return `${arrow} ${sign}${percentage}% ${label} (${Math.abs(absolute)})`;
+    text = `${sign}${percentage}% ${label} (${Math.abs(absolute)})`;
   }
+  return { direction, text };
 };

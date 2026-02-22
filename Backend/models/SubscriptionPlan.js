@@ -13,7 +13,7 @@ const SubscriptionPlan = sequelize.define(
       type: DataTypes.STRING(50),
       allowNull: false,
       unique: true,
-      comment: 'Unique identifier for the plan (e.g., trial, launch, scale)'
+      comment: 'Unique identifier for the plan (e.g., trial, starter, professional, enterprise)'
     },
     order: {
       type: DataTypes.INTEGER,

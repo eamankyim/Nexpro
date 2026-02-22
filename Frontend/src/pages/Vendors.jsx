@@ -850,7 +850,7 @@ const Vendors = () => {
                 name="address"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Address</FormLabel>
+                    <FormLabel>Address (optional)</FormLabel>
                     <FormControl>
                       <Textarea {...field} rows={2} placeholder="Enter address" />
                     </FormControl>

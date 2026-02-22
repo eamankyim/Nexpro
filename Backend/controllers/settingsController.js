@@ -1239,3 +1239,132 @@ exports.testEmailConnection = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Get Paystack banks (for payment collection / subaccount setup)
+// @route   GET /api/settings/payment-collection/banks
+// @access  Private
+exports.getPaymentCollectionBanks = async (req, res, next) => {
+  try {
+    const paystackService = require('../services/paystackService');
+    if (!paystackService.secretKey) {
+      return res.status(503).json({
+        success: false,
+        message: 'Paystack is not configured'
+      });
+    }
+    const result = await paystackService.listBanks({ currency: 'GHS', type: 'ghipps' });
+    const banks = result?.data || [];
+    res.status(200).json({ success: true, data: banks });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get payment collection settings (masked; for receive payments / subaccount)
+// @route   GET /api/settings/payment-collection
+// @access  Private
+exports.getPaymentCollectionSettings = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.tenantId);
+    if (!tenant) {
+      return res.status(404).json({ success: false, message: 'Tenant not found' });
+    }
+    const pc = tenant.metadata?.paymentCollection || {};
+    const accountNumber = pc.account_number || '';
+    const safe = {
+      business_name: pc.business_name || '',
+      bank_code: pc.bank_code || '',
+      bank_name: pc.bank_name || '',
+      account_number_masked: accountNumber ? `****${accountNumber.slice(-4)}` : '',
+      primary_contact_email: pc.primary_contact_email || '',
+      hasSubaccount: Boolean(tenant.paystackSubaccountCode)
+    };
+    res.status(200).json({ success: true, data: safe });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update payment collection settings and create Paystack subaccount if none
+// @route   PUT /api/settings/payment-collection
+// @access  Private (admin, manager)
+exports.updatePaymentCollectionSettings = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.tenantId);
+    if (!tenant) {
+      return res.status(404).json({ success: false, message: 'Tenant not found' });
+    }
+    const paystackService = require('../services/paystackService');
+    if (!paystackService.secretKey) {
+      return res.status(503).json({
+        success: false,
+        message: 'Paystack is not configured'
+      });
+    }
+    const { business_name, bank_code, account_number, bank_name, primary_contact_email } = sanitizePayload(req.body);
+
+    if (tenant.paystackSubaccountCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Bank account is already linked. Contact support to change it.'
+      });
+    }
+
+    if (!business_name || typeof business_name !== 'string' || !business_name.trim()) {
+      return res.status(400).json({ success: false, message: 'Business / account name is required' });
+    }
+    if (!bank_code || typeof bank_code !== 'string' || !bank_code.trim()) {
+      return res.status(400).json({ success: false, message: 'Bank is required' });
+    }
+    if (!account_number || typeof account_number !== 'string') {
+      return res.status(400).json({ success: false, message: 'Account number is required' });
+    }
+    const accountNumberStr = String(account_number).replace(/\s/g, '');
+    if (accountNumberStr.length < 8) {
+      return res.status(400).json({ success: false, message: 'Account number is too short' });
+    }
+
+    const result = await paystackService.createSubaccount({
+      business_name: business_name.trim(),
+      bank_code: bank_code.trim(),
+      account_number: accountNumberStr,
+      primary_contact_email: primary_contact_email && String(primary_contact_email).trim() ? String(primary_contact_email).trim() : undefined
+    });
+
+    const subaccountCode = result?.data?.subaccount_code || result?.subaccount_code;
+    if (!subaccountCode) {
+      return res.status(502).json({
+        success: false,
+        message: result?.message || 'Failed to link bank account with Paystack'
+      });
+    }
+
+    tenant.paystackSubaccountCode = subaccountCode;
+    tenant.metadata = tenant.metadata || {};
+    tenant.metadata.paymentCollection = {
+      ...(tenant.metadata.paymentCollection || {}),
+      business_name: business_name.trim(),
+      bank_code: bank_code.trim(),
+      bank_name: bank_name && String(bank_name).trim() ? String(bank_name).trim() : undefined,
+      account_number: accountNumberStr,
+      primary_contact_email: primary_contact_email && String(primary_contact_email).trim() ? String(primary_contact_email).trim() : undefined
+    };
+    await tenant.save();
+
+    const safe = {
+      business_name: tenant.metadata.paymentCollection.business_name,
+      bank_code: tenant.metadata.paymentCollection.bank_code,
+      bank_name: tenant.metadata.paymentCollection.bank_name,
+      account_number_masked: `****${accountNumberStr.slice(-4)}`,
+      primary_contact_email: tenant.metadata.paymentCollection.primary_contact_email || '',
+      hasSubaccount: true
+    };
+    res.status(200).json({
+      success: true,
+      message: 'Bank account linked. You will receive your share of card/MoMo payments here.',
+      data: safe
+    });
+  } catch (error) {
+    next(error);
+  }
+};

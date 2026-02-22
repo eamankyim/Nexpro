@@ -228,7 +228,7 @@ const Sales = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  const organization = organizationData?.data || {};
+  const organization = organizationData?.data?.data || organizationData?.data || {};
   const { posConfig } = usePOSConfig();
   const printConfig = posConfig.print || { format: 'a4' };
 
