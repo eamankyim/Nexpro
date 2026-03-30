@@ -145,6 +145,33 @@ const bulkOperationLimiter = rateLimit({
   validate: false,
 });
 
+/**
+ * Public tracking lookup rate limiter
+ * 12 lookup attempts per minute per IP
+ */
+const publicTrackingLookupLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 12,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || req.connection?.remoteAddress || 'unknown',
+  handler: createErrorHandler('Too many tracking attempts. Please wait and try again.'),
+  validate: false,
+});
+
+/**
+ * Public tracking page branding (GET) — higher cap than lookup POST
+ */
+const publicTrackBrandingLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip || req.connection?.remoteAddress || 'unknown',
+  handler: createErrorHandler('Too many requests. Please try again shortly.'),
+  validate: false,
+});
+
 module.exports = {
   generalLimiter,
   authLimiter,
@@ -154,4 +181,6 @@ module.exports = {
   exportLimiter,
   webhookLimiter,
   bulkOperationLimiter,
+  publicTrackingLookupLimiter,
+  publicTrackBrandingLimiter,
 };

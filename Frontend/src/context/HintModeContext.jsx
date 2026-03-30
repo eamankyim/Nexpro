@@ -42,7 +42,7 @@ export const HintModeProvider = ({ children }) => {
 
   return (
     <HintModeContext.Provider value={value}>
-      <TooltipProvider delayDuration={delayDuration}>
+      <TooltipProvider key={hintMode ? 'hint-on' : 'hint-off'} delayDuration={delayDuration}>
         {children}
       </TooltipProvider>
     </HintModeContext.Provider>

@@ -106,7 +106,7 @@ const Plans = () => {
               role="switch"
               aria-checked={billingPeriod === 'yearly'}
               onClick={() => setBillingPeriod((p) => (p === 'monthly' ? 'yearly' : 'monthly'))}
-              className="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-gray-200 transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-[#166534] focus:ring-offset-2"
+              className="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-gray-200 transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
             >
               <span
                 className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
@@ -142,20 +142,20 @@ const Plans = () => {
               <Card
                 key={plan.id}
                 className={`relative flex flex-col ${
-                  plan.popular ? 'border-[#166534] border-2' : 'border-gray-200'
+                  plan.popular ? 'border-brand border-2' : 'border-gray-200'
                 }`}
               >
                 {plan.popular && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <span className="bg-[#166534] text-white px-3 py-0.5 rounded-full text-xs font-semibold">
+                    <span className="bg-brand text-white px-3 py-0.5 rounded-full text-xs font-semibold">
                       Most Popular
                     </span>
                   </div>
                 )}
                 <CardHeader>
                   <div className="flex items-center gap-2 mb-2">
-                    <div className="p-2 rounded-lg bg-[#166534]/10">
-                      <Icon className="h-5 w-5 text-[#166534]" />
+                    <div className="p-2 rounded-lg bg-brand-10">
+                      <Icon className="h-5 w-5 text-brand" />
                     </div>
                     <CardTitle className="text-xl">{plan.name}</CardTitle>
                   </div>
@@ -173,7 +173,7 @@ const Plans = () => {
                   <ul className="space-y-3">
                     {plan.features.map((feature, idx) => (
                       <li key={idx} className="flex items-start gap-2 text-sm">
-                        <Check className="h-4 w-4 text-[#166534] flex-shrink-0 mt-0.5" />
+                        <Check className="h-4 w-4 text-brand flex-shrink-0 mt-0.5" />
                         <span>{feature}</span>
                       </li>
                     ))}

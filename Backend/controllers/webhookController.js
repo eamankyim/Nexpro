@@ -2,6 +2,11 @@ const { Customer, Tenant, SabitoTenantMapping } = require('../models');
 const { verifySabitoWebhook } = require('../middleware/webhookAuth');
 const whatsappService = require('../services/whatsappService');
 const paystackService = require('../services/paystackService');
+const {
+  applyPaystackChargeToInvoiceFromTx,
+  getPaystackInvoiceLinkMetadata,
+  parseInvoiceIdFromPublicPaystackReference
+} = require('../services/paystackPublicInvoicePayment');
 const { applySubscriptionFromTransaction } = require('./subscriptionController');
 
 /**
@@ -23,10 +28,18 @@ exports.handleWhatsAppWebhook = async (req, res) => {
       if (mode === 'subscribe' && token === verifyToken) {
         console.log('[WhatsApp Webhook] Verification successful');
         return res.status(200).send(challenge);
-      } else {
-        console.error('[WhatsApp Webhook] Verification failed', { mode, token, verifyToken });
-        return res.status(403).send('Forbidden');
       }
+
+      // Some providers (and occasional Meta probes) hit the callback URL
+      // without hub.* query params. Return 200 so health/probe checks don't
+      // get treated as hard verification failures.
+      if (!mode && !token && !challenge) {
+        console.log('[WhatsApp Webhook] Probe received without verification params');
+        return res.status(200).send('OK');
+      }
+
+      console.error('[WhatsApp Webhook] Verification failed', { mode, token, verifyToken });
+      return res.status(403).send('Forbidden');
     }
 
     // Handle webhook events (POST request)
@@ -36,7 +49,10 @@ exports.handleWhatsAppWebhook = async (req, res) => {
       
       // Verify signature if app secret is configured
       if (appSecret && signature) {
-        const rawBody = JSON.stringify(req.body);
+        const rawBody =
+          req.rawBody && Buffer.isBuffer(req.rawBody)
+            ? req.rawBody.toString('utf8')
+            : JSON.stringify(req.body);
         const isValid = whatsappService.verifyWebhookSignature(signature, rawBody, appSecret);
         
         if (!isValid) {
@@ -49,7 +65,13 @@ exports.handleWhatsAppWebhook = async (req, res) => {
       }
 
       const webhookData = req.body;
-      const results = whatsappService.handleWebhook(webhookData);
+      let results = [];
+      try {
+        results = whatsappService.handleWebhook(webhookData) || [];
+      } catch (handlerErr) {
+        console.error('[WhatsApp Webhook] handleWebhook failed:', handlerErr?.message || handlerErr);
+        return res.status(200).json({ success: true, message: 'Webhook acknowledged' });
+      }
 
       // Process webhook results (update message status, handle incoming messages, etc.)
       for (const result of results) {
@@ -151,7 +173,7 @@ exports.handleSabitoCustomerWebhook = async (req, res) => {
       });
     }
 
-    // 2. Map Sabito business ID to ShopWISE tenant ID
+    // 2. Map Sabito business ID to ABS tenant ID
     if (!businessId) {
       console.error('[Sabito Webhook] Missing businessId in webhook data');
       return res.status(400).json({
@@ -382,10 +404,19 @@ exports.handlePaystackWebhook = async (req, res) => {
 
       const tx = result.data;
       const metadata = typeof tx.metadata === 'string' ? JSON.parse(tx.metadata || '{}') : (tx.metadata || {});
+      const invLink = getPaystackInvoiceLinkMetadata(metadata);
+      const refInvoiceId = parseInvoiceIdFromPublicPaystackReference(reference);
 
       // Log for debugging Paystack webhook (invoice payments)
-      if (metadata.type === 'invoice') {
-        console.log('[Paystack Webhook] charge.success for invoice payment', { reference, paymentToken: metadata.paymentToken, invoiceId: metadata.invoiceId });
+      if (String(metadata.type || '').toLowerCase() === 'invoice' || invLink.paymentToken || refInvoiceId) {
+        console.log('[Paystack Webhook] charge.success for invoice payment', {
+          reference,
+          paymentToken: invLink.paymentToken,
+          invoiceId: invLink.invoiceId,
+          tenantId: invLink.tenantId,
+          refInvoiceId,
+          metadataKeys: Object.keys(metadata || {})
+        });
       }
 
       // POS sale: metadata has sale_id and tenant_id (no plan)
@@ -396,14 +427,17 @@ exports.handlePaystackWebhook = async (req, res) => {
         });
         if (sale && sale.status === 'pending') {
           const amount = parseFloat(tx.amount || 0) / 100;
+          const saleTotal = parseFloat(sale.total || 0);
+          const appliedAmount = Number.isFinite(saleTotal) && saleTotal > 0 ? Math.min(amount, saleTotal) : amount;
           const tenant = await Tenant.findByPk(metadata.tenant_id);
           const pc = tenant?.metadata?.paymentCollection || {};
           const isMoMo = pc.settlementType === 'momo' && pc.momoPhone;
+          const useLegacyMomoTransfer = isMoMo && !tenant?.paystackSubaccountCode;
 
           await sale.update({
             status: 'completed',
             paymentMethod: sale.paymentMethod || 'mobile_money',
-            amountPaid: amount,
+            amountPaid: appliedAmount,
             metadata: {
               ...(sale.metadata || {}),
               paystackRef: reference,
@@ -411,11 +445,12 @@ exports.handlePaystackWebhook = async (req, res) => {
             }
           });
 
-          // MoMo settlement: transfer tenant share to their MoMo
-          if (isMoMo) {
+          // Legacy MoMo (metadata only, no Paystack subaccount): transfer tenant share to their MoMo.
+          // When subaccount exists, split/settlement is handled by Paystack — do not transfer again.
+          if (useLegacyMomoTransfer) {
             try {
               const platformFeePercent = parseFloat(process.env.PAYSTACK_PLATFORM_FEE_PERCENT || '2');
-              const tenantShare = amount * (1 - platformFeePercent / 100);
+              const tenantShare = appliedAmount * (1 - platformFeePercent / 100);
               const tenantSharePesewas = Math.round(tenantShare * 100);
               if (tenantSharePesewas >= 100) {
                 let recipientCode = pc.paystackTransferRecipientCode;
@@ -466,105 +501,26 @@ exports.handlePaystackWebhook = async (req, res) => {
           }
           console.log('[Paystack Webhook] POS sale completed:', metadata.sale_id);
         }
-      } else if (metadata.type === 'invoice') {
-        // Public invoice payment via pay-invoice link (find by paymentToken or fallback to invoiceId)
-        const { Invoice, Customer, Payment, Sale, SaleActivity } = require('../models');
-        const activityLogger = require('../services/activityLogger');
-        const { updateCustomerBalance } = require('../services/customerBalanceService');
-
-        let invoice = null;
-        if (metadata.paymentToken) {
-          invoice = await Invoice.findOne({
-            where: { paymentToken: metadata.paymentToken },
-            include: [{ model: Customer, as: 'customer' }]
-          });
+      } else if (
+        !metadata.sale_id &&
+        (String(metadata.type || '').toLowerCase() === 'invoice' ||
+          invLink.paymentToken ||
+          (invLink.invoiceId && invLink.tenantId) ||
+          refInvoiceId)
+      ) {
+        const outcome = await applyPaystackChargeToInvoiceFromTx(reference, tx);
+        if (outcome.duplicate) {
+          return res.status(200).send('OK');
         }
-        if (!invoice && metadata.invoiceId && metadata.tenantId) {
-          invoice = await Invoice.findOne({
-            where: { id: metadata.invoiceId, tenantId: metadata.tenantId },
-            include: [{ model: Customer, as: 'customer' }]
-          });
-          if (invoice) {
-            console.log('[Paystack Webhook] Invoice found by invoiceId fallback:', invoice.invoiceNumber);
-          }
-        }
-        if (invoice && invoice.status !== 'cancelled' && invoice.status !== 'paid') {
-          // Idempotency: skip if we already recorded this Paystack reference (e.g. duplicate webhook)
-          const existingPayment = await Payment.findOne({
-            where: { referenceNumber: reference, tenantId: invoice.tenantId }
-          });
-          if (existingPayment) {
-            console.log('[Paystack Webhook] Invoice payment already recorded for reference:', reference, '- skipping duplicate');
-            return res.status(200).send('OK');
-          }
-
-          const paymentAmount = parseFloat(tx.amount || 0) / 100;
-          const totalAmount = parseFloat(invoice.totalAmount || 0);
-          const newAmountPaid = parseFloat(invoice.amountPaid || 0) + paymentAmount;
-          const newBalance = Math.max(totalAmount - newAmountPaid, 0);
-
-          const updatePayload = {
-            amountPaid: newAmountPaid,
-            balance: newBalance
-          };
-          if (newBalance <= 0) {
-            updatePayload.status = 'paid';
-            updatePayload.paidDate = new Date();
-          } else if (invoice.status === 'draft') {
-            updatePayload.status = 'sent';
-          } else if (invoice.status === 'sent' && newAmountPaid > 0) {
-            updatePayload.status = 'partial';
-          }
-          await invoice.update(updatePayload);
-
-          const paymentNumber = `PAY-${Date.now()}`;
-          const paymentData = {
-            paymentNumber,
-            type: 'income',
-            customerId: invoice.customerId,
-            tenantId: invoice.tenantId,
-            amount: paymentAmount,
-            paymentMethod: 'credit_card',
-            paymentDate: new Date(),
-            referenceNumber: reference,
-            status: 'completed',
-            notes: `Paystack payment for invoice ${invoice.invoiceNumber}`
-          };
-          if (invoice.jobId) paymentData.jobId = invoice.jobId;
-          if (invoice.saleId) paymentData.saleId = invoice.saleId;
-          if (invoice.prescriptionId) paymentData.prescriptionId = invoice.prescriptionId;
-          await Payment.create(paymentData);
-
-          if (invoice.saleId && newAmountPaid >= totalAmount) {
-            const sale = await Sale.findByPk(invoice.saleId);
-            if (sale && sale.status === 'pending') {
-              await sale.update({ status: 'completed' });
-              await SaleActivity.create({
-                saleId: sale.id,
-                tenantId: invoice.tenantId,
-                type: 'payment',
-                subject: 'Payment Received',
-                notes: `Paystack payment for invoice ${invoice.invoiceNumber}`,
-                createdBy: null,
-                metadata: { invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, paymentAmount, paystackRef: reference }
-              });
-            }
-          }
-          try {
-            await activityLogger.logInvoicePaid(invoice, null);
-          } catch (e) {
-            console.error('[Paystack Webhook] activityLogger error:', e.message);
-          }
-          try {
-            if (invoice.customerId) await updateCustomerBalance(invoice.customerId);
-          } catch (e) {
-            console.error('[Paystack Webhook] updateCustomerBalance error:', e.message);
-          }
-          console.log('[Paystack Webhook] Invoice payment completed – invoice updated to paid:', invoice.invoiceNumber, 'reference:', reference);
-        } else if (metadata.type === 'invoice' && invoice) {
-          console.log('[Paystack Webhook] Invoice already paid or cancelled, skipping:', invoice.invoiceNumber);
-        } else if (metadata.type === 'invoice' && !invoice) {
-          console.error('[Paystack Webhook] Invoice not found for payment – paymentToken:', metadata.paymentToken, 'invoiceId:', metadata.invoiceId);
+        if (!outcome.applied && outcome.reason === 'invoice_not_found') {
+          console.error(
+            '[Paystack Webhook] Invoice not found for payment – paymentToken:',
+            invLink.paymentToken,
+            'invoiceId:',
+            invLink.invoiceId,
+            'refInvoiceId:',
+            refInvoiceId
+          );
         }
       } else if (metadata.tenant_id && metadata.plan) {
         // Subscription payment

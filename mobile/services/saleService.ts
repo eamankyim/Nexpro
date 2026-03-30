@@ -37,7 +37,12 @@ export const saleService = {
 
   createSale: async (payload: object) => {
     const res = await api.post('/sales', payload);
-    // Backend returns: { success: true, data: {...} }
+    return res.data;
+  },
+
+  /** Batch sync offline sales (idempotent by clientId) */
+  syncBatch: async (items: Array<{ clientId: string; payload: object }>) => {
+    const res = await api.post('/sales/sync', { items });
     return res.data;
   },
 

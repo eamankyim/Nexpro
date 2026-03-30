@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -22,15 +23,63 @@ import {
   UserPlus,
   Pill,
   ChefHat,
-  Download
+  Download,
+  Workflow
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuth } from '@/context/AuthContext';
+import { useBranding } from '@/context/BrandingContext';
+import { useHintMode } from '@/context/HintModeContext';
 import { usePWAInstall } from '@/context/PWAInstallContext';
-import { isQuotesEnabledForTenant, STUDIO_LIKE_TYPES } from '@/constants';
+import { APP_NAME, isQuotesEnabledForTenant, STUDIO_LIKE_TYPES, SHOW_SHOPS } from '@/constants';
+import settingsService from '@/services/settingsService';
+import { API_BASE_URL } from '@/services/api';
+
+const DEFAULT_APP_NAME = 'ABS';
+const DEFAULT_APP_GREEN = '#166534';
+
+/**
+ * Line under the app title in the sidebar: org name for default branding; attribution when app name is white-labeled.
+ * @param {string} appName - Resolved display name from branding (same as title above).
+ * @param {string} organizationDisplayName - Company / workspace name from settings or tenant.
+ * @returns {string} Subtitle text or empty to hide the row.
+ */
+function sidebarBrandSubtitle(appName, organizationDisplayName) {
+  const usingDefaultProductName =
+    (appName || '').trim().toLowerCase() === String(APP_NAME || 'ABS').trim().toLowerCase();
+  if (usingDefaultProductName) {
+    return (organizationDisplayName || '').trim();
+  }
+  return 'Powered by ABS';
+}
+
+/** App logo: first letter of app name on brand background */
+function AppLogo({ appName = DEFAULT_APP_NAME, primaryColor = DEFAULT_APP_GREEN, className = '' }) {
+  const letter = (appName || DEFAULT_APP_NAME).trim().charAt(0).toUpperCase() || 'A';
+  return (
+    <div
+      className={`flex items-center justify-center flex-shrink-0 rounded-md font-bold text-white ${className}`}
+      style={{ backgroundColor: primaryColor }}
+      aria-hidden
+    >
+      {letter}
+    </div>
+  );
+}
+
+/**
+ * Renders a menu or quick-action icon. Lucide exports forwardRef components (typeof === 'object'),
+ * not plain functions — do not use `typeof Icon === 'function'` or every item becomes LayoutDashboard.
+ */
+function NavMenuIcon({ icon: Icon, className }) {
+  if (Icon == null) {
+    return <LayoutDashboard className={className} />;
+  }
+  return <Icon className={className} />;
+}
 
 /** Hint text for menu items – simple language for market women */
 const MENU_HINTS = {
@@ -39,10 +88,15 @@ const MENU_HINTS = {
   '/orders': 'Orders from customers',
   '/products': 'Things you sell',
   '/jobs': 'Orders from customers',
+  '/deliveries': 'Send finished jobs and sales out to customers',
   '/customers': 'People who buy from you',
+  '/marketing': 'Email or text many customers at once',
   '/invoices': 'Bills you send to customers',
   '/expenses': 'Money you spent on business',
-  '/reports': 'See your business summary',
+  '/reports': 'Reports and data analysis',
+  '/ask-ai': 'Ask AI about your business data',
+  '/data-analysis': 'Reports and data analysis',
+  '/export-data': 'Download data as CSV or Excel',
   '/settings': 'Change app settings',
   '/users': 'Manage people who use the app',
   advanced: 'More options',
@@ -61,33 +115,57 @@ const MENU_HINTS = {
   '/drugs': 'Medicines you sell',
   '/quotes': 'Price quotes for customers',
   '/pricing': 'Set your prices',
-  '/workspace': 'Your personal tasks and notes',
+  '/tasks': 'Track follow-ups, meetings, and team tasks',
+  '/automations': 'Set rules that run business actions automatically',
 };
 
-const getMenuItems = (businessType, isAdmin, shopType) => {
+/**
+ * Drop items the role cannot see; drop parent groups with no visible children.
+ */
+const filterNavItems = (items, { isAdmin, isManager }) =>
+  items
+    .filter((item) => {
+      if (item.adminOnly && !isAdmin) return false;
+      if (item.managerOnly && !isManager) return false;
+      return true;
+    })
+    .map((item) => {
+      if (!item.children?.length) return item;
+      const children = filterNavItems(item.children, { isAdmin, isManager });
+      return { ...item, children };
+    })
+    .filter((item) => !item.children || item.children.length > 0);
+
+const getMenuItems = (businessType, isAdmin, isManager, shopType, hasFeature = () => true) => {
   // Standalone (most important): Dashboard, Sales, Products, Jobs (printing_press), Customers, Invoices, Expenses
   const baseItems = [
     { key: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', tooltip: MENU_HINTS['/dashboard'] },
   ];
 
-  if (businessType === 'shop') {
+  if (businessType === 'shop' && hasFeature('paymentsExpenses')) {
     baseItems.push({ key: '/sales', icon: ShoppingCart, label: 'Sales', tooltip: MENU_HINTS['/sales'] });
-    if (shopType === 'restaurant') {
+    if (shopType === 'restaurant' && hasFeature('orders')) {
       baseItems.push({ key: '/orders', icon: ChefHat, label: 'Orders', tooltip: MENU_HINTS['/orders'] });
     }
-    baseItems.push({ key: '/products', icon: Package, label: 'Products', tooltip: MENU_HINTS['/products'] });
+    if (hasFeature('products')) {
+      baseItems.push({ key: '/products', icon: Package, label: 'Products', tooltip: MENU_HINTS['/products'] });
+    }
   }
-  if (STUDIO_LIKE_TYPES.includes(businessType)) {
+  if (STUDIO_LIKE_TYPES.includes(businessType) && hasFeature('jobAutomation')) {
     baseItems.push({ key: '/jobs', icon: FileText, label: 'Jobs', tooltip: MENU_HINTS['/jobs'] });
   }
-  baseItems.push(
-    { key: '/customers', icon: Users, label: 'Customers', tooltip: MENU_HINTS['/customers'] },
-    { key: '/invoices', icon: Receipt, label: 'Invoices', tooltip: MENU_HINTS['/invoices'] },
-    { key: '/expenses', icon: Banknote, label: 'Expenses', tooltip: MENU_HINTS['/expenses'] },
-  );
+  if (hasFeature('crm')) {
+    baseItems.push({ key: '/customers', icon: Users, label: 'Customers', tooltip: MENU_HINTS['/customers'] });
+  }
+  if (hasFeature('invoices') || hasFeature('expenses')) {
+    baseItems.push(
+      ...(hasFeature('invoices') ? [{ key: '/invoices', icon: Receipt, label: 'Invoices', tooltip: MENU_HINTS['/invoices'] }] : []),
+      ...(hasFeature('expenses') ? [{ key: '/expenses', icon: Banknote, label: 'Expenses', tooltip: MENU_HINTS['/expenses'] }] : []),
+    );
+  }
 
   // Company assets: materials and equipment the business uses (not for sale)
-  baseItems.push({
+  if (hasFeature('materials')) baseItems.push({
     key: 'company-assets',
     icon: PackageCheck,
     label: 'Company assets',
@@ -100,29 +178,37 @@ const getMenuItems = (businessType, isAdmin, shopType) => {
 
   // Advanced group: everything else (Leads, Vendors, Shops/Pharmacies, Payroll, Accounting, Quotes, Employees, Workspace, etc.)
   const advancedChildren = [
-    { key: '/leads', label: 'Leads', tooltip: MENU_HINTS['/leads'] },
-    { key: '/vendors', label: 'Vendors', tooltip: MENU_HINTS['/vendors'] },
-    { key: '/payroll', label: 'Payroll', tooltip: MENU_HINTS['/payroll'] },
-    { key: '/accounting', label: 'Accounting', tooltip: MENU_HINTS['/accounting'] },
-    ...(isQuotesEnabledForTenant(businessType, shopType) ? [{ key: '/quotes', label: 'Quotes', tooltip: MENU_HINTS['/quotes'] }] : []),
-    { key: '/employees', label: 'Employees', tooltip: MENU_HINTS['/employees'] },
-    { key: '/workspace', label: 'Workspace', tooltip: MENU_HINTS['/workspace'] },
+    ...(hasFeature('deliveries') ? [{ key: '/deliveries', label: 'Deliveries', tooltip: MENU_HINTS['/deliveries'] }] : []),
+    ...(hasFeature('jobAutomation') ? [{ key: '/tasks', label: 'Tasks', tooltip: MENU_HINTS['/tasks'] }] : []),
+    ...(hasFeature('automations') ? [{ key: '/automations', label: 'Automations', tooltip: MENU_HINTS['/automations'], managerOnly: true }] : []),
+    ...(hasFeature('leadPipeline') ? [{ key: '/leads', label: 'Leads', tooltip: MENU_HINTS['/leads'] }] : []),
+    ...(hasFeature('marketing') ? [{ key: '/marketing', label: 'Marketing', tooltip: MENU_HINTS['/marketing'], managerOnly: true }] : []),
+    ...(hasFeature('vendors') ? [{ key: '/vendors', label: 'Vendors', tooltip: MENU_HINTS['/vendors'] }] : []),
+    ...(hasFeature('payroll') ? [{ key: '/payroll', label: 'Payroll', tooltip: MENU_HINTS['/payroll'], managerOnly: true }] : []),
+    ...(hasFeature('accounting') ? [{ key: '/accounting', label: 'Accounting', tooltip: MENU_HINTS['/accounting'], managerOnly: true }] : []),
+    ...(hasFeature('quoteAutomation') && isQuotesEnabledForTenant(businessType, shopType) ? [{ key: '/quotes', label: 'Quotes', tooltip: MENU_HINTS['/quotes'] }] : []),
+    ...(hasFeature('payroll') ? [{ key: '/employees', label: 'Employees', tooltip: MENU_HINTS['/employees'], managerOnly: true }] : []),
   ];
-  if (businessType === 'shop') {
-    advancedChildren.splice(2, 0, { key: '/shops', label: 'Shops', tooltip: MENU_HINTS['/shops'] });
-    advancedChildren.push({ key: '/foot-traffic', label: 'Foot Traffic', tooltip: MENU_HINTS['/foot-traffic'] });
+  if (SHOW_SHOPS && businessType === 'shop') {
+    if (hasFeature('shopsModule')) {
+      advancedChildren.splice(2, 0, { key: '/shops', label: 'Shops', tooltip: MENU_HINTS['/shops'] });
+    }
+    // Foot Traffic temporarily hidden
   }
   if (businessType === 'pharmacy') {
-    advancedChildren.splice(2, 0, { key: '/pharmacies', label: 'Pharmacies', tooltip: MENU_HINTS['/pharmacies'] });
-    advancedChildren.push({ key: '/prescriptions', label: 'Prescriptions', tooltip: MENU_HINTS['/prescriptions'] });
-    advancedChildren.push({ key: '/drugs', label: 'Drugs', tooltip: MENU_HINTS['/drugs'] });
-    advancedChildren.push({ key: '/foot-traffic', label: 'Foot Traffic', tooltip: MENU_HINTS['/foot-traffic'] });
+    if (hasFeature('pharmacyOps')) {
+      advancedChildren.splice(2, 0, { key: '/pharmacies', label: 'Pharmacies', tooltip: MENU_HINTS['/pharmacies'] });
+      advancedChildren.push({ key: '/prescriptions', label: 'Prescriptions', tooltip: MENU_HINTS['/prescriptions'] });
+      advancedChildren.push({ key: '/drugs', label: 'Drugs', tooltip: MENU_HINTS['/drugs'] });
+    }
+    // Foot Traffic temporarily hidden
   }
-  if (businessType === 'printing_press') {
+  // Pricing templates available for all studio-like types (printing press, mechanic, barber, salon, studio)
+  if (hasFeature('pricingTemplates') && STUDIO_LIKE_TYPES.includes(businessType)) {
     advancedChildren.push({ key: '/pricing', label: 'Pricing', tooltip: MENU_HINTS['/pricing'] });
   }
 
-  baseItems.push({
+  if (advancedChildren.length > 0) baseItems.push({
     key: 'advanced',
     icon: LayoutList,
     label: 'Advanced',
@@ -130,26 +216,30 @@ const getMenuItems = (businessType, isAdmin, shopType) => {
     children: advancedChildren,
   });
 
-  // Reports section with children
+  // Data & Reports section with children
   const reportsChildren = [
     { key: '/reports/overview', label: 'Overview', tooltip: MENU_HINTS['/reports'] },
-    { key: '/reports/smart-report', label: 'Smart Report', tooltip: MENU_HINTS['/reports'] },
+    { key: '/reports/smart-report', label: 'Smart report', tooltip: 'Generate and view smart reports' },
     { key: '/reports/compliance', label: 'Compliance', tooltip: 'Reports for submission to revenue centers and tax authorities' },
+    { key: '/export-data', label: 'Export data', tooltip: MENU_HINTS['/export-data'] },
   ];
 
-  baseItems.push(
-    {
+  if (hasFeature('reports')) {
+    baseItems.push({
       key: 'reports',
       icon: BarChart3,
-      label: 'Reports',
+      label: 'Data & Reports',
       tooltip: MENU_HINTS['/reports'],
+      managerOnly: true,
       children: reportsChildren
-    },
-    { key: '/users', icon: UserCog, label: 'Users', adminOnly: true, tooltip: MENU_HINTS['/users'] },
-    { key: '/settings', icon: Settings, label: 'Settings', tooltip: MENU_HINTS['/settings'] }
-  );
+    });
+  }
+  if (hasFeature('roleManagement')) {
+    baseItems.push({ key: '/users', icon: UserCog, label: 'Users', managerOnly: true, tooltip: MENU_HINTS['/users'] });
+  }
+  baseItems.push({ key: '/settings', icon: Settings, label: 'Settings', managerOnly: true, tooltip: MENU_HINTS['/settings'] });
 
-  return baseItems.filter(item => !item.adminOnly || isAdmin);
+  return filterNavItems(baseItems, { isAdmin, isManager });
 };
 
 /**
@@ -189,17 +279,47 @@ const getQuickActions = (businessType, shopType) => {
 export function Sidebar({ collapsed, onCollapse }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, activeTenant, user } = useAuth();
+  const { isAdmin, isManager, activeTenant, user, hasFeature } = useAuth();
+  const { appName, primaryColor } = useBranding();
   const { canInstall, promptInstall } = usePWAInstall();
   const [openKeys, setOpenKeys] = useState([]);
 
+  const { data: organizationData } = useQuery({
+    queryKey: ['settings', 'organization'],
+    queryFn: () => settingsService.getOrganizationSettings(),
+    enabled: !!activeTenant?.id,
+  });
+  const organization = organizationData?.data ?? organizationData;
+  const businessName = organization?.name || activeTenant?.name || '';
+  const sidebarSubtitle = useMemo(
+    () => sidebarBrandSubtitle(appName, businessName),
+    [appName, businessName]
+  );
+
   const businessType = activeTenant?.businessType || null;
-  const shopType = activeTenant?.metadata?.shopType || null;
+  const shopType =
+    activeTenant?.metadata?.businessSubType ||
+    activeTenant?.metadata?.shopType ||
+    null;
 
   const menuItems = useMemo(
-    () => getMenuItems(businessType, isAdmin, shopType),
-    [businessType, isAdmin, shopType]
+    () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature),
+    [businessType, isAdmin, isManager, shopType, hasFeature]
   );
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const flags = activeTenant?.effectiveFeatureFlags || {};
+    const enabled = Object.entries(flags).filter(([, v]) => v === true).map(([k]) => k).sort();
+    console.log('[Sidebar][features] tenantId=%s plan=%s enabledCount=%s crm=%s automations=%s menuKeys=%j enabled=%j',
+      activeTenant?.id || 'n/a',
+      activeTenant?.plan || 'n/a',
+      enabled.length,
+      hasFeature('crm'),
+      hasFeature('automations'),
+      menuItems.map((item) => item.key),
+      enabled
+    );
+  }, [activeTenant, hasFeature, menuItems]);
   const quickActions = useMemo(() => getQuickActions(businessType, shopType), [businessType, shopType]);
 
   // Open the group that contains the current route by default (only on route change)
@@ -220,7 +340,9 @@ export function Sidebar({ collapsed, onCollapse }) {
   // Route prefetching map - maps routes to their lazy import functions
   const routePrefetchMap = useMemo(() => ({
     '/dashboard': () => import('../../pages/Dashboard'),
+    '/ask-ai': () => import('../../pages/AskAI'),
     '/customers': () => import('../../pages/Customers'),
+    '/marketing': () => import('../../pages/Marketing'),
     '/vendors': () => import('../../pages/Vendors'),
     '/jobs': () => import('../../pages/Jobs'),
     '/sales': () => import('../../pages/Sales'),
@@ -230,7 +352,7 @@ export function Sidebar({ collapsed, onCollapse }) {
     '/expenses': () => import('../../pages/Expenses'),
     '/pricing': () => import('../../pages/Pricing'),
     '/reports/overview': () => import('../../pages/Reports'),
-    '/reports/smart-report': () => import('../../pages/Reports'),
+    '/export-data': () => import('../../pages/ExportData'),
     '/reports/compliance': () => import('../../pages/Reports'),
     '/materials': () => import('../../pages/Materials'),
     '/equipment': () => import('../../pages/Equipment'),
@@ -245,8 +367,8 @@ export function Sidebar({ collapsed, onCollapse }) {
     '/products': () => import('../../pages/Products'),
     '/drugs': () => import('../../pages/Drugs'),
     '/prescriptions': () => import('../../pages/Prescriptions'),
-    '/foot-traffic': () => import('../../pages/FootTraffic'),
-    '/workspace': () => import('../../pages/Workspace'),
+    '/tasks': () => import('../../pages/Tasks'),
+    '/automations': () => import('../../pages/Automations'),
   }), []);
 
   const handlePrefetch = useCallback((key) => {
@@ -284,7 +406,9 @@ export function Sidebar({ collapsed, onCollapse }) {
     }
   }, [collapsed, onCollapse, toggleSubmenu]);
 
+  const { hintMode } = useHintMode();
   const tooltipContentClass = 'shadow-none border border-border';
+  const tooltipDelay = hintMode ? 300 : 999999;
 
   return (
     <aside 
@@ -294,22 +418,31 @@ export function Sidebar({ collapsed, onCollapse }) {
         collapsed ? "w-20" : "w-64"
       )}
     >
-      <TooltipProvider delayDuration={200}>
-        <div className="h-16 flex-shrink-0 flex items-center justify-center px-4 border-b border-border">
-          <div className={cn(
-            "flex items-center gap-2",
-            collapsed && "justify-center"
-          )}>
-            <span
-              className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-md bg-[#84cc16] text-lg font-bold text-white"
-              aria-hidden
-            >
-              S
-            </span>
+      <TooltipProvider delayDuration={tooltipDelay}>
+        <div className="h-16 flex-shrink-0 flex items-center justify-start px-4 border-b border-border">
+          <div
+            className={cn(
+              'flex items-center gap-2 min-w-0',
+              collapsed && 'justify-center'
+            )}
+          >
+            <AppLogo
+              appName={appName}
+              primaryColor={primaryColor}
+              className={cn(
+                collapsed ? 'h-9 w-9 text-base' : 'h-10 w-10 text-lg'
+              )}
+            />
             {!collapsed && (
-              <div className="flex items-center">
-                <span className="text-xl font-bold text-[#166534]">Shop</span>
-                <span className="text-xl font-bold text-[#84cc16]">WISE</span>
+              <div className="flex flex-col leading-tight min-w-0">
+                <span className="text-base font-semibold" style={{ color: primaryColor }}>
+                  {appName}
+                </span>
+                {sidebarSubtitle ? (
+                  <span className="text-xs text-muted-foreground truncate">
+                    {sidebarSubtitle}
+                  </span>
+                ) : null}
               </div>
             )}
           </div>
@@ -330,7 +463,7 @@ export function Sidebar({ collapsed, onCollapse }) {
                         )}
                         data-tour={parentDataTour}
                       >
-                        <item.icon className="h-5 w-5 flex-shrink-0" />
+                        <NavMenuIcon icon={item.icon} className="h-5 w-5 flex-shrink-0" />
                         {!collapsed && (
                           <>
                             <span className="flex-1 text-left">{item.label}</span>
@@ -364,7 +497,7 @@ export function Sidebar({ collapsed, onCollapse }) {
                                       className={cn(
                                         "w-full text-left px-3 py-2 rounded-md hover:bg-muted transition-colors",
                                         location.pathname === child.key 
-                                          ? "bg-[#166534] text-white font-medium hover:bg-[#14532d]" 
+                                          ? "bg-brand text-white font-medium hover:bg-brand-dark" 
                                           : "text-foreground"
                                       )}
                                       data-tour={childDataTour}
@@ -409,13 +542,13 @@ export function Sidebar({ collapsed, onCollapse }) {
                         className={cn(
                           "w-full flex items-center gap-3 px-3 py-2 rounded-md hover:bg-muted transition-colors",
                           location.pathname === item.key 
-                            ? "bg-[#166534] text-white font-medium hover:bg-[#14532d]" 
+                            ? "bg-brand text-white font-medium hover:bg-brand-dark" 
                             : "text-foreground",
                           collapsed && "justify-center !p-2 w-10 h-10 mx-auto"
                         )}
                         data-tour={dataTourId}
                       >
-                        <item.icon className="h-5 w-5 flex-shrink-0" />
+                        <NavMenuIcon icon={item.icon} className="h-5 w-5 flex-shrink-0" />
                         {!collapsed && <span>{item.label}</span>}
                       </button>
                     );
@@ -452,8 +585,8 @@ export function Sidebar({ collapsed, onCollapse }) {
                         collapsed && "justify-center !p-1 w-10 h-10 mx-auto"
                       )}
                     >
-                      <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-[#166534] text-white">
-                        <action.icon className="h-4 w-4" />
+                      <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-brand text-white">
+                        <NavMenuIcon icon={action.icon} className="h-4 w-4" />
                       </span>
                       {!collapsed && <span>{action.label}</span>}
                     </button>
@@ -495,7 +628,7 @@ export function Sidebar({ collapsed, onCollapse }) {
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right" className={tooltipContentClass}>
-                Install ShopWISE on your device
+                Install ABS on your device
               </TooltipContent>
             </Tooltip>
           )}
@@ -531,13 +664,26 @@ export function MobileSidebar() {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, activeTenant } = useAuth();
+  const { isAdmin, isManager, activeTenant, hasFeature } = useAuth();
+  const { appName, primaryColor } = useBranding();
   const { canInstall, promptInstall } = usePWAInstall();
   const [openKeys, setOpenKeys] = useState([]);
 
+  const { data: organizationData } = useQuery({
+    queryKey: ['settings', 'organization'],
+    queryFn: () => settingsService.getOrganizationSettings(),
+    enabled: !!activeTenant?.id,
+  });
+  const organization = organizationData?.data ?? organizationData;
+  const businessName = organization?.name || activeTenant?.name || '';
+  const sidebarSubtitle = useMemo(
+    () => sidebarBrandSubtitle(appName, businessName),
+    [appName, businessName]
+  );
+
   const businessType = activeTenant?.businessType || null;
   const shopType = activeTenant?.metadata?.shopType || null;
-  const menuItems = useMemo(() => getMenuItems(businessType, isAdmin, shopType), [businessType, isAdmin, shopType]);
+  const menuItems = useMemo(() => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature), [businessType, isAdmin, isManager, shopType, hasFeature]);
   const quickActions = useMemo(() => getQuickActions(businessType, shopType), [businessType, shopType]);
 
   // Open the group that contains the current route when sheet opens or location changes
@@ -557,7 +703,9 @@ export function MobileSidebar() {
 
   const routePrefetchMap = useMemo(() => ({
     '/dashboard': () => import('../../pages/Dashboard'),
+    '/ask-ai': () => import('../../pages/AskAI'),
     '/customers': () => import('../../pages/Customers'),
+    '/marketing': () => import('../../pages/Marketing'),
     '/vendors': () => import('../../pages/Vendors'),
     '/jobs': () => import('../../pages/Jobs'),
     '/sales': () => import('../../pages/Sales'),
@@ -567,7 +715,7 @@ export function MobileSidebar() {
     '/expenses': () => import('../../pages/Expenses'),
     '/pricing': () => import('../../pages/Pricing'),
     '/reports/overview': () => import('../../pages/Reports'),
-    '/reports/smart-report': () => import('../../pages/Reports'),
+    '/export-data': () => import('../../pages/ExportData'),
     '/reports/compliance': () => import('../../pages/Reports'),
     '/materials': () => import('../../pages/Materials'),
     '/equipment': () => import('../../pages/Equipment'),
@@ -582,8 +730,8 @@ export function MobileSidebar() {
     '/products': () => import('../../pages/Products'),
     '/drugs': () => import('../../pages/Drugs'),
     '/prescriptions': () => import('../../pages/Prescriptions'),
-    '/foot-traffic': () => import('../../pages/FootTraffic'),
-    '/workspace': () => import('../../pages/Workspace'),
+    '/tasks': () => import('../../pages/Tasks'),
+    '/automations': () => import('../../pages/Automations'),
   }), []);
 
   const handlePrefetch = useCallback((key) => {
@@ -616,16 +764,25 @@ export function MobileSidebar() {
         <Button 
           variant="ghost" 
           size="icon" 
-          className="lg:hidden min-h-[44px] min-w-[44px] bg-muted hover:bg-muted/80"
+          className="lg:hidden min-h-[44px] min-w-[44px] px-[3px] bg-muted hover:bg-muted/80"
         >
           <Menu className="h-5 w-5" />
         </Button>
       </SheetTrigger>
       <SheetContent side="left" className="w-64 bg-card text-foreground p-0 border-r border-border flex flex-col overflow-hidden">
-        <div className="h-16 flex-shrink-0 flex items-center justify-center px-4 border-b border-border">
-          <div className="flex items-center">
-            <span className="text-2xl font-bold text-[#166534]">Shop</span>
-            <span className="text-2xl font-bold text-[#84cc16]">WISE</span>
+        <div className="h-16 flex-shrink-0 flex items-center justify-start px-4 border-b border-border">
+          <div className="flex items-center gap-2 min-w-0">
+            <AppLogo appName={appName} primaryColor={primaryColor} className="h-9 w-9 text-base" />
+            <div className="flex flex-col leading-tight min-w-0">
+              <span className="text-sm font-semibold" style={{ color: primaryColor }}>
+                {appName}
+              </span>
+              {sidebarSubtitle ? (
+                <span className="text-xs text-muted-foreground truncate">
+                  {sidebarSubtitle}
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
         <nav className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4 space-y-1">
@@ -640,7 +797,7 @@ export function MobileSidebar() {
                           onClick={() => toggleSubmenu(item.key)}
                           className="w-full flex items-center gap-3 px-3 py-3 rounded-md hover:bg-muted transition-colors text-foreground min-h-[44px]"
                         >
-                          <item.icon className="h-5 w-5 flex-shrink-0" />
+                          <NavMenuIcon icon={item.icon} className="h-5 w-5 flex-shrink-0" />
                           <span className="flex-1 text-left">{item.label}</span>
                           <ChevronRight className={cn(
                             "h-4 w-4 transition-transform",
@@ -674,11 +831,11 @@ export function MobileSidebar() {
                     className={cn(
                       "w-full flex items-center gap-3 px-3 py-3 rounded-md hover:bg-muted transition-colors min-h-[44px]",
                       location.pathname === item.key 
-                        ? "bg-[#166534] text-white font-medium hover:bg-[#14532d]" 
+                        ? "bg-brand text-white font-medium hover:bg-brand-dark" 
                         : "text-foreground"
                     )}
                   >
-                    <item.icon className="h-5 w-5 flex-shrink-0" />
+                    <NavMenuIcon icon={item.icon} className="h-5 w-5 flex-shrink-0" />
                     <span>{item.label}</span>
                   </button>
                 )}
@@ -699,8 +856,8 @@ export function MobileSidebar() {
                     }}
                     className="w-full flex items-center gap-3 px-3 py-3 rounded-md hover:bg-muted transition-colors text-primary min-h-[44px]"
                   >
-                    <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-[#166534] text-white">
-                      <action.icon className="h-4 w-4" />
+                    <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-md bg-brand text-white">
+                      <NavMenuIcon icon={action.icon} className="h-4 w-4" />
                     </span>
                     <span>{action.label}</span>
                   </button>

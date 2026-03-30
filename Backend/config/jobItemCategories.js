@@ -24,6 +24,16 @@ const JOB_ITEM_CATEGORIES = {
     { value: 'Scanning', label: 'Scanning', group: 'Finishing Services' },
     { value: 'Design Services', label: 'Design Services', group: 'Professional Services' }
   ],
+  software_it_services: [
+    { value: 'Discovery & Planning', label: 'Discovery & Planning', group: 'Project Phases' },
+    { value: 'UI/UX Design', label: 'UI/UX Design', group: 'Project Phases' },
+    { value: 'Frontend Development', label: 'Frontend Development', group: 'Development' },
+    { value: 'Backend & API Development', label: 'Backend & API Development', group: 'Development' },
+    { value: 'Mobile App Development', label: 'Mobile App Development', group: 'Development' },
+    { value: 'Testing & QA', label: 'Testing & QA', group: 'Quality Assurance' },
+    { value: 'DevOps & Infrastructure', label: 'DevOps & Infrastructure', group: 'Technical Services' },
+    { value: 'Maintenance & Support', label: 'Maintenance & Support', group: 'Ongoing Services' }
+  ],
   mechanic: [
     { value: 'Repairs', label: 'Repairs', group: 'Services' },
     { value: 'Oil Change', label: 'Oil Change', group: 'Services' },
@@ -73,6 +83,12 @@ const getJobItemCategories = (businessType, metadata = {}) => {
 
   if (resolved !== 'studio') {
     return JOB_ITEM_CATEGORIES.default || [];
+  }
+
+  // Software & IT services: use dedicated categories if businessSubType is set
+  const businessSubType = metadata?.businessSubType;
+  if (businessSubType === 'software_it_services') {
+    return JOB_ITEM_CATEGORIES.software_it_services || JOB_ITEM_CATEGORIES.default || [];
   }
 
   const type = LEGACY_TO_STUDIO.includes(studioType) ? studioType : 'default';

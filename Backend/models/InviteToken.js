@@ -14,13 +14,13 @@ const InviteToken = sequelize.define('InviteToken', {
       model: 'tenants',
       key: 'id'
     },
-    comment: 'Null for platform_admin invites'
+    comment: 'Null for platform_admin and new_tenant invites'
   },
   inviteType: {
     type: DataTypes.STRING(20),
     allowNull: false,
     defaultValue: 'tenant',
-    comment: 'tenant | platform_admin'
+    comment: 'tenant | platform_admin | new_tenant'
   },
   token: {
     type: DataTypes.STRING,
@@ -79,6 +79,17 @@ const InviteToken = sequelize.define('InviteToken', {
     type: DataTypes.STRING(100),
     allowNull: true,
     comment: 'For inviteType=platform_admin: PlatformAdminRole name to assign (e.g. Marketing, Operations)'
+  },
+  emailStatus: {
+    type: DataTypes.STRING(20),
+    allowNull: false,
+    defaultValue: 'pending',
+    comment: 'pending | sent | failed'
+  },
+  emailLastError: {
+    type: DataTypes.TEXT,
+    allowNull: true,
+    comment: 'Last email delivery error (if any)'
   }
 }, {
   timestamps: true,

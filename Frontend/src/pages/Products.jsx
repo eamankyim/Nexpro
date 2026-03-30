@@ -40,6 +40,8 @@ import {
   QrCode,
   Info,
   Receipt,
+  Upload,
+  Download,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useDebounce } from '../hooks/useDebounce';
@@ -138,6 +140,7 @@ import {
   getStockStatus,
   getWorkspaceDisplayName,
 } from '../constants';
+import { numberInputValue, handleNumberChange } from '../utils/formUtils';
 // =============================================
 // HELPER FUNCTIONS
 // =============================================
@@ -155,18 +158,6 @@ const marginFormatter = (costPrice, sellingPrice) => {
   const margin = calculateMargin(costPrice, sellingPrice);
   return `${margin.toFixed(1)}%`;
 };
-
-const handleNumberChange = (e, onChange) => {
-  const raw = e.target.value;
-  if (raw === '') {
-    onChange('');
-    return;
-  }
-  const n = parseFloat(raw);
-  onChange(Number.isNaN(n) ? '' : n);
-};
-
-const numberInputValue = (v) => (v === '' ? '' : v);
 
 const FormLabelWithInfo = ({ label, hint }) => (
   <div className="flex items-center gap-1.5 min-h-[1.25rem]">
@@ -204,9 +195,10 @@ const ProductMovementTab = ({ productId, unit = 'pcs', valueFormatter }) => {
     productService.getProductSales(productId, { limit: 50 })
       .then((res) => {
         if (cancelled) return;
-        const data = res?.data ?? res;
-        setItems(data.data || []);
-        setTotal(data.count ?? 0);
+        // API returns { success, count, pagination, data: rows }; axios interceptor returns response.data
+        const list = Array.isArray(res?.data) ? res.data : (res?.data?.data ?? []);
+        setItems(list);
+        setTotal(res?.count ?? res?.pagination?.total ?? 0);
       })
       .catch(() => { if (!cancelled) setItems([]); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -316,6 +308,8 @@ const productSchema = z.object({
   // Clothing/Beauty
   sizes: z.string().optional(),
   colors: z.string().optional(),
+  // Model variance (e.g. pump model, electronics SKU)
+  models: z.string().optional(),
   // Sports
   size: z.string().optional(),
   // Toys
@@ -338,15 +332,39 @@ const stockAdjustSchema = z.object({
   path: ['newQuantity'],
 });
 
+const parseDecimalInput = (v) => {
+  if (v === '' || v == null) return undefined;
+  if (typeof v === 'number' && !Number.isNaN(v)) return v;
+  const s = String(v).replace(/,/g, '.');
+  const n = parseFloat(s);
+  return Number.isNaN(n) ? undefined : n;
+};
+
 const variantSchema = z.object({
   name: z.string().optional(),
   sku: z.string().optional(),
   barcode: z.string().optional(),
-  costPrice: z.union([z.number().min(0), z.literal('')]).transform((v) => (v === '' ? undefined : v)).optional(),
-  sellingPrice: z.union([z.number().min(0), z.literal('')]).transform((v) => (v === '' ? undefined : v)).optional(),
-  quantityOnHand: z.union([z.number().min(0), z.literal('')]).transform((v) => (v === '' ? 0 : v)),
-  size: z.string().min(1, 'Size is required'),
+  costPrice: z.union([
+    z.number().min(0),
+    z.string().transform((s) => parseDecimalInput(s)),
+    z.literal('')
+  ]).transform((v) => (v === '' ? undefined : v)).optional(),
+  sellingPrice: z.union([
+    z.number().min(0),
+    z.string().transform((s) => parseDecimalInput(s)),
+    z.literal('')
+  ]).transform((v) => (v === '' ? undefined : v)).optional(),
+  quantityOnHand: z.union([
+    z.number().min(0),
+    z.string().transform((s) => (parseDecimalInput(s) ?? 0)),
+    z.literal('')
+  ]).transform((v) => (v === '' ? 0 : v)),
+  size: z.string().optional(),
   color: z.string().optional(),
+  model: z.string().optional(),
+}).refine((data) => data.size || data.color || data.model || data.name, {
+  message: 'At least one of Size, Color, or Model is required',
+  path: ['size'],
 });
 
 const quickVendorSchema = z.object({
@@ -367,7 +385,10 @@ const Products = () => {
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Get shop type from tenant metadata
-  const shopType = activeTenant?.metadata?.shopType || SHOP_TYPES.CONVENIENCE;
+  const shopType =
+    activeTenant?.metadata?.businessSubType ||
+    activeTenant?.metadata?.shopType ||
+    SHOP_TYPES.CONVENIENCE;
   const shopTypeFields = SHOP_TYPE_FIELDS[shopType] || [];
 
   // Debug: log shop type and fields when they change (helps verify size/allergens show for restaurant)
@@ -439,6 +460,10 @@ const Products = () => {
   const [categoryModalOpen, setCategoryModalOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [creatingCategory, setCreatingCategory] = useState(false);
+  const [categoryToDelete, setCategoryToDelete] = useState(null);
+  const [deletingCategory, setDeletingCategory] = useState(false);
+  const [categorySearchTerm, setCategorySearchTerm] = useState('');
+  const [categoryFilterSearchTerm, setCategoryFilterSearchTerm] = useState('');
   const [qrScannerOpen, setQrScannerOpen] = useState(false);
   const [receiveStockOpen, setReceiveStockOpen] = useState(false);
   const [qrGenerateOpen, setQrGenerateOpen] = useState(false);
@@ -448,6 +473,13 @@ const Products = () => {
   const [vendorSelectOpen, setVendorSelectOpen] = useState(false);
   const [vendorCategories, setVendorCategories] = useState([]);
   const [addingVendor, setAddingVendor] = useState(false);
+
+  // Bulk import state
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importResult, setImportResult] = useState(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
 
   // Offline state
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -507,6 +539,7 @@ const Products = () => {
       optionalFoods: '',
       sizes: '',
       colors: '',
+      models: '',
       size: '',
       ageRange: '',
       batteryRequired: false,
@@ -533,6 +566,7 @@ const Products = () => {
       quantityOnHand: 0,
       size: '',
       color: '',
+      model: '',
     },
   });
 
@@ -855,6 +889,21 @@ const Products = () => {
     }
   }, [newCategoryName, formOpen, form]);
 
+  const handleDeleteCategory = useCallback(async () => {
+    if (!categoryToDelete?.id) return;
+    setDeletingCategory(true);
+    try {
+      await productService.deleteCategory(categoryToDelete.id);
+      showSuccess('Category deleted');
+      setCategoryToDelete(null);
+      fetchCategories();
+    } catch (error) {
+      showError(error?.response?.data?.message || 'Failed to delete category');
+    } finally {
+      setDeletingCategory(false);
+    }
+  }, [categoryToDelete, fetchCategories]);
+
   const handleAddNewVendor = useCallback((e) => {
     if (e) e.preventDefault();
     setVendorSelectOpen(false);
@@ -967,18 +1016,18 @@ const Products = () => {
 
   // Online/offline detection
   useEffect(() => {
-    const handleOnline = () => {
+    const handleOnline = async () => {
       setIsOnline(true);
-      // Sync pending changes
-      const pending = productService.getPendingChanges();
+      const pending = await productService.getPendingChanges();
       if (pending.length > 0) {
-        productService.syncPendingChanges().then(results => {
-          if (results.synced > 0) {
-            showSuccess(`Synced ${results.synced} pending changes`);
-            fetchProducts();
-            fetchStats();
-          }
-        });
+        const results = await productService.syncPendingChanges();
+        if (results.synced > 0) {
+          showSuccess(`Synced ${results.synced} pending changes`);
+          fetchProducts();
+          fetchStats();
+        }
+        const after = await productService.getPendingChanges();
+        setPendingChanges(after.length);
       }
     };
     const handleOffline = () => setIsOnline(false);
@@ -986,8 +1035,7 @@ const Products = () => {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Check pending changes
-    setPendingChanges(productService.getPendingChanges().length);
+    productService.getPendingChanges().then((p) => setPendingChanges(p.length));
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -1053,6 +1101,7 @@ const Products = () => {
       optionalFoods: product.metadata?.optionalFoods || '',
       sizes: product.metadata?.sizes || '',
       colors: product.metadata?.colors || '',
+      models: product.metadata?.models || '',
       size: product.metadata?.size || '',
       ageRange: product.metadata?.ageRange || '',
       batteryRequired: product.metadata?.batteryRequired || false,
@@ -1101,12 +1150,60 @@ const Products = () => {
       optionalFoods: '',
       sizes: '',
       colors: '',
+      models: '',
       size: '',
       ageRange: '',
       batteryRequired: false,
     });
     setFormOpen(true);
   };
+
+  const handleDownloadProductTemplate = useCallback(async () => {
+    setTemplateLoading(true);
+    try {
+      const blob = await productService.getProductImportTemplate();
+      const url = URL.createObjectURL(blob?.data ?? blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'products_import_template.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+      showSuccess('Template downloaded');
+    } catch (err) {
+      showError(err?.response?.data?.message ?? err?.message ?? 'Failed to download template');
+    } finally {
+      setTemplateLoading(false);
+    }
+  }, []);
+
+  const handleImportSubmit = useCallback(async () => {
+    if (!importFile) {
+      showError('Please select a CSV or Excel file');
+      return;
+    }
+    setImportLoading(true);
+    setImportResult(null);
+    try {
+      const result = await productService.importProducts(importFile);
+      setImportResult(result);
+      const success = result?.successCount ?? 0;
+      const failed = result?.errorCount ?? 0;
+      if (success > 0) {
+        showSuccess(`${success} product(s) imported`);
+        fetchProducts();
+        fetchStats();
+      }
+      if (failed > 0 && success === 0) {
+        showError(`${failed} row(s) failed. Check the errors below.`);
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.message ?? err?.message ?? 'Import failed';
+      showError(msg);
+      setImportResult({ successCount: 0, errorCount: 1, errors: [{ row: 0, message: msg }] });
+    } finally {
+      setImportLoading(false);
+    }
+  }, [importFile, fetchProducts, fetchStats]);
 
   const handleProductDataFromQR = useCallback(
     (data) => {
@@ -1153,6 +1250,7 @@ const Products = () => {
         optionalFoods: data.optionalFoods || '',
         sizes: data.sizes || '',
         colors: data.colors || '',
+        models: data.models || '',
         size: data.size || '',
         ageRange: data.ageRange || '',
         batteryRequired: data.batteryRequired ?? false,
@@ -1171,9 +1269,17 @@ const Products = () => {
 
   const handleDeleteConfirm = async () => {
     if (!productToDelete) return;
-    
+
     setSubmitting(true);
     try {
+      if (!navigator.onLine) {
+        await productService.queueOfflineChange('delete', { id: productToDelete.id });
+        showSuccess('Saved offline. Will sync when connected.');
+        productService.getPendingChanges().then((p) => setPendingChanges(p.length));
+        setDeleteDialogOpen(false);
+        setProductToDelete(null);
+        return;
+      }
       await productService.deleteProduct(productToDelete.id);
       showSuccess('Product deleted successfully');
       setDeleteDialogOpen(false);
@@ -1209,6 +1315,7 @@ const Products = () => {
         quantityOnHand: variant.quantityOnHand ?? 0,
         size: variant.attributes?.size || '',
         color: variant.attributes?.color || '',
+        model: variant.attributes?.model || '',
       });
       setEditingVariant(variant);
     } else {
@@ -1221,6 +1328,7 @@ const Products = () => {
         quantityOnHand: 0,
         size: '',
         color: '',
+        model: '',
       });
       setEditingVariant(null);
     }
@@ -1237,9 +1345,9 @@ const Products = () => {
     if (!selectedProduct?.id) return;
     setSubmitting(true);
     try {
-      // Use size value as name, or find the label from SIZE_OPTIONS
+      // Use model, size, or color for variant display name
       const sizeOption = SIZE_OPTIONS.find(opt => opt.value === values.size);
-      const variantName = sizeOption ? sizeOption.label : values.size || values.name || '';
+      const variantName = values.model || (sizeOption ? sizeOption.label : values.size) || values.color || values.name || '';
       
       const payload = {
         name: variantName,
@@ -1252,6 +1360,7 @@ const Products = () => {
       };
       if (values.size) payload.attributes.size = values.size;
       if (values.color) payload.attributes.color = values.color;
+      if (values.model) payload.attributes.model = values.model;
 
       if (editingVariant) {
         await productService.updateProductVariant(editingVariant.id, payload);
@@ -1284,7 +1393,7 @@ const Products = () => {
         'warrantyPeriod', 'specifications', 'dimensions', 'weight',
         'material', 'partNumber', 'compatibility', 'vehicleModels',
         'isbn', 'author', 'publisher', 'assemblyRequired',
-        'allergens', 'optionalFoods', 'sizes', 'colors', 'size', 'ageRange', 'batteryRequired',
+        'allergens', 'optionalFoods', 'sizes', 'colors', 'models', 'size', 'ageRange', 'batteryRequired',
       ];
       
       const metadata = {};
@@ -1316,6 +1425,17 @@ const Products = () => {
         imageUrl: values.imageUrl || undefined,
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       };
+
+      if (!navigator.onLine) {
+        const action = editingProduct ? 'update' : 'create';
+        const data = editingProduct ? { ...payload, id: editingProduct.id } : payload;
+        await productService.queueOfflineChange(action, data);
+        showSuccess('Saved offline. Will sync when connected.');
+        productService.getPendingChanges().then((p) => setPendingChanges(p.length));
+        setFormOpen(false);
+        setEditingProduct(null);
+        return;
+      }
 
       if (editingProduct) {
         await productService.updateProduct(editingProduct.id, payload);
@@ -1856,7 +1976,7 @@ const Products = () => {
             render={({ field }) => (
               <FormItem className="flex flex-row items-center justify-between rounded-lg border p-3">
                 <div className="space-y-0.5">
-                  <FormLabelWithInfo label={PRODUCT_FIELD_LABELS.hasVariants} hint="Product has size/color variants" />
+                  <FormLabelWithInfo label={PRODUCT_FIELD_LABELS.hasVariants} hint="Product has size, color, or model variants" />
                 </div>
                 <FormControl>
                   <Switch checked={field.value} onCheckedChange={field.onChange} />
@@ -1948,6 +2068,30 @@ const Products = () => {
                     );
                   })}
                 </div>
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      );
+    }
+
+    // Model variance (e.g. pump model, electronics SKU) – comma-separated list when hasVariants
+    if (shopTypeFields.includes('models') && form.watch('hasVariants')) {
+      fields.push(
+        <FormField
+          key="models"
+          control={form.control}
+          name="models"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{PRODUCT_FIELD_LABELS.models}</FormLabel>
+              <FormControl>
+                <Input
+                  placeholder="e.g. MHM32-200/40, MHM32-250/55, MHM65-250 (comma-separated)"
+                  {...field}
+                  value={field.value || ''}
+                />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -2107,7 +2251,7 @@ const Products = () => {
           subtitle="Manage your product catalog"
           icon={<Package className="h-6 w-6" />}
         />
-        <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -2138,36 +2282,46 @@ const Products = () => {
             <TooltipTrigger asChild>
               <Button
                 variant="outline"
-                size={isMobile ? 'icon' : 'default'}
                 onClick={() => {
                   setEditingProduct(null);
                   setQrScannerOpen(true);
                 }}
               >
                 <ScanLine className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">Scan QR</span>}
+                <span className="ml-2">Scan to edit or restock</span>
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Scan product QR code to quickly add or edit a product</TooltipContent>
+            <TooltipContent>Scan product QR to edit or restock</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="outline"
-                size={isMobile ? 'icon' : 'default'}
                 onClick={() => setReceiveStockOpen(true)}
               >
                 <PackagePlus className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">Receive stock</span>}
+                <span className="ml-2">Receive stock</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>Record new stock received (scan QR or search product)</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button onClick={handleCreateProduct}>
+              <Button
+                variant="outline"
+                onClick={() => { setImportModalOpen(true); setImportResult(null); setImportFile(null); }}
+              >
+                <Upload className="h-4 w-4" />
+                <span className="ml-2">Import</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Bulk import products from CSV (download template, fill, then upload)</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={handleCreateProduct} className="flex-1 min-w-0 md:flex-none">
                 <Plus className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">Add Product</span>}
+                <span className="ml-2">Add Product</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>Add a new product to your catalog</TooltipContent>
@@ -2226,17 +2380,35 @@ const Products = () => {
               </div>
               <div>
                 <Label className="mb-2 block">Category</Label>
-                <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                <Select
+                  value={categoryFilter}
+                  onValueChange={setCategoryFilter}
+                  onOpenChange={(open) => { if (!open) setCategoryFilterSearchTerm(''); }}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="All categories" />
                   </SelectTrigger>
                   <SelectContent>
+                    <div className="p-2 border-b border-border sticky top-0 bg-popover z-10" onPointerDown={(e) => e.stopPropagation()}>
+                      <Input
+                        placeholder="Search categories..."
+                        value={categoryFilterSearchTerm}
+                        onChange={(e) => setCategoryFilterSearchTerm(e.target.value)}
+                        className="h-8"
+                      />
+                    </div>
                     <SelectItem value="all">All categories</SelectItem>
-                    {categories.map((cat) => (
-                      <SelectItem key={cat.id} value={String(cat.id)}>
-                        {cat.name}
-                      </SelectItem>
-                    ))}
+                    {(() => {
+                      const term = (categoryFilterSearchTerm || '').trim().toLowerCase();
+                      const filtered = term
+                        ? categories.filter((cat) => (cat.name || '').toLowerCase().includes(term))
+                        : categories;
+                      return filtered.map((cat) => (
+                        <SelectItem key={cat.id} value={String(cat.id)}>
+                          {cat.name}
+                        </SelectItem>
+                      ));
+                    })()}
                   </SelectContent>
                 </Select>
               </div>
@@ -2312,18 +2484,17 @@ const Products = () => {
         description={editingProduct ? 'Update product details below' : 'Fill in the product details to add it to your catalog'}
         footer={
           <>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleOpenQRGenerateFromForm}
-              title="Generate QR code for this product"
-            >
-              <QrCode className="h-4 w-4 mr-2" />
-              Generate QR
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setFormOpen(false)}>
-              Cancel
-            </Button>
+            {!isMobile && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleOpenQRGenerateFromForm}
+                title="Generate QR code for this product"
+              >
+                <QrCode className="h-4 w-4 mr-2" />
+                Generate QR
+              </Button>
+            )}
             <Button type="submit" form="product-form" loading={submitting}>
               {editingProduct ? 'Update Product' : 'Create Product'}
             </Button>
@@ -2339,10 +2510,10 @@ const Products = () => {
                   variant="outline"
                   className="w-full justify-center gap-2"
                   onClick={() => setQrScannerOpen(true)}
-                  title="Scan product QR code to fill form"
+                  title="Scan to edit or restock"
                 >
                   <ScanLine className="h-4 w-4" />
-                  Scan QR code to fill details
+                  Scan to edit or restock
                 </Button>
               )}
 
@@ -2380,7 +2551,7 @@ const Products = () => {
                             onDragLeave={(e) => { e.preventDefault(); setProductImageDragging(false); }}
                             className={cn(
                               'flex flex-col items-center justify-center w-full min-h-[120px] py-8 px-4 rounded-lg border-2 border-dashed cursor-pointer transition-colors',
-                              productImageDragging ? 'border-[#166534] bg-[#166534]/5' : 'border-border bg-card',
+                              productImageDragging ? 'border-brand bg-brand-5' : 'border-border bg-card',
                               productImageUploading && 'opacity-70 cursor-not-allowed'
                             )}
                           >
@@ -2414,15 +2585,15 @@ const Products = () => {
                               </div>
                             ) : productImageUploading ? (
                               <div className="flex flex-col items-center gap-2">
-                                <Loader2 className="h-10 w-10 animate-spin text-[#166534]" />
+                                <Loader2 className="h-10 w-10 animate-spin text-brand" />
                                 <span className="text-sm text-muted-foreground">Uploading...</span>
                               </div>
                             ) : (
                               <>
-                                <UploadCloud className="h-10 w-10 mb-3 text-[#166534]" />
+                                <UploadCloud className="h-10 w-10 mb-3 text-brand" />
                                 <div className="text-center">
                                   <p className="text-sm">
-                                    <span className="font-medium text-[#166534]">Click to upload</span>
+                                    <span className="font-medium text-brand">Click to upload</span>
                                     <span className="text-muted-foreground"> or drag and drop</span>
                                   </p>
                                   <p className="text-xs text-muted-foreground mt-1">
@@ -2462,6 +2633,7 @@ const Products = () => {
                           <Select
                             value={field.value || undefined}
                             onValueChange={(v) => field.onChange(v && !String(v).startsWith('_cat_') ? v : '')}
+                            onOpenChange={(open) => { if (!open) setCategorySearchTerm(''); }}
                           >
                             <FormControl>
                               <SelectTrigger className="flex-1">
@@ -2469,19 +2641,42 @@ const Products = () => {
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
+                              {categories.length > 0 && (
+                                <div className="p-2 border-b border-border sticky top-0 bg-popover z-10" onPointerDown={(e) => e.stopPropagation()}>
+                                  <Input
+                                    placeholder="Search categories..."
+                                    value={categorySearchTerm}
+                                    onChange={(e) => setCategorySearchTerm(e.target.value)}
+                                    className="h-8"
+                                  />
+                                </div>
+                              )}
                               {categories.length === 0 ? (
                                 <div className="py-4 px-3 text-center text-sm text-muted-foreground">
                                   No categories yet. Use + to add one.
                                 </div>
                               ) : (
-                                categories.map((cat) => {
-                                  const idStr = cat.id != null && String(cat.id) !== '' ? String(cat.id) : `_cat_${cat.id ?? 'blank'}`;
-                                  return (
-                                    <SelectItem key={cat.id ?? idStr} value={idStr}>
-                                      {cat.name}
-                                    </SelectItem>
-                                  );
-                                })
+                                (() => {
+                                  const term = (categorySearchTerm || '').trim().toLowerCase();
+                                  const filtered = term
+                                    ? categories.filter((cat) => (cat.name || '').toLowerCase().includes(term))
+                                    : categories;
+                                  if (filtered.length === 0) {
+                                    return (
+                                      <div className="py-4 px-3 text-center text-sm text-muted-foreground">
+                                        No categories match &quot;{categorySearchTerm}&quot;
+                                      </div>
+                                    );
+                                  }
+                                  return filtered.map((cat) => {
+                                    const idStr = cat.id != null && String(cat.id) !== '' ? String(cat.id) : `_cat_${cat.id ?? 'blank'}`;
+                                    return (
+                                      <SelectItem key={cat.id ?? idStr} value={idStr}>
+                                        {cat.name}
+                                      </SelectItem>
+                                    );
+                                  });
+                                })()
                               )}
                             </SelectContent>
                           </Select>
@@ -3150,6 +3345,14 @@ const Products = () => {
                 <Share2 className="h-4 w-4 mr-2" />
                 Share
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleOpenVariantForm()}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Add Variance
+              </Button>
             </div>
 
             <DrawerSectionCard title="Product info">
@@ -3326,7 +3529,7 @@ const Products = () => {
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground py-2">
-                    No variants yet. Add sizes (Small, Medium, Large) or other options.
+                    No variants yet. Add sizes, colors, models, or other options.
                   </p>
                 )}
               </DrawerSectionCard>
@@ -3383,7 +3586,7 @@ const Products = () => {
                   name="size"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Size</FormLabel>
+                      <FormLabel>Size (optional)</FormLabel>
                       <Select value={field.value || undefined} onValueChange={field.onChange}>
                         <FormControl>
                           <SelectTrigger>
@@ -3402,6 +3605,54 @@ const Products = () => {
                     </FormItem>
                   )}
                 />
+                {(selectedProduct?.metadata?.models || '').split(',').map((s) => s.trim()).filter(Boolean).length > 0 ? (
+                  <FormField
+                    control={variantForm.control}
+                    name="model"
+                    render={({ field }) => {
+                      const raw = (selectedProduct?.metadata?.models || '').split(',').map((s) => s.trim());
+                      const modelOptions = raw.filter((opt) => opt != null && opt !== '');
+                      return (
+                        <FormItem>
+                          <FormLabel>Model</FormLabel>
+                          <Select value={field.value || undefined} onValueChange={field.onChange}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select model" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {modelOptions.map((opt, idx) => (
+                                <SelectItem key={`${opt}-${idx}`} value={opt}>
+                                  {opt}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      );
+                    }}
+                  />
+                ) : (
+                  <FormField
+                    control={variantForm.control}
+                    name="model"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Model (optional)</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="e.g. MHM32-200/40"
+                            {...field}
+                            value={field.value || ''}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <FormField
                     control={variantForm.control}
@@ -3411,12 +3662,19 @@ const Products = () => {
                         <FormLabel>Selling Price</FormLabel>
                         <FormControl>
                           <Input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             step="0.01"
                             min="0"
                             {...field}
                             value={field.value ?? ''}
-                            onChange={(e) => field.onChange(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              if (raw === '') return field.onChange('');
+                              const normalized = raw.replace(/,/g, '.');
+                              const n = parseFloat(normalized);
+                              field.onChange(Number.isNaN(n) ? raw : n);
+                            }}
                           />
                         </FormControl>
                         <FormMessage />
@@ -3431,12 +3689,19 @@ const Products = () => {
                         <FormLabel>Cost Price</FormLabel>
                         <FormControl>
                           <Input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             step="0.01"
                             min="0"
                             {...field}
                             value={field.value ?? ''}
-                            onChange={(e) => field.onChange(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              if (raw === '') return field.onChange('');
+                              const normalized = raw.replace(/,/g, '.');
+                              const n = parseFloat(normalized);
+                              field.onChange(Number.isNaN(n) ? raw : n);
+                            }}
                           />
                         </FormControl>
                         <FormMessage />
@@ -3455,8 +3720,8 @@ const Products = () => {
                             step="0.01"
                             min="0"
                             {...field}
-                            value={field.value ?? ''}
-                            onChange={(e) => field.onChange(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+                            value={numberInputValue(field.value)}
+                            onChange={(e) => handleNumberChange(e, field.onChange)}
                           />
                         </FormControl>
                         <FormMessage />
@@ -3481,12 +3746,15 @@ const Products = () => {
             </Form>
       </MobileFormDialog>
 
-      {/* Create Category Dialog */}
+      {/* Create / Manage Category Dialog */}
       <MobileFormDialog
         open={categoryModalOpen}
-        onOpenChange={setCategoryModalOpen}
-        title="Create New Category"
-        description="Add a new category for organizing your products."
+        onOpenChange={(open) => {
+          setCategoryModalOpen(open);
+          if (!open) setNewCategoryName('');
+        }}
+        title="Categories"
+        description="Add a category or delete one that has no products."
         footer={
           <>
             <Button
@@ -3496,7 +3764,7 @@ const Products = () => {
                 setNewCategoryName('');
               }}
             >
-              Cancel
+              Close
             </Button>
             <Button
               onClick={handleCreateCategory}
@@ -3511,7 +3779,7 @@ const Products = () => {
       >
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label htmlFor="categoryName">Category Name</Label>
+              <Label htmlFor="categoryName">New category name</Label>
               <Input
                 id="categoryName"
                 placeholder="e.g., Beverages, Snacks, Dairy..."
@@ -3525,8 +3793,116 @@ const Products = () => {
                 }}
               />
             </div>
+            {categories.length > 0 && (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <Label className="text-muted-foreground">Existing categories</Label>
+                  <ul className="space-y-1 max-h-40 overflow-y-auto rounded-md border border-input p-2">
+                    {categories.map((cat) => (
+                      <li key={cat.id} className="flex items-center justify-between gap-2 py-1.5 px-2 rounded hover:bg-muted/50">
+                        <span className="text-sm truncate">{cat.name}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => setCategoryToDelete(cat)}
+                          title="Delete category"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </>
+            )}
           </div>
       </MobileFormDialog>
+
+      {/* Confirm delete category */}
+      <AlertDialog open={!!categoryToDelete} onOpenChange={(open) => !open && setCategoryToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete category</AlertDialogTitle>
+            <AlertDialogDescription>
+              Delete &quot;{categoryToDelete?.name}&quot;? This only works if no products use this category. Products using it will need their category changed first.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteCategory}
+              disabled={deletingCategory}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingCategory ? 'Deleting…' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk import modal */}
+      <Dialog open={importModalOpen} onOpenChange={(open) => { setImportModalOpen(open); if (!open) { setImportResult(null); setImportFile(null); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Import products</DialogTitle>
+            <DialogDescription>
+              Download the CSV template, fill in your products (no images), then upload the file. Max 500 rows per file.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleDownloadProductTemplate}
+                disabled={templateLoading}
+                className="w-full"
+              >
+                {templateLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+                Download CSV template
+              </Button>
+            </div>
+            <div>
+              <Label htmlFor="import-file">Select CSV or Excel file</Label>
+              <Input
+                id="import-file"
+                type="file"
+                accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                className="mt-2"
+                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              />
+              {importFile && <p className="text-sm text-muted-foreground mt-1">{importFile.name}</p>}
+            </div>
+            {importResult && (
+              <div className="rounded-md border border-border p-3 space-y-2">
+                <p className="text-sm font-medium">
+                  {importResult.successCount ?? 0} imported, {(importResult.errors ?? []).length} error(s)
+                </p>
+                {Array.isArray(importResult.errors) && importResult.errors.length > 0 && (
+                  <ul className="text-xs text-muted-foreground max-h-32 overflow-y-auto space-y-1">
+                    {importResult.errors.slice(0, 20).map((err, i) => (
+                      <li key={i}>Row {err.row}: {err.message}</li>
+                    ))}
+                    {importResult.errors.length > 20 && <li>… and {importResult.errors.length - 20} more</li>}
+                  </ul>
+                )}
+              </div>
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setImportModalOpen(false)}>
+              Close
+            </Button>
+            <Button type="button" onClick={handleImportSubmit} disabled={!importFile || importLoading}>
+              {importLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Image preview modal */}
       <Dialog open={!!imagePreviewUrl} onOpenChange={(open) => !open && setImagePreviewUrl(null)}>

@@ -361,6 +361,46 @@ exports.getExpenses = async (req, res, next) => {
   }
 };
 
+// @desc    Export expenses to CSV/Excel
+// @route   GET /api/expenses/export
+// @access  Private (admin, manager)
+exports.exportExpenses = async (req, res, next) => {
+  try {
+    const { format = 'csv', status, category } = req.query;
+    const { sendCSV, sendExcel, COLUMN_DEFINITIONS } = require('../utils/dataExport');
+
+    const where = applyTenantFilter(req.tenantId, {});
+    if (status) where.status = status;
+    if (category) where.category = category;
+
+    const expenses = await Expense.findAll({
+      where,
+      include: [{ model: Vendor, as: 'vendor', attributes: ['id', 'name'] }],
+      order: [['expenseDate', 'DESC']],
+      raw: false
+    });
+    const rows = expenses.map((e) => {
+      const plain = e.get({ plain: true });
+      return { ...plain, vendor: plain.vendor || {} };
+    });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No expenses to export' });
+    }
+
+    const filename = `expenses_${new Date().toISOString().split('T')[0]}`;
+    const columns = COLUMN_DEFINITIONS.expenses;
+
+    if (format === 'excel') {
+      await sendExcel(res, rows, `${filename}.xlsx`, { columns, sheetName: 'Expenses', title: 'Expense List' });
+    } else {
+      sendCSV(res, rows, `${filename}.csv`, columns);
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Get single expense
 // @route   GET /api/expenses/:id
 // @access  Private

@@ -1,6 +1,6 @@
 # Component Structure Template
 
-This document outlines the standard structure for React components in the ShopWISE application.
+This document outlines the standard structure for React components in the African Business Suite application.
 
 ## Standard Component Structure
 

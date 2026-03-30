@@ -9,6 +9,8 @@ import {
   Loader2,
   Filter,
   Pencil,
+  Upload,
+  Download,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useDebounce } from '../hooks/useDebounce';
@@ -17,6 +19,7 @@ import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import ActionColumn from '../components/ActionColumn';
 import DashboardTable from '../components/DashboardTable';
+import StatusChip from '../components/StatusChip';
 import WelcomeSection from '../components/WelcomeSection';
 import equipmentService from '../services/equipmentService';
 import vendorService from '../services/vendorService';
@@ -27,7 +30,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
 import { Descriptions, DescriptionItem } from '../components/ui/descriptions';
 import {
   Select,
@@ -137,6 +139,11 @@ const Equipment = () => {
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [vendorAddModalOpen, setVendorAddModalOpen] = useState(false);
   const [addingVendor, setAddingVendor] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importResult, setImportResult] = useState(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [templateLoading, setTemplateLoading] = useState(false);
 
   useEffect(() => {
     setPageSearchConfig({ scope: 'equipment', placeholder: SEARCH_PLACEHOLDERS.EQUIPMENT });
@@ -321,6 +328,52 @@ const Equipment = () => {
     [editingItem, drawerVisible, viewingItem, fetchItems, handleViewItem]
   );
 
+  const handleDownloadEquipmentTemplate = useCallback(async () => {
+    setTemplateLoading(true);
+    try {
+      const blob = await equipmentService.getImportTemplate();
+      const url = URL.createObjectURL(blob?.data ?? blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'equipment_import_template.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+      showSuccess('Template downloaded');
+    } catch (err) {
+      showError(err?.response?.data?.message ?? err?.message ?? 'Failed to download template');
+    } finally {
+      setTemplateLoading(false);
+    }
+  }, []);
+
+  const handleEquipmentImportSubmit = useCallback(async () => {
+    if (!importFile) {
+      showError('Please select a CSV or Excel file');
+      return;
+    }
+    setImportLoading(true);
+    setImportResult(null);
+    try {
+      const result = await equipmentService.importItems(importFile);
+      setImportResult(result);
+      const success = result?.successCount ?? 0;
+      const failed = result?.errorCount ?? 0;
+      if (success > 0) {
+        showSuccess(`${success} equipment item(s) imported`);
+        fetchItems(true);
+      }
+      if (failed > 0 && success === 0) {
+        showError(`${failed} row(s) failed. Check the errors below.`);
+      }
+    } catch (err) {
+      const msg = err?.response?.data?.message ?? err?.message ?? 'Import failed';
+      showError(msg);
+      setImportResult({ successCount: 0, errorCount: 1, errors: [{ row: 0, message: msg }] });
+    } finally {
+      setImportLoading(false);
+    }
+  }, [importFile, fetchItems]);
+
   const openCategoryModal = (context = null) => {
     categoryForm.reset();
     setCategoryModalContext(context);
@@ -436,10 +489,10 @@ const Equipment = () => {
       {
         key: 'status',
         label: 'Status',
+        mobileDashboardPlacement: 'headerEnd',
         render: (_, record) => {
           const status = record?.status || 'active';
-          const variant = status === 'active' ? 'default' : 'secondary';
-          return <Badge variant={variant}>{status}</Badge>;
+          return <StatusChip status={status} />;
         }
       },
       {
@@ -493,9 +546,7 @@ const Equipment = () => {
                 {viewingItem.serialNumber || '—'}
               </DescriptionItem>
               <DescriptionItem label="Status">
-                <Badge variant={viewingItem.status === 'active' ? 'default' : 'secondary'}>
-                  {viewingItem.status || 'active'}
-                </Badge>
+                <StatusChip status={viewingItem.status || 'active'} />
               </DescriptionItem>
               <DescriptionItem label="Vendor">
                 {viewingItem.vendor?.name || viewingItem.vendor?.company || '—'}
@@ -522,7 +573,7 @@ const Equipment = () => {
           welcomeMessage="Equipment"
           subText="Track fixed assets: laptops, furniture, vehicles."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <Button
             variant="outline"
             onClick={() => setFilterDrawerOpen(true)}
@@ -543,9 +594,17 @@ const Equipment = () => {
               <RefreshCw className="h-4 w-4" />
             )}
           </Button>
-          <Button onClick={() => openItemModal()} size={isMobile ? 'icon' : 'default'}>
+          <Button
+            variant="outline"
+            onClick={() => { setImportModalOpen(true); setImportResult(null); setImportFile(null); }}
+            size={isMobile ? 'icon' : 'default'}
+          >
+            <Upload className="h-4 w-4" />
+            {!isMobile && <span className="ml-2">Import</span>}
+          </Button>
+          <Button onClick={() => openItemModal()} className="flex-1 min-w-0 md:flex-none">
             <Plus className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Add Equipment</span>}
+            <span className="ml-2">Add Equipment</span>
           </Button>
         </div>
       </div>
@@ -1044,6 +1103,66 @@ const Equipment = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={importModalOpen} onOpenChange={(open) => { setImportModalOpen(open); if (!open) { setImportResult(null); setImportFile(null); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Import equipment</DialogTitle>
+            <DialogDescription>
+              Download the CSV template, fill in your equipment, then upload the file. Max 500 rows per file.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleDownloadEquipmentTemplate}
+                disabled={templateLoading}
+                className="w-full"
+              >
+                {templateLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
+                Download CSV template
+              </Button>
+            </div>
+            <div>
+              <Label htmlFor="equipment-import-file">Select CSV or Excel file</Label>
+              <Input
+                id="equipment-import-file"
+                type="file"
+                accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                className="mt-2"
+                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              />
+              {importFile && <p className="text-sm text-muted-foreground mt-1">{importFile.name}</p>}
+            </div>
+            {importResult && (
+              <div className="rounded-md border border-border p-3 space-y-2">
+                <p className="text-sm font-medium">
+                  {importResult.successCount ?? 0} imported, {(importResult.errors ?? []).length} error(s)
+                </p>
+                {Array.isArray(importResult.errors) && importResult.errors.length > 0 && (
+                  <ul className="text-xs text-muted-foreground max-h-32 overflow-y-auto space-y-1">
+                    {importResult.errors.slice(0, 20).map((err, i) => (
+                      <li key={i}>Row {err.row}: {err.message}</li>
+                    ))}
+                    {importResult.errors.length > 20 && <li>… and {importResult.errors.length - 20} more</li>}
+                  </ul>
+                )}
+              </div>
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setImportModalOpen(false)}>
+              Close
+            </Button>
+            <Button type="button" onClick={handleEquipmentImportSubmit} disabled={!importFile || importLoading}>
+              {importLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+              Import
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

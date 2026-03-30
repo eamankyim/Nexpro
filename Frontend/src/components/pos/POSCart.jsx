@@ -1,9 +1,9 @@
 /**
  * POSCart Component
- * 
+ *
  * Shopping cart for the POS system.
  * Displays items, quantities, prices, discounts, and totals.
- * Optimized for touch input with large targets.
+ * Responsive layout for phone, tablet, and desktop.
  */
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
@@ -160,6 +160,7 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount }) => {
  * @param {function} props.onUpdateCartDiscount - Called when cart discount changes
  * @param {function} props.onCheckout - Called when checkout is pressed
  * @param {function} props.onClearCart - Called to clear the cart
+ * @param {Object} [props.totalsOverride] - Precomputed totals (e.g. tax-aware from parent POS)
  * @param {boolean} [props.showQuickCustomerForm] - Show inline customer form instead of selection button
  * @param {string} [props.quickCustomerName] - Name for quick customer form
  * @param {function} [props.onQuickCustomerNameChange] - Called when quick customer name changes
@@ -179,6 +180,7 @@ const POSCart = ({
   onUpdateCartDiscount,
   onCheckout,
   onClearCart,
+  totalsOverride = null,
   showQuickCustomerForm = false,
   quickCustomerName = '',
   onQuickCustomerNameChange,
@@ -212,15 +214,11 @@ const POSCart = ({
     setCustomerSelectValue(customer?.id ?? '');
   }, [customer?.id]);
 
-  // Calculate totals
-  const totals = useMemo(() => {
-    const subtotal = items.reduce((sum, item) => 
-      sum + (item.unitPrice * item.quantity), 0);
-    const itemDiscounts = items.reduce((sum, item) => 
-      sum + (item.discount || 0), 0);
+  const internalTotals = useMemo(() => {
+    const subtotal = items.reduce((sum, item) => sum + (item.unitPrice * item.quantity), 0);
+    const itemDiscounts = items.reduce((sum, item) => sum + (item.discount || 0), 0);
     const totalDiscount = itemDiscounts + cartDiscount;
     const total = subtotal - totalDiscount;
-    
     return {
       subtotal,
       itemDiscounts,
@@ -230,6 +228,8 @@ const POSCart = ({
       itemCount: items.reduce((sum, item) => sum + item.quantity, 0)
     };
   }, [items, cartDiscount]);
+
+  const totals = totalsOverride || internalTotals;
 
   const handleEditItemDiscount = useCallback((item) => {
     setEditingItem(item);
@@ -507,6 +507,13 @@ const POSCart = ({
                   </TooltipTrigger>
                   <TooltipContent>Give discount on whole cart</TooltipContent>
                 </Tooltip>
+
+                {Number(totals.taxAmount) > 0 && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">{totals.taxLabel || 'Tax'}</span>
+                    <span className="font-medium">{formatCurrency(totals.taxAmount)}</span>
+                  </div>
+                )}
 
                 <Separator />
                 

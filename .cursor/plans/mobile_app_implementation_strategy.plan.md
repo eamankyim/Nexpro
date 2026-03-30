@@ -31,7 +31,7 @@ See **`docs/mobile-design-references.md`** for visual references. Key sources:
 
 ### 0.1 Create Expo App
 - Run `npx create-expo-app@latest mobile --template tabs` (or blank, then add tabs)
-- Place in `Nexpro/mobile/` alongside `Frontend/`, `Backend/`
+- Place in project `mobile/` alongside `Frontend/`, `Backend/`
 - Use **Expo Router** (file-based routing) for navigation
 - Use **Expo SDK 52+** (latest stable)
 
@@ -43,7 +43,7 @@ See **`docs/mobile-design-references.md`** for visual references. Key sources:
 
 ### 0.3 Project Structure
 ```
-Nexpro/
+Project root/
 ├── Backend/
 ├── Frontend/          # Web (desktop)
 ├── mobile/            # Expo app (new)

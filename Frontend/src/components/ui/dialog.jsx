@@ -49,7 +49,7 @@ const DialogContent = React.forwardRef(({ className, children, onInteractOutside
           // Mobile & Desktop: flex column so DialogBody scrolls; header/footer fixed; content scrolls behind footer
           "fixed z-[110] flex flex-col w-full border border-border bg-background duration-200",
           "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-          "inset-0 w-[100vw] min-h-[100vh] max-h-[100vh] overflow-hidden rounded-none pt-5 pb-5 gap-0",
+          "inset-0 w-[100vw] min-h-[100dvh] max-h-[100dvh] overflow-hidden rounded-none pt-5 pb-5 gap-0",
           // Desktop: centered modal
           "sm:inset-auto sm:left-[50%] sm:top-[2.5vh] sm:translate-x-[-50%] sm:translate-y-0",
           "sm:w-[var(--modal-w)] sm:min-w-[min(90vw,20rem)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)] sm:rounded-lg sm:pt-8 sm:pb-6 sm:gap-0",
@@ -63,7 +63,7 @@ const DialogContent = React.forwardRef(({ className, children, onInteractOutside
         {...props}
       >
         {children}
-        <DialogPrimitive.Close className="absolute right-4 top-4 rounded-full bg-muted w-10 h-10 sm:w-8 sm:h-8 flex items-center justify-center transition-all duration-200 hover:bg-muted/80 hover:scale-110 opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none group min-h-[44px] min-w-[44px] sm:min-h-[32px] sm:min-w-[32px]">
+        <DialogPrimitive.Close className="absolute top-4 right-[max(1rem,env(safe-area-inset-right))] sm:right-4 rounded-full bg-muted w-10 h-10 sm:w-8 sm:h-8 flex items-center justify-center transition-all duration-200 hover:bg-muted/80 hover:scale-110 opacity-70 hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none group min-h-[44px] min-w-[44px] sm:min-h-[32px] sm:min-w-[32px]">
           <X className="h-5 w-5 sm:h-4 sm:w-4 transition-transform duration-200 group-hover:rotate-[-90deg]" />
           <span className="sr-only">Close</span>
         </DialogPrimitive.Close>

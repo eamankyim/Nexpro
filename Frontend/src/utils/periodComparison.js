@@ -154,6 +154,9 @@ export const calculateComparison = (current, previous) => {
  * @returns {{ direction: 'up'|'down'|'neutral', text: string }}
  */
 export const formatComparisonText = (comparison, label, prefix = '') => {
+  if (!comparison || typeof comparison !== 'object') {
+    return { direction: 'neutral', text: '' };
+  }
   const { percentage, absolute, isPositive, isNeutral } = comparison;
   const direction = isNeutral ? 'neutral' : (isPositive ? 'up' : 'down');
   const sign = isPositive ? '+' : '';

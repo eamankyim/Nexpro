@@ -1,16 +1,4 @@
-import { useEffect, useState } from 'react';
-import {
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  BarChart,
-  Bar,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useResponsive } from '../../hooks/useResponsive';
@@ -34,16 +22,31 @@ import { Currency, Users, CreditCard } from 'lucide-react';
 
 dayjs.extend(relativeTime);
 
-const PLAN_COLORS = ['#27ae60', '#2f80ed', '#9b51e0'];
+const AdminBillingCharts = lazy(() => import('./AdminBillingCharts'));
+
+const PLAN_ALIASES = {
+  free: 'trial',
+  standard: 'starter',
+  pro: 'professional',
+  launch: 'starter',
+  scale: 'professional',
+};
+
+const normalizePlanId = (plan = '') => PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
 
 const getPlanLabel = (plan) => {
-  switch (plan) {
-    case 'standard':
-      return 'Standard';
-    case 'pro':
-      return 'Pro';
+  const normalized = normalizePlanId(plan);
+  switch (normalized) {
+    case 'trial':
+      return 'Trial';
+    case 'starter':
+      return 'Starter';
+    case 'professional':
+      return 'Professional';
+    case 'enterprise':
+      return 'Enterprise';
     default:
-      return plan;
+      return normalized;
   }
 };
 
@@ -130,64 +133,16 @@ const AdminBilling = () => {
         />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <Card className="border border-gray-200">
-          <CardHeader>
-            <CardTitle className="text-base">Revenue by plan (₵)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {summary?.planBreakdown?.length ? (
-              <ResponsiveContainer width="100%" height={280}>
-                <BarChart data={summary.planBreakdown}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="plan" tickFormatter={getPlanLabel} />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip formatter={(value) => `₵ ${value}`} />
-                  <Bar dataKey="mrr" fill="#2f80ed" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <Empty description="No paying tenants yet" />
-            )}
-          </CardContent>
-        </Card>
-        <Card className="border border-gray-200">
-          <CardHeader>
-            <CardTitle className="text-base">Plan mix</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {summary?.planBreakdown?.length ? (
-              <ResponsiveContainer width="100%" height={280}>
-                <PieChart>
-                  <Pie
-                    data={summary.planBreakdown}
-                    dataKey="count"
-                    nameKey="plan"
-                    innerRadius={60}
-                    outerRadius={100}
-                    paddingAngle={4}
-                  >
-                    {summary.planBreakdown.map((entry, index) => (
-                      <Cell
-                        key={entry.plan}
-                        fill={PLAN_COLORS[index % PLAN_COLORS.length]}
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(value, name, props) => [
-                      `${value} tenants`,
-                      getPlanLabel(props.payload.plan),
-                    ]}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <Empty description="No data yet" />
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <Suspense
+        fallback={
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            <Skeleton className="h-[280px] w-full rounded-lg border border-gray-200" />
+            <Skeleton className="h-[280px] w-full rounded-lg border border-gray-200" />
+          </div>
+        }
+      >
+        <AdminBillingCharts summary={summary} getPlanLabel={getPlanLabel} />
+      </Suspense>
 
       <Card className="border border-gray-200">
         <CardHeader className="flex flex-row items-center justify-between">
@@ -211,7 +166,7 @@ const AdminBilling = () => {
                       </p>
                     </div>
                     <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-gray-100">
-                      <Badge variant={tenant.plan === 'pro' ? 'default' : 'secondary'}>
+                      <Badge variant={normalizePlanId(tenant.plan) === 'professional' ? 'default' : 'secondary'}>
                         {getPlanLabel(tenant.plan)}
                       </Badge>
                       <StatusChip status={tenant.status} />
@@ -253,7 +208,7 @@ const AdminBilling = () => {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge variant={tenant.plan === 'pro' ? 'default' : 'secondary'}>
+                          <Badge variant={normalizePlanId(tenant.plan) === 'professional' ? 'default' : 'secondary'}>
                             {getPlanLabel(tenant.plan)}
                           </Badge>
                         </TableCell>

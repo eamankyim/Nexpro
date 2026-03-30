@@ -4,6 +4,9 @@ import { Currency, ShoppingCart, TrendingUp, Users } from 'lucide-react';
 import { formatComparisonText } from '../utils/periodComparison';
 
 const COMPARING_LABEL = 'Comparing...';
+// IMPORTANT: Dashboard stats colors should not track branding primary color.
+// Many KPI cards previously used `var(--color-primary)`, which changes under white-labeling.
+const ABS_PRIMARY = '#166534';
 
 /**
  * DashboardStatsCards - Reusable row of dashboard statistics cards
@@ -16,6 +19,7 @@ const COMPARING_LABEL = 'Comparing...';
  * @param {Object} comparisonData - Comparison data from previous period
  * @param {boolean} comparisonLoading - Whether comparison is still being computed
  * @param {string} activeFilter - Active filter type (today, thisWeek, etc.)
+ * @param {boolean} [loading] - When true, stats cards show skeleton loaders
  */
 const DashboardStatsCards = memo(({
   revenueValue = 0,
@@ -26,7 +30,8 @@ const DashboardStatsCards = memo(({
   isPharmacy = false,
   comparisonData = null,
   comparisonLoading = false,
-  activeFilter = null
+  activeFilter = null,
+  loading = false
 }) => {
   const comparingColor = '#666';
   const showComparing = comparisonLoading;
@@ -39,8 +44,8 @@ const DashboardStatsCards = memo(({
   const revenueComparisonColor = showComparing
     ? comparingColor
     : (comparisonData?.revenue
-        ? (comparisonData.revenue.isPositive ? '#166534' : comparisonData.revenue.isNegative ? '#ef4444' : '#666')
-        : '#166534');
+        ? (comparisonData.revenue.isPositive ? ABS_PRIMARY : comparisonData.revenue.isNegative ? '#ef4444' : '#666')
+        : ABS_PRIMARY);
 
   const expenseFormatted = comparisonData?.expenses
     ? formatComparisonText(comparisonData.expenses, comparisonData.label, '₵ ')
@@ -50,7 +55,7 @@ const DashboardStatsCards = memo(({
   const expenseComparisonColor = showComparing
     ? comparingColor
     : (comparisonData?.expenses
-        ? (comparisonData.expenses.isPositive ? '#ef4444' : comparisonData.expenses.isNegative ? '#166534' : '#666')
+        ? (comparisonData.expenses.isPositive ? '#ef4444' : comparisonData.expenses.isNegative ? ABS_PRIMARY : '#666')
         : '#ef4444');
 
   const profitFormatted = comparisonData?.profit
@@ -61,8 +66,8 @@ const DashboardStatsCards = memo(({
   const profitComparisonColor = showComparing
     ? comparingColor
     : (comparisonData?.profit
-        ? (comparisonData.profit.isPositive ? '#166534' : comparisonData.profit.isNegative ? '#ef4444' : '#666')
-        : (profitValue < 0 ? '#ef4444' : '#166534'));
+        ? (comparisonData.profit.isPositive ? ABS_PRIMARY : comparisonData.profit.isNegative ? '#ef4444' : '#666')
+        : (profitValue < 0 ? '#ef4444' : ABS_PRIMARY));
 
   const newCustomersFormatted = comparisonData?.newCustomers
     ? formatComparisonText(comparisonData.newCustomers, comparisonData.label, '')
@@ -72,12 +77,12 @@ const DashboardStatsCards = memo(({
   const newCustomersComparisonColor = showComparing
     ? comparingColor
     : (comparisonData?.newCustomers
-        ? (comparisonData.newCustomers.isPositive ? '#166534' : comparisonData.newCustomers.isNegative ? '#ef4444' : '#666')
+        ? (comparisonData.newCustomers.isPositive ? ABS_PRIMARY : comparisonData.newCustomers.isNegative ? '#ef4444' : '#666')
         : '#666');
 
   return (
     <div
-      className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4 mb-4 md:mb-8"
+      className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 md:gap-4 mb-3 md:mb-8"
       data-tour="dashboard-stats"
     >
       {/* Total Revenue Card */}
@@ -87,11 +92,12 @@ const DashboardStatsCards = memo(({
         value={revenueValue}
         valuePrefix="₵ "
         icon={isShop || isPharmacy ? ShoppingCart : Currency}
-        iconBgColor="rgba(22, 101, 52, 0.1)"
-        iconColor="#166534"
+        iconBgColor="color-mix(in srgb, #166534 10%, transparent)"
+        iconColor={ABS_PRIMARY}
         comparisonText={revenueComparison}
         comparisonColor={revenueComparisonColor}
         trend={revenueTrend}
+        loading={loading}
       />
 
       {/* Total Expenses Card */}
@@ -106,6 +112,7 @@ const DashboardStatsCards = memo(({
         comparisonText={expenseComparison}
         comparisonColor={expenseComparisonColor}
         trend={expenseTrend}
+        loading={loading}
       />
 
       {/* Profit Made Card */}
@@ -120,6 +127,7 @@ const DashboardStatsCards = memo(({
         comparisonText={profitComparison}
         comparisonColor={profitComparisonColor}
         trend={profitTrend}
+        loading={loading}
       />
 
       {/* New Customers Card */}
@@ -128,11 +136,12 @@ const DashboardStatsCards = memo(({
         title="New customers:"
         value={newCustomers}
         icon={Users}
-        iconBgColor="rgba(22, 101, 52, 0.1)"
-        iconColor="#166534"
+        iconBgColor="color-mix(in srgb, #166534 10%, transparent)"
+        iconColor={ABS_PRIMARY}
         comparisonText={newCustomersComparison}
         comparisonColor={newCustomersComparisonColor}
         trend={newCustomersTrend}
+        loading={loading}
       />
     </div>
   );

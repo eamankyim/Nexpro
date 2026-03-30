@@ -22,7 +22,19 @@ const StatusChip = memo(({ status, className, ...props }) => {
     STATUS_CHIP_CLASSES[raw] ??
     STATUS_CHIP_DEFAULT_CLASS;
 
-  const displayOverrides = { active_flag: 'Active', inactive_flag: 'Inactive' };
+  const displayOverrides = {
+    active_flag: 'Active',
+    inactive_flag: 'Inactive',
+    partially_paid: 'Partially paid',
+    success: 'Success',
+    failed: 'Failed',
+    returning: 'Returning',
+    new: 'New',
+    disposed: 'Disposed',
+    sold: 'Sold',
+    sent: 'Sent',
+    pending: 'Pending',
+  };
   const formatStatusText = (s) => {
     if (displayOverrides[s]) return displayOverrides[s];
     return s
@@ -32,7 +44,7 @@ const StatusChip = memo(({ status, className, ...props }) => {
       .join(' ');
   };
 
-  const displayText = formatStatusText(normalizedStatus).toUpperCase();
+  const displayText = displayOverrides[normalizedStatus] ?? formatStatusText(normalizedStatus);
 
   return (
     <Badge

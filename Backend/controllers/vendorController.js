@@ -70,6 +70,31 @@ exports.getVendors = async (req, res, next) => {
   }
 };
 
+// @desc    Export vendors to CSV
+// @route   GET /api/vendors/export
+// @access  Private (admin, manager)
+exports.exportVendors = async (req, res, next) => {
+  try {
+    const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
+    const where = applyTenantFilter(req.tenantId, {});
+
+    const vendors = await Vendor.findAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      raw: true,
+    });
+
+    if (vendors.length === 0) {
+      return res.status(404).json({ success: false, message: 'No vendors to export' });
+    }
+
+    const filename = `vendors_${new Date().toISOString().split('T')[0]}`;
+    sendCSV(res, vendors, `${filename}.csv`, COLUMN_DEFINITIONS.vendors);
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Get single vendor
 // @route   GET /api/vendors/:id
 // @access  Private
@@ -109,6 +134,7 @@ exports.getVendor = async (req, res, next) => {
 exports.createVendor = async (req, res, next) => {
   try {
     const payload = sanitizePayload(req.body);
+    if (payload.email === '') payload.email = null;
     // Normalize empty website string to null to avoid validation errors
     if (payload.website === '' || payload.website === null || payload.website === undefined) {
       payload.website = null;
@@ -144,6 +170,7 @@ exports.updateVendor = async (req, res, next) => {
     }
 
     const payload = sanitizePayload(req.body);
+    if (payload.email === '') payload.email = null;
     // Normalize empty website string to null to avoid validation errors
     if (payload.website === '' || payload.website === null || payload.website === undefined) {
       payload.website = null;

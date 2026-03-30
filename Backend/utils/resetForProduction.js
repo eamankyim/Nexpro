@@ -14,9 +14,10 @@ const {
   InviteToken,
   VendorPriceList,
   Notification,
-  InventoryCategory,
-  InventoryItem,
-  InventoryMovement,
+  // Inventory models were renamed to Material* in the codebase
+  MaterialCategory,
+  MaterialItem,
+  MaterialMovement,
   Lead,
   LeadActivity,
   Setting,
@@ -75,13 +76,13 @@ const resetForProduction = async () => {
     await Lead.destroy({ where: {}, force: true });
     console.log('✅ Leads cleared');
 
-    await InventoryMovement.destroy({ where: {}, force: true });
+    await MaterialMovement.destroy({ where: {}, force: true });
     console.log('✅ Inventory Movements cleared');
 
-    await InventoryItem.destroy({ where: {}, force: true });
+    await MaterialItem.destroy({ where: {}, force: true });
     console.log('✅ Inventory Items cleared');
 
-    await InventoryCategory.destroy({ where: {}, force: true });
+    await MaterialCategory.destroy({ where: {}, force: true });
     console.log('✅ Inventory Categories cleared');
 
     await Notification.destroy({ where: {}, force: true });

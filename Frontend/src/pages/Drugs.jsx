@@ -11,6 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 import { PRODUCT_UNITS } from '../constants';
+import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -80,10 +81,10 @@ const drugSchema = z.object({
   barcode: z.string().optional(),
   description: z.string().optional(),
   drugType: z.string().default('otc'),
-  costPrice: z.coerce.number().min(0, 'Cost must be 0 or greater'),
-  sellingPrice: z.coerce.number().min(0, 'Price must be 0 or greater'),
-  quantityOnHand: z.coerce.number().min(0).default(0),
-  reorderLevel: z.coerce.number().min(0).default(10),
+  costPrice: numberOrEmptySchema(z),
+  sellingPrice: numberOrEmptySchema(z),
+  quantityOnHand: numberOrEmptySchema(z),
+  reorderLevel: numberOrEmptySchema(z),
   unit: z.string().default('pcs'),
   strength: z.string().optional(),
   form: z.string().optional(),
@@ -199,7 +200,7 @@ const Drugs = () => {
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
-            <Pill className="h-4 w-4" style={{ color: '#166534' }} />
+            <Pill className="h-4 w-4" style={{ color: 'var(--color-primary)' }} />
           </div>
           <div>
             <div className="font-medium">{row.original.name}</div>
@@ -407,7 +408,7 @@ const Drugs = () => {
         </div>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button onClick={handleCreate} className="bg-[#166534] hover:bg-[#14532d] text-white">
+            <Button onClick={handleCreate} className="bg-brand hover:bg-brand-dark text-white">
               <Plus className="h-4 w-4 mr-2" />
               Add Drug
             </Button>
@@ -665,7 +666,12 @@ const Drugs = () => {
                     <FormItem>
                       <FormLabel>Cost Price (₵)</FormLabel>
                       <FormControl>
-                        <Input type="number" step="0.01" {...field} />
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={numberInputValue(field.value)}
+                          onChange={(e) => handleNumberChange(e, field.onChange)}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -679,7 +685,12 @@ const Drugs = () => {
                     <FormItem>
                       <FormLabel>Selling Price (₵)</FormLabel>
                       <FormControl>
-                        <Input type="number" step="0.01" {...field} />
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={numberInputValue(field.value)}
+                          onChange={(e) => handleNumberChange(e, field.onChange)}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -695,7 +706,11 @@ const Drugs = () => {
                     <FormItem>
                       <FormLabel>Stock Quantity</FormLabel>
                       <FormControl>
-                        <Input type="number" {...field} />
+                        <Input
+                          type="number"
+                          value={numberInputValue(field.value)}
+                          onChange={(e) => handleNumberChange(e, field.onChange)}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -709,7 +724,11 @@ const Drugs = () => {
                     <FormItem>
                       <FormLabel>Reorder Level</FormLabel>
                       <FormControl>
-                        <Input type="number" {...field} />
+                        <Input
+                          type="number"
+                          value={numberInputValue(field.value)}
+                          onChange={(e) => handleNumberChange(e, field.onChange)}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -786,7 +805,7 @@ const Drugs = () => {
             <Button 
               type="submit" 
               form="drug-form"
-              className="bg-[#166534] hover:bg-[#14532d] text-white"
+              className="bg-brand hover:bg-brand-dark text-white"
               loading={isSubmitting}
             >
               {editingDrug ? 'Update Drug' : 'Create Drug'}

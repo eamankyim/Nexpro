@@ -1,4 +1,9 @@
 const { Notification } = require('../models');
+const {
+  getPreferencesForUsers,
+  isNotificationChannelEnabled,
+  normalizeNotificationCategory
+} = require('./notificationPreferenceHelper');
 
 const logPrefix = '[Notifications]';
 
@@ -23,6 +28,19 @@ const createNotification = async ({
       title
     });
     return null;
+  }
+
+  const gatedCategory = normalizeNotificationCategory(type);
+  if (gatedCategory && (channels || []).includes('in_app')) {
+    const prefsMap = await getPreferencesForUsers([userId]);
+    const prefs = prefsMap.get(userId);
+    if (!isNotificationChannelEnabled(prefs, gatedCategory, 'in_app')) {
+      console.log(`${logPrefix} Skipping in-app notification (user preference)`, {
+        userId,
+        type: gatedCategory
+      });
+      return null;
+    }
   }
 
   try {
@@ -93,7 +111,26 @@ const notifyUsers = async ({ tenantId, userIds, payload = {}, transaction = null
     return [];
   }
 
-  const notifications = uniqueUserIds.map((userId) => ({
+  const prefsMap = await getPreferencesForUsers(uniqueUserIds);
+  const categoryForPrefs = payload.type || 'info';
+  const gatedCategory = normalizeNotificationCategory(categoryForPrefs);
+
+  const eligibleUserIds = uniqueUserIds.filter((uid) => {
+    if (!gatedCategory) return true;
+    const ch = payload.channels || ['in_app'];
+    if (!ch.includes('in_app')) return true;
+    return isNotificationChannelEnabled(prefsMap.get(uid), gatedCategory, 'in_app');
+  });
+
+  if (eligibleUserIds.length === 0) {
+    console.log(`${logPrefix} notifyUsers: no recipients after preference filter`, {
+      category: gatedCategory,
+      requested: uniqueUserIds.length
+    });
+    return [];
+  }
+
+  const notifications = eligibleUserIds.map((userId) => ({
     ...payload,
     tenantId,
     userId,

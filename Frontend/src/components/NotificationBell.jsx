@@ -42,6 +42,7 @@ const NotificationBell = () => {
     queryFn: () => notificationService.getSummary(),
     enabled: !!activeTenantId,
     staleTime: SUMMARY_STALE_MS,
+    refetchOnMount: 'always',
     refetchInterval: SUMMARY_REFETCH_MS,
     retry: (failureCount, error) => {
       const isNetworkError = error?.code === 'ERR_NETWORK' || error?.message === 'Network Error';
@@ -60,6 +61,7 @@ const NotificationBell = () => {
     queryFn: () => notificationService.getNotifications({ page: 1, limit: PAGE_SIZE }),
     enabled: !!activeTenantId && open,
     staleTime: LIST_STALE_MS,
+    refetchOnMount: 'always',
     refetchOnWindowFocus: false,
   });
 
@@ -355,15 +357,14 @@ const NotificationBell = () => {
           }}
           disabled={loadingSummary}
           className={cn(
-            'relative bg-muted hover:bg-muted/80 rounded-full',
-            'h-11 w-11 min-h-[44px] min-w-[44px]',
+            'relative bg-muted/60 hover:bg-muted/80 rounded-full py-1 px-[3px]',
             'flex items-center justify-center'
           )}
         >
           {loadingSummary ? (
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           ) : (
-            <Bell className="h-5 w-5" />
+            <Bell className="h-6 w-6" />
           )}
           {summary.unread > 0 && (
             <span

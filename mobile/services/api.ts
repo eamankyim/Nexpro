@@ -58,6 +58,8 @@ export const createCancelToken = (requestId: string): CancelTokenSource => {
 const isPublicEndpoint = (url?: string) =>
   url?.includes('/auth/login') ||
   url?.includes('/auth/register') ||
+  url?.includes('/auth/google') ||
+  url?.includes('/auth/config') ||
   url?.includes('/auth/sso') ||
   url?.includes('/tenants/signup') ||
   url?.includes('/invites/validate');
@@ -100,7 +102,6 @@ api.interceptors.response.use(
     return response;
   },
   async (error) => {
-    // Don't log errors for canceled requests
     if (axios.isCancel(error)) {
       logger.debug('API', 'Request canceled:', error.message);
       return Promise.reject(error);
@@ -109,16 +110,21 @@ api.interceptors.response.use(
     const url = error.config?.url?.replace(error.config.baseURL || '', '') || 'unknown';
     const status = error.response?.status;
     const msg = error.response?.data?.error || error.response?.data?.message || error.message;
+    const isNetworkError =
+      error.code === 'ECONNREFUSED' ||
+      error.code === 'ECONNABORTED' ||
+      error.message === 'Network Error' ||
+      (typeof error.message === 'string' && error.message.toLowerCase().includes('timeout'));
 
-    logger.error('API', `← ${status || 'ERR'} ${url}:`, msg || error.message);
+    if (isNetworkError) {
+      logger.warn('API', `← ${url}: ${error.message || 'unreachable'}. Check backend is running and EXPO_PUBLIC_API_URL.`);
+    } else {
+      logger.error('API', `← ${status || 'ERR'} ${url}:`, msg || error.message);
+    }
 
     if (status === 401) {
       logger.info('API', '401 Unauthorized - clearing token');
       await SecureStore.deleteItemAsync('token');
-    }
-
-    if (error.code === 'ECONNREFUSED' || error.message === 'Network Error') {
-      logger.error('API', 'Connection refused. Check EXPO_PUBLIC_API_URL and backend is running.');
     }
 
     return Promise.reject(error);

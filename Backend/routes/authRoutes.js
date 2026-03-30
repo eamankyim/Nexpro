@@ -3,6 +3,7 @@ const {
   register,
   login,
   getMe,
+  getPublicConfig,
   googleAuth,
   updateDetails,
   updatePassword,
@@ -12,7 +13,9 @@ const {
   verifyEmail,
   resendVerification,
   sabitoSSO,
-  verifyNexproToken
+  verifyNexproToken,
+  checkEmailAvailability,
+  updateNotificationPreferences,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/auth');
 const { authLimiter, registrationLimiter, passwordResetLimiter } = require('../middleware/rateLimiter');
@@ -21,13 +24,19 @@ const router = express.Router();
 
 // Apply stricter rate limiting to auth endpoints
 router.post('/register', registrationLimiter, register);
+router.post('/check-email', registrationLimiter, checkEmailAvailability);
 router.post('/login', authLimiter, login);
 router.post('/google', authLimiter, googleAuth);
 router.post('/sso/sabito', authLimiter, sabitoSSO);
 console.log('[AUTH ROUTES] ✅ POST /api/auth/sso/sabito route registered');
-// Endpoint for Sabito to verify ShopWISE tokens (for reverse SSO)
+// Endpoint for Sabito to verify ABS tokens (for reverse SSO)
 router.get('/verify-token', verifyNexproToken);
+// Public config (Google client ID etc.) – no auth
+router.get('/config', getPublicConfig);
+console.log('[AUTH ROUTES] ✅ GET /api/auth/config registered');
+console.log('[AUTH ROUTES] ✅ POST /api/auth/check-email registered');
 router.get('/me', protect, getMe);
+router.patch('/notification-preferences', protect, updateNotificationPreferences);
 router.put('/updatedetails', protect, updateDetails);
 router.put('/updatepassword', protect, updatePassword);
 router.put('/set-initial-password', protect, setInitialPassword);

@@ -30,6 +30,7 @@ import { Switch } from '@/components/ui/switch';
 import DashboardTable from '../components/DashboardTable';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import TableSkeleton from '../components/TableSkeleton';
+import StatusChip from '../components/StatusChip';
 import { showSuccess, showError } from '../utils/toast';
 import api from '../services/api';
 
@@ -103,7 +104,7 @@ const Pharmacies = () => {
       cell: ({ row }) => (
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center">
-            <Building2 className="h-4 w-4" style={{ color: '#166534' }} />
+            <Building2 className="h-4 w-4" style={{ color: 'var(--color-primary)' }} />
           </div>
           <div>
             <div className="font-medium">{row.original.name}</div>
@@ -141,11 +142,7 @@ const Pharmacies = () => {
       accessorKey: 'isActive',
       header: 'Status',
       cell: ({ row }) => (
-        <span className={`px-2 py-1 rounded-full text-xs font-medium border ${
-          row.original.isActive ? STATUS_CHIP_CLASSES.active_flag : STATUS_CHIP_CLASSES.inactive_flag
-        }`}>
-          {row.original.isActive ? 'Active' : 'Inactive'}
-        </span>
+        <StatusChip status={row.original.isActive ? 'active_flag' : 'inactive_flag'} />
       ),
     },
     {
@@ -220,7 +217,7 @@ const Pharmacies = () => {
         </div>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button onClick={handleCreate} className="bg-[#166534] hover:bg-[#14532d] text-white">
+            <Button onClick={handleCreate} className="bg-brand hover:bg-brand-dark text-white">
               <Plus className="h-4 w-4 mr-2" />Add Pharmacy
             </Button>
           </TooltipTrigger>
@@ -360,7 +357,7 @@ const Pharmacies = () => {
               
               <div className="flex justify-end gap-2 pt-4">
                 <SecondaryButton type="button" onClick={() => setIsModalOpen(false)}>Cancel</SecondaryButton>
-                <Button type="submit" className="bg-[#166534] hover:bg-[#14532d] text-white" loading={isSubmitting}>
+                <Button type="submit" className="bg-brand hover:bg-brand-dark text-white" loading={isSubmitting}>
                   {editingPharmacy ? 'Update' : 'Create'}
                 </Button>
               </div>

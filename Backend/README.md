@@ -1,4 +1,4 @@
-# ShopWISE - Business Management System - Backend API
+# ABS (African Business Suite) - Business Management System - Backend API
 
 A comprehensive backend API for managing studio operations including customers, jobs, services, vendors, payments, expenses, and pricing.
 

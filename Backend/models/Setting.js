@@ -11,7 +11,7 @@ const Setting = sequelize.define(
     },
     tenantId: {
       type: DataTypes.UUID,
-      allowNull: false,
+      allowNull: true, // Null for platform-wide settings (no specific tenant)
       references: {
         model: 'tenants',
         key: 'id'

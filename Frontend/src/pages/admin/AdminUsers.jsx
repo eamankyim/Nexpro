@@ -7,9 +7,9 @@ import adminService from '../../services/adminService';
 import { showError, showSuccess } from '../../utils/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import DashboardTable from '../../components/DashboardTable';
+import StatusChip from '../../components/StatusChip';
 import ViewToggle from '../../components/ViewToggle';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useSmartSearch } from '../../context/SmartSearchContext';
@@ -169,16 +169,9 @@ const AdminUsers = () => {
     {
       key: 'isActive',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => (
-        <Badge
-          className={
-            record?.isActive
-              ? 'bg-green-700 text-white'
-              : 'bg-gray-500 text-white'
-          }
-        >
-          {record?.isActive ? 'Active' : 'Inactive'}
-        </Badge>
+        <StatusChip status={record?.isActive ? 'active_flag' : 'inactive_flag'} />
       ),
     },
     {
@@ -204,7 +197,7 @@ const AdminUsers = () => {
               onClick={() => handleOpenEdit(record)}
             >
               <Pencil className="h-4 w-4" />
-              {!isMobile && <span className="ml-2">Edit</span>}
+              <span className="ml-2">Edit</span>
             </Button>
           </div>
         ) : null,
@@ -231,7 +224,7 @@ const AdminUsers = () => {
             Manage platform administrators with access to the Control Center.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Button
             variant="outline"
@@ -246,9 +239,9 @@ const AdminUsers = () => {
             )}
           </Button>
           {hasPermission('users.manage') && (
-            <Button onClick={handleOpenCreate} size={isMobile ? 'icon' : 'default'}>
+            <Button onClick={handleOpenCreate} className="flex-1 min-w-0 md:flex-none">
               <Plus className="h-4 w-4" />
-              {!isMobile && <span className="ml-2">Add User</span>}
+              <span className="ml-2">Add User</span>
             </Button>
           )}
         </div>
@@ -261,7 +254,7 @@ const AdminUsers = () => {
               className="p-2 rounded-lg"
               style={{ backgroundColor: 'rgba(22, 101, 52, 0.1)' }}
             >
-              <UserCog className="h-5 w-5" style={{ color: '#166534' }} />
+              <UserCog className="h-5 w-5" style={{ color: 'var(--color-primary)' }} />
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Total Users</p>

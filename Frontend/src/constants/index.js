@@ -5,6 +5,9 @@
  * and business rules used throughout the application.
  */
 
+/** App display name (branding). Use useBranding().appName when inside BrandingProvider for tenant customization. */
+export const APP_NAME = 'ABS';
+
 // API Configuration
 export const API_CONFIG = {
   TIMEOUT: 30000, // 30 seconds
@@ -76,6 +79,9 @@ export const BUSINESS_TYPES = {
 
 /** Business types that use Jobs (studio-like: printing press, mechanic, barber, salon) */
 export const STUDIO_LIKE_TYPES = ['printing_press', 'mechanic', 'barber', 'salon', 'studio'];
+
+/** Phase 2: set to true to show Shops menu and page for shop business type */
+export const SHOW_SHOPS = false;
 
 // Job Statuses
 export const JOB_STATUSES = {
@@ -263,6 +269,7 @@ export const STATUS_CHIP_CLASSES = {
   // Sale statuses
   completed: CHIP_GREEN,
   pending: CHIP_ORANGE,
+  partially_paid: CHIP_ORANGE,
   // Payroll run statuses (approved, paid same as expense)
   // Employee statuses
   active: CHIP_BLUE,
@@ -292,6 +299,8 @@ export const STATUS_CHIP_CLASSES = {
   syncing: CHIP_BLUE,
   synced: CHIP_GREEN,
   failed: CHIP_RED,
+  /** Automation rule run outcome */
+  success: CHIP_GREEN,
   sending: CHIP_BLUE,
   ready: CHIP_GRAY,
   processing: CHIP_BLUE,
@@ -317,6 +326,11 @@ export const STATUS_CHIP_CLASSES = {
   expired: CHIP_RED,
   contacted: CHIP_BLUE,
   accepted: CHIP_GREEN,
+  /** Equipment asset lifecycle */
+  disposed: CHIP_GRAY,
+  sold: CHIP_ORANGE,
+  /** Customer account type (vs workflow status) */
+  returning: CHIP_BLUE,
 };
 
 /** Priority → Tailwind classes for priority chips (Jobs, Leads). */
@@ -343,6 +357,49 @@ export const PAYMENT_METHODS = {
   CHEQUE: 'cheque',
   CARD: 'card',
   OTHER: 'other',
+};
+
+/**
+ * Africa-focused MoMo markets (copy for UI copy, provider hints, docs).
+ * Backend: Backend/config/africaPaymentMarkets.js
+ * Customer-facing POS / pay links: prefer cash + MoMo (direct APIs) + card (Paystack).
+ */
+export const AFRICA_MOMO_MARKETS = [
+  {
+    countryCode: 'GH',
+    currency: 'GHS',
+    dialCode: '233',
+    label: 'Ghana',
+    operators: [
+      { code: 'MTN', label: 'MTN Mobile Money', prefixes: ['24', '54', '55', '59'] },
+      { code: 'AIRTEL', label: 'AirtelTigo Money', prefixes: ['26', '27', '57'] },
+      { code: 'VODAFONE', label: 'Vodafone Cash', prefixes: ['20', '50'], apiReady: false }
+    ]
+  },
+  {
+    countryCode: 'UG',
+    currency: 'UGX',
+    dialCode: '256',
+    label: 'Uganda',
+    operators: [
+      { code: 'MTN', label: 'MTN Mobile Money', prefixes: ['77', '78', '76'] },
+      { code: 'AIRTEL', label: 'Airtel Money', prefixes: ['70', '75'] }
+    ]
+  },
+  {
+    countryCode: 'KE',
+    currency: 'KES',
+    dialCode: '254',
+    label: 'Kenya',
+    operators: [{ code: 'AIRTEL', label: 'Airtel Money', prefixes: ['73', '78'] }]
+  }
+];
+
+/** Payment rails exposed to customers at POS / public pay: cash, direct MoMo, card (PSP). */
+export const CUSTOMER_PAYMENT_RAILS = {
+  CASH: 'cash',
+  MOBILE_MONEY: 'mobile_money',
+  CARD: 'card'
 };
 
 // Default Values
@@ -385,6 +442,7 @@ export const SEARCH_PLACEHOLDERS = {
   INVOICES: 'Invoice #, customer, or amount...',
   LEADS: 'Name, company, or email...',
   JOBS: 'Job #, title, or customer...',
+  DELIVERIES: 'Job or sale #, customer, phone, or address...',
   QUOTES: 'Quote #, customer, or title...',
   VENDORS: 'Name, company, or category...',
   ASSETS: 'Name, tag, or location...',
@@ -566,6 +624,28 @@ export const ORDER_STATUS_LABELS = {
   [ORDER_STATUSES.COMPLETED]: 'Completed',
 };
 
+/** First-party delivery (jobs + sales); when set, public tracking shows this timeline only */
+export const DELIVERY_STATUSES = {
+  READY_FOR_DELIVERY: 'ready_for_delivery',
+  OUT_FOR_DELIVERY: 'out_for_delivery',
+  DELIVERED: 'delivered',
+  RETURNED: 'returned',
+};
+
+export const DELIVERY_STATUS_LABELS = {
+  [DELIVERY_STATUSES.READY_FOR_DELIVERY]: 'Ready for delivery',
+  [DELIVERY_STATUSES.OUT_FOR_DELIVERY]: 'Out for delivery',
+  [DELIVERY_STATUSES.DELIVERED]: 'Delivered',
+  [DELIVERY_STATUSES.RETURNED]: 'Returned',
+};
+
+export const DELIVERY_STATUS_ORDER = [
+  DELIVERY_STATUSES.READY_FOR_DELIVERY,
+  DELIVERY_STATUSES.OUT_FOR_DELIVERY,
+  DELIVERY_STATUSES.DELIVERED,
+  DELIVERY_STATUSES.RETURNED,
+];
+
 // Shop Types (from backend config)
 export const SHOP_TYPES = {
   SUPERMARKET: 'supermarket',
@@ -610,18 +690,18 @@ export const SHOP_TYPE_FIELDS = {
   [SHOP_TYPES.SUPERMARKET]: ['expiryDate', 'batchNumber', 'isPerishable'],
   [SHOP_TYPES.CONVENIENCE]: ['expiryDate', 'batchNumber', 'isPerishable'],
   
-  // Fields for electronics stores
-  [SHOP_TYPES.ELECTRONICS]: ['serialNumber', 'warrantyPeriod', 'specifications'],
+  // Fields for electronics stores (model = variant e.g. SKU/model number)
+  [SHOP_TYPES.ELECTRONICS]: ['serialNumber', 'warrantyPeriod', 'specifications', 'hasVariants', 'models'],
   
-  // Fields for hardware stores
-  [SHOP_TYPES.HARDWARE]: ['dimensions', 'weight', 'material'],
+  // Fields for hardware stores (model = variant e.g. pump model, tool model)
+  [SHOP_TYPES.HARDWARE]: ['dimensions', 'weight', 'material', 'hasVariants', 'models'],
   
   // Fields for clothing and beauty (variants)
   [SHOP_TYPES.CLOTHING]: ['hasVariants', 'sizes', 'colors'],
   [SHOP_TYPES.BEAUTY]: ['expiryDate', 'batchNumber', 'hasVariants', 'sizes'],
   
-  // Fields for auto parts
-  [SHOP_TYPES.AUTO_PARTS]: ['partNumber', 'compatibility', 'vehicleModels'],
+  // Fields for auto parts (model = variant e.g. part model)
+  [SHOP_TYPES.AUTO_PARTS]: ['partNumber', 'compatibility', 'vehicleModels', 'hasVariants', 'models'],
   
   // Fields for bookstore and stationery
   [SHOP_TYPES.BOOKSTORE]: ['isbn', 'author', 'publisher'],
@@ -642,7 +722,7 @@ export const SHOP_TYPE_FIELDS = {
   // Restaurant (size for pizza, etc.: small, medium, large, XL; hasVariants for size-based pricing; optionalFoods = add-ons)
   [SHOP_TYPES.RESTAURANT]: ['expiryDate', 'isPerishable', 'allergens', 'optionalFoods', 'size', 'hasVariants'],
   
-  [SHOP_TYPES.OTHER]: [],
+  [SHOP_TYPES.OTHER]: ['hasVariants', 'models'],
 };
 
 // Fields to hide per shop type (simplify form)
@@ -747,6 +827,7 @@ export const PRODUCT_FIELD_LABELS = {
   hasVariants: 'Has Variants',
   sizes: 'Available Sizes',
   colors: 'Available Colors',
+  models: 'Available Models (optional)',
   partNumber: 'Part Number (optional)',
   compatibility: 'Compatibility (optional)',
   vehicleModels: 'Vehicle Models (optional)',
@@ -826,4 +907,29 @@ export const getStockStatusConfig = (quantity, reorderLevel) => {
     default:
       return { color: 'default', label: 'In Stock' };
   }
+};
+
+/** Keys must stay in sync with Backend/services/notificationPreferenceHelper.js */
+export const NOTIFICATION_PREFERENCE_CATEGORY_ORDER = [
+  'job',
+  'lead',
+  'invoice',
+  'payment',
+  'order',
+  'quote',
+  'alert',
+  'expense',
+  'user',
+];
+
+export const NOTIFICATION_PREFERENCE_CATEGORY_LABELS = {
+  job: 'Jobs',
+  lead: 'Leads',
+  invoice: 'Invoices',
+  payment: 'Payments',
+  order: 'Orders (kitchen / POS)',
+  quote: 'Quotes',
+  alert: 'Alerts & low stock',
+  expense: 'Expenses',
+  user: 'Team & invitations',
 };

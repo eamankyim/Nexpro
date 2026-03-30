@@ -73,13 +73,18 @@ const Sale = sequelize.define('Sale', {
     defaultValue: 0
   },
   status: {
-    type: DataTypes.ENUM('pending', 'completed', 'cancelled', 'refunded'),
+    type: DataTypes.ENUM('pending', 'partially_paid', 'completed', 'cancelled', 'refunded'),
     allowNull: false,
     defaultValue: 'completed'
   },
   // Restaurant order tracking (received, preparing, ready, completed)
   orderStatus: {
     type: DataTypes.STRING(20),
+    allowNull: true
+  },
+  /** First-party delivery: when set, public tracking shows delivery timeline only. */
+  deliveryStatus: {
+    type: DataTypes.STRING(32),
     allowNull: true
   },
   // Invoice reference (if invoice was generated)
@@ -105,6 +110,11 @@ const Sale = sequelize.define('Sale', {
   metadata: {
     type: DataTypes.JSONB,
     defaultValue: {}
+  },
+  // Offline sync idempotency: client-generated id so duplicate syncs are ignored
+  clientId: {
+    type: DataTypes.STRING(255),
+    allowNull: true
   }
 }, {
   tableName: 'sales',
@@ -112,6 +122,9 @@ const Sale = sequelize.define('Sale', {
   indexes: [
     {
       fields: ['tenantId']
+    },
+    {
+      fields: ['clientId']
     },
     {
       fields: ['shopId']

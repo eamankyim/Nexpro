@@ -38,3 +38,26 @@ export const numberOrEmptySchema = (z) =>
  */
 export const optionalNumberOrEmptySchema = (z) =>
   z.union([z.number(), z.literal('')]).transform((v) => (v === '' ? undefined : v)).optional();
+
+/**
+ * Use as Input onChange for integer fields so user can clear the field.
+ * @param {React.ChangeEvent<HTMLInputElement>} e - Change event
+ * @param {function} onChange - Form field onChange
+ */
+export const handleIntegerChange = (e, onChange) => {
+  const raw = e.target.value;
+  if (raw === '') {
+    onChange('');
+    return;
+  }
+  const n = parseInt(raw, 10);
+  onChange(Number.isNaN(n) ? '' : n);
+};
+
+/**
+ * Zod schema helper: accept integer or empty string, transform '' to defaultVal on submit.
+ * @param {object} z - Zod
+ * @param {number} defaultVal - Value when input is '' (e.g. 0 or 1)
+ */
+export const integerOrEmptySchema = (z, defaultVal = 0) =>
+  z.union([z.number().int(), z.literal('')]).transform((v) => (v === '' ? defaultVal : v));

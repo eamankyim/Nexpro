@@ -1,37 +1,44 @@
-# Deploying Nexpro to Vercel
+# Deploying ABS (African Business Suite) to Vercel
 
 This guide covers deploying the **Backend**, **Frontend**, and **Marketing Site** as **three separate Vercel projects** from this monorepo.
 
 ---
 
-## ShopWISE Africa production domains
+## ABS / African Business Suite production domains
 
-The production app is served at **myapp.shopwiseafrica.com** (any previous Vercel preview URL such as `nexpro-frontend-dusky.vercel.app` is no longer used). When the app is deployed on these domains, use the following so the frontend and API stay connected:
+The production app is served at **myapp.africanbusinesssuite.com** (any previous Vercel preview URL such as `nexpro-frontend-dusky.vercel.app` is no longer used). When the app is deployed on these domains, use the following so the frontend and API stay connected:
 
 | Role | Domain |
 |------|--------|
-| **API (Backend)** | `https://api.shopwiseafrica.com` |
-| **App (Frontend)** | `https://myapp.shopwiseafrica.com` |
-| **Website** | `https://shopwiseafrica.com` |
+| **API (Backend)** | `https://api.africanbusinesssuite.com` |
+| **App (Frontend)** | `https://myapp.africanbusinesssuite.com` |
+| **Website** | `https://africanbusinesssuite.com` |
 
-### Backend (api.shopwiseafrica.com)
+### Backend (api.africanbusinesssuite.com)
 
 Set these environment variables on the API server:
 
-- **`CORS_ORIGIN`** = `https://myapp.shopwiseafrica.com,https://shopwiseafrica.com`  
+- **`CORS_ORIGIN`** = `https://myapp.africanbusinesssuite.com,https://africanbusinesssuite.com`  
   (so both the app and the website can call the API)
-- **`FRONTEND_URL`** = `https://myapp.shopwiseafrica.com`  
+- **`FRONTEND_URL`** = `https://myapp.africanbusinesssuite.com`  
   (for auth redirects, invite links, and email links)
 
-### Frontend (myapp.shopwiseafrica.com)
+### Frontend (myapp.africanbusinesssuite.com)
 
-- The app automatically uses `https://api.shopwiseafrica.com` when it is served from `myapp.shopwiseafrica.com` or `shopwiseafrica.com`, so **`VITE_API_URL`** is optional for that deployment.
-- To override, set **`VITE_API_URL`** = `https://api.shopwiseafrica.com`.
+- The app automatically uses `https://api.africanbusinesssuite.com` when it is served from `myapp.africanbusinesssuite.com` or `africanbusinesssuite.com`, so **`VITE_API_URL`** is optional for that deployment.
+- To override, set **`VITE_API_URL`** = `https://api.africanbusinesssuite.com`.
 
-### Website (shopwiseafrica.com)
+### Website (africanbusinesssuite.com)
 
-- If the website only links to the app (e.g. “Log in” → myapp.shopwiseafrica.com), no API env is needed on the website.
-- If the website makes API calls, ensure the backend has `https://shopwiseafrica.com` in **`CORS_ORIGIN`** (see above).
+- If the website only links to the app (e.g. “Log in” → myapp.africanbusinesssuite.com), no API env is needed on the website.
+- If the website makes API calls, ensure the backend has `https://africanbusinesssuite.com` in **`CORS_ORIGIN`** (see above).
+
+### CORS: "No 'Access-Control-Allow-Origin' header" from myapp.africanbusinesssuite.com
+
+- **Set CORS on the Backend (API) project** — the project that serves your API domain (e.g. `api.africanbusinesssuite.com`). CORS is enforced by the API server, not the frontend.
+- In that project's env: **`CORS_ORIGIN`** = `https://myapp.africanbusinesssuite.com` (no trailing slash; add `,https://africanbusinesssuite.com` if the marketing site calls the API). **`FRONTEND_URL`** = `https://myapp.africanbusinesssuite.com` (also added to allowed origins).
+- **Redeploy the Backend** after changing env vars so the new values are applied.
+- Ensure the **Frontend** project uses **`VITE_API_URL`** = `https://api.africanbusinesssuite.com` (or leave unset when the app is served from myapp.africanbusinesssuite.com so it auto-uses that API), then redeploy the frontend.
 
 ---
 
@@ -77,8 +84,8 @@ In **Settings** → **Environment Variables**, add:
 | `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@host:5432/db?sslmode=require` |
 | `JWT_SECRET` | Secret for JWT signing | `openssl rand -base64 32` |
 | `JWT_EXPIRE` | Token expiry | `7d` |
-| `CORS_ORIGIN` | Allowed frontend origins (comma‑separated) | `https://myapp.shopwiseafrica.com,https://shopwiseafrica.com` |
-| `FRONTEND_URL` | Main app URL (invites, etc.) | `https://myapp.shopwiseafrica.com` |
+| `CORS_ORIGIN` | Allowed frontend origins (comma‑separated) | `https://myapp.africanbusinesssuite.com,https://africanbusinesssuite.com` |
+| `FRONTEND_URL` | Main app URL (invites, etc.) | `https://myapp.africanbusinesssuite.com` |
 
 Optional (see `Backend/env.example`):
 
@@ -86,6 +93,22 @@ Optional (see `Backend/env.example`):
 - Sabito, WhatsApp, OpenAI, Mobile Money, etc.
 
 Add these for **Production** (and **Preview** if you use branch deploys).
+
+### 2.3.1 Database migrations (do not skip)
+
+Whenever backend code adds or changes database columns, run migrations against the **same** database as `DATABASE_URL` **before or immediately after** that code reaches production. From a machine that can reach Postgres:
+
+```bash
+cd Backend && npm run migrate
+```
+
+To apply only the customer job-tracking column on `jobs` (if the full migrate script is not an option):
+
+```bash
+cd Backend && node migrations/add-view-token-to-jobs.js
+```
+
+If migrations are not applied, Sequelize will still issue `SELECT`/`INSERT` including new fields and Postgres will error (for example **`column Job.viewToken does not exist`**), which surfaces as **500** on **`GET /api/jobs`**.
 
 ### 2.4 Deploy
 
@@ -116,7 +139,7 @@ Add these for **Production** (and **Preview** if you use branch deploys).
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `VITE_API_URL` | Backend API base URL (**required** unless on myapp.shopwiseafrica.com) | `https://api.shopwiseafrica.com` |
+| `VITE_API_URL` | Backend API base URL (**required** unless on myapp.africanbusinesssuite.com) | `https://api.africanbusinesssuite.com` |
 
 Optional:
 
@@ -125,7 +148,7 @@ Optional:
 
 ### 3.4 Deploy
 
-Deploy and note the Frontend URL (production: `https://myapp.shopwiseafrica.com`).
+Deploy and note the Frontend URL (production: `https://myapp.africanbusinesssuite.com`).
 
 ### 3.5 Wire Backend ↔ Frontend
 
@@ -152,7 +175,7 @@ Use defaults (`npm run build`, Next.js output).
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `NEXT_PUBLIC_APP_URL` | Main app URL for redirects | `https://myapp.shopwiseafrica.com` |
+| `NEXT_PUBLIC_APP_URL` | Main app URL for redirects | `https://myapp.africanbusinesssuite.com` |
 
 If set, `/signup` and `/login` on the marketing site redirect to the main app.
 
@@ -201,7 +224,7 @@ Ensure **Root Directory** is set correctly for each project in the Vercel dashbo
 
 ### Backend (serverless)
 
-- **WebSockets**: Not supported on Vercel serverless. Real‑time features use HTTP fallbacks where implemented.
+- **WebSockets**: Not supported on Vercel serverless. Real‑time features use HTTP fallbacks where implemented. Requests to `/socket.io/` return **503** with a JSON body so the client can detect that WebSocket is unavailable. To avoid connection attempts and log noise, set **`VITE_WS_ENABLED=false`** in the Frontend project when the API is deployed on Vercel.
 - **File uploads**: The `/uploads` directory is not persistent. Use **Vercel Blob**, **S3**, or similar for production file storage.
 - **Cron / background jobs**: `node-cron` and long‑running processes do not run on serverless. Use [Vercel Cron](https://vercel.com/docs/cron-jobs) or an external scheduler for Sabito sync, reminders, etc.
 - **`maxDuration`**: `Backend/vercel.json` sets `maxDuration: 60` for the API handler. This requires a **Pro** plan; **Hobby** is limited to 10s. Adjust or remove if needed.
@@ -209,6 +232,8 @@ Ensure **Root Directory** is set correctly for each project in the Vercel dashbo
 ### Frontend
 
 - **`VITE_API_URL`** must be set in production. The app shows an error banner if it’s missing on a Vercel deployment.
+
+- **`VITE_WS_ENABLED=false`** recommended when the API is on Vercel (no WebSocket support); avoids connection attempts and 503s for `/socket.io/`.
 
 ### Marketing site
 
@@ -231,6 +256,7 @@ Use the same domains in `CORS_ORIGIN`, `FRONTEND_URL`, and `VITE_API_URL` as nee
 
 | Issue | Check |
 |-------|--------|
+| **404 DEPLOYMENT_NOT_FOUND** (e.g. on myapp.africanbusinesssuite.com/view-quote/…) | Vercel can’t find the deployment. In Vercel → your **Frontend** project: **Deployments** → ensure there is a successful production deployment; **Settings → Domains** → ensure the domain (e.g. myapp.africanbusinesssuite.com) is set and assigned to **Production** (not an old/deleted deployment). Then trigger a new production deploy from the main branch. |
 | Backend 404 / 500 | Root Directory = `Backend`, `DATABASE_URL` set, redeploy after env changes |
 | Frontend “VITE_API_URL not set” | Add `VITE_API_URL` in Frontend project env and redeploy |
 | CORS errors | Add Frontend (and marketing) URLs to Backend `CORS_ORIGIN` |

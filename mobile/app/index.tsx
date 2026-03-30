@@ -5,7 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { logger } from '@/utils/logger';
 
 export default function Index() {
-  const { user, loading } = useAuth();
+  const { user, loading, activeTenant } = useAuth();
 
   useEffect(() => {
     if (loading) {
@@ -13,13 +13,19 @@ export default function Index() {
       return;
     }
     if (user) {
-      logger.info('Index', 'User logged in, redirecting to tabs');
-      router.replace('/(tabs)');
+      const onboardingCompleted = activeTenant?.metadata?.onboarding?.completedAt;
+      if (onboardingCompleted) {
+        logger.info('Index', 'User logged in, onboarding done, redirecting to tabs');
+        router.replace('/(tabs)');
+      } else {
+        logger.info('Index', 'User logged in, onboarding not done, redirecting to onboarding');
+        router.replace('/onboarding');
+      }
     } else {
       logger.info('Index', 'No user, redirecting to login');
       router.replace('/login');
     }
-  }, [user, loading]);
+  }, [user, loading, activeTenant]);
 
   return (
     <View style={styles.container}>

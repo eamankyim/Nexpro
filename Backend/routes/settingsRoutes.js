@@ -20,13 +20,26 @@ const {
   getEmailSettings,
   updateEmailSettings,
   testEmailConnection,
+  getNotificationChannels,
+  updateCustomerNotificationPreferences,
+  getQuoteWorkflow,
+  updateQuoteWorkflow,
+  getJobInvoiceSettings,
+  updateJobInvoiceSettings,
   getPOSConfig,
   updatePOSConfig,
   uploadProfilePicture,
   uploadOrganizationLogo,
   getPaymentCollectionBanks,
   getPaymentCollectionSettings,
-  updatePaymentCollectionSettings
+  getPaystackWorkspaceTransactions,
+  updatePaymentCollectionSettings,
+  verifyPaymentCollectionPassword,
+  sendPaymentCollectionOtp,
+  verifyPaymentCollectionOtp,
+  updateMtnCollectionCredentials,
+  testMtnCollectionCredentials,
+  disconnectMtnCollectionCredentials
 } = require('../controllers/settingsController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
@@ -132,16 +145,69 @@ router.post(
   testEmailConnection
 );
 
+router.get('/notification-channels', getNotificationChannels);
+router.put(
+  '/customer-notification-preferences',
+  authorize('admin', 'manager'),
+  updateCustomerNotificationPreferences
+);
+
+router
+  .route('/quote-workflow')
+  .get(getQuoteWorkflow)
+  .put(authorize('admin', 'manager'), updateQuoteWorkflow);
+
+router
+  .route('/job-invoice')
+  .get(getJobInvoiceSettings)
+  .put(authorize('admin', 'manager'), updateJobInvoiceSettings);
+
 router
   .route('/pos-config')
   .get(getPOSConfig)
   .put(authorize('admin', 'manager'), updatePOSConfig);
 
 router.get('/payment-collection/banks', getPaymentCollectionBanks);
+router.get(
+  '/payment-collection/paystack-transactions',
+  authorize('admin', 'manager'),
+  getPaystackWorkspaceTransactions
+);
+router.post(
+  '/payment-collection/verify-password',
+  authorize('admin', 'manager'),
+  verifyPaymentCollectionPassword
+);
+router.post(
+  '/payment-collection/send-otp',
+  authorize('admin', 'manager'),
+  sendPaymentCollectionOtp
+);
+router.post(
+  '/payment-collection/verify-otp',
+  authorize('admin', 'manager'),
+  verifyPaymentCollectionOtp
+);
 router
   .route('/payment-collection')
   .get(getPaymentCollectionSettings)
   .put(authorize('admin', 'manager'), updatePaymentCollectionSettings);
+
+router.put(
+  '/mtn-collection-credentials',
+  authorize('admin', 'manager'),
+  updateMtnCollectionCredentials
+);
+router.post(
+  '/mtn-collection-credentials/test',
+  authorize('admin', 'manager'),
+  testMtnCollectionCredentials
+);
+router.post(
+  '/mtn-collection-credentials/disconnect',
+  authorize('admin', 'manager'),
+  disconnectMtnCollectionCredentials
+);
 
 module.exports = router;
 

@@ -1,4 +1,4 @@
-# ShopWISE User Acceptance Testing (UAT) Plan
+# African Business Suite User Acceptance Testing (UAT) Plan
 
 Plan and checklist for end-to-end testing before release.
 
@@ -6,7 +6,9 @@ Plan and checklist for end-to-end testing before release.
 
 ## Purpose
 
-We are running user acceptance testing to validate ShopWISE end-to-end with real users before rollout. The goal is to confirm that login, onboarding, core workflows, and key modules work as expected across **Studio**, **Shop**, and **Pharmacy** workspaces, and to catch any issues early.
+We are running user acceptance testing to validate African Business Suite end-to-end with real users before rollout. The goal is to confirm that login, onboarding, core workflows, and key modules work as expected across **Studio**, **Shop**, and **Pharmacy** workspaces, and to catch any issues early.
+
+For **tenant-type-specific E2E paths** (retail shop vs restaurant, studio variants, pharmacy, deliveries, public tracking, role checks), see **[`E2E_TESTING_BY_TENANT_TYPE.md`](./E2E_TESTING_BY_TENANT_TYPE.md)**.
 
 ---
 

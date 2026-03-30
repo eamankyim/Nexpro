@@ -281,10 +281,10 @@ const AdminCustomers = () => {
             Manage your own customers. Create customers and create jobs for them (e.g. website design).
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={handleAdd} size={isMobile ? 'icon' : 'default'}>
+        <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
+          <Button onClick={handleAdd} className="flex-1 min-w-0 md:flex-none">
             <Plus className="h-4 w-4" />
-            {!isMobile && <span className="ml-2">Add customer</span>}
+            <span className="ml-2">Add customer</span>
           </Button>
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Button
@@ -308,7 +308,7 @@ const AdminCustomers = () => {
             className="p-2 rounded-lg"
             style={{ backgroundColor: 'rgba(22, 101, 52, 0.1)' }}
           >
-            <Users className="h-5 w-5" style={{ color: '#166534' }} />
+            <Users className="h-5 w-5" style={{ color: 'var(--color-primary)' }} />
           </div>
           <div>
             <p className="text-sm text-muted-foreground">Total customers</p>

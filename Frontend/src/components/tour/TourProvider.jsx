@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Joyride, { STATUS } from 'react-joyride';
-import { ImageIcon, Sparkles, LayoutDashboard, Navigation, Zap, Clock, ChevronRight } from 'lucide-react';
+import { ImageIcon, ChevronRight } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useBranding } from '@/context/BrandingContext';
 import { TourContext, useTourInternal } from '../../hooks/useTour';
 import { getJoyrideConfig, TOUR_IDS } from '../../config/tours';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,7 @@ export default function TourProvider({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
   const { activeTenant } = useAuth();
+  const { primaryColor: brandPrimaryHex } = useBranding();
   const tourValue = useTourInternal();
   const {
     runningTour,
@@ -52,7 +54,7 @@ export default function TourProvider({ children }) {
 
   const businessType = activeTenant?.businessType || 'shop';
   const isRunning = runningTour === TOUR_IDS.MAIN_TOUR;
-  const tourConfig = getJoyrideConfig(businessType, isRunning);
+  const tourConfig = getJoyrideConfig(businessType, isRunning, brandPrimaryHex);
 
   const stepsWithImages = tourConfig.steps.map((step) => ({
     ...step,
@@ -134,81 +136,40 @@ export default function TourProvider({ children }) {
     <TourContext.Provider value={tourValue}>
       {children}
       
-      {/* Tour Prompt Dialog */}
+      {/* Tour Prompt Dialog – minimal, app-colored */}
       <Dialog open={showTourPrompt} onOpenChange={setShowTourPrompt}>
-        <DialogContent className="sm:max-w-[420px] p-0 gap-0 overflow-hidden">
-          {/* Header with gradient background */}
-          <div className="bg-gradient-to-br from-green-600 to-green-700 px-6 py-8 text-center">
-            <div className="mx-auto w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mb-4 backdrop-blur-sm">
-              <Sparkles className="h-8 w-8 text-white" />
-            </div>
-            <h2 className="text-xl font-semibold text-white mb-1">
-              Welcome to ShopWISE!
-            </h2>
-            <p className="text-green-100 text-sm">
-              Let's get you started with a quick tour
-            </p>
-          </div>
-
-          {/* Content */}
-          <div className="px-6 py-5">
-            <p className="text-gray-600 text-sm mb-4">
-              Take a guided tour to discover how ShopWISE can help you manage your business efficiently.
-            </p>
-
-            {/* Feature highlights */}
-            <div className="space-y-3">
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 border border-gray-100">
-                <div className="w-9 h-9 rounded-lg bg-green-100 flex items-center justify-center flex-shrink-0">
-                  <LayoutDashboard className="h-4.5 w-4.5 text-green-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-900">Dashboard Overview</p>
-                  <p className="text-xs text-gray-500">Understand your business at a glance</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 border border-gray-100">
-                <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
-                  <Navigation className="h-4.5 w-4.5 text-blue-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-900">Navigation & Features</p>
-                  <p className="text-xs text-gray-500">Find everything you need quickly</p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 border border-gray-100">
-                <div className="w-9 h-9 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
-                  <Zap className="h-4.5 w-4.5 text-amber-600" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-gray-900">Quick Actions</p>
-                  <p className="text-xs text-gray-500">Speed up your daily tasks</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Duration badge */}
-            <div className="flex items-center justify-center gap-1.5 mt-4 text-xs text-gray-500">
-              <Clock className="h-3.5 w-3.5" />
-              <span>Takes about 2 minutes</span>
-            </div>
-          </div>
-
-          {/* Footer */}
-          <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 flex items-center justify-between">
-            <Button 
-              variant="ghost" 
-              onClick={handleSkipTour}
-              className="text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+        <DialogContent className="sm:max-w-[380px] p-0 gap-0 overflow-hidden border border-border">
+          <div className="px-6 pt-6 pb-4">
+            {/* Placeholder image area */}
+            <div
+              className="w-full rounded-lg border border-border bg-muted flex flex-col items-center justify-center text-muted-foreground mb-5"
+              style={{ height: 140, backgroundColor: `${brandPrimaryHex}14` }}
+              aria-hidden
             >
+              <ImageIcon className="w-10 h-10 mb-1 opacity-60" strokeWidth={1.5} style={{ color: brandPrimaryHex }} />
+              <span className="text-xs">Image placeholder</span>
+            </div>
+
+            <h2 className="text-lg font-semibold text-foreground text-center mb-2">
+              Welcome to African Business Suite!
+            </h2>
+            <p className="text-sm text-muted-foreground text-center leading-relaxed">
+              You can continue the tour to learn how to use the platform. If you wish, you can exit from the tour by clicking the button.
+            </p>
+
+            {/* Progress dot (single step for this prompt) */}
+            <div className="flex justify-center gap-1.5 mt-5">
+              <span className="w-2 h-2 rounded-full bg-foreground/20" aria-hidden />
+              <span className="w-2 h-2 rounded-full" style={{ backgroundColor: brandPrimaryHex }} aria-hidden />
+              <span className="w-2 h-2 rounded-full bg-foreground/20" aria-hidden />
+            </div>
+          </div>
+
+          <div className="px-6 py-4 border-t border-border grid grid-cols-2 gap-3">
+            <Button variant="outline" onClick={handleSkipTour} className="border-border text-muted-foreground w-full">
               Maybe Later
             </Button>
-            <Button 
-              onClick={handleStartTour} 
-              className="bg-green-600 hover:bg-green-700 text-white gap-1"
-            >
+            <Button onClick={handleStartTour} className="text-white gap-1 w-full bg-brand hover:bg-brand-dark border-0">
               Start Tour
               <ChevronRight className="h-4 w-4" />
             </Button>

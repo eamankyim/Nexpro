@@ -17,6 +17,7 @@ import {
   ChevronDown,
   User,
   UserCircle,
+  CheckSquare,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -33,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import Footer from '../components/layout/Footer';
+import { useResponsive, BREAKPOINTS } from '../hooks/useResponsive';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 
@@ -64,6 +66,7 @@ const menuItems = [
   { path: '/admin/billing', icon: Currency, label: 'Billing' },
   { path: '/admin/reports', icon: FileSearch, label: 'Reports' },
   { path: '/admin/health', icon: AlertTriangle, label: 'System Health' },
+  { path: '/admin/tasks', icon: CheckSquare, label: 'Tasks' },
   { path: '/admin/settings', icon: Settings, label: 'Settings' },
 ];
 
@@ -72,14 +75,8 @@ const AdminLayout = () => {
   const location = useLocation();
   const { user, logout } = useAuth();
   const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
-  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 1024);
+  const { isMobile: isBelowTablet } = useResponsive({ mobileBreakpoint: BREAKPOINTS.TABLET });
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
-
-  useEffect(() => {
-    const handleResize = () => setIsMobile(window.innerWidth < 1024);
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
 
   const handleNavigateToSabito = () => {
     const token = localStorage.getItem('token');
@@ -104,6 +101,7 @@ const AdminLayout = () => {
           '/admin/billing': 'billing.view',
           '/admin/reports': 'reports.view',
           '/admin/health': 'health.view',
+          '/admin/tasks': 'settings.view',
           '/admin/settings': 'settings.view',
         };
         const requiredPermission = permissionMap[item.path];
@@ -120,7 +118,7 @@ const AdminLayout = () => {
             className={cn(
               'w-full flex items-center gap-3 px-3 py-2 rounded-md transition-colors min-h-[44px]',
               isActive
-                ? 'bg-[#166534] text-white font-medium'
+                ? 'bg-brand text-white font-medium'
                 : 'text-foreground hover:bg-muted'
             )}
           >
@@ -135,11 +133,11 @@ const AdminLayout = () => {
   return (
     <div className="min-h-screen bg-background">
       {/* Desktop sidebar */}
-      {!isMobile && (
+      {!isBelowTablet && (
       <aside className="fixed left-0 top-0 bottom-0 z-50 w-[220px] flex flex-col bg-card border-r border-border overflow-hidden">
         <div className="h-16 flex-shrink-0 flex items-center px-4 border-b border-border">
           <span className="font-semibold text-lg tracking-wide text-foreground">
-            ShopWISE Control Center
+            ABS Control Center
           </span>
         </div>
         {navContent}
@@ -149,11 +147,11 @@ const AdminLayout = () => {
       <SmartSearchProvider>
         <div className={cn(
           "min-h-screen flex flex-col",
-          isMobile ? "ml-0" : "ml-[220px]"
+          isBelowTablet ? "ml-0" : "ml-[220px]"
         )}>
           <header className="sticky top-0 z-40 h-16 flex items-center justify-between gap-4 px-6 bg-card border-b border-border">
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              {isMobile && (
+              {isBelowTablet && (
                 <Sheet open={mobileSheetOpen} onOpenChange={setMobileSheetOpen}>
                   <SheetTrigger asChild>
                     <Button
@@ -167,7 +165,7 @@ const AdminLayout = () => {
                   <SheetContent side="left" className="w-[260px] p-0 flex flex-col overflow-hidden">
                     <div className="h-16 flex-shrink-0 flex items-center px-4 border-b border-border">
                       <span className="font-semibold text-lg tracking-wide text-foreground">
-                        ShopWISE Control
+                        ABS Control
                       </span>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto">{navContent}</div>
@@ -183,7 +181,7 @@ const AdminLayout = () => {
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
-                    className="flex items-center gap-2 h-auto py-1.5 pl-1.5 pr-2 rounded-full bg-muted hover:bg-muted/80 min-h-[44px]"
+                    className="flex items-center gap-2 h-auto p-0 rounded-full bg-muted hover:bg-muted/80 min-h-[44px]"
                   >
                     <Avatar className="h-8 w-8">
                       <AvatarImage src={user?.profilePicture} alt={user?.name} />

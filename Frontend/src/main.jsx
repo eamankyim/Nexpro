@@ -1,36 +1,33 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
 import { ToastContainer } from 'react-toastify';
 import App from './App';
-import { QUERY_CACHE } from './constants';
+import { QUERY_CACHE, APP_NAME } from './constants';
+
+if (typeof window !== 'undefined') {
+  window.APP_NAME = APP_NAME;
+}
+import { queryPersister, shouldDehydrateQuery } from './utils/queryPersist';
 import 'react-toastify/dist/ReactToastify.css';
 import './index.css';
 
-// Register service worker only in production (avoids caching/HMR issues in dev)
-if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker
-      .register('/sw.js')
-      .then((registration) => {
-        console.log('[PWA] Service Worker registered:', registration.scope);
-        setInterval(() => registration.update(), 60 * 60 * 1000);
-      })
-      .catch((err) => console.error('[PWA] Service Worker registration failed:', err));
-  });
-}
+// PWA service worker is registered via registerSW in PWAUpdatePrompt (prompt mode for "New version" UX)
+
+const PERSIST_MAX_AGE = 24 * 60 * 60 * 1000; // 24h for offline use
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      staleTime: QUERY_CACHE.STALE_TIME_DEFAULT, // 2 minutes default (can be overridden per query)
-      gcTime: QUERY_CACHE.CACHE_TIME, // 10 minutes (formerly cacheTime)
-      retry: 1, // Reduce retries for faster failure feedback
-      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000), // Exponential backoff
+      staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
+      gcTime: Math.max(QUERY_CACHE.CACHE_TIME, PERSIST_MAX_AGE),
+      retry: 1,
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
     },
     mutations: {
-      retry: false, // Don't retry mutations
+      retry: false,
     },
   },
 });
@@ -41,9 +38,18 @@ const queryClient = new QueryClient({
 // - Reference data (categories, dropdowns): QUERY_CACHE.STALE_TIME_STABLE (5min) - rarely changes
 // Example: useQuery(['dashboard'], fetchDashboard, { staleTime: QUERY_CACHE.STALE_TIME_VOLATILE })
 
-// StrictMode disabled: React 18 double-mount breaks Radix Select/DropdownMenu/Popover (open state resets, so dropdowns appear not to open). Re-enable when Radix or React addresses this.
+// PersistQueryClientProvider restores cache from IndexedDB for offline; StrictMode disabled (Radix double-mount).
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <QueryClientProvider client={queryClient}>
+  <PersistQueryClientProvider
+    client={queryClient}
+    persistOptions={{
+      persister: queryPersister,
+      maxAge: PERSIST_MAX_AGE,
+      dehydrateOptions: {
+        shouldDehydrateQuery,
+      },
+    }}
+  >
     <App />
     <ToastContainer
       position="bottom-right"
@@ -55,5 +61,5 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       theme="light"
       limit={4}
     />
-  </QueryClientProvider>
+  </PersistQueryClientProvider>
 );

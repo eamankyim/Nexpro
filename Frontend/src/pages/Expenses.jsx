@@ -9,6 +9,7 @@ import {
   Pencil,
   Upload as UploadIcon,
   Currency,
+  Eye,
   ShoppingCart,
   FileText,
   Send,
@@ -19,8 +20,7 @@ import {
   Filter,
   RefreshCw,
   Receipt,
-  Archive,
-  Settings2
+  Archive
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import expenseService from '../services/expenseService';
@@ -31,6 +31,7 @@ import { STUDIO_LIKE_TYPES } from '../constants';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError, showWarning } from '../utils/toast';
 import { resolveImageUrl } from '../utils/fileUtils';
+import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import TableSkeleton from '../components/TableSkeleton';
@@ -101,7 +102,7 @@ const optionalString = () => z.union([z.string(), z.null(), z.undefined()]).tran
 
 const baseExpenseSchema = z.object({
   category: z.string().min(1, 'Category is required'),
-  amount: z.number().min(0.01, 'Amount must be greater than 0'),
+  amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Amount must be greater than 0'),
   expenseDate: z.date({ required_error: 'Expense date is required' }),
   description: optionalString(),
   vendorId: z.string().optional().nullable(),
@@ -117,7 +118,7 @@ const expenseSchema = baseExpenseSchema.extend({
 
 const multipleExpenseItemSchema = z.object({
   category: z.string().min(1, 'Category is required'),
-  amount: z.number().min(0.01, 'Amount must be greater than 0'),
+  amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Amount must be greater than 0'),
   description: z.string().optional(),
   jobId: z.string().optional().nullable(),
   vendorId: z.string().optional().nullable(),
@@ -789,6 +790,7 @@ const Expenses = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record?.status} />
     },
     {
@@ -844,6 +846,7 @@ const Expenses = () => {
     {
       key: 'approvalStatus',
       label: 'Approval Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record?.approvalStatus} />
     },
     {
@@ -918,7 +921,7 @@ const Expenses = () => {
           welcomeMessage="Expenses"
           subText="Track and manage your business expenses and expense requests."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -931,15 +934,6 @@ const Expenses = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="outline" onClick={() => setManageCategoriesOpen(true)} size={isMobile ? "icon" : "default"}>
-                <Settings2 className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">Categories</span>}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Manage expense categories (add or remove custom)</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
               <Button 
                 variant="outline" 
                 onClick={async () => { 
@@ -947,13 +941,13 @@ const Expenses = () => {
                   fetchStats(); 
                 }}
                 disabled={expensesRefetching}
-                size={isMobile ? "icon" : "default"}
               >
                 {expensesRefetching ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <RefreshCw className="h-4 w-4" />
                 )}
+                {!isMobile && <span className="ml-2">Refresh</span>}
               </Button>
             </TooltipTrigger>
             <TooltipContent>Reload expense list</TooltipContent>
@@ -962,7 +956,6 @@ const Expenses = () => {
             <TooltipTrigger asChild>
               <SecondaryButton 
                 onClick={() => handleCreate(true)}
-                size={isMobile ? "icon" : "default"}
               >
                 <Plus className="h-4 w-4" />
                 {!isMobile && <span className="ml-2">Expense Request</span>}
@@ -972,9 +965,9 @@ const Expenses = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button onClick={() => handleCreate(false)} size={isMobile ? "icon" : "default"}>
+              <Button onClick={() => handleCreate(false)} className="flex-1 min-w-0 md:flex-none">
                 <Plus className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">Add Expense</span>}
+                <span className="ml-2">Add Expense</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>Add a new expense (marked as paid and approved)</TooltipContent>
@@ -1018,88 +1011,51 @@ const Expenses = () => {
         />
       </div>
 
-      {/* Expenses Table - no Card container on mobile (standalone cards) */}
-      {isMobile ? (
-        <DashboardTable
-          data={paginatedExpenses}
-          columns={filters.viewType === 'requests' ? requestTableColumns : tableColumns}
-          loading={expensesLoading}
-          title={null}
-          emptyIcon={
-            filters.viewType === 'approved' ? <CheckCircle className="h-12 w-12 text-muted-foreground" /> :
-            filters.viewType === 'requests' ? <Send className="h-12 w-12 text-muted-foreground" /> :
-            <ShoppingCart className="h-12 w-12 text-muted-foreground" />
-          }
-          emptyDescription={
-            filters.viewType === 'approved' ? 'No approved expenses found' :
-            filters.viewType === 'requests' ? 'No expense requests found' :
-            filters.viewType === 'job-specific' ? 'No job-specific expenses found' :
-            filters.viewType === 'general' ? 'No general expenses found' :
-            'No expenses yet. Track your business spending by adding your first expense.'
-          }
-          emptyAction={
-            filters.viewType === 'all' && (
-              <Button onClick={() => handleCreate(false)}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add First Expense
-              </Button>
-            )
-          }
-          pageSize={pagination.pageSize}
-          onPageChange={(newPagination) => {
-            setPagination(newPagination);
-          }}
-          externalPagination={{
-            current: pagination.current,
-            total: expensesCount
-          }}
-          viewMode={tableViewMode}
-          onViewModeChange={setTableViewMode}
-        />
-      ) : (
-        <Card>
-          <DashboardTable
-            data={paginatedExpenses}
-            columns={filters.viewType === 'requests' ? requestTableColumns : tableColumns}
-            loading={expensesLoading}
-            title={null}
-            emptyIcon={
-              filters.viewType === 'approved' ? <CheckCircle className="h-12 w-12 text-muted-foreground" /> :
-              filters.viewType === 'requests' ? <Send className="h-12 w-12 text-muted-foreground" /> :
-              <ShoppingCart className="h-12 w-12 text-muted-foreground" />
-            }
-            emptyDescription={
-              filters.viewType === 'approved' ? 'No approved expenses found' :
-              filters.viewType === 'requests' ? 'No expense requests found' :
-              filters.viewType === 'job-specific' ? 'No job-specific expenses found' :
-              filters.viewType === 'general' ? 'No general expenses found' :
-              'No expenses yet. Track your business spending by adding your first expense.'
-            }
-            emptyAction={
-              filters.viewType === 'all' && (
-                <Button onClick={() => handleCreate(false)}>
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add First Expense
-                </Button>
-              )
-            }
-            pageSize={pagination.pageSize}
-            onPageChange={(newPagination) => {
-              setPagination(newPagination);
-            }}
-            externalPagination={{
-              current: pagination.current,
-              total: expensesCount
-            }}
-            viewMode={tableViewMode}
-            onViewModeChange={setTableViewMode}
-          />
-        </Card>
-      )}
+      {/* DashboardTable already wraps desktop table in Card; no extra Card (avoids double border). */}
+      <DashboardTable
+        data={paginatedExpenses}
+        columns={filters.viewType === 'requests' ? requestTableColumns : tableColumns}
+        loading={expensesLoading}
+        title={null}
+        emptyIcon={
+          filters.viewType === 'approved' ? <CheckCircle className="h-12 w-12 text-muted-foreground" /> :
+          filters.viewType === 'requests' ? <Send className="h-12 w-12 text-muted-foreground" /> :
+          <ShoppingCart className="h-12 w-12 text-muted-foreground" />
+        }
+        emptyDescription={
+          filters.viewType === 'approved' ? 'No approved expenses found' :
+          filters.viewType === 'requests' ? 'No expense requests found' :
+          filters.viewType === 'job-specific' ? 'No job-specific expenses found' :
+          filters.viewType === 'general' ? 'No general expenses found' :
+          'No expenses yet. Track your business spending by adding your first expense.'
+        }
+        emptyAction={
+          filters.viewType === 'all' && (
+            <Button onClick={() => handleCreate(false)}>
+              <Plus className="h-4 w-4 mr-2" />
+              Add First Expense
+            </Button>
+          )
+        }
+        pageSize={pagination.pageSize}
+        onPageChange={(newPagination) => {
+          setPagination(newPagination);
+        }}
+        externalPagination={{
+          current: pagination.current,
+          total: expensesCount
+        }}
+        viewMode={tableViewMode}
+        onViewModeChange={setTableViewMode}
+      />
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent
+          side="right"
+          className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto"
+          style={{ top: 8, bottom: 8, right: 8, height: 'calc(100dvh - 16px)', borderRadius: 8 }}
+        >
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Expenses</SheetTitle>
           </SheetHeader>
@@ -1431,7 +1387,17 @@ const Expenses = () => {
 
               <Separator />
               <div className="space-y-3 md:space-y-4">
-                <h3 className="text-lg font-semibold">Expense Items</h3>
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <h3 className="text-lg font-semibold">Expense Items</h3>
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="text-muted-foreground h-auto p-0 text-xs"
+                    onClick={() => setManageCategoriesOpen(true)}
+                  >
+                    Manage categories
+                  </Button>
+                </div>
                 {expenseFields.map((field, index) => (
                   <Card key={field.id} className="p-4 bg-muted">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 md:gap-4 mb-3 md:mb-4">
@@ -1469,12 +1435,8 @@ const Expenses = () => {
                                 step="0.01"
                                 min="0"
                                 placeholder="0.00"
-                                value={field.value === undefined || field.value === null ? '' : field.value}
-                                onChange={(e) => {
-                                  const raw = e.target.value;
-                                  if (raw === '') field.onChange(0);
-                                  else { const n = parseFloat(raw); field.onChange(Number.isNaN(n) ? 0 : n); }
-                                }}
+                                value={numberInputValue(field.value)}
+                                onChange={(e) => handleNumberChange(e, field.onChange)}
                               />
                             </FormControl>
                             <FormMessage />
@@ -1618,17 +1580,27 @@ const Expenses = () => {
               </>
               ) : (
               <>
-              {/* Single expense form */}
-              <FormFieldGrid columns={2}>
+              {/* Single expense form: fixed label height + same spacing so Category and Amount inputs align */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
                 <FormField
                   control={form.control}
                   name="category"
                   render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Category</FormLabel>
+                    <div className="grid grid-cols-1 gap-y-2" style={{ gridTemplateRows: '1.25rem auto auto' }}>
+                      <div className="flex h-5 items-center justify-between gap-2 overflow-hidden">
+                        <FormLabel className="mb-0 shrink-0 leading-none">Category</FormLabel>
+                        <Button
+                          type="button"
+                          variant="link"
+                          className="text-muted-foreground h-5 min-h-0 shrink-0 p-0 text-xs leading-none"
+                          onClick={() => setManageCategoriesOpen(true)}
+                        >
+                          Manage categories
+                        </Button>
+                      </div>
                       <Select value={field.value ?? ''} onValueChange={field.onChange}>
                         <FormControl>
-                          <SelectTrigger>
+                          <SelectTrigger className="mt-0">
                             <SelectValue placeholder="Select category" />
                           </SelectTrigger>
                         </FormControl>
@@ -1639,15 +1611,17 @@ const Expenses = () => {
                         </SelectContent>
                       </Select>
                       <FormMessage />
-                    </FormItem>
+                    </div>
                   )}
                 />
                 <FormField
                   control={form.control}
                   name="amount"
                   render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Amount</FormLabel>
+                    <div className="grid grid-cols-1 gap-y-2" style={{ gridTemplateRows: '1.25rem auto auto' }}>
+                      <div className="flex h-5 items-center overflow-hidden">
+                        <FormLabel className="mb-0 leading-none">Amount</FormLabel>
+                      </div>
                       <FormControl>
                         <Input
                           type="number"
@@ -1663,10 +1637,10 @@ const Expenses = () => {
                         />
                       </FormControl>
                       <FormMessage />
-                    </FormItem>
+                    </div>
                   )}
                 />
-            </FormFieldGrid>
+              </div>
 
             <FormField
               control={form.control}
@@ -2103,7 +2077,7 @@ const Expenses = () => {
                     {viewingExpense.description || '-'}
                   </DescriptionItem>
                   <DescriptionItem label="Amount">
-                    <strong style={{ fontSize: '18px', color: '#166534' }}>
+                    <strong style={{ fontSize: '18px', color: 'var(--color-primary)' }}>
                       ₵ {parseFloat(viewingExpense.amount || 0).toFixed(2)}
                     </strong>
                   </DescriptionItem>
@@ -2118,7 +2092,7 @@ const Expenses = () => {
                           size="sm"
                           onClick={() => handleMarkPaid(viewingExpense.id)}
                           disabled={markingPaid === viewingExpense.id}
-                          className="text-[#166534] hover:text-[#166534] hover:underline font-medium h-auto p-0 flex-shrink-0 order-first"
+                          className="text-brand hover:underline font-medium h-auto p-0 flex-shrink-0 order-first"
                         >
                           {markingPaid === viewingExpense.id && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
                           Mark as Paid
@@ -2139,7 +2113,7 @@ const Expenses = () => {
                           size="sm"
                           onClick={() => handleApprove(viewingExpense.id)}
                           disabled={approvingExpense}
-                          className="text-[#166534] hover:text-[#166534] hover:underline font-medium h-auto p-0 flex-shrink-0 order-first"
+                          className="text-brand hover:underline font-medium h-auto p-0 flex-shrink-0 order-first"
                         >
                           {approvingExpense && <Loader2 className="h-3 w-3 mr-1 animate-spin" />}
                           {approvingExpense ? (

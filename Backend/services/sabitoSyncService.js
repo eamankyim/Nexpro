@@ -2,7 +2,7 @@ const axios = require('axios');
 const { Customer, SabitoTenantMapping, Tenant } = require('../models');
 
 /**
- * Service to sync customers from Sabito to ShopWISE
+ * Service to sync customers from Sabito to ABS
  */
 class SabitoSyncService {
   constructor() {
@@ -55,9 +55,9 @@ class SabitoSyncService {
   }
 
   /**
-   * Sync a single customer from Sabito to ShopWISE
+   * Sync a single customer from Sabito to ABS
    * @param {Object} sabitoCustomer - Customer object from Sabito
-   * @param {String} nexproTenantId - ShopWISE tenant ID
+   * @param {String} nexproTenantId - ABS tenant ID
    * @param {String} sabitoBusinessId - Sabito business ID
    * @returns {Promise<Object>} - Result object with status
    */

@@ -1,8 +1,8 @@
 /**
  * POSNumpad Component
- * 
- * Large numeric keypad optimized for touch input.
- * Used for quantity and cash entry in the POS system.
+ *
+ * Numeric keypad for quantity and cash entry in the POS.
+ * Usable on phone, tablet, or laptop.
  */
 
 import { useCallback } from 'react';

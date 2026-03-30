@@ -1,4 +1,4 @@
-# ShopWISE - Business Management System - Setup Guide
+# ABS (African Business Suite) - Business Management System - Setup Guide
 
 ## 📋 Prerequisites
 

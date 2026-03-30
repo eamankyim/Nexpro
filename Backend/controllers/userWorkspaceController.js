@@ -1,7 +1,51 @@
-const { UserTodo, UserWeekFocus, UserTask, UserChecklist, UserChecklistItem, UserTenant } = require('../models');
+const { UserTodo, UserWeekFocus, UserTask, UserChecklist, UserChecklistItem, UserTenant, User, Tenant } = require('../models');
+const { getTenantLogoUrl } = require('../utils/tenantLogo');
 const { Op } = require('sequelize');
+const emailService = require('../services/emailService');
+const emailTemplates = require('../services/emailTemplates');
 
 const ALLOWED_TASK_STATUSES = ['todo', 'in_progress', 'on_hold', 'completed'];
+
+const normalizeTaskMetadata = (value) => (value && typeof value === 'object' ? value : {});
+const normalizeTaskComments = (metadata) => (Array.isArray(metadata.comments) ? metadata.comments : []);
+const normalizeTaskActivity = (metadata) => (Array.isArray(metadata.activityLog) ? metadata.activityLog : []);
+const buildActivityEntry = (type, payload = {}) => ({
+  id: `a_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+  type,
+  createdAt: new Date().toISOString(),
+  ...payload
+});
+
+const sendTaskAssignmentEmail = async ({
+  tenantId,
+  assignee,
+  actor,
+  task
+}) => {
+  if (!tenantId || !assignee?.email || !task?.title) return;
+
+  let company = { name: 'African Business Suite', primaryColor: '#166534', logoUrl: '' };
+  try {
+    const tenant = await Tenant.findByPk(tenantId, { attributes: ['name', 'metadata'] });
+    if (tenant) {
+      company = {
+        name: tenant.name || company.name,
+        logoUrl: getTenantLogoUrl(tenant),
+        primaryColor: tenant.metadata?.primaryColor || company.primaryColor
+      };
+    }
+  } catch (_) {
+    /* use defaults */
+  }
+
+  const { subject, html, text } = emailTemplates.workspaceTaskAssignedEmail(assignee, actor, task, company);
+  const result = await emailService.sendMessage(tenantId, assignee.email, subject, html, text);
+  if (!result?.success) {
+    console.warn(
+      `[Tasks][assignment-email] failed tenantId=${tenantId} taskId=${task.id} assigneeId=${assignee.id} error=${result?.error || 'unknown'}`
+    );
+  }
+};
 
 /**
  * Get Monday of the week for a given date (YYYY-MM-DD)
@@ -168,7 +212,8 @@ exports.getTasks = async (req, res, next) => {
       tenantId: req.tenantId,
       [Op.or]: [
         { isPrivate: false },
-        { userId: req.user.id }
+        { userId: req.user.id },
+        { assigneeId: req.user.id }
       ]
     };
 
@@ -178,6 +223,10 @@ exports.getTasks = async (req, res, next) => {
 
     const tasks = await UserTask.findAll({
       where,
+      include: [
+        { model: User, as: 'assignee', attributes: ['id', 'name', 'email', 'profilePicture'] },
+        { model: User, as: 'user', attributes: ['id', 'name', 'email', 'profilePicture'] }
+      ],
       order: [['createdAt', 'DESC']]
     });
 
@@ -192,7 +241,7 @@ exports.getTasks = async (req, res, next) => {
  */
 exports.createTask = async (req, res, next) => {
   try {
-    const { title, status, dueDate, priority, description, isPrivate, assigneeId } = req.body;
+    const { title, status, dueDate, startDate, priority, description, isPrivate, assigneeId } = req.body;
 
     if (!req.tenantId) {
       return res.status(400).json({
@@ -212,7 +261,7 @@ exports.createTask = async (req, res, next) => {
       normalizedStatus = 'todo';
     }
 
-    let finalAssigneeId = null;
+    let finalAssigneeId = req.user.id;
     if (assigneeId) {
       const membership = await UserTenant.findOne({
         where: {
@@ -232,14 +281,46 @@ exports.createTask = async (req, res, next) => {
       userId: req.user.id,
       title: title.trim(),
       status: normalizedStatus,
+      startDate: startDate || new Date().toISOString().slice(0, 10),
       dueDate: dueDate || null,
       priority: priority || null,
       description: description || null,
       assigneeId: finalAssigneeId,
-      isPrivate: Boolean(isPrivate)
+      isPrivate: Boolean(isPrivate),
+      metadata: {
+        activityLog: [
+          buildActivityEntry('created', {
+            userId: req.user.id,
+            userName: req.user.name || req.user.email || 'User',
+            summary: 'Task created'
+          })
+        ]
+      }
     });
 
-    res.status(201).json({ success: true, data: task });
+    const createdTask = await UserTask.findOne({
+      where: { id: task.id, tenantId: req.tenantId },
+      include: [
+        { model: User, as: 'assignee', attributes: ['id', 'name', 'email', 'profilePicture'] },
+        { model: User, as: 'user', attributes: ['id', 'name', 'email', 'profilePicture'] }
+      ]
+    });
+
+    // Send assignment email when a task is explicitly assigned to someone else on creation.
+    if (assigneeId && finalAssigneeId && finalAssigneeId !== req.user.id && createdTask?.assignee?.email) {
+      sendTaskAssignmentEmail({
+        tenantId: req.tenantId,
+        assignee: createdTask.assignee,
+        actor: req.user,
+        task: createdTask
+      }).catch((err) => {
+        console.error(
+          `[Tasks][assignment-email] create taskId=${createdTask.id} assigneeId=${createdTask.assignee.id} error=${err?.message || err}`
+        );
+      });
+    }
+
+    res.status(201).json({ success: true, data: createdTask || task });
   } catch (error) {
     next(error);
   }
@@ -252,7 +333,7 @@ exports.createTask = async (req, res, next) => {
 exports.updateTask = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { title, status, dueDate, priority, description, isPrivate, assigneeId } = req.body;
+    const { title, status, dueDate, startDate, priority, description, isPrivate, assigneeId } = req.body;
 
     if (!req.tenantId) {
       return res.status(400).json({
@@ -265,32 +346,51 @@ exports.updateTask = async (req, res, next) => {
       where: {
         id,
         tenantId: req.tenantId,
-        userId: req.user.id
+        [Op.or]: [
+          { userId: req.user.id },
+          { assigneeId: req.user.id }
+        ]
       }
     });
 
     if (!task) {
       return res.status(404).json({ success: false, message: 'Task not found' });
     }
+    const previousAssigneeId = task.assigneeId || null;
 
+    const changes = [];
     if (title !== undefined && typeof title === 'string' && title.trim()) {
+      if (task.title !== title.trim()) changes.push('title');
       task.title = title.trim();
     }
     if (status !== undefined && typeof status === 'string' && status.trim()) {
       const nextStatus = status.trim();
+      if (ALLOWED_TASK_STATUSES.includes(nextStatus) && task.status !== nextStatus) changes.push('status');
       task.status = ALLOWED_TASK_STATUSES.includes(nextStatus) ? nextStatus : task.status;
     }
+    if (startDate !== undefined) {
+      const nextStart = startDate || null;
+      if ((task.startDate || null) !== nextStart) changes.push('startDate');
+      task.startDate = nextStart;
+    }
     if (dueDate !== undefined) {
+      const nextDue = dueDate || null;
+      if ((task.dueDate || null) !== nextDue) changes.push('dueDate');
       task.dueDate = dueDate || null;
     }
     if (priority !== undefined) {
+      const nextPriority = priority || null;
+      if ((task.priority || null) !== nextPriority) changes.push('priority');
       task.priority = priority || null;
     }
     if (description !== undefined) {
+      const nextDescription = description || null;
+      if ((task.description || null) !== nextDescription) changes.push('description');
       task.description = description || null;
     }
     if (assigneeId !== undefined) {
       if (!assigneeId) {
+        if (task.assigneeId !== null) changes.push('assignee');
         task.assigneeId = null;
       } else {
         const membership = await UserTenant.findOne({
@@ -303,15 +403,107 @@ exports.updateTask = async (req, res, next) => {
         if (!membership) {
           return res.status(400).json({ success: false, message: 'Assignee must be a member of this workspace' });
         }
+        if (task.assigneeId !== assigneeId) changes.push('assignee');
         task.assigneeId = assigneeId;
       }
     }
     if (isPrivate !== undefined) {
+      if (task.isPrivate !== Boolean(isPrivate)) changes.push('isPrivate');
       task.isPrivate = Boolean(isPrivate);
     }
 
+    if (changes.length > 0) {
+      const metadata = normalizeTaskMetadata(task.metadata);
+      const activityLog = normalizeTaskActivity(metadata);
+      const actor = req.user.name || req.user.email || 'User';
+      metadata.activityLog = [
+        ...activityLog,
+        buildActivityEntry('updated', {
+          userId: req.user.id,
+          userName: actor,
+          summary: `Updated ${changes.join(', ')}`,
+          changes
+        })
+      ].slice(-300);
+      task.set('metadata', metadata);
+      task.changed('metadata', true);
+    }
+
     await task.save();
-    res.status(200).json({ success: true, data: task });
+
+    const updatedTask = await UserTask.findOne({
+      where: { id: task.id, tenantId: req.tenantId },
+      include: [
+        { model: User, as: 'assignee', attributes: ['id', 'name', 'email', 'profilePicture'] },
+        { model: User, as: 'user', attributes: ['id', 'name', 'email', 'profilePicture'] }
+      ]
+    });
+
+    const nextAssigneeId = updatedTask?.assigneeId || null;
+    const assigneeChanged = previousAssigneeId !== nextAssigneeId;
+    if (
+      assigneeChanged &&
+      nextAssigneeId &&
+      nextAssigneeId !== req.user.id &&
+      updatedTask?.assignee?.email
+    ) {
+      sendTaskAssignmentEmail({
+        tenantId: req.tenantId,
+        assignee: updatedTask.assignee,
+        actor: req.user,
+        task: updatedTask
+      }).catch((err) => {
+        console.error(
+          `[Tasks][assignment-email] update taskId=${updatedTask.id} assigneeId=${updatedTask.assignee.id} error=${err?.message || err}`
+        );
+      });
+    }
+
+    res.status(200).json({ success: true, data: updatedTask || task });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get active task members in current tenant.
+ */
+exports.getTaskMembers = async (req, res, next) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required for task members'
+      });
+    }
+
+    const members = await UserTenant.findAll({
+      where: {
+        tenantId: req.tenantId,
+        status: 'active'
+      },
+      attributes: ['userId', 'role'],
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'name', 'email', 'profilePicture']
+        }
+      ],
+      order: [[{ model: User, as: 'user' }, 'name', 'ASC']]
+    });
+
+    const data = members
+      .filter((m) => m.user)
+      .map((m) => ({
+        id: m.user.id,
+        name: m.user.name || 'Unknown User',
+        email: m.user.email || '',
+        profilePicture: m.user.profilePicture || '',
+        role: m.role || 'staff'
+      }));
+
+    res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
   }
@@ -346,6 +538,195 @@ exports.deleteTask = async (req, res, next) => {
     await task.destroy();
     res.status(200).json({ success: true, data: { id } });
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get task detail (single task) with access checks
+ */
+exports.getTaskById = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!req.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required for workspace tasks'
+      });
+    }
+
+    const task = await UserTask.findOne({
+      where: {
+        id,
+        tenantId: req.tenantId,
+        [Op.or]: [
+          { isPrivate: false },
+          { userId: req.user.id },
+          { assigneeId: req.user.id }
+        ]
+      },
+      include: [
+        { model: User, as: 'assignee', attributes: ['id', 'name', 'email', 'profilePicture'] },
+        { model: User, as: 'user', attributes: ['id', 'name', 'email', 'profilePicture'] }
+      ]
+    });
+
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    res.set('Cache-Control', 'no-store');
+    res.status(200).json({ success: true, data: task });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get comments for one task (stored inside task.metadata.comments)
+ */
+exports.getTaskComments = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!req.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required for workspace tasks'
+      });
+    }
+
+    const task = await UserTask.findOne({
+      where: {
+        id,
+        tenantId: req.tenantId,
+        [Op.or]: [
+          { isPrivate: false },
+          { userId: req.user.id },
+          { assigneeId: req.user.id }
+        ]
+      }
+    });
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    const metadata = normalizeTaskMetadata(task.metadata);
+    const comments = normalizeTaskComments(metadata);
+    console.log(
+      `[Tasks][comments:get] taskId=${id} tenantId=${req.tenantId} userId=${req.user?.id || 'unknown'} comments=${comments.length} activity=${normalizeTaskActivity(metadata).length}`
+    );
+    res.set('Cache-Control', 'no-store');
+    res.status(200).json({ success: true, data: comments });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getTaskActivity = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    if (!req.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required for workspace tasks'
+      });
+    }
+
+    const task = await UserTask.findOne({
+      where: {
+        id,
+        tenantId: req.tenantId,
+        [Op.or]: [
+          { isPrivate: false },
+          { userId: req.user.id },
+          { assigneeId: req.user.id }
+        ]
+      }
+    });
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    const metadata = normalizeTaskMetadata(task.metadata);
+    const activity = normalizeTaskActivity(metadata);
+    console.log(
+      `[Tasks][activity:get] taskId=${id} tenantId=${req.tenantId} userId=${req.user?.id || 'unknown'} activity=${activity.length} comments=${normalizeTaskComments(metadata).length}`
+    );
+    res.set('Cache-Control', 'no-store');
+    res.status(200).json({ success: true, data: activity });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Add a comment to task metadata
+ */
+exports.addTaskComment = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const text = String(req.body?.text || '').trim();
+    console.log(
+      `[Tasks][comment:add:start] taskId=${id} tenantId=${req.tenantId || 'unknown'} userId=${req.user?.id || 'unknown'} textLength=${text.length}`
+    );
+    if (!req.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tenant context is required for workspace tasks'
+      });
+    }
+    if (!text) {
+      return res.status(400).json({ success: false, message: 'Comment text is required' });
+    }
+
+    const task = await UserTask.findOne({
+      where: {
+        id,
+        tenantId: req.tenantId,
+        [Op.or]: [
+          { isPrivate: false },
+          { userId: req.user.id },
+          { assigneeId: req.user.id }
+        ]
+      }
+    });
+    if (!task) {
+      return res.status(404).json({ success: false, message: 'Task not found' });
+    }
+
+    const metadata = normalizeTaskMetadata(task.metadata);
+    const comments = normalizeTaskComments(metadata);
+    const entry = {
+      id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      text: text.slice(0, 2000),
+      userId: req.user.id,
+      userName: req.user.name || req.user.email || 'User',
+      userEmail: req.user.email || '',
+      createdAt: new Date().toISOString()
+    };
+
+    metadata.comments = [...comments, entry].slice(-200);
+    const activityLog = normalizeTaskActivity(metadata);
+    metadata.activityLog = [
+      ...activityLog,
+      buildActivityEntry('comment', {
+        userId: req.user.id,
+        userName: req.user.name || req.user.email || 'User',
+        summary: `Commented: ${entry.text.slice(0, 120)}`
+      })
+    ].slice(-300);
+    task.set('metadata', metadata);
+    task.changed('metadata', true);
+    await task.save();
+    console.log(
+      `[Tasks][comment:add:done] taskId=${id} commentId=${entry.id} comments=${metadata.comments.length} activity=${metadata.activityLog.length}`
+    );
+
+    res.status(201).json({ success: true, data: entry });
+  } catch (error) {
+    console.error(
+      `[Tasks][comment:add:error] taskId=${req.params?.id || 'unknown'} tenantId=${req.tenantId || 'unknown'} userId=${req.user?.id || 'unknown'} message=${error?.message || error}`
+    );
     next(error);
   }
 };

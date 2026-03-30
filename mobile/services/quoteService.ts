@@ -34,4 +34,9 @@ export const quoteService = {
     const res = await api.put(`/quotes/${id}`, data);
     return res.data;
   },
+
+  convertToJob: async (id: string) => {
+    const res = await api.post(`/quotes/${id}/convert`);
+    return res.data;
+  },
 };

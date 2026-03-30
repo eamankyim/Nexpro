@@ -16,15 +16,18 @@ const {
   bulkDeleteProducts,
   bulkUpdateStock,
   exportProducts,
+  getProductImportTemplate,
+  importProducts,
   uploadProductImage,
   getProductCategories,
-  createProductCategory
+  createProductCategory,
+  deleteProductCategory
 } = require('../controllers/productController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { cacheMiddleware, generateProductListKey } = require('../middleware/cache');
 const { bulkOperationLimiter, exportLimiter } = require('../middleware/rateLimiter');
-const { productImageUploader } = require('../middleware/upload');
+const { productImageUploader, importFileUploader } = require('../middleware/upload');
 
 const router = express.Router();
 
@@ -39,6 +42,10 @@ router.route('/')
 // Export endpoint - must be before /:id to avoid conflict
 router.route('/export')
   .get(exportLimiter, authorize('admin', 'manager'), exportProducts);
+
+// Import template and import - must be before /:id
+router.get('/import/template', exportLimiter, authorize('admin', 'manager'), getProductImportTemplate);
+router.post('/import', bulkOperationLimiter, authorize('admin', 'manager'), importFileUploader.single('file'), importProducts);
 
 // Bulk operations - must be before /:id to avoid conflict
 router.route('/bulk')
@@ -58,6 +65,9 @@ router.route('/upload-image')
 router.route('/categories')
   .get(getProductCategories)
   .post(authorize('admin', 'manager', 'staff'), createProductCategory);
+
+router.route('/categories/:id')
+  .delete(authorize('admin', 'manager', 'staff'), deleteProductCategory);
 
 // Variant routes (must be before /:id to avoid conflict)
 router.route('/variants/:variantId')

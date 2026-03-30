@@ -44,6 +44,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 import {
   Table,
   TableBody,
@@ -74,8 +75,8 @@ const accountSchema = z.object({
 
 const journalLineSchema = z.object({
   accountId: z.string().min(1, 'Account is required'),
-  debit: z.number().min(0).default(0),
-  credit: z.number().min(0).default(0),
+  debit: numberOrEmptySchema(z),
+  credit: numberOrEmptySchema(z),
   description: z.string().optional(),
 }).refine((data) => (data.debit > 0 && data.credit === 0) || (data.debit === 0 && data.credit > 0), {
   message: 'Either debit or credit must be greater than 0, but not both',
@@ -350,8 +351,8 @@ const Accounting = () => {
     const paginatedData = showPagination ? (dataSource?.slice(startIndex, endIndex) || []) : (dataSource || []);
 
     return (
-      <div className="rounded-md border">
-        <Table>
+      <div className="rounded-md border overflow-x-auto">
+        <Table className="min-w-[720px]">
           <TableHeader>
             <TableRow>
               {columns.map((col) => (
@@ -425,6 +426,7 @@ const Accounting = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record?.status || 'draft'} />
     },
     {
@@ -722,9 +724,7 @@ const Accounting = () => {
                 <DescriptionItem label="Type">{accountTypeLabels[selectedAccount.type] || selectedAccount.type}</DescriptionItem>
                 <DescriptionItem label="Category">{selectedAccount.category || '—'}</DescriptionItem>
                 <DescriptionItem label="Status">
-                  <Badge className={selectedAccount.isActive ? 'bg-green-600' : 'bg-red-600'}>
-                    {selectedAccount.isActive ? 'Active' : 'Inactive'}
-                  </Badge>
+                  <StatusChip status={selectedAccount.isActive ? 'active_flag' : 'inactive_flag'} />
                 </DescriptionItem>
                 <DescriptionItem label="Description">{selectedAccount.description || '—'}</DescriptionItem>
                 <DescriptionItem label="Created At">
@@ -1150,8 +1150,8 @@ const Accounting = () => {
                                   step="0.01"
                                   placeholder="0.00"
                                   {...field}
-                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                  value={field.value || ''}
+                                  value={numberInputValue(field.value)}
+                                  onChange={(e) => handleNumberChange(e, field.onChange)}
                                 />
                               </FormControl>
                               <FormMessage />
@@ -1173,8 +1173,8 @@ const Accounting = () => {
                                   step="0.01"
                                   placeholder="0.00"
                                   {...field}
-                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                  value={field.value || ''}
+                                  value={numberInputValue(field.value)}
+                                  onChange={(e) => handleNumberChange(e, field.onChange)}
                                 />
                               </FormControl>
                               <FormMessage />

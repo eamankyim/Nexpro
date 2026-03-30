@@ -41,10 +41,11 @@ import {
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Switch } from '@/components/ui/switch';
 import DashboardTable from '../components/DashboardTable';
+import StatusChip from '../components/StatusChip';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import { showSuccess, showError } from '../utils/toast';
 import api from '../services/api';
-import { STATUS_CHIP_CLASSES, SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 
 // Validation schema
 const shopSchema = z.object({
@@ -230,12 +231,9 @@ const Shops = () => {
     {
       key: 'isActive',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => (
-        <span className={`px-2 py-1 rounded-full text-xs font-medium border ${
-          record?.isActive ? STATUS_CHIP_CLASSES.active_flag : STATUS_CHIP_CLASSES.inactive_flag
-        }`}>
-          {record?.isActive ? 'Active' : 'Inactive'}
-        </span>
+        <StatusChip status={record?.isActive ? 'active_flag' : 'inactive_flag'} />
       ),
     },
     {
@@ -341,7 +339,7 @@ const Shops = () => {
           <h1 className="text-2xl md:text-3xl font-bold text-foreground">Shops</h1>
           <p className="text-gray-600 mt-1">Manage your shop locations and branches</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-row gap-2 w-full md:w-auto">
           <Tooltip>
             <TooltipTrigger asChild>
               <SecondaryButton onClick={fetchShops} size={isMobile ? 'icon' : 'default'}>
@@ -352,7 +350,10 @@ const Shops = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button onClick={handleCreate} className="bg-green-700 hover:bg-green-800">
+              <Button
+                onClick={handleCreate}
+                className="bg-green-700 hover:bg-green-800 flex-1 md:flex-none"
+              >
                 <Plus className="h-4 w-4 mr-2" />
                 Add Shop
               </Button>

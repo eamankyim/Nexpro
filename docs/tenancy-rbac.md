@@ -1,6 +1,6 @@
 # Multi-Tenant Roles & Permissions
 
-This document captures the baseline approach for handling tenants, roles, and permissions in **ShopWISE**. Keep it updated as the authorization model evolves.
+This document captures the baseline approach for handling tenants, roles, and permissions in **African Business Suite**. Keep it updated as the authorization model evolves.
 
 ---
 
@@ -99,10 +99,15 @@ Only users with `settings.manage_roles` (typically the Owner role) may update ro
 
 ### Backend effective role (current implementation)
 
-Route authorization uses an **effective role** derived from both tenant membership and user:
+Route authorization uses **`getEffectiveRole`** in `Backend/middleware/auth.js`:
 
-- **Effective role**: If `req.tenantRole` (from `user_tenants.role`) is `owner` or `admin`, the effective role is treated as `admin` for `authorize(...)` checks. Otherwise, `User.role` (`admin` \| `manager` \| `staff`) is used.
-- **Implication**: Tenant owners/admins get full API access (admin-level) even if `User.role` is lower. Routes that use `authorize('admin', 'manager', 'staff')` must run after `tenantContext` so `req.tenantRole` is set.
+- **`user_tenants.role`** `owner` or `admin` → effective role **`admin`** for `authorize(...)`.
+- **`user_tenants.role`** `manager` or `staff` → effective role **`manager`** or **`staff`** (membership wins; avoids stale `users.role`).
+- If there is no tenant role on the request, **`users.role`** is used.
+
+Tenant owners/admins therefore get admin-level checks; managers/staff are scoped correctly per workspace. Routes must run after **`tenantContext`** so `req.tenantRole` is set.
+
+See **`docs/TENANT_ROLE_ACCESS_MATRIX.md`** for a concise UI + API matrix (user routes, reports, settings, etc.).
 
 ---
 

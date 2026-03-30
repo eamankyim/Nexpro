@@ -52,8 +52,8 @@ const VerifyEmail = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="w-full max-w-md text-center">
-          <h1 className="text-3xl font-bold text-[#166534] mb-4">ShopWISE</h1>
-          <Loader2 className="h-12 w-12 animate-spin text-[#166534] mx-auto mb-4" />
+          <h1 className="text-3xl font-bold text-brand mb-4">ABS</h1>
+          <Loader2 className="h-12 w-12 animate-spin text-brand mx-auto mb-4" />
           <p className="text-muted-foreground">Verifying your email...</p>
         </div>
       </div>
@@ -64,13 +64,13 @@ const VerifyEmail = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="w-full max-w-md text-center">
-          <h1 className="text-3xl font-bold text-[#166534] mb-4">ShopWISE</h1>
-          <CheckCircle className="h-16 w-16 text-[#166534] mx-auto mb-4" />
+          <h1 className="text-3xl font-bold text-brand mb-4">ABS</h1>
+          <CheckCircle className="h-16 w-16 text-brand mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-foreground mb-2">Email verified</h2>
           <p className="text-muted-foreground mb-6">{message}</p>
           <Button
             onClick={() => navigate('/dashboard', { replace: true })}
-            className="bg-[#166534] hover:bg-[#14532d] text-white"
+            className="bg-brand hover:bg-brand-dark text-white"
           >
             Go to dashboard
           </Button>
@@ -82,7 +82,7 @@ const VerifyEmail = () => {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-md text-center">
-        <h1 className="text-3xl font-bold text-[#166534] mb-4">ShopWISE</h1>
+        <h1 className="text-3xl font-bold text-brand mb-4">ABS</h1>
         <XCircle className="h-16 w-16 text-destructive mx-auto mb-4" />
         <h2 className="text-xl font-semibold text-foreground mb-2">Verification failed</h2>
         <p className="text-muted-foreground mb-6">{message}</p>

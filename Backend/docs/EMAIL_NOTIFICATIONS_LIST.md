@@ -21,11 +21,19 @@
 
 | Item | Recipient | When | Implemented | Template / Notes |
 |------|-----------|------|--------------|------------------|
+| **Quote sent** | Customer | When quote is created with "Send to customer" and email is configured | ✅ Yes | `quoteNotification` – quoteController (auto-send on create) |
 | **Invoice sent** | Customer | When business sends invoice to customer | ✅ Yes | `invoiceNotification` – invoiceController |
 | **Sale receipt** | Customer | When business sends receipt (POS / sale) via email | ⚠️ Broken | saleController uses `emailService.sendEmail()` which does not exist; should use `sendMessage(tenantId, ...)` |
 | **Invoice paid confirmation** | Customer | After invoice is paid (if you add it) | ❌ Template only | `invoicePaidConfirmation` – not sent anywhere yet |
 | **Payment reminder (email)** | Customer | Overdue invoice reminder | ❌ Template only | `paymentReminder` – paymentReminderService currently sends **WhatsApp** only, not email |
 | **Low stock alert (to customer)** | N/A | N/A | N/A | Not applicable (alerts go to staff) |
+
+### Quote email – why it might not send
+
+- **Settings → Integrations → Email** must be **turned on** (enabled) and have SMTP or SendGrid/SES configured. If the toggle is off or credentials are missing, quote email is skipped.
+- The **customer** linked to the quote must have an **email address** (Customers → edit customer).
+- When creating the quote, **Send quote to customer** must be checked and at least one channel (Email, WhatsApp, or SMS) must be configured; if Email is the only one, it must be configured as above.
+- If send fails (e.g. SMTP auth error), the API returns `delivery.emailError`; the app shows a toast with the error.
 
 ---
 

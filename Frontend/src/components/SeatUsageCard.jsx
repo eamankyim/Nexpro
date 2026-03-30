@@ -90,7 +90,7 @@ function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
             <Users className="h-4 w-4" />
             Team Seats
             {planName && (
-              <Badge className="ml-2" style={{ backgroundColor: '#166534' }}>
+              <Badge className="ml-2 bg-brand text-primary-foreground hover:bg-brand-dark border-0">
                 {planName} Plan
               </Badge>
             )}
@@ -194,7 +194,7 @@ function SeatUsageCard({ style, size = 'default', showUpgradeButton = true }) {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="flex items-center gap-2 text-sm">
-                        <Info className="h-4 w-4 text-[#166534]" />
+                        <Info className="h-4 w-4 text-brand" />
                         <span>
                           Need more seats? Add them for <strong>₵ {pricePerAdditional}</strong> per user
                         </span>

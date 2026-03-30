@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import StatusChip from '../../components/StatusChip';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
@@ -48,6 +49,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
+import { numberInputValue, handleIntegerChange } from '../../utils/formUtils';
 import {
   Form,
   FormControl,
@@ -83,6 +85,12 @@ const defaultFormValues = {
   featureFlags: {},
   communications: {},
 };
+
+const formatPlanLabel = (name = '') =>
+  String(name || '')
+    .replace(/\b(monthly|month|annually|annual|yearly|year)\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 
 const AdminsTable = ({ columns, data }) => (
   <Table>
@@ -231,6 +239,9 @@ const AdminSettings = () => {
   const [featureCatalog, setFeatureCatalog] = useState([]);
   const [featureCategories, setFeatureCategories] = useState({});
   const [featuresByCategory, setFeaturesByCategory] = useState({});
+  const [featureMatrixPlans, setFeatureMatrixPlans] = useState([]);
+  const [featureMatrix, setFeatureMatrix] = useState({});
+  const [featureMatrixLoading, setFeatureMatrixLoading] = useState(false);
   
   // Modules state (new)
   const [modules, setModules] = useState([]);
@@ -285,6 +296,7 @@ const AdminSettings = () => {
     loadSubscriptionPlans();
     loadFeatureCatalog();
     loadModules();
+    loadFeatureMatrix();
   }, []);
 
   // Check permission after all hooks
@@ -303,7 +315,8 @@ const AdminSettings = () => {
     setSaving(true);
     try {
       await adminService.updatePlatformSettings(values);
-      showSuccess('Platform settings updated');
+      await adminService.updateFeatureMatrix(featureMatrix);
+      showSuccess('Settings and feature table updated');
     } catch (error) {
       console.error('Failed to update platform settings', error);
       showError(null, 'Failed to update settings');
@@ -506,6 +519,57 @@ const AdminSettings = () => {
     }
   };
 
+  const loadFeatureMatrix = async () => {
+    setFeatureMatrixLoading(true);
+    try {
+      const response = await adminService.getFeatureMatrix();
+      if (response?.success) {
+        const plans = Array.isArray(response.data?.plans) ? response.data.plans : [];
+        const preferredOrder = ['trial', 'starter', 'professional', 'enterprise'];
+        const rank = (planId = '') => {
+          const idx = preferredOrder.indexOf(String(planId).toLowerCase());
+          return idx === -1 ? 999 : idx;
+        };
+        const normalizedByPlanId = plans.reduce((acc, plan) => {
+          const planId = String(plan?.planId || '').toLowerCase();
+          if (!planId) return acc;
+          acc[planId] = plan;
+          return acc;
+        }, {});
+
+        // Ensure core billing columns exist even if plan row is missing from DB yet.
+        for (const planId of preferredOrder) {
+          if (!normalizedByPlanId[planId]) {
+            normalizedByPlanId[planId] = {
+              id: `virtual-${planId}`,
+              planId,
+              name: planId.charAt(0).toUpperCase() + planId.slice(1),
+              order: Number.MAX_SAFE_INTEGER
+            };
+          }
+        }
+
+        const sortedPlans = Object.values(normalizedByPlanId)
+          .filter((p) => preferredOrder.includes(String(p.planId || '').toLowerCase()))
+          .sort((a, b) => {
+          const rankDiff = rank(a.planId) - rank(b.planId);
+          if (rankDiff !== 0) return rankDiff;
+          const orderA = Number.isFinite(Number(a.order)) ? Number(a.order) : Number.MAX_SAFE_INTEGER;
+          const orderB = Number.isFinite(Number(b.order)) ? Number(b.order) : Number.MAX_SAFE_INTEGER;
+          if (orderA !== orderB) return orderA - orderB;
+          return String(a.name || '').localeCompare(String(b.name || ''));
+          });
+        setFeatureMatrixPlans(sortedPlans);
+        setFeatureMatrix(response.data?.matrix && typeof response.data.matrix === 'object' ? response.data.matrix : {});
+      }
+    } catch (error) {
+      console.error('Failed to load feature matrix', error);
+      showError(null, 'Failed to load feature table');
+    } finally {
+      setFeatureMatrixLoading(false);
+    }
+  };
+
   const loadSubscriptionPlans = async () => {
     console.log('[AdminSettings] loadSubscriptionPlans: Starting...');
     setPlansLoading(true);
@@ -556,6 +620,16 @@ const AdminSettings = () => {
       console.log('[AdminSettings] loadSubscriptionPlans: Finally block - setting loading to false');
       setPlansLoading(false);
     }
+  };
+
+  const handleFeatureMatrixToggle = (planId, featureKey, checked) => {
+    setFeatureMatrix((prev) => ({
+      ...prev,
+      [planId]: {
+        ...(prev[planId] || {}),
+        [featureKey]: checked === true
+      }
+    }));
   };
 
   const openCreatePlanModal = () => {
@@ -740,6 +814,7 @@ const AdminSettings = () => {
       title: 'Name',
       dataIndex: 'name',
       key: 'name',
+      render: (name) => formatPlanLabel(name) || '—',
     },
     {
       title: 'Price',
@@ -752,7 +827,7 @@ const AdminSettings = () => {
       key: 'seats',
       render: (_, record) => {
         if (record.seatLimit === null) {
-          return <Badge variant="default">Unlimited</Badge>;
+          return <Badge variant="secondary">Unlimited</Badge>;
         }
         return (
           <span>
@@ -769,7 +844,7 @@ const AdminSettings = () => {
       key: 'storage',
       render: (_, record) => {
         if (record.storageLimitMB === null) {
-          return <Badge variant="default">Unlimited</Badge>;
+          return <Badge variant="secondary">Unlimited</Badge>;
         }
         const storageGB = (record.storageLimitMB / 1024).toFixed(0);
         return (
@@ -786,8 +861,9 @@ const AdminSettings = () => {
       title: 'Status',
       dataIndex: 'isActive',
       key: 'isActive',
-      render: (isActive) =>
-        isActive ? <Badge variant="default">Active</Badge> : <Badge variant="destructive">Inactive</Badge>,
+      render: (isActive) => (
+        <StatusChip status={isActive ? 'active_flag' : 'inactive_flag'} />
+      ),
     },
     {
       title: 'Marketing',
@@ -843,6 +919,7 @@ const AdminSettings = () => {
             <TabsList>
               <TabsTrigger value="branding">Branding</TabsTrigger>
               <TabsTrigger value="featureFlags">Feature Flags</TabsTrigger>
+              <TabsTrigger value="featureTable">Feature Table</TabsTrigger>
               <TabsTrigger value="communications">Communications</TabsTrigger>
               <TabsTrigger value="roles">Roles & Permissions</TabsTrigger>
               <TabsTrigger value="invite">Invite</TabsTrigger>
@@ -857,7 +934,7 @@ const AdminSettings = () => {
                     <FormItem>
                       <FormLabel>Application name</FormLabel>
                       <FormControl>
-                        <Input placeholder="ShopWISE" className="h-11" {...field} />
+                        <Input placeholder="ABS" className="h-11" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -944,7 +1021,7 @@ const AdminSettings = () => {
                   <FormItem className="mt-4">
                     <FormLabel>Email footer</FormLabel>
                     <FormControl>
-                      <Textarea rows={3} placeholder="Thank you for using ShopWISE." {...field} />
+                      <Textarea rows={3} placeholder="Thank you for using African Business Suite." {...field} />
                     </FormControl>
                     <FormDescription>Appears at the bottom of all system emails.</FormDescription>
                     <FormMessage />
@@ -982,7 +1059,10 @@ const AdminSettings = () => {
                 name="featureFlags.publicSignup"
                 render={({ field }) => (
                   <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
-                    <FormLabel>Public signup</FormLabel>
+                    <div className="space-y-0.5">
+                      <FormLabel>Allow self-signup (marketing site)</FormLabel>
+                      <p className="text-sm text-muted-foreground">When on: marketing site shows Start Free Trial, signup links, and Pricing. When off: shows Contact Sales and Book a Demo only; Login remains.</p>
+                    </div>
                     <FormControl>
                       <Switch checked={field.value} onCheckedChange={field.onChange} />
                     </FormControl>
@@ -990,6 +1070,51 @@ const AdminSettings = () => {
                 )}
               />
               <p className="text-sm text-muted-foreground mt-4">These toggles control global availability of features across all tenants.</p>
+            </TabsContent>
+            <TabsContent value="featureTable" className="mt-6">
+              <div className="flex items-center justify-between mb-4">
+                <p className="text-sm text-muted-foreground">
+                  Toggle feature availability per plan (all catalog features).
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="outline" onClick={loadFeatureMatrix} disabled={featureMatrixLoading}>
+                    {featureMatrixLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    Reload
+                  </Button>
+                </div>
+              </div>
+              <div className="rounded-lg border overflow-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="min-w-[260px]">Feature</TableHead>
+                      {featureMatrixPlans.map((plan) => (
+                        <TableHead key={plan.planId} className="text-center min-w-[140px]">
+                          {formatPlanLabel(plan.name) || plan.name}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {featureCatalog.map((feature) => (
+                      <TableRow key={feature.key}>
+                        <TableCell>
+                          <div className="font-medium">{feature.name}</div>
+                          <div className="text-xs text-muted-foreground">{feature.key} · {feature.category}</div>
+                        </TableCell>
+                        {featureMatrixPlans.map((plan) => (
+                          <TableCell key={`${feature.key}-${plan.planId}`} className="text-center">
+                            <Switch
+                              checked={featureMatrix?.[plan.planId]?.[feature.key] === true}
+                              onCheckedChange={(checked) => handleFeatureMatrixToggle(plan.planId, feature.key, checked)}
+                            />
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </TabsContent>
             <TabsContent value="communications" className="mt-6 space-y-4">
               <FormField
@@ -999,7 +1124,7 @@ const AdminSettings = () => {
                   <FormItem>
                     <FormLabel>Support email</FormLabel>
                     <FormControl>
-                      <Input type="email" placeholder="support@shopwise.app" {...field} />
+                      <Input type="email" placeholder="support@yourapp.com" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -1012,7 +1137,7 @@ const AdminSettings = () => {
                   <FormItem>
                     <FormLabel>Marketing email</FormLabel>
                     <FormControl>
-                      <Input type="email" placeholder="marketing@shopwise.app" {...field} />
+                      <Input type="email" placeholder="marketing@yourapp.com" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -1040,7 +1165,7 @@ const AdminSettings = () => {
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between">
                   <CardTitle>Platform administrators</CardTitle>
-                  <Button onClick={openCreateAdminModal} className="bg-[#166534] hover:bg-[#14502a]">
+                  <Button onClick={openCreateAdminModal} className="bg-brand hover:bg-brand-dark">
                     Invite admin
                   </Button>
                 </CardHeader>
@@ -1074,7 +1199,7 @@ const AdminSettings = () => {
             <TabsContent value="subscriptionPlans" className="mt-6">
               <p className="text-muted-foreground mb-4">Manage subscription plans that appear on your marketing site and tenant onboarding flow.</p>
               <div className="flex gap-2 mb-4">
-                <Button onClick={openCreatePlanModal} className="bg-[#166534] hover:bg-[#14502a]">
+                <Button onClick={openCreatePlanModal} className="bg-brand hover:bg-brand-dark">
                   <Plus className="h-4 w-4 mr-2" />
                   Create Plan
                 </Button>
@@ -1087,10 +1212,10 @@ const AdminSettings = () => {
             </TabsContent>
           </Tabs>
 
-          <div className="mt-6">
-            <Button type="submit" disabled={saving || loading} className="bg-[#166534] hover:bg-[#14502a]">
+          <div className="mt-6 flex justify-end">
+            <Button type="submit" disabled={saving || loading || featureMatrixLoading} className="bg-brand hover:bg-brand-dark">
               {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
-              Save settings
+              Save all changes
             </Button>
           </div>
           </form>
@@ -1167,7 +1292,7 @@ const AdminSettings = () => {
                 </div>
                 <DialogFooter>
                   <Button type="button" variant="outline" onClick={() => setAdminModalVisible(false)}>Cancel</Button>
-                  <Button type="submit" disabled={adminSaving} className="bg-[#166534] hover:bg-[#14502a]">
+                  <Button type="submit" disabled={adminSaving} className="bg-brand hover:bg-brand-dark">
                     {adminSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                     Save
                   </Button>
@@ -1220,7 +1345,7 @@ const AdminSettings = () => {
                   {!generatedInviteLink && (
                     <DialogFooter>
                       <Button type="button" variant="outline" onClick={() => setAdminModalVisible(false)}>Cancel</Button>
-                      <Button type="submit" disabled={adminSaving} className="bg-[#166534] hover:bg-[#14502a]">
+                      <Button type="submit" disabled={adminSaving} className="bg-brand hover:bg-brand-dark">
                         {adminSaving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
                         Send invite
                       </Button>
@@ -1319,7 +1444,7 @@ const AdminSettings = () => {
                     <FormItem>
                       <FormLabel>Order</FormLabel>
                       <FormControl>
-                        <Input type="number" min={0} {...field} value={field.value ?? ''} onChange={(e) => field.onChange(e.target.value ? parseInt(e.target.value, 10) : 0)} />
+                        <Input type="number" min={0} {...field} value={numberInputValue(field.value)} onChange={(e) => handleIntegerChange(e, field.onChange)} />
                       </FormControl>
                       <FormDescription>For sorting (lower = first)</FormDescription>
                       <FormMessage />
@@ -1592,7 +1717,7 @@ const AdminSettings = () => {
                     />
                     <CollapsibleTrigger className="flex-1 flex items-center gap-2 text-left hover:underline">
                       <span className="font-semibold">{module.name}</span>
-                      <Badge variant={allEnabled ? 'default' : someEnabled ? 'secondary' : 'outline'}>
+                      <Badge variant={allEnabled || someEnabled ? 'secondary' : 'outline'}>
                         {enabledCount}/{moduleFeatures.length} features
                       </Badge>
                       <span className="text-sm text-muted-foreground">{module.description}</span>
@@ -1672,7 +1797,7 @@ const AdminSettings = () => {
 
               <DialogFooter>
                 <Button type="button" variant="outline" onClick={() => setPlanModalVisible(false)}>Cancel</Button>
-                <Button type="submit" className="bg-[#166534] hover:bg-[#14502a]">Save</Button>
+                <Button type="submit" className="bg-brand hover:bg-brand-dark">Save</Button>
               </DialogFooter>
             </form>
           </Form>

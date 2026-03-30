@@ -1,5 +1,5 @@
 /**
- * Generate PWA icons with ShopWISE "S" branding
+ * Generate PWA icons with ABS branding
  * Run with: node scripts/generate-icons.js
  */
 const sharp = require('sharp');
@@ -9,7 +9,7 @@ const fs = require('fs');
 const ICON_SIZES = [72, 96, 128, 144, 152, 192, 384, 512];
 const OUTPUT_DIR = path.join(__dirname, '../public/icons');
 
-// ShopWISE brand colors
+// ABS brand colors
 const BG_COLOR = '#166534'; // Dark green
 const TEXT_COLOR = '#FFFFFF'; // White
 
@@ -18,7 +18,7 @@ async function generateIcon(size) {
   const fontSize = Math.round(size * 0.6);
   const yOffset = Math.round(size * 0.7); // Adjust vertical centering
 
-  // Create SVG with "S" letter
+  // Create SVG with "A" letter (app logo)
   const svg = `
     <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
       <rect width="${size}" height="${size}" rx="${Math.round(size * 0.15)}" fill="${BG_COLOR}"/>
@@ -30,7 +30,7 @@ async function generateIcon(size) {
         font-weight="bold" 
         fill="${TEXT_COLOR}" 
         text-anchor="middle"
-      >S</text>
+      >A</text>
     </svg>
   `;
 
@@ -49,7 +49,7 @@ async function main() {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   }
 
-  console.log('Generating ShopWISE PWA icons...\n');
+  console.log('Generating ABS PWA icons...\n');
   
   for (const size of ICON_SIZES) {
     await generateIcon(size);

@@ -1,6 +1,6 @@
 # Mobile App Design Reference Images
 
-Design references for the ShopWISE mobile app (Expo/React Native). Use these for layout, typography, spacing, and UX patterns.
+Design references for the African Business Suite mobile app (Expo/React Native). Use these for layout, typography, spacing, and UX patterns.
 
 ---
 

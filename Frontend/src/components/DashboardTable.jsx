@@ -1,13 +1,6 @@
-import { memo, useState, useMemo } from 'react';
+import { memo, useState, useMemo, useRef, useEffect } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Empty } from '@/components/ui/empty';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -16,6 +9,101 @@ import { useResponsive, BREAKPOINTS } from '@/hooks/useResponsive';
 import { cn } from '@/lib/utils';
 import TableSkeleton from './TableSkeleton';
 import MobileCardView from './MobileCardView';
+
+/** Desktop table: virtualize row DOM when a page has many rows (e.g. page size 50–100). */
+const ROW_VIRTUALIZE_MIN = 25;
+const ROW_ESTIMATE_PX = 56;
+
+/**
+ * Grid-based virtualized list (same columns as classic table; avoids broken table+absolute tr layout).
+ */
+function DashboardVirtualizedGrid({ scrollRef, paginatedData, columns, scrollResetKey }) {
+  const gridTemplateColumns = useMemo(
+    () =>
+      columns
+        .map((c) => (typeof c.width === 'string' && c.width.trim() ? c.width : 'minmax(0,1fr)'))
+        .join(' '),
+    [columns]
+  );
+
+  const rowVirtualizer = useVirtualizer({
+    count: paginatedData.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_ESTIMATE_PX,
+    overscan: 8,
+    measureElement:
+      typeof document !== 'undefined' &&
+      typeof navigator !== 'undefined' &&
+      !/Firefox\//.test(navigator.userAgent)
+        ? (el) => el?.getBoundingClientRect().height ?? ROW_ESTIMATE_PX
+        : undefined,
+  });
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = 0;
+  }, [scrollResetKey, scrollRef]);
+
+  return (
+    <div className="min-w-[720px]">
+      <div
+        className="sticky top-0 z-[1] grid gap-0 border-b bg-card text-sm font-medium text-muted-foreground"
+        style={{ gridTemplateColumns }}
+        role="rowgroup"
+      >
+        {columns.map((column) => (
+          <div
+            key={column.key}
+            role="columnheader"
+            className={cn('h-12 px-4 flex items-center border-b border-border', column.headerClassName)}
+          >
+            {column.label}
+          </div>
+        ))}
+      </div>
+      <div
+        role="rowgroup"
+        className="relative w-full"
+        style={{ height: rowVirtualizer.getTotalSize() }}
+      >
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const item = paginatedData[virtualRow.index];
+          const index = virtualRow.index;
+          return (
+            <div
+              key={item.id != null ? String(item.id) : item.key != null ? String(item.key) : `row-${virtualRow.key}`}
+              role="row"
+              ref={rowVirtualizer.measureElement}
+              data-index={virtualRow.index}
+              className="absolute left-0 grid w-full border-b border-border transition-colors hover:bg-muted/50"
+              style={{
+                transform: `translateY(${virtualRow.start}px)`,
+                gridTemplateColumns,
+                height: `${virtualRow.size}px`,
+              }}
+            >
+              {columns.map((column) => (
+                <div
+                  key={column.key}
+                  role="cell"
+                  className={cn('flex min-w-0 items-center p-4 align-middle text-sm', column.cellClassName)}
+                >
+                  <div className="min-w-0 flex-1">
+                    {column.render
+                      ? column.render(item[column.key], item, index)
+                      : item[column.key] !== undefined && item[column.key] !== null
+                        ? item[column.key]
+                        : '—'}
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 /**
  * DashboardTable - Generic reusable table component for dashboard
@@ -93,6 +181,9 @@ const DashboardTable = memo(({
     setPagination(prev => ({ ...prev, current: newPage, pageSize }));
   };
 
+  const tableScrollRef = useRef(null);
+  const useVirtualRows = paginatedData.length >= ROW_VIRTUALIZE_MIN;
+
   // Use card view when: grid mode selected OR mobile
   const useCardView = viewMode === 'grid' || isMobile;
 
@@ -158,28 +249,54 @@ const DashboardTable = memo(({
           </div>
         ) : (
           <>
-            <div className="border-b overflow-x-auto">
-              <Table className="min-w-[720px]">
-                <TableHeader>
-                  <TableRow className="border-b">
-                    {columns.map((column) => (
-                      <TableHead key={column.key}>{column.label}</TableHead>
-                    ))}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {paginatedData.map((item, index) => (
-                    <TableRow key={item.id || item.key || index} className="border-b last:border-b-0">
+            {useVirtualRows ? (
+              <div className="-mx-6 w-[calc(100%+3rem)] border-b">
+                <div
+                  ref={tableScrollRef}
+                  className="max-h-[min(70vh,560px)] overflow-auto"
+                >
+                  <DashboardVirtualizedGrid
+                    scrollRef={tableScrollRef}
+                    paginatedData={paginatedData}
+                    columns={columns}
+                    scrollResetKey={`${pagination.current}-${effectivePageSize}`}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="-mx-6 w-[calc(100%+3rem)] overflow-x-auto border-b">
+                <table className="min-w-[720px] w-full min-w-full caption-bottom text-sm border-collapse [&_tr]:border-b">
+                  <thead className="[&_tr]:border-b">
+                    <tr className="border-b transition-colors hover:bg-muted/50">
                       {columns.map((column) => (
-                        <TableCell key={column.key}>
-                          {column.render ? column.render(item[column.key], item, index) : (item[column.key] !== undefined && item[column.key] !== null ? item[column.key] : '—')}
-                        </TableCell>
+                        <th
+                          key={column.key}
+                          className={cn('h-12 px-4 text-left align-middle font-medium text-muted-foreground', column.headerClassName)}
+                          style={column.width ? { width: column.width, minWidth: column.width } : undefined}
+                        >
+                          {column.label}
+                        </th>
                       ))}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                    </tr>
+                  </thead>
+                  <tbody className="[&_tr:last-child]:border-0">
+                    {paginatedData.map((item, index) => (
+                      <tr key={item.id || item.key || index} className="border-b transition-colors hover:bg-muted/50 last:border-b-0">
+                        {columns.map((column) => (
+                          <td
+                            key={column.key}
+                            className={cn('p-4 align-middle', column.cellClassName)}
+                            style={column.width ? { width: column.width, minWidth: column.width } : undefined}
+                          >
+                            {column.render ? column.render(item[column.key], item, index) : (item[column.key] !== undefined && item[column.key] !== null ? item[column.key] : '—')}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
 
             {/* Pagination */}
             {totalItems > 0 && (

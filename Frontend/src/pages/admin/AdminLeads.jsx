@@ -421,6 +421,7 @@ const AdminLeads = () => {
       key: 'status',
       title: 'Status',
       dataIndex: 'status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (status) => <StatusChip status={status} />
     },
     {
@@ -480,7 +481,7 @@ const AdminLeads = () => {
             Track potential customers and businesses you've engaged with about the app
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Button
             variant="outline"
@@ -503,9 +504,9 @@ const AdminLeads = () => {
             )}
           </Button>
           {hasPermission('leads.manage') && (
-            <Button onClick={handleAdd} size={isMobile ? "icon" : "default"}>
+            <Button onClick={handleAdd} className="flex-1 min-w-0 md:flex-none">
               <Plus className="h-4 w-4" />
-              {!isMobile && <span className="ml-2">New Lead</span>}
+              <span className="ml-2">New Lead</span>
             </Button>
           )}
         </div>

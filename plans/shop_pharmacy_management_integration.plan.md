@@ -1,6 +1,6 @@
 ---
 name: Shop & Pharmacy Management Integration
-overview: Add Shop Management and Pharmacy Management modules to the existing Nexpro application, reusing the multi-tenant architecture, authentication, inventory patterns, and UI components while creating domain-specific features for retail and pharmacy operations.
+overview: Add Shop Management and Pharmacy Management modules to the existing African Business Suite application, reusing the multi-tenant architecture, authentication, inventory patterns, and UI components while creating domain-specific features for retail and pharmacy operations.
 todos:
   - id: analyze-reusability
     content: Analyze existing codebase patterns and identify reusable components
@@ -74,7 +74,7 @@ todos:
 
 ## Overview
 
-This plan outlines how to add Shop Management and Pharmacy Management modules to Nexpro, maximizing code reuse while creating domain-specific features. The modules will be fully integrated with existing features (customers, invoices, inventory, etc.).
+This plan outlines how to add Shop Management and Pharmacy Management modules to African Business Suite, maximizing code reuse while creating domain-specific features. The modules will be fully integrated with existing features (customers, invoices, inventory, etc.).
 
 ## Reusable Components & Infrastructure
 

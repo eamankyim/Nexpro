@@ -1,6 +1,6 @@
-# ShopWISE End-to-End Tests
+# African Business Suite End-to-End Tests
 
-Comprehensive end-to-end testing suite for the ShopWISE application using Playwright.
+Comprehensive end-to-end testing suite for the African Business Suite application using Playwright.
 
 ## Setup
 

@@ -11,9 +11,14 @@ const getWeekFocus = (weekStart) =>
 const updateWeekFocus = (payload) => api.put('/user-workspace/week-focus', payload);
 
 const getTasks = (params = {}) => api.get('/user-workspace/tasks', { params });
+const getTaskMembers = () => api.get('/user-workspace/task-members');
 const createTask = (payload) => api.post('/user-workspace/tasks', payload);
 const updateTask = (id, payload) => api.put(`/user-workspace/tasks/${id}`, payload);
 const deleteTask = (id) => api.delete(`/user-workspace/tasks/${id}`);
+const getTaskDetail = (id) => api.get(`/user-workspace/tasks/${id}/detail`);
+const getTaskComments = (id) => api.get(`/user-workspace/tasks/${id}/comments`);
+const getTaskActivity = (id) => api.get(`/user-workspace/tasks/${id}/activity`);
+const addTaskComment = (id, payload) => api.post(`/user-workspace/tasks/${id}/comments`, payload);
 
 const getChecklists = () => api.get('/user-workspace/checklists');
 const createChecklist = (payload) => api.post('/user-workspace/checklists', payload);
@@ -37,9 +42,14 @@ export default {
   getWeekFocus,
   updateWeekFocus,
   getTasks,
+  getTaskMembers,
   createTask,
   updateTask,
   deleteTask,
+  getTaskDetail,
+  getTaskComments,
+  getTaskActivity,
+  addTaskComment,
   getChecklists,
   createChecklist,
   updateChecklist,

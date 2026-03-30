@@ -9,6 +9,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Plus, Loader2, RefreshCw, Filter, Users, Repeat, XCircle, CheckCircle, Phone, Mail, Briefcase, Pencil, Printer, Download, Receipt, Cloud, CloudOff } from 'lucide-react';
 import customerService from '../services/customerService';
+import offlineQueueService from '../services/offlineQueueService';
 import { 
   cacheCustomers, 
   getCachedCustomers, 
@@ -34,7 +35,6 @@ import DashboardTable from '../components/DashboardTable';
 import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
-import FloatingActionButton from '../components/FloatingActionButton';
 import { showSuccess, showError, showWarning, handleApiError } from '../utils/toast';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
@@ -71,28 +71,36 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
+import { Sheet } from '@/components/ui/sheet';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import ResponsiveSheet from '../components/ResponsiveSheet';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
 import PrintableReceipt from '../components/PrintableReceipt';
 import PrintableInvoice from '../components/PrintableInvoice';
 
+/** API often returns null for empty optional fields; forms need strings for controlled inputs. */
+const customerString = z.preprocess(
+  (val) => (val === null || val === undefined ? '' : val),
+  z.string()
+);
+
 const customerSchema = z.object({
-  name: z.string().min(1, 'Enter customer name'),
-  email: z.string().min(1, 'Enter email').email('Enter a valid email'),
-  company: z.string().optional(),
-  phone: z.string().optional(),
-  address: z.string().optional(),
-  city: z.string().optional(),
-  state: z.string().optional(),
-  howDidYouHear: z.string().optional().or(z.literal('')),
-  referralName: z.string().optional(),
+  name: z.preprocess(
+    (val) => (val === null || val === undefined ? '' : val),
+    z.string().min(1, 'Enter customer name')
+  ),
+  email: z.preprocess(
+    (val) => (val === null || val === undefined ? '' : val),
+    z.union([z.literal(''), z.string().email('Enter a valid email')])
+  ),
+  company: customerString,
+  phone: customerString,
+  address: customerString,
+  city: customerString,
+  state: customerString,
+  howDidYouHear: customerString,
+  referralName: customerString,
 });
 
 const Customers = () => {
@@ -223,9 +231,33 @@ const Customers = () => {
   });
 
   const createMutation = useMutation({
-    mutationFn: (values) => customerService.create(values),
-    onSuccess: () => {
-      showSuccess('Customer created successfully');
+    mutationFn: async (values) => {
+      if (!navigator.onLine) {
+        await offlineQueueService.queueAction(
+          offlineQueueService.OFFLINE_ACTION_TYPES.CUSTOMER,
+          'create',
+          values
+        );
+        return { _offline: true };
+      }
+      return customerService.create(values);
+    },
+    onSuccess: (data) => {
+      // If backend returns { success: false, error: ... } with 200 status, treat as error and avoid conflicting toasts
+      if (data && data.success === false) {
+        handleApiError(
+          { response: { data } },
+          {
+            defaultMessage: 'Failed to save customer. Please try again.',
+            context: 'create customer',
+            logError: false,
+          }
+        );
+        return;
+      }
+      showSuccess(
+        data?._offline ? 'Saved offline. Will sync when connected.' : 'Customer created successfully'
+      );
       setModalVisible(false);
       form.reset();
       queryClient.invalidateQueries({ queryKey: ['customers'] });
@@ -234,9 +266,19 @@ const Customers = () => {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, values }) => customerService.update(id, values),
-    onSuccess: () => {
-      showSuccess('Customer updated successfully');
+    mutationFn: async ({ id, values }) => {
+      if (!navigator.onLine) {
+        await offlineQueueService.queueAction(
+          offlineQueueService.OFFLINE_ACTION_TYPES.CUSTOMER,
+          'update',
+          { ...values, id }
+        );
+        return { _offline: true };
+      }
+      return customerService.update(id, values);
+    },
+    onSuccess: (data) => {
+      showSuccess(data?._offline ? 'Saved offline. Will sync when connected.' : 'Customer updated successfully');
       setModalVisible(false);
       form.reset();
       queryClient.invalidateQueries({ queryKey: ['customers'] });
@@ -245,9 +287,19 @@ const Customers = () => {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => customerService.delete(id),
-    onSuccess: () => {
-      showSuccess('Customer deleted successfully');
+    mutationFn: async (id) => {
+      if (!navigator.onLine) {
+        await offlineQueueService.queueAction(
+          offlineQueueService.OFFLINE_ACTION_TYPES.CUSTOMER,
+          'delete',
+          { id }
+        );
+        return { _offline: true };
+      }
+      return customerService.delete(id);
+    },
+    onSuccess: (data) => {
+      showSuccess(data?._offline ? 'Saved offline. Will sync when connected.' : 'Customer deleted successfully');
       queryClient.invalidateQueries({ queryKey: ['customers'] });
     },
     onError: (error) => handleApiError(error, { context: 'delete customer' }),
@@ -558,10 +610,9 @@ const Customers = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => (
-        <Badge variant={record?.isActive ? 'default' : 'destructive'}>
-          {record?.isActive ? 'Active' : 'Inactive'}
-        </Badge>
+        <StatusChip status={record?.isActive ? 'active_flag' : 'inactive_flag'} />
       )
     },
     {
@@ -620,7 +671,7 @@ const Customers = () => {
           welcomeMessage="Customers"
           subText="Manage your customer relationships and track interactions."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           {/* Sync status indicator */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -661,7 +712,11 @@ const Customers = () => {
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+              <Button
+                variant="outline"
+                onClick={() => setFilterDrawerOpen(true)}
+                size={isMobile ? 'icon' : 'default'}
+              >
                 <Filter className="h-4 w-4" />
                 {!isMobile && <span className="ml-2">Filter</span>}
               </Button>
@@ -670,11 +725,11 @@ const Customers = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={handleRefresh}
                 disabled={refreshingCustomers}
-                size={isMobile ? "icon" : "default"}
+                size={isMobile ? 'icon' : 'default'}
               >
                 {refreshingCustomers ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -688,9 +743,12 @@ const Customers = () => {
           {(isManager || user?.role === 'staff') && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button onClick={handleAdd} size={isMobile ? "icon" : "default"}>
-                  <Plus className="h-4 w-4" />
-                  {!isMobile && <span className="ml-2">New Customer</span>}
+                <Button
+                  onClick={handleAdd}
+                  className="min-h-[44px] flex-1 min-w-0 md:flex-none"
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  <span>Add Customer</span>
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Add a new customer to your database</TooltipContent>
@@ -753,9 +811,9 @@ const Customers = () => {
             }}
           >
             {isRefreshing ? (
-              <Loader2 className="h-6 w-6 animate-spin text-[#166534]" />
+              <Loader2 className="h-6 w-6 animate-spin text-brand" />
             ) : (
-              <RefreshCw className="h-6 w-6 text-[#166534]" />
+              <RefreshCw className="h-6 w-6 text-brand" />
             )}
           </div>
         )}
@@ -784,14 +842,6 @@ const Customers = () => {
           onViewModeChange={setTableViewMode}
         />
       </div>
-
-      {/* Floating Action Button for Mobile */}
-      <FloatingActionButton
-        onClick={handleAdd}
-        icon={Plus}
-        label="Add Customer"
-        show={isMobile}
-      />
 
       <MobileFormDialog
         open={modalVisible}
@@ -854,7 +904,7 @@ const Customers = () => {
                 name="email"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Email</FormLabel>
+                    <FormLabel>Email (optional)</FormLabel>
                     <FormControl>
                       <Input {...field} type="email" placeholder="email@example.com" />
                     </FormControl>
@@ -982,12 +1032,13 @@ const Customers = () => {
       </MobileFormDialog>
 
       {/* Filter Drawer */}
-      <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
-          <SheetHeader className="pb-4 border-b">
-            <SheetTitle>Filter Customers</SheetTitle>
-          </SheetHeader>
-          <div className="space-y-4 md:space-y-6 mt-4 md:mt-6">
+      <ResponsiveSheet
+        open={filterDrawerOpen}
+        onOpenChange={setFilterDrawerOpen}
+        title="Filter Customers"
+        contentClassName="space-y-4 md:space-y-6 mt-4 md:mt-6"
+      >
+          <div className="space-y-4 md:space-y-6 mt-0">
             <div className="space-y-2">
               <Label>Status</Label>
               <Select
@@ -1058,8 +1109,7 @@ const Customers = () => {
               </Button>
             )}
           </div>
-        </SheetContent>
-      </Sheet>
+      </ResponsiveSheet>
 
       <DetailsDrawer
         open={drawerVisible}
@@ -1129,19 +1179,15 @@ const Customers = () => {
                       </DescriptionItem>
                     )}
                     <DescriptionItem label="Type">
-                      {parseFloat(viewingCustomer.balance || 0) > 0 ? (
-                        <Badge variant="default">Returning</Badge>
-                      ) : (
-                        <Badge variant="outline">New</Badge>
-                      )}
+                      <StatusChip
+                        status={parseFloat(viewingCustomer.balance || 0) > 0 ? 'returning' : 'new'}
+                      />
                     </DescriptionItem>
                     <DescriptionItem label="Balance">
                       <span className="text-foreground">₵ {parseFloat(viewingCustomer.balance || 0).toFixed(2)}</span>
                     </DescriptionItem>
                     <DescriptionItem label="Status">
-                      <Badge variant={viewingCustomer.isActive ? 'default' : 'destructive'}>
-                        {viewingCustomer.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
+                      <StatusChip status={viewingCustomer.isActive ? 'active_flag' : 'inactive_flag'} />
                     </DescriptionItem>
                     <DescriptionItem label="Created At">
                       <span className="text-foreground">

@@ -8,10 +8,12 @@ const {
   deleteJob,
   getJobStats,
   uploadJobAttachment,
-  deleteJobAttachment
+  deleteJobAttachment,
+  exportJobs
 } = require('../controllers/jobController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { exportLimiter } = require('../middleware/rateLimiter');
 const multer = require('multer');
 
 const router = express.Router();
@@ -21,6 +23,7 @@ router.use(tenantContext);
 
 router.get('/categories', getJobCategories);
 router.get('/stats/overview', getJobStats);
+router.get('/export', exportLimiter, authorize('admin', 'manager'), exportJobs);
 
 router.route('/')
   .get(getJobs)

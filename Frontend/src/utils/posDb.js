@@ -9,13 +9,14 @@
  */
 
 const DB_NAME = 'shopwise_pos';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 // Store names
 export const STORES = {
   PRODUCTS: 'pos_products',
   CUSTOMERS: 'pos_customers',
   PENDING_SALES: 'pos_pending_sales',
+  PENDING_ACTIONS: 'pos_pending_actions', // Unified queue: products, invoices, quotes, customers
   QUICK_ITEMS: 'pos_quick_items',
   SYNC_META: 'pos_sync_meta',
   DASHBOARD_CACHE: 'dashboard_cache'
@@ -74,6 +75,17 @@ export const openDatabase = () => {
         });
         salesStore.createIndex('createdAt', 'createdAt', { unique: false });
         salesStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+      }
+
+      // Pending actions store - unified queue (products, invoices, quotes, customers)
+      if (!db.objectStoreNames.contains(STORES.PENDING_ACTIONS)) {
+        const actionsStore = db.createObjectStore(STORES.PENDING_ACTIONS, {
+          keyPath: 'localId',
+          autoIncrement: true
+        });
+        actionsStore.createIndex('createdAt', 'createdAt', { unique: false });
+        actionsStore.createIndex('syncStatus', 'syncStatus', { unique: false });
+        actionsStore.createIndex('type', 'type', { unique: false });
       }
 
       // Quick items store - frequently sold items
@@ -260,15 +272,31 @@ export const getProductByBarcodeOffline = async (barcode) => {
  * @returns {Promise<number>} - The local ID of the queued sale
  */
 export const queuePendingSale = async (saleData) => {
+  const clientId =
+    saleData.clientId ||
+    `offline-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   const pendingSale = {
     ...saleData,
+    clientId,
     createdAt: new Date().toISOString(),
     syncStatus: 'pending',
     syncAttempts: 0,
     lastSyncError: null
   };
-  
-  return await putItem(STORES.PENDING_SALES, pendingSale);
+  const localId = await putItem(STORES.PENDING_SALES, pendingSale);
+
+  // Best-effort Background Sync registration (if available)
+  try {
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator && 'SyncManager' in window) {
+      navigator.serviceWorker.ready.then((registration) => {
+        registration.sync.register('sync-pending').catch(() => {});
+      });
+    }
+  } catch {
+    // Ignore – background sync is an enhancement
+  }
+
+  return localId;
 };
 
 /**
@@ -590,6 +618,69 @@ export const clearDashboardCache = async (tenantId) => {
   }
 };
 
+// ============ Pending Actions (unified offline queue) ============
+
+/**
+ * Add a pending action to the unified queue
+ * @param {Object} item - { type, action, clientId, payload }
+ * @returns {Promise<number>} localId
+ */
+export const addPendingAction = async (item) => {
+  const record = {
+    ...item,
+    createdAt: new Date().toISOString(),
+    syncStatus: 'pending',
+    syncAttempts: 0,
+    lastSyncError: null,
+  };
+  return await putItem(STORES.PENDING_ACTIONS, record);
+};
+
+/**
+ * Get all pending actions (pending or failed)
+ * @returns {Promise<Array>}
+ */
+export const getPendingActions = async () => {
+  const all = await getAllItems(STORES.PENDING_ACTIONS);
+  return all.filter((a) => a.syncStatus === 'pending' || a.syncStatus === 'failed');
+};
+
+/**
+ * Update pending action status
+ * @param {number} localId - localId
+ * @param {string} status - 'pending' | 'syncing' | 'synced' | 'failed'
+ * @param {string} [error] - error message
+ * @param {string} [serverId] - server id after sync
+ */
+export const updatePendingActionStatus = async (localId, status, error = null, serverId = null) => {
+  const action = await getItem(STORES.PENDING_ACTIONS, localId);
+  if (action) {
+    action.syncStatus = status;
+    action.syncAttempts = (action.syncAttempts || 0) + (status === 'syncing' ? 1 : 0);
+    action.lastSyncError = error;
+    action.serverId = serverId;
+    action.lastSyncAt = new Date().toISOString();
+    await putItem(STORES.PENDING_ACTIONS, action);
+  }
+};
+
+/**
+ * Remove a synced action from the queue
+ * @param {number} localId - localId
+ */
+export const removeSyncedAction = async (localId) => {
+  await deleteItem(STORES.PENDING_ACTIONS, localId);
+};
+
+/**
+ * Get count of pending actions
+ * @returns {Promise<number>}
+ */
+export const getPendingActionsCount = async () => {
+  const list = await getPendingActions();
+  return list.length;
+};
+
 export default {
   openDatabase,
   STORES,
@@ -624,5 +715,10 @@ export default {
   getDashboardCacheKey,
   getCachedDashboard,
   cacheDashboard,
-  clearDashboardCache
+  clearDashboardCache,
+  addPendingAction,
+  getPendingActions,
+  updatePendingActionStatus,
+  removeSyncedAction,
+  getPendingActionsCount
 };

@@ -16,6 +16,17 @@ const PLAN_PRICING = {
   launch: 129, scale: 250 // legacy aliases for existing DB data
 };
 
+const PLAN_ALIASES = {
+  free: 'trial',
+  standard: 'starter',
+  pro: 'professional',
+  launch: 'starter',
+  scale: 'professional',
+};
+
+const normalizePlanId = (plan = '') =>
+  PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
+
 const hasDateFilter = (dateFilter) => {
   return dateFilter && (Object.keys(dateFilter).length > 0 || dateFilter[Op.between] !== undefined);
 };
@@ -54,12 +65,15 @@ exports.getAdminKpiSummary = async (req, res, next) => {
       where: { plan: 'trial', status: 'active' }
     });
 
-    const planBreakdown = planBreakdownRaw.map((row) => ({
-      plan: row.plan,
+    const planBreakdown = planBreakdownRaw.map((row) => {
+      const normalizedPlan = normalizePlanId(row.plan);
+      return {
+      plan: normalizedPlan,
       count: Number(row.count) || 0,
-      price: PLAN_PRICING[row.plan] ?? 0,
-      mrr: (PLAN_PRICING[row.plan] ?? 0) * (Number(row.count) || 0)
-    }));
+      price: PLAN_PRICING[normalizedPlan] ?? 0,
+      mrr: (PLAN_PRICING[normalizedPlan] ?? 0) * (Number(row.count) || 0)
+    };
+    });
 
     const estimatedMRR = planBreakdown.reduce((acc, item) => acc + item.mrr, 0);
     const payingTenants = planBreakdown.reduce((acc, item) => acc + item.count, 0);
@@ -236,7 +250,7 @@ exports.getAdminTopCustomers = async (req, res, next) => {
           company: t.slug,
           plan: t.plan
         },
-        totalRevenue: PLAN_PRICING[t.plan] ?? 0,
+        totalRevenue: PLAN_PRICING[normalizePlanId(t.plan)] ?? 0,
         paymentCount: 1
       }))
       .sort((a, b) => (b.totalRevenue || 0) - (a.totalRevenue || 0))

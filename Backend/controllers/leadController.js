@@ -10,6 +10,7 @@ const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
+const taskAutomationService = require('../services/taskAutomationService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
 const logLeadDebug = (...args) => {
@@ -96,6 +97,39 @@ exports.getLeads = async (req, res, next) => {
       },
       data: rows
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Export leads to CSV
+// @route   GET /api/leads/export
+// @access  Private (admin, manager)
+exports.exportLeads = async (req, res, next) => {
+  try {
+    const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
+    const where = applyTenantFilter(req.tenantId, {});
+
+    const leads = await Lead.findAll({
+      where,
+      order: [['createdAt', 'DESC']],
+      include: buildLeadInclude(),
+      raw: false,
+    });
+    const rows = leads.map((l) => {
+      const plain = l.get({ plain: true });
+      return {
+        ...plain,
+        assignee: plain.assignee || {},
+      };
+    });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No leads to export' });
+    }
+
+    const filename = `leads_${new Date().toISOString().split('T')[0]}`;
+    sendCSV(res, rows, `${filename}.csv`, COLUMN_DEFINITIONS.leads);
   } catch (error) {
     next(error);
   }
@@ -305,6 +339,20 @@ exports.updateLead = async (req, res, next) => {
 
     await lead.update(sanitized, { transaction });
 
+    if (sanitized.nextFollowUp) {
+      try {
+        await taskAutomationService.createLeadFollowUpTask({
+          lead: { ...lead.toJSON(), ...sanitized },
+          followUpDate: sanitized.nextFollowUp,
+          nextStep: null,
+          tenantId: req.tenantId,
+          triggeredBy: req.user?.id || null
+        });
+      } catch (automationError) {
+        console.error('[LeadController] Failed to create lead follow-up task:', automationError?.message);
+      }
+    }
+
     let activityCreated = false;
     if (sanitized.status && sanitized.status !== previousStatus) {
       // Log status change notification
@@ -427,6 +475,17 @@ exports.addLeadActivity = async (req, res, next) => {
 
     if (payload.followUpDate) {
       await lead.update({ nextFollowUp: payload.followUpDate });
+      try {
+        await taskAutomationService.createLeadFollowUpTask({
+          lead,
+          followUpDate: payload.followUpDate,
+          nextStep: payload.nextStep || null,
+          tenantId: req.tenantId,
+          triggeredBy: req.user?.id || null
+        });
+      } catch (automationError) {
+        console.error('[LeadController] Failed to create follow-up task:', automationError?.message);
+      }
     }
     if (payload.updateStatus) {
       await lead.update({ status: payload.updateStatus });

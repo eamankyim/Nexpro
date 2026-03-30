@@ -15,6 +15,7 @@ import DetailsDrawer from '../components/DetailsDrawer';
 import DrawerSectionCard from '../components/DrawerSectionCard';
 import PhoneNumberInput from '../components/PhoneNumberInput';
 import DashboardTable from '../components/DashboardTable';
+import StatusChip from '../components/StatusChip';
 import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
@@ -24,6 +25,7 @@ import FilePreview from '../components/FilePreview';
 import { showSuccess, showError } from '../utils/toast';
 import { API_BASE_URL } from '../services/api';
 import { PRODUCT_UNITS } from '../constants';
+import { numberInputValue, handleNumberChange } from '../utils/formUtils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -513,10 +515,9 @@ const Vendors = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => (
-        <Badge variant={record?.isActive ? 'default' : 'destructive'}>
-          {record?.isActive ? 'Active' : 'Inactive'}
-        </Badge>
+        <StatusChip status={record?.isActive ? 'active_flag' : 'inactive_flag'} />
       )
     },
     {
@@ -551,7 +552,7 @@ const Vendors = () => {
           welcomeMessage="Vendors"
           subText="Manage your vendor relationships and price lists."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -588,10 +589,10 @@ const Vendors = () => {
                     form.reset();
                     setModalVisible(true);
                   }}
-                  size={isMobile ? "icon" : "default"}
+                  className="flex-1 min-w-0 md:flex-none"
                 >
                   <Plus className="h-4 w-4" />
-                  {!isMobile && <span className="ml-2">New Vendor</span>}
+                  <span className="ml-2">New Vendor</span>
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Add a new vendor</TooltipContent>
@@ -674,7 +675,11 @@ const Vendors = () => {
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent
+          side="right"
+          className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto"
+          style={{ top: 8, bottom: 8, right: 8, height: 'calc(100dvh - 16px)', borderRadius: 8 }}
+        >
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Vendors</SheetTitle>
           </SheetHeader>
@@ -920,9 +925,7 @@ const Vendors = () => {
                   <Descriptions column={1} className="space-y-0">
                     <DescriptionItem label="Address">{viewingVendor.address || '—'}</DescriptionItem>
                     <DescriptionItem label="Status">
-                      <Badge variant={viewingVendor.isActive ? 'default' : 'destructive'}>
-                        {viewingVendor.isActive ? 'Active' : 'Inactive'}
-                      </Badge>
+                      <StatusChip status={viewingVendor.isActive ? 'active_flag' : 'inactive_flag'} />
                     </DescriptionItem>
                     <DescriptionItem label="Created At">
                       {viewingVendor.createdAt ? new Date(viewingVendor.createdAt).toLocaleString() : '—'}
@@ -1124,11 +1127,8 @@ const Vendors = () => {
                           placeholder="0.00"
                           min={0}
                           step={0.01}
-                          value={field.value || ''}
-                          onChange={(e) => {
-                            const value = parseFloat(e.target.value) || 0;
-                            field.onChange(value);
-                          }}
+                          value={numberInputValue(field.value)}
+                          onChange={(e) => handleNumberChange(e, field.onChange)}
                           className="pl-12"
                         />
                       </div>

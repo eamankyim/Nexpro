@@ -316,6 +316,35 @@ exports.createProductCategory = async (req, res, next) => {
   }
 };
 
+// @desc    Delete product category
+// @route   DELETE /api/products/categories/:id
+// @access  Private
+exports.deleteProductCategory = async (req, res, next) => {
+  try {
+    const category = await ProductCategory.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
+    if (!category) {
+      return res.status(404).json({ success: false, message: 'Category not found' });
+    }
+
+    const productCount = await Product.count({
+      where: { tenantId: req.tenantId, categoryId: category.id }
+    });
+    if (productCount > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Cannot delete: ${productCount} product(s) use this category. Reassign or remove the category from those products first.`
+      });
+    }
+
+    await category.destroy();
+    res.status(200).json({ success: true, data: {} });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Create new product
 // @route   POST /api/products
 // @access  Private
@@ -407,6 +436,21 @@ exports.updateProduct = async (req, res, next) => {
                   }
                 }
               }
+            }
+            try {
+              const taskAutomationService = require('../services/taskAutomationService');
+              await taskAutomationService.createLowStockTask({
+                item: {
+                  id: productForAlert.id,
+                  name: productForAlert.name,
+                  quantityOnHand: Number(newQuantity) || 0,
+                  reorderLevel: Number(reorderLevel) || 0
+                },
+                tenantId: tenantIdForAlert,
+                triggeredBy: req.user?.id || null
+              });
+            } catch (taskErr) {
+              console.error('[Product] Low stock task automation failed:', taskErr?.message);
             }
           } catch (error) {
             console.error('[Product] WhatsApp low stock alert error:', error);
@@ -790,6 +834,97 @@ exports.exportProducts = async (req, res, next) => {
     } else {
       sendCSV(res, products, `${filename}.csv`, columns);
     }
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get CSV template for product bulk import
+// @route   GET /api/products/import/template
+// @access  Private (admin, manager)
+exports.getProductImportTemplate = (req, res) => {
+  const { getTemplateCSV } = require('../utils/importParse');
+  const csv = getTemplateCSV('products');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="products_import_template.csv"');
+  res.send(csv);
+};
+
+// @desc    Bulk import products from CSV/Excel (no images)
+// @route   POST /api/products/import
+// @access  Private (admin, manager)
+exports.importProducts = async (req, res, next) => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+    const { parseImportFile } = require('../utils/importParse');
+    const { bulkCreate } = require('../utils/bulkOperations');
+    const mime = req.file.mimetype || '';
+    const ext = (req.file.originalname || '').toLowerCase().slice(-5);
+    const { mapped, errors: parseErrors } = await parseImportFile(
+      req.file.buffer,
+      mime || ext,
+      'products'
+    );
+
+    if (parseErrors.length > 0 && mapped.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid file or rows',
+        errors: parseErrors,
+      });
+    }
+
+    const categoryNames = [...new Set(mapped.map((m) => m.categoryName).filter(Boolean))];
+    const categories =
+      categoryNames.length > 0
+        ? await ProductCategory.findAll({
+            where: applyTenantFilter(req.tenantId, { name: { [Op.in]: categoryNames } }),
+            attributes: ['id', 'name'],
+            raw: true,
+          })
+        : [];
+    const categoryByName = Object.fromEntries(categories.map((c) => [c.name, c.id]));
+
+    const products = mapped.map((m) => {
+      const rec = {
+        name: m.name,
+        sku: m.sku || null,
+        barcode: m.barcode || null,
+        description: m.description || null,
+        categoryId: m.categoryName ? categoryByName[m.categoryName] || null : null,
+        costPrice: Number(m.costPrice) || 0,
+        sellingPrice: Number(m.sellingPrice) || 0,
+        quantityOnHand: Number(m.quantityOnHand) ?? 0,
+        reorderLevel: Number(m.reorderLevel) ?? 0,
+        reorderQuantity: Number(m.reorderLevel) ?? 0,
+        unit: (m.unit && String(m.unit).trim()) || 'pcs',
+        isActive: m.isActive !== false,
+      };
+      return sanitizePayload(rec);
+    });
+
+    const result = await bulkCreate(Product, products, {
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      continueOnError: true,
+      maxBatchSize: 100,
+    });
+
+    invalidateProductListCache(req.tenantId);
+    const allErrors = [
+      ...parseErrors.map((e) => ({ row: e.row, message: e.message })),
+      ...result.errors.map((e) => ({ row: e.index + 2, message: e.error })),
+    ];
+    res.status(result.success ? 201 : 207).json({
+      success: result.success,
+      successCount: result.successCount,
+      errorCount: allErrors.length,
+      totalProcessed: mapped.length,
+      created: result.created,
+      errors: allErrors.length ? allErrors : result.errors,
+    });
   } catch (error) {
     next(error);
   }

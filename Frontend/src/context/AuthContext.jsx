@@ -1,15 +1,38 @@
-import { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import authService from '../services/authService';
 
 const AuthContext = createContext(null);
 
+/**
+ * Same resolution as useEffect bootstrap: prefer stored active tenant, else default/first membership.
+ * Keeps React state aligned with localStorage on first paint so tenant-scoped queries (e.g. notifications) run immediately.
+ */
+function readInitialActiveTenantId() {
+  try {
+    const storedActive = authService.getActiveTenantId();
+    const memberships = authService.getStoredMemberships();
+    if (storedActive) return storedActive;
+    if (!Array.isArray(memberships) || memberships.length === 0) return null;
+    const defaultMembership = memberships.find((m) => m.isDefault);
+    return (
+      authService.membershipTenantId(defaultMembership) ||
+      authService.membershipTenantId(memberships[0]) ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [memberships, setMemberships] = useState([]);
-  const [activeTenantId, setActiveTenantId] = useState(null);
+  const [activeTenantId, setActiveTenantId] = useState(() => readInitialActiveTenantId());
   const [loading, setLoading] = useState(true);
   const queryClient = useQueryClient();
+  /** Prevents repeated /auth/me loops when flags are missing; cleared on logout / successful hydrate. */
+  const featureFlagsHydrateForTenantRef = useRef(null);
 
   /**
    * Resolves the initial tenant ID from memberships
@@ -18,14 +41,18 @@ export const AuthProvider = ({ children }) => {
    * @returns {string|null} - Resolved tenant ID
    */
   const resolveInitialTenant = (membershipsList = [], preferredTenantId = null) => {
-    if (preferredTenantId) {
-      return preferredTenantId;
+    if (preferredTenantId != null && preferredTenantId !== '') {
+      return String(preferredTenantId);
     }
     if (!Array.isArray(membershipsList) || membershipsList.length === 0) {
       return null;
     }
     const defaultMembership = membershipsList.find((membership) => membership.isDefault);
-    return defaultMembership?.tenantId || membershipsList[0]?.tenantId || null;
+    return (
+      authService.membershipTenantId(defaultMembership) ||
+      authService.membershipTenantId(membershipsList[0]) ||
+      null
+    );
   };
 
   useEffect(() => {
@@ -49,65 +76,133 @@ export const AuthProvider = ({ children }) => {
       setMemberships(storedMemberships);
     }
 
-    const firstStoredTenant = storedMemberships?.[0]?.tenant;
-    const hasStaleMemberships = storedUser && storedMemberships?.length > 0 && !firstStoredTenant?.metadata;
+    const resolvedFromCache = resolveInitialTenant(storedMemberships, storedActiveTenantId);
+    const hasToken = Boolean(authService.getToken());
 
-    // If user is logged in but has no memberships, or memberships lack tenant metadata (stale cache), refetch from backend
-    if (storedUser && (hasStaleMemberships || !storedMemberships || storedMemberships.length === 0)) {
-      if (import.meta.env.DEV) console.log('[AuthContext] Refetching /auth/me...', hasStaleMemberships ? '(stale)' : '(no memberships)');
-      authService.getCurrentUser()
-        .then((body) => {
-          const userData = body?.data ?? body;
-          const memberships = userData?.tenantMemberships || [];
-          if (import.meta.env.DEV) console.log('[AuthContext] Fetched memberships:', {
-            membershipsCount: memberships.length,
-            memberships: memberships.map(m => ({ tenantId: m.tenantId, isDefault: m.isDefault }))
-          });
-          
-          if (memberships.length > 0) {
-            setMemberships(memberships);
-            authService.persistAuthPayload({
-              user: userData,
-              memberships: memberships,
-              defaultTenantId: memberships[0]?.tenantId || null
-            });
-            
-            const resolvedTenantId = resolveInitialTenant(memberships, null);
-            if (resolvedTenantId) {
-              authService.setActiveTenantId(resolvedTenantId);
-              setActiveTenantId(resolvedTenantId);
-              if (import.meta.env.DEV) console.log('[AuthContext] Set activeTenantId:', resolvedTenantId);
-            }
-          } else {
-            if (import.meta.env.DEV) console.warn('[AuthContext] No tenant memberships');
-          }
-          setLoading(false);
-        })
-        .catch((error) => {
-          if (import.meta.env.DEV) console.error('[AuthContext] Error fetching memberships:', error);
-          setLoading(false);
-        });
-    } else {
-      const resolvedTenantId = resolveInitialTenant(storedMemberships, storedActiveTenantId);
-      
-      if (import.meta.env.DEV) console.log('[AuthContext] Resolved tenant:', {
-        resolvedTenantId,
-        storedActiveTenantId,
-        hasMemberships: !!storedMemberships,
-        memberships: storedMemberships?.map(m => ({ tenantId: m.tenantId, isDefault: m.isDefault }))
-      });
-      
-      // ALWAYS ensure activeTenantId is persisted to localStorage if we have a resolved tenant
+    if (import.meta.env.DEV) {
+      console.log('[AuthContext][features] Cached feature flags snapshot:', (storedMemberships || []).map((m) => ({
+        tenantId: m?.tenantId,
+        plan: m?.tenant?.plan,
+        hasEffectiveFlags: !!m?.tenant?.effectiveFeatureFlags,
+        enabledCount: Object.values(m?.tenant?.effectiveFeatureFlags || {}).filter(Boolean).length,
+        crm: m?.tenant?.effectiveFeatureFlags?.crm === true,
+        automations: m?.tenant?.effectiveFeatureFlags?.automations === true,
+      })));
+    }
+
+    const applyResolvedTenant = (membershipsList, preferredActiveId) => {
+      const ids = new Set(
+        (membershipsList || []).map((m) => authService.membershipTenantId(m)).filter(Boolean)
+      );
+      const preferred = preferredActiveId != null && preferredActiveId !== '' ? String(preferredActiveId) : null;
+      const resolvedTenantId =
+        preferred && ids.has(preferred)
+          ? preferred
+          : resolveInitialTenant(membershipsList, null);
       if (resolvedTenantId) {
         if (import.meta.env.DEV) console.log('[AuthContext] Set activeTenantId:', resolvedTenantId);
         authService.setActiveTenantId(resolvedTenantId);
-      } else {
-        if (import.meta.env.DEV) console.warn('[AuthContext] No tenant ID resolved');
+      } else if (import.meta.env.DEV) {
+        console.warn('[AuthContext] No tenant ID resolved');
       }
-      
       setActiveTenantId(resolvedTenantId);
+    };
+
+    const finishBootstrapFromCache = () => {
+      if (import.meta.env.DEV) {
+        console.log('[AuthContext] Resolved tenant (cache):', {
+          resolvedTenantId: resolvedFromCache,
+          storedActiveTenantId,
+          hasMemberships: !!storedMemberships,
+          memberships: storedMemberships?.map((m) => ({
+            tenantId: authService.membershipTenantId(m),
+            isDefault: m.isDefault,
+          })),
+        });
+      }
+      applyResolvedTenant(storedMemberships, storedActiveTenantId);
       setLoading(false);
+    };
+
+    if (!storedUser) {
+      setLoading(false);
+      return;
     }
+
+    // No token: cannot call API; keep whatever we hydrated from storage.
+    if (!hasToken) {
+      finishBootstrapFromCache();
+      return;
+    }
+
+    // Always refresh from server on load so effectiveFeatureFlags match admin/plan changes (localStorage is a cache only).
+    if (import.meta.env.DEV) {
+      console.log('[AuthContext] Refreshing session via GET /auth/me (feature flags + memberships source of truth)...');
+    }
+    authService
+      .getCurrentUser()
+      .then((body) => {
+        const userData = body?.data ?? body;
+        const memberships = userData?.tenantMemberships || [];
+        if (import.meta.env.DEV) {
+          console.log('[AuthContext] Fetched memberships:', {
+            membershipsCount: memberships.length,
+            memberships: memberships.map((m) => ({ tenantId: m.tenantId, isDefault: m.isDefault })),
+          });
+        }
+        if (import.meta.env.DEV) {
+          console.log('[AuthContext][features] Fresh feature flags snapshot:', memberships.map((m) => ({
+            tenantId: m?.tenantId,
+            plan: m?.tenant?.plan,
+            enabledCount: Object.values(m?.tenant?.effectiveFeatureFlags || {}).filter(Boolean).length,
+            crm: m?.tenant?.effectiveFeatureFlags?.crm === true,
+            automations: m?.tenant?.effectiveFeatureFlags?.automations === true,
+          })));
+        }
+        for (const m of memberships) {
+          const eff = m?.tenant?.effectiveFeatureFlags && typeof m.tenant.effectiveFeatureFlags === 'object'
+            ? m.tenant.effectiveFeatureFlags
+            : {};
+          const enabled = Object.entries(eff)
+            .filter(([, v]) => v === true)
+            .map(([k]) => k)
+            .sort();
+          console.log(
+            '[TenantAccess] bootstrap_getMe tenantId=%s plan=%s businessType=%s enabledCount=%s enabled=%j',
+            m.tenantId,
+            m.tenant?.plan || 'n/a',
+            m.tenant?.businessType || 'n/a',
+            enabled.length,
+            enabled
+          );
+        }
+
+        setUser(userData);
+
+        if (memberships.length > 0) {
+          setMemberships(memberships);
+          const defaultTid = authService.membershipTenantId(memberships[0]) || null;
+          const preferredAfterFetch = (() => {
+            const ids = new Set(memberships.map((m) => authService.membershipTenantId(m)).filter(Boolean));
+            const s = storedActiveTenantId != null && storedActiveTenantId !== '' ? String(storedActiveTenantId) : null;
+            return s && ids.has(s) ? s : defaultTid;
+          })();
+          authService.persistAuthPayload({
+            user: userData,
+            memberships: memberships,
+            defaultTenantId: preferredAfterFetch,
+          });
+          applyResolvedTenant(memberships, storedActiveTenantId);
+        } else {
+          if (import.meta.env.DEV) console.warn('[AuthContext] No tenant memberships');
+          applyResolvedTenant(memberships, storedActiveTenantId);
+        }
+        setLoading(false);
+      })
+      .catch((error) => {
+        if (import.meta.env.DEV) console.error('[AuthContext] Error fetching /auth/me:', error);
+        finishBootstrapFromCache();
+      });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /**
@@ -149,6 +244,48 @@ export const AuthProvider = ({ children }) => {
   };
 
   /**
+   * Refetch /auth/me so tenant.effectiveFeatureFlags is populated (login/register return raw Tenant rows).
+   */
+  const refreshAuthState = async () => {
+    if (import.meta.env.DEV) console.log('[AuthContext] refreshAuthState: fetching /auth/me');
+    const body = await authService.getCurrentUser();
+    const userData = body?.data ?? body;
+    const nextMemberships = userData?.tenantMemberships || [];
+    const firstTenant = nextMemberships[0]?.tenant;
+    if (import.meta.env.DEV) {
+      console.log('[AuthContext] refreshAuthState:', { membershipsCount: nextMemberships.length, firstTenantId: firstTenant?.id });
+    }
+    const payload = {
+      user: userData,
+      memberships: nextMemberships,
+      defaultTenantId:
+        authService.getActiveTenantId() ||
+        authService.membershipTenantId(nextMemberships.find((m) => m.isDefault)) ||
+        authService.membershipTenantId(nextMemberships[0]) ||
+        null,
+    };
+    authService.persistAuthPayload(payload);
+    syncAuthState(payload);
+    const activeId =
+      payload.defaultTenantId ||
+      authService.getActiveTenantId() ||
+      authService.membershipTenantId(nextMemberships.find((m) => m.isDefault)) ||
+      authService.membershipTenantId(nextMemberships[0]);
+    const activeM = nextMemberships.find((m) => authService.membershipTenantId(m) === activeId);
+    const t = activeM?.tenant;
+    const eff = t?.effectiveFeatureFlags && typeof t.effectiveFeatureFlags === 'object' ? t.effectiveFeatureFlags : {};
+    const enabled = Object.entries(eff)
+      .filter(([, v]) => v === true)
+      .map(([k]) => k)
+      .sort();
+    console.log('[TenantAccess] client refreshAuthState activeTenantId=%s plan=%s businessType=%s enabledCount=%s enabled=%j', activeId || 'n/a', t?.plan || 'n/a', t?.businessType || 'n/a', enabled.length, enabled);
+    if (import.meta.env.DEV) {
+      console.log('[AuthContext] refreshAuthState: updated, defaultTenantId=', payload.defaultTenantId);
+    }
+    return payload;
+  };
+
+  /**
    * Logs in a user with credentials
    * @param {Object} credentials - Login credentials
    * @param {string} credentials.email - User email
@@ -160,6 +297,11 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authService.login(credentials);
       syncAuthState(response.data || {});
+      try {
+        await refreshAuthState();
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn('[AuthContext] login: /auth/me refresh failed', e);
+      }
       if (import.meta.env.DEV) {
         const data = response?.data || {};
         console.log('[AuthContext] login success:', {
@@ -181,6 +323,11 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authService.register(userData);
       syncAuthState(response.data || {});
+      try {
+        await refreshAuthState();
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn('[AuthContext] register: /auth/me refresh failed', e);
+      }
       return response;
     } catch (error) {
       throw error;
@@ -192,6 +339,7 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     setMemberships([]);
     setActiveTenantId(null);
+    featureFlagsHydrateForTenantRef.current = null;
     queryClient.clear();
   };
 
@@ -199,6 +347,11 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authService.tenantSignup(payload);
       syncAuthState(response.data || {});
+      try {
+        await refreshAuthState();
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn('[AuthContext] tenantSignup: /auth/me refresh failed', e);
+      }
       return response;
     } catch (error) {
       throw error;
@@ -219,7 +372,12 @@ export const AuthProvider = ({ children }) => {
       });
       
       syncAuthState(response.data || {});
-      
+      try {
+        await refreshAuthState();
+      } catch (e) {
+        if (import.meta.env.DEV) console.warn('[AuthContext] sabitoSSO: /auth/me refresh failed', e);
+      }
+
       // Verify activeTenantId was set
       const activeTenantId = authService.getActiveTenantId();
       if (import.meta.env.DEV) console.log('[AuthContext] Active tenant after sync:', activeTenantId);
@@ -242,6 +400,11 @@ export const AuthProvider = ({ children }) => {
   const googleAuth = async (idToken, options = {}) => {
     const response = await authService.googleAuth(idToken, options);
     syncAuthState(response.data || {});
+    try {
+      await refreshAuthState();
+    } catch (e) {
+      if (import.meta.env.DEV) console.warn('[AuthContext] googleAuth: /auth/me refresh failed', e);
+    }
     queryClient.invalidateQueries({ queryKey: ['settings', 'organization'] });
     return response;
   };
@@ -257,7 +420,7 @@ export const AuthProvider = ({ children }) => {
       syncAuthState({
         user: userData,
         memberships: memberships,
-        defaultTenantId: memberships[0]?.tenantId || null
+        defaultTenantId: authService.membershipTenantId(memberships[0]) || null,
       });
       
       // Invalidate organization settings query to refetch after login
@@ -270,42 +433,29 @@ export const AuthProvider = ({ children }) => {
   };
 
   const updateUser = (userData) => {
-    setUser(userData);
-    localStorage.setItem('user', JSON.stringify(userData));
+    setUser((prev) => {
+      const nextUser = {
+        ...(prev && typeof prev === 'object' ? prev : {}),
+        ...(userData && typeof userData === 'object' ? userData : {}),
+      };
+      localStorage.setItem('user', JSON.stringify(nextUser));
+      return nextUser;
+    });
   };
 
   const setActiveTenant = (tenantId) => {
     authService.setActiveTenantId(tenantId);
     setActiveTenantId(tenantId || null);
     queryClient.clear();
-  };
-
-  /** Refetch /auth/me and update auth state + storage. Call after onboarding or when tenant metadata may have changed. */
-  /**
-   * Refetches user data from the server and updates auth state
-   * Useful after operations that modify tenant metadata (e.g., onboarding)
-   * @returns {Promise<Object>} - Updated auth payload
-   */
-  const refreshAuthState = async () => {
-    if (import.meta.env.DEV) console.log('[AuthContext] refreshAuthState: fetching /auth/me');
-    const body = await authService.getCurrentUser();
-    const userData = body?.data ?? body;
-    const nextMemberships = userData?.tenantMemberships || [];
-    const firstTenant = nextMemberships[0]?.tenant;
-    if (import.meta.env.DEV) console.log('[AuthContext] refreshAuthState:', { membershipsCount: nextMemberships.length, firstTenantId: firstTenant?.id });
-    const payload = {
-      user: userData,
-      memberships: nextMemberships,
-      defaultTenantId: authService.getActiveTenantId() || nextMemberships.find((m) => m.isDefault)?.tenantId || nextMemberships[0]?.tenantId || null,
-    };
-    authService.persistAuthPayload(payload);
-    syncAuthState(payload);
-    if (import.meta.env.DEV) console.log('[AuthContext] refreshAuthState: updated, defaultTenantId=', payload.defaultTenantId);
-    return payload;
+    if (tenantId && user) {
+      refreshAuthState().catch(() => {});
+    }
   };
 
   const activeMembership = useMemo(
-    () => memberships.find((membership) => membership.tenantId === activeTenantId) || null,
+    () =>
+      memberships.find((membership) => authService.membershipTenantId(membership) === activeTenantId) ||
+      null,
     [memberships, activeTenantId]
   );
 
@@ -313,6 +463,44 @@ export const AuthProvider = ({ children }) => {
     () => activeMembership?.tenant || null,
     [activeMembership]
   );
+  const activeFeatureFlags = useMemo(
+    () => (activeTenant?.effectiveFeatureFlags && typeof activeTenant.effectiveFeatureFlags === 'object'
+      ? activeTenant.effectiveFeatureFlags
+      : {}),
+    [activeTenant]
+  );
+  const hasFeature = useMemo(
+    () => (featureKey) => activeFeatureFlags[featureKey] === true,
+    [activeFeatureFlags]
+  );
+
+  const refreshAuthStateRef = useRef(refreshAuthState);
+  refreshAuthStateRef.current = refreshAuthState;
+
+  /**
+   * DB is source of truth; /auth/me attaches computed effectiveFeatureFlags.
+   * If the active membership's tenant is missing that payload (stale localStorage, old login shape), hydrate once.
+   */
+  useEffect(() => {
+    if (loading || !user || user.isPlatformAdmin || !activeTenantId) return;
+    const m = memberships.find((x) => authService.membershipTenantId(x) === activeTenantId);
+    const eff = m?.tenant?.effectiveFeatureFlags;
+    const looksHydrated =
+      eff != null &&
+      typeof eff === 'object' &&
+      !Array.isArray(eff) &&
+      Object.keys(eff).length > 0;
+    if (looksHydrated) {
+      featureFlagsHydrateForTenantRef.current = null;
+      return;
+    }
+    if (featureFlagsHydrateForTenantRef.current === activeTenantId) return;
+    featureFlagsHydrateForTenantRef.current = activeTenantId;
+    console.log('[TenantAccess] hydrate_missing_flags tenantId=%s → GET /auth/me', activeTenantId);
+    refreshAuthStateRef.current().catch(() => {
+      /* Keep ref = tenantId so we do not retry in a loop; full page reload can retry. */
+    });
+  }, [loading, user, activeTenantId, memberships]);
 
   const tenantRole = useMemo(
     () => activeMembership?.role || null,
@@ -328,6 +516,25 @@ export const AuthProvider = ({ children }) => {
   const wasInvited = useMemo(
     () => Array.isArray(memberships) && memberships.some((m) => !!m.invitedBy),
     [memberships]
+  );
+
+  /**
+   * Every active membership was created from a workspace invite (invitedBy set).
+   * Empty memberships is false so platform-only users are not misclassified.
+   * Self-service owners have invitedBy null on their workspace — they still need email verification.
+   */
+  const joinedOnlyViaWorkspaceInvite = useMemo(
+    () =>
+      Array.isArray(memberships) &&
+      memberships.length > 0 &&
+      memberships.every((m) => !!m.invitedBy),
+    [memberships]
+  );
+
+  /** In-app verify-email banner, checkout gate, etc. Invited joiners are treated as already validated. */
+  const needsEmailVerification = useMemo(
+    () => Boolean(user && !user.emailVerifiedAt && !joinedOnlyViaWorkspaceInvite),
+    [user, joinedOnlyViaWorkspaceInvite]
   );
 
   /**
@@ -381,6 +588,8 @@ export const AuthProvider = ({ children }) => {
     tenantMemberships: memberships,
     activeTenantId,
     activeTenant,
+    activeFeatureFlags,
+    hasFeature,
     tenantRole,
     setActiveTenant,
     refreshAuthState,
@@ -399,6 +608,8 @@ export const AuthProvider = ({ children }) => {
     isPlatformAdmin,
     isFirstLogin,
     wasInvited,
+    joinedOnlyViaWorkspaceInvite,
+    needsEmailVerification,
     shouldCompleteProfile,
   };
 

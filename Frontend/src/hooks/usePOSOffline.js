@@ -25,6 +25,7 @@ import {
   updatePendingSaleStatus,
   removeSyncedSale,
   getPendingSalesCount,
+  getPendingActionsCount,
   getQuickItems,
   setQuickItem,
   removeQuickItem,
@@ -36,6 +37,7 @@ import {
 import productService from '../services/productService';
 import customerService from '../services/customerService';
 import saleService from '../services/saleService';
+import offlineQueueService from '../services/offlineQueueService';
 import { showSuccess, showError } from '../utils/toast';
 
 /**
@@ -268,8 +270,9 @@ export const usePOSOffline = () => {
   }, []);
 
   /**
-   * Process a sale (online or queue for later)
-   * @param {Object} saleData - Sale data
+   * Process a sale (online or queue for later).
+   * Server recomputes tax from tenant settings; optional `metadata.posTaxConfigSnapshot` is for audit/debug only.
+   * @param {Object} saleData - Sale payload (include `cartDiscount` when cart-level discount applies)
    * @returns {Promise<Object>} - { success, sale, isQueued }
    */
   const processSale = useCallback(async (saleData) => {
@@ -313,14 +316,17 @@ export const usePOSOffline = () => {
    * Update pending count
    */
   const updatePendingCount = useCallback(async () => {
-    const count = await getPendingSalesCount();
+    const [salesCount, actionsCount] = await Promise.all([
+      getPendingSalesCount(),
+      getPendingActionsCount(),
+    ]);
     if (isMountedRef.current) {
-      setPendingCount(count);
+      setPendingCount(salesCount + actionsCount);
     }
   }, []);
 
   /**
-   * Sync pending sales to server
+   * Sync pending sales to server (uses batch API when available)
    */
   const syncPendingSales = useCallback(async () => {
     if (!navigator.onLine || isSyncing) return;
@@ -331,44 +337,73 @@ export const usePOSOffline = () => {
     setIsSyncing(true);
     setLastSyncError(null);
 
+    const localFields = ['localId', 'createdAt', 'syncStatus', 'syncAttempts', 'lastSyncError', 'lastSyncAt', 'serverId'];
+    const items = pending.map((sale) => {
+      const { ...saleData } = sale;
+      localFields.forEach((f) => delete saleData[f]);
+      return { clientId: sale.clientId || `local-${sale.localId}`, payload: saleData };
+    });
+
     let syncedCount = 0;
     let failedCount = 0;
 
-    for (const sale of pending) {
-      if (!isMountedRef.current) break;
-
-      try {
-        await updatePendingSaleStatus(sale.localId, 'syncing');
-        
-        // Extract sale data (remove local metadata)
-        const { localId, createdAt, syncStatus, syncAttempts, lastSyncError, lastSyncAt, ...saleData } = sale;
-        
-        const response = await saleService.createSale(saleData);
-        const serverId = response.data?.sale?.id || response.sale?.id;
-        
-        await updatePendingSaleStatus(sale.localId, 'synced', null, serverId);
-        await removeSyncedSale(sale.localId);
-        syncedCount++;
-      } catch (error) {
-        console.error('Failed to sync sale:', error);
-        await updatePendingSaleStatus(
-          sale.localId, 
-          'failed', 
-          error.message || 'Sync failed'
-        );
+    try {
+      const { results } = await saleService.syncBatch(items);
+      if (Array.isArray(results) && results.length === pending.length) {
+        for (let i = 0; i < results.length; i++) {
+          const r = results[i];
+          const sale = pending[i];
+          if (r?.id && !r?.error) {
+            await removeSyncedSale(sale.localId);
+            syncedCount++;
+          } else {
+            await updatePendingSaleStatus(sale.localId, 'failed', r?.error || 'Sync failed');
+            failedCount++;
+          }
+        }
+      } else {
+        for (const sale of pending) {
+          await updatePendingSaleStatus(sale.localId, 'syncing');
+          try {
+            const { localId, createdAt, syncStatus, syncAttempts, lastSyncError, lastSyncAt, serverId, ...saleData } = sale;
+            const response = await saleService.createSale({ ...saleData, clientId: sale.clientId });
+            const _serverId = response.data?.sale?.id || response.data?.data?.id || response.sale?.id;
+            await removeSyncedSale(sale.localId);
+            syncedCount++;
+          } catch (err) {
+            await updatePendingSaleStatus(sale.localId, 'failed', err?.message || 'Sync failed');
+            failedCount++;
+          }
+        }
+      }
+    } catch (batchError) {
+      for (const sale of pending) {
+        await updatePendingSaleStatus(sale.localId, 'failed', batchError?.message || 'Sync failed');
         failedCount++;
       }
     }
 
     await updatePendingCount();
-    setIsSyncing(false);
-
     if (syncedCount > 0) {
       showSuccess(`Synced ${syncedCount} offline sale${syncedCount > 1 ? 's' : ''}`);
     }
     if (failedCount > 0) {
       setLastSyncError(`Failed to sync ${failedCount} sale${failedCount > 1 ? 's' : ''}`);
     }
+
+    // Sync unified queue (products, invoices, quotes, customers)
+    const actionsResult = await offlineQueueService.syncPendingActions();
+    await updatePendingCount();
+    if (actionsResult.synced > 0) {
+      showSuccess(`Synced ${actionsResult.synced} offline item${actionsResult.synced > 1 ? 's' : ''}`);
+    }
+    if (actionsResult.failed > 0) {
+      setLastSyncError(
+        (prev) => `${prev || ''} ${actionsResult.failed} action(s) failed.`.trim()
+      );
+    }
+
+    setIsSyncing(false);
   }, [isSyncing]);
 
   /**
@@ -436,12 +471,22 @@ export const usePOSOffline = () => {
     }
   }, [refreshProductCache, getCachedProducts, updatePendingCount, syncPendingSales]);
 
+  // Listen for Background Sync from service worker
+  const handleSyncMessage = useCallback((event) => {
+    if (event?.data?.type === 'SYNC_PENDING' || event?.data?.type === 'SYNC_SALES') {
+      if (navigator.onLine) syncPendingSales();
+    }
+  }, [syncPendingSales]);
+
   // Set up event listeners and sync interval
   useEffect(() => {
     isMountedRef.current = true;
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.addEventListener('message', handleSyncMessage);
+    }
 
     // Initialize on mount
     initialize();
@@ -457,11 +502,14 @@ export const usePOSOffline = () => {
       isMountedRef.current = false;
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.removeEventListener('message', handleSyncMessage);
+      }
       if (syncIntervalRef.current) {
         clearInterval(syncIntervalRef.current);
       }
     };
-  }, [handleOnline, handleOffline, initialize, syncPendingSales]);
+  }, [handleOnline, handleOffline, handleSyncMessage, initialize, syncPendingSales]);
 
   return {
     // Status

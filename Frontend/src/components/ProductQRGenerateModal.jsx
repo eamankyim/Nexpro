@@ -59,7 +59,7 @@ export default function ProductQRGenerateModal({ open, onClose, product }) {
       <html>
         <head><title>Label - ${name}</title>
           <style>
-            body { font-family: system-ui, sans-serif; padding: 24px; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; }
+            body { font-family: system-ui, sans-serif; padding: 24px; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100dvh; }
             .name { font-size: 18px; font-weight: 600; margin-bottom: 4px; text-align: center; }
             .sku { font-size: 12px; color: #666; margin-bottom: 12px; }
             img { display: block; }
@@ -100,7 +100,7 @@ export default function ProductQRGenerateModal({ open, onClose, product }) {
 
           {loading && (
             <div className="flex flex-col items-center justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-[#166534]" />
+              <Loader2 className="h-8 w-8 animate-spin text-brand" />
               <p className="text-sm text-gray-500 mt-2">Generating QR...</p>
             </div>
           )}

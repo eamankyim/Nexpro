@@ -5,11 +5,11 @@ Summary of SEO implementation for the Next.js marketing site (`marketing-site/`)
 ## Implemented
 
 - **Metadata**
-  - Root: `metadataBase` (from `NEXT_PUBLIC_SITE_URL`), default title/description, title template `%s | ShopWISE`, Open Graph, Twitter cards, robots (index, follow).
+  - Root: `metadataBase` (from `NEXT_PUBLIC_SITE_URL`), default title/description, title template `%s | African Business Suite`, Open Graph, Twitter cards, robots (index, follow).
   - Per-route metadata for: `/`, `/pricing`, `/contact`, `/shops`, `/studios`, `/pharmacies`, `/smart-report` (unique title and description per page).
 
 - **Default OG/Twitter image**
-  - Dynamic image via `app/opengraph-image.tsx` (Next.js `ImageResponse`), 1200×630, branded with ShopWISE name and tagline.
+  - Dynamic image via `app/opengraph-image.tsx` (Next.js `ImageResponse`), 1200×630, branded with African Business Suite name and tagline.
 
 - **Sitemap**
   - `app/sitemap.ts` – all public routes with `lastModified`, `changeFrequency`, and `priority`. Served at `/sitemap.xml`.
@@ -25,13 +25,13 @@ Summary of SEO implementation for the Next.js marketing site (`marketing-site/`)
   - WebSite: name, url, description, publisher (Organization). Injected in root layout via `components/seo/JsonLd.tsx`.
 
 - **Content/technical**
-  - One `h1` per page; Hero image has descriptive `alt="ShopWISE Dashboard"`.
+  - One `h1` per page; Hero image has descriptive `alt="African Business Suite Dashboard"`.
 
 ## Environment
 
 Set in production (or `.env.local` for local overrides):
 
-- `NEXT_PUBLIC_SITE_URL` – marketing site base URL (e.g. `https://shopwiseafrica.com`). Used for canonicals, sitemap, and JSON-LD.
+- `NEXT_PUBLIC_SITE_URL` – marketing site base URL (e.g. `https://africanbusinesssuite.com`). Used for canonicals, sitemap, and JSON-LD.
 - `NEXT_PUBLIC_APP_URL` – main app URL for signup/login redirects.
 
 See `marketing-site/.env.example`.

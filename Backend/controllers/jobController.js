@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const { Job, Customer, User, Payment, Expense, JobItem, Invoice, Quote, JobStatusHistory } = require('../models');
+const { Job, Customer, User, Payment, Expense, JobItem, Invoice, Quote, JobStatusHistory, Setting } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { getPagination } = require('../utils/paginationUtils');
@@ -9,8 +9,100 @@ const { baseUploadDir } = require('../middleware/upload');
 const activityLogger = require('../services/activityLogger');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { getJobItemCategories } = require('../config/jobItemCategories');
 const { getMaterialTypesForStudioType } = require('../config/studioTypes');
+const { buildCustomerFacingJobTitle } = require('../utils/jobCustomerMessageText');
+
+const WHATSAPP_TEMPLATE_CREATED = 'job_created';
+const WHATSAPP_TEMPLATE_COMPLETED = 'job_completed';
+
+const sendJobLifecycleWhatsApp = async ({ tenantId, job, eventType }) => {
+  try {
+    const whatsappService = require('../services/whatsappService');
+    const config = await whatsappService.getConfig(tenantId);
+    if (!config || !job?.customer?.phone) return;
+
+    const phoneNumber = whatsappService.validatePhoneNumber(job.customer.phone);
+    if (!phoneNumber) return;
+
+    const customerName = job.customer?.name || job.customer?.company || 'Customer';
+    const jobNumber = job.jobNumber || 'N/A';
+    const plain = typeof job?.toJSON === 'function' ? job.toJSON() : job;
+    const jobTitle = buildCustomerFacingJobTitle(plain);
+
+    const preferredLanguage = typeof config?.templateLanguage === 'string' && config.templateLanguage.trim()
+      ? config.templateLanguage.trim()
+      : 'en_US';
+    const alternateLanguage = preferredLanguage === 'en_US' ? 'en' : 'en_US';
+
+    const sendWithLanguageFallback = async (templateName, templateParams, options) => {
+      const firstAttempt = await whatsappService.sendMessage(
+        tenantId,
+        phoneNumber,
+        templateName,
+        templateParams,
+        preferredLanguage,
+        options
+      );
+      if (firstAttempt?.success || firstAttempt?.meta?.metaCode !== 132001) {
+        return firstAttempt;
+      }
+      return whatsappService.sendMessage(
+        tenantId,
+        phoneNumber,
+        templateName,
+        templateParams,
+        alternateLanguage,
+        options
+      );
+    };
+
+    if (eventType === 'created') {
+      const { ensureJobViewToken } = require('../services/jobCustomerTrackingService');
+      const viewToken = await ensureJobViewToken(job.id, tenantId);
+      const trackingPathParam = viewToken ? `track-job/${viewToken}` : null;
+      let createdResult = await sendWithLanguageFallback(
+        WHATSAPP_TEMPLATE_CREATED,
+        [
+          { name: 'customer_name', text: customerName },
+          { name: 'job_id', text: jobNumber },
+          { name: 'job_title', text: jobTitle }
+        ],
+        trackingPathParam ? { buttonParameters: [trackingPathParam], buttonIndex: 0 } : undefined
+      );
+
+      if (
+        !createdResult?.success &&
+        createdResult?.meta?.metaCode === 132018 &&
+        /does not require parameters/i.test(createdResult?.meta?.errorBodyPreview || '')
+      ) {
+        createdResult = await sendWithLanguageFallback(
+          WHATSAPP_TEMPLATE_CREATED,
+          [
+            { name: 'customer_name', text: customerName },
+            { name: 'job_id', text: jobNumber },
+            { name: 'job_title', text: jobTitle }
+          ]
+        );
+      }
+      return;
+    }
+
+    if (eventType === 'completed') {
+      await sendWithLanguageFallback(
+        WHATSAPP_TEMPLATE_COMPLETED,
+        [
+          { name: 'customer_name', text: customerName },
+          { name: 'job_id', text: jobNumber },
+          { name: 'job_title', text: jobTitle }
+        ]
+      );
+    }
+  } catch (error) {
+    console.error('[Job] WhatsApp lifecycle message error:', error?.message || error);
+  }
+};
 
 // Generate unique job number with transaction support for advisory locks
 const generateJobNumber = async (tenantId, transaction = null) => {
@@ -360,6 +452,37 @@ const autoCreateInvoice = async (jobId, tenantId) => {
   }
 };
 
+/**
+ * If tenant enabled auto-send, mark invoice sent and notify customer; log invoice sent for the team.
+ */
+async function maybeAutoSendInvoiceOnJobCreation(tenantId, invoice, userId) {
+  if (!invoice?.id || !tenantId) return;
+  const row = await Setting.findOne({ where: { tenantId, key: 'job-invoice' } });
+  if (row?.value?.autoSendInvoiceOnJobCreation !== true) {
+    return;
+  }
+  try {
+    const { sendInvoiceToCustomer } = require('./invoiceController');
+    await sendInvoiceToCustomer(tenantId, invoice, { forceCustomerChannels: true });
+    const sentInvoice = await Invoice.findOne({
+      where: applyTenantFilter(tenantId, { id: invoice.id }),
+      include: [
+        { model: Customer, as: 'customer' },
+        { model: Job, as: 'job', attributes: ['id', 'createdBy', 'assignedTo'], required: false }
+      ]
+    });
+    if (sentInvoice) {
+      try {
+        await activityLogger.logInvoiceSent(sentInvoice, userId || null);
+      } catch (logErr) {
+        console.error('[Job] logInvoiceSent after auto-send on job creation failed:', logErr?.message);
+      }
+    }
+  } catch (e) {
+    console.error('[Job] Auto-send invoice on job creation failed:', e?.message);
+  }
+}
+
 // @desc    Get all jobs
 // @route   GET /api/jobs
 // @access  Private
@@ -446,14 +569,28 @@ exports.getJobs = async (req, res, next) => {
 
     const { count, rows } = await Job.findAndCountAll({
       where,
+      // Omit description on list — large text; full job (incl. description) from GET /api/jobs/:id
+      attributes: [
+        'id',
+        'jobNumber',
+        'title',
+        'status',
+        'priority',
+        'finalPrice',
+        'dueDate',
+        'customerId',
+        'assignedTo',
+        'createdBy',
+        'createdAt',
+        'updatedAt'
+      ],
       limit,
       offset,
       include: [
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email'] },
         { model: User, as: 'assignedUser', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: Quote, as: 'quote', attributes: ['id', 'quoteNumber', 'status', 'title'] },
-        { model: JobItem, as: 'items' }
+        { model: Quote, as: 'quote', attributes: ['id', 'quoteNumber', 'status', 'title'] }
       ],
       order: [['createdAt', 'DESC']]
     });
@@ -468,6 +605,39 @@ exports.getJobs = async (req, res, next) => {
       },
       data: rows
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Export jobs to CSV
+// @route   GET /api/jobs/export
+// @access  Private (admin, manager)
+exports.exportJobs = async (req, res, next) => {
+  try {
+    const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
+    const where = applyTenantFilter(req.tenantId, {});
+
+    const jobs = await Job.findAll({
+      where,
+      include: [
+        { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email'] },
+        { model: User, as: 'assignedUser', attributes: ['id', 'name', 'email'] },
+      ],
+      order: [['createdAt', 'DESC']],
+      raw: false,
+    });
+    const rows = jobs.map((j) => {
+      const plain = j.get({ plain: true });
+      return { ...plain, customer: plain.customer || {}, assignedUser: plain.assignedUser || {} };
+    });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No jobs to export' });
+    }
+
+    const filename = `jobs_${new Date().toISOString().split('T')[0]}`;
+    sendCSV(res, rows, `${filename}.csv`, COLUMN_DEFINITIONS.jobs);
   } catch (error) {
     next(error);
   }
@@ -531,6 +701,18 @@ exports.createJob = async (req, res, next) => {
     try {
       const { items, ...rawJobData } = req.body;
       const jobData = sanitizePayload(rawJobData);
+
+      if (jobData.deliveryStatus !== undefined) {
+        const parsed = parseDeliveryStatusInput(jobData.deliveryStatus);
+        if (parsed === undefined) {
+          await transaction.rollback();
+          return res.status(400).json({
+            success: false,
+            message: 'Invalid deliveryStatus'
+          });
+        }
+        jobData.deliveryStatus = parsed;
+      }
       
       // Generate job number INSIDE the transaction with advisory lock
       // This ensures no race conditions - the lock serializes job number generation
@@ -543,6 +725,9 @@ exports.createJob = async (req, res, next) => {
       // If status is completed, set completion date
       if (jobData.status === 'completed') {
         jobData.completionDate = new Date();
+      }
+      if (jobData.status === 'in_progress' && !jobData.startDate) {
+        jobData.startDate = new Date();
       }
 
       const job = await Job.create({
@@ -573,22 +758,6 @@ exports.createJob = async (req, res, next) => {
       // Commit transaction before auto-creating invoice (invoice creation is separate)
       await transaction.commit();
       
-      // Auto-create invoice for ALL new jobs (not just completed) - outside transaction
-      let autoGeneratedInvoice = null;
-      try {
-        console.log(`[CreateJob] Attempting to auto-create invoice for job ${job.id}`);
-        autoGeneratedInvoice = await autoCreateInvoice(job.id, req.tenantId);
-        if (autoGeneratedInvoice) {
-          console.log(`[CreateJob] ✅ Invoice auto-created: ${autoGeneratedInvoice.invoiceNumber}`);
-        } else {
-          console.log(`[CreateJob] ⚠️ No invoice was created (may already exist or job has no items/price)`);
-        }
-      } catch (invoiceError) {
-        console.error('[CreateJob] ❌ Failed to auto-create invoice, but job was created:', invoiceError);
-        console.error('[CreateJob] Error stack:', invoiceError.stack);
-        // Don't fail the job creation if invoice creation fails
-      }
-
       const jobWithDetails = await Job.findOne({
         where: applyTenantFilter(req.tenantId, { id: job.id }),
         include: [
@@ -611,25 +780,58 @@ exports.createJob = async (req, res, next) => {
         jobWithDetails.attachments = [];
       }
 
+      try {
+        await activityLogger.logJobCreated(jobWithDetails, req.user?.id || null);
+      } catch (logErr) {
+        console.error('[CreateJob] logJobCreated failed:', logErr?.message);
+      }
+
       if (jobWithDetails.assignedTo) {
         await activityLogger.logJobAssigned(jobWithDetails, req.user?.id || null);
       }
 
-      const response = {
-        success: true,
-        data: jobWithDetails
-      };
-
-      // Include invoice info if it was auto-generated
-      if (autoGeneratedInvoice) {
-        response.invoice = {
-          id: autoGeneratedInvoice.id,
-          invoiceNumber: autoGeneratedInvoice.invoiceNumber,
-          message: 'Invoice automatically generated'
-        };
+      if (jobWithDetails.assignedTo && jobWithDetails.assignedUser?.email) {
+        const { sendJobAssignedEmailToAssignee } = require('../services/jobAssigneeEmailService');
+        sendJobAssignedEmailToAssignee({
+          tenantId: req.tenantId,
+          job: jobWithDetails,
+          assignee: jobWithDetails.assignedUser,
+          assignedByUser: req.user || null
+        });
       }
 
+      await sendJobLifecycleWhatsApp({
+        tenantId: req.tenantId,
+        job: jobWithDetails,
+        eventType: 'created'
+      });
+
+      const response = {
+        success: true,
+        data: jobWithDetails,
+        invoice: {
+          queued: true,
+          message: 'Invoice generation is processing in the background'
+        }
+      };
+
       res.status(201).json(response);
+
+      // Auto-create/send invoice after response so job creation never waits on payment/integration work.
+      setImmediate(async () => {
+        try {
+          console.log(`[CreateJob] Background invoice processing started for job ${job.id}`);
+          const autoGeneratedInvoice = await autoCreateInvoice(job.id, req.tenantId);
+          if (autoGeneratedInvoice) {
+            console.log(`[CreateJob] ✅ Background invoice auto-created: ${autoGeneratedInvoice.invoiceNumber}`);
+            await maybeAutoSendInvoiceOnJobCreation(req.tenantId, autoGeneratedInvoice, req.user?.id || null);
+          } else {
+            console.log(`[CreateJob] ℹ️ Background invoice: no invoice created for job ${job.id}`);
+          }
+        } catch (invoiceError) {
+          console.error('[CreateJob] ❌ Background invoice processing failed:', invoiceError?.message || invoiceError);
+        }
+      });
       
       // Success - break out of retry loop
       return;
@@ -714,8 +916,20 @@ exports.updateJob = async (req, res, next) => {
       });
     }
 
-    const { statusComment, ...rawPayload } = req.body;
+    const { statusComment, items, ...rawPayload } = req.body;
     const updatePayload = sanitizePayload(rawPayload);
+
+    if (updatePayload.deliveryStatus !== undefined) {
+      const parsed = parseDeliveryStatusInput(updatePayload.deliveryStatus);
+      if (parsed === undefined) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid deliveryStatus'
+        });
+      }
+      updatePayload.deliveryStatus = parsed;
+    }
+
     const oldStatus = job.status;
     const newStatus = updatePayload.status;
     const oldAssignedTo = job.assignedTo;
@@ -725,7 +939,35 @@ exports.updateJob = async (req, res, next) => {
       updatePayload.completionDate = new Date();
     }
 
-    await job.update(updatePayload);
+    // When work starts, persist start date for customer tracking / timeline if not already set
+    if (newStatus === 'in_progress' && oldStatus !== 'in_progress' && !job.startDate) {
+      if (updatePayload.startDate == null) {
+        updatePayload.startDate = new Date();
+      }
+    }
+
+    if (items !== undefined && Array.isArray(items)) {
+      const transaction = await sequelize.transaction();
+      try {
+        await job.update(updatePayload, { transaction });
+        await JobItem.destroy({ where: { jobId: job.id, tenantId: req.tenantId }, transaction });
+        if (items.length > 0) {
+          const jobItems = items.map((item) => ({
+            ...sanitizePayload(item),
+            jobId: job.id,
+            tenantId: req.tenantId,
+            totalPrice: parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)
+          }));
+          await JobItem.bulkCreate(jobItems, { transaction });
+        }
+        await transaction.commit();
+      } catch (err) {
+        await transaction.rollback();
+        throw err;
+      }
+    } else {
+      await job.update(updatePayload);
+    }
 
     // Auto-create invoice when job is marked as completed
     let autoGeneratedInvoice = null;
@@ -768,37 +1010,35 @@ exports.updateJob = async (req, res, next) => {
       await activityLogger.logJobAssigned(updatedJob, req.user?.id || null);
     }
 
+    if (
+      updatePayload.assignedTo &&
+      updatePayload.assignedTo !== oldAssignedTo &&
+      updatedJob.assignedUser?.email
+    ) {
+      const { sendJobAssignedEmailToAssignee } = require('../services/jobAssigneeEmailService');
+      sendJobAssignedEmailToAssignee({
+        tenantId: req.tenantId,
+        job: updatedJob,
+        assignee: updatedJob.assignedUser,
+        assignedByUser: req.user || null
+      });
+    }
+
     if (statusChanged) {
       await activityLogger.logJobStatusChanged(updatedJob, oldStatus, newStatus, req.user?.id || null);
-      
-      // Send WhatsApp order confirmation when status changes to 'in_progress'
-      if (newStatus === 'in_progress' && oldStatus !== 'in_progress') {
-        try {
-          const whatsappService = require('../services/whatsappService');
-          const whatsappTemplates = require('../services/whatsappTemplates');
-          const config = await whatsappService.getConfig(req.tenantId);
-          
-          if (config && updatedJob.customer && updatedJob.customer.phone) {
-            const phoneNumber = whatsappService.validatePhoneNumber(updatedJob.customer.phone);
-            if (phoneNumber) {
-              const parameters = whatsappTemplates.prepareOrderConfirmation(
-                updatedJob,
-                updatedJob.customer
-              );
-              
-              await whatsappService.sendMessage(
-                req.tenantId,
-                phoneNumber,
-                'order_confirmation',
-                parameters
-              ).catch(error => {
-                console.error('[Job] WhatsApp send failed:', error);
-              });
-            }
-          }
-        } catch (error) {
-          console.error('[Job] WhatsApp integration error:', error);
-        }
+      if (newStatus === 'completed') {
+        await activityLogger.logJobCompleted(updatedJob, req.user?.id || null).catch((err) =>
+          console.error('[Job] logJobCompleted failed:', err?.message)
+        );
+      }
+
+      // Customer messaging policy: only notify on creation and completion.
+      if (newStatus === 'completed' && oldStatus !== 'completed') {
+        await sendJobLifecycleWhatsApp({
+          tenantId: req.tenantId,
+          job: updatedJob,
+          eventType: 'completed'
+        });
       }
     }
 

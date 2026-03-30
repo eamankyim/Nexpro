@@ -50,6 +50,7 @@ import { DatePicker } from '@/components/ui/date-picker';
 import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import { DEBOUNCE_DELAYS } from '../../constants';
+import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../../utils/formUtils';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import MobileFormDialog from '../../components/MobileFormDialog';
@@ -64,7 +65,7 @@ import {
 
 const addExpenseSchema = z.object({
   category: z.string().min(1, 'Category is required'),
-  amount: z.number().min(0.01, 'Amount must be greater than 0'),
+  amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Amount must be greater than 0'),
   expenseDate: z.date({ required_error: 'Expense date is required' }),
   description: z.string().optional().default(''),
   paymentMethod: z.string().optional(),
@@ -290,11 +291,13 @@ const AdminExpenses = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record?.status} />
     },
     {
       key: 'approvalStatus',
       label: 'Approval',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record?.approvalStatus} />
     },
     {
@@ -336,7 +339,7 @@ const AdminExpenses = () => {
             Track platform operating expenses (office, infrastructure, etc.).
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
             <Filter className="h-4 w-4" />
@@ -368,10 +371,10 @@ const AdminExpenses = () => {
                 });
                 setAddModalOpen(true);
               }}
-              size={isMobile ? "icon" : "default"}
+              className="flex-1 min-w-0 md:flex-none"
             >
               <Plus className="h-4 w-4" />
-              {!isMobile && <span className="ml-2">Add Expense</span>}
+              <span className="ml-2">Add Expense</span>
             </Button>
           )}
         </div>
@@ -458,14 +461,14 @@ const AdminExpenses = () => {
             <div className="space-y-2">
               <Label>Category</Label>
               <Select
-                value={filters.category || ''}
-                onValueChange={(value) => handleFilterChange('category', value || '')}
+                value={filters.category || '__all__'}
+                onValueChange={(value) => handleFilterChange('category', value === '__all__' ? '' : value)}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="All categories" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Categories</SelectItem>
+                  <SelectItem value="__all__">All Categories</SelectItem>
                   {expenseCategories.map(category => (
                     <SelectItem key={category} value={category}>{category}</SelectItem>
                   ))}
@@ -476,14 +479,14 @@ const AdminExpenses = () => {
             <div className="space-y-2">
               <Label>Status</Label>
               <Select
-                value={filters.status || ''}
-                onValueChange={(value) => handleFilterChange('status', value || '')}
+                value={filters.status || '__all__'}
+                onValueChange={(value) => handleFilterChange('status', value === '__all__' ? '' : value)}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="All statuses" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Statuses</SelectItem>
+                  <SelectItem value="__all__">All Statuses</SelectItem>
                   {statusOptions.map(status => (
                     <SelectItem key={status} value={status}>{status.toUpperCase()}</SelectItem>
                   ))}
@@ -494,14 +497,14 @@ const AdminExpenses = () => {
             <div className="space-y-2">
               <Label>Approval Status</Label>
               <Select
-                value={filters.approvalStatus || ''}
-                onValueChange={(value) => handleFilterChange('approvalStatus', value || '')}
+                value={filters.approvalStatus || '__all__'}
+                onValueChange={(value) => handleFilterChange('approvalStatus', value === '__all__' ? '' : value)}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="All approval statuses" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">All Approval Statuses</SelectItem>
+                  <SelectItem value="__all__">All Approval Statuses</SelectItem>
                   {approvalStatusOptions.map(status => (
                     <SelectItem key={status} value={status}>{status.replace('_', ' ').toUpperCase()}</SelectItem>
                   ))}
@@ -586,7 +589,8 @@ const AdminExpenses = () => {
                         step="0.01"
                         min="0"
                         {...field}
-                        onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
+                        value={numberInputValue(field.value)}
+                        onChange={(e) => handleNumberChange(e, field.onChange)}
                       />
                     </FormControl>
                     <FormMessage />
@@ -710,7 +714,7 @@ const AdminExpenses = () => {
                     {viewingExpense.description || '-'}
                   </DescriptionItem>
                   <DescriptionItem label="Amount">
-                    <strong style={{ fontSize: '18px', color: '#166534' }}>
+                    <strong style={{ fontSize: '18px', color: 'var(--color-primary)' }}>
                       {formatCurrency(viewingExpense.amount)}
                     </strong>
                   </DescriptionItem>

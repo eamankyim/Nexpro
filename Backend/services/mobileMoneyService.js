@@ -7,7 +7,7 @@ const crypto = require('crypto');
  * for payment collection in African markets
  */
 
-// MTN MoMo API Configuration
+// MTN MoMo API Configuration (platform fallback when tenant has no encrypted credentials)
 const MTN_CONFIG = {
   baseUrl: process.env.MTN_MOMO_BASE_URL || 'https://sandbox.momodeveloper.mtn.com',
   collectionApiUrl: process.env.MTN_MOMO_COLLECTION_URL || 'https://sandbox.momodeveloper.mtn.com/collection',
@@ -17,6 +17,38 @@ const MTN_CONFIG = {
   environment: process.env.MTN_MOMO_ENVIRONMENT || 'sandbox',
   callbackUrl: process.env.MTN_MOMO_CALLBACK_URL
 };
+
+/**
+ * Merge tenant-specific or per-request MTN credentials with platform env defaults.
+ * @param {object|null|undefined} runtime - { subscriptionKey, apiUser, apiKey, environment, collectionApiUrl, callbackUrl }
+ */
+function resolveMtnRuntime(runtime) {
+  if (
+    runtime &&
+    runtime.subscriptionKey &&
+    runtime.apiUser &&
+    runtime.apiKey
+  ) {
+    const envRaw = (runtime.environment || 'sandbox').toString().toLowerCase();
+    return {
+      collectionApiUrl: runtime.collectionApiUrl || MTN_CONFIG.collectionApiUrl,
+      subscriptionKey: runtime.subscriptionKey,
+      apiUser: runtime.apiUser,
+      apiKey: runtime.apiKey,
+      environment: envRaw === 'production' ? 'production' : 'sandbox',
+      callbackUrl: runtime.callbackUrl || MTN_CONFIG.callbackUrl
+    };
+  }
+  const envFallback = (MTN_CONFIG.environment || 'sandbox').toString().toLowerCase();
+  return {
+    collectionApiUrl: MTN_CONFIG.collectionApiUrl,
+    subscriptionKey: MTN_CONFIG.subscriptionKey,
+    apiUser: MTN_CONFIG.apiUser,
+    apiKey: MTN_CONFIG.apiKey,
+    environment: envFallback === 'production' ? 'production' : 'sandbox',
+    callbackUrl: MTN_CONFIG.callbackUrl
+  };
+}
 
 // Airtel Money API Configuration
 const AIRTEL_CONFIG = {
@@ -40,23 +72,28 @@ const generateUUID = () => {
 const mtnMoMo = {
   /**
    * Get OAuth access token for MTN MoMo API
+   * @param {object} [runtimeConfig] - Optional tenant-specific credentials
    */
-  getAccessToken: async () => {
+  getAccessToken: async (runtimeConfig) => {
+    const cfg = resolveMtnRuntime(runtimeConfig);
+    if (!cfg.subscriptionKey || !cfg.apiUser || !cfg.apiKey) {
+      throw new Error('MTN MoMo API is not configured (missing subscription key, API user, or API key)');
+    }
     try {
-      const credentials = Buffer.from(`${MTN_CONFIG.apiUser}:${MTN_CONFIG.apiKey}`).toString('base64');
-      
+      const credentials = Buffer.from(`${cfg.apiUser}:${cfg.apiKey}`).toString('base64');
+
       const response = await axios.post(
-        `${MTN_CONFIG.collectionApiUrl}/token/`,
+        `${cfg.collectionApiUrl}/token/`,
         null,
         {
           headers: {
-            'Authorization': `Basic ${credentials}`,
-            'Ocp-Apim-Subscription-Key': MTN_CONFIG.subscriptionKey,
+            Authorization: `Basic ${credentials}`,
+            'Ocp-Apim-Subscription-Key': cfg.subscriptionKey,
             'Content-Type': 'application/x-www-form-urlencoded'
           }
         }
       );
-      
+
       return response.data.access_token;
     } catch (error) {
       console.error('[MTN MoMo] Error getting access token:', error.response?.data || error.message);
@@ -66,42 +103,47 @@ const mtnMoMo = {
 
   /**
    * Request payment from customer (Collection)
-   * @param {Object} params - Payment parameters
-   * @param {string} params.phoneNumber - Customer phone number (format: 233XXXXXXXXX)
-   * @param {number} params.amount - Amount to collect
-   * @param {string} params.currency - Currency code (e.g., GHS, UGX)
-   * @param {string} params.externalId - Your reference ID
-   * @param {string} params.payerMessage - Message to show payer
-   * @param {string} params.payeeNote - Note for your records
+   * @param {object} runtimeConfig - Optional tenant-specific credentials
    */
-  requestPayment: async ({ phoneNumber, amount, currency = 'GHS', externalId, payerMessage, payeeNote }) => {
+  requestPayment: async (
+    { phoneNumber, amount, currency = 'GHS', externalId, payerMessage, payeeNote },
+    runtimeConfig
+  ) => {
+    const cfg = resolveMtnRuntime(runtimeConfig);
+    if (!cfg.subscriptionKey || !cfg.apiUser || !cfg.apiKey) {
+      return {
+        success: false,
+        error: 'MTN MoMo API is not configured for this workspace',
+        provider: 'MTN'
+      };
+    }
     try {
-      const accessToken = await mtnMoMo.getAccessToken();
+      const accessToken = await mtnMoMo.getAccessToken(runtimeConfig);
       const referenceId = generateUUID();
-      
+
       const payload = {
         amount: amount.toString(),
         currency,
         externalId: externalId || referenceId,
         payer: {
           partyIdType: 'MSISDN',
-          partyId: phoneNumber.replace(/^\+/, '') // Remove + if present
+          partyId: phoneNumber.replace(/^\+/, '')
         },
         payerMessage: payerMessage || 'Payment for purchase',
         payeeNote: payeeNote || 'Shop payment'
       };
 
       await axios.post(
-        `${MTN_CONFIG.collectionApiUrl}/v1_0/requesttopay`,
+        `${cfg.collectionApiUrl}/v1_0/requesttopay`,
         payload,
         {
           headers: {
-            'Authorization': `Bearer ${accessToken}`,
+            Authorization: `Bearer ${accessToken}`,
             'X-Reference-Id': referenceId,
-            'X-Target-Environment': MTN_CONFIG.environment,
-            'Ocp-Apim-Subscription-Key': MTN_CONFIG.subscriptionKey,
+            'X-Target-Environment': cfg.environment,
+            'Ocp-Apim-Subscription-Key': cfg.subscriptionKey,
             'Content-Type': 'application/json',
-            ...(MTN_CONFIG.callbackUrl && { 'X-Callback-Url': MTN_CONFIG.callbackUrl })
+            ...(cfg.callbackUrl && { 'X-Callback-Url': cfg.callbackUrl })
           }
         }
       );
@@ -126,29 +168,40 @@ const mtnMoMo = {
 
   /**
    * Check payment status
-   * @param {string} referenceId - The X-Reference-Id from the payment request
+   * @param {string} referenceId
+   * @param {object} [runtimeConfig]
    */
-  checkPaymentStatus: async (referenceId) => {
+  checkPaymentStatus: async (referenceId, runtimeConfig) => {
+    const cfg = resolveMtnRuntime(runtimeConfig);
+    if (!cfg.subscriptionKey || !cfg.apiUser || !cfg.apiKey) {
+      return {
+        success: false,
+        referenceId,
+        status: 'UNKNOWN',
+        error: 'MTN MoMo API is not configured',
+        provider: 'MTN'
+      };
+    }
     try {
-      const accessToken = await mtnMoMo.getAccessToken();
-      
+      const accessToken = await mtnMoMo.getAccessToken(runtimeConfig);
+
       const response = await axios.get(
-        `${MTN_CONFIG.collectionApiUrl}/v1_0/requesttopay/${referenceId}`,
+        `${cfg.collectionApiUrl}/v1_0/requesttopay/${referenceId}`,
         {
           headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'X-Target-Environment': MTN_CONFIG.environment,
-            'Ocp-Apim-Subscription-Key': MTN_CONFIG.subscriptionKey
+            Authorization: `Bearer ${accessToken}`,
+            'X-Target-Environment': cfg.environment,
+            'Ocp-Apim-Subscription-Key': cfg.subscriptionKey
           }
         }
       );
 
       const data = response.data;
-      
+
       return {
         success: true,
         referenceId,
-        status: data.status, // PENDING, SUCCESSFUL, FAILED
+        status: data.status,
         amount: data.amount,
         currency: data.currency,
         payerPhone: data.payer?.partyId,
@@ -170,18 +223,28 @@ const mtnMoMo = {
 
   /**
    * Validate account holder (check if phone number is valid)
+   * @param {object} [runtimeConfig]
    */
-  validateAccount: async (phoneNumber) => {
+  validateAccount: async (phoneNumber, runtimeConfig) => {
+    const cfg = resolveMtnRuntime(runtimeConfig);
+    if (!cfg.subscriptionKey || !cfg.apiUser || !cfg.apiKey) {
+      return {
+        success: false,
+        valid: false,
+        error: 'MTN MoMo API is not configured',
+        provider: 'MTN'
+      };
+    }
     try {
-      const accessToken = await mtnMoMo.getAccessToken();
-      
+      const accessToken = await mtnMoMo.getAccessToken(runtimeConfig);
+
       const response = await axios.get(
-        `${MTN_CONFIG.collectionApiUrl}/v1_0/accountholder/msisdn/${phoneNumber.replace(/^\+/, '')}/basicuserinfo`,
+        `${cfg.collectionApiUrl}/v1_0/accountholder/msisdn/${phoneNumber.replace(/^\+/, '')}/basicuserinfo`,
         {
           headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'X-Target-Environment': MTN_CONFIG.environment,
-            'Ocp-Apim-Subscription-Key': MTN_CONFIG.subscriptionKey
+            Authorization: `Bearer ${accessToken}`,
+            'X-Target-Environment': cfg.environment,
+            'Ocp-Apim-Subscription-Key': cfg.subscriptionKey
           }
         }
       );
@@ -362,6 +425,8 @@ const mobileMoneyService = {
       if (['24', '54', '55', '59'].includes(prefix)) return 'MTN';
       // Airtel/Tigo Ghana: 26, 27, 57
       if (['26', '27', '57'].includes(prefix)) return 'AIRTEL';
+      // Vodafone Cash Ghana: 20, 50
+      if (['20', '50'].includes(prefix)) return 'VODAFONE';
     }
     
     // Uganda prefixes
@@ -388,14 +453,23 @@ const mobileMoneyService = {
    * Request payment (auto-routes to correct provider)
    */
   requestPayment: async (params) => {
-    const provider = params.provider || mobileMoneyService.detectProvider(params.phoneNumber);
-    
+    const { mtnConfig, ...paymentParams } = params;
+    const provider = paymentParams.provider || mobileMoneyService.detectProvider(paymentParams.phoneNumber);
+
     if (provider === 'MTN') {
-      return mtnMoMo.requestPayment(params);
-    } else if (provider === 'AIRTEL') {
-      return airtelMoney.requestPayment(params);
+      return mtnMoMo.requestPayment(paymentParams, mtnConfig);
     }
-    
+    if (provider === 'AIRTEL') {
+      return airtelMoney.requestPayment(paymentParams);
+    }
+    if (provider === 'VODAFONE') {
+      return {
+        success: false,
+        error: 'Vodafone Cash API is not connected yet. Use MTN or AirtelTigo, or pay by card.',
+        provider: 'VODAFONE'
+      };
+    }
+
     return {
       success: false,
       error: 'Unable to detect mobile money provider. Please specify provider.',
@@ -406,13 +480,23 @@ const mobileMoneyService = {
   /**
    * Check payment status (requires knowing the provider)
    */
-  checkPaymentStatus: async (referenceId, provider) => {
+  checkPaymentStatus: async (referenceId, provider, mtnConfig) => {
     if (provider === 'MTN') {
-      return mtnMoMo.checkPaymentStatus(referenceId);
-    } else if (provider === 'AIRTEL') {
+      return mtnMoMo.checkPaymentStatus(referenceId, mtnConfig);
+    }
+    if (provider === 'AIRTEL') {
       return airtelMoney.checkPaymentStatus(referenceId);
     }
-    
+    if (provider === 'VODAFONE') {
+      return {
+        success: false,
+        referenceId,
+        status: 'UNKNOWN',
+        error: 'Vodafone Cash status checks are not available yet.',
+        provider: 'VODAFONE'
+      };
+    }
+
     return {
       success: false,
       error: 'Provider not specified',
@@ -423,11 +507,11 @@ const mobileMoneyService = {
   /**
    * Validate phone number for mobile money
    */
-  validateAccount: async (phoneNumber, provider) => {
+  validateAccount: async (phoneNumber, provider, mtnConfig) => {
     const detectedProvider = provider || mobileMoneyService.detectProvider(phoneNumber);
-    
+
     if (detectedProvider === 'MTN') {
-      return mtnMoMo.validateAccount(phoneNumber);
+      return mtnMoMo.validateAccount(phoneNumber, mtnConfig);
     }
     
     // Airtel doesn't have a validation endpoint in same way
@@ -441,7 +525,8 @@ const mobileMoneyService = {
 
   // Expose individual provider APIs
   mtn: mtnMoMo,
-  airtel: airtelMoney
+  airtel: airtelMoney,
+  resolveMtnRuntime
 };
 
 module.exports = mobileMoneyService;

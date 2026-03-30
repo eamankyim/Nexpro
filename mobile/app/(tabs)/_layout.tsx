@@ -76,19 +76,12 @@ export default function TabLayout() {
           options={{ href: null }}
         />
       )}
-      {(isShop || isPharmacy) && (
-        <Tabs.Screen
-          name="products"
-          options={
-            isRestaurant
-              ? { href: null } // Products in More menu for restaurants
-              : {
-                  title: 'Products',
-                  tabBarIcon: ({ color }) => <TabBarIcon name="archive" color={color} />,
-                }
-          }
-        />
-      )}
+      <Tabs.Screen
+        name="products"
+        options={{
+          href: null, // Products accessible from More menu only
+        }}
+      />
       {isStudio ? (
         <Tabs.Screen
           name="jobs"
@@ -108,7 +101,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="scan"
         options={{
-          title: 'Scan',
+          title: isStudio ? 'Add' : 'Scan',
           tabBarButton: (props) => (
             <Pressable
               onPress={props.onPress}
@@ -119,7 +112,9 @@ export default function TabLayout() {
             >
               <View style={styles.centerTabContent}>
                 <CenterTabButton />
-                <Text style={[styles.centerTabLabel, { color: colors.tabIconDefault }]}>Scan</Text>
+                <Text style={[styles.centerTabLabel, { color: colors.tabIconDefault }]}>
+                  {isStudio ? 'Add' : 'Scan'}
+                </Text>
               </View>
             </Pressable>
           ),

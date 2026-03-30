@@ -1,7 +1,7 @@
 /**
  * Mobile app logger - use __DEV__ to only log in development
  */
-const PREFIX = '[ShopWISE]';
+const PREFIX = '[ABS]';
 
 export const logger = {
   info: (tag: string, ...args: unknown[]) => {

@@ -19,6 +19,7 @@ import { useCart } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
 import { customerService } from '@/services/customerService';
 import { saleService } from '@/services/saleService';
+import { offlineQueueService } from '@/services/offlineQueueService';
 import { CURRENCY } from '@/constants';
 import { useTheme } from '@/context/ThemeContext';
 import Colors from '@/constants/Colors';
@@ -58,17 +59,30 @@ export default function CartScreen() {
   }>;
 
   const createSaleMutation = useMutation({
-    mutationFn: (payload: object) => saleService.createSale(payload),
-    onSuccess: () => {
+    mutationFn: async (payload: object) => {
+      try {
+        return await saleService.createSale(payload);
+      } catch (error: any) {
+        if (!error?.response && (error?.code === 'ERR_NETWORK' || error?.message?.toLowerCase().includes('network'))) {
+          await offlineQueueService.queueSale(payload);
+          return { _offline: true };
+        }
+        throw error;
+      }
+    },
+    onSuccess: (data: any) => {
+      if (data?._offline) {
+        clearCart();
+        setPaymentModalVisible(false);
+        Alert.alert('Saved offline', 'Sale will sync when you are back online.', [{ text: 'OK' }]);
+        return;
+      }
       queryClient.invalidateQueries({ queryKey: ['sales'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
       clearCart();
       setPaymentModalVisible(false);
       Alert.alert('Success', 'Sale completed successfully!', [
-        {
-          text: 'OK',
-          onPress: () => router.push('/(tabs)/sales'),
-        },
+        { text: 'OK', onPress: () => router.push('/(tabs)/sales') },
       ]);
     },
     onError: (error: any) => {
@@ -561,7 +575,7 @@ const styles = StyleSheet.create({
   modalContent: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '85%',
+    maxHeight: '80%',
   },
   modalHeader: {
     flexDirection: 'row',

@@ -19,6 +19,7 @@ const addImageUrlToProducts = require('./add-imageUrl-to-products');
 const alterProductsImageUrlToText = require('./alter-products-imageUrl-to-text');
 const addTrackStockToProducts = require('./add-trackStock-to-products');
 const addOrderStatusToSales = require('./add-orderStatus-to-sales');
+const addClientIdToSales = require('./add-clientId-to-sales');
 const createProductCategoriesAndSwitchProducts = require('./create-product-categories-and-switch-products');
 const addBusinessTypeToProductCategories = require('./add-business-type-to-product-categories');
 const addShopTypeToProductCategories = require('./add-shop-type-to-product-categories');
@@ -28,6 +29,24 @@ const backfillCategoriesForExistingTenants = require('./backfill-categories-for-
 const addEmailPhoneUniqueConstraints = require('./add-email-phone-unique-constraints');
 const fixUniquenessPerTenant = require('./fix-uniqueness-per-tenant');
 const renameInventoryTablesToMaterials = require('./rename-inventory-tables-to-materials');
+const addPartiallyPaidToSalesStatus = require('./add-partially-paid-to-sales-status');
+const addQuoteInvoiceSaleFlow = require('./add-quote-invoice-sale-flow');
+const addViewTokenToQuotes = require('./add-view-token-to-quotes');
+const addViewTokenToJobs = require('./add-view-token-to-jobs');
+const allowNullTenantIdInSettings = require('./allow-null-tenantId-in-settings');
+const addInviteEmailStatusFields = require('./add-invite-email-status-fields');
+const addNotificationPreferencesToUsers = require('./add-notification-preferences-to-users');
+const addTaxToQuotes = require('./add-tax-to-quotes');
+const addJobQueryIndexes = require('./add-job-query-indexes');
+const addTaskAutomationFieldsToUserTasks = require('./add-task-automation-fields-to-user-tasks');
+const addMetadataToUserTasks = require('./add-metadata-to-user-tasks');
+const addStartDateToUserTasks = require('./add-startDate-to-user-tasks');
+const createTenantAccessAudits = require('./create-tenant-access-audits');
+const createAutomationsTables = require('./create-automations-tables');
+const normalizeTenantPlansToTrial = require('./normalize-tenant-plans-to-trial');
+const addDeliveryStatusToJobsAndSales = require('./add-delivery-status-to-jobs-and-sales');
+const addSalesTenantSoldByCreatedIndex = require('./add-sales-tenant-soldby-created-index');
+const addQueryPathIndexesV2 = require('./add-query-path-indexes-v2');
 
 const migrate = async () => {
   try {
@@ -77,6 +96,9 @@ const migrate = async () => {
     // Add orderStatus column for restaurant order tracking
     await addOrderStatusToSales();
 
+    // Add clientId column for offline sale idempotency (safe if already exists)
+    await addClientIdToSales();
+
     // Create product_categories, migrate product refs from inventory_categories, switch FK
     await createProductCategoriesAndSwitchProducts();
     
@@ -104,6 +126,9 @@ const migrate = async () => {
     // Rename inventory_* tables to materials_* for full materials/equipment consistency
     await renameInventoryTablesToMaterials.up();
 
+    // Allow NULL tenantId for platform-wide settings (platform:branding, platform:featureFlags, etc.)
+    await allowNullTenantIdInSettings();
+
     // Create invite_tokens table if it doesn't exist
     await createInviteTokens.up(sequelize.getQueryInterface(), require('sequelize'));
 
@@ -115,6 +140,54 @@ const migrate = async () => {
 
     // Add email_verified_at to users if it doesn't exist
     await addEmailVerifiedAtToUsers.up();
+
+    // Add partially_paid to sales status enum
+    const queryInterface = sequelize.getQueryInterface();
+    await addPartiallyPaidToSalesStatus.up(queryInterface);
+
+    // Quote → invoice → sale flow (quoteId on invoices, productId on quote_items)
+    await addQuoteInvoiceSaleFlow();
+
+    // Add viewToken to quotes for public quote viewing
+    await addViewTokenToQuotes();
+
+    // Add viewToken to jobs for customer job tracking links
+    await addViewTokenToJobs();
+
+    // Add invite email delivery status fields
+    await addInviteEmailStatusFields();
+
+    // Per-user notification preference JSON on users
+    await addNotificationPreferencesToUsers.up();
+
+    // Quote tax columns (tenant tax configuration)
+    await addTaxToQuotes();
+
+    // Jobs list/search indexes
+    await addJobQueryIndexes();
+
+    // Workspace task automation metadata columns
+    await addTaskAutomationFieldsToUserTasks();
+    await addMetadataToUserTasks.up();
+    await addStartDateToUserTasks.up();
+
+    // Tenant access audit trail
+    await createTenantAccessAudits.up();
+
+    // Automations V1 tables
+    await createAutomationsTables.up({ closeConnection: false });
+
+    // Normalize all tenant plan values to canonical trial
+    await normalizeTenantPlansToTrial.up({ closeConnection: false });
+
+    // First-party delivery tracking (jobs + sales)
+    await addDeliveryStatusToJobsAndSales();
+
+    // Sales list for staff (tenant + soldBy + recency)
+    await addSalesTenantSoldByCreatedIndex();
+
+    // Additional endpoint-driven indexes (sales/invoices/jobs)
+    await addQueryPathIndexesV2();
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 import { useSmartSearch } from '../context/SmartSearchContext';
@@ -17,6 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Avatar as ShadcnAvatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
+import { cn } from '@/lib/utils';
 import {
   Select,
   SelectContent,
@@ -103,6 +104,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, ROLE_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS } from '../constants';
+import StatusChip from '../components/StatusChip';
 import { resolveImageUrl } from '../utils/fileUtils';
 
 const Users = () => {
@@ -128,14 +130,14 @@ const Users = () => {
   const [viewingUser, setViewingUser] = useState(null);
   const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [inviteModalVisible, setInviteModalVisible] = useState(false);
-  const [generatedInviteLink, setGeneratedInviteLink] = useState(null);
-  const [isExistingInvite, setIsExistingInvite] = useState(false);
   const [pendingInvites, setPendingInvites] = useState([]);
   const [loadingInvites, setLoadingInvites] = useState(false);
   const [revokingInviteId, setRevokingInviteId] = useState(null);
   const [deletingUserId, setDeletingUserId] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [submittingInvite, setSubmittingInvite] = useState(false);
+  /** Bumps when a new invite is sent so overlapping polls cancel */
+  const inviteEmailPollGenRef = useRef(0);
   const [deletingUser, setDeletingUser] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(null);
   const [refreshingUsers, setRefreshingUsers] = useState(false);
@@ -172,6 +174,42 @@ const Users = () => {
       setLoadingInvites(false);
     }
   }, []);
+
+  /**
+   * Backend sends invite email asynchronously after POST returns; `emailStatus` becomes `sent` in DB only after send completes.
+   * Poll so the Pending Invites table updates without a full page refresh.
+   * @param {string} invitedEmail - Normalized email for the row to watch
+   */
+  const pollInviteEmailStatusUntilSettled = useCallback(
+    async (invitedEmail) => {
+      const normalized = (invitedEmail || '').trim().toLowerCase();
+      if (!normalized) return;
+      const pollGen = ++inviteEmailPollGenRef.current;
+      const maxAttempts = 30;
+      const intervalMs = 2000;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        await new Promise((r) => setTimeout(r, intervalMs));
+        if (pollGen !== inviteEmailPollGenRef.current) return;
+
+        try {
+          const response = await inviteService.getAllInvites({ used: 'false' });
+          const data = response.data?.data ?? response.data ?? [];
+          const list = Array.isArray(data) ? data : [];
+          if (pollGen !== inviteEmailPollGenRef.current) return;
+          setPendingInvites(list);
+
+          const row = list.find((inv) => (inv.email || '').toLowerCase() === normalized);
+          if (row && row.emailStatus && row.emailStatus !== 'pending') {
+            return;
+          }
+        } catch {
+          break;
+        }
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     setPageSearchConfig({ scope: 'users', placeholder: SEARCH_PLACEHOLDERS.USERS });
@@ -281,14 +319,7 @@ const Users = () => {
       email: '',
       role: 'staff',
     });
-    setGeneratedInviteLink(null);
-    setIsExistingInvite(false);
     setInviteModalVisible(true);
-  };
-
-  const handleCopyInviteLink = () => {
-    navigator.clipboard.writeText(generatedInviteLink);
-    showSuccess('Invite link copied to clipboard!');
   };
 
   const getInviteUrl = (token) => {
@@ -362,14 +393,15 @@ const Users = () => {
   };
 
   const onInviteSubmit = async (values) => {
+    const invitedEmail = (values.email || '').trim().toLowerCase();
     try {
       setSubmittingInvite(true);
-      const response = await inviteService.generateInvite(values);
-      const inviteUrl = response.data?.data?.inviteUrl ?? response.data?.inviteUrl;
-      setGeneratedInviteLink(inviteUrl);
-      setIsExistingInvite(false);
-      showSuccess('Invite link generated successfully!');
+      await inviteService.generateInvite(values);
+      showSuccess('Invite created. The user should receive an email shortly; delivery status updates below in a few seconds.');
+      setInviteModalVisible(false);
+      inviteForm.reset({ email: '', role: 'staff' });
       await fetchPendingInvites();
+      void pollInviteEmailStatusUntilSettled(invitedEmail);
     } catch (error) {
       if (error?.response?.data?.code === 'EMAIL_VERIFICATION_REQUIRED') {
         showError(error?.response?.data?.message || 'Verify your email to invite team members.');
@@ -378,14 +410,7 @@ const Users = () => {
       if (error?.response?.data?.message?.includes('already exists') ||
           error?.response?.data?.message?.includes('already invited') ||
           error?.response?.data?.data?.inviteUrl) {
-        const url = error?.response?.data?.data?.inviteUrl ?? error?.response?.data?.inviteUrl;
-        if (url) {
-          setGeneratedInviteLink(url);
-          setIsExistingInvite(true);
-          showInfo('User already has an active invite. Showing existing invite link.');
-        } else {
-          handleApiError(error, { context: 'generate invite' });
-        }
+        showInfo('User already has an active invite. You can copy the link from the Pending Invites table.');
       } else {
         handleApiError(error, { context: 'generate invite' });
       }
@@ -423,7 +448,7 @@ const Users = () => {
       render: (_, record) => {
         const picUrl = resolveImageUrl(record?.profilePicture || '') || '';
         return (
-          <ShadcnAvatar className={picUrl ? 'cursor-pointer' : ''}>
+          <ShadcnAvatar className={cn('h-10 w-10 aspect-square rounded-full', picUrl ? 'cursor-pointer' : '')}>
             {picUrl ? (
               <button
                 type="button"
@@ -480,6 +505,7 @@ const Users = () => {
     {
       key: 'isActive',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => isAdmin ? (
         <Switch
           checked={record?.isActive}
@@ -487,9 +513,7 @@ const Users = () => {
           disabled={togglingStatus === record.id}
         />
       ) : (
-        <Badge variant={record?.isActive ? 'default' : 'destructive'}>
-          {record?.isActive ? 'ACTIVE' : 'INACTIVE'}
-        </Badge>
+        <StatusChip status={record?.isActive ? 'active_flag' : 'inactive_flag'} />
       )
     },
     {
@@ -538,15 +562,24 @@ const Users = () => {
   };
 
   const hasActiveFilters = filters.role !== 'all' || filters.isActive !== 'all';
+  const getEmailStatusBadge = (status) => {
+    if (status === 'sent') return <StatusChip status="sent" />;
+    if (status === 'failed') return <StatusChip status="failed" />;
+    return <StatusChip status="pending" />;
+  };
 
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <WelcomeSection
           welcomeMessage="Users Management"
-          subText="Manage user accounts, roles, and permissions."
+          subText={
+            isAdmin
+              ? 'Manage user accounts, roles, and permissions.'
+              : 'View workspace members. Only a workspace administrator can invite users, manage invites, or change roles and status.'
+          }
         />
-        {isAdmin && (
+        {isManager && (
           <div className="flex items-center gap-2">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -569,15 +602,17 @@ const Users = () => {
               </TooltipTrigger>
               <TooltipContent>Refresh users list</TooltipContent>
             </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button onClick={handleInviteUser}>
-                  <Link className="h-4 w-4 mr-2" />
-                  Invite User
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Invite a new user to your workspace</TooltipContent>
-            </Tooltip>
+            {isAdmin && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button onClick={handleInviteUser}>
+                    <Link className="h-4 w-4 mr-2" />
+                    Invite User
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Invite a new user to your workspace</TooltipContent>
+              </Tooltip>
+            )}
           </div>
         )}
       </div>
@@ -627,7 +662,7 @@ const Users = () => {
               Pending Invites
             </CardTitle>
             <CardDescription>
-              People who have been invited but have not completed signup yet. Share the invite link or revoke.
+              Invited users who have not signed up yet. Delivery shows when the invite email has finished sending—the list may show Pending for a few seconds right after you invite while the server sends the message.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -637,11 +672,54 @@ const Users = () => {
               </div>
             ) : (
               <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
+                <div className="md:hidden divide-y divide-gray-100">
+                  {pendingInvites.map((invite) => (
+                    <div key={invite.id} className="p-3 space-y-2">
+                      <p className="text-sm font-medium break-all">{invite.email}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className={ROLE_CHIP_CLASSES[invite.role] ?? STATUS_CHIP_DEFAULT_CLASS}>
+                          {invite.role?.toUpperCase() ?? '—'}
+                        </Badge>
+                        {getEmailStatusBadge(invite.emailStatus)}
+                      </div>
+                      {invite.emailStatus === 'failed' && invite.emailLastError ? (
+                        <p className="text-xs text-red-600 break-words">{invite.emailLastError}</p>
+                      ) : null}
+                      <div className="text-xs text-muted-foreground space-y-0.5">
+                        <p>Invited: {invite.createdAt ? dayjs(invite.createdAt).format('MMM DD, YYYY') : '—'}</p>
+                        <p>Expires: {invite.expiresAt ? dayjs(invite.expiresAt).format('MMM DD, YYYY') : '—'}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pt-1">
+                        <SecondaryButton
+                          size="sm"
+                          onClick={() => handleCopyPendingInviteLink(invite)}
+                        >
+                          <Copy className="h-4 w-4 mr-1" />
+                          Copy
+                        </SecondaryButton>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => handleRevokeInvite(invite.id)}
+                          disabled={revokingInviteId === invite.id}
+                        >
+                          {revokingInviteId === invite.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4 mr-1" />
+                          )}
+                          Revoke
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <table className="hidden md:table w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/50">
                       <th className="text-left font-medium py-3 px-4">Email</th>
                       <th className="text-left font-medium py-3 px-4">Role</th>
+                      <th className="text-left font-medium py-3 px-4">Delivery</th>
                       <th className="text-left font-medium py-3 px-4">Invited</th>
                       <th className="text-left font-medium py-3 px-4">Expires</th>
                       <th className="text-right font-medium py-3 px-4">Actions</th>
@@ -655,6 +733,16 @@ const Users = () => {
                           <Badge variant="outline" className={ROLE_CHIP_CLASSES[invite.role] ?? STATUS_CHIP_DEFAULT_CLASS}>
                             {invite.role?.toUpperCase() ?? '—'}
                           </Badge>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="space-y-1">
+                            {getEmailStatusBadge(invite.emailStatus)}
+                            {invite.emailStatus === 'failed' && invite.emailLastError && (
+                              <p className="text-xs text-red-600 max-w-[280px] truncate" title={invite.emailLastError}>
+                                {invite.emailLastError}
+                              </p>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3 px-4 text-muted-foreground">
                           {invite.createdAt ? dayjs(invite.createdAt).format('MMM DD, YYYY') : '—'}
@@ -703,12 +791,18 @@ const Users = () => {
         loading={loading}
         title={null}
         emptyIcon={<UsersIcon className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No team members yet. Invite users to collaborate on your workspace."
+        emptyDescription={
+          isAdmin
+            ? 'No team members yet. Invite users to collaborate on your workspace.'
+            : 'No team members match your filters, or the workspace is empty. Ask an administrator to invite users.'
+        }
         emptyAction={
-          <Button onClick={handleInviteUser}>
-            <Link className="h-4 w-4 mr-2" />
-            Invite User
-          </Button>
+          isAdmin ? (
+            <Button onClick={handleInviteUser}>
+              <Link className="h-4 w-4 mr-2" />
+              Invite User
+            </Button>
+          ) : undefined
         }
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
@@ -722,7 +816,11 @@ const Users = () => {
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent
+          side="right"
+          className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto"
+          style={{ top: 8, bottom: 8, right: 8, height: 'calc(100dvh - 16px)', borderRadius: 8 }}
+        >
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Users</SheetTitle>
           </SheetHeader>
@@ -822,7 +920,7 @@ const Users = () => {
             render: (picture) => {
               const picUrl = resolveImageUrl(picture || '') || '';
               return (
-                <ShadcnAvatar className="h-20 w-20">
+                <ShadcnAvatar className="h-20 w-20 aspect-square rounded-full">
                   {picUrl ? (
                     <button
                       type="button"
@@ -862,9 +960,7 @@ const Users = () => {
             label: 'Status', 
             value: viewingUser.isActive,
             render: (isActive) => (
-              <Badge variant={isActive ? 'default' : 'destructive'}>
-                {isActive ? 'ACTIVE' : 'INACTIVE'}
-              </Badge>
+              <StatusChip status={isActive ? 'active_flag' : 'inactive_flag'} />
             )
           },
           { 
@@ -889,7 +985,6 @@ const Users = () => {
       <Dialog open={inviteModalVisible} onOpenChange={(open) => {
         if (!open) {
           setInviteModalVisible(false);
-          setGeneratedInviteLink(null);
         }
       }}>
         <DialogContent className="sm:w-[var(--modal-w-lg)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
@@ -900,7 +995,6 @@ const Users = () => {
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
-        {!generatedInviteLink ? (
             <Form {...inviteForm}>
               <form onSubmit={inviteForm.handleSubmit(onInviteSubmit)} className="space-y-4">
                 <FormField
@@ -953,56 +1047,21 @@ const Users = () => {
                 <Alert>
                   <AlertTitle>How It Works</AlertTitle>
                   <AlertDescription>
-                    An invite link will be generated that you can share with the user. They'll click the link to complete registration.
+                    We will email an invite link directly to the user. You can still copy links later from the Pending Invites table.
                   </AlertDescription>
                 </Alert>
                 <DialogFooter>
                   <SecondaryButton type="button" onClick={() => {
                   setInviteModalVisible(false);
-                  setGeneratedInviteLink(null);
                 }} disabled={submittingInvite}>
                   Cancel
                 </SecondaryButton>
                   <Button type="submit" loading={submittingInvite}>
-                    Generate Invite Link
+                    Send Invite
                   </Button>
                 </DialogFooter>
               </form>
           </Form>
-        ) : (
-            <div className="space-y-4">
-              <Alert variant={isExistingInvite ? 'default' : 'default'}>
-                <AlertTitle>{isExistingInvite ? "Existing Invite Found!" : "Invite Link Generated!"}</AlertTitle>
-                <AlertDescription>
-                  {isExistingInvite 
-                ? "This user has already been invited. You can copy the existing invite link below."
-                : "Copy the link below and share it with the user. The link will expire in 7 days."}
-                </AlertDescription>
-              </Alert>
-              <div className="flex gap-2">
-              <Input
-                value={generatedInviteLink}
-                readOnly
-                  className="flex-1"
-              />
-              <Button
-                onClick={handleCopyInviteLink}
-              >
-                  <Copy className="h-4 w-4 mr-2" />
-                Copy invitation link
-              </Button>
-              </div>
-              <DialogFooter>
-              <Button onClick={() => {
-                setInviteModalVisible(false);
-                setGeneratedInviteLink(null);
-                setIsExistingInvite(false);
-              }}>
-                Close
-              </Button>
-              </DialogFooter>
-          </div>
-        )}
           </DialogBody>
         </DialogContent>
       </Dialog>

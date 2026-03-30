@@ -66,21 +66,6 @@ import {
   TrendingUp,
   TrendingDown
 } from 'lucide-react';
-import {
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  Legend,
-  ResponsiveContainer
-} from 'recharts';
 import reportService from '../services/reportService';
 import materialsService from '../services/materialsService';
 import { useAuth } from '../context/AuthContext';
@@ -89,14 +74,15 @@ import { SEARCH_PLACEHOLDERS } from '../constants';
 import { getPreviousPeriod } from '../utils/periodComparison';
 import { cn } from '@/lib/utils';
 import dayjs from 'dayjs';
+import { RechartsModuleProvider, useRechartsModule } from '@/components/charts/RechartsModuleContext';
 
-
-const Reports = () => {
+function ReportsInner() {
   const location = useLocation();
   const navigate = useNavigate();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const { activeTenant, user } = useAuth();
   const { isMobile } = useResponsive();
+  const rc = useRechartsModule();
 
   // Declare first so it's never in TDZ when used below
   const [generatedReport, setGeneratedReport] = useState(null);
@@ -107,8 +93,17 @@ const Reports = () => {
   const isPrintingPress = businessType === 'printing_press';
   const isShop = businessType === 'shop';
   const isPharmacy = businessType === 'pharmacy';
-  const isRestaurant = isShop && metadata?.shopType === 'restaurant';
-  const terminology = useMemo(() => getBusinessTerminology(businessType, metadata), [businessType, metadata]);
+  const isRestaurant =
+    isShop &&
+    ((metadata?.businessSubType || metadata?.shopType) === 'restaurant');
+  const terminology = useMemo(
+    () =>
+      getBusinessTerminology(businessType, {
+        ...metadata,
+        shopType: metadata?.shopType || metadata?.businessSubType || null,
+      }),
+    [businessType, metadata]
+  );
 
   // Compact empty state padding for restaurant (many empty sections when no data)
   const emptyStateClass = isRestaurant ? 'py-3 text-sm text-muted-foreground' : 'py-6 text-muted-foreground';
@@ -158,6 +153,7 @@ const Reports = () => {
   // VAT report data
   const [vatData, setVatData] = useState(null);
   const [vatLoading, setVatLoading] = useState(false);
+
 
   useEffect(() => {
     setPageSearchConfig({ scope: 'reports', placeholder: SEARCH_PLACEHOLDERS.REPORTS });
@@ -869,8 +865,11 @@ const Reports = () => {
       } else {
         fetchPromises.push(Promise.resolve(null));
       }
+      // Phase 2: top customers, pipeline, materials (for customer-summary, pipeline, materials-summary)
+      fetchPromises.push(reportService.getOverviewPhase2(startDate, endDate, 10).catch(() => ({ data: {} })));
 
-      const [revenueData, expenseData, salesData, outstandingData, serviceAnalyticsData, productSalesData, materialsData, prescriptionData] = await Promise.all(fetchPromises);
+      const [revenueData, expenseData, salesData, outstandingData, serviceAnalyticsData, productSalesData, materialsData, prescriptionData, phase2Data] = await Promise.all(fetchPromises);
+      const phase2 = phase2Data?.data || {};
 
       const revenue = revenueData.data?.totalRevenue || 0;
       const expenses = expenseData.data?.totalExpenses || 0;
@@ -965,7 +964,7 @@ const Reports = () => {
               : `Your revenue is down ${Math.abs(revenueChange).toFixed(1)}% (₵ ${(prevRevenue - revenue).toLocaleString()}) from the previous period.`
           }
       ];
-      const conditionalSections = (selectedReportTypes.includes('cashflow') || selectedReportTypes.includes('service-analytics') || selectedReportTypes.includes('product-analytics')) ? [
+      const conditionalSections = selectedReportTypes.length > 0 ? [
             ...(isShop || isPharmacy ? [{
               type: 'product-analytics',
               title: 'Product Sales',
@@ -1227,6 +1226,67 @@ const Reports = () => {
               // No hardcoded fallback - only return recommendations when there's actual data to act on
               return recommendations;
             })()
+          }] : []),
+          ...(selectedReportTypes.includes('outstanding-payments') ? [{
+            type: 'outstanding-payments',
+            title: 'Outstanding Payments',
+            description: 'Accounts receivable and overdue amounts.',
+            data: (() => {
+              const inv = outstandingData.data?.invoices || [];
+              const total = outstandingData.data?.totalOutstanding ?? 0;
+              const overdue = inv.filter((i) => i.status === 'overdue');
+              const overdueAmount = overdue.reduce((s, i) => s + parseFloat(i.balance || 0), 0);
+              return { totalOutstanding: total, overdueCount: overdue.length, overdueAmount, invoices: inv.slice(0, 10) };
+            })(),
+            recommendations: (() => {
+              const total = outstandingData.data?.totalOutstanding ?? 0;
+              if (total <= 0) return [];
+              return [{ finding: `Total outstanding is ₵ ${total.toLocaleString()}.`, recommendation: 'Send payment reminders and follow up on overdue invoices.' }];
+            })()
+          }] : []),
+          ...(selectedReportTypes.includes('customer-summary') ? [{
+            type: 'customer-summary',
+            title: 'Customer Summary',
+            description: 'Top customers by revenue in the period.',
+            data: (phase2.topCustomers || revenueData.data?.byCustomer || []).slice(0, 10).map((c) => ({
+              name: c.customerName || c.customer?.name || c.name || 'Unknown',
+              revenue: parseFloat(c.totalRevenue || c.revenue || 0),
+              count: c.jobCount || c.transactionCount || c.count || 0
+            })),
+            recommendations: []
+          }] : []),
+          ...(selectedReportTypes.includes('sales-summary') ? [{
+            type: 'sales-summary',
+            title: isStudio ? 'Jobs Summary' : 'Sales Summary',
+            description: isStudio ? 'Job volume and status in the period.' : 'Sales volume and status in the period.',
+            data: (() => {
+              const byStatus = salesData.data?.byStatus || [];
+              const byDate = salesData.data?.byDate || [];
+              return {
+                totalJobs: salesData.data?.totalJobs ?? 0,
+                totalSales: salesData.data?.totalSales ?? 0,
+                byStatus: byStatus.map((s) => ({ status: s.status || s.name, count: s.count ?? s.jobCount ?? 0, total: parseFloat(s.totalSales || s.totalAmount || 0) })),
+                byDate: byDate.slice(0, 14).map((d) => ({ date: d.date, count: d.count ?? 0, total: parseFloat(d.totalSales || d.totalRevenue || 0) }))
+              };
+            })(),
+            recommendations: []
+          }] : []),
+          ...(isStudio && selectedReportTypes.includes('materials-summary') ? [{
+            type: 'materials-summary',
+            title: 'Materials Summary',
+            description: 'Stock levels and recent movements.',
+            data: {
+              summary: phase2.materialsSummary || { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+              movements: (phase2.materialsMovements || []).slice(0, 10)
+            },
+            recommendations: []
+          }] : []),
+          ...(selectedReportTypes.includes('pipeline') ? [{
+            type: 'pipeline',
+            title: 'Pipeline',
+            description: 'Active jobs, open leads, and pending invoices.',
+            data: phase2.pipelineSummary || { activeJobs: 0, openLeads: 0, pendingInvoices: 0 },
+            recommendations: []
           }] : []),
           ...(isPharmacy && selectedReportTypes.includes('prescription-summary') && prescriptionData?.data ? [{
             type: 'prescription-summary',
@@ -1572,6 +1632,7 @@ const Reports = () => {
             </CardHeader>
             <CardContent>
               <ReportsTableWithCards
+                title="Customer details"
                 columns={[
                   { key: 'customer', label: 'Customer', render: (_, r) => r.customer?.name || '-' },
                   { key: 'company', label: 'Company', render: (_, r) => r.customer?.company || '-' },
@@ -1690,6 +1751,7 @@ const Reports = () => {
             </CardHeader>
             <CardContent>
               <ReportsTableWithCards
+                title="Expenses by category"
                 columns={[
                   { key: 'category', label: 'Category' },
                   { key: 'totalAmount', label: 'Amount', render: (v) => `₵ ${parseFloat(v || 0).toFixed(2)}` },
@@ -1705,6 +1767,7 @@ const Reports = () => {
             </CardHeader>
             <CardContent>
               <ReportsTableWithCards
+                title="Top vendors"
                 columns={[
                   { key: 'vendor', label: 'Vendor', render: (_, r) => r.vendor?.name || '-' },
                   { key: 'totalAmount', label: 'Amount', render: (v) => `₵ ${parseFloat(v || 0).toFixed(2)}` },
@@ -1806,7 +1869,7 @@ const Reports = () => {
                   { key: 'customer', label: 'Customer', render: (_, r) => r.customer?.name || '-' },
                   { key: 'dueDate', label: 'Due Date', render: (v) => dayjs(v).format('MMM DD, YYYY') },
                   { key: 'balance', label: 'Balance', render: (v) => `₵ ${parseFloat(v || 0).toFixed(2)}` },
-                  { key: 'status', label: 'Status', render: (_, r) => <StatusChip status={r.status} /> },
+                  { key: 'status', label: 'Status', mobileDashboardPlacement: 'headerEnd', render: (_, r) => <StatusChip status={r.status} /> },
                 ]}
                 data={invoicesList}
               />
@@ -1922,7 +1985,8 @@ const Reports = () => {
                 <CardTitle>{terminology.salesByTypeLabel}</CardTitle>
               </CardHeader>
               <CardContent>
-                <ShadcnTable className="min-w-[400px]">
+                <div className="overflow-x-auto">
+                  <ShadcnTable className="min-w-[400px]">
                   <TableHeader>
                     <TableRow>
                       <TableHead>{terminology.typeColumnLabel}</TableHead>
@@ -1941,7 +2005,8 @@ const Reports = () => {
                       </TableRow>
                     ))}
                   </TableBody>
-                </ShadcnTable>
+                  </ShadcnTable>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -1950,7 +2015,8 @@ const Reports = () => {
               <CardTitle>Sales by Status</CardTitle>
             </CardHeader>
             <CardContent>
-              <ShadcnTable className="min-w-[400px]">
+              <div className="overflow-x-auto">
+                <ShadcnTable className="min-w-[400px]">
                 <TableHeader>
                   <TableRow>
                     <TableHead>Status</TableHead>
@@ -1967,7 +2033,8 @@ const Reports = () => {
                     </TableRow>
                   ))}
                 </TableBody>
-              </ShadcnTable>
+                </ShadcnTable>
+              </div>
             </CardContent>
           </Card>
         </div>
@@ -2123,7 +2190,7 @@ const Reports = () => {
               <FileText className="h-4 w-4 mr-2" />
               Print
             </ShadcnButton>
-            <ShadcnButton className="bg-[#166534] hover:bg-[#14502a] text-white" size="sm" onClick={handlePrint}>
+            <ShadcnButton className="bg-brand hover:bg-brand-dark text-white" size="sm" onClick={handlePrint}>
               <Download className="h-4 w-4 mr-2" />
               Export
             </ShadcnButton>
@@ -3265,7 +3332,7 @@ const Reports = () => {
                           />
                           <Bar 
                             dataKey="value" 
-                            fill="#166534" 
+                            fill="var(--color-primary)" 
                             radius={[0, 4, 4, 0]}
                           />
                         </BarChart>
@@ -3279,7 +3346,7 @@ const Reports = () => {
                                 <p className="text-sm font-medium text-foreground mb-1 truncate">{item.channel}</p>
                                 <p className="text-xs text-muted-foreground">{percentage.toFixed(1)}% of total</p>
                               </div>
-                              <span className="text-[#166534] font-bold ml-4">₵ {(item.revenue / 1000).toFixed(2)}K</span>
+                              <span className="text-brand font-bold ml-4">₵ {(item.revenue / 1000).toFixed(2)}K</span>
                             </div>
                           );
                         })}
@@ -3297,35 +3364,75 @@ const Reports = () => {
     );
   };
 
-  // Report type options filtered by business type (studio: service/repair analytics; shop/pharmacy: product analytics)
-  const reportTypeOptions = useMemo(() => {
-    const base = [
+  // Report type options grouped and filtered by business type
+  const reportTypeOptionsGrouped = useMemo(() => {
+    const financial = [
       { value: 'cashflow', label: 'Cashflow overview', description: 'Overall business health and financial performance' },
       { value: 'cost-analysis', label: 'Cost analysis', description: 'Detailed view of expenses and cost-saving opportunities' },
-      { value: 'invoice-summary', label: 'Invoice summary', description: 'Overview of invoice statuses and payment trends' }
+      { value: 'invoice-summary', label: 'Invoice summary', description: 'Overview of invoice statuses and payment trends' },
+      { value: 'outstanding-payments', label: 'Outstanding payments', description: 'AR total, aging, and overdue amounts' },
+    ];
+    const salesAndPerformance = [
+      { value: 'customer-summary', label: 'Customer summary', description: 'Top customers by revenue and activity' },
+      { value: 'sales-summary', label: isStudio ? 'Jobs summary' : 'Sales summary', description: isStudio ? 'Job volume, status, and trends' : 'Sales volume, status, and trends' },
     ];
     if (isStudio) {
-      return [
-        ...base.slice(0, 2),
-        { value: 'service-analytics', label: terminology.analytics, description: terminology.analyticsDescription },
-        ...base.slice(2)
-      ];
+      salesAndPerformance.push({ value: 'service-analytics', label: terminology.analytics, description: terminology.analyticsDescription });
+      salesAndPerformance.push({ value: 'materials-summary', label: 'Materials summary', description: 'Stock levels and movements' });
     }
     if (isPharmacy) {
-      return [
-        ...base.slice(0, 2),
-        { value: 'product-analytics', label: 'Drug Analytics', description: 'Drug and prescription performance' },
-        ...(base.slice(2)),
-        { value: 'prescription-summary', label: 'Prescription summary', description: 'Prescription volume, status, and revenue' }
-      ];
+      salesAndPerformance.push({ value: 'product-analytics', label: 'Drug Analytics', description: 'Drug and prescription performance' });
+      salesAndPerformance.push({ value: 'prescription-summary', label: 'Prescription summary', description: 'Prescription volume, status, and revenue' });
     }
-    // Shop
-    return [
-      ...base.slice(0, 2),
-      { value: 'product-analytics', label: 'Product Analytics', description: 'Product sales and inventory performance' },
-      ...base.slice(2)
+    if (isShop && !isPharmacy) {
+      salesAndPerformance.push({ value: 'product-analytics', label: 'Product Analytics', description: 'Product sales and inventory performance' });
+    }
+    const operations = [
+      { value: 'pipeline', label: 'Pipeline', description: 'Active jobs, open leads, and pending invoices' },
     ];
-  }, [isStudio, isPharmacy, terminology.analytics, terminology.analyticsDescription]);
+    const groups = [
+      { groupLabel: 'Financial', options: financial },
+      { groupLabel: 'Sales & performance', options: salesAndPerformance },
+      { groupLabel: 'Operations', options: operations },
+    ];
+    return groups;
+  }, [isStudio, isPharmacy, isShop, terminology.analytics, terminology.analyticsDescription]);
+
+  // Flat list of all report types (for backward compatibility and iteration)
+  const reportTypeOptions = useMemo(
+    () => reportTypeOptionsGrouped.flatMap((g) => g.options),
+    [reportTypeOptionsGrouped]
+  );
+
+  if (!rc) {
+    return (
+      <div className="space-y-4 md:space-y-6 p-4 md:p-6">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin shrink-0" aria-hidden />
+          <span>Loading charts…</span>
+        </div>
+        <Skeleton className="h-10 w-full max-w-lg" />
+        <Skeleton className="h-[320px] w-full rounded-md border border-border" />
+        <Skeleton className="h-[220px] w-full rounded-md border border-border" />
+      </div>
+    );
+  }
+
+  const {
+    LineChart,
+    Line,
+    BarChart,
+    Bar,
+    PieChart,
+    Pie,
+    Cell,
+    XAxis,
+    YAxis,
+    CartesianGrid,
+    Tooltip: RechartsTooltip,
+    Legend,
+    ResponsiveContainer,
+  } = rc;
 
   const renderGeneratedReports = () => {
     // Map report types to display names and icons
@@ -3337,6 +3444,11 @@ const Reports = () => {
         'service-analytics': { label: 'Service overview', icon: Zap },
         'cashflow': { label: 'Cashflow overview', icon: Currency },
         'invoice-summary': { label: 'Invoice overview', icon: FileText },
+        'outstanding-payments': { label: 'Outstanding payments', icon: FileText },
+        'customer-summary': { label: 'Customer summary', icon: Users },
+        'sales-summary': { label: businessType === 'pharmacy' || businessType === 'shop' ? 'Sales summary' : 'Jobs summary', icon: BarChart3 },
+        'materials-summary': { label: 'Materials summary', icon: Zap },
+        'pipeline': { label: 'Pipeline', icon: BarChart3 },
         'product-analytics': { label: productLabel, icon: Zap },
         'prescription-summary': { label: 'Prescription summary', icon: FileText },
         'inventory': { label: 'Materials overview', icon: Zap },
@@ -3360,6 +3472,7 @@ const Reports = () => {
           }
           else if (insight.type === 'invoice-summary') types.push('invoice-summary');
           else if (insight.type === 'prescription-summary') types.push('prescription-summary');
+          else if (['outstanding-payments', 'customer-summary', 'sales-summary', 'materials-summary', 'pipeline'].includes(insight.type)) types.push(insight.type);
         });
       }
       // Default if no types found
@@ -3401,7 +3514,7 @@ const Reports = () => {
                 </p>
                 <ShadcnButton
                   onClick={handleOpenCreateReportModal}
-                  className="bg-[#166534] hover:bg-[#14502a] text-white"
+                  className="bg-brand hover:bg-brand-dark text-white"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Create Your First Report
@@ -3667,11 +3780,56 @@ const Reports = () => {
                     </p>
                   </div>
                   <div className="flex gap-2 flex-shrink-0 sm:self-start">
-                    <ShadcnButton variant="outline" size="sm">
+                    <ShadcnButton
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        const el = document.getElementById('generated-report-content');
+                        if (el) {
+                          const win = window.open('', '_blank');
+                          win.document.write(
+                            '<!DOCTYPE html><html><head><title>' +
+                              (generatedReport?.title || 'Smart Report') +
+                              '</title><style>body{font-family:system-ui,sans-serif;padding:1rem;max-width:800px;margin:0 auto}</style></head><body>' +
+                              el.innerHTML +
+                              '</body></html>'
+                          );
+                          win.document.close();
+                          win.print();
+                          win.close();
+                        }
+                      }}
+                    >
                       <Eye className="h-4 w-4 mr-2" />
                       Print
                     </ShadcnButton>
-                    <ShadcnButton className="bg-[#166534] hover:bg-[#14502a] text-white" size="sm">
+                    <ShadcnButton
+                      className="bg-brand hover:bg-brand-dark text-white"
+                      size="sm"
+                      onClick={() => {
+                        if (!generatedReport) return;
+                        const brandHex = (typeof window !== 'undefined' && getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim()) || '#166534';
+                        const html = [
+                          '<!DOCTYPE html><html><head><meta charset="utf-8"><title>' + (generatedReport.title || 'Smart Report') + '</title>',
+                          '<style>body{font-family:system-ui,sans-serif;padding:1rem;max-width:800px;margin:0 auto}h1,h2{color:' + brandHex + '}</style></head><body>',
+                          '<h1>' + (generatedReport.title || 'Smart Report') + '</h1>',
+                          '<p>' + (generatedReport.greeting || '') + '</p>',
+                          ...(generatedReport.insights || []).map((s) => {
+                            const title = s.title || '';
+                            const bullets = (s.items || []).map((i) => '<li>' + (typeof i === 'string' ? i : i.text || i.label || JSON.stringify(i)) + '</li>').join('');
+                            return '<h2>' + title + '</h2>' + (bullets ? '<ul>' + bullets + '</ul>' : '');
+                          }),
+                          '</body></html>'
+                        ].join('');
+                        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = (generatedReport.title || 'smart-report').replace(/[^a-z0-9-_]/gi, '_') + '_' + dayjs().format('YYYY-MM-DD') + '.html';
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                    >
                       <Download className="h-4 w-4 mr-2" />
                       Export
                     </ShadcnButton>
@@ -3816,7 +3974,7 @@ const Reports = () => {
                                 }}
                               />
                               <Legend />
-                              <Bar dataKey="revenue" fill="#166534" name="Revenue (₵)" />
+                              <Bar dataKey="revenue" fill="var(--color-primary)" name="Revenue (₵)" />
                             </BarChart>
                           </ResponsiveContainer>
                         </div>
@@ -4117,6 +4275,199 @@ const Reports = () => {
               </Card>
             )}
 
+            {/* Outstanding Payments Section */}
+            {generatedReport.insights.find(i => i.type === 'outstanding-payments') && (() => {
+              const section = generatedReport.insights.find(i => i.type === 'outstanding-payments');
+              const d = section.data || {};
+              return (
+                <Card key="outstanding-payments" style={{ ...cardStyle, marginBottom: 12 }}>
+                  <CardContent className="p-4 md:p-6">
+                    <h4 className="text-base font-semibold">{section.title}</h4>
+                    <p className="text-muted-foreground text-sm mb-5">{section.description}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">Total outstanding</p>
+                        <p className="text-xl font-semibold">₵ {(d.totalOutstanding ?? 0).toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">Overdue invoices</p>
+                        <p className="text-xl font-semibold">{d.overdueCount ?? 0}</p>
+                      </div>
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">Overdue amount</p>
+                        <p className="text-xl font-semibold">₵ {(d.overdueAmount ?? 0).toLocaleString()}</p>
+                      </div>
+                    </div>
+                    {section.recommendations?.length > 0 && (
+                      <>
+                        <Separator className="my-4" />
+                        <h5 className="text-sm font-semibold mb-2">Recommendations</h5>
+                        {section.recommendations.map((rec, idx) => (
+                          <p key={idx} className="text-sm text-muted-foreground">{rec.finding} {rec.recommendation}</p>
+                        ))}
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
+            {/* Customer Summary Section */}
+            {generatedReport.insights.find(i => i.type === 'customer-summary') && (() => {
+              const section = generatedReport.insights.find(i => i.type === 'customer-summary');
+              const rows = section.data || [];
+              return (
+                <Card key="customer-summary" style={{ ...cardStyle, marginBottom: 12 }}>
+                  <CardContent className="p-4 md:p-6">
+                    <h4 className="text-base font-semibold">{section.title}</h4>
+                    <p className="text-muted-foreground text-sm mb-5">{section.description}</p>
+                    {rows.length > 0 ? (
+                      <ShadcnTable className="min-w-[400px]">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Customer</TableHead>
+                            <TableHead className="text-right">Revenue (₵)</TableHead>
+                            <TableHead className="text-right">Count</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {rows.map((row, idx) => (
+                            <TableRow key={idx}>
+                              <TableCell>{row.name}</TableCell>
+                              <TableCell className="text-right">{row.revenue?.toLocaleString()}</TableCell>
+                              <TableCell className="text-right">{row.count}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </ShadcnTable>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No customer data in this period.</p>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
+            {/* Sales / Jobs Summary Section */}
+            {generatedReport.insights.find(i => i.type === 'sales-summary') && (() => {
+              const section = generatedReport.insights.find(i => i.type === 'sales-summary');
+              const d = section.data || {};
+              return (
+                <Card key="sales-summary" style={{ ...cardStyle, marginBottom: 12 }}>
+                  <CardContent className="p-4 md:p-6">
+                    <h4 className="text-base font-semibold">{section.title}</h4>
+                    <p className="text-muted-foreground text-sm mb-5">{section.description}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">{isStudio ? 'Total jobs' : 'Total sales'}</p>
+                        <p className="text-xl font-semibold">{d.totalJobs ?? d.totalSales ?? 0}</p>
+                      </div>
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">Total amount (₵)</p>
+                        <p className="text-xl font-semibold">₵ {(d.totalSales ?? 0).toLocaleString()}</p>
+                      </div>
+                    </div>
+                    {Array.isArray(d.byStatus) && d.byStatus.length > 0 && (
+                      <ShadcnTable className="min-w-[300px]">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">Count</TableHead>
+                            <TableHead className="text-right">Total (₵)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {d.byStatus.map((row, idx) => (
+                            <TableRow key={idx}>
+                              <TableCell>{row.status}</TableCell>
+                              <TableCell className="text-right">{row.count}</TableCell>
+                              <TableCell className="text-right">{row.total?.toLocaleString()}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </ShadcnTable>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
+            {/* Materials Summary Section (studio) */}
+            {generatedReport.insights.find(i => i.type === 'materials-summary') && (() => {
+              const section = generatedReport.insights.find(i => i.type === 'materials-summary');
+              const d = section.data || {};
+              const summary = d.summary || {};
+              const movements = d.movements || [];
+              return (
+                <Card key="materials-summary" style={{ ...cardStyle, marginBottom: 12 }}>
+                  <CardContent className="p-4 md:p-6">
+                    <h4 className="text-base font-semibold">{section.title}</h4>
+                    <p className="text-muted-foreground text-sm mb-5">{section.description}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">Total stock items</p>
+                        <p className="text-xl font-semibold">{summary.totalStocks ?? 0}</p>
+                      </div>
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">Stock value (₵)</p>
+                        <p className="text-xl font-semibold">₵ {(summary.totalStockValue ?? 0).toLocaleString()}</p>
+                      </div>
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">Availability rate</p>
+                        <p className="text-xl font-semibold">{summary.stockAvailabilityRate ?? 0}%</p>
+                      </div>
+                    </div>
+                    {movements.length > 0 && (
+                      <ShadcnTable className="min-w-[400px]">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Movement</TableHead>
+                            <TableHead className="text-right">Quantity</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {movements.slice(0, 10).map((m, idx) => (
+                            <TableRow key={idx}>
+                              <TableCell>{m.itemName || m.name || m.type || '—'}</TableCell>
+                              <TableCell className="text-right">{m.quantity ?? m.count ?? '—'}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </ShadcnTable>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
+            {/* Pipeline Section */}
+            {generatedReport.insights.find(i => i.type === 'pipeline') && (() => {
+              const section = generatedReport.insights.find(i => i.type === 'pipeline');
+              const d = section.data || {};
+              return (
+                <Card key="pipeline" style={{ ...cardStyle, marginBottom: 12 }}>
+                  <CardContent className="p-4 md:p-6">
+                    <h4 className="text-base font-semibold">{section.title}</h4>
+                    <p className="text-muted-foreground text-sm mb-5">{section.description}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">Active jobs</p>
+                        <p className="text-xl font-semibold">{d.activeJobs ?? 0}</p>
+                      </div>
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">Open leads</p>
+                        <p className="text-xl font-semibold">{d.openLeads ?? 0}</p>
+                      </div>
+                      <div className="rounded-lg border p-4">
+                        <p className="text-sm text-muted-foreground">Pending invoices</p>
+                        <p className="text-xl font-semibold">{d.pendingInvoices ?? 0}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })()}
+
             {/* Prescription Summary Section (pharmacy) */}
             {generatedReport.insights.find(i => i.type === 'prescription-summary') && (
               <Card style={{ ...cardStyle, marginBottom: 12 }}>
@@ -4216,7 +4567,7 @@ const Reports = () => {
             {/* Footer */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 md:gap-0 py-4 md:py-5 border-t border-border">
               <p className="text-xs text-muted-foreground">
-                Powered by <span className="font-semibold text-primary">ShopWISE Intelligence Systems</span>
+                Powered by <span className="font-semibold text-primary">African Business Suite</span>
               </p>
               <p className="text-xs text-muted-foreground">
                 Copyright © {dayjs().year()} Nexus Creative Studio. Confidential and proprietary information.
@@ -4244,7 +4595,8 @@ const Reports = () => {
             <DialogTitle className="text-lg font-semibold">Create report</DialogTitle>
           </DialogHeader>
           <Form {...reportConfigForm}>
-            <form onSubmit={reportConfigForm.handleSubmit(handleCreateReport)} className="px-6 space-y-5">
+            <form onSubmit={reportConfigForm.handleSubmit(handleCreateReport)} className="flex flex-col max-h-[85vh]">
+              <div className="px-6 space-y-5 overflow-y-auto max-h-[60vh] min-h-0">
               <FormField
                 control={reportConfigForm.control}
                 name="reportTitle"
@@ -4336,51 +4688,68 @@ const Reports = () => {
                   )}
                 />
               </div>
-              <div className="space-y-3 pt-1">
+              <div className="space-y-4 pt-1">
                 <Label className="text-sm font-medium">Report type</Label>
-                <div className="space-y-3">
-                  {reportTypeOptions.map((type) => (
-                    <div
-                      key={type.value}
-                      role="button"
-                      tabIndex={0}
-                      onClick={() => {
-                        if (selectedReportTypes.includes(type.value)) {
-                          setSelectedReportTypes(selectedReportTypes.filter((t) => t !== type.value));
-                        } else {
-                          setSelectedReportTypes([...selectedReportTypes, type.value]);
-                        }
-                      }}
-                      onKeyDown={(e) => e.key === 'Enter' && (document.activeElement === e.currentTarget ? (selectedReportTypes.includes(type.value) ? setSelectedReportTypes(selectedReportTypes.filter((t) => t !== type.value)) : setSelectedReportTypes([...selectedReportTypes, type.value])) : null)}
-                      className={cn(
-                      "flex items-center justify-between rounded-lg border p-4 cursor-pointer transition-colors",
-                      selectedReportTypes.includes(type.value) ? "border-primary bg-primary/10" : "border-border hover:bg-muted/50"
-                    )}
-                    >
-                      <div>
-                        <p className="font-medium text-sm">{type.label}</p>
-                        <p className="text-xs text-muted-foreground">{type.description}</p>
-                      </div>
-                      <div
-                        className="flex h-5 w-5 shrink-0 items-center justify-center rounded border-2"
-                        style={{
-                          borderColor: selectedReportTypes.includes(type.value) ? '#166534' : '#d9d9d9',
-                          background: selectedReportTypes.includes(type.value) ? '#166534' : undefined,
-                        }}
-                      >
-                        {selectedReportTypes.includes(type.value) && (
-                          <CheckCircle className="h-3 w-3 text-white" />
-                        )}
+                <div className="space-y-4">
+                  {reportTypeOptionsGrouped.map((group) => (
+                    <div key={group.groupLabel}>
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                        {group.groupLabel}
+                      </p>
+                      <div className="space-y-2">
+                        {group.options.map((type) => (
+                          <div
+                            key={type.value}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
+                              if (selectedReportTypes.includes(type.value)) {
+                                setSelectedReportTypes(selectedReportTypes.filter((t) => t !== type.value));
+                              } else {
+                                setSelectedReportTypes([...selectedReportTypes, type.value]);
+                              }
+                            }}
+                            onKeyDown={(e) =>
+                              e.key === 'Enter' &&
+                              (document.activeElement === e.currentTarget
+                                ? selectedReportTypes.includes(type.value)
+                                  ? setSelectedReportTypes(selectedReportTypes.filter((t) => t !== type.value))
+                                  : setSelectedReportTypes([...selectedReportTypes, type.value])
+                                : null)
+                            }
+                            className={cn(
+                              'flex items-center justify-between rounded-lg border p-4 cursor-pointer transition-colors',
+                              selectedReportTypes.includes(type.value) ? 'border-primary bg-primary/10' : 'border-border hover:bg-muted/50'
+                            )}
+                          >
+                            <div>
+                              <p className="font-medium text-sm">{type.label}</p>
+                              <p className="text-xs text-muted-foreground">{type.description}</p>
+                            </div>
+                            <div
+                              className="flex h-5 w-5 shrink-0 items-center justify-center rounded border-2"
+                              style={{
+                                borderColor: selectedReportTypes.includes(type.value) ? 'var(--color-primary)' : '#d9d9d9',
+                                background: selectedReportTypes.includes(type.value) ? 'var(--color-primary)' : undefined,
+                              }}
+                            >
+                              {selectedReportTypes.includes(type.value) && (
+                                <CheckCircle className="h-3 w-3 text-white" />
+                              )}
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   ))}
                 </div>
               </div>
-              <DialogFooter className="gap-2 pt-0 pb-0 -mx-6">
+              </div>
+              <DialogFooter className="gap-2 pt-4 pb-6 px-6 flex-shrink-0 border-t border-border mt-0">
                 <ShadcnButton type="button" variant="outline" size="lg" onClick={() => setCreateReportModalVisible(false)}>
                   Cancel
                 </ShadcnButton>
-                <ShadcnButton type="submit" size="lg" disabled={aiLoading} className="bg-[#166534] hover:bg-[#14502a]">
+                <ShadcnButton type="submit" size="lg" disabled={aiLoading} className="bg-brand hover:bg-brand-dark">
                   {aiLoading ? 'Creating...' : 'Create'}
                 </ShadcnButton>
               </DialogFooter>
@@ -4440,7 +4809,7 @@ const Reports = () => {
               <TooltipTrigger asChild>
                 <ShadcnButton
                   onClick={handleOpenCreateReportModal}
-                  className="bg-[#166534] hover:bg-[#14502a] text-white"
+                  className="bg-brand hover:bg-brand-dark text-white"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Create report
@@ -4502,7 +4871,15 @@ const Reports = () => {
     </div>
     </>
   );
-};
+}
+
+function Reports() {
+  return (
+    <RechartsModuleProvider>
+      <ReportsInner />
+    </RechartsModuleProvider>
+  );
+}
 
 export default Reports;
 

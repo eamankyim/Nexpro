@@ -105,6 +105,20 @@ const vendorPriceListUploader = multer({
 // Product image uploader (memory storage; controller writes to disk)
 const productImageUploader = imageOnlyMulter();
 
+// CSV/Excel import uploader (memory, for bulk import)
+const importFileUploader = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok =
+      file.mimetype === 'text/csv' ||
+      file.mimetype === 'application/vnd.ms-excel' ||
+      file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      /\.(csv|xlsx)$/i.test(file.originalname || '');
+    cb(null, ok);
+  }
+});
+
 // Expense receipt uploader (images + PDF)
 const expenseReceiptUploader = multer({
   storage: multer.memoryStorage(),
@@ -168,6 +182,7 @@ module.exports = {
   upload,
   vendorPriceListUploader,
   productImageUploader,
+  importFileUploader,
   expenseReceiptUploader,
   baseUploadDir,
   ensureDirExists,

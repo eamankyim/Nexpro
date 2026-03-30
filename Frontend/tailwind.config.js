@@ -51,6 +51,11 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        /** Workspace primary from BrandingContext (--color-primary / --color-primary-dark) */
+        brand: {
+          DEFAULT: "var(--color-primary)",
+          dark: "var(--color-primary-dark)",
+        },
       },
       borderRadius: {
         lg: "var(--radius)",

@@ -37,7 +37,6 @@ const loadPlatformAdminPermissions = async (req, res, next) => {
         }]
       });
 
-      // Union all permissions from all roles
       const permissionSet = new Set();
       userRoles.forEach(userRole => {
         if (userRole.role && userRole.role.permissions) {
@@ -46,6 +45,12 @@ const loadPlatformAdminPermissions = async (req, res, next) => {
           });
         }
       });
+
+      // If platform admin has no roles assigned (e.g. after DB reset), grant all permissions so bootstrap admin can access Control Center
+      if (permissionSet.size === 0) {
+        const allPerms = await PlatformAdminPermission.findAll({ attributes: ['key'], raw: true });
+        allPerms.forEach(p => permissionSet.add(p.key));
+      }
 
       permissionKeys = Array.from(permissionSet);
       cache.set(cacheKey, permissionKeys, PERMISSION_CACHE_TTL);

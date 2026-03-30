@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-/** Production API URL when app is served from ShopWISE Africa domains */
-const SHOPWISE_AFRICA_API_URL = 'https://api.shopwiseafrica.com';
+/** Production API URL when app is served from ABS / African Business Suite production domains */
+const ABS_API_URL = 'https://api.africanbusinesssuite.com';
 
 const deriveApiBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
@@ -24,12 +24,12 @@ const deriveApiBaseUrl = () => {
   // In production, use appropriate API URL
   if (typeof window !== 'undefined') {
     const { hostname } = window.location;
-    // ShopWISE Africa production: app at myapp.shopwiseafrica.com or shopwiseafrica.com → API at api.shopwiseafrica.com
-    if (hostname === 'myapp.shopwiseafrica.com' || hostname === 'shopwiseafrica.com') {
+    // ABS production: app at myapp.africanbusinesssuite.com or africanbusinesssuite.com → API at api.africanbusinesssuite.com
+    if (hostname === 'myapp.africanbusinesssuite.com' || hostname === 'africanbusinesssuite.com') {
       if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
-        console.log(`[API] Using base URL: ${SHOPWISE_AFRICA_API_URL}`);
+        console.log(`[API] Using base URL: ${ABS_API_URL}`);
       }
-      return SHOPWISE_AFRICA_API_URL;
+      return ABS_API_URL;
     }
     const isProduction = hostname.includes('vercel.app') ||
                         hostname.includes('netlify.app') ||
@@ -116,6 +116,7 @@ const api = axios.create({
   baseURL: API_BASE_URL ? `${API_BASE_URL}/api` : '/api',
   headers: {
     'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest', // Satisfies backend CSRF check (state-changing requests)
   },
   timeout: 30000, // 30 second timeout
 });
@@ -140,6 +141,8 @@ api.interceptors.request.use(
                             config.url?.includes('/auth/login') ||
                             config.url?.includes('/auth/register') ||
                             config.url?.includes('/auth/sso') ||
+                            config.url?.includes('/auth/check-email') ||
+                            config.url?.includes('/auth/config') ||
                             config.url?.includes('/invites/validate');
     const isUserScopedEndpoint = config.url?.includes('/user-workspace');
     
@@ -188,7 +191,13 @@ api.interceptors.request.use(
 
 // Response interceptor with retry logic
 api.interceptors.response.use(
-  (response) => response.data,
+  (response) => {
+    const rt = response.config?.responseType;
+    if (rt === 'blob' || rt === 'arraybuffer') {
+      return response;
+    }
+    return response.data;
+  },
   async (error) => {
     const config = error.config;
 
@@ -214,15 +223,21 @@ api.interceptors.response.use(
     }
 
     // Don't redirect on 401 for login/register endpoints - let them handle the error
-    const isAuthEndpoint = error.config?.url?.includes('/auth/login') || 
+    const isAuthEndpoint = error.config?.url?.includes('/auth/login') ||
                           error.config?.url?.includes('/auth/register') ||
                           error.config?.url?.includes('/tenants/signup');
-    
-    if (error.response?.status === 401 && !isAuthEndpoint) {
-      // Only redirect for authenticated endpoints, not for login failures
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/login';
+    // Don't redirect on 401 for tour status - avoids reload loop when token expired and tour refetches
+    const isTourEndpoint = error.config?.url?.includes('/tours/status');
+
+    if (error.response?.status === 401 && !isAuthEndpoint && !isTourEndpoint) {
+      const existingToken = localStorage.getItem('token');
+      // Only redirect when we actually had a session token.
+      // This prevents redirect/reload loops on public pages making optional requests.
+      if (existingToken) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

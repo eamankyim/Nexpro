@@ -9,10 +9,11 @@ const { invalidateUserCache } = require('../middleware/cache');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 const emailService = require('../services/emailService');
-const { passwordReset: passwordResetEmailTemplate, emailVerification: emailVerificationTemplate } = require('../services/emailTemplates');
+const { passwordReset: passwordResetEmailTemplate, emailVerification: emailVerificationTemplate, welcomeEmail: welcomeEmailTemplate } = require('../services/emailTemplates');
 const { seedDefaultCategories, seedDefaultEquipmentCategories } = require('../utils/categorySeeder');
 const { seedDefaultChartOfAccounts } = require('../utils/seedAccountingAccounts');
 const { resolveBusinessType } = require('../config/businessTypes');
+const { getTenantEffectiveEntitlements } = require('../utils/tenantEntitlements');
 
 // Slug utility functions (copied from tenantController)
 const slugify = (value = '') => {
@@ -53,6 +54,52 @@ const generateToken = (id) => {
   return jwt.sign({ id }, config.jwt.secret, {
     expiresIn: config.jwt.expire
   });
+};
+
+const toPlainJsonSafe = (value) => {
+  const seen = new WeakSet();
+  return JSON.parse(
+    JSON.stringify(value, (key, current) => {
+      if (typeof current === 'object' && current !== null) {
+        if (seen.has(current)) return undefined;
+        seen.add(current);
+      }
+      return current;
+    })
+  );
+};
+
+/**
+ * @desc    Check if an email is already registered
+ * @route   POST /api/auth/check-email
+ * @access  Public
+ */
+exports.checkEmailAvailability = async (req, res, next) => {
+  try {
+    const { email } = req.body || {};
+
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const existingUser = await User.findOne({
+      where: { email: normalizedEmail },
+      attributes: ['id']
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        exists: Boolean(existingUser)
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
 };
 
 // @desc    Register user
@@ -127,7 +174,9 @@ exports.register = async (req, res, next) => {
         email: (email || '').trim().toLowerCase(),
         password,
         role: 'admin',
-        isPlatformAdmin: true
+        isPlatformAdmin: true,
+        // Invite was sent to this email — no separate verification step
+        emailVerifiedAt: new Date()
       });
 
       const roleToAssign = invite.platformAdminRoleName
@@ -148,6 +197,18 @@ exports.register = async (req, res, next) => {
       });
 
       const token = generateToken(user.id);
+      const platformCompany = { name: 'African Business Suite', primaryColor: '#166534' };
+      const loginUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '') + '/login';
+      setImmediate(() => {
+        try {
+          const { subject, html, text } = welcomeEmailTemplate(user, platformCompany, loginUrl);
+          emailService.sendPlatformMessage(user.email, subject, html, text).catch(err => {
+            console.error('[Auth] Welcome email failed (platform admin):', err?.message);
+          });
+        } catch (err) {
+          console.error('[Auth] Welcome email error (platform admin):', err?.message);
+        }
+      });
       return res.status(201).json({
         success: true,
         data: {
@@ -160,12 +221,154 @@ exports.register = async (req, res, next) => {
       });
     }
 
-    // Tenant invite: create user and UserTenant membership
+    if (invite.inviteType === 'new_tenant') {
+      // Admin-invited tenant: create new tenant + user as owner, then mark invite used
+      const trimmedCompanyName = 'My Business';
+      const transaction = await sequelize.transaction();
+      try {
+        const slug = await generateUniqueSlug(trimmedCompanyName, transaction);
+        const trialEndDate = dayjs().add(1, 'month').toDate();
+        const metadata = { signupSource: 'admin_invite' };
+
+        const tenant = await Tenant.create(
+          {
+            name: trimmedCompanyName,
+            slug,
+            plan: 'trial',
+            businessType: 'shop',
+            status: 'active',
+            metadata,
+            trialEndsAt: trialEndDate,
+          },
+          { transaction }
+        );
+
+        const user = await User.create(
+          {
+            name,
+            email: (email || '').trim().toLowerCase(),
+            password,
+            role: 'admin',
+            // Admin-invited businesses should have their email verified automatically
+            emailVerifiedAt: new Date(),
+          },
+          { transaction }
+        );
+
+        await UserTenant.create(
+          {
+            tenantId: tenant.id,
+            userId: user.id,
+            role: 'owner',
+            status: 'active',
+            isDefault: true,
+            invitedBy: invite.createdBy,
+            invitedAt: invite.createdAt,
+            joinedAt: new Date(),
+          },
+          { transaction }
+        );
+
+        await Setting.bulkCreate(
+          [
+            {
+              tenantId: tenant.id,
+              key: 'organization',
+              value: {
+                name: trimmedCompanyName,
+                legalName: trimmedCompanyName,
+                email: (email || '').trim().toLowerCase(),
+                phone: '',
+                website: '',
+                logoUrl: '',
+                address: { line1: '', city: '', state: '', country: '', postalCode: '' },
+                tax: { vatNumber: '', tin: '' },
+                invoiceFooter: 'Thank you for doing business with us.',
+              },
+              description: 'Organization profile',
+            },
+            {
+              tenantId: tenant.id,
+              key: 'subscription',
+              value: {
+                plan: 'trial',
+                status: 'trialing',
+                trialEndsAt: trialEndDate,
+                paymentMethod: null,
+                seats: 1,
+              },
+              description: 'Subscription and billing information',
+            },
+            {
+              tenantId: tenant.id,
+              key: 'payroll',
+              value: { payeRate: 0.1, ssnitRate: 0.135, currency: 'GHS', payCycle: 'monthly' },
+              description: 'Default payroll configuration',
+            },
+          ],
+          { transaction }
+        );
+
+        await invite.update(
+          { used: true, usedAt: new Date(), usedBy: user.id },
+          { transaction }
+        );
+
+        await transaction.commit();
+
+        seedDefaultCategories(tenant.id, 'shop', null, null, true)
+          .then(() => console.log('[Auth] Seeded default categories for new_tenant'))
+          .catch((err) => console.error('[Auth] seedDefaultCategories (new_tenant):', err?.message));
+        seedDefaultChartOfAccounts(tenant.id, true)
+          .then(({ created }) => { if (created) console.log('[Auth] Seeded accounting for new_tenant'); })
+          .catch((err) => console.error('[Auth] seedDefaultChartOfAccounts (new_tenant):', err?.message));
+        seedDefaultEquipmentCategories(tenant.id, true)
+          .then((created) => { if (created) console.log('[Auth] Seeded equipment categories for new_tenant'); })
+          .catch((err) => console.error('[Auth] seedDefaultEquipmentCategories (new_tenant):', err?.message));
+
+        const token = generateToken(user.id);
+        const memberships = await UserTenant.findAll({
+          where: { userId: user.id },
+          include: [{ model: Tenant, as: 'tenant' }],
+          order: [['isDefault', 'DESC'], ['createdAt', 'ASC']],
+        });
+
+        const platformCompany = { name: 'African Business Suite', primaryColor: '#166534' };
+        const loginUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '') + '/login';
+        setImmediate(() => {
+          try {
+            const { subject, html, text } = welcomeEmailTemplate(user, platformCompany, loginUrl);
+            emailService.sendPlatformMessage(user.email, subject, html, text).catch(err => {
+              console.error('[Auth] Welcome email failed (new_tenant):', err?.message);
+            });
+          } catch (err) {
+            console.error('[Auth] Welcome email error (new_tenant):', err?.message);
+          }
+        });
+
+        return res.status(201).json({
+          success: true,
+          data: {
+            user,
+            token,
+            memberships,
+            defaultTenantId: tenant.id,
+          },
+        });
+      } catch (err) {
+        await transaction.rollback();
+        throw err;
+      }
+    }
+
+    // Tenant invite: create user and UserTenant membership (existing tenant)
     const user = await User.create({
       name,
       email: (email || '').trim().toLowerCase(),
       password,
-      role: invite.role
+      role: invite.role,
+      // Invite was sent to this email — no separate verification step
+      emailVerifiedAt: new Date()
     });
 
     const existingMembershipCount = await UserTenant.count({
@@ -203,6 +406,19 @@ exports.register = async (req, res, next) => {
         ['isDefault', 'DESC'],
         ['createdAt', 'ASC']
       ]
+    });
+
+    const platformCompany = { name: 'African Business Suite', primaryColor: '#166534' };
+    const loginUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '') + '/login';
+    setImmediate(() => {
+      try {
+        const { subject, html, text } = welcomeEmailTemplate(user, platformCompany, loginUrl);
+        emailService.sendPlatformMessage(user.email, subject, html, text).catch(err => {
+          console.error('[Auth] Welcome email failed (tenant user):', err?.message);
+        });
+      } catch (err) {
+        console.error('[Auth] Welcome email error (tenant user):', err?.message);
+      }
     });
 
     res.status(201).json({
@@ -245,9 +461,10 @@ exports.login = async (req, res, next) => {
     const user = await User.findOne({ where: { email: normalizedEmail } });
 
     if (!user) {
-      return res.status(401).json({
+      return res.status(404).json({
         success: false,
-        message: 'Invalid email or password'
+        errorCode: 'EMAIL_NOT_FOUND',
+        message: 'No account exists for this email. Sign up instead.'
       });
     }
 
@@ -414,14 +631,11 @@ exports.googleAuth = async (req, res, next) => {
           message: 'Account is inactive',
         });
       }
-      if (!user.googleId) {
-        await user.update({ googleId, lastLogin: new Date() });
-      } else {
-        await user.update({ lastLogin: new Date() });
-      }
-      if (picture && !user.profilePicture) {
-        await user.update({ profilePicture: picture });
-      }
+      const updatePayload = { lastLogin: new Date() };
+      if (!user.googleId) updatePayload.googleId = googleId;
+      if (picture && !user.profilePicture) updatePayload.profilePicture = picture;
+      if (!user.emailVerifiedAt) updatePayload.emailVerifiedAt = new Date();
+      await user.update(updatePayload);
 
       const token = generateToken(user.id);
       const memberships = await UserTenant.findAll({
@@ -433,10 +647,11 @@ exports.googleAuth = async (req, res, next) => {
         ],
       });
 
+      const updatedUser = await User.findByPk(user.id);
       return res.status(200).json({
         success: true,
         data: {
-          user: user.toJSON ? user.toJSON() : user,
+          user: updatedUser.toJSON ? updatedUser.toJSON() : updatedUser,
           token,
           memberships,
           defaultTenantId: memberships[0]?.tenantId || null,
@@ -608,6 +823,41 @@ exports.googleAuth = async (req, res, next) => {
   }
 };
 
+// @desc    Public config for frontend (e.g. Google OAuth client ID, self-signup flag for marketing site)
+// @route   GET /api/auth/config
+// @access  Public
+exports.getPublicConfig = async (req, res, next) => {
+  try {
+    const googleClientId = process.env.GOOGLE_CLIENT_ID || '';
+    const masked = googleClientId ? `${googleClientId.substring(0, 15)}...` : '(empty)';
+    console.log('[getPublicConfig] GET /api/auth/config -> GOOGLE_CLIENT_ID:', masked, 'length=', googleClientId.length);
+
+    let selfSignupEnabled = true;
+    try {
+      const featureFlagsSetting = await Setting.findOne({
+        where: { tenantId: null, key: 'platform:featureFlags' },
+        attributes: ['value']
+      });
+      if (featureFlagsSetting && featureFlagsSetting.value && typeof featureFlagsSetting.value === 'object') {
+        selfSignupEnabled = featureFlagsSetting.value.publicSignup !== false;
+      }
+    } catch (dbError) {
+      // Public config should remain available even if DB has transient issues.
+      console.warn(
+        '[getPublicConfig] Failed reading platform:featureFlags; using fallback defaults:',
+        dbError?.message || dbError
+      );
+    }
+
+    res.status(200).json({
+      googleClientId,
+      selfSignupEnabled
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Get current logged in user
 // @route   GET /api/auth/me
 // @access  Private
@@ -624,9 +874,32 @@ exports.getMe = async (req, res, next) => {
     });
     const firstMembership = user?.tenantMemberships?.[0];
     const firstTenant = firstMembership?.tenant;
-    console.log('[getMe] userId=%s, memberships=%s, first tenant id=%s, first tenant.metadata.onboarding=%j', req.user.id, user?.tenantMemberships?.length, firstTenant?.id, firstTenant?.metadata?.onboarding);
+    console.log(
+      '[getMe] userId=%s memberships=%s firstTenantId=%s businessType=%s onboarding=%j',
+      req.user.id,
+      user?.tenantMemberships?.length,
+      firstTenant?.id,
+      firstTenant?.businessType || 'n/a',
+      firstTenant?.metadata?.onboarding
+    );
 
     const memberships = user?.tenantMemberships || [];
+    const tenantFeatureMap = {};
+    for (const membership of memberships) {
+      if (!membership?.tenant) continue;
+      try {
+        const entitlements = await getTenantEffectiveEntitlements(membership.tenant, {
+          logContext: `getMe:user=${req.user.id}`,
+        });
+        const tenantJson = membership.tenant.toJSON ? membership.tenant.toJSON() : membership.tenant;
+        tenantFeatureMap[String(membership.tenantId)] = {
+          ...tenantJson,
+          effectiveFeatureFlags: entitlements.effectiveFeatureFlags || {}
+        };
+      } catch (error) {
+        console.warn('[getMe] Failed to resolve feature flags for tenant %s: %s', membership.tenantId, error?.message || error);
+      }
+    }
     const invitedByList = memberships.map((m) => ({ tenantId: m.tenantId, role: m.role, invitedBy: m.invitedBy }));
     console.log('[ProfileCompletion] getMe auth data:', {
       userId: user?.id,
@@ -636,10 +909,67 @@ exports.getMe = async (req, res, next) => {
       membershipsInvitedBy: invitedByList,
     });
 
+    const { mergeNotificationPreferences } = require('../services/notificationPreferenceHelper');
+    const userJson = user.toJSON();
+    userJson.notificationPreferences = mergeNotificationPreferences(user.notificationPreferences);
+    if (Array.isArray(userJson.tenantMemberships)) {
+      userJson.tenantMemberships = userJson.tenantMemberships.map((membership) => {
+        const mappedTenant = tenantFeatureMap[String(membership.tenantId)];
+        if (!mappedTenant) return membership;
+        return {
+          ...membership,
+          tenant: mappedTenant
+        };
+      });
+    }
+
+    const safeUserJson = toPlainJsonSafe(userJson);
     res.status(200).json({
       success: true,
-      data: user
+      data: safeUserJson
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update staff notification preferences (in-app + email copy)
+// @route   PATCH /api/auth/notification-preferences
+// @access  Private
+exports.updateNotificationPreferences = async (req, res, next) => {
+  try {
+    const {
+      mergeNotificationPreferences,
+      NOTIFICATION_PREFERENCE_CATEGORIES
+    } = require('../services/notificationPreferenceHelper');
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const merged = mergeNotificationPreferences(user.notificationPreferences);
+    const raw = req.body || {};
+    const patch =
+      raw.categories && typeof raw.categories === 'object' ? raw.categories : raw;
+
+    for (const key of NOTIFICATION_PREFERENCE_CATEGORIES) {
+      if (
+        Object.prototype.hasOwnProperty.call(patch, key) &&
+        patch[key] &&
+        typeof patch[key] === 'object'
+      ) {
+        merged.categories[key] = {
+          in_app: patch[key].in_app !== false,
+          email: patch[key].email === true
+        };
+      }
+    }
+
+    user.notificationPreferences = merged;
+    await user.save();
+    invalidateUserCache(user.id);
+
+    res.status(200).json({ success: true, data: merged });
   } catch (error) {
     next(error);
   }
@@ -655,11 +985,19 @@ exports.updateDetails = async (req, res, next) => {
     const isChangingEmail = newEmail && user.email && newEmail !== user.email.trim().toLowerCase();
 
     if (isChangingEmail && !user.emailVerifiedAt) {
-      return res.status(403).json({
-        success: false,
-        code: 'EMAIL_VERIFICATION_REQUIRED',
-        message: 'Please verify your email before changing it.',
+      const memberships = await UserTenant.findAll({
+        where: { userId: user.id, status: 'active' },
+        attributes: ['invitedBy']
       });
+      const joinedOnlyViaInvite =
+        memberships.length > 0 && memberships.every((m) => m.invitedBy != null);
+      if (!joinedOnlyViaInvite) {
+        return res.status(403).json({
+          success: false,
+          code: 'EMAIL_VERIFICATION_REQUIRED',
+          message: 'Please verify your email before changing it.',
+        });
+      }
     }
 
     const fieldsToUpdate = {
@@ -785,18 +1123,23 @@ exports.requestPasswordReset = async (req, res, next) => {
     const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
     const resetLink = `${frontendUrl}/reset-password?token=${token}`;
 
-    // Send via platform email (we pay). Do not use tenant SMTP for system emails.
-    try {
-      const company = { name: process.env.APP_NAME || 'ShopWISE' };
-      const { subject, html, text } = passwordResetEmailTemplate(user, resetLink, company);
-      const result = await emailService.sendPlatformMessage(user.email, subject, html, text);
-      if (!result.success) {
-        console.error('[Auth] Password reset email failed:', result.error);
+    // Send email in background so the request returns immediately (~20s faster)
+    const company = { name: process.env.APP_NAME || 'African Business Suite' };
+    const { subject, html, text } = passwordResetEmailTemplate(user, resetLink, company);
+    const recipientEmail = user.email;
+    setImmediate(async () => {
+      try {
+        console.log('[Auth] Sending password reset email to', recipientEmail);
+        const result = await emailService.sendPlatformMessage(recipientEmail, subject, html, text);
+        if (result.success) {
+          console.log('[Auth] Password reset email sent successfully to', recipientEmail);
+        } else {
+          console.error('[Auth] Password reset email failed:', result.error);
+        }
+      } catch (emailErr) {
+        console.error('[Auth] Password reset email exception:', emailErr.message, emailErr.code || '');
       }
-    } catch (emailErr) {
-      console.error('[Auth] Password reset email failed:', emailErr.message);
-      // Still return success - don't reveal that email failed
-    }
+    });
 
     return res.status(200).json({ success: true, message });
   } catch (error) {
@@ -936,11 +1279,11 @@ exports.resendVerification = async (req, res, next) => {
       expiresAt,
     });
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
     const verifyLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
-    const company = { name: 'ShopWISE' };
+    const company = { name: process.env.APP_NAME || 'ABS' };
     const { subject, html, text } = emailVerificationTemplate(user, verifyLink, company);
-    const result = await emailService.sendPlatformMessage(user.email, subject, html, text);
+    const result = await emailService.sendPlatformMessage(user.email, subject, html, text, [], { categories: ['transactional', 'signup'] });
 
     if (!result?.success) {
       return res.status(503).json({
@@ -958,10 +1301,10 @@ exports.resendVerification = async (req, res, next) => {
   }
 };
 
-// @desc    Verify ShopWISE token for Sabito SSO (called by Sabito)
+// @desc    Verify ABS token for Sabito SSO (called by Sabito)
 // @route   GET /api/auth/verify-token
 // @access  Public (but requires API key from Sabito)
-// This endpoint allows Sabito to verify ShopWISE JWT tokens and get user info for auto-login
+// This endpoint allows Sabito to verify ABS JWT tokens and get user info for auto-login
 exports.verifyNexproToken = async (req, res, next) => {
   try {
     // Get token from query parameter or Authorization header
@@ -1029,7 +1372,7 @@ exports.verifyNexproToken = async (req, res, next) => {
   }
 };
 
-// @desc    SSO login from Sabito (Sabito → ShopWISE)
+// @desc    SSO login from Sabito (Sabito → ABS)
 // @route   POST /api/auth/sso/sabito
 // @access  Public
 exports.sabitoSSO = async (req, res, next) => {
@@ -1146,7 +1489,7 @@ exports.sabitoSSO = async (req, res, next) => {
         });
       }
 
-      // Find or create user in ShopWISE
+      // Find or create user in ABS
       let user = await User.findOne({
         where: {
           [Op.or]: [
@@ -1257,7 +1600,7 @@ exports.sabitoSSO = async (req, res, next) => {
         });
       }
 
-      // Generate ShopWISE JWT token
+      // Generate ABS JWT token
       const token = generateToken(user.id);
 
       // Get user memberships
@@ -1609,7 +1952,7 @@ exports.sabitoSSO = async (req, res, next) => {
                 }
               );
               
-              console.log('[SSO] ✅ Stored ShopWISE tenant ID in Sabito installation:', {
+              console.log('[SSO] ✅ Stored ABS tenant ID in Sabito installation:', {
                 installationId: installation.id,
                 nexproTenantId,
                 businessId: sabitoUser.businessId
@@ -1623,7 +1966,7 @@ exports.sabitoSSO = async (req, res, next) => {
             });
           }
           
-          // Step 2: Auto-create tenant mapping in ShopWISE database
+          // Step 2: Auto-create tenant mapping in ABS database
           try {
             const { SabitoTenantMapping } = require('../models');
             
@@ -1702,7 +2045,7 @@ exports.sabitoSSO = async (req, res, next) => {
   }
 };
 
-// @desc    SSO login from Sabito via GET (Sabito → ShopWISE)
+// @desc    SSO login from Sabito via GET (Sabito → ABS)
 // @route   GET /sso?token=xxx&appName=nexpro
 // @access  Public
 exports.sabitoSSOGet = async (req, res, next) => {
@@ -1829,7 +2172,7 @@ exports.sabitoSSOGet = async (req, res, next) => {
         return res.redirect(`${frontendUrl}/login?error=invalid_token`);
       }
 
-      // Find or create user in ShopWISE
+      // Find or create user in ABS
       let user = await User.findOne({
         where: {
           [Op.or]: [
@@ -1909,7 +2252,7 @@ exports.sabitoSSOGet = async (req, res, next) => {
         return res.redirect(`${frontendUrl}/login?error=account_inactive`);
       }
 
-      // Generate ShopWISE JWT token
+      // Generate ABS JWT token
       const nexproToken = generateToken(user.id);
 
       // Get user memberships
@@ -2174,7 +2517,7 @@ exports.sabitoSSOGet = async (req, res, next) => {
               }
             );
             
-            console.log('[SSO GET] ✅ Stored ShopWISE tenant ID in Sabito installation:', {
+            console.log('[SSO GET] ✅ Stored ABS tenant ID in Sabito installation:', {
               installationId: installation.id,
               nexproTenantId,
               businessId: sabitoUser.businessId
@@ -2186,7 +2529,7 @@ exports.sabitoSSOGet = async (req, res, next) => {
             });
           }
           
-          // Auto-create tenant mapping in ShopWISE database
+          // Auto-create tenant mapping in ABS database
           try {
             const { SabitoTenantMapping } = require('../models');
             

@@ -120,7 +120,9 @@ const sanitizeValue = (value, key = '') => {
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
       .replace(/&quot;/g, '"')
-      .replace(/&#x27;/g, "'");
+      .replace(/&#x27;/g, "'")
+      .replace(/&#x2F;/gi, '/')
+      .replace(/&#47;/g, '/');
     // Re-apply xss filter after unescaping
     sanitized = xss(sanitized, xssOptions);
   }

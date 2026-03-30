@@ -1,14 +1,22 @@
-const { Sale, SaleItem, Product, ProductVariant, Customer, Shop, Invoice, User, SaleActivity, Tenant } = require('../models');
+const { Sale, SaleItem, Product, ProductVariant, Customer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting } = require('../models');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { createSaleCogsJournal, createSaleRevenueJournal } = require('../services/saleAccountingService');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateSaleListCache } = require('../middleware/cache');
 const { sequelize } = require('../config/database');
 const crypto = require('crypto');
 const { emitNewSale, emitSaleStatusChange, emitInventoryAlert } = require('../services/websocketService');
 const { notifyOrderStatusChanged, notifyNewOrder } = require('../services/notificationService');
+const { getTaxConfigForTenant } = require('../utils/taxConfig');
+const { computeDocumentTax } = require('../utils/taxCalculation');
+const { getTenantLogoUrl } = require('../utils/tenantLogo');
+
+/** Throttle check-Paystack calls per sale (avoid hitting Paystack every poll) */
+const paystackCheckLastBySaleId = new Map();
+const PAYSTACK_CHECK_THROTTLE_MS = 4000;
 
 // Generate unique sale number
 const generateSaleNumber = async (tenantId) => {
@@ -64,25 +72,20 @@ const generateInvoiceNumber = async (tenantId) => {
 const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
   try {
     console.log(`[AutoInvoice] Starting invoice creation for saleId: ${saleId}, tenantId: ${tenantId}`);
-    
-    // Check if invoice already exists
+
     const existingInvoice = await Invoice.findOne({
       where: { saleId, tenantId }
     });
-    
+
     if (existingInvoice) {
       console.log(`[AutoInvoice] Invoice already exists for sale ${saleId}, skipping creation`);
       return existingInvoice;
     }
 
-    // Fetch sale with relations
     const sale = await Sale.findByPk(saleId, {
       include: [
         { model: Customer, as: 'customer' },
-        {
-          model: SaleItem,
-          as: 'items'
-        }
+        { model: SaleItem, as: 'items' }
       ]
     });
 
@@ -92,76 +95,67 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
     }
 
     const totalAmount = parseFloat(sale.total || 0);
-    const isPaidImmediately = sale.paymentMethod !== 'credit';
-    const invoiceStatus = isPaidImmediately ? 'paid' : 'sent';
-    console.log(`[AutoInvoice] Sale found: ${sale.saleNumber}, items: ${sale.items?.length || 0}, total: ${totalAmount}, status: ${invoiceStatus}`);
+    const amountPaid = parseFloat(sale.amountPaid || 0);
+    const balance = Math.max(totalAmount - amountPaid, 0);
+    const invoiceStatus = balance <= 0 ? 'paid' : amountPaid > 0 ? 'partial' : 'sent';
+    console.log(
+      `[AutoInvoice] Sale found: ${sale.saleNumber}, items: ${sale.items?.length || 0}, total: ${totalAmount}, amountPaid: ${amountPaid}, status: ${invoiceStatus}`
+    );
 
-    // Generate invoice number
     const invoiceNumber = await generateInvoiceNumber(tenantId);
+    const td = sale.metadata?.taxDetail || {};
+    const taxAmt = parseFloat(sale.tax || 0);
+    let taxableExclusive =
+      td.taxableExclusive != null && td.taxableExclusive !== ''
+        ? parseFloat(td.taxableExclusive)
+        : Math.max(0, parseFloat(sale.subtotal || 0) - parseFloat(sale.discount || 0));
+    if (!Number.isFinite(taxableExclusive)) taxableExclusive = 0;
 
-    // Build invoice items from sale items
-    let subtotal = 0;
+    let taxRate =
+      taxAmt > 0 && taxableExclusive > 0
+        ? Math.round((taxAmt / taxableExclusive) * 10000) / 100
+        : 0;
+    if (taxRate === 0 && td.ratePercent != null && taxAmt > 0) {
+      taxRate = Math.min(100, Math.max(0, parseFloat(td.ratePercent) || 0));
+    }
+
+    const totalDiscount = parseFloat(sale.discount || 0);
+
+    /** @type {Array<Record<string, unknown>>} */
     let items = [];
-
     if (sale.items && sale.items.length > 0) {
-      items = sale.items.map(item => {
-        const itemSubtotal = parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0);
-        const itemDiscount = parseFloat(item.discount || 0);
+      items = sale.items.map((item) => {
+        const qty = parseFloat(item.quantity || 0);
+        const itemTax = parseFloat(item.tax || 0);
+        const itemTotal = parseFloat(item.total || 0);
+        const itemExclusive = Math.max(0, itemTotal - itemTax);
+        const unitPriceNet = qty > 0 ? itemExclusive / qty : itemExclusive;
         return {
           description: item.name || 'Sale item',
           category: 'Sale',
           quantity: item.quantity,
-          unitPrice: parseFloat(item.unitPrice),
-          discountAmount: itemDiscount,
+          unitPrice: unitPriceNet,
+          discountAmount: 0,
           discountPercent: 0,
           discountReason: null,
-          total: itemSubtotal - itemDiscount
+          total: itemExclusive
         };
       });
-      subtotal = items.reduce((sum, item) => sum + (parseFloat(item.quantity) * parseFloat(item.unitPrice)), 0);
-      
-      // Calculate total discount from all items
-      const totalItemDiscount = items.reduce((sum, item) => sum + parseFloat(item.discountAmount || 0), 0);
-      
-      if (totalItemDiscount > 0) {
-        const invoicePayload = {
-          invoiceNumber,
-          saleId,
-          customerId: sale.customerId,
-          tenantId,
-          sourceType: 'sale',
-          invoiceDate: new Date(),
-          dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-          subtotal,
-          taxRate: parseFloat(sale.tax || 0) / subtotal * 100 || 0,
-          discountType: 'fixed',
-          discountValue: totalItemDiscount,
-          discountAmount: totalItemDiscount,
-          discountReason: 'Sale discounts applied',
-          paymentTerms: isPaidImmediately ? 'Due on Receipt' : 'Net 30',
-          status: invoiceStatus,
-          totalAmount,
-          amountPaid: isPaidImmediately ? totalAmount : 0,
-          balance: isPaidImmediately ? 0 : totalAmount,
-          items,
-          notes: `Invoice generated from sale ${sale.saleNumber}`,
-          termsAndConditions: 'Payment is due within the specified payment terms. Late payments may incur additional charges.'
-        };
-        if (isPaidImmediately) {
-          invoicePayload.paidDate = new Date();
+    } else {
+      items = [
+        {
+          description: `Sale ${sale.saleNumber}`,
+          quantity: 1,
+          unitPrice: taxableExclusive,
+          total: taxableExclusive,
+          discountAmount: 0,
+          discountPercent: 0,
+          discountReason: null,
+          category: 'Sale'
         }
-        const invoice = await Invoice.create(invoicePayload);
-
-        // Update sale with invoiceId
-        await sale.update({ invoiceId: invoice.id });
-
-        console.log(`[AutoInvoice] ✅ Invoice created successfully: ${invoice.invoiceNumber} (ID: ${invoice.id}), status: ${invoiceStatus}`);
-        return invoice;
-      }
+      ];
     }
 
-    // Create invoice without discounts or with sale-level discount
-    const totalDiscount = parseFloat(sale.discount || 0);
     const invoicePayload = {
       invoiceNumber,
       saleId,
@@ -170,32 +164,27 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
       sourceType: 'sale',
       invoiceDate: new Date(),
       dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-      subtotal: subtotal || parseFloat(sale.subtotal || 0),
-      taxRate: parseFloat(sale.tax || 0) / (subtotal || parseFloat(sale.subtotal || 0)) * 100 || 0,
+      subtotal: taxableExclusive,
+      taxRate,
       discountType: 'fixed',
-      discountValue: totalDiscount,
-      discountAmount: totalDiscount,
-      discountReason: sale.notes || null,
-      paymentTerms: isPaidImmediately ? 'Due on Receipt' : 'Net 30',
+      discountValue: 0,
+      discountAmount: 0,
+      discountReason: totalDiscount > 0 ? 'Discounts included in line totals' : null,
+      paymentTerms: balance <= 0 ? 'Due on Receipt' : 'Net 30',
       status: invoiceStatus,
       totalAmount,
-      amountPaid: isPaidImmediately ? totalAmount : 0,
-      balance: isPaidImmediately ? 0 : totalAmount,
-      items: items.length > 0 ? items : [{
-        description: `Sale ${sale.saleNumber}`,
-        quantity: 1,
-        unitPrice: parseFloat(sale.total || 0),
-        total: parseFloat(sale.total || 0)
-      }],
+      amountPaid,
+      balance,
+      items,
       notes: `Invoice generated from sale ${sale.saleNumber}`,
-      termsAndConditions: 'Payment is due within the specified payment terms. Late payments may incur additional charges.'
+      termsAndConditions:
+        'Payment is due within the specified payment terms. Late payments may incur additional charges.'
     };
-    if (isPaidImmediately) {
+    if (balance <= 0) {
       invoicePayload.paidDate = new Date();
     }
     const invoice = await Invoice.create(invoicePayload);
 
-    // Update sale with invoiceId
     await sale.update({ invoiceId: invoice.id });
 
     try {
@@ -271,6 +260,7 @@ exports.getSales = async (req, res, next) => {
 
     const { count, rows } = await Sale.findAndCountAll({
       where,
+      attributes: { exclude: ['notes'] },
       limit,
       offset,
       include: baseInclude,
@@ -287,6 +277,45 @@ exports.getSales = async (req, res, next) => {
       },
       data: rows
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Export sales to CSV/Excel
+// @route   GET /api/sales/export
+// @access  Private (admin, manager)
+exports.exportSales = async (req, res, next) => {
+  try {
+    const { format = 'csv', status } = req.query;
+    const { sendCSV, sendExcel, COLUMN_DEFINITIONS } = require('../utils/dataExport');
+
+    const where = applyTenantFilter(req.tenantId, {});
+    if (status) where.status = status;
+
+    const sales = await Sale.findAll({
+      where,
+      include: [{ model: Customer, as: 'customer', attributes: ['id', 'name'] }],
+      order: [['createdAt', 'DESC']],
+      raw: false
+    });
+    const rows = sales.map((s) => {
+      const plain = s.get({ plain: true });
+      return { ...plain, customer: plain.customer || {} };
+    });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No sales to export' });
+    }
+
+    const filename = `sales_${new Date().toISOString().split('T')[0]}`;
+    const columns = COLUMN_DEFINITIONS.sales;
+
+    if (format === 'excel') {
+      await sendExcel(res, rows, `${filename}.xlsx`, { columns, sheetName: 'Sales', title: 'Sales List' });
+    } else {
+      sendCSV(res, rows, `${filename}.csv`, columns);
+    }
   } catch (error) {
     next(error);
   }
@@ -344,113 +373,133 @@ exports.getSale = async (req, res, next) => {
   }
 };
 
+// Idempotent create: if clientId provided and sale exists for tenant, return existing; otherwise create.
+const createSaleCore = async (transaction, tenantId, userId, body, clientId = null, tenant = null) => {
+  const { items, cartDiscount: bodyCartDiscount, ...saleData } = sanitizePayload(body);
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    throw new Error('Sale must have at least one item');
+  }
+  if (clientId) {
+    const existing = await Sale.findOne({
+      where: { tenantId, clientId },
+      transaction
+    });
+    if (existing) return existing;
+  }
+
+  const taxConfig = await getTaxConfigForTenant(tenantId);
+  const cartDiscount = Math.max(0, parseFloat(bodyCartDiscount) || 0);
+  const lines = items.map((item) => ({
+    quantity: item.quantity,
+    unitPrice: item.unitPrice,
+    discount: item.discount || 0
+  }));
+  const computed = computeDocumentTax({
+    lines,
+    cartDiscount,
+    config: taxConfig
+  });
+
+  const saleNumber = await generateSaleNumber(tenantId);
+  const subtotal = computed.subtotal;
+  const totalDiscount = computed.discount;
+  const totalTax = computed.taxAmount;
+  const total = computed.total;
+  const amountPaid = saleData.amountPaid != null ? parseFloat(saleData.amountPaid) : total;
+  const change = amountPaid > total ? Math.round((amountPaid - total) * 100) / 100 : 0;
+  const shopType = tenant?.metadata?.shopType;
+  const isRestaurant = shopType === 'restaurant';
+  const saleStatus = saleData.status || 'completed';
+  const sendToKitchen = saleData.sendToKitchen !== false;
+  const orderStatus = isRestaurant && sendToKitchen ? 'received' : null;
+
+  const priorMeta = saleData.metadata && typeof saleData.metadata === 'object' ? saleData.metadata : {};
+  const sale = await Sale.create({
+    ...saleData,
+    tenantId,
+    clientId: clientId || null,
+    saleNumber,
+    subtotal,
+    discount: totalDiscount,
+    tax: totalTax,
+    total,
+    amountPaid,
+    change,
+    soldBy: userId,
+    status: saleStatus,
+    orderStatus,
+    metadata: {
+      ...priorMeta,
+      taxDetail: {
+        ratePercent: taxConfig.enabled ? taxConfig.defaultRatePercent : 0,
+        pricesAreTaxInclusive: taxConfig.pricesAreTaxInclusive,
+        taxableExclusive: computed.netTaxable,
+        taxAmount: totalTax
+      }
+    }
+  }, { transaction });
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const lr = computed.lineResults[i] || { exclusive: 0, tax: 0, gross: 0 };
+    const lineSub = (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0);
+    const lineItemTotal = Math.round((lr.exclusive + lr.tax) * 100) / 100;
+    await SaleItem.create({
+      saleId: sale.id,
+      productId: item.productId,
+      productVariantId: item.productVariantId || null,
+      name: item.name,
+      sku: item.sku,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      discount: item.discount || 0,
+      tax: lr.tax,
+      subtotal: lineSub,
+      total: lineItemTotal
+    }, { transaction });
+
+    const product = await Product.findByPk(item.productId, { transaction });
+    if (product && product.trackStock !== false) {
+      const newQuantity = parseFloat(product.quantityOnHand || 0) - parseFloat(item.quantity || 0);
+      await product.update({ quantityOnHand: Math.max(0, newQuantity) }, { transaction });
+    }
+    if (item.productVariantId) {
+      const variant = await ProductVariant.findByPk(item.productVariantId, { transaction });
+      const parent = product || await Product.findByPk(item.productId, { transaction });
+      if (variant && parent?.trackStock !== false && variant.trackStock !== false) {
+        const newVariantQuantity = parseFloat(variant.quantityOnHand || 0) - parseFloat(item.quantity || 0);
+        await variant.update({ quantityOnHand: Math.max(0, newVariantQuantity) }, { transaction });
+      }
+    }
+  }
+
+  await SaleActivity.create({
+    saleId: sale.id,
+    tenantId,
+    type: 'note',
+    subject: 'Sale Created',
+    notes: `Sale ${saleNumber} created`,
+    createdBy: userId || null,
+    metadata: {
+      action: 'created',
+      paymentMethod: saleData.paymentMethod || 'cash',
+      total
+    }
+  }, { transaction });
+
+  return { sale, items };
+};
+
 // @desc    Create new sale (POS transaction)
 // @route   POST /api/sales
 // @access  Private
 exports.createSale = async (req, res, next) => {
   const transaction = await sequelize.transaction();
-  
   try {
-    const { items, ...saleData } = sanitizePayload(req.body);
-    
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Sale must have at least one item'
-      });
-    }
-
-    // Generate sale number
-    const saleNumber = await generateSaleNumber(req.tenantId);
-
-    // Calculate totals
-    let subtotal = 0;
-    let totalDiscount = 0;
-    let totalTax = 0;
-
-    items.forEach(item => {
-      const itemSubtotal = (item.quantity || 0) * (item.unitPrice || 0);
-      subtotal += itemSubtotal;
-      totalDiscount += item.discount || 0;
-      totalTax += item.tax || 0;
-    });
-
-    const total = subtotal - totalDiscount + totalTax;
-    const amountPaid = saleData.amountPaid || total;
-    const change = amountPaid > total ? amountPaid - total : 0;
-
-    // Restaurant: set orderStatus for kitchen tracking only when sendToKitchen is true (e.g. pizza);
-    // items like water only do not go to kitchen
+    const clientId = req.body.clientId || null;
+    const { sale, items } = await createSaleCore(transaction, req.tenantId, req.user.id, req.body, clientId, req.tenant);
     const shopType = req.tenant?.metadata?.shopType;
     const isRestaurant = shopType === 'restaurant';
-    const saleStatus = saleData.status || 'completed';
-    const sendToKitchen = saleData.sendToKitchen !== false;
-    const orderStatus = isRestaurant && sendToKitchen ? 'received' : null;
-
-    // Create sale
-    const sale = await Sale.create({
-      ...saleData,
-      tenantId: req.tenantId,
-      saleNumber,
-      subtotal,
-      discount: totalDiscount,
-      tax: totalTax,
-      total,
-      amountPaid,
-      change,
-      soldBy: req.user.id,
-      status: saleStatus,
-      orderStatus
-    }, { transaction });
-
-    // Create sale items and update product stock
-    for (const item of items) {
-      await SaleItem.create({
-        saleId: sale.id,
-        productId: item.productId,
-        productVariantId: item.productVariantId || null,
-        name: item.name,
-        sku: item.sku,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        discount: item.discount || 0,
-        tax: item.tax || 0,
-        subtotal: (item.quantity || 0) * (item.unitPrice || 0),
-        total: ((item.quantity || 0) * (item.unitPrice || 0)) - (item.discount || 0) + (item.tax || 0)
-      }, { transaction });
-
-      // Update product stock (skip when trackStock is false - made-to-order)
-      const product = await Product.findByPk(item.productId, { transaction });
-      if (product && product.trackStock !== false) {
-        const newQuantity = parseFloat(product.quantityOnHand || 0) - parseFloat(item.quantity || 0);
-        await product.update({ quantityOnHand: Math.max(0, newQuantity) }, { transaction });
-      }
-
-      // Update variant stock if applicable (skip when product or variant has trackStock false)
-      if (item.productVariantId) {
-        const variant = await ProductVariant.findByPk(item.productVariantId, { transaction });
-        const parent = product || await Product.findByPk(item.productId, { transaction });
-        if (variant && parent?.trackStock !== false && variant.trackStock !== false) {
-          const newVariantQuantity = parseFloat(variant.quantityOnHand || 0) - parseFloat(item.quantity || 0);
-          await variant.update({ quantityOnHand: Math.max(0, newVariantQuantity) }, { transaction });
-        }
-      }
-    }
-
-    // Create activity for sale creation
-    await SaleActivity.create({
-      saleId: sale.id,
-      tenantId: req.tenantId,
-      type: 'note',
-      subject: 'Sale Created',
-      notes: `Sale ${saleNumber} created`,
-      createdBy: req.user?.id || null,
-      metadata: {
-        action: 'created',
-        paymentMethod: saleData.paymentMethod || 'cash',
-        total: total
-      }
-    }, { transaction });
 
     await transaction.commit();
 
@@ -526,6 +575,18 @@ exports.createSale = async (req, res, next) => {
     }
 
     invalidateSaleListCache(req.tenantId);
+
+    // Auto-send receipt to customer if setting is on (fire-and-forget)
+    if (createdSale.status === 'completed') {
+      const saleId = createdSale.id;
+      const tenantId = req.tenantId;
+      setImmediate(() => {
+        autoSendReceiptIfEnabled(tenantId, saleId).catch((err) =>
+          console.error('[CreateSale] Auto-send receipt failed:', err?.message || err)
+        );
+      });
+    }
+
     res.status(201).json({
       success: true,
       data: createdSale
@@ -534,6 +595,56 @@ exports.createSale = async (req, res, next) => {
     await transaction.rollback();
     next(error);
   }
+};
+
+// @desc    Batch sync offline sales (idempotent by clientId)
+// @route   POST /api/sales/sync
+// @body    { items: [{ clientId, payload }] } where payload is same as createSale body
+// @access  Private
+exports.batchSyncSales = async (req, res, next) => {
+  const items = req.body?.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({
+      success: false,
+      message: 'items array is required'
+    });
+  }
+  const results = [];
+  for (const { clientId, payload } of items) {
+    if (!payload || !payload.items?.length) {
+      results.push({ clientId: clientId || null, error: 'Invalid payload' });
+      continue;
+    }
+    const transaction = await sequelize.transaction();
+    try {
+      const { sale } = await createSaleCore(
+        transaction,
+        req.tenantId,
+        req.user.id,
+        payload,
+        clientId || null,
+        req.tenant
+      );
+      await transaction.commit();
+      try {
+        if (sale.status === 'completed') {
+          await autoCreateInvoiceFromSale(sale.id, req.tenantId);
+          await createSaleRevenueJournal(req.tenantId, sale.id, req.user?.id);
+          await createSaleCogsJournal(req.tenantId, sale.id, req.user?.id);
+        }
+      } catch (postErr) {
+        console.error('[batchSyncSales] Post-commit failed for sale', sale.id, postErr?.message);
+      }
+      results.push({ clientId: clientId || null, id: sale.id });
+    } catch (err) {
+      await transaction.rollback();
+      results.push({
+        clientId: clientId || null,
+        error: err?.message || 'Sync failed'
+      });
+    }
+  }
+  res.status(200).json({ success: true, results });
 };
 
 // @desc    Update sale
@@ -558,7 +669,7 @@ exports.updateSale = async (req, res, next) => {
     }
 
     // Only allow updating certain fields (status, notes, etc.)
-    const allowedFields = ['status', 'notes', 'metadata'];
+    const allowedFields = ['status', 'notes', 'metadata', 'deliveryStatus'];
     const payload = sanitizePayload(req.body);
     const updateData = {};
     
@@ -568,16 +679,30 @@ exports.updateSale = async (req, res, next) => {
       }
     });
 
+    if (updateData.deliveryStatus !== undefined) {
+      const parsed = parseDeliveryStatusInput(updateData.deliveryStatus);
+      if (parsed === undefined) {
+        await transaction.rollback();
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid deliveryStatus'
+        });
+      }
+      updateData.deliveryStatus = parsed;
+    }
+
     const previousStatus = sale.status;
+    const previousDeliveryStatus = sale.deliveryStatus || null;
 
     // Validate incremental status progression
     if (updateData.status && updateData.status !== previousStatus) {
       // Define status progression order (incremental only)
       const statusOrder = {
         'pending': 1,
-        'completed': 2,
-        'refunded': 3,  // terminal
-        'cancelled': 3  // terminal
+        'partially_paid': 2,
+        'completed': 3,
+        'refunded': 4,  // terminal
+        'cancelled': 4  // terminal
       };
 
       const previousOrder = statusOrder[previousStatus];
@@ -604,9 +729,21 @@ exports.updateSale = async (req, res, next) => {
 
     await sale.update(updateData, { transaction });
 
+    const deliveryStatusChanged =
+      updateData.deliveryStatus !== undefined &&
+      String(updateData.deliveryStatus || '') !== String(previousDeliveryStatus || '');
+
+    const DELIVERY_LABELS = {
+      ready_for_delivery: 'Ready for delivery',
+      out_for_delivery: 'Out for delivery',
+      delivered: 'Delivered',
+      returned: 'Returned'
+    };
+
     if (updateData.status && updateData.status !== previousStatus) {
       const statusLabels = {
         pending: 'Pending',
+        partially_paid: 'Partially paid',
         completed: 'Completed',
         cancelled: 'Cancelled',
         refunded: 'Refunded'
@@ -625,7 +762,38 @@ exports.updateSale = async (req, res, next) => {
           newStatus: updateData.status
         }
       }, { transaction });
-    } else if (Object.keys(updateData).length > 0) {
+    }
+
+    if (deliveryStatusChanged) {
+      const oldL = previousDeliveryStatus
+        ? DELIVERY_LABELS[previousDeliveryStatus] || previousDeliveryStatus
+        : 'Not set';
+      const newL = updateData.deliveryStatus
+        ? DELIVERY_LABELS[updateData.deliveryStatus] || updateData.deliveryStatus
+        : 'Not set';
+      await SaleActivity.create({
+        saleId: sale.id,
+        tenantId: req.tenantId,
+        type: 'note',
+        subject: 'Delivery status updated',
+        notes: `Delivery status changed from ${oldL} to ${newL}`,
+        createdBy: req.user?.id || null,
+        metadata: {
+          deliveryStatusChange: true,
+          oldDeliveryStatus: previousDeliveryStatus,
+          newDeliveryStatus: updateData.deliveryStatus
+        }
+      }, { transaction });
+    }
+
+    const otherUpdatedKeys = Object.keys(updateData).filter(
+      (k) => k !== 'status' && k !== 'deliveryStatus'
+    );
+    if (
+      !(updateData.status && updateData.status !== previousStatus) &&
+      !deliveryStatusChanged &&
+      otherUpdatedKeys.length > 0
+    ) {
       await SaleActivity.create({
         saleId: sale.id,
         tenantId: req.tenantId,
@@ -655,7 +823,17 @@ exports.updateSale = async (req, res, next) => {
           console.log(`[UpdateSale] ✅ Invoice auto-created: ${autoGeneratedInvoice.invoiceNumber}`);
         }
       } catch (invoiceError) {
-        console.error('[UpdateSale] ❌ Failed to auto-create invoice:', invoiceError);
+        console.error('[UpdateSale] ❌ Failed to auto-create invoice:', invoiceError?.message);
+      }
+      try {
+        await createSaleRevenueJournal(req.tenantId, sale.id, req.user?.id);
+      } catch (revError) {
+        console.error('[UpdateSale] Failed to create sale revenue journal:', revError?.message);
+      }
+      try {
+        await createSaleCogsJournal(req.tenantId, sale.id, req.user?.id);
+      } catch (cogsError) {
+        console.error('[UpdateSale] Failed to create COGS journal:', cogsError?.message);
       }
     }
 
@@ -686,6 +864,177 @@ exports.updateSale = async (req, res, next) => {
     if (transaction && !transaction.finished) {
       await transaction.rollback();
     }
+    next(error);
+  }
+};
+
+// Map sale payment method to Payment model enum (Payment has credit_card not card)
+const salePaymentMethodToPaymentModel = (method) => {
+  if (!method) return 'cash';
+  const m = String(method).toLowerCase();
+  if (m === 'card') return 'credit_card';
+  if (['cash', 'mobile_money', 'check', 'bank_transfer', 'other'].includes(m)) return m;
+  return 'other';
+};
+
+// @desc    Record payment on a sale (partial or full)
+// @route   POST /api/sales/:id/payment
+// @access  Private
+exports.recordPayment = async (req, res, next) => {
+  try {
+    const { amount, paymentMethod, referenceNumber, paymentDate } = sanitizePayload(req.body);
+
+    const sale = await Sale.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      include: [
+        { model: Customer, as: 'customer' },
+        { model: SaleItem, as: 'items' }
+      ]
+    });
+
+    if (!sale) {
+      return res.status(404).json({
+        success: false,
+        message: 'Sale not found'
+      });
+    }
+
+    if (sale.status === 'cancelled' || sale.status === 'refunded') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot record payment on a cancelled or refunded sale'
+      });
+    }
+
+    const totalAmount = parseFloat(sale.total || 0);
+    const currentPaid = parseFloat(sale.amountPaid || 0);
+    const balanceDue = Math.max(totalAmount - currentPaid, 0);
+
+    if (balanceDue <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Sale is already fully paid'
+      });
+    }
+
+    const paymentAmount = parseFloat(amount);
+    if (!paymentAmount || paymentAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment amount must be greater than 0'
+      });
+    }
+    if (paymentAmount > balanceDue) {
+      return res.status(400).json({
+        success: false,
+        message: `Payment amount cannot exceed balance due (₵ ${balanceDue.toFixed(2)})`
+      });
+    }
+
+    const newAmountPaid = Math.min(currentPaid + paymentAmount, totalAmount);
+    const effectivePaymentDate = paymentDate ? new Date(paymentDate) : new Date();
+    const previousStatus = sale.status;
+    const isNowCompleted = newAmountPaid >= totalAmount;
+
+    const updatePayload = {
+      amountPaid: newAmountPaid
+    };
+    if (paymentMethod) {
+      updatePayload.paymentMethod = paymentMethod;
+    }
+    if (isNowCompleted) {
+      updatePayload.status = 'completed';
+    } else {
+      updatePayload.status = 'partially_paid';
+    }
+
+    await sale.update(updatePayload);
+
+    const paymentNumber = `PAY-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    await Payment.create({
+      paymentNumber,
+      type: 'income',
+      customerId: sale.customerId,
+      tenantId: req.tenantId,
+      amount: paymentAmount,
+      paymentMethod: salePaymentMethodToPaymentModel(paymentMethod || sale.paymentMethod),
+      paymentDate: effectivePaymentDate,
+      referenceNumber: referenceNumber || null,
+      status: 'completed',
+      notes: `Payment for sale ${sale.saleNumber || sale.id}`
+    });
+
+    await SaleActivity.create({
+      saleId: sale.id,
+      tenantId: req.tenantId,
+      type: 'payment',
+      subject: 'Payment recorded',
+      notes: `₵ ${paymentAmount.toFixed(2)} received (${paymentMethod || sale.paymentMethod || 'cash'}). Total paid: ₵ ${newAmountPaid.toFixed(2)}${isNowCompleted ? ' – Sale completed' : ''}`,
+      createdBy: req.user?.id || null,
+      metadata: {
+        amount: paymentAmount,
+        paymentMethod: paymentMethod || sale.paymentMethod,
+        previousAmountPaid: currentPaid,
+        newAmountPaid: newAmountPaid,
+        completed: isNowCompleted
+      }
+    });
+
+    if (isNowCompleted && (previousStatus === 'pending' || previousStatus === 'partially_paid')) {
+      if (!sale.invoiceId) {
+        try {
+          const autoGeneratedInvoice = await autoCreateInvoiceFromSale(sale.id, req.tenantId);
+          if (autoGeneratedInvoice) {
+            console.log('[RecordPayment] ✅ Invoice auto-created:', autoGeneratedInvoice.invoiceNumber);
+          }
+        } catch (invoiceError) {
+          console.error('[RecordPayment] Failed to auto-create invoice:', invoiceError?.message);
+        }
+      }
+      try {
+        await createSaleRevenueJournal(req.tenantId, sale.id, req.user?.id);
+      } catch (revError) {
+        console.error('[RecordPayment] Failed to create sale revenue journal:', revError?.message);
+      }
+      try {
+        await createSaleCogsJournal(req.tenantId, sale.id, req.user?.id);
+      } catch (cogsError) {
+        console.error('[RecordPayment] Failed to create COGS journal:', cogsError?.message);
+      }
+    }
+
+    const updatedSale = await Sale.findByPk(sale.id, {
+      include: [
+        { model: Shop, as: 'shop' },
+        { model: Customer, as: 'customer' },
+        { model: User, as: 'seller' },
+        { model: Invoice, as: 'invoice' },
+        {
+          model: SaleItem,
+          as: 'items',
+          include: [
+            { model: Product, as: 'product' },
+            { model: ProductVariant, as: 'variant' }
+          ]
+        }
+      ]
+    });
+
+    invalidateSaleListCache(req.tenantId);
+    if (isNowCompleted && (previousStatus === 'pending' || previousStatus === 'partially_paid')) {
+      try {
+        emitSaleStatusChange(req.tenantId, updatedSale, previousStatus);
+      } catch (wsErr) {
+        console.error('[RecordPayment] WebSocket emit error:', wsErr?.message);
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: updatedSale,
+      message: isNowCompleted ? 'Payment recorded and sale completed' : 'Payment recorded'
+    });
+  } catch (error) {
     next(error);
   }
 };
@@ -954,6 +1303,21 @@ exports.updateOrderStatus = async (req, res, next) => {
   }
 };
 
+// @desc    Update delivery status (all business types; public tracking uses delivery timeline when set)
+// @route   PATCH /api/sales/:id/delivery-status
+// @access  Private
+exports.updateDeliveryStatus = async (req, res, next) => {
+  if (!Object.prototype.hasOwnProperty.call(req.body || {}, 'deliveryStatus')) {
+    return res.status(400).json({
+      success: false,
+      message: 'deliveryStatus is required (send null to clear)'
+    });
+  }
+  const { deliveryStatus } = req.body;
+  req.body = { deliveryStatus };
+  return exports.updateSale(req, res, next);
+};
+
 exports.addSaleActivity = async (req, res, next) => {
   try {
     const sale = await Sale.findOne({
@@ -1122,6 +1486,52 @@ exports.sendReceipt = async (req, res, next) => {
 };
 
 /**
+ * If tenant has "auto send receipt to customer" enabled, send receipt via all configured channels.
+ * Called from createSale (setImmediate) so it does not block the response.
+ */
+async function autoSendReceiptIfEnabled(tenantId, saleId) {
+  const prefs = await Setting.findOne({ where: { tenantId, key: 'customer-notification-preferences' } });
+  if (!prefs?.value?.autoSendReceiptToCustomer) return;
+
+  const sale = await Sale.findOne({
+    where: { tenantId, id: saleId },
+    include: [
+      { model: SaleItem, as: 'items', include: [{ model: Product, as: 'product' }, { model: ProductVariant, as: 'variant' }] },
+      { model: Customer, as: 'customer' }
+    ]
+  });
+  if (!sale?.customer) return;
+
+  const smsService = require('../services/smsService');
+  const whatsappService = require('../services/whatsappService');
+  const emailService = require('../services/emailService');
+  const smsConfig = await smsService.getResolvedConfig(tenantId);
+  const whatsappConfig = await whatsappService.getConfig(tenantId);
+  const emailConfig = await emailService.getConfig(tenantId);
+
+  const receiptMessage = buildReceiptMessage(sale, tenantId);
+  const phone = sale.customer.phone?.trim();
+  const email = sale.customer.email?.trim();
+  const hasPhone = !!smsService.validatePhoneNumber(phone);
+
+  if (emailConfig && email) {
+    await sendEmailReceipt(tenantId, email, sale, receiptMessage).catch((e) =>
+      console.error('[AutoSendReceipt] Email failed:', e?.message)
+    );
+  }
+  if (smsConfig && hasPhone) {
+    await sendSMSReceipt(tenantId, smsService.validatePhoneNumber(phone), receiptMessage).catch((e) =>
+      console.error('[AutoSendReceipt] SMS failed:', e?.message)
+    );
+  }
+  if (whatsappConfig?.phoneNumberId && hasPhone) {
+    await sendWhatsAppReceipt(tenantId, whatsappService.validatePhoneNumber(phone), receiptMessage).catch((e) =>
+      console.error('[AutoSendReceipt] WhatsApp failed:', e?.message)
+    );
+  }
+}
+
+/**
  * Build receipt message for SMS/WhatsApp
  * @param {Object} sale - Sale object
  * @param {string} tenantId - Tenant ID
@@ -1196,64 +1606,34 @@ async function sendWhatsAppReceipt(tenantId, phone, message) {
  * Send Email receipt using configured email service
  */
 async function sendEmailReceipt(tenantId, email, sale, textMessage) {
-  const { Setting } = require('../models');
+  const { Setting, Tenant } = require('../models');
   const emailService = require('../services/emailService');
-  
+  const emailTemplates = require('../services/emailTemplates');
+
   // Get email settings
   const emailSettings = await Setting.findOne({
     where: { tenantId, key: 'email' }
   });
-  
+
   if (!emailSettings?.value?.enabled) {
     return { success: false, error: 'Email service not configured' };
   }
-  
+
   try {
-    const subject = `Receipt - ${sale.saleNumber}`;
-    const htmlContent = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-        <h2>Receipt</h2>
-        <p><strong>Sale Number:</strong> ${sale.saleNumber}</p>
-        <p><strong>Date:</strong> ${new Date(sale.createdAt).toLocaleDateString()}</p>
-        
-        <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-          <thead>
-            <tr style="background: #f5f5f5;">
-              <th style="padding: 10px; text-align: left; border-bottom: 1px solid #ddd;">Item</th>
-              <th style="padding: 10px; text-align: right; border-bottom: 1px solid #ddd;">Qty</th>
-              <th style="padding: 10px; text-align: right; border-bottom: 1px solid #ddd;">Price</th>
-              <th style="padding: 10px; text-align: right; border-bottom: 1px solid #ddd;">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${sale.items?.map(item => `
-              <tr>
-                <td style="padding: 10px; border-bottom: 1px solid #eee;">${item.name}</td>
-                <td style="padding: 10px; text-align: right; border-bottom: 1px solid #eee;">${item.quantity}</td>
-                <td style="padding: 10px; text-align: right; border-bottom: 1px solid #eee;">GHS ${item.unitPrice?.toFixed(2)}</td>
-                <td style="padding: 10px; text-align: right; border-bottom: 1px solid #eee;">GHS ${(item.quantity * item.unitPrice).toFixed(2)}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colspan="3" style="padding: 10px; text-align: right; font-weight: bold;">Total:</td>
-              <td style="padding: 10px; text-align: right; font-weight: bold;">GHS ${sale.total?.toFixed(2)}</td>
-            </tr>
-          </tfoot>
-        </table>
-        
-        <p style="color: #666;">Thank you for your purchase!</p>
-      </div>
-    `;
-    
-    await emailService.sendEmail(emailSettings.value, {
-      to: email,
-      subject,
-      html: htmlContent,
-      text: textMessage
-    });
-    
+    const tenant = await Tenant.findByPk(tenantId, { attributes: ['name', 'metadata'] });
+    const company = {
+      name: tenant?.name || 'African Business Suite',
+      logoUrl: getTenantLogoUrl(tenant),
+      primaryColor: tenant?.metadata?.primaryColor || '#166534'
+    };
+    const closing = textMessage && String(textMessage).trim() ? String(textMessage).trim() : '';
+    const { subject, html, text } = emailTemplates.saleReceiptEmail(sale, company, closing);
+
+    const result = await emailService.sendMessage(tenantId, email, subject, html, text);
+
+    if (!result.success) {
+      return { success: false, error: result.error };
+    }
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -1382,7 +1762,17 @@ exports.initializePaystackForSale = async (req, res, next) => {
     }
 
     const reference = `SALE-${sale.id}-${Date.now()}`.slice(0, 50);
-    const amountPesewas = Math.round(totalAmount * 100);
+    const orgRow = await Setting.findOne({ where: { tenantId: sale.tenantId, key: 'organization' } });
+    const orgTax = orgRow?.value?.tax || {};
+    const oc = orgTax?.otherCharges || {};
+    const shouldApplyCustomerCharge =
+      oc?.enabled === true &&
+      oc?.customerBears === true &&
+      ['online_payments', 'all_payments'].includes(String(oc?.appliesTo || ''));
+    const chargeRate = shouldApplyCustomerCharge ? Math.max(0, Math.min(100, parseFloat(oc?.ratePercent) || 0)) : 0;
+    const chargeAmount = Math.round((totalAmount * chargeRate / 100) * 100) / 100;
+    const payableAmount = shouldApplyCustomerCharge ? totalAmount + chargeAmount : totalAmount;
+    const amountPesewas = Math.round(payableAmount * 100);
     const callback = callbackUrl && String(callbackUrl).trim() ? String(callbackUrl).trim() : null;
 
     const tenant = await Tenant.findByPk(sale.tenantId);
@@ -1396,8 +1786,17 @@ exports.initializePaystackForSale = async (req, res, next) => {
       reference,
       metadata: {
         sale_id: sale.id,
-        tenant_id: sale.tenantId
+        tenant_id: sale.tenantId,
+        paymentSurcharge: shouldApplyCustomerCharge
+          ? {
+              label: typeof oc?.label === 'string' && oc.label.trim() ? oc.label.trim() : 'Transaction charge',
+              ratePercent: chargeRate,
+              amount: chargeAmount,
+              customerBears: true
+            }
+          : undefined
       },
+      channels: ['card'],
       ...(subaccount ? { subaccount } : {})
     });
 
@@ -1419,6 +1818,282 @@ exports.initializePaystackForSale = async (req, res, next) => {
       }
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Initiate Paystack Mobile Money payment for a pending POS sale
+// @route   POST /api/sales/:id/paystack-mobile-money
+// @access  Private
+exports.paystackMobileMoneyForSale = async (req, res, next) => {
+  try {
+    const saleId = req.params.id;
+    const { phoneNumber, provider } = sanitizePayload(req.body || {});
+
+    if (!phoneNumber || !provider) {
+      return res.status(400).json({
+        success: false,
+        message: 'phoneNumber and provider are required'
+      });
+    }
+
+    const sale = await Sale.findOne({
+      where: applyTenantFilter(req.tenantId, { id: saleId }),
+      include: [{ model: Customer, as: 'customer' }]
+    });
+
+    if (!sale) {
+      return res.status(404).json({ success: false, message: 'Sale not found' });
+    }
+
+    if (sale.status !== 'pending') {
+      return res.status(400).json({
+        success: false,
+        message: 'Sale is not pending payment'
+      });
+    }
+
+    const totalAmount = parseFloat(sale.total || 0);
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Sale total must be greater than zero'
+      });
+    }
+
+    const tenant = await Tenant.findByPk(sale.tenantId);
+
+    const customerEmail =
+      (sale.customer && sale.customer.email) ||
+      req.user?.email ||
+      tenant?.metadata?.companyEmail ||
+      tenant?.email ||
+      null;
+
+    if (!customerEmail) {
+      return res.status(400).json({
+        success: false,
+        message: 'Customer or user email is required for mobile money payment'
+      });
+    }
+
+    const paystackService = require('../services/paystackService');
+    if (!paystackService.secretKey) {
+      return res.status(503).json({
+        success: false,
+        message: 'Paystack is not configured'
+      });
+    }
+
+    const reference = `SALE-MM-${sale.id}-${Date.now()}`.slice(0, 50);
+
+    const logicalProvider = String(provider || '').toUpperCase();
+
+    const orgRow = await Setting.findOne({ where: { tenantId: sale.tenantId, key: 'organization' } });
+    const orgTax = orgRow?.value?.tax || {};
+    const oc = orgTax?.otherCharges || {};
+    const shouldApplyCustomerCharge =
+      oc?.enabled === true &&
+      oc?.customerBears === true &&
+      ['online_payments', 'all_payments'].includes(String(oc?.appliesTo || ''));
+    const chargeRate = shouldApplyCustomerCharge ? Math.max(0, Math.min(100, parseFloat(oc?.ratePercent) || 0)) : 0;
+    const chargeAmount = Math.round((totalAmount * chargeRate / 100) * 100) / 100;
+    const payableAmount = shouldApplyCustomerCharge ? totalAmount + chargeAmount : totalAmount;
+
+    const result = await paystackService.chargeMobileMoney({
+      email: customerEmail,
+      amount: payableAmount,
+      reference,
+      phoneNumber,
+      provider: logicalProvider,
+      metadata: {
+        sale_id: sale.id,
+        tenant_id: sale.tenantId,
+        paymentSurcharge: shouldApplyCustomerCharge
+          ? {
+              label: typeof oc?.label === 'string' && oc.label.trim() ? oc.label.trim() : 'Transaction charge',
+              ratePercent: chargeRate,
+              amount: chargeAmount,
+              customerBears: true
+            }
+          : undefined
+      },
+      ...(tenant?.paystackSubaccountCode ? { subaccount: tenant.paystackSubaccountCode } : {})
+    });
+
+    console.log('[MoMo] Paystack chargeMobileMoney result:', {
+      saleId: sale.id,
+      hasResult: !!result,
+      resultStatus: result?.status,
+      resultMessage: result?.message,
+      resultKeys: result ? Object.keys(result) : null
+    });
+
+    if (!result || result.status === false) {
+      console.warn('[MoMo] Returning 502 – result missing or result.status === false:', { result });
+      return res.status(502).json({
+        success: false,
+        message: result?.message || 'Failed to initiate mobile money payment'
+      });
+    }
+
+    // Persist basic Paystack MoMo info in sale metadata
+    const existingMetadata = sale.metadata || {};
+    const updatedMetadata = {
+      ...existingMetadata,
+      paystackMobileMoney: {
+        ...(existingMetadata.paystackMobileMoney || {}),
+        reference,
+        provider: logicalProvider,
+        phoneNumber,
+        initiatedAt: new Date().toISOString()
+      }
+    };
+
+    await sale.update({ metadata: updatedMetadata });
+
+    const payload = {
+      success: true,
+      data: {
+        reference,
+        provider: logicalProvider,
+        status: 'PENDING'
+      }
+    };
+    console.log('[MoMo] Returning 200 success:', { saleId: sale.id, payload });
+    res.status(200).json(payload);
+  } catch (error) {
+    console.error('[MoMo] paystackMobileMoneyForSale error:', { saleId: req.params?.id, error: error.message, stack: error.stack });
+    next(error);
+  }
+};
+
+/**
+ * Check Paystack charge status for a pending POS MoMo sale and update sale when charge succeeds.
+ * Used when webhook cannot reach the server (e.g. local dev) so the frontend can poll and still see completion.
+ * GET /api/sales/:id/check-paystack-charge
+ */
+exports.checkPaystackChargeForSale = async (req, res, next) => {
+  try {
+    const saleId = req.params.id;
+    const sale = await Sale.findOne({
+      where: applyTenantFilter(req.tenantId, { id: saleId }),
+      include: [{ model: Customer, as: 'customer' }]
+    });
+
+    if (!sale) {
+      return res.status(404).json({ success: false, message: 'Sale not found' });
+    }
+
+    // If already completed, return as-is
+    if (sale.status === 'completed') {
+      return res.status(200).json({ success: true, data: sale });
+    }
+
+    const ref = sale.metadata?.paystackMobileMoney?.reference;
+    if (!ref) {
+      return res.status(200).json({ success: true, data: sale });
+    }
+
+    // Throttle: don't call Paystack more than once per 8s per sale
+    const now = Date.now();
+    const last = paystackCheckLastBySaleId.get(saleId) || 0;
+    if (now - last < PAYSTACK_CHECK_THROTTLE_MS) {
+      return res.status(200).json({ success: true, data: sale });
+    }
+    paystackCheckLastBySaleId.set(saleId, now);
+
+    const paystackService = require('../services/paystackService');
+    if (!paystackService.secretKey) {
+      return res.status(200).json({ success: true, data: sale });
+    }
+
+    const result = await paystackService.verifyTransaction(ref);
+    if (!result.status || !result.data) {
+      return res.status(200).json({ success: true, data: sale });
+    }
+
+    const tx = result.data;
+    const txStatus = (tx.status || '').toLowerCase();
+    if (txStatus !== 'success') {
+      return res.status(200).json({ success: true, data: sale });
+    }
+
+    const amount = parseFloat(tx.amount || 0) / 100;
+    const saleTotal = parseFloat(sale.total || 0);
+    const appliedAmount = Number.isFinite(saleTotal) && saleTotal > 0 ? Math.min(amount, saleTotal) : amount;
+    const tenant = await Tenant.findByPk(sale.tenantId);
+    const pc = tenant?.metadata?.paymentCollection || {};
+    const isMoMo = pc.settlementType === 'momo' && pc.momoPhone;
+    const useLegacyMomoTransfer = isMoMo && !tenant?.paystackSubaccountCode;
+
+    await sale.update({
+      status: 'completed',
+      paymentMethod: sale.paymentMethod || 'mobile_money',
+      amountPaid: appliedAmount,
+      metadata: {
+        ...(sale.metadata || {}),
+        paystackRef: ref,
+        paystackCompletedAt: new Date().toISOString()
+      }
+    });
+
+    if (useLegacyMomoTransfer) {
+      try {
+        const platformFeePercent = parseFloat(process.env.PAYSTACK_PLATFORM_FEE_PERCENT || '2');
+        const tenantShare = appliedAmount * (1 - platformFeePercent / 100);
+        const tenantSharePesewas = Math.round(tenantShare * 100);
+        if (tenantSharePesewas >= 100) {
+          let recipientCode = pc.paystackTransferRecipientCode;
+          if (!recipientCode) {
+            const momoAccount = (pc.momoPhone || '').replace(/^\+?233/, '0');
+            const recipientRes = await paystackService.createTransferRecipient({
+              type: 'mobile_money',
+              name: tenant?.name || 'Business',
+              account_number: momoAccount || pc.momoPhone,
+              bank_code: paystackService.getMoMoBankCode(pc.momoProvider),
+              currency: 'GHS'
+            });
+            recipientCode = recipientRes?.data?.recipient_code;
+            if (recipientCode && tenant) {
+              tenant.metadata = tenant.metadata || {};
+              tenant.metadata.paymentCollection = tenant.metadata.paymentCollection || {};
+              tenant.metadata.paymentCollection.paystackTransferRecipientCode = recipientCode;
+              await tenant.save();
+            }
+          }
+          if (recipientCode) {
+            const transferRef = `sale_${sale.id}_${Date.now()}`.slice(0, 50);
+            await paystackService.initiateTransfer({
+              amount: tenantSharePesewas,
+              recipient: recipientCode,
+              reference: transferRef,
+              reason: `POS sale ${sale.saleNumber}`
+            });
+            console.log('[MoMo] Transfer initiated for sale (check-paystack):', sale.id);
+          }
+        }
+      } catch (transferErr) {
+        console.error('[MoMo] Transfer failed for sale (check-paystack):', sale.id, transferErr?.response?.data || transferErr.message);
+      }
+    }
+
+    try {
+      await autoCreateInvoiceFromSale(sale.id, sale.tenantId);
+    } catch (invErr) {
+      console.error('[MoMo] Auto-invoice failed for POS sale (check-paystack):', invErr.message);
+    }
+    try {
+      invalidateSaleListCache(sale.tenantId);
+      emitNewSale(sale.tenantId, sale);
+    } catch (e) {
+      console.error('[MoMo] WebSocket/cache error (check-paystack):', e.message);
+    }
+    console.log('[MoMo] Sale completed via check-paystack-charge:', sale.id);
+
+    return res.status(200).json({ success: true, data: sale });
+  } catch (error) {
+    console.error('[MoMo] checkPaystackChargeForSale error:', { saleId: req.params?.id, error: error.message });
     next(error);
   }
 };

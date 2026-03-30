@@ -36,16 +36,12 @@ export default function MoreScreen() {
   const menuItems = useMemo(() => {
     const items: MenuItem[] = [];
 
-    // Kitchen Orders in main tab for restaurants; Products in More
-    if (isRestaurant) {
-      items.push({ id: 'products', label: 'Products', icon: 'archive', route: '/(tabs)/products' });
-    }
-
     // Financial / Operations - show based on business type
-    if (isShop || isPharmacy) {
-      items.push({ id: 'sales', label: 'Sales', icon: 'shopping-cart', route: '/(tabs)/sales' });
-      items.push({ id: 'materials', label: 'Materials', icon: 'archive', route: '/(tabs)/materials' });
-    }
+  if (isShop || isPharmacy) {
+    items.push({ id: 'products', label: 'Products', icon: 'archive', route: '/(tabs)/products' });
+    items.push({ id: 'sales', label: 'Sales', icon: 'shopping-cart', route: '/(tabs)/sales' });
+    items.push({ id: 'materials', label: 'Materials', icon: 'archive', route: '/(tabs)/materials' });
+  }
     items.push({ id: 'expenses', label: 'Expenses', icon: 'minus-circle', route: '/(tabs)/expenses' });
     if (isShop || isPharmacy || isStudio) {
       items.push({ id: 'invoices', label: 'Invoices', icon: 'file-text', route: '/(tabs)/invoices' });

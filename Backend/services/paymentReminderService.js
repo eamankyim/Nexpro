@@ -1,12 +1,18 @@
 const cron = require('node-cron');
-const { Invoice, Customer, Tenant } = require('../models');
+const { Invoice, Customer, Tenant, Setting } = require('../models');
 const { Op } = require('sequelize');
 const whatsappService = require('./whatsappService');
 const whatsappTemplates = require('./whatsappTemplates');
+const activityLogger = require('./activityLogger');
+const smsService = require('./smsService');
+const emailService = require('./emailService');
+const emailTemplates = require('./emailTemplates');
+const taskAutomationService = require('./taskAutomationService');
+const { getTenantLogoUrl } = require('../utils/tenantLogo');
 
 /**
  * Payment Reminder Service
- * Sends WhatsApp reminders for overdue invoices
+ * Sends WhatsApp and/or SMS reminders for overdue invoices
  * Runs daily at 9 AM
  */
 class PaymentReminderService {
@@ -15,7 +21,18 @@ class PaymentReminderService {
   }
 
   /**
-   * Check for overdue invoices and send reminders
+   * Build short SMS message for overdue invoice (under 160 chars when possible)
+   */
+  buildPaymentReminderSms(invoice, paymentLink) {
+    const invNum = invoice.invoiceNumber || `#${invoice.id}`;
+    const balance = parseFloat(invoice.balance);
+    const amount = Number.isFinite(balance) ? `GHS ${balance.toFixed(2)}` : 'outstanding';
+    const msg = `Overdue: Invoice ${invNum}. Balance ${amount}. Pay: ${paymentLink}`;
+    return msg.substring(0, 160);
+  }
+
+  /**
+   * Check for overdue invoices and send reminders (WhatsApp and/or SMS)
    */
   async checkAndSendReminders() {
     if (this.isRunning) {
@@ -28,7 +45,6 @@ class PaymentReminderService {
 
     try {
       // Find all overdue invoices (status: sent, partial, or overdue, with balance > 0)
-      // Group by tenant to process efficiently
       const overdueInvoices = await Invoice.findAll({
         where: {
           status: { [Op.in]: ['sent', 'partial', 'overdue'] },
@@ -52,65 +68,112 @@ class PaymentReminderService {
 
       for (const invoice of overdueInvoices) {
         try {
-          // Check if WhatsApp is enabled for this tenant
-          const config = await whatsappService.getConfig(invoice.tenantId);
-          if (!config || !config.enabled) {
-            skippedCount++;
-            continue;
+          try {
+            await taskAutomationService.createInvoiceOverdueTask({
+              invoice,
+              tenantId: invoice.tenantId,
+              triggeredBy: null
+            });
+          } catch (taskError) {
+            console.error('[PaymentReminder] Failed to auto-create overdue invoice task:', taskError?.message);
           }
 
-          // Check if customer has phone number
           if (!invoice.customer || !invoice.customer.phone) {
             skippedCount++;
             continue;
           }
 
-          // Validate phone number
-          const phoneNumber = whatsappService.validatePhoneNumber(invoice.customer.phone);
-          if (!phoneNumber) {
-            skippedCount++;
-            continue;
-          }
-
-          // Check rate limit
-          if (!whatsappService.checkRateLimit(invoice.tenantId)) {
-            console.log(`[PaymentReminder] Rate limit reached for tenant ${invoice.tenantId}`);
-            break; // Stop processing for this tenant
-          }
-
-          // Generate payment link
           const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-          const paymentLink = invoice.paymentToken 
+          const paymentLink = invoice.paymentToken
             ? `${frontendUrl}/pay-invoice/${invoice.paymentToken}`
             : `${frontendUrl}/invoices/${invoice.id}`;
 
-          // Prepare template parameters
-          const parameters = whatsappTemplates.preparePaymentReminder(invoice, paymentLink);
+          let reminderSent = false;
 
-          // Send WhatsApp message
-          const result = await whatsappService.sendMessage(
-            invoice.tenantId,
-            phoneNumber,
-            'payment_reminder',
-            parameters
-          );
-
-          if (result.success) {
-            sentCount++;
-            console.log(`[PaymentReminder] Sent reminder for invoice ${invoice.invoiceNumber}`);
-            
-            // Update invoice status to overdue if not already
-            if (invoice.status !== 'overdue') {
-              await invoice.update({ status: 'overdue' });
+          // Send WhatsApp if enabled
+          const whatsappConfig = await whatsappService.getConfig(invoice.tenantId);
+          if (whatsappConfig && whatsappConfig.enabled) {
+            const phoneNumber = whatsappService.validatePhoneNumber(invoice.customer.phone);
+            if (phoneNumber && whatsappService.checkRateLimit(invoice.tenantId)) {
+              const parameters = whatsappTemplates.preparePaymentReminder(invoice, paymentLink);
+              const result = await whatsappService.sendMessage(
+                invoice.tenantId,
+                phoneNumber,
+                'payment_reminder',
+                parameters
+              );
+              if (result.success) {
+                reminderSent = true;
+                console.log(`[PaymentReminder] WhatsApp reminder sent for invoice ${invoice.invoiceNumber}`);
+              } else {
+                console.error(`[PaymentReminder] WhatsApp failed for ${invoice.invoiceNumber}:`, result.error);
+              }
+              await new Promise(resolve => setTimeout(resolve, 100));
             }
-          } else {
-            console.error(`[PaymentReminder] Failed to send reminder for invoice ${invoice.invoiceNumber}:`, result.error);
-            skippedCount++;
           }
 
-          // Small delay to avoid rate limiting
-          await new Promise(resolve => setTimeout(resolve, 100));
+          // Send SMS if enabled (tenant or platform)
+          const smsConfig = await smsService.getResolvedConfig(invoice.tenantId);
+          if (smsConfig) {
+            const smsPhone = smsService.validatePhoneNumber(invoice.customer.phone);
+            if (smsPhone && smsService.checkRateLimit(invoice.tenantId)) {
+              const smsMessage = this.buildPaymentReminderSms(invoice, paymentLink);
+              const smsResult = await smsService.sendMessage(invoice.tenantId, smsPhone, smsMessage);
+              if (smsResult.success) {
+                reminderSent = true;
+                console.log(`[PaymentReminder] SMS reminder sent for invoice ${invoice.invoiceNumber}`);
+              } else {
+                console.error(`[PaymentReminder] SMS failed for ${invoice.invoiceNumber}:`, smsResult.error);
+              }
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
 
+          // Send email if enabled (optional setting)
+          const prefsRow = await Setting.findOne({ where: { tenantId: invoice.tenantId, key: 'customer-notification-preferences' } });
+          const prefs = prefsRow?.value || {};
+          if (prefs.sendPaymentReminderEmail === true && invoice.customer?.email) {
+            const emailConfig = await emailService.getConfig(invoice.tenantId);
+            if (emailConfig) {
+              const tenant = await Tenant.findByPk(invoice.tenantId);
+              const company = {
+                name: tenant?.name || 'African Business Suite',
+                logo: getTenantLogoUrl(tenant),
+                primaryColor: tenant?.metadata?.primaryColor || '#166534'
+              };
+              const balance = parseFloat(invoice.balance);
+              const invoiceForEmail = {
+                ...invoice.toJSON(),
+                total: Number.isFinite(balance) ? balance : (parseFloat(invoice.totalAmount) || 0),
+                invoiceNumber: invoice.invoiceNumber,
+                currency: invoice.currency || 'GHS',
+                dueDate: invoice.dueDate
+              };
+              const { subject, html, text } = emailTemplates.paymentReminder(invoiceForEmail, invoice.customer, paymentLink, company, 'overdue');
+              const emailResult = await emailService.sendMessage(invoice.tenantId, invoice.customer.email, subject, html, text);
+              if (emailResult.success) {
+                reminderSent = true;
+                console.log(`[PaymentReminder] Email reminder sent for invoice ${invoice.invoiceNumber}`);
+              } else {
+                console.error(`[PaymentReminder] Email failed for ${invoice.invoiceNumber}:`, emailResult.error);
+              }
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+
+          if (reminderSent) {
+            sentCount++;
+            if (invoice.status !== 'overdue') {
+              await invoice.update({ status: 'overdue' });
+              try {
+                await activityLogger.logInvoiceOverdue(invoice, null);
+              } catch (logErr) {
+                console.error('[PaymentReminder] logInvoiceOverdue failed:', logErr?.message);
+              }
+            }
+          } else {
+            skippedCount++;
+          }
         } catch (error) {
           console.error(`[PaymentReminder] Error processing invoice ${invoice.invoiceNumber}:`, error);
           skippedCount++;

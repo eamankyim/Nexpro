@@ -110,7 +110,7 @@ export default function ProductQRScanner({ open, onClose, onProductData }) {
                 {isStarting && (
                   <div className="absolute inset-0 flex items-center justify-center bg-background/90 z-10">
                     <div className="text-center">
-                      <Loader2 className="h-8 w-8 animate-spin text-[#166534] mx-auto" />
+                      <Loader2 className="h-8 w-8 animate-spin text-brand mx-auto" />
                       <p className="text-sm text-gray-600 mt-2">Starting camera...</p>
                     </div>
                   </div>

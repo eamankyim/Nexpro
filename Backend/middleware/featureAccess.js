@@ -1,6 +1,7 @@
 const { canAccessFeature, canAccessRoute, getFeatureByKey } = require('../config/features');
-const { Tenant, SubscriptionPlan } = require('../models');
+const { Tenant } = require('../models');
 const { getFeaturesForBusinessType, isFeatureAvailableForBusinessType } = require('../config/businessTypes');
+const { getTenantEffectiveEntitlements, resolveTenantAccessState } = require('../utils/tenantEntitlements');
 
 /**
  * Middleware to check if tenant's plan includes a specific feature
@@ -27,22 +28,8 @@ const requireFeature = (featureKey) => {
         });
       }
 
-      // Get plan features from database
-      const plan = await SubscriptionPlan.findOne({
-        where: { planId: tenant.plan, isActive: true }
-      });
-
-      // Get plan features
-      let planFeatures = [];
-      if (!plan) {
-        // Fallback: check config file
-        const { getFeaturesForPlan } = require('../config/features');
-        planFeatures = getFeaturesForPlan(tenant.plan);
-      } else {
-        // Check database plan features
-        planFeatures = Object.keys(plan.marketing?.featureFlags || {})
-          .filter(key => plan.marketing.featureFlags[key] === true);
-      }
+      const entitlements = await getTenantEffectiveEntitlements(tenant);
+      let planFeatures = entitlements.enabledFeatures;
 
       // Filter features by business type
       if (tenant.businessType) {
@@ -76,10 +63,65 @@ const requireFeature = (featureKey) => {
 };
 
 /**
+ * Tenant must have at least one of the listed features (after business-type filtering).
+ */
+const requireAnyFeature = (featureKeys) => {
+  return async (req, res, next) => {
+    try {
+      const tenantId = req.headers['x-tenant-id'] || req.user?.activeTenantId;
+
+      if (!tenantId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Tenant context required'
+        });
+      }
+
+      const tenant = await Tenant.findByPk(tenantId);
+
+      if (!tenant) {
+        return res.status(404).json({
+          success: false,
+          message: 'Tenant not found'
+        });
+      }
+
+      const entitlements = await getTenantEffectiveEntitlements(tenant);
+      let planFeatures = entitlements.enabledFeatures;
+
+      if (tenant.businessType) {
+        const businessTypeFeatures = getFeaturesForBusinessType(tenant.businessType);
+        planFeatures = planFeatures.filter((f) => businessTypeFeatures.includes(f));
+      }
+
+      const allowed = Array.isArray(featureKeys) && featureKeys.some((k) => canAccessFeature(planFeatures, k));
+      if (!allowed) {
+        return res.status(403).json({
+          success: false,
+          message: 'This action is not included in your current plan for this workspace.',
+          featureRequired: featureKeys,
+          upgradeRequired: true
+        });
+      }
+
+      next();
+    } catch (error) {
+      console.error('requireAnyFeature check failed:', error);
+      next(error);
+    }
+  };
+};
+
+/**
  * Middleware to check route-based access
  */
 const checkRouteAccess = async (req, res, next) => {
   try {
+    const publicUrl = req.originalUrl || req.url || req.path || '';
+    if (publicUrl.includes('/api/public/') || (req.path && req.path.startsWith('/public/'))) {
+      return next();
+    }
+
     const tenantId = req.headers['x-tenant-id'] || req.user?.activeTenantId;
     
     // Skip for platform admins
@@ -96,21 +138,23 @@ const checkRouteAccess = async (req, res, next) => {
       return next();
     }
 
-    // Get plan features
-    const plan = await SubscriptionPlan.findOne({
-      where: { planId: tenant.plan, isActive: true }
-    });
-
-    let planFeatures = [];
-    
-    if (plan) {
-      planFeatures = Object.keys(plan.marketing?.featureFlags || {})
-        .filter(key => plan.marketing.featureFlags[key] === true);
-    } else {
-      // Fallback to config
-      const { getFeaturesForPlan } = require('../config/features');
-      planFeatures = getFeaturesForPlan(tenant.plan);
+    const accessState = resolveTenantAccessState(tenant);
+    const isReadMethod = ['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+    if ((accessState === 'read_only' || accessState === 'restricted') && !isReadMethod) {
+      return res.status(403).json({
+        success: false,
+        message: 'Workspace is restricted by platform admin.'
+      });
     }
+    if (accessState === 'suspended') {
+      return res.status(403).json({
+        success: false,
+        message: 'Workspace is suspended by platform admin.'
+      });
+    }
+
+    const entitlements = await getTenantEffectiveEntitlements(tenant);
+    let planFeatures = entitlements.enabledFeatures;
 
     // Filter features by business type
     if (tenant.businessType) {
@@ -146,21 +190,8 @@ const checkRouteAccess = async (req, res, next) => {
 const getTenantFeatures = async (tenantId) => {
   const tenant = await Tenant.findByPk(tenantId);
   if (!tenant) return [];
-
-  const plan = await SubscriptionPlan.findOne({
-    where: { planId: tenant.plan, isActive: true }
-  });
-
-  let planFeatures = [];
-  
-  if (plan) {
-    planFeatures = Object.keys(plan.marketing?.featureFlags || {})
-      .filter(key => plan.marketing.featureFlags[key] === true);
-  } else {
-    // Fallback
-    const { getFeaturesForPlan } = require('../config/features');
-    planFeatures = getFeaturesForPlan(tenant.plan);
-  }
+  const entitlements = await getTenantEffectiveEntitlements(tenant);
+  let planFeatures = entitlements.enabledFeatures;
 
   // Filter features by business type
   if (tenant.businessType) {
@@ -216,6 +247,7 @@ const checkSeatLimit = async (req, res, next) => {
 
 module.exports = {
   requireFeature,
+  requireAnyFeature,
   checkRouteAccess,
   getTenantFeatures,
   checkSeatLimit

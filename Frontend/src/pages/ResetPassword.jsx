@@ -62,13 +62,13 @@ const ResetPassword = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="w-full max-w-md text-center">
-          <h1 className="text-3xl font-bold text-[#166534] mb-4">ShopWISE</h1>
+          <h1 className="text-3xl font-bold text-brand mb-4">ABS</h1>
           <p className="text-muted-foreground mb-4">Invalid or missing reset link. Please request a new password reset.</p>
-          <Link to="/forgot-password" className="text-[#166534] hover:underline font-medium">
+          <Link to="/forgot-password" className="text-brand hover:underline font-medium">
             Request new link
           </Link>
           <span className="text-muted-foreground mx-2">or</span>
-          <Link to="/login" className="text-[#166534] hover:underline font-medium">
+          <Link to="/login" className="text-brand hover:underline font-medium">
             Sign in
           </Link>
         </div>
@@ -79,7 +79,7 @@ const ResetPassword = () => {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-0 md:p-8">
       <div className={`w-full ${isMobile ? 'h-screen' : 'max-w-md bg-card rounded-2xl border border-border'} overflow-hidden flex flex-col ${isMobile ? 'px-6 py-4' : 'p-12'}`}>
-        <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-[#166534]`}>ShopWISE</h1>
+        <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-brand`}>ABS</h1>
 
         <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-foreground`}>Set new password</h2>
         <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-muted-foreground`}>
@@ -137,7 +137,7 @@ const ResetPassword = () => {
             />
             <Button
               type="submit"
-              className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium`}
+              className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium`}
               disabled={loading}
             >
               {loading ? (
@@ -153,7 +153,7 @@ const ResetPassword = () => {
         </Form>
 
         <div className={`text-center ${isMobile ? 'mt-4' : 'mt-6'}`}>
-          <Link to="/login" className="text-sm text-[#166534] hover:underline font-medium">
+          <Link to="/login" className="text-sm text-brand hover:underline font-medium">
             Back to sign in
           </Link>
         </div>

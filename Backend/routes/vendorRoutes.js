@@ -5,10 +5,12 @@ const {
   getVendorCategories,
   createVendor,
   updateVendor,
-  deleteVendor
+  deleteVendor,
+  exportVendors
 } = require('../controllers/vendorController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { exportLimiter } = require('../middleware/rateLimiter');
 
 const router = express.Router();
 
@@ -19,6 +21,7 @@ router.use(protect);
 router.use(tenantContext);
 
 router.get('/categories', getVendorCategories);
+router.get('/export', exportLimiter, authorize('admin', 'manager'), exportVendors);
 
 router.route('/')
   .get(getVendors)

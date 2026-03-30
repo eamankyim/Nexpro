@@ -4,6 +4,15 @@ const { User, InviteToken } = require('../models');
 const { getPlatformAdminInviteRoles, isValidPlatformAdminInviteRole } = require('../config/platformAdminInviteRoles');
 
 const generateToken = () => crypto.randomBytes(16).toString('hex');
+const getFrontendBaseUrl = () => {
+  const raw = process.env.FRONTEND_URL || 'http://localhost:3000';
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch (_err) {
+    return raw.replace(/\/+$/, '').replace(/\/onboarding$/i, '');
+  }
+};
 
 /**
  * Get roles available for platform admin invites.
@@ -58,7 +67,7 @@ exports.generatePlatformAdminInvite = async (req, res, next) => {
       }
     });
     if (existingInvite) {
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontendUrl = getFrontendBaseUrl();
       const inviteUrl = `${frontendUrl}/signup?token=${existingInvite.token}`;
       return res.status(400).json({
         success: false,
@@ -84,7 +93,7 @@ exports.generatePlatformAdminInvite = async (req, res, next) => {
       used: false
     });
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = getFrontendBaseUrl();
     const inviteUrl = `${frontendUrl}/signup?token=${token}`;
 
     res.status(201).json({

@@ -16,11 +16,13 @@ const {
   rejectExpense,
   getExpenseActivities,
   addExpenseActivity,
-  uploadExpenseReceipt
+  uploadExpenseReceipt,
+  exportExpenses
 } = require('../controllers/expenseController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { expenseReceiptUploader, checkStorageLimit } = require('../middleware/upload');
+const { exportLimiter } = require('../middleware/rateLimiter');
 
 const router = express.Router();
 
@@ -36,6 +38,8 @@ router.get('/by-job/:jobId', getExpensesByJob);
 router.route('/')
   .get(getExpenses)
   .post(authorize('admin', 'manager', 'staff'), createExpense);
+
+router.get('/export', exportLimiter, authorize('admin', 'manager'), exportExpenses);
 
 router.post('/bulk', authorize('admin', 'manager', 'staff'), createBulkExpenses);
 

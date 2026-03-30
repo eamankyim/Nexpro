@@ -13,7 +13,6 @@ import { Button } from '@/components/ui/button';
 import { Empty } from '@/components/ui/empty';
 import { ChevronLeft, ChevronRight, Briefcase, Plus, Package } from 'lucide-react';
 import TableSkeleton from './TableSkeleton';
-import StatusChip from './StatusChip';
 import { useResponsive } from '../hooks/useResponsive';
 import dayjs from 'dayjs';
 
@@ -53,12 +52,19 @@ const DashboardJobsTable = memo(({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle>{title}</CardTitle>
+          {!isSalesTable && (
+            <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-200">
+              In Progress
+            </Badge>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {loading ? (
           <div className="p-4">
-            <TableSkeleton rows={5} cols={6} />
+            <TableSkeleton rows={5} cols={5} />
           </div>
         ) : paginatedJobs.length === 0 ? (
           <div className="flex items-center justify-center p-8">
@@ -71,7 +77,7 @@ const DashboardJobsTable = memo(({
                 </div>
                 <Button
                   onClick={onAddProduct}
-                  className="bg-[#166534] hover:bg-[#14532d] text-white"
+                  className="bg-brand hover:bg-brand-dark text-white"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Add Your First Product
@@ -110,10 +116,8 @@ const DashboardJobsTable = memo(({
                       <>
                         <div className="flex justify-between items-start gap-2">
                           <div className="min-w-0 flex-1">
-                            <p className="font-medium text-sm truncate">{job.jobNumber}</p>
-                            <p className="text-muted-foreground text-sm truncate">{job.title || 'N/A'}</p>
+                            <p className="font-medium text-sm truncate">{job.title || 'N/A'}</p>
                           </div>
-                          <StatusChip status={job.status} />
                         </div>
                         <p className="text-muted-foreground text-sm truncate mt-1">{job.customer?.name || 'N/A'}</p>
                         <div className="flex items-center justify-between mt-2 pt-2 border-t">
@@ -129,6 +133,7 @@ const DashboardJobsTable = memo(({
                                     className={`w-fit text-xs ${
                                       color === 'red' ? 'bg-red-100 text-red-800 border-red-200' :
                                       color === 'orange' ? 'bg-orange-100 text-orange-800 border-orange-200' :
+                                      color === 'green' ? 'bg-green-100 text-green-800 border-green-200' :
                                       'bg-muted text-foreground border-border'
                                     }`}
                                   >
@@ -190,10 +195,8 @@ const DashboardJobsTable = memo(({
                       </>
                     ) : (
                       <>
-                        <TableHead>Job Number</TableHead>
                         <TableHead>Title</TableHead>
                         <TableHead>Customer</TableHead>
-                        <TableHead>Status</TableHead>
                         <TableHead>Created</TableHead>
                         <TableHead>Due Date</TableHead>
                       </>
@@ -225,12 +228,8 @@ const DashboardJobsTable = memo(({
                     };
                     return (
                       <TableRow key={job.id} className="border-b last:border-b-0">
-                        <TableCell className="font-medium">{job.jobNumber}</TableCell>
                         <TableCell>{job.title || 'N/A'}</TableCell>
                         <TableCell>{job.customer?.name || 'N/A'}</TableCell>
-                        <TableCell>
-                          <StatusChip status={job.status} />
-                        </TableCell>
                         <TableCell>{dayjs(job.createdAt).format('MMM DD, YYYY')}</TableCell>
                         <TableCell>
                           <div className="flex flex-col gap-1">
@@ -242,6 +241,7 @@ const DashboardJobsTable = memo(({
                                   `w-fit ${
                                     color === 'red' ? 'bg-red-100 text-red-800 border-red-200' :
                                     color === 'orange' ? 'bg-orange-100 text-orange-800 border-orange-200' :
+                                    color === 'green' ? 'bg-green-100 text-green-800 border-green-200' :
                                     'bg-muted text-foreground border-border'
                                   }`
                                 }

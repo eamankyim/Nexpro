@@ -1,4 +1,4 @@
-const { Tenant, SubscriptionPlan } = require('../models');
+const { Tenant, SubscriptionPlan, Job } = require('../models');
 const fs = require('fs').promises;
 const path = require('path');
 
@@ -22,45 +22,67 @@ async function getDirectorySize(dirPath) {
       }
     }
   } catch (error) {
-    console.error(`Error reading directory ${dirPath}:`, error.message);
+    if (error.code !== 'ENOENT') {
+      console.error(`Error reading directory ${dirPath}:`, error.message);
+    }
+    // ENOENT = directory does not exist (e.g. serverless with no persistent uploads) – treat as 0 usage
   }
 
   return totalSize;
 }
 
 /**
- * Get current storage usage for a tenant in MB
+ * Get current storage usage for a tenant in MB (disk under Backend/uploads only).
+ * Counts: products, expenses, optional legacy settings folder, and per-job folders (uploads/jobs/<jobId>).
+ * Employee docs stored as base64 in DB are not included.
  */
 async function getTenantStorageUsage(tenantId) {
   const uploadsDir = path.join(__dirname, '../uploads');
-  
-  // Calculate storage for different upload types
-  const directories = [
-    `jobs/${tenantId}`,
-    `employees/${tenantId}`,
+
+  const staticDirs = [
+    `products/${tenantId}`,
+    `expenses/${tenantId}`,
     `settings/${tenantId}`,
-    // Add other tenant-specific upload directories
   ];
 
   let totalBytes = 0;
 
-  for (const dir of directories) {
+  for (const dir of staticDirs) {
     const dirPath = path.join(uploadsDir, dir);
     try {
-      const size = await getDirectorySize(dirPath);
-      totalBytes += size;
+      totalBytes += await getDirectorySize(dirPath);
     } catch (error) {
-      // Directory might not exist yet, skip
+      // Directory might not exist yet
     }
   }
 
-  // Convert bytes to MB
+  let jobIds = [];
+  try {
+    const rows = await Job.findAll({
+      where: { tenantId },
+      attributes: ['id'],
+      raw: true,
+    });
+    jobIds = rows.map((r) => r.id).filter(Boolean);
+  } catch (error) {
+    console.warn('[storageLimitHelper] Job IDs for storage scan failed:', error.message);
+  }
+
+  for (const jobId of jobIds) {
+    const dirPath = path.join(uploadsDir, 'jobs', jobId);
+    try {
+      totalBytes += await getDirectorySize(dirPath);
+    } catch (error) {
+      // Missing job folder is normal
+    }
+  }
+
   const totalMB = Math.ceil(totalBytes / (1024 * 1024));
-  
+
   return {
     bytes: totalBytes,
     megabytes: totalMB,
-    gigabytes: (totalBytes / (1024 * 1024 * 1024)).toFixed(2)
+    gigabytes: (totalBytes / (1024 * 1024 * 1024)).toFixed(2),
   };
 }
 
@@ -147,39 +169,66 @@ async function canUploadFile(tenantId, fileSizeBytes) {
 }
 
 /**
+ * Safe default when storage summary cannot be computed (e.g. serverless, DB blip)
+ */
+function getDefaultStorageSummary() {
+  const limitMB = 1024;
+  return {
+    currentMB: 0,
+    currentGB: 0,
+    limitMB,
+    limitGB: (limitMB / 1024).toFixed(1),
+    remainingMB: limitMB,
+    remainingGB: (limitMB / 1024).toFixed(2),
+    percentageUsed: 0,
+    isUnlimited: false,
+    isNearLimit: false,
+    isAtLimit: false,
+    canUploadMore: true,
+    planName: 'Trial',
+    price100GB: null
+  };
+}
+
+/**
  * Get storage usage summary for a tenant
  */
 async function getStorageUsageSummary(tenantId) {
-  const [usage, limitInfo] = await Promise.all([
-    getTenantStorageUsage(tenantId),
-    getTenantStorageLimit(tenantId)
-  ]);
+  try {
+    const [usage, limitInfo] = await Promise.all([
+      getTenantStorageUsage(tenantId),
+      getTenantStorageLimit(tenantId)
+    ]);
 
-  const isUnlimited = limitInfo.limitMB === null;
-  const currentMB = usage.megabytes;
-  const currentGB = parseFloat(usage.gigabytes);
-  const limitGB = isUnlimited ? null : (limitInfo.limitMB / 1024).toFixed(1);
-  const remainingMB = isUnlimited ? null : limitInfo.limitMB - currentMB;
-  const remainingGB = isUnlimited ? null : (remainingMB / 1024).toFixed(2);
-  const percentageUsed = isUnlimited ? 0 : Math.round((currentMB / limitInfo.limitMB) * 100);
-  const isNearLimit = !isUnlimited && percentageUsed >= 80;
-  const isAtLimit = !isUnlimited && percentageUsed >= 95;
+    const isUnlimited = limitInfo.limitMB === null;
+    const currentMB = usage.megabytes;
+    const currentGB = parseFloat(usage.gigabytes);
+    const limitGB = isUnlimited ? null : (limitInfo.limitMB / 1024).toFixed(1);
+    const remainingMB = isUnlimited ? null : limitInfo.limitMB - currentMB;
+    const remainingGB = isUnlimited ? null : (remainingMB / 1024).toFixed(2);
+    const percentageUsed = isUnlimited ? 0 : Math.round((currentMB / limitInfo.limitMB) * 100);
+    const isNearLimit = !isUnlimited && percentageUsed >= 80;
+    const isAtLimit = !isUnlimited && percentageUsed >= 95;
 
-  return {
-    currentMB,
-    currentGB,
-    limitMB: limitInfo.limitMB,
-    limitGB,
-    remainingMB,
-    remainingGB,
-    percentageUsed,
-    isUnlimited,
-    isNearLimit,
-    isAtLimit,
-    canUploadMore: isUnlimited || remainingMB > 0,
-    planName: limitInfo.planName,
-    price100GB: limitInfo.price100GB
-  };
+    return {
+      currentMB,
+      currentGB,
+      limitMB: limitInfo.limitMB,
+      limitGB,
+      remainingMB,
+      remainingGB,
+      percentageUsed,
+      isUnlimited,
+      isNearLimit,
+      isAtLimit,
+      canUploadMore: isUnlimited || remainingMB > 0,
+      planName: limitInfo.planName,
+      price100GB: limitInfo.price100GB
+    };
+  } catch (error) {
+    console.warn('[storageLimitHelper] getStorageUsageSummary failed, returning default:', error.message);
+    return getDefaultStorageSummary();
+  }
 }
 
 /**

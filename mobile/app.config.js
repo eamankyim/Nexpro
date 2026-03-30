@@ -1,17 +1,17 @@
 export default {
   expo: {
-    name: 'ShopWISE',
-    slug: 'shopwise',
+    name: 'ABS',
+    slug: 'abs',
     version: '1.0.0',
     orientation: 'portrait',
     icon: './assets/images/icon.png',
-    scheme: 'shopwise',
+    scheme: 'abs',
     userInterfaceStyle: 'automatic',
     newArchEnabled: true,
     splash: {
       image: './assets/images/splash-icon.png',
       resizeMode: 'contain',
-      backgroundColor: '#ffffff',
+      backgroundColor: '#166534',
     },
     ios: { supportsTablet: true },
     android: {

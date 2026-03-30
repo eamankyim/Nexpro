@@ -47,7 +47,8 @@ const analyzeReportData = async (reportData, options = {}) => {
       studioType,
       period = 'monthly',
       startDate,
-      endDate
+      endDate,
+      customQuestion
     } = options;
 
     const effectiveType = studioType || businessType;
@@ -144,6 +145,7 @@ ${dataSummary.topItems.length > 0 ? `Top Performing ${terms.items}: ${dataSummar
 ${dataSummary.expenseBreakdown.length > 0 ? `Expense Breakdown: ${dataSummary.expenseBreakdown.map(exp => `${exp.category}: GHS ${exp.amount.toLocaleString()}`).join(', ')}` : ''}
 
 ${dataSummary.materials ? `Materials Status: ${dataSummary.materials.totalStocks} total items, ${dataSummary.materials.stockAvailabilityRate}% availability rate` : ''}
+${customQuestion ? `\nThe user also asked: "${customQuestion}". Address this question specifically in your analysis.` : ''}
 
 Provide your analysis in a structured JSON format with the following keys:
 - keyFindings: array of strings
@@ -226,41 +228,52 @@ Write in a professional, executive-friendly tone. Highlight key achievements, ch
  * Chat with the AI assistant using conversation history and tenant context.
  * Used for in-app Q&A (e.g. "How many customers this month?", "Predict next month sales").
  * @param {Array<{ role: string, content: string }>} messages - Conversation history (user/assistant)
- * @param {Object} context - Tenant context from getAssistantContext: { businessType, tenantName, thisMonth, last3Months }
+ * @param {Object} context - Tenant context from getAssistantContext: { businessType, tenantName, workspaceContact, thisMonth, last3Months, receivables }
  * @param {Object} options - Optional { businessType }
  * @returns {Promise<string>} Assistant reply text
  */
 const chatWithContext = async (messages, context, options = {}) => {
   try {
     const businessType = options.businessType || context.businessType || 'printing_press';
+    const workspaceContact = context.workspaceContact || {};
     const contextBlob = JSON.stringify(
       {
         businessType,
         tenantName: context.tenantName,
+        workspaceContact,
         thisMonth: context.thisMonth,
-        last3Months: context.last3Months
+        last3Months: context.last3Months,
+        receivables: context.receivables
       },
       null,
       2
     );
 
-    const systemPrompt = `You are a helpful business assistant for a ${businessType} business. The user can ask questions about their business data (customers, revenue, expenses, sales) or ask for predictions or summaries.
+    const systemPrompt = `You are a helpful business assistant for a ${businessType} business using the African Business Suite (ABS) app. The user can ask questions about their business data (customers, revenue, expenses, sales), ask for predictions or summaries, ask how to use the app, or ask you to draft customer-facing emails or messages.
 
 Current business data (use only this data for factual answers; currency is GHS):
 ${contextBlob}
 
+Workspace contact (use for email signatures and drafts when values are non-null; never invent phone numbers or emails):
+- businessName, email, phone, website appear under workspaceContact. If email or phone is null, do not use bracket placeholders like [Your phone] in the final message—instead add one short line telling the user to add missing details in Workspace / organization settings before sending.
+
+App features (for "how do I" questions): Dashboard, Customers, Jobs (studio-type businesses), Quotes, Invoices, Sales, Expenses, Products, Materials, Vendors, Reports, Marketing, Settings. Users can create quotes (Quotes → Create Quote), record invoice payments (Invoices → open invoice → Record Payment), add expenses (Expenses → Add expense), create jobs (Jobs → Create Job), run POS/sales (Sales or POS). To email or SMS customers in bulk (promotions, announcements), use Marketing: choose channels, enter subject and plain-text message, respect consent and local rules—do not tell users to export CSV and use an external mail client unless they explicitly want that.
+
 Rules:
 - Answer factual questions (e.g. "How many customers this month?") using only the data above. Be concise and cite numbers.
-- Use clear formatting: put the main number in a short first line, then use a bullet list for details (e.g. "New customers this month: **2**"). Use **bold** for key numbers and labels.
-- For predictions (e.g. "Predict next month sales"), use the trends in the data and clearly state: "This is an estimate, not a guarantee."
+- When the user asks how to do something in the app (e.g. "How do I create an expense?", "How do I create a quote?", "How do I record a payment?"), give clear step-by-step instructions. Mention the relevant page or menu (e.g. "Go to Expenses", "Open the invoice and click Record Payment"). Use a short numbered list. Keep it concise and actionable.
+- Use clear formatting: put the main number in a short first line, then use a bullet list for details. Use **bold** for key numbers and labels.
+- For predictions, use the trends in the data and clearly state: "This is an estimate, not a guarantee."
 - For summaries, highlight key numbers and one or two actionable points.
+- For financial summaries/analysis, always assess receivables risk from context.receivables. If receivables.totalOutstanding is material vs thisMonth.revenue (especially when outstanding >= 30% of thisMonth.revenue, or thisMonth.revenue is low and outstanding is high), explicitly call out outstanding risk and recommend collection actions.
+- Customer-facing email drafts (promotions, newsletters, announcements): Output plain text suitable for ABS Marketing → Email (no HTML). Format exactly: first line \`Subject: ...\`, then a blank line, then the body only. Open with a friendly line (prefer "Hi there," unless the user asked for "Dear Customer" style). Include a clear single call to action (e.g. reply, call, visit). Add offers as short bullets if appropriate. Include offer end date if the user gave one; if not, omit or ask one clarifying question at the end instead of inventing a date. Add one brief line for terms if promotions are described (e.g. "Cannot be combined with other offers" only when relevant). Sign off with the business name from workspaceContact.businessName or tenantName. Use workspaceContact.phone and workspaceContact.email in the signature when present; otherwise one line: remind them to add phone/email in workspace settings. Avoid decorative emoji in professional B2B copy unless the user requests a casual tone.
 - Keep replies concise. Do not make up data not present in the context.`;
 
     const anthropic = requireAnthropic();
     const claudeMessages = messages.map((m) => ({ role: m.role, content: m.content }));
     const claudeResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
-      max_tokens: 1024,
+      max_tokens: 1536,
       system: systemPrompt,
       messages: claudeMessages
     });

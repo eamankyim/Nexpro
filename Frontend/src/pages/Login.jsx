@@ -1,11 +1,12 @@
-import { useState, useCallback } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useState, useCallback, useEffect } from 'react';
+import { useNavigate, useSearchParams, Link, Navigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { GoogleLogin } from '@react-oauth/google';
 import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { usePublicConfig } from '../context/PublicConfigContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
 import { Button } from '@/components/ui/button';
@@ -21,8 +22,6 @@ import {
 } from '@/components/ui/form';
 import africanWomanImage from '../assets/African focused woman.png';
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
-
 const loginSchema = z.object({
   email: z.string().min(1, 'Enter your email').email('Enter a valid email'),
   password: z.string().min(1, 'Enter your password'),
@@ -35,12 +34,23 @@ const Login = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { login, googleAuth } = useAuth();
+  const { googleClientId, configLoaded } = usePublicConfig();
+  useEffect(() => {
+    console.log('[Login] googleClientId:', googleClientId ? `${googleClientId.substring(0, 15)}...` : '(empty)', 'configLoaded=', configLoaded, 'showGoogleButton=', Boolean(googleClientId));
+  }, [googleClientId, configLoaded]);
   const planParam = searchParams.get('plan');
   const billingPeriodParam = searchParams.get('billingPeriod');
+  const inviteTokenParam = searchParams.get('token');
   const validPlans = ['starter', 'professional'];
   const validPeriods = ['monthly', 'yearly'];
   const hasCheckoutParams = validPlans.includes(planParam) && validPeriods.includes(billingPeriodParam);
   const { isMobile } = useResponsive();
+  const whatsappContactUrl =
+    (import.meta.env.VITE_WHATSAPP_CONTACT_URL || '').trim() ||
+    'https://wa.me/233555155972?text=' +
+      encodeURIComponent(
+        "Hi, I don't have an ABS account yet. Please help me create one for my business."
+      );
 
   const form = useForm({
     resolver: zodResolver(loginSchema),
@@ -50,22 +60,47 @@ const Login = () => {
     },
   });
 
+  const [emailNotFound, setEmailNotFound] = useState(false);
+  const emailValue = form.watch('email');
+  useEffect(() => {
+    if (emailNotFound && emailValue) setEmailNotFound(false);
+  }, [emailValue]);
+
   const onSubmit = async (values) => {
     setLoading(true);
+    setEmailNotFound(false);
     try {
       const response = await login(values);
       const payload = response?.data || response || {};
       showSuccess('Login successful!');
       const user = payload?.user;
+      const memberships = payload?.memberships || [];
+      const defaultMembership =
+        memberships.find((m) => m.isDefault) || memberships[0] || null;
+      const onboardingCompleted =
+        defaultMembership?.tenant?.metadata?.onboarding?.completedAt;
+      const isInvitedTenantUser = Boolean(defaultMembership?.invitedBy);
+
       if (user?.isPlatformAdmin) {
         navigate('/admin');
       } else if (hasCheckoutParams) {
-        navigate('/checkout', { state: { plan: planParam, billingPeriod: billingPeriodParam } });
+        navigate('/checkout', {
+          state: { plan: planParam, billingPeriod: billingPeriodParam },
+        });
+      } else if (!onboardingCompleted && !isInvitedTenantUser) {
+        navigate('/onboarding');
       } else {
         navigate('/dashboard');
       }
     } catch (error) {
-      showError(error, 'Wrong email or password. Check and try again.');
+      const errorCode = error?.response?.data?.errorCode;
+      const message = error?.response?.data?.message;
+      if (errorCode === 'EMAIL_NOT_FOUND' || (error?.response?.status === 404 && message)) {
+        setEmailNotFound(true);
+        showError(message || 'No account exists for this email. Sign up instead.');
+      } else {
+        showError(error, message || 'Wrong email or password. Check and try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -81,10 +116,21 @@ const Login = () => {
         const payload = response?.data || response || {};
         showSuccess('Login successful!');
         const user = payload?.user;
+        const memberships = payload?.memberships || [];
+        const defaultMembership =
+          memberships.find((m) => m.isDefault) || memberships[0] || null;
+        const onboardingCompleted =
+          defaultMembership?.tenant?.metadata?.onboarding?.completedAt;
+        const isInvitedTenantUser = Boolean(defaultMembership?.invitedBy);
+
         if (user?.isPlatformAdmin) {
           navigate('/admin');
         } else if (hasCheckoutParams) {
-          navigate('/checkout', { state: { plan: planParam, billingPeriod: billingPeriodParam } });
+          navigate('/checkout', {
+            state: { plan: planParam, billingPeriod: billingPeriodParam },
+          });
+        } else if (!onboardingCompleted && !isInvitedTenantUser) {
+          navigate('/onboarding');
         } else {
           navigate('/dashboard');
         }
@@ -109,6 +155,10 @@ const Login = () => {
     setGoogleLoading(false);
   }, []);
 
+  if (inviteTokenParam) {
+    return <Navigate to={`/signup?token=${encodeURIComponent(inviteTokenParam)}`} replace />;
+  }
+
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-0 md:p-8">
       {/* Main Content */}
@@ -117,11 +167,20 @@ const Login = () => {
           <div className={`flex-1 ${isMobile ? 'px-6 py-4' : 'p-12'} flex flex-col justify-center ${isMobile ? 'min-h-screen' : ''}`}>
             <div className={`${isMobile ? 'w-full' : 'max-w-md'} mx-auto w-full`}>
               {/* Logo */}
-              <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-[#166534]`}>ShopWISE</h1>
+              <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-brand`}>ABS</h1>
               
               {/* Heading */}
               <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-foreground`}>Welcome back</h2>
               <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-muted-foreground`}>Sign in to manage your business and keep every job on track.</p>
+
+              {emailNotFound && (
+                <div className="mb-4 p-4 rounded-lg border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 text-foreground">
+                  <p className="text-sm mb-2">No account exists for this email. Sign up instead.</p>
+                  <Link to="/signup" className="text-sm font-medium text-brand hover:underline">
+                    Create an account
+                  </Link>
+                </div>
+              )}
 
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className={isMobile ? "space-y-4" : "space-y-6"}>
@@ -172,7 +231,7 @@ const Login = () => {
                         </FormControl>
                         <FormMessage />
                         <div className="flex justify-end mt-1">
-                          <Link to="/forgot-password" className="text-sm text-[#166534] hover:underline">
+                          <Link to="/forgot-password" className="text-sm text-brand hover:underline">
                             Forgot password?
                           </Link>
                         </div>
@@ -184,7 +243,7 @@ const Login = () => {
                     <TooltipTrigger asChild>
                       <Button
                         type="submit"
-                        className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
+                        className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
                         loading={loading}
                       >
                         Log in
@@ -204,9 +263,9 @@ const Login = () => {
                 </div>
               </div>
 
-              {/* Google Sign In Button */}
-              {GOOGLE_CLIENT_ID ? (
-                <div className="flex justify-center">
+              {/* Google Sign In Button - min-height so space is reserved while script loads */}
+              {googleClientId ? (
+                <div className="flex justify-center min-h-[44px]" data-google-configured="true">
                   <GoogleLogin
                     onSuccess={handleGoogleSuccess}
                     onError={handleGoogleError}
@@ -219,18 +278,30 @@ const Login = () => {
                     width={isMobile ? 320 : 400}
                   />
                 </div>
-              ) : null}
+              ) : configLoaded ? null : (
+                <div className="flex justify-center min-h-[44px] items-center text-muted-foreground text-sm">
+                  Loading sign-in options...
+                </div>
+              )}
 
               <div className={`text-center ${isMobile ? 'mt-4' : 'mt-6'}`}>
+                {/* For now always show Contact administrator; signup route /signup and Signup.jsx remain for invite links */}
                 <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground`}>
-                  Don&apos;t have an account yet?{' '}
+                  Don&apos;t have an account?{' '}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <a href="/signup" className="text-[#166534] hover:underline font-medium">
-                        Sign up here
+                      <a
+                        href={whatsappContactUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-brand hover:underline font-medium"
+                      >
+                        Contact administrator
                       </a>
                     </TooltipTrigger>
-                    <TooltipContent>New? Create account</TooltipContent>
+                    <TooltipContent>
+                      We&apos;ll help you set up an account.
+                    </TooltipContent>
                   </Tooltip>
                 </p>
               </div>
@@ -254,14 +325,14 @@ const Login = () => {
                 <div className="absolute top-8 right-8 space-y-3">
                   <div className="bg-card border border-border p-4 w-48">
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="w-8 h-8 bg-[#166534] rounded flex items-center justify-center text-white font-bold text-sm">io</div>
+                      <div className="w-8 h-8 bg-brand rounded flex items-center justify-center text-white font-bold text-sm">io</div>
                       <div className="flex-1 h-px bg-border"></div>
                     </div>
                     <div className="text-2xl font-semibold text-foreground">₵1,200.00</div>
                   </div>
                   <div className="bg-card border border-border p-4 w-48">
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="w-8 h-8 bg-[#a3e635] rounded flex items-center justify-center text-[#166534] font-bold text-sm">qb</div>
+                      <div className="w-8 h-8 bg-[#a3e635] rounded flex items-center justify-center text-brand font-bold text-sm">qb</div>
                       <div className="flex-1 h-px bg-border"></div>
                     </div>
                     <div className="text-2xl font-semibold text-foreground">₵1,200.00</div>

@@ -49,7 +49,7 @@ const Checkout = () => {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { activeTenant, user, refreshAuthState } = useAuth();
+  const { activeTenant, user, refreshAuthState, needsEmailVerification } = useAuth();
   const [verifying, setVerifying] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [verified, setVerified] = useState(false);
@@ -122,7 +122,7 @@ const Checkout = () => {
     payMutation.mutate({ plan, billingPeriod });
   }, [plan, billingPeriod, isEnterprise, payMutation]);
 
-  if (!reference && user && !user.emailVerifiedAt) {
+  if (!reference && user && needsEmailVerification) {
     return (
       <div className="min-h-screen overflow-y-auto">
         <div className="max-w-md mx-auto p-4 md:p-6 flex flex-col items-center justify-center min-h-[300px] gap-4 text-center">
@@ -133,7 +133,7 @@ const Checkout = () => {
           <Button
             onClick={handleResendVerification}
             disabled={resendLoading}
-            className="bg-[#166534] hover:bg-[#14532d] text-white"
+            className="bg-brand hover:bg-brand-dark text-white"
           >
             {resendLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
             Resend verification email
@@ -211,7 +211,7 @@ const Checkout = () => {
                 type="button"
                 onClick={() => setBillingPeriod('monthly')}
                 className={`px-3 py-1.5 rounded-md text-sm font-medium ${
-                  billingPeriod === 'monthly' ? 'bg-[#166534] text-white' : 'bg-muted text-foreground hover:bg-muted/80'
+                  billingPeriod === 'monthly' ? 'bg-brand text-white' : 'bg-muted text-foreground hover:bg-muted/80'
                 }`}
               >
                 Monthly
@@ -220,12 +220,14 @@ const Checkout = () => {
                 type="button"
                 onClick={() => setBillingPeriod('yearly')}
                 className={`px-3 py-1.5 rounded-md text-sm font-medium ${
-                  billingPeriod === 'yearly' ? 'bg-[#166534] text-white' : 'bg-muted text-foreground hover:bg-muted/80'
+                  billingPeriod === 'yearly' ? 'bg-brand text-white' : 'bg-muted text-foreground hover:bg-muted/80'
                 }`}
               >
                 Yearly
               </button>
-              <span className="text-xs text-green-600 font-medium">Save up to 23%</span>
+              {billingPeriod === 'yearly' && (
+                <span className="text-xs text-green-600 font-medium">Save up to 23%</span>
+              )}
             </div>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -242,20 +244,20 @@ const Checkout = () => {
                   key={p.id}
                   type="button"
                   onClick={() => setSelectedPlan(p.id)}
-                  className={`text-left p-4 rounded-lg border-2 transition-all ${
-                    isSelected ? 'border-[#166534] bg-[#166534]/5' : 'border-gray-200 hover:border-gray-300'
+                  className={`text-left p-4 rounded-lg transition-all ${
+                    isSelected ? 'border border-brand bg-brand-5' : 'border border-gray-200 hover:border-gray-300'
                   }`}
                 >
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <Icon className="h-5 w-5 text-[#166534]" />
+                      <Icon className="h-5 w-5 text-brand" />
                       <span className="font-semibold">{p.name}</span>
                     </div>
-                    {isSelected && <Check className="h-5 w-5 text-[#166534]" />}
+                    {isSelected && <Check className="h-5 w-5 text-brand" />}
                   </div>
                   <div className="text-lg font-bold">{priceDisplay}</div>
                   {p.popular && (
-                    <span className="inline-block mt-2 text-xs font-medium text-[#166534]">Most Popular</span>
+                    <span className="inline-block mt-2 text-xs font-medium text-brand">Most Popular</span>
                   )}
                 </button>
               );
@@ -332,7 +334,7 @@ const Checkout = () => {
             ) : (
               <>
                 <p className="text-sm text-muted-foreground">
-                  Pay securely with Paystack. You can use Card, Bank Transfer, or Mobile Money (MoMo).
+                  Pay securely with Paystack using your card.
                 </p>
 
                 <Tooltip>
@@ -345,7 +347,7 @@ const Checkout = () => {
                   {payMutation.isPending ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Redirecting to Paystack...
+                      Opening secure card checkout…
                     </>
                   ) : (
                     <>

@@ -1,6 +1,6 @@
-# ShopWISE - Business Management System - Frontend
+# ABS (African Business Suite) - Business Management System - Frontend
 
-React + Ant Design frontend application for ShopWISE - Business Management System.
+React frontend application for ABS (African Business Suite) - Business Management System.
 
 ## 🚀 Quick Start
 
@@ -31,6 +31,16 @@ npm run dev
 ```
 
 The app will be available at `http://localhost:3000`
+
+### Lighthouse (optional)
+
+With `npm run dev` running on port 3000, generate an HTML report in this folder:
+
+```bash
+npm run lighthouse:local
+```
+
+Opens nothing automatically; open `lighthouse-report.html` in a browser. Uses `npx lighthouse` (no extra install if you have Chrome).
 
 ## 🔑 Default Login Credentials
 

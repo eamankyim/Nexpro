@@ -1,4 +1,4 @@
-const { Product, Sale, SaleItem, StockCount, StockCountItem, Notification, User } = require('../models');
+const { Product, Sale, SaleItem, StockCount, StockCountItem, Notification, User, UserTenant } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { emitInventoryAlert, emitNotification } = require('./websocketService');
@@ -349,35 +349,60 @@ const generateLeakageReport = async (tenantId, options = {}) => {
 };
 
 /**
- * Create alert notifications for variance issues
+ * Create alert notifications for variance issues (one per admin/manager so notice board works).
  * @param {string} tenantId - Tenant ID
  * @param {Array} alerts - Array of alert objects
  */
 const createVarianceAlerts = async (tenantId, alerts) => {
+  if (!alerts || alerts.length === 0) return;
   try {
+    const managerUsers = await UserTenant.findAll({
+      where: {
+        tenantId,
+        role: { [Op.in]: ['admin', 'manager'] }
+      },
+      attributes: ['userId']
+    });
+    const recipientIds = [...new Set(managerUsers.map(ut => ut.userId).filter(Boolean))];
+    if (recipientIds.length === 0) {
+      console.warn('[VarianceAlerts] No admin/manager recipients for tenant', tenantId);
+      return;
+    }
     for (const alert of alerts) {
-      // Create in-app notification
-      const notification = await Notification.create({
+      const title = alert.type === 'shrinkage'
+        ? 'Stock Shrinkage Detected'
+        : 'Suspicious Pattern Alert';
+      const payload = {
         tenantId,
         type: 'materials',
-        title: alert.type === 'shrinkage' 
-          ? 'Stock Shrinkage Detected' 
-          : 'Suspicious Pattern Alert',
+        title,
         message: alert.message,
         priority: alert.severity === 'high' ? 'high' : 'normal',
         channels: ['in_app', 'email'],
         metadata: alert
-      });
-
-      // Emit real-time alert
-      emitNotification(tenantId, null, {
-        id: notification.id,
-        type: notification.type,
-        title: notification.title,
-        message: notification.message,
-        priority: notification.priority,
-        data: alert
-      });
+      };
+      for (const userId of recipientIds) {
+        const notification = await Notification.create({
+          ...payload,
+          userId
+        });
+        try {
+          emitNotification(tenantId, userId, {
+            id: notification.id,
+            type: notification.type,
+            title: notification.title,
+            message: notification.message,
+            priority: notification.priority,
+            link: notification.link,
+            createdAt: notification.createdAt,
+            data: alert
+          });
+        } catch (wsErr) {
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[VarianceAlerts] WebSocket emit failed:', wsErr?.message);
+          }
+        }
+      }
     }
   } catch (error) {
     console.error('[VarianceAlerts] Error creating alerts:', error);

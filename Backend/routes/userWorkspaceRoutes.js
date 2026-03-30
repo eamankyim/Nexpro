@@ -9,6 +9,11 @@ const {
   getWeekFocus,
   updateWeekFocus,
   getTasks,
+  getTaskById,
+  getTaskComments,
+  getTaskActivity,
+  addTaskComment,
+  getTaskMembers,
   createTask,
   updateTask,
   deleteTask,
@@ -32,7 +37,12 @@ router.get('/week-focus', getWeekFocus);
 router.put('/week-focus', updateWeekFocus);
 
 router.route('/tasks').get(getTasks).post(createTask);
+router.get('/task-members', getTaskMembers);
 router.route('/tasks/:id').put(updateTask).delete(deleteTask);
+router.get('/tasks/:id/detail', getTaskById);
+router.get('/tasks/:id/comments', getTaskComments);
+router.get('/tasks/:id/activity', getTaskActivity);
+router.post('/tasks/:id/comments', addTaskComment);
 
 router.route('/checklists').get(getChecklists).post(createChecklist);
 router

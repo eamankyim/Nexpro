@@ -81,11 +81,31 @@ export const authService = {
     }
   },
 
+  /**
+   * Check if an email is already registered.
+   * Returns a payload with an `exists` boolean (mirrors web authService).
+   */
+  checkEmailAvailability: async (email: string) => {
+    logger.info('Auth', 'Checking email availability:', email);
+    const response = await api.post('/auth/check-email', { email });
+    const data = response?.data ?? response ?? {};
+    return data;
+  },
+
   getCurrentUser: async () => {
     logger.debug('Auth', 'Fetching current user');
     const res = await api.get('/auth/me');
     logger.info('Auth', 'Current user fetched');
     return res;
+  },
+
+  resendVerification: async () => {
+    await api.post('/auth/resend-verification');
+  },
+
+  forgotPassword: async (email: string) => {
+    logger.info('Auth', 'Requesting password reset for:', email);
+    await api.post('/auth/forgot-password', { email });
   },
 
   logout: async () => {
@@ -117,6 +137,64 @@ export const authService = {
   },
 
   getToken: () => SecureStore.getItemAsync(STORAGE_KEYS.token),
+
+  tenantSignup: async (payload: {
+    companyName?: string;
+    companyEmail: string;
+    adminName: string;
+    adminEmail: string;
+    password: string;
+    plan?: string;
+  }) => {
+    logger.info('Auth', 'Tenant signup attempt:', payload.adminEmail);
+    const body = {
+      companyName: payload.companyName ?? 'My Business',
+      companyEmail: payload.companyEmail,
+      adminName: payload.adminName,
+      adminEmail: payload.adminEmail,
+      password: payload.password,
+      plan: payload.plan ?? 'trial',
+    };
+    const response = await api.post('/tenants/signup', body);
+    const data = response?.data?.data ?? response?.data ?? response ?? {};
+    const memberships = data.memberships ?? data.tenantMemberships ?? [];
+    const defaultTenantId =
+      data.defaultTenantId ??
+      memberships.find((m: { isDefault?: boolean }) => m.isDefault)?.tenantId ??
+      memberships[0]?.tenantId ??
+      null;
+    await persistAuthPayload({
+      user: data.user,
+      token: data.token,
+      memberships,
+      defaultTenantId,
+    });
+    return { ...response, data: { ...data, memberships, defaultTenantId } };
+  },
+
+  googleAuth: async (idToken: string, options: { signUp?: boolean; companyName?: string } = {}) => {
+    const { signUp = false, companyName } = options;
+    logger.info('Auth', 'Google auth:', signUp ? 'signUp' : 'signIn');
+    const response = await api.post('/auth/google', {
+      idToken,
+      signUp,
+      ...(companyName && { companyName }),
+    });
+    const data = response?.data?.data ?? response?.data ?? response ?? {};
+    const memberships = data.memberships ?? data.tenantMemberships ?? [];
+    const defaultTenantId =
+      data.defaultTenantId ??
+      memberships.find((m: { isDefault?: boolean }) => m.isDefault)?.tenantId ??
+      memberships[0]?.tenantId ??
+      null;
+    await persistAuthPayload({
+      user: data.user,
+      token: data.token,
+      memberships,
+      defaultTenantId,
+    });
+    return { ...response, data: { ...data, memberships, defaultTenantId } };
+  },
 
   persistAuthPayload,
 };

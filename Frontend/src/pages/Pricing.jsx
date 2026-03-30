@@ -14,6 +14,7 @@ import DetailsDrawer from '../components/DetailsDrawer';
 import DashboardTable from '../components/DashboardTable';
 import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
+import StatusChip from '../components/StatusChip';
 import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError, showWarning } from '../utils/toast';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -55,12 +56,13 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { numberInputValue, handleNumberChange, handleIntegerChange, numberOrEmptySchema, integerOrEmptySchema } from '../utils/formUtils';
 
 // Zod schemas
 const discountTierSchema = z.object({
-  minQuantity: z.number().min(1, 'Min quantity must be at least 1'),
-  maxQuantity: z.number().optional().nullable(),
-  discountPercent: z.number().min(0, 'Discount must be at least 0').max(100, 'Discount cannot exceed 100'),
+  minQuantity: integerOrEmptySchema(z, 1).refine((v) => v >= 1, 'Min quantity must be at least 1'),
+  maxQuantity: z.union([z.number().int().min(1), z.literal(''), z.null()]).optional().transform((v) => (v === '' ? null : v)),
+  discountPercent: numberOrEmptySchema(z).refine((v) => v >= 0 && v <= 100, 'Discount must be 0–100'),
 });
 
 const additionalOptionSchema = z.object({
@@ -68,14 +70,17 @@ const additionalOptionSchema = z.object({
   price: z.number().min(0, 'Price must be at least 0'),
 });
 
+const optionalNumberOrEmptyNullable = (zod) =>
+  zod.union([zod.number(), zod.literal(''), zod.null()]).optional().transform((v) => (v === '' ? null : v));
+
 const pricingTemplateSchema = z.object({
   name: z.string().min(1, 'Template name is required'),
   category: z.string().min(1, 'Category is required'),
   materialType: z.string().optional(),
   materialSize: z.string().optional(),
   pricingMethod: z.enum(['unit', 'square_foot']).default('unit'),
-  pricePerUnit: z.number().optional().nullable(),
-  pricePerSquareFoot: z.number().optional().nullable(),
+  pricePerUnit: optionalNumberOrEmptyNullable(z),
+  pricePerSquareFoot: optionalNumberOrEmptyNullable(z),
   colorType: z.enum(['black_white', 'color', 'spot_color']).optional(),
   isActive: z.boolean().default(true),
   description: z.string().optional(),
@@ -111,6 +116,7 @@ const Pricing = () => {
   const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const { isManager, isAdmin, activeTenantId } = useAuth();
+  const { isMobile } = useResponsive();
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingTemplate, setViewingTemplate] = useState(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -153,8 +159,12 @@ const Pricing = () => {
   const pricingMethod = form.watch('pricingMethod');
   const materialType = form.watch('materialType');
 
-  const fetchTemplates = useCallback(async () => {
-    setLoading(true);
+  const fetchTemplates = useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshingTemplates(true);
+    } else {
+      setLoading(true);
+    }
     try {
       const params = {
         page: pagination.current,
@@ -181,7 +191,7 @@ const Pricing = () => {
         setLoading(false);
       }
     }
-  }, [filters]);
+  }, [filters, pagination.current, pagination.pageSize]);
 
   // Apply client-side filtering
   const filteredTemplates = useMemo(() => {
@@ -453,10 +463,9 @@ const Pricing = () => {
     {
       key: 'isActive',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => (
-        <Badge variant={record?.isActive ? 'default' : 'destructive'}>
-          {record?.isActive ? 'Active' : 'Inactive'}
-        </Badge>
+        <StatusChip status={record?.isActive ? 'active_flag' : 'inactive_flag'} />
       )
     },
     {
@@ -491,7 +500,7 @@ const Pricing = () => {
           welcomeMessage="Pricing Templates"
           subText="Manage pricing templates for your products and services."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -598,7 +607,11 @@ const Pricing = () => {
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent
+          side="right"
+          className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto"
+          style={{ top: 8, bottom: 8, right: 8, height: 'calc(100dvh - 16px)', borderRadius: 8 }}
+        >
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Pricing Templates</SheetTitle>
           </SheetHeader>
@@ -831,11 +844,8 @@ const Pricing = () => {
                               placeholder="0.00"
                               min={0}
                               step={0.01}
-                              value={field.value || ''}
-                              onChange={(e) => {
-                                const value = parseFloat(e.target.value) || 0;
-                                field.onChange(value);
-                              }}
+                              value={numberInputValue(field.value)}
+                              onChange={(e) => handleNumberChange(e, field.onChange)}
                               className="pl-12"
                             />
                           </div>
@@ -845,28 +855,28 @@ const Pricing = () => {
                     )}
                   />
                   <FormField
-                    control={form.control}
-                    name="pricingMethod"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Pricing Method</FormLabel>
-                        <Select value={field.value} onValueChange={field.onChange}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value="unit">By Unit (Quantity × Price)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  control={form.control}
+                  name="pricingMethod"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Pricing Method</FormLabel>
+                      <Select value={field.value} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="unit">By Unit (Quantity × Price)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
                   <FormField
-                    control={form.control}
-                    name="isActive"
+                  control={form.control}
+                  name="isActive"
                     render={({ field }) => (
                       <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
                         <div className="space-y-0.5">
@@ -898,11 +908,8 @@ const Pricing = () => {
                               placeholder="0.00"
                               min={0}
                               step={0.01}
-                              value={field.value || ''}
-                              onChange={(e) => {
-                                const value = parseFloat(e.target.value) || 0;
-                                field.onChange(value);
-                              }}
+                              value={numberInputValue(field.value)}
+                              onChange={(e) => handleNumberChange(e, field.onChange)}
                               className="pl-12"
                             />
                           </div>
@@ -989,11 +996,8 @@ const Pricing = () => {
                               placeholder="0.00"
                               min={0}
                               step={0.01}
-                              value={field.value || ''}
-                              onChange={(e) => {
-                                const value = parseFloat(e.target.value) || 0;
-                                field.onChange(value);
-                              }}
+                              value={numberInputValue(field.value)}
+                              onChange={(e) => handleNumberChange(e, field.onChange)}
                               className="pl-12"
                             />
                           </div>
@@ -1102,11 +1106,8 @@ const Pricing = () => {
                                 type="number"
                                 placeholder="100"
                                 min={1}
-                                value={field.value || ''}
-                                onChange={(e) => {
-                                  const value = parseInt(e.target.value) || 1;
-                                  field.onChange(value);
-                                }}
+                                value={numberInputValue(field.value)}
+                                onChange={(e) => handleIntegerChange(e, field.onChange)}
                               />
                             </FormControl>
                             <FormMessage />
@@ -1124,10 +1125,15 @@ const Pricing = () => {
                                 type="number"
                                 placeholder="Optional"
                                 min={1}
-                                value={field.value || ''}
+                                value={field.value == null ? '' : field.value}
                                 onChange={(e) => {
-                                  const value = e.target.value ? parseInt(e.target.value) : null;
-                                  field.onChange(value);
+                                  const raw = e.target.value;
+                                  if (raw === '') {
+                                    field.onChange(null);
+                                    return;
+                                  }
+                                  const n = parseInt(raw, 10);
+                                  field.onChange(Number.isNaN(n) ? null : n);
                                 }}
                               />
                             </FormControl>
@@ -1148,11 +1154,8 @@ const Pricing = () => {
                                   placeholder="10"
                                   min={0}
                                   max={100}
-                                  value={field.value || ''}
-                                  onChange={(e) => {
-                                    const value = parseFloat(e.target.value) || 0;
-                                    field.onChange(value);
-                                  }}
+                                  value={numberInputValue(field.value)}
+                                  onChange={(e) => handleNumberChange(e, field.onChange)}
                                   className="pr-8"
                                 />
                                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">%</span>
@@ -1385,9 +1388,7 @@ const Pricing = () => {
             label: 'Status', 
             value: viewingTemplate.isActive,
             render: (isActive) => (
-              <Badge variant={isActive ? 'default' : 'destructive'}>
-                {isActive ? 'Active' : 'Inactive'}
-              </Badge>
+              <StatusChip status={isActive ? 'active_flag' : 'inactive_flag'} />
             )
           },
           { 

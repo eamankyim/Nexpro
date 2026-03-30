@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import { Loader2, Building2, CreditCard, Zap, Crown, Eye } from 'lucide-react';
+import { Loader2, Building2, CreditCard, Zap, Crown, Eye, UserPlus } from 'lucide-react';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useResponsive } from '../../hooks/useResponsive';
 import adminService from '../../services/adminService';
@@ -30,14 +30,42 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 dayjs.extend(relativeTime);
 
+const PLAN_ALIASES = {
+  free: 'trial',
+  standard: 'starter',
+  pro: 'professional',
+  launch: 'starter',
+  scale: 'professional',
+};
+const CANONICAL_PLAN_ORDER = ['trial', 'starter', 'professional', 'enterprise'];
+
+const normalizePlanId = (plan = '') => PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
+const formatPlanLabel = (name = '') =>
+  String(name || '')
+    .replace(/\b(monthly|month|annually|annual|yearly|year)\b/gi, '')
+    .replace(/\(\s*\)/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+
 const getPlanVariant = (plan) => {
-  switch (plan) {
-    case 'pro':
+  const normalizedPlan = normalizePlanId(plan);
+  switch (normalizedPlan) {
+    case 'professional':
       return 'default';
-    case 'standard':
+    case 'starter':
       return 'secondary';
     case 'trial':
       return 'outline';
@@ -67,6 +95,54 @@ const AdminTenants = () => {
   const [selectedTenant, setSelectedTenant] = useState(null);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [planStats, setPlanStats] = useState(null);
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteName, setInviteName] = useState('');
+  const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [inviteEmailError, setInviteEmailError] = useState('');
+  const [planCatalog, setPlanCatalog] = useState([]);
+  const [featureCatalog, setFeatureCatalog] = useState([]);
+  const [accessSaving, setAccessSaving] = useState(false);
+  const [accessAuditLoading, setAccessAuditLoading] = useState(false);
+  const [accessAuditLogs, setAccessAuditLogs] = useState([]);
+  const [accessForm, setAccessForm] = useState({
+    plan: '',
+    accessState: 'active',
+    note: '',
+    featureOverrides: {},
+  });
+  const [tenantDetailTab, setTenantDetailTab] = useState('overview');
+
+  const canonicalPlanCatalog = useMemo(() => {
+    const fallbackLabels = {
+      trial: 'Trial',
+      starter: 'Starter',
+      professional: 'Professional',
+      enterprise: 'Enterprise',
+    };
+    const byCanonicalId = planCatalog.reduce((acc, plan) => {
+      const planId = normalizePlanId(plan?.planId);
+      if (!CANONICAL_PLAN_ORDER.includes(planId)) return acc;
+      const existing = acc[planId];
+      if (!existing || (plan?.isActive && !existing?.isActive)) {
+        acc[planId] = {
+          ...plan,
+          planId,
+          name: formatPlanLabel(plan?.name) || fallbackLabels[planId] || planId,
+        };
+      }
+      return acc;
+    }, {});
+    // Always expose all canonical tiers: DB may omit trial (internal/default) while others exist.
+    return CANONICAL_PLAN_ORDER.map((id) => {
+      if (byCanonicalId[id]) return byCanonicalId[id];
+      return {
+        planId: id,
+        name: fallbackLabels[id] || id,
+        isActive: true,
+      };
+    });
+  }, [planCatalog]);
 
   const fetchTenants = async (page = 1, pageSize = 20, overrideFilters = {}) => {
     setLoading(true);
@@ -113,13 +189,41 @@ const AdminTenants = () => {
     try {
       const response = await adminService.getTenantDetail(tenantId);
       if (response?.success) {
-        setSelectedTenant(response.data);
+        const tenantData = response.data;
+        setSelectedTenant(tenantData);
+        const normalizedPlan = normalizePlanId(tenantData.plan || '');
+        const planForForm = CANONICAL_PLAN_ORDER.includes(normalizedPlan)
+          ? normalizedPlan
+          : tenantData.plan || '';
+        setAccessForm({
+          plan: planForForm,
+          accessState: tenantData.accessControl?.accessState || 'active',
+          note: tenantData.accessControl?.note || '',
+          featureOverrides: tenantData.accessControl?.featureOverrides || {},
+        });
         setDrawerVisible(true);
       }
     } catch (error) {
       handleApiError(error, { context: 'fetch tenant detail' });
     } finally {
       setDetailLoading(false);
+    }
+  }, []);
+
+  const fetchTenantAccessAudit = useCallback(async (tenantId) => {
+    setAccessAuditLoading(true);
+    try {
+      const response = await adminService.getTenantAccessAudit(tenantId);
+      if (response?.success) {
+        setAccessAuditLogs(Array.isArray(response.data) ? response.data : []);
+      } else {
+        setAccessAuditLogs([]);
+      }
+    } catch (error) {
+      setAccessAuditLogs([]);
+      handleApiError(error, { context: 'load access audit' });
+    } finally {
+      setAccessAuditLoading(false);
     }
   }, []);
 
@@ -134,14 +238,16 @@ const AdminTenants = () => {
         const res = await adminService.getTenantMetrics();
         if (res?.success && res?.data?.planDistribution) {
           const byPlan = (res.data.planDistribution || []).reduce((acc, { plan, count }) => {
-            acc[plan] = count;
+            const normalized = normalizePlanId(plan);
+            acc[normalized] = (acc[normalized] || 0) + count;
             return acc;
           }, {});
           setPlanStats({
             total: res.data.total ?? 0,
             trial: byPlan.trial ?? 0,
-            standard: byPlan.standard ?? 0,
-            pro: byPlan.pro ?? 0,
+            starter: byPlan.starter ?? 0,
+            professional: byPlan.professional ?? 0,
+          enterprise: byPlan.enterprise ?? 0,
           });
         }
       } catch {
@@ -149,6 +255,31 @@ const AdminTenants = () => {
       }
     };
     loadMetrics();
+  }, []);
+
+  useEffect(() => {
+    const loadCatalog = async () => {
+      try {
+        const [plansRes, featuresRes] = await Promise.all([
+          adminService.getSubscriptionPlans(),
+          adminService.getFeatureCatalog(),
+        ]);
+        const plans = Array.isArray(plansRes?.data) ? plansRes.data : (Array.isArray(plansRes) ? plansRes : []);
+        const featurePayload = featuresRes?.data;
+        const features = Array.isArray(featurePayload?.features)
+          ? featurePayload.features
+          : Array.isArray(featurePayload)
+            ? featurePayload
+            : Array.isArray(featuresRes)
+              ? featuresRes
+              : [];
+        setPlanCatalog(plans);
+        setFeatureCatalog(features);
+      } catch (error) {
+        showError('Could not load access catalog');
+      }
+    };
+    loadCatalog();
   }, []);
 
   useEffect(() => {
@@ -179,9 +310,74 @@ const AdminTenants = () => {
 
   const handleViewTenant = useCallback((record) => {
     setSelectedTenant(record);
+    setTenantDetailTab('overview');
     setDrawerVisible(true);
     fetchTenantDetail(record.id);
-  }, [fetchTenantDetail]);
+    fetchTenantAccessAudit(record.id);
+  }, [fetchTenantDetail, fetchTenantAccessAudit]);
+
+  const handleInviteTenant = async (e) => {
+    e?.preventDefault?.();
+    const email = inviteEmail?.trim();
+    setInviteEmailError('');
+    if (!email) {
+      setInviteEmailError('Email is required');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setInviteEmailError('Enter a valid email address');
+      return;
+    }
+    setInviteSubmitting(true);
+    try {
+      const res = await adminService.inviteTenant({ email, name: inviteName?.trim() || undefined });
+      const data = res?.data ?? res;
+      showSuccess(data?.inviteUrl ? 'Invite sent. They can sign up using the link.' : 'Invite sent.');
+      setInviteModalOpen(false);
+      setInviteEmail('');
+      setInviteName('');
+      setInviteEmailError('');
+      fetchTenants(pagination.current, pagination.pageSize);
+    } catch (err) {
+      handleApiError(err, { context: 'invite tenant' });
+    } finally {
+      setInviteSubmitting(false);
+    }
+  };
+
+  const handleSaveAccess = async () => {
+    if (!selectedTenant?.id) return;
+    setAccessSaving(true);
+    try {
+      const payload = {
+        plan: accessForm.plan,
+        accessState: accessForm.accessState,
+        featureOverrides: accessForm.featureOverrides || {},
+        note: accessForm.note || '',
+      };
+      await adminService.updateTenantAccess(selectedTenant.id, payload);
+      showSuccess('Tenant access updated');
+      await fetchTenantDetail(selectedTenant.id);
+      await fetchTenantAccessAudit(selectedTenant.id);
+      await fetchTenants(pagination.current, pagination.pageSize);
+    } catch (error) {
+      handleApiError(error, { context: 'update tenant access' });
+    } finally {
+      setAccessSaving(false);
+    }
+  };
+
+  const handleOverrideToggle = (featureKey, nextValue) => {
+    setAccessForm((prev) => {
+      const featureOverrides = { ...(prev.featureOverrides || {}) };
+      if (nextValue === null) {
+        delete featureOverrides[featureKey];
+      } else {
+        featureOverrides[featureKey] = nextValue;
+      }
+      return { ...prev, featureOverrides };
+    });
+  };
 
   const tableColumns = useMemo(() => [
     { key: 'name', label: 'Organization', render: (_, record) => (
@@ -193,7 +389,10 @@ const AdminTenants = () => {
     { key: 'plan', label: 'Plan', render: (_, record) => (
       <Badge variant={getPlanVariant(record.plan)}>{record.plan}</Badge>
     )},
-    { key: 'status', label: 'Status', render: (_, record) => <StatusChip status={record.status} /> },
+    { key: 'status', label: 'Status', mobileDashboardPlacement: 'headerEnd', render: (_, record) => <StatusChip status={record.status} /> },
+    { key: 'primaryUserEmail', label: 'User email', render: (_, record) => (
+      <span className="text-muted-foreground text-sm">{record.primaryUserEmail || '—'}</span>
+    )},
     { key: 'userCount', label: 'Users', render: (_, record) => record.userCount ?? 0 },
     { key: 'createdAt', label: 'Created', render: (_, record) => dayjs(record.createdAt).format('MMM D, YYYY') },
     { key: 'trialEndsAt', label: 'Trial ends', render: (_, record) => (record.trialEndsAt ? dayjs(record.trialEndsAt).format('MMM D, YYYY') : '—') },
@@ -223,20 +422,28 @@ const AdminTenants = () => {
         iconColor: '#ca8a04',
       },
       {
-        key: 'standard',
-        label: 'Standard',
-        value: planStats?.standard ?? '—',
+        key: 'starter',
+        label: 'Starter',
+        value: planStats?.starter ?? '—',
         icon: CreditCard,
         iconBg: 'rgba(59, 130, 246, 0.15)',
         iconColor: '#2563eb',
       },
       {
-        key: 'pro',
-        label: 'Pro',
-        value: planStats?.pro ?? '—',
+        key: 'professional',
+        label: 'Professional',
+        value: planStats?.professional ?? '—',
         icon: Crown,
         iconBg: 'rgba(147, 51, 234, 0.15)',
         iconColor: '#7c3aed',
+      },
+      {
+        key: 'enterprise',
+        label: 'Enterprise',
+        value: planStats?.enterprise ?? '—',
+        icon: Building2,
+        iconBg: 'rgba(236, 72, 153, 0.15)',
+        iconColor: '#db2777',
       },
     ];
 
@@ -250,7 +457,13 @@ const AdminTenants = () => {
               Review every workspace, their status, and plan footprint across the platform.
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+            {hasPermission('tenants.create') && (
+              <Button onClick={() => setInviteModalOpen(true)}>
+                <UserPlus className="h-4 w-4 mr-2" />
+                Invite tenant
+              </Button>
+            )}
             <Select
               value={filters.plan ?? 'all'}
               onValueChange={(v) => handleFilterChange('plan', v === 'all' ? undefined : v)}
@@ -261,8 +474,9 @@ const AdminTenants = () => {
               <SelectContent>
                 <SelectItem value="all">All plans</SelectItem>
                 <SelectItem value="trial">Trial</SelectItem>
-                <SelectItem value="standard">Standard</SelectItem>
-                <SelectItem value="pro">Pro</SelectItem>
+                <SelectItem value="starter">Starter</SelectItem>
+                <SelectItem value="professional">Professional</SelectItem>
+                <SelectItem value="enterprise">Enterprise</SelectItem>
               </SelectContent>
             </Select>
             <Select
@@ -284,7 +498,7 @@ const AdminTenants = () => {
 
         {planStats && (
           <div className="rounded-lg border border-border bg-card p-4">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-6">
               {statCards.map(({ key, label, value, icon: Icon, iconBg, iconColor }) => (
                 <div key={key} className="flex items-center gap-3">
                   <div
@@ -322,8 +536,61 @@ const AdminTenants = () => {
         />
       </div>
 
+      <Dialog open={inviteModalOpen} onOpenChange={(open) => { setInviteModalOpen(open); if (!open) { setInviteEmail(''); setInviteName(''); setInviteEmailError(''); } }}>
+        <DialogContent className="sm:max-w-[425px] p-0 gap-0 overflow-hidden !pt-3 !pb-3 !pr-0 !pl-0">
+          <DialogHeader className="px-0 pt-0 pb-0 space-y-1">
+            <DialogTitle>Invite tenant</DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Send an invite link so they can create their workspace.
+            </p>
+          </DialogHeader>
+          <form onSubmit={handleInviteTenant} noValidate className="pl-4 pr-0 pt-3 pb-0">
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="invite-email">Email</Label>
+                <Input
+                  id="invite-email"
+                  type="email"
+                  placeholder="e.g. owner@business.com"
+                  value={inviteEmail}
+                  onChange={(e) => { setInviteEmail(e.target.value); setInviteEmailError(''); }}
+                  aria-required="true"
+                  aria-invalid={!!inviteEmailError}
+                  aria-describedby={inviteEmailError ? 'invite-email-error' : undefined}
+                  className={`h-9 ${inviteEmailError ? 'border-destructive' : ''}`}
+                />
+                {inviteEmailError && (
+                  <p id="invite-email-error" className="text-sm text-destructive">
+                    {inviteEmailError}
+                  </p>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="invite-name">Full name (optional)</Label>
+                <Input
+                  id="invite-name"
+                  type="text"
+                  placeholder="e.g. Jane Doe"
+                  value={inviteName}
+                  onChange={(e) => setInviteName(e.target.value)}
+                  className="h-9"
+                />
+              </div>
+            </div>
+            <DialogFooter className="pl-4 !pr-0 !pt-2 !pb-0 mt-3 border-t">
+              <Button type="button" variant="outline" onClick={() => setInviteModalOpen(false)} disabled={inviteSubmitting}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={inviteSubmitting} loading={inviteSubmitting}>
+                Send invite
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <Sheet open={drawerVisible} onOpenChange={(open) => { setDrawerVisible(open); if (!open) setSelectedTenant(null); }}>
-        <SheetContent side="right" className="w-full sm:max-w-[520px] overflow-y-auto">
+        <SheetContent side="right" className="w-full sm:max-w-[520px] overflow-y-auto flex flex-col">
           <SheetHeader>
             <SheetTitle>Tenant details</SheetTitle>
           </SheetHeader>
@@ -332,7 +599,13 @@ const AdminTenants = () => {
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
             </div>
           ) : selectedTenant ? (
-            <div className="space-y-6 mt-6">
+            <Tabs value={tenantDetailTab} onValueChange={setTenantDetailTab} className="mt-4 flex flex-col flex-1 min-h-0">
+              <TabsList className="grid w-full grid-cols-3 shrink-0">
+                <TabsTrigger value="overview">Overview</TabsTrigger>
+                <TabsTrigger value="members">Members</TabsTrigger>
+                <TabsTrigger value="access">Access control</TabsTrigger>
+              </TabsList>
+              <TabsContent value="overview" className="mt-4 space-y-6 data-[state=inactive]:hidden">
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">Control</CardTitle>
@@ -396,30 +669,177 @@ const AdminTenants = () => {
 
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-base">Members</CardTitle>
+                  <CardTitle className="text-base">Access audit trail</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  {Array.isArray(selectedTenant.memberships) && selectedTenant.memberships.length > 0 ? (
+                  {accessAuditLoading ? (
+                    <div className="flex items-center justify-center py-4">
+                      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : accessAuditLogs.length > 0 ? (
                     <div className="space-y-3">
-                      {selectedTenant.memberships.map((membership) => (
-                        <div key={membership.id || membership.user?.id} className="flex justify-between items-start gap-2 py-2 border-b border-border last:border-0">
-                          <div>
-                            <p className="font-medium text-foreground">{membership.user?.name || membership.user?.email}</p>
-                            <p className="text-sm text-muted-foreground">{membership.user?.email}</p>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Last login: {membership.user?.lastLogin ? dayjs(membership.user.lastLogin).fromNow() : 'Never'}
+                      {accessAuditLogs.map((entry) => (
+                        <div key={entry.id} className="rounded-md border border-border p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-medium text-foreground">
+                              {entry.actor?.name || entry.actor?.email || 'System'}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {entry.createdAt ? dayjs(entry.createdAt).format('MMM D, YYYY h:mm A') : '—'}
                             </p>
                           </div>
-                          <Badge variant="outline">{membership.role}</Badge>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {entry.action || 'tenant_access_updated'}
+                          </p>
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Plan: <span className="text-foreground">{entry.before?.plan || '—'}</span>{' -> '}
+                            <span className="text-foreground">{entry.after?.plan || '—'}</span>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            Access: <span className="text-foreground">{entry.before?.accessState || '—'}</span>{' -> '}
+                            <span className="text-foreground">{entry.after?.accessState || '—'}</span>
+                          </div>
+                          {entry.reason ? (
+                            <p className="mt-2 text-xs text-muted-foreground">Reason: {entry.reason}</p>
+                          ) : null}
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <Empty description="No members found" />
+                    <Empty description="No access changes recorded yet" />
                   )}
                 </CardContent>
               </Card>
-            </div>
+              </TabsContent>
+
+              <TabsContent value="members" className="mt-4 data-[state=inactive]:hidden">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Members</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {Array.isArray(selectedTenant.memberships) && selectedTenant.memberships.length > 0 ? (
+                      <div className="space-y-3">
+                        {selectedTenant.memberships.map((membership) => (
+                          <div key={membership.id || membership.user?.id} className="flex justify-between items-start gap-2 py-2 border-b border-border last:border-0">
+                            <div>
+                              <p className="font-medium text-foreground">{membership.user?.name || membership.user?.email}</p>
+                              <p className="text-sm text-muted-foreground">{membership.user?.email}</p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Last login: {membership.user?.lastLogin ? dayjs(membership.user.lastLogin).fromNow() : 'Never'}
+                              </p>
+                            </div>
+                            <Badge variant="outline">{membership.role}</Badge>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <Empty description="No members found" />
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="access" className="mt-4 space-y-4 data-[state=inactive]:hidden">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Plan &amp; access control</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="space-y-1.5">
+                      <Label>Assigned plan</Label>
+                      <Select
+                        value={accessForm.plan || ''}
+                        onValueChange={(value) => setAccessForm((prev) => ({ ...prev, plan: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select plan" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {canonicalPlanCatalog.map((plan) => (
+                            <SelectItem key={plan.id || plan.planId} value={plan.planId}>
+                              {plan.name} ({plan.planId})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label>Access mode</Label>
+                      <Select
+                        value={accessForm.accessState}
+                        onValueChange={(value) => setAccessForm((prev) => ({ ...prev, accessState: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select access mode" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="active">Active (normal)</SelectItem>
+                          <SelectItem value="read_only">Read only</SelectItem>
+                          <SelectItem value="restricted">Restricted</SelectItem>
+                          <SelectItem value="suspended">Suspended</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Feature overrides (optional)</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Force-enable or force-disable features for this tenant. Leave unchanged to follow the plan.
+                      </p>
+                      <div className="space-y-2 max-h-56 overflow-y-auto border rounded-md p-3">
+                        {featureCatalog.map((feature) => {
+                          const current = accessForm.featureOverrides?.[feature.key];
+                          return (
+                            <div key={feature.key} className="flex items-start justify-between gap-3 border-b border-border last:border-0 pb-2 last:pb-0">
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium text-foreground">{feature.name}</p>
+                                <p className="text-xs text-muted-foreground break-all">{feature.key}</p>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={current === true ? 'default' : 'outline'}
+                                  onClick={() => handleOverrideToggle(feature.key, current === true ? null : true)}
+                                >
+                                  Allow
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant={current === false ? 'destructive' : 'outline'}
+                                  onClick={() => handleOverrideToggle(feature.key, current === false ? null : false)}
+                                >
+                                  Deny
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="tenant-access-note">Admin note (optional)</Label>
+                      <Input
+                        id="tenant-access-note"
+                        value={accessForm.note}
+                        onChange={(e) => setAccessForm((prev) => ({ ...prev, note: e.target.value }))}
+                        placeholder="Reason for this access profile"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-end">
+                      <Button onClick={handleSaveAccess} loading={accessSaving} disabled={!hasPermission('tenants.update')}>
+                        Save access
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            </Tabs>
           ) : (
             <Empty description="Select a tenant to view details" className="py-12" />
           )}

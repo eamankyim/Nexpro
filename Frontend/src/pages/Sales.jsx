@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 
 const POS = lazy(() => import('./POS'));
 import { useDebounce } from '../hooks/useDebounce';
 import { usePOSConfig } from '../hooks/usePOSConfig';
 import { useResponsive } from '../hooks/useResponsive';
-import { ShoppingCart, Filter, RefreshCw, Printer, Receipt, FileText, Loader2, X, CheckCircle, Clock, XCircle, Download, Plus, Package } from 'lucide-react';
+import { ShoppingCart, Filter, RefreshCw, Printer, Receipt, FileText, Loader2, X, CheckCircle, Clock, XCircle, Download, Plus, Package, Archive } from 'lucide-react';
 import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
 import saleService from '../services/saleService';
 import customerService from '../services/customerService';
@@ -61,6 +64,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  Form,
+  FormControl,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -70,6 +81,15 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
+import { DELIVERY_STATUS_ORDER, DELIVERY_STATUS_LABELS } from '../constants';
+
+const recordPaymentSchema = z.object({
+  amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Payment amount must be greater than 0'),
+  paymentMethod: z.string().min(1, 'Payment method is required'),
+  paymentDate: z.date(),
+  referenceNumber: z.string().optional(),
+});
 
 const Sales = () => {
   const navigate = useNavigate();
@@ -79,6 +99,7 @@ const Sales = () => {
   const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [totalSalesCount, setTotalSalesCount] = useState(0);
+  const [saleForPayment, setSaleForPayment] = useState(null);
   const [filters, setFilters] = useState({ 
     status: 'all',
     customerId: 'all',
@@ -100,10 +121,24 @@ const Sales = () => {
   const [posModalOpen, setPosModalOpen] = useState(false);
   const [loadingReceipt, setLoadingReceipt] = useState(false);
   const [saleToDelete, setSaleToDelete] = useState(null);
+  const [updatingSaleDelivery, setUpdatingSaleDelivery] = useState(false);
   const { activeTenant, activeTenantId } = useAuth();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isShop = businessType === 'shop';
-  const isRestaurant = isShop && activeTenant?.metadata?.shopType === 'restaurant';
+  const isRestaurant =
+    isShop &&
+    (activeTenant?.metadata?.businessSubType ||
+      activeTenant?.metadata?.shopType) === 'restaurant';
+
+  const recordPaymentForm = useForm({
+    resolver: zodResolver(recordPaymentSchema),
+    defaultValues: {
+      amount: 0,
+      paymentMethod: 'cash',
+      paymentDate: new Date(),
+      referenceNumber: '',
+    },
+  });
 
   // Check if tenant has products (to show appropriate empty state)
   const { data: productsData } = useQuery({
@@ -133,6 +168,14 @@ const Sales = () => {
       return sales.filter(s => KITCHEN_PENDING_STATUSES.includes(s.orderStatus)).length;
     }
     return sales.filter(s => s.status === 'pending').length;
+  }, [sales, isRestaurant]);
+
+  // Revenue = completed sales only (aligns with Dashboard definition)
+  const totalRevenueCompleted = useMemo(() => {
+    const completed = isRestaurant
+      ? sales.filter(s => s.orderStatus === 'completed' || (s.orderStatus == null && s.status === 'completed'))
+      : sales.filter(s => s.status === 'completed');
+    return completed.reduce((sum, s) => sum + parseFloat(s.total || 0), 0);
   }, [sales, isRestaurant]);
 
   const fetchSales = useCallback(async (isRefresh = false) => {
@@ -269,6 +312,25 @@ const Sales = () => {
     setSaleActivities([]);
   };
 
+  const handleSaleDeliveryChange = useCallback(
+    async (value) => {
+      if (!viewingSale) return;
+      const val = value === '__none__' ? null : value;
+      try {
+        setUpdatingSaleDelivery(true);
+        await saleService.updateDeliveryStatus(viewingSale.id, val);
+        await fetchSaleDetails(viewingSale.id);
+        showSuccess('Delivery status updated');
+        fetchSales();
+      } catch (error) {
+        showError(error?.response?.data?.message || error?.message || 'Failed to update delivery status');
+      } finally {
+        setUpdatingSaleDelivery(false);
+      }
+    },
+    [viewingSale, fetchSaleDetails, fetchSales]
+  );
+
   const handlePrintReceipt = useCallback(async (sale) => {
     // Use already-loaded viewingSale when drawer is open (avoids redundant fetch)
     if (viewingSale?.id === sale.id && viewingSale.items && (!sale.invoiceId || viewingSale.invoice?.customer)) {
@@ -324,6 +386,43 @@ const Sales = () => {
     }
   };
 
+  const handleOpenRecordPayment = useCallback((sale) => {
+    const total = parseFloat(sale.total || 0);
+    const amountPaid = parseFloat(sale.amountPaid || 0);
+    const balanceDue = Math.max(total - amountPaid, 0);
+    if (balanceDue <= 0) {
+      showSuccess('This sale is already fully paid.');
+      return;
+    }
+    setSaleForPayment(sale);
+    recordPaymentForm.reset({
+      amount: balanceDue,
+      paymentMethod: sale.paymentMethod || 'cash',
+      paymentDate: new Date(),
+      referenceNumber: '',
+    });
+  }, [recordPaymentForm]);
+
+  const handleRecordPaymentSubmit = useCallback(async (values) => {
+    if (!saleForPayment) return;
+    try {
+      await saleService.recordPayment(saleForPayment.id, {
+        amount: values.amount,
+        paymentMethod: values.paymentMethod,
+        referenceNumber: values.referenceNumber || undefined,
+        paymentDate: values.paymentDate,
+      });
+      showSuccess('Payment recorded successfully');
+      setSaleForPayment(null);
+      fetchSales();
+      if (viewingSale?.id === saleForPayment.id) {
+        await fetchSaleDetails(saleForPayment.id);
+      }
+    } catch (error) {
+      showError(error, 'Failed to record payment');
+    }
+  }, [saleForPayment, viewingSale?.id, fetchSales, fetchSaleDetails]);
+
   const paymentMethodLabels = {
     cash: 'Cash',
     card: 'Card',
@@ -335,6 +434,7 @@ const Sales = () => {
 
   const statusLabels = {
     pending: 'Pending',
+    partially_paid: 'Partially paid',
     completed: 'Completed',
     cancelled: 'Cancelled',
     refunded: 'Refunded'
@@ -376,6 +476,7 @@ const Sales = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record.status} />
     },
     {
@@ -395,6 +496,13 @@ const Sales = () => {
           record={record}
           onView={handleView}
           extraActions={[
+            (record.status === 'pending' || record.status === 'partially_paid') && {
+              key: 'record-payment',
+              label: 'Record payment',
+              variant: 'secondary',
+              icon: <CheckCircle className="h-4 w-4" />,
+              onClick: () => handleOpenRecordPayment(record)
+            },
             record.invoiceId && {
               key: 'view-invoice',
               label: 'View Invoice',
@@ -406,7 +514,7 @@ const Sales = () => {
         />
       )
     }
-  ], [handleView, handleViewInvoice]);
+  ], [handleView, handleViewInvoice, handleOpenRecordPayment]);
 
   const drawerFields = useMemo(() => viewingSale ? [
     { label: 'Sale Number', value: viewingSale.saleNumber },
@@ -523,7 +631,7 @@ const Sales = () => {
           welcomeMessage="Sales"
           subText="Track and manage your sales transactions."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -553,9 +661,9 @@ const Sales = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button onClick={() => setPosModalOpen(true)} size={isMobile ? "icon" : "default"}>
+              <Button onClick={() => setPosModalOpen(true)} className="flex-1 min-w-0 md:flex-none">
                 <ShoppingCart className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">Point of Sale</span>}
+                <span className="ml-2">Point of Sale</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>Open Point of Sale to record a new sale or scan products</TooltipContent>
@@ -571,6 +679,7 @@ const Sales = () => {
           icon={ShoppingCart}
           iconBgColor="rgba(22, 101, 52, 0.1)"
           iconColor="#166534"
+          loading={loading}
         />
         <DashboardStatsCard
           tooltip={isRestaurant ? 'Orders completed (kitchen done or not sent to kitchen)' : 'Sales that have been paid and completed'}
@@ -579,22 +688,25 @@ const Sales = () => {
           icon={CheckCircle}
           iconBgColor="rgba(132, 204, 22, 0.1)"
           iconColor="#84cc16"
+          loading={loading}
         />
         <DashboardStatsCard
-          tooltip={isRestaurant ? 'Orders in kitchen (received, preparing, or ready)' : 'Sales awaiting payment'}
+          tooltip={isRestaurant ? 'Orders in kitchen (received, preparing, or ready)' : 'Sales with no payment received yet'}
           title={isRestaurant ? 'Pending (in kitchen)' : 'Pending'}
           value={pendingCount}
           icon={Clock}
           iconBgColor="rgba(59, 130, 246, 0.1)"
           iconColor="#3b82f6"
+          loading={loading}
         />
         <DashboardStatsCard
-          tooltip="Total amount from all sales in the current view"
+          tooltip="Revenue from completed sales only (matches Dashboard). Pending and partially paid sales are not counted until completed."
           title="Total Revenue"
-          value={`₵ ${sales.reduce((sum, s) => sum + parseFloat(s.total || 0), 0).toFixed(2)}`}
+          value={`₵ ${totalRevenueCompleted.toFixed(2)}`}
           icon={Receipt}
           iconBgColor="rgba(22, 101, 52, 0.1)"
           iconColor="#166534"
+          loading={loading}
         />
       </div>
 
@@ -608,7 +720,7 @@ const Sales = () => {
         emptyAction={!hasProducts ? (
           <Button
             onClick={() => navigate('/products?add=1')}
-            className="bg-[#166534] hover:bg-[#14532d] text-white"
+            className="bg-brand hover:bg-brand-dark text-white"
           >
             <Plus className="h-4 w-4 mr-2" />
             Add Your First Product
@@ -641,7 +753,7 @@ const Sales = () => {
         }}
       >
         <DialogContent
-          className="!left-1/2 !top-1/2 !-translate-x-1/2 !-translate-y-1/2 !w-[98vw] !h-[98vh] !max-w-[98vw] !max-h-[98vh] !min-h-0 !p-0 !gap-0 overflow-hidden flex flex-col rounded-lg"
+          className="!left-0 !top-0 !translate-x-0 !translate-y-0 !w-[100vw] !h-[100vh] !max-w-[100vw] !max-h-[100vh] !min-h-0 !p-0 !gap-0 overflow-hidden flex flex-col rounded-none border-0"
           aria-describedby={undefined}
         >
           <DialogTitle className="sr-only">Point of Sale</DialogTitle>
@@ -652,7 +764,7 @@ const Sales = () => {
             <Suspense
               fallback={
                 <div className="flex items-center justify-center h-full">
-                  <Loader2 className="h-10 w-10 animate-spin text-[#166534]" />
+                  <Loader2 className="h-10 w-10 animate-spin text-brand" />
                 </div>
               }
             >
@@ -667,7 +779,7 @@ const Sales = () => {
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Sales</SheetTitle>
           </SheetHeader>
-          <div className="space-y-6 mt-6">
+          <div className="space-y-6 mt-6 pb-4">
             <div className="space-y-2">
               <Label>Status</Label>
               <Select
@@ -680,6 +792,7 @@ const Sales = () => {
                 <SelectContent>
                   <SelectItem value="all">All Statuses</SelectItem>
                   <SelectItem value="pending">Pending</SelectItem>
+                  <SelectItem value="partially_paid">Partially paid</SelectItem>
                   <SelectItem value="completed">Completed</SelectItem>
                   <SelectItem value="cancelled">Cancelled</SelectItem>
                   <SelectItem value="refunded">Refunded</SelectItem>
@@ -762,32 +875,238 @@ const Sales = () => {
         </SheetContent>
       </Sheet>
 
+      <Dialog open={!!saleForPayment} onOpenChange={(open) => !open && setSaleForPayment(null)}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Record payment</DialogTitle>
+            <DialogDescription>
+              Enter the amount received (partial or full). Sale will be marked completed when fully paid.
+            </DialogDescription>
+          </DialogHeader>
+          {saleForPayment && (() => {
+            const total = parseFloat(saleForPayment.total || 0);
+            const amountPaid = parseFloat(saleForPayment.amountPaid || 0);
+            const balanceDue = Math.max(total - amountPaid, 0);
+            const isFullyPaid = balanceDue <= 0;
+            return (
+              <>
+                {/* Sale summary — clear card with balance due prominent */}
+                <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Sale</span>
+                    <span className="font-medium">{saleForPayment.saleNumber}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-muted-foreground">Customer</span>
+                    <span className="font-medium">{saleForPayment.customer?.name || 'Walk-in'}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-muted-foreground">Total</span>
+                    <span>₵ {total.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-muted-foreground">Amount paid</span>
+                    <span>₵ {amountPaid.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between items-center pt-1">
+                    <span className="font-medium text-foreground">Balance due</span>
+                    <span className={`text-lg font-semibold ${balanceDue > 0 ? 'text-orange-600' : 'text-green-600'}`}>
+                      ₵ {balanceDue.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+
+                {isFullyPaid ? (
+                  <p className="text-sm text-muted-foreground py-2">
+                    This sale is already fully paid. No payment to record.
+                  </p>
+                ) : (
+                  <Form {...recordPaymentForm}>
+                    <form
+                      id="record-payment-form"
+                      onSubmit={recordPaymentForm.handleSubmit(handleRecordPaymentSubmit)}
+                      className="space-y-4"
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <FormField
+                          control={recordPaymentForm.control}
+                          name="amount"
+                          rules={[
+                            {
+                              validate: (value) => {
+                                if (value > balanceDue) return 'Amount exceeds balance due';
+                                return true;
+                              },
+                            },
+                          ]}
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Payment amount</FormLabel>
+                              <FormControl>
+                                <div className="relative">
+                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">₵</span>
+                                  <Input
+                                    type="number"
+                                    min={0.01}
+                                    max={balanceDue}
+                                    step={0.01}
+                                    placeholder="0.00"
+                                    className="pl-8"
+                                    value={numberInputValue(field.value)}
+                                    onChange={(e) => handleNumberChange(e, field.onChange)}
+                                  />
+                                </div>
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={recordPaymentForm.control}
+                          name="paymentMethod"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Payment method</FormLabel>
+                              <Select value={field.value} onValueChange={field.onChange}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="cash">Cash</SelectItem>
+                                  <SelectItem value="card">Card</SelectItem>
+                                  <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                                  <SelectItem value="other">Other</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <FormField
+                          control={recordPaymentForm.control}
+                          name="paymentDate"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Payment date</FormLabel>
+                              <FormControl>
+                                <DatePicker date={field.value} onDateChange={field.onChange} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <FormField
+                          control={recordPaymentForm.control}
+                          name="referenceNumber"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Reference (optional)</FormLabel>
+                              <FormControl>
+                                <Input placeholder="e.g. receipt or transfer ref" {...field} value={field.value || ''} />
+                              </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      </div>
+                    </form>
+                  </Form>
+                )}
+                <DialogFooter className="gap-2 sm:gap-0">
+                  <Button type="button" variant="outline" onClick={() => setSaleForPayment(null)}>
+                    Cancel
+                  </Button>
+                  {!isFullyPaid && (
+                    <Button form="record-payment-form" type="submit" disabled={recordPaymentForm.formState.isSubmitting}>
+                      {recordPaymentForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Record payment
+                    </Button>
+                  )}
+                </DialogFooter>
+              </>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       <DetailsDrawer
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Sale Details"
         width={720}
-        onPrint={viewingSale && viewingSale.status === 'completed' && ((viewingSale.invoiceId && viewingSale.invoice?.status === 'paid') || (viewingSale.paymentMethod !== 'credit' && !viewingSale.invoiceId)) ? () => handlePrintReceipt(viewingSale) : null}
-        printDisabled={loadingReceipt}
         onDelete={viewingSale ? () => handleDeleteSale(viewingSale.id) : null}
         deleteConfirmText="Are you sure you want to delete this sale? This action cannot be undone."
-        extraActions={viewingSale ? [
-          (viewingSale.status === 'completed' && ((viewingSale.invoiceId && viewingSale.invoice?.status === 'paid') || (viewingSale.paymentMethod !== 'credit' && !viewingSale.invoiceId))) && {
-            key: 'print-receipt',
-            label: loadingReceipt ? 'Loading...' : 'Print Receipt',
-            variant: 'secondary',
-            icon: loadingReceipt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />,
-            onClick: () => handlePrintReceipt(viewingSale),
-            disabled: loadingReceipt
-          },
-          viewingSale.invoiceId && {
-            key: 'view-invoice',
-            label: 'View Invoice',
-            variant: 'default',
-            icon: <FileText className="h-4 w-4" />,
-            onClick: () => handleViewInvoice(viewingSale)
+        primaryAction={viewingSale ? (() => {
+          const canPrint = viewingSale.status === 'completed' && ((viewingSale.invoiceId && viewingSale.invoice?.status === 'paid') || (viewingSale.paymentMethod !== 'credit' && !viewingSale.invoiceId));
+          const hasInvoice = !!viewingSale.invoiceId;
+          const isPending = viewingSale.status === 'pending' || viewingSale.status === 'partially_paid';
+          if (hasInvoice) {
+            return { label: 'View Invoice', icon: <FileText className="h-4 w-4" />, onClick: () => handleViewInvoice(viewingSale) };
           }
-        ].filter(Boolean) : []}
+          if (canPrint) {
+            return {
+              label: loadingReceipt ? 'Loading...' : 'Print Receipt',
+              icon: loadingReceipt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />,
+              onClick: () => handlePrintReceipt(viewingSale),
+              disabled: loadingReceipt
+            };
+          }
+          if (isPending) {
+            return { label: 'Record payment', icon: <CheckCircle className="h-4 w-4" />, onClick: () => handleOpenRecordPayment(viewingSale) };
+          }
+          return null;
+        })() : null}
+        moreMenuItems={viewingSale ? (() => {
+          const canPrint = viewingSale.status === 'completed' && ((viewingSale.invoiceId && viewingSale.invoice?.status === 'paid') || (viewingSale.paymentMethod !== 'credit' && !viewingSale.invoiceId));
+          const hasInvoice = !!viewingSale.invoiceId;
+          const isPending = viewingSale.status === 'pending' || viewingSale.status === 'partially_paid';
+          const primaryIsViewInvoice = hasInvoice;
+          const primaryIsPrintReceipt = !hasInvoice && canPrint;
+          const primaryIsRecordPayment = !hasInvoice && !canPrint && isPending;
+          const items = [];
+          if (canPrint) {
+            items.push({
+              key: 'view-pdf',
+              label: 'View PDF',
+              icon: <FileText className="h-4 w-4" />,
+              onClick: () => handlePrintReceipt(viewingSale),
+              disabled: loadingReceipt
+            });
+          }
+          if (hasInvoice && !primaryIsViewInvoice) {
+            items.push({
+              key: 'view-invoice',
+              label: 'View Invoice',
+              icon: <FileText className="h-4 w-4" />,
+              onClick: () => handleViewInvoice(viewingSale)
+            });
+          }
+          if (canPrint && !primaryIsPrintReceipt) {
+            items.push({
+              key: 'print-receipt',
+              label: loadingReceipt ? 'Loading...' : 'Print Receipt',
+              icon: loadingReceipt ? <Loader2 className="h-4 w-4 animate-spin" /> : <Printer className="h-4 w-4" />,
+              onClick: () => handlePrintReceipt(viewingSale),
+              disabled: loadingReceipt
+            });
+          }
+          if (isPending && !primaryIsRecordPayment) {
+            items.push({
+              key: 'record-payment',
+              label: 'Record payment',
+              icon: <CheckCircle className="h-4 w-4" />,
+              onClick: () => handleOpenRecordPayment(viewingSale)
+            });
+          }
+          items.push({ key: 'archive', label: 'Archive', icon: <Archive className="h-4 w-4" />, destructive: true });
+          return items;
+        })() : []}
         tabs={viewingSale ? [
           {
             key: 'details',
@@ -835,6 +1154,28 @@ const Sales = () => {
                       </DescriptionItem>
                     ))}
                   </Descriptions>
+                </DrawerSectionCard>
+                <DrawerSectionCard title="Delivery tracking (optional)">
+                  <div className="space-y-2">
+                    <Label htmlFor="sale-delivery-status">Delivery status</Label>
+                    <Select
+                      value={viewingSale.deliveryStatus || '__none__'}
+                      onValueChange={handleSaleDeliveryChange}
+                      disabled={updatingSaleDelivery}
+                    >
+                      <SelectTrigger id="sale-delivery-status" className="max-w-md">
+                        <SelectValue placeholder="Not set" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Not set</SelectItem>
+                        {DELIVERY_STATUS_ORDER.map((key) => (
+                          <SelectItem key={key} value={key}>
+                            {DELIVERY_STATUS_LABELS[key]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </DrawerSectionCard>
               </div>
             )

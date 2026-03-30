@@ -5,7 +5,7 @@ const { invalidateUserCache } = require('../middleware/cache');
 
 // @desc    Get all users for the current tenant
 // @route   GET /api/users
-// @access  Private/Admin
+// @access  Private — workspace manager or admin
 exports.getUsers = async (req, res, next) => {
   try {
     const { page, limit, offset } = getPagination(req);
@@ -73,7 +73,7 @@ exports.getUsers = async (req, res, next) => {
 
 // @desc    Get single user
 // @route   GET /api/users/:id
-// @access  Private/Admin
+// @access  Private — workspace manager or admin
 exports.getUser = async (req, res, next) => {
   try {
     if (!req.tenantId) {
@@ -157,7 +157,7 @@ exports.createUser = async (req, res, next) => {
 
 // @desc    Update user
 // @route   PUT /api/users/:id
-// @access  Private/Admin
+// @access  Private — workspace admin only
 exports.updateUser = async (req, res, next) => {
   try {
     if (!req.tenantId) {
@@ -247,7 +247,7 @@ exports.deleteUser = async (req, res, next) => {
 
 // @desc    Toggle user status
 // @route   PUT /api/users/:id/toggle-status
-// @access  Private/Admin
+// @access  Private — workspace admin only
 exports.toggleUserStatus = async (req, res, next) => {
   try {
     if (!req.tenantId) {

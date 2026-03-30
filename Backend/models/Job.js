@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
@@ -130,6 +131,17 @@ const Job = sequelize.define('Job', {
       model: 'leads',
       key: 'id'
     }
+  },
+  /** Public token for customer job tracking (no login). Only used when tenantId is set. */
+  viewToken: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    unique: true
+  },
+  /** First-party delivery: when set, public tracking shows delivery timeline only. */
+  deliveryStatus: {
+    type: DataTypes.STRING(32),
+    allowNull: true
   }
 }, {
   timestamps: true,
@@ -137,7 +149,14 @@ const Job = sequelize.define('Job', {
   indexes: [
     // Note: Unique constraint is now handled via partial index in migration
     // This allows NULL tenantId (admin jobs) to have duplicate jobNumbers
-  ]
+  ],
+  hooks: {
+    beforeCreate: (job) => {
+      if (job.tenantId && !job.viewToken) {
+        job.viewToken = crypto.randomBytes(32).toString('hex');
+      }
+    }
+  }
 });
 
 module.exports = Job;

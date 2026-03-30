@@ -6,37 +6,23 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import assistantService from '@/services/assistantService';
 import { showError } from '@/utils/toast';
 import { cn } from '@/lib/utils';
-
-/**
- * Format assistant message for display: escape HTML, strip # and *, render **bold**, preserve line breaks and lists.
- * @param {string} text - Raw assistant message (may contain markdown: #, **, *, bullets)
- * @returns {string} Sanitized HTML string safe to render with dangerouslySetInnerHTML
- */
-function formatAssistantMessage(text) {
-  if (!text || typeof text !== 'string') return '';
-  const escape = (s) =>
-    String(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-  const escaped = escape(text);
-  // Strip markdown headers: # ## ### at start of line (and optional space after)
-  const noHeaders = escaped.replace(/(^|\n)\s*#+\s*/g, '$1');
-  // **bold** -> <strong>
-  const withBold = noHeaders.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-semibold text-foreground">$1</strong>');
-  // Remove single asterisks (emphasis or stray *)
-  const noSingleAsterisks = withBold.replace(/\*([^*]*)\*/g, '$1');
-  const withBreaks = noSingleAsterisks.replace(/\n/g, '<br />');
-  const bulletSpan = '<span class="inline-block w-4 mr-1 text-foreground">•</span> ';
-  const withBullets = withBreaks.replace(/(^|<br \/>)\s*[-•]\s+/g, (_, prefix) => (prefix || '') + bulletSpan);
-  return withBullets;
-}
+import { formatAssistantMessage } from '@/utils/assistantMessageFormatter';
 
 const SUGGESTED_PROMPTS = [
   'How many customers do I have this month?',
   'Predict next month sales',
   'Summarize this month\'s performance',
+];
+
+const HOW_TO_PROMPTS = [
+  'How do I create an expense?',
+  'How do I create a quote?',
+  'How do I record a payment on an invoice?',
+];
+
+const MARKETING_PROMPTS = [
+  'Draft a promotional email for my customers (subject + plain text for Marketing)',
+  'How do I send a promotion to all customers in ABS?',
 ];
 
 /**
@@ -148,11 +134,49 @@ export default function AssistantChatPanel({ open, onOpenChange }) {
           className="flex-1 min-h-0 px-4 py-3"
         >
           {messages.length === 0 ? (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <p className="text-sm text-gray-500">
-                Ask about your business data (customers, revenue, sales) or request a summary or prediction.
+                Ask about your business data (customers, revenue, sales) or how to use the app.
               </p>
-              <p className="text-xs text-gray-400">Suggested questions:</p>
+              <p className="text-xs font-medium text-foreground">How do I…?</p>
+              <ul className="space-y-2">
+                {HOW_TO_PROMPTS.map((prompt) => (
+                  <li key={prompt}>
+                    <button
+                      type="button"
+                      onClick={() => handleSuggestionClick(prompt)}
+                      disabled={loading}
+                      className={cn(
+                        'text-left text-sm w-full px-3 py-2 rounded-lg border border-gray-200',
+                        'bg-muted hover:bg-muted/80 text-foreground',
+                        'disabled:opacity-50 disabled:pointer-events-none'
+                      )}
+                    >
+                      {prompt}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs font-medium text-foreground pt-1">Marketing &amp; customers</p>
+              <ul className="space-y-2">
+                {MARKETING_PROMPTS.map((prompt) => (
+                  <li key={prompt}>
+                    <button
+                      type="button"
+                      onClick={() => handleSuggestionClick(prompt)}
+                      disabled={loading}
+                      className={cn(
+                        'text-left text-sm w-full px-3 py-2 rounded-lg border border-gray-200',
+                        'bg-muted hover:bg-muted/80 text-foreground',
+                        'disabled:opacity-50 disabled:pointer-events-none'
+                      )}
+                    >
+                      {prompt}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs font-medium text-foreground pt-1">Data &amp; predictions</p>
               <ul className="space-y-2">
                 {SUGGESTED_PROMPTS.map((prompt) => (
                   <li key={prompt}>
@@ -186,7 +210,7 @@ export default function AssistantChatPanel({ open, onOpenChange }) {
                     className={cn(
                       'max-w-[85%] rounded-lg px-3 py-2 text-sm',
                       msg.role === 'user'
-                        ? 'bg-[#166534] text-white'
+                        ? 'bg-brand text-white'
                         : 'bg-muted text-foreground border border-border'
                     )}
                   >
@@ -230,7 +254,7 @@ export default function AssistantChatPanel({ open, onOpenChange }) {
               disabled={!inputValue.trim()}
               loading={loading}
               size="icon"
-              className="bg-[#166534] hover:bg-[#14502a]"
+              className="bg-brand hover:bg-brand-dark"
             >
               <Send className="h-4 w-4" />
               <span className="sr-only">Send</span>

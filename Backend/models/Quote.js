@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
@@ -59,6 +60,15 @@ const Quote = sequelize.define('Quote', {
     type: DataTypes.DECIMAL(12, 2),
     defaultValue: 0
   },
+  taxRate: {
+    type: DataTypes.DECIMAL(5, 2),
+    defaultValue: 0,
+    comment: 'Tax % applied to (subtotal - discountTotal)'
+  },
+  taxAmount: {
+    type: DataTypes.DECIMAL(12, 2),
+    defaultValue: 0
+  },
   notes: {
     type: DataTypes.TEXT
   },
@@ -72,10 +82,22 @@ const Quote = sequelize.define('Quote', {
   },
   acceptedAt: {
     type: DataTypes.DATE
+  },
+  viewToken: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    unique: true
   }
 }, {
   timestamps: true,
-  tableName: 'quotes'
+  tableName: 'quotes',
+  hooks: {
+    beforeCreate: (quote) => {
+      if (!quote.viewToken) {
+        quote.viewToken = crypto.randomBytes(32).toString('hex');
+      }
+    }
+  }
 });
 
 module.exports = Quote;

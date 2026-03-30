@@ -1,17 +1,15 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { ArrowRight, ArrowLeft, Loader2, X, Check, Camera, Search } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Loader2, X, Check, Camera, Search, ShoppingBag, Printer, Scissors, Car, UtensilsCrossed, Pill, Briefcase } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { showSuccess, showError } from '../utils/toast';
+import { showError } from '../utils/toast';
 import FileUpload from '../components/FileUpload';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import api from '../services/api';
@@ -19,9 +17,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import authService from '../services/authService';
 import dashboardService from '../services/dashboardService';
 import ReactCountryFlag from 'react-country-flag';
+import { BUSINESS_OPTIONS, BUSINESS_GROUPS, getCoreTypeForBusinessSubType } from '@/constants/businessTypes';
 
 const onboardingSchema = z.object({
-  shopType: z.string().optional(),
+  businessGroup: z.string().min(1, 'Select your business type'),
+  businessSubType: z.string().min(1, 'Select your business sub-type'),
   companyName: z.string().min(1, 'Enter your business name'),
   companyLogo: z.any().optional(),
   companyAddress: z.string().optional().or(z.literal('')),
@@ -67,7 +67,7 @@ const businessTypes = [
     description: 'Point of sale, inventory, and sales management'
   },
   {
-    value: 'printing_press',
+    value: 'studio',
     label: 'Studio Management',
     description: 'Manage jobs, services, quotes, and production workflows'
   },
@@ -78,46 +78,29 @@ const businessTypes = [
   }
 ];
 
-const shopTypes = [
-  { value: 'supermarket', label: 'Supermarket/Grocery Store' },
-  { value: 'hardware', label: 'Hardware Store' },
-  { value: 'electronics', label: 'Electronics Store' },
-  { value: 'clothing', label: 'Clothing/Fashion Store' },
-  { value: 'furniture', label: 'Furniture Store' },
-  { value: 'bookstore', label: 'Bookstore' },
-  { value: 'auto_parts', label: 'Auto Parts Store' },
-  { value: 'convenience', label: 'General Store/Convenience Store' },
-  { value: 'beauty', label: 'Beauty/Cosmetics Store' },
-  { value: 'sports', label: 'Sports Store' },
-  { value: 'toys', label: 'Toy Store' },
-  { value: 'pet', label: 'Pet Store' },
-  { value: 'stationery', label: 'Stationery Store' },
-  { value: 'restaurant', label: 'Restaurant' },
-  { value: 'other', label: 'Other' }
-];
-
-
 const Onboarding = () => {
   const navigate = useNavigate();
-  const { user, activeTenant, refreshAuthState } = useAuth();
+  const { user, activeTenant, refreshAuthState, wasInvited } = useAuth();
   const queryClient = useQueryClient();
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
   const fileInputRef = useRef(null);
+  const [checkingPhone, setCheckingPhone] = useState(false);
 
   // Check if onboarding is already completed
   useEffect(() => {
     const onboardingCompleted = activeTenant?.metadata?.onboarding?.completedAt;
-    if (onboardingCompleted) {
-      // User already completed onboarding, redirect to dashboard
+    if (onboardingCompleted || wasInvited) {
+      // Invited users join an existing workspace and should not go through onboarding.
       navigate('/dashboard', { replace: true });
     }
-  }, [activeTenant, navigate]);
+  }, [activeTenant, wasInvited, navigate]);
 
   const form = useForm({
     resolver: zodResolver(onboardingSchema),
     defaultValues: {
-      shopType: '',
+      businessGroup: '',
+      businessSubType: '',
       companyName: '',
       companyLogo: undefined,
       companyAddress: '',
@@ -127,32 +110,139 @@ const Onboarding = () => {
       companyWebsite: ''
     }
   });
+  
 
+  const getBusinessGroupLabel = (group) => {
+    switch (group) {
+      case BUSINESS_GROUPS.RETAIL:
+        return 'Retail shops';
+      case BUSINESS_GROUPS.PRINT_PHOTO:
+        return 'Professional services';
+      case BUSINESS_GROUPS.BEAUTY:
+        return 'Beauty & Grooming';
+      case BUSINESS_GROUPS.AUTO:
+        return 'Auto & Workshop';
+      case BUSINESS_GROUPS.FOOD:
+        return 'Food & Drinks';
+      case BUSINESS_GROUPS.HEALTH:
+        return 'Health / Pharmacy';
+      case BUSINESS_GROUPS.SERVICES:
+      default:
+        return 'Other services';
+    }
+  };
 
-  // Get businessType from tenant (set during signup)
-  const businessType = activeTenant?.businessType || 'printing_press';
-  const isShop = businessType === 'shop';
+  const getBusinessGroupIcon = (group) => {
+    switch (group) {
+      case BUSINESS_GROUPS.RETAIL:
+        return ShoppingBag;
+      case BUSINESS_GROUPS.PRINT_PHOTO:
+        return Briefcase;
+      case BUSINESS_GROUPS.BEAUTY:
+        return Scissors;
+      case BUSINESS_GROUPS.AUTO:
+        return Car;
+      case BUSINESS_GROUPS.FOOD:
+        return UtensilsCrossed;
+      case BUSINESS_GROUPS.HEALTH:
+        return Pill;
+      case BUSINESS_GROUPS.SERVICES:
+      default:
+        return Briefcase;
+    }
+  };
+
+  const getBusinessGroupExamples = (group) => {
+    switch (group) {
+      case BUSINESS_GROUPS.RETAIL:
+        return 'e.g. Supermarkets, provision stores, hardware shops, cosmetics shops';
+      case BUSINESS_GROUPS.PRINT_PHOTO:
+        return 'e.g. Printing press, photo studio, branding, software & IT services';
+      case BUSINESS_GROUPS.BEAUTY:
+        return 'e.g. Barbering shops, hair salons, spas and nail bars';
+      case BUSINESS_GROUPS.AUTO:
+        return 'e.g. Mechanic workshops, car wash and detailing';
+      case BUSINESS_GROUPS.FOOD:
+        return 'e.g. Restaurants, fast food joints, bakeries and pastry shops';
+      case BUSINESS_GROUPS.HEALTH:
+        return 'e.g. Community pharmacies, clinic or hospital pharmacies';
+      case BUSINESS_GROUPS.SERVICES:
+      default:
+        return 'e.g. Other professional and local services';
+    }
+  };
+
+  const businessOptionsByGroup = useMemo(() => {
+    const groups = {};
+    BUSINESS_OPTIONS.forEach((opt) => {
+      const key = opt.group || 'other';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(opt);
+    });
+    return groups;
+  }, []);
 
   const onSubmit = async (values) => {
+    // First, pre-check if the phone number is already used by another workspace
+    const fullPhone = values.phoneCountryCode
+      ? `${values.phoneCountryCode} ${values.companyPhone}`
+      : values.companyPhone;
+
+    try {
+      setCheckingPhone(true);
+      const phoneCheckResponse = await api.post('/tenants/check-business-phone', {
+        phone: fullPhone,
+      });
+      const phoneCheckData = phoneCheckResponse?.data ?? phoneCheckResponse;
+      const exists =
+        phoneCheckData?.data?.exists ??
+        phoneCheckData?.exists ??
+        false;
+
+      if (exists) {
+        form.setError('companyPhone', {
+          type: 'manual',
+          message:
+            'This business phone number is already used by another workspace. Use a different phone number.',
+        });
+        return;
+      }
+    } catch (phoneError) {
+      // If the lookup fails (network, timeout, etc.), fall back to backend validation
+      console.error('[Onboarding] Failed to pre-check business phone', phoneError);
+    } finally {
+      setCheckingPhone(false);
+    }
+
     setLoading(true);
     try {
       // Prepare form data for file upload
       const formData = new FormData();
-      
-      // Use businessType from tenant, not form
-      formData.append('businessType', businessType);
-      
-      if (isShop && values.shopType) {
-        // If "other" is selected, use the custom value; otherwise use the selected value
-        const shopTypeValue = values.shopType === 'other' && shopTypeOtherValue.trim() 
-          ? shopTypeOtherValue.trim() 
-          : values.shopType;
-        formData.append('shopType', shopTypeValue);
+
+      // Derive core business type from selected sub-type.
+      // If tenant already has a non-shop businessType set, keep it to avoid regressions.
+      const selectedSubType = values.businessSubType || null;
+      const derivedCoreType = getCoreTypeForBusinessSubType(selectedSubType);
+      const existingBusinessType = activeTenant?.businessType || null;
+      const effectiveBusinessType =
+        existingBusinessType && existingBusinessType !== 'shop'
+          ? existingBusinessType
+          : derivedCoreType || 'shop';
+
+      formData.append('businessType', effectiveBusinessType);
+
+      // For shops, also persist a more specific shopType (sub-type) for seeding and defaults.
+      if (effectiveBusinessType === 'shop' && selectedSubType) {
+        formData.append('shopType', selectedSubType);
+      }
+
+      // Store selected business sub-type (everyday label) for metadata
+      if (values.businessSubType) {
+        formData.append('businessSubType', values.businessSubType);
       }
       if (values.companyName) formData.append('companyName', values.companyName);
       if (values.companyEmail) formData.append('companyEmail', values.companyEmail);
       // Phone is required, so always append it
-      const fullPhone = values.phoneCountryCode ? `${values.phoneCountryCode} ${values.companyPhone}` : values.companyPhone;
       formData.append('companyPhone', fullPhone);
       if (values.companyWebsite) {
         // Add protocol if missing
@@ -212,7 +302,6 @@ const Onboarding = () => {
 
       // Now navigate - animation will continue until dashboard is ready
       setLoading(false);
-      showSuccess('Onboarding completed! Redirecting to your dashboard...');
       console.log('[Onboarding] Navigating to /dashboard');
       navigate('/dashboard');
     } catch (error) {
@@ -230,21 +319,14 @@ const Onboarding = () => {
 
   const watchedValues = form.watch();
   
-  // Conditionally include shop type step only for retail shops
+  // Conditionally include steps (account is always considered completed)
   const getTimelineSteps = () => {
     const steps = [
       { id: 'account', label: 'Create Account', completed: true },
-    ];
-    
-    if (isShop) {
-      steps.push({ id: 'shopType', label: 'Shop Type', completed: false });
-    }
-    
-    steps.push(
+      { id: 'businessType', label: 'Business type', completed: false },
       { id: 'businessInfo', label: 'Business Info', completed: false },
       { id: 'contactInfo', label: 'Contact Info', completed: false }
-    );
-    
+    ];
     return steps;
   };
 
@@ -252,23 +334,19 @@ const Onboarding = () => {
 
   const getSteps = () => {
     const stepsArray = [];
-    
-    // Add shop type step only if business type is shop
-    if (isShop) {
-      stepsArray.push({
-        id: 'shopType',
-        title: 'What type of shop do you run?',
-        subtitle: 'Select the specific type of retail shop to customize your inventory categories.',
-        fields: ['shopType']
-      });
-    }
-    
+
     stepsArray.push(
+      {
+        id: 'businessType',
+        title: 'What type of business are you running?',
+        subtitle: 'This helps us set up the right dashboard and tools for you.',
+        fields: ['businessGroup']
+      },
       {
         id: 'businessInfo',
         title: 'Tell us about your business',
         subtitle: 'This information will appear on your invoices and receipts.',
-        fields: ['companyName'] // Company name required; logo and address optional
+        fields: ['businessSubType', 'companyName'] // Sub-type and name required; logo and address optional
       },
       {
         id: 'contactInfo',
@@ -292,18 +370,15 @@ const Onboarding = () => {
   
   const currentStepData = steps[currentStep] || steps[0];
   
+  const watchedBusinessGroup = form.watch('businessGroup');
+
+  useEffect(() => {
+    // When business group changes, clear any previously selected sub-type
+    form.setValue('businessSubType', '');
+  }, [watchedBusinessGroup, form]);
+
   // Search state for dropdowns
-  const [shopTypeSearch, setShopTypeSearch] = useState('');
   const [countryCodeSearch, setCountryCodeSearch] = useState('');
-  
-  // State for "other" shop type input
-  const [showShopTypeOtherInput, setShowShopTypeOtherInput] = useState(false);
-  const [shopTypeOtherValue, setShopTypeOtherValue] = useState('');
-  
-  // Filter shop types based on search
-  const filteredShopTypes = shopTypes.filter(shopType =>
-    shopType.label.toLowerCase().includes(shopTypeSearch.toLowerCase())
-  );
   
   // Filter country codes based on search
   const filteredCountryCodes = countryCodes.filter(country =>
@@ -323,10 +398,6 @@ const Onboarding = () => {
     // Check required fields
     const allRequiredFieldsFilled = requiredFields.every(field => {
       const value = watchedValues[field];
-      // Special handling for shopType: if "other" is selected, require custom input
-      if (field === 'shopType' && value === 'other') {
-        return shopTypeOtherValue.trim().length > 0;
-      }
       return value !== undefined && value !== '';
     });
     
@@ -344,30 +415,26 @@ const Onboarding = () => {
   const getTimelineStepStatus = (stepId) => {
     if (stepId === 'account') return 'completed';
     
-    // Map stepId to currentStep index
-    const getStepIndexMap = () => {
-      const map = {};
-      let index = 0;
-      
-      if (isShop) {
-        map['shopType'] = index;
-        index++;
-      }
-      
-      map['businessInfo'] = index;
-      index++;
-      map['contactInfo'] = index;
-      
-      return map;
+    // Map stepId to currentStep index (businessType = 0, businessInfo = 1, contactInfo = 2)
+    const stepIndexMap = {
+      businessType: 0,
+      businessInfo: 1,
+      contactInfo: 2,
     };
-    
-    const stepIndexMap = getStepIndexMap();
     const stepIndex = stepIndexMap[stepId];
     
     if (stepIndex === undefined) return 'pending';
     if (stepIndex < currentStep) return 'completed';
     if (stepIndex === currentStep) return 'current';
     return 'pending';
+  };
+
+  const stepIdToIndex = { businessType: 0, businessInfo: 1, contactInfo: 2 };
+  const goToStep = (stepId) => {
+    const index = stepIdToIndex[stepId];
+    if (typeof index === 'number' && index >= 0 && index < steps.length) {
+      setCurrentStep(index);
+    }
   };
 
   const handleNext = async () => {
@@ -489,180 +556,219 @@ const Onboarding = () => {
 
     <div className="min-h-screen bg-gradient-to-br from-muted/80 via-background to-muted/50">
       {/* Welcome Message */}
-      <div className="pt-8 pb-4 text-center">
-        <h1 className="text-3xl font-bold text-foreground mb-2">Let's set up your business</h1>
-        <p className="text-gray-600">You can skip this and finish later.</p>
+      <div className="pt-8 pb-2 text-center px-4">
+        <h1 className="text-2xl sm:text-3xl font-bold text-foreground">
+          Let's set up your business
+        </h1>
       </div>
 
-      <div className="flex max-w-7xl mx-auto px-8 pb-16">
-        {/* Left Sidebar - Timeline (30%) */}
-        <div className="w-[30%] pt-8">
-          <div className="bg-card rounded-l-xl p-6 border-t border-l border-b border-border h-[600px] flex flex-col">
-            <h2 className="text-lg font-semibold text-foreground mb-6">Getting Started</h2>
-            <div className="relative flex-1 overflow-y-auto custom-scrollbar">
-              {timelineSteps.map((step, index) => {
-                const status = getTimelineStepStatus(step.id);
-                const isLast = index === timelineSteps.length - 1;
-                const prevStatus = index > 0 ? getTimelineStepStatus(timelineSteps[index - 1].id) : 'completed';
-                
-                return (
-                  <div key={step.id} className="relative pb-6">
-                    <div className="flex items-start gap-3">
-                      {/* Icon Circle */}
-                      <div className={`relative flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center border z-10 ${
-                        status === 'completed'
-                          ? 'bg-primary border-primary'
-                          : status === 'current'
-                          ? 'bg-card border-primary'
-                          : 'bg-card border-border'
-                      }`}>
-                        {status === 'completed' ? (
-                          <Check className="h-3 w-3 text-white" />
-                        ) : status === 'current' ? (
-                          <div className="w-1.5 h-1.5 rounded-full bg-primary" />
-                        ) : null}
-                      </div>
-                      
-                      {/* Label */}
-                      <div className="flex-1 pt-1">
-                        <div className={`text-sm font-medium ${
-                          status === 'completed'
-                            ? 'text-primary'
-                            : status === 'current'
-                            ? 'text-foreground'
-                            : 'text-gray-500'
-                        }`}>
-                          {step.label}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Connecting Line */}
-                    {!isLast && (
-                      <div className={`absolute left-[10px] top-5 w-0.5 ${
-                        status === 'completed' ? 'bg-primary' : 'bg-border'
-                      }`} style={{ height: 'calc(100% - 0.5rem)' }} />
+      {/* Stepper row (same max-width as form card) */}
+      <div className="max-w-none md:max-w-3xl mx-auto px-3 pb-3 md:px-4 md:pb-4">
+        <div className="flex items-center gap-2 md:gap-3 px-4 md:px-0 md:justify-center">
+          {timelineSteps.map((step, index) => {
+            const status = getTimelineStepStatus(step.id);
+            const isCompleted = status === 'completed';
+            const isCurrent = status === 'current';
+            const isClickable = step.id !== 'account' && (isCompleted || isCurrent);
+
+            return (
+              <div
+                key={step.id}
+                className="flex items-center gap-2 md:gap-3 flex-1 md:flex-none"
+              >
+                <button
+                  type="button"
+                  onClick={() => isClickable && goToStep(step.id)}
+                  className={[
+                    'flex items-center gap-2 z-10 rounded-md transition-colors',
+                    isClickable ? 'cursor-pointer hover:opacity-80' : 'cursor-default',
+                  ].join(' ')}
+                  aria-label={`Go to ${step.label}`}
+                  aria-current={isCurrent ? 'step' : undefined}
+                >
+                  <div
+                    className={[
+                      'w-5 h-5 rounded-full flex items-center justify-center border text-[10px]',
+                      isCompleted
+                        ? 'bg-primary border-primary text-white'
+                        : isCurrent
+                        ? 'bg-card border-primary text-primary'
+                        : 'bg-muted border-border text-gray-400',
+                    ].join(' ')}
+                  >
+                    {isCompleted ? (
+                      <Check className="w-3 h-3" />
+                    ) : (
+                      <span className="font-semibold">
+                        {index + 1}
+                      </span>
                     )}
                   </div>
-                );
-              })}
-            </div>
-          </div>
+                  <span
+                    className={[
+                      'hidden md:inline text-[11px] font-medium truncate',
+                      isCompleted
+                        ? 'text-primary'
+                        : isCurrent
+                        ? 'text-foreground'
+                        : 'text-gray-500',
+                    ].join(' ')}
+                  >
+                    {step.label}
+                  </span>
+                </button>
+                {index < timelineSteps.length - 1 && (
+                  <div className="flex-1 md:w-10 h-px bg-border" />
+                )}
+              </div>
+            );
+          })}
         </div>
+      </div>
 
-        {/* Vertical Divider */}
-        <div className="w-px bg-border h-[600px] mt-8"></div>
-
-        {/* Right Content - Form (70%) */}
-        <div className="w-[70%] pt-8">
-          <div className="bg-card rounded-r-xl p-8 max-w-3xl border-t border-r border-b border-border h-[600px] flex flex-col">
+      <div className="flex flex-col md:flex-row max-w-5xl lg:max-w-7xl mx-auto px-3 md:px-8 pb-8 md:pb-16 gap-4 md:gap-8">
+        {/* Main Content - Form */}
+        <div className="w-full pt-0 md:pt-8">
+          <div className="bg-card rounded-xl p-3 md:p-8 max-w-none md:max-w-3xl border border-border h-auto md:max-h-[calc(100vh-220px)] flex flex-col mx-auto">
             <div className="flex-1 overflow-y-auto custom-scrollbar">
               <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)}>
-                {/* Step 1: Shop Type (only for retail shops) */}
-                {currentStep === 0 && currentStepData.id === 'shopType' && (
+                {/* Step 1: Business Type (group) */}
+                {currentStepData.id === 'businessType' && (
                   <div className="space-y-6">
                     <div className="mb-8">
-                      <h2 className="text-2xl font-bold text-foreground mb-3">
+                      <h2 className="text-xl md:text-2xl font-bold text-foreground mb-3">
                         {currentStepData.title}
                       </h2>
                       <p className="text-base text-gray-600 font-normal">
                         {currentStepData.subtitle}
                       </p>
                     </div>
+
                     <FormField
                       control={form.control}
-                      name="shopType"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="text-gray-700">Shop Type</FormLabel>
-                          <FormControl>
-                            <Select
-                              onValueChange={(value) => {
-                                field.onChange(value);
-                                if (value === 'other') {
-                                  setShowShopTypeOtherInput(true);
-                                } else {
-                                  setShowShopTypeOtherInput(false);
-                                  setShopTypeOtherValue('');
-                                }
-                              }}
-                              value={field.value || ''}
-                            >
-                              <SelectTrigger className="h-12 text-base border-[1px] border-border rounded-lg bg-muted text-foreground focus:border-[1px] focus:border-primary focus:ring-0 focus:ring-offset-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[1px] focus-visible:border-primary">
-                                <SelectValue placeholder="Select shop type" />
-                              </SelectTrigger>
-                              <SelectContent className="bg-card border-border p-0">
-                                <div className="p-2 border-b border-border sticky top-0 bg-card z-10">
-                                  <div className="relative">
-                                    <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                                    <Input
-                                      placeholder="Search shop types..."
-                                      value={shopTypeSearch}
-                                      onChange={(e) => setShopTypeSearch(e.target.value)}
-                                      className="pl-8 h-9 text-sm border-border rounded-md bg-muted text-foreground placeholder:text-muted-foreground focus:border-primary focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0"
-                                      onClick={(e) => e.stopPropagation()}
-                                      onKeyDown={(e) => e.stopPropagation()}
-                                    />
-                                  </div>
-                                </div>
-                                <div className="max-h-[200px] overflow-y-auto custom-scrollbar">
-                                  {filteredShopTypes.length > 0 ? (
-                                    filteredShopTypes.map((shopType) => (
-                                      <SelectItem 
-                                        key={shopType.value} 
-                                        value={shopType.value}
-                                        className="!text-foreground focus:!bg-muted focus:!text-foreground hover:!bg-muted hover:!text-foreground data-[highlighted]:!bg-muted data-[highlighted]:!text-foreground cursor-pointer"
+                      name="businessGroup"
+                      render={({ field }) => {
+                        const entries = Object.entries(businessOptionsByGroup).filter(
+                          ([_, opts]) => opts?.length > 0 && opts[0]?.id
+                        );
+                        const groupKeys = entries.map(([groupKey]) => groupKey);
+                        const currentValue = field.value == null ? '' : String(field.value);
+                        const handleSelectIndex = (index) => {
+                          if (index >= 0 && index < groupKeys.length) {
+                            field.onChange(groupKeys[index]);
+                          }
+                        };
+                        return (
+                          <FormItem className="space-y-3">
+                            <FormControl>
+                              <div className="space-y-4" role="radiogroup" aria-label="Business type">
+                                {entries.map(([groupKey], index) => {
+                                  const IconComponent = getBusinessGroupIcon(groupKey);
+                                  const isSelected = currentValue === groupKey;
+                                  return (
+                                    <button
+                                      key={groupKey}
+                                      type="button"
+                                      role="radio"
+                                      aria-checked={isSelected}
+                                      aria-label={getBusinessGroupLabel(groupKey)}
+                                      tabIndex={isSelected ? 0 : -1}
+                                      onClick={() => field.onChange(groupKey)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                          e.preventDefault();
+                                          field.onChange(groupKey);
+                                        }
+                                        if (e.key === 'ArrowDown') {
+                                          e.preventDefault();
+                                          handleSelectIndex(
+                                            index + 1 < groupKeys.length ? index + 1 : 0
+                                          );
+                                        }
+                                        if (e.key === 'ArrowUp') {
+                                          e.preventDefault();
+                                          handleSelectIndex(
+                                            index - 1 >= 0 ? index - 1 : groupKeys.length - 1
+                                          );
+                                        }
+                                      }}
+                                      className={`flex w-full flex-row items-center gap-2.5 md:gap-3 cursor-pointer rounded-lg border px-3 py-2 md:p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/50 ${
+                                        isSelected ? 'border-primary bg-primary/5' : 'border-border'
+                                      }`}
+                                    >
+                                      <div
+                                        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+                                          isSelected
+                                            ? 'bg-primary text-primary-foreground'
+                                            : 'bg-muted text-muted-foreground'
+                                        }`}
                                       >
-                                        {shopType.label}
-                                      </SelectItem>
-                                    ))
-                                  ) : (
-                                    <div className="px-2 py-3 text-sm text-gray-500 text-center">No shop types found</div>
-                                  )}
-                                </div>
-                              </SelectContent>
-                            </Select>
-                          </FormControl>
-                          {showShopTypeOtherInput && (
-                            <div className="mt-4">
-                              <FormLabel className="text-gray-700">Specify shop type</FormLabel>
-                              <Input
-                                value={shopTypeOtherValue}
-                                onChange={(e) => setShopTypeOtherValue(e.target.value)}
-                                placeholder="Enter your shop type"
-                                className="h-12 text-base border-border rounded-lg bg-muted text-foreground placeholder:text-muted-foreground focus:border-primary focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-primary focus-visible:border mt-2"
-                              />
-                            </div>
-                          )}
-                          <FormMessage />
-                        </FormItem>
-                      )}
+                                        <IconComponent className="h-4 w-4" />
+                                      </div>
+                                      <div className="flex flex-1 min-w-0 flex-col gap-0.5 py-0.5">
+                                        <span className="font-medium leading-tight">
+                                          {getBusinessGroupLabel(groupKey)}
+                                        </span>
+                                        <p className="text-xs text-muted-foreground leading-snug">
+                                          {getBusinessGroupExamples(groupKey)}
+                                        </p>
+                                      </div>
+                                      <div
+                                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                                          isSelected
+                                            ? 'border-primary bg-primary'
+                                            : 'border-gray-300 bg-transparent'
+                                        }`}
+                                      >
+                                        {isSelected && (
+                                          <Check className="h-3 w-3 text-white" strokeWidth={3} />
+                                        )}
+                                      </div>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }}
                     />
                   </div>
                 )}
 
-                {/* Step 2: Business Info */}
+                {/* Step 2: Business Info (includes sub-type) */}
                 {currentStepData.id === 'businessInfo' && (
                   <div className="space-y-6">
-                    <div className="mb-8">
-                      <h2 className="text-2xl font-bold text-foreground mb-3">
+                    <div className="mb-8 text-center md:text-left">
+                      <h2 className="text-xl md:text-2xl font-bold text-foreground">
                         {currentStepData.title}
                       </h2>
-                      <p className="text-base text-gray-600 font-normal">
-                        {currentStepData.subtitle}
-                      </p>
                     </div>
-                    
+
                     <FormField
                       control={form.control}
                       name="companyLogo"
                       render={({ field: { value, onChange, ...field } }) => (
-                        <FormItem>
-                          <FormLabel className="text-gray-700">Company Logo (Optional)</FormLabel>
+                        <FormItem className="items-center md:items-start">
+                          <FormLabel className="text-gray-700 text-center md:text-left">
+                            Company Logo (Optional)
+                          </FormLabel>
                           <FormControl>
-                            <div className="flex items-center gap-4">
-                              <div className="relative">
+                            <div className="flex items-center justify-center md:justify-start gap-4">
+                              <div
+                                className="relative cursor-pointer"
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => fileInputRef.current?.click()}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    fileInputRef.current?.click();
+                                  }
+                                }}
+                              >
                                 {value ? (
                                   <div className="w-20 h-20 rounded-full border border-border overflow-hidden bg-muted">
                                     <img 
@@ -689,13 +795,9 @@ const Onboarding = () => {
                                   }}
                                   className="hidden"
                                 />
-                                <button
-                                  type="button"
-                                  onClick={() => fileInputRef.current?.click()}
-                                  className="absolute bottom-0 right-0 w-6 h-6 bg-primary rounded-full flex items-center justify-center text-primary-foreground hover:bg-primary/90 transition-colors border border-border"
-                                >
-                                  <Camera className="w-3.5 h-3.5" />
-                                </button>
+                                <div className="pointer-events-none absolute bottom-3 right-4 rounded-md border border-border bg-white/90 px-1.5 py-1.5">
+                                  <Camera className="w-3 h-3 text-primary" />
+                                </div>
                               </div>
                             </div>
                           </FormControl>
@@ -739,6 +841,63 @@ const Onboarding = () => {
                         </FormItem>
                       )}
                     />
+
+                    <FormField
+                      control={form.control}
+                      name="businessSubType"
+                      render={({ field }) => {
+                        const groupKey = watchedBusinessGroup;
+                        const options = groupKey ? (businessOptionsByGroup[groupKey] || []) : [];
+                        const hasGroup = !!groupKey && options.length > 0;
+                        return (
+                          <FormItem className="space-y-3">
+                            <FormLabel className="text-gray-700">What do you mainly do?</FormLabel>
+                            <FormDescription className="text-gray-600">
+                              Select what best matches your business.
+                            </FormDescription>
+                            <FormControl>
+                              <Select
+                                value={field.value}
+                                onValueChange={field.onChange}
+                                disabled={!hasGroup}
+                              >
+                                <SelectTrigger className="h-11 border-border bg-muted text-foreground focus:border-primary focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0">
+                                  <SelectValue
+                                    placeholder={
+                                      hasGroup
+                                        ? 'Select what best matches your business'
+                                        : 'Select business type first'
+                                    }
+                                  />
+                                </SelectTrigger>
+                                {hasGroup && (
+                                  <SelectContent className="bg-card border-border w-[var(--radix-select-trigger-width)] max-w-full max-h-[60vh]">
+                                    {options.map((opt) => (
+                                      <div key={opt.id} className="px-1 py-0.5">
+                                        <SelectItem
+                                          value={opt.id}
+                                          className="!text-foreground !items-start !py-1.5"
+                                        >
+                                          <span className="font-medium text-sm">
+                                            {opt.label}
+                                          </span>
+                                        </SelectItem>
+                                        {opt.description && (
+                                          <div className="pl-8 pr-2 pt-0.5 text-xs text-muted-foreground leading-snug">
+                                            {opt.description}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </SelectContent>
+                                )}
+                              </Select>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }}
+                    />
                   </div>
                 )}
 
@@ -746,12 +905,9 @@ const Onboarding = () => {
                 {currentStepData.id === 'contactInfo' && (
                   <div className="space-y-6">
                     <div className="mb-8">
-                      <h2 className="text-2xl font-bold text-foreground mb-3">
+                      <h2 className="text-2xl font-bold text-foreground">
                         {currentStepData.title}
                       </h2>
-                      <p className="text-base text-gray-600 font-normal">
-                        {currentStepData.subtitle}
-                      </p>
                     </div>
 
                     <FormField
@@ -861,7 +1017,7 @@ const Onboarding = () => {
                                 type="tel"
                                 className="h-12 text-base border-border rounded-lg bg-muted text-foreground placeholder:text-gray-400 focus:border-primary focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-primary focus-visible:border flex-1"
                                 placeholder="123 456 7890"
-                              />
+                                />
                             </div>
                           </FormControl>
                           <FormMessage />
@@ -895,24 +1051,34 @@ const Onboarding = () => {
             </div>
             
             {/* Navigation Buttons - Outside Form */}
-            <div className="flex justify-between pt-6 mt-auto">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={handleSkip}
-                disabled={loading}
-                className="text-gray-600 hover:text-foreground"
+            <div className="flex justify-between pt-6 mt-auto gap-3">
+              {currentStep === 0 ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleSkip}
+                  disabled={loading}
+                  className="text-gray-600 hover:text-foreground"
+                >
+                  Skip for now
+                </Button>
+              ) : (
+                <div className="hidden md:block" />
+              )}
+              <div
+                className={`flex gap-3 ${
+                  currentStep > 0 ? 'w-full' : ''
+                } md:w-auto`}
               >
-                Skip for now
-              </Button>
-              <div className="flex gap-3">
                 {currentStep > 0 && (
                   <Button
                     type="button"
                     variant="outline"
                     onClick={handleBack}
                     disabled={loading}
-                    className="border-primary text-primary bg-transparent hover:bg-transparent hover:text-primary hover:border-primary transition-colors"
+                    className={`border-primary text-primary bg-transparent hover:bg-transparent hover:text-primary hover:border-primary transition-colors ${
+                      currentStep > 0 ? 'flex-1 md:flex-none' : ''
+                    }`}
                   >
                     <ArrowLeft className="mr-2 h-4 w-4" />
                     Back
@@ -923,7 +1089,9 @@ const Onboarding = () => {
                   onClick={handleNext}
                   disabled={!canProceed()}
                   loading={loading}
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-base px-6 py-2"
+                  className={`bg-primary hover:bg-primary/90 text-primary-foreground font-medium text-base px-6 py-2 ${
+                    currentStep > 0 ? 'flex-1 md:flex-none' : ''
+                  }`}
                 >
                   {currentStep === steps.length - 1 ? (
                     'Finish setup'

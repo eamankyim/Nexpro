@@ -1,5 +1,14 @@
 const { Setting, SubscriptionPlan } = require('../models');
 const { FEATURE_CATALOG, FEATURE_CATEGORIES, DEFAULT_PLAN_SEAT_LIMITS, PLAN_SEAT_PRICING, getFeaturesByCategory } = require('../config/features');
+
+/** Canonical billing tiers; feature matrix UI always shows these columns even if a row was never seeded. */
+const CANONICAL_PLAN_IDS = ['trial', 'starter', 'professional', 'enterprise'];
+const CANONICAL_PLAN_LABELS = {
+  trial: 'Trial',
+  starter: 'Starter',
+  professional: 'Professional',
+  enterprise: 'Enterprise',
+};
 const { MODULES, ALL_FEATURES } = require('../config/modules');
 const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
 const paystackService = require('../services/paystackService');
@@ -586,6 +595,141 @@ exports.getModules = async (req, res, next) => {
       }
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Get feature-plan matrix (feature rows x plan columns)
+ * @route   GET /api/platform-settings/feature-matrix
+ * @access  Platform Admin Only
+ */
+exports.getFeaturePlanMatrix = async (req, res, next) => {
+  try {
+    const plans = await SubscriptionPlan.findAll({
+      order: [['order', 'ASC'], ['createdAt', 'ASC']],
+      attributes: ['id', 'planId', 'name', 'order', 'marketing']
+    });
+    const featureKeys = FEATURE_CATALOG.map((f) => f.key);
+    const matrix = {};
+    for (const plan of plans) {
+      const flags = plan?.marketing?.featureFlags && typeof plan.marketing.featureFlags === 'object'
+        ? plan.marketing.featureFlags
+        : {};
+      const pid = String(plan.planId || '').toLowerCase();
+      matrix[pid] = featureKeys.reduce((acc, key) => {
+        acc[key] = flags[key] === true;
+        return acc;
+      }, {});
+    }
+
+    for (const canonicalId of CANONICAL_PLAN_IDS) {
+      if (!matrix[canonicalId]) {
+        matrix[canonicalId] = featureKeys.reduce((acc, key) => {
+          acc[key] = false;
+          return acc;
+        }, {});
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      data: {
+        plans: plans.map((p) => ({
+          id: p.id,
+          planId: p.planId,
+          name: p.name,
+          order: p.order
+        })),
+        features: FEATURE_CATALOG,
+        matrix
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Update feature-plan matrix
+ * @route   PUT /api/platform-settings/feature-matrix
+ * @access  Platform Admin Only
+ */
+exports.updateFeaturePlanMatrix = async (req, res, next) => {
+  const tx = await sequelize.transaction();
+  try {
+    const rawMatrix = req.body?.matrix;
+    if (!rawMatrix || typeof rawMatrix !== 'object') {
+      await tx.rollback();
+      return res.status(400).json({ success: false, message: 'matrix object is required' });
+    }
+
+    const matrix = Object.fromEntries(
+      Object.entries(rawMatrix).map(([k, v]) => [String(k || '').toLowerCase(), v])
+    );
+
+    const validFeatureKeys = new Set(FEATURE_CATALOG.map((f) => f.key));
+    const canonicalSet = new Set(CANONICAL_PLAN_IDS);
+    const planIds = Object.keys(matrix);
+
+    for (const planId of planIds) {
+      if (!canonicalSet.has(planId)) continue;
+      await SubscriptionPlan.findOrCreate({
+        where: { planId },
+        defaults: {
+          planId,
+          name: CANONICAL_PLAN_LABELS[planId] || planId,
+          order: Math.max(0, CANONICAL_PLAN_IDS.indexOf(planId)),
+          description: null,
+          price: {},
+          highlights: [],
+          marketing: {},
+          onboarding: {},
+          isActive: true,
+          metadata: { autoCreatedFrom: 'feature-matrix' },
+        },
+        transaction: tx,
+      });
+    }
+
+    const plans = await SubscriptionPlan.findAll({
+      where: { planId: { [Op.in]: planIds } },
+      transaction: tx
+    });
+    const foundPlanIds = new Set(plans.map((p) => String(p.planId || '').toLowerCase()));
+    const unknownPlanIds = planIds.filter((p) => !foundPlanIds.has(p));
+
+    for (const plan of plans) {
+      const pid = String(plan.planId || '').toLowerCase();
+      const row = matrix[pid] || {};
+      const nextFlags = {};
+      for (const [featureKey, value] of Object.entries(row)) {
+        if (!validFeatureKeys.has(featureKey)) {
+          await tx.rollback();
+          return res.status(400).json({ success: false, message: `Unknown feature key: ${featureKey}` });
+        }
+        nextFlags[featureKey] = value === true;
+      }
+      for (const key of validFeatureKeys) {
+        if (!Object.prototype.hasOwnProperty.call(nextFlags, key)) {
+          nextFlags[key] = false;
+        }
+      }
+      const marketing = { ...(plan.marketing || {}) };
+      marketing.featureFlags = nextFlags;
+      await plan.update({ marketing }, { transaction: tx });
+    }
+
+    await tx.commit();
+    res.status(200).json({
+      success: true,
+      message: unknownPlanIds.length > 0
+        ? `Feature matrix updated (ignored unknown plans: ${unknownPlanIds.join(', ')})`
+        : 'Feature matrix updated',
+      ignoredPlans: unknownPlanIds
+    });
+  } catch (error) {
+    await tx.rollback();
     next(error);
   }
 };

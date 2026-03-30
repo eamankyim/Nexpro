@@ -24,12 +24,16 @@ const quoteService = {
     return await api.put(`/quotes/${id}`, quoteData);
   },
 
+  updateStatus: async (id, status) => {
+    return await api.patch(`/quotes/${id}/status`, { status });
+  },
+
   delete: async (id) => {
     return await api.delete(`/quotes/${id}`);
   },
 
-  convertToJob: async (id) => {
-    return await api.post(`/quotes/${id}/convert`);
+  convertToJob: async (id, jobData = {}) => {
+    return await api.post(`/quotes/${id}/convert`, jobData);
   },
 
   convertToSale: async (id, paymentMethod = 'credit', shopId = null) => {

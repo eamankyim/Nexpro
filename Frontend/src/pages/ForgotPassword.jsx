@@ -47,7 +47,7 @@ const ForgotPassword = () => {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-0 md:p-8">
       <div className={`w-full ${isMobile ? 'h-screen' : 'max-w-md bg-card rounded-2xl border border-border'} overflow-hidden flex flex-col ${isMobile ? 'px-6 py-4' : 'p-12'}`}>
-        <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-[#166534] text-center`}>ShopWISE</h1>
+        <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-brand text-center`}>ABS</h1>
 
         {!submitted && (
           <>
@@ -60,8 +60,8 @@ const ForgotPassword = () => {
 
         {submitted ? (
           <div className="flex flex-col items-center text-center space-y-5 py-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-[#166534]/10 border border-[#166534]/20">
-              <CheckCircle2 className="h-8 w-8 text-[#166534]" aria-hidden />
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-brand-10 border border-brand-20">
+              <CheckCircle2 className="h-8 w-8 text-brand" aria-hidden />
             </div>
             <div className="space-y-2">
               <h3 className="font-semibold text-foreground text-lg">Check your email</h3>
@@ -74,7 +74,7 @@ const ForgotPassword = () => {
             </div>
             <Link
               to="/login"
-              className="inline-flex items-center justify-center rounded-lg bg-[#166534] hover:bg-[#14532d] text-white font-medium h-12 px-6 w-full max-w-[240px] transition-colors"
+              className="inline-flex items-center justify-center rounded-lg bg-brand hover:bg-brand-dark text-white font-medium h-12 px-6 w-full max-w-[240px] transition-colors"
             >
               Back to sign in
             </Link>
@@ -103,7 +103,7 @@ const ForgotPassword = () => {
               />
               <Button
                 type="submit"
-                className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium`}
+                className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium`}
                 disabled={loading}
               >
                 {loading ? (
@@ -123,7 +123,7 @@ const ForgotPassword = () => {
           <div className={`text-center ${isMobile ? 'mt-4' : 'mt-6'}`}>
             <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground`}>
               Remember your password?{' '}
-              <Link to="/login" className="text-[#166534] hover:underline font-medium">
+              <Link to="/login" className="text-brand hover:underline font-medium">
                 Sign in
               </Link>
             </p>

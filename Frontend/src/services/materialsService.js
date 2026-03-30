@@ -33,7 +33,21 @@ const materialsService = {
 
   restock: async (id, payload) => api.post(`/materials/items/${id}/restock`, payload),
   adjust: async (id, payload) => api.post(`/materials/items/${id}/adjust`, payload),
-  recordUsage: async (id, payload) => api.post(`/materials/items/${id}/usage`, payload)
+  recordUsage: async (id, payload) => api.post(`/materials/items/${id}/usage`, payload),
+
+  getImportTemplate: async () => {
+    const response = await api.get('/materials/items/import/template', { responseType: 'blob' });
+    return response.data;
+  },
+
+  importItems: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/materials/items/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response?.data ?? response;
+  },
 };
 
 export default materialsService;

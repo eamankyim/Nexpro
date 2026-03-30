@@ -11,6 +11,8 @@ const {
   reorderSubscriptionPlans,
   syncPaystackPlans,
   getFeatureCatalog,
+  getFeaturePlanMatrix,
+  updateFeaturePlanMatrix,
   getModules,
   getTenantStorageUsage
 } = require('../controllers/platformSettingsController');
@@ -81,6 +83,8 @@ router.put('/', updatePlatformSettings);
  *         description: Feature catalog with categories
  */
 router.get('/features', getFeatureCatalog);
+router.get('/feature-matrix', getFeaturePlanMatrix);
+router.put('/feature-matrix', updateFeaturePlanMatrix);
 
 /**
  * @swagger

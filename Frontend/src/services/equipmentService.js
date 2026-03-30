@@ -18,7 +18,21 @@ const equipmentService = {
   getById: async (id) => api.get(`/equipment/items/${id}`),
   createItem: async (payload) => api.post('/equipment/items', payload),
   updateItem: async (id, payload) => api.put(`/equipment/items/${id}`, payload),
-  deleteItem: async (id) => api.delete(`/equipment/items/${id}`)
+  deleteItem: async (id) => api.delete(`/equipment/items/${id}`),
+
+  getImportTemplate: async () => {
+    const response = await api.get('/equipment/items/import/template', { responseType: 'blob' });
+    return response.data;
+  },
+
+  importItems: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/equipment/items/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response?.data ?? response;
+  },
 };
 
 export default equipmentService;

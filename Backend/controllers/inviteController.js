@@ -2,6 +2,9 @@ const crypto = require('crypto');
 const { InviteToken, User, Tenant } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const activityLogger = require('../services/activityLogger');
+const emailService = require('../services/emailService');
+const { inviteEmail: inviteEmailTemplate } = require('../services/emailTemplates');
 const { validateSeatLimit, getSeatUsageSummary } = require('../utils/seatLimitHelper');
 const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
 
@@ -10,13 +13,32 @@ const generateToken = () => {
   return crypto.randomBytes(16).toString('hex');
 };
 
+const getFrontendBaseUrl = () => {
+  const raw = process.env.FRONTEND_URL || 'http://localhost:3000';
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch (_err) {
+    return raw.replace(/\/+$/, '').replace(/\/onboarding$/i, '');
+  }
+};
+
 // @desc    Generate invite token
 // @route   POST /api/invites
 // @access  Private/Admin
 exports.generateInvite = async (req, res, next) => {
   try {
     const { email, role, name, expiresInDays } = req.body;
-    console.log('[Invite] Generating invite for:', { email, role, name, expiresInDays });
+    const inviteRequestId = `inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    console.log('[Invite] Generating invite for:', {
+      inviteRequestId,
+      email,
+      role,
+      name,
+      expiresInDays,
+      inviterUserId: req.user?.id,
+      tenantId: req.tenantId || null,
+    });
 
     const { User: UserModel } = require('../models');
     const inviter = await UserModel.findByPk(req.user.id, { attributes: ['id', 'emailVerifiedAt'] });
@@ -72,7 +94,7 @@ exports.generateInvite = async (req, res, next) => {
 
     if (existingInvite) {
       console.log('[Invite] Active invite already exists:', email);
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+      const frontendUrl = getFrontendBaseUrl();
       const existingInviteUrl = `${frontendUrl}/signup?token=${existingInvite.token}`;
       return res.status(400).json({
         success: false,
@@ -124,9 +146,155 @@ exports.generateInvite = async (req, res, next) => {
       tenantId: req.tenantId
     });
 
+    try {
+      await activityLogger.logUserInvited(invite, req.user?.id);
+    } catch (logErr) {
+      console.error('[Invite] logUserInvited failed:', logErr?.message);
+    }
+
     // Generate invite URL
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    const frontendUrl = getFrontendBaseUrl();
     const inviteUrl = `${frontendUrl}/signup?token=${token}`;
+
+    setImmediate(async () => {
+      try {
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const sendWithRetry = async (sendFn, label, maxAttempts = 3) => {
+          let lastResult = null;
+          for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            try {
+              const result = await sendFn();
+              if (result?.success) return result;
+              lastResult = result;
+              console.warn('[Invite Email] Send attempt failed', {
+                inviteRequestId,
+                inviteId: invite.id,
+                label,
+                attempt,
+                maxAttempts,
+                error: result?.error || 'unknown_error',
+              });
+            } catch (err) {
+              lastResult = { success: false, error: err?.message || 'unknown_error' };
+              console.warn('[Invite Email] Send attempt exception', {
+                inviteRequestId,
+                inviteId: invite.id,
+                label,
+                attempt,
+                maxAttempts,
+                error: err?.message,
+              });
+            }
+            if (attempt < maxAttempts) {
+              await sleep(500 * attempt);
+            }
+          }
+          return lastResult;
+        };
+
+        const platformConfig = emailService.getPlatformConfig?.();
+        console.log('[Invite Email] Dispatch started', {
+          inviteRequestId,
+          inviteId: invite.id,
+          inviteType: 'workspace_user',
+          to: normalizedEmail,
+          inviterUserId: req.user?.id,
+          tenantId: req.tenantId,
+          provider: platformConfig?.provider || 'unknown',
+          fromEmail: platformConfig?.fromEmail || null,
+          frontendUrl,
+        });
+        const inviter = await User.findByPk(req.user.id, { attributes: ['name', 'email'] });
+        const tenant = await Tenant.findByPk(req.tenantId, { attributes: ['name'] });
+        const inviterName = inviter?.name || inviter?.email || 'A team member';
+        const organizationName = tenant?.name || 'African Business Suite';
+        const { subject, html, text } = inviteEmailTemplate(normalizedEmail, inviteUrl, inviterName, organizationName);
+        const tenantEmailConfig = await emailService.getConfig(req.tenantId);
+        let result = null;
+        let usedProvider = platformConfig?.provider || 'unknown';
+
+        if (tenantEmailConfig?.enabled) {
+          console.log('[Invite Email] Sending via tenant email config', {
+            inviteRequestId,
+            inviteId: invite.id,
+            tenantId: req.tenantId,
+            provider: tenantEmailConfig.provider || 'smtp',
+          });
+          result = await sendWithRetry(
+            () => emailService.sendMessage(req.tenantId, normalizedEmail, subject, html, text),
+            'tenant_email'
+          );
+          usedProvider = tenantEmailConfig.provider || 'smtp';
+        } else {
+          console.log('[Invite Email] Tenant email config not enabled. Using platform sender.', {
+            inviteRequestId,
+            inviteId: invite.id,
+            tenantId: req.tenantId,
+          });
+        }
+
+        if (!result?.success) {
+          const fallbackResult = await sendWithRetry(
+            () => emailService.sendPlatformMessage(
+              normalizedEmail,
+              subject,
+              html,
+              text,
+              [],
+              { categories: ['transactional', 'signup'] }
+            ),
+            'platform_email'
+          );
+          if (!fallbackResult?.success) {
+            await InviteToken.update(
+              {
+                emailStatus: 'failed',
+                emailLastError: String(fallbackResult?.error || result?.error || 'Invite email send failed').slice(0, 5000),
+              },
+              { where: { id: invite.id } }
+            );
+            throw new Error(fallbackResult?.error || result?.error || 'Invite email send failed');
+          }
+          result = fallbackResult;
+          usedProvider = platformConfig?.provider || 'unknown';
+        }
+        await InviteToken.update(
+          {
+            emailStatus: 'sent',
+            emailLastError: null,
+          },
+          { where: { id: invite.id } }
+        );
+        console.log('[Invite Email] Dispatch success', {
+          inviteRequestId,
+          inviteId: invite.id,
+          to: normalizedEmail,
+          messageId: result?.messageId || null,
+          provider: usedProvider,
+        });
+      } catch (err) {
+        await InviteToken.update(
+          {
+            emailStatus: 'failed',
+            emailLastError: String(err?.message || 'Invite email send failed').slice(0, 5000),
+          },
+          { where: { id: invite.id } }
+        ).catch((updateErr) => {
+          console.error('[Invite Email] Failed to persist email failure status', {
+            inviteRequestId,
+            inviteId: invite.id,
+            error: updateErr?.message,
+          });
+        });
+        console.error('[Invite Email] Dispatch failed', {
+          inviteRequestId,
+          inviteId: invite.id,
+          to: normalizedEmail,
+          error: err?.message,
+          stack: err?.stack,
+        });
+      }
+    });
 
     res.status(201).json({
       success: true,

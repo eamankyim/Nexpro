@@ -113,7 +113,7 @@ const ForcePasswordChange = ({ visible, onComplete }) => {
         updateUser({ ...user, isFirstLogin: false, profilePicture });
       }
 
-      showSuccess('Profile updated successfully! Welcome to ShopWISE!');
+      showSuccess('Profile updated successfully! Welcome to African Business Suite!');
       onComplete();
     } catch (error) {
       showError(error, 'Failed to update profile');
@@ -137,7 +137,7 @@ const ForcePasswordChange = ({ visible, onComplete }) => {
         <DialogBody>
         <Alert className="mb-6">
           <Info className="h-4 w-4" />
-          <AlertTitle>Welcome to ShopWISE!</AlertTitle>
+          <AlertTitle>Welcome to African Business Suite!</AlertTitle>
           <AlertDescription>
             Please complete your profile setup by changing your password and adding a profile picture.
           </AlertDescription>

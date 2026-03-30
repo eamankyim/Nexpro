@@ -24,6 +24,15 @@ const QuoteItem = sequelize.define('QuoteItem', {
     },
     onDelete: 'CASCADE'
   },
+  productId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'products',
+      key: 'id'
+    },
+    comment: 'For shop/product-based quotes: product this line refers to'
+  },
   description: {
     type: DataTypes.TEXT,
     allowNull: false

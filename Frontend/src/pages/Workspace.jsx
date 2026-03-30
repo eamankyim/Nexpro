@@ -185,15 +185,15 @@ const Workspace = () => {
         </p>
       </div>
 
-      <Tabs defaultValue="focus" className="space-y-4 md:space-y-6">
-        <TabsList className="overflow-x-auto w-full flex-nowrap mb-3 md:mb-4">
-          <TabsTrigger value="focus" className="text-xs md:text-sm">
+      <Tabs defaultValue="focus" className="w-full space-y-4 md:space-y-6">
+        <TabsList className="grid w-full grid-cols-3 mb-3 md:mb-4 h-auto p-0 gap-0 rounded-lg bg-muted">
+          <TabsTrigger value="focus" className="rounded-lg data-[state=active]:bg-background data-[state=active]:text-foreground text-xs md:text-sm py-3">
             Focus for the week
           </TabsTrigger>
-          <TabsTrigger value="tasks" className="text-xs md:text-sm">
+          <TabsTrigger value="tasks" className="rounded-lg data-[state=active]:bg-background data-[state=active]:text-foreground text-xs md:text-sm py-3">
             Tasks
           </TabsTrigger>
-          <TabsTrigger value="checklist" className="text-xs md:text-sm">
+          <TabsTrigger value="checklist" className="rounded-lg data-[state=active]:bg-background data-[state=active]:text-foreground text-xs md:text-sm py-3">
             Checklist
           </TabsTrigger>
         </TabsList>

@@ -9,6 +9,9 @@ const DEFAULT_ORIGINS = [
   'http://localhost:4321',
   'http://127.0.0.1:3000',
   'http://127.0.0.1:5173',
+  'https://myapp.africanbusinesssuite.com',
+  'https://africanbusinesssuite.com',
+  'https://www.africanbusinesssuite.com',
 ];
 
 /**
@@ -51,7 +54,7 @@ const isLanOrigin = (o) => {
 };
 
 /**
- * Check if an origin is allowed (exact match or vercel.app)
+ * Check if an origin is allowed (exact match, vercel.app, or Cloudflare Pages *.pages.dev)
  * @param {string} origin - Request origin
  * @returns {boolean}
  */
@@ -59,6 +62,7 @@ const isOriginAllowed = (origin) => {
   if (!origin) return false;
   const o = normalize(origin);
   if (o.includes('vercel.app')) return true;
+  if (o.includes('pages.dev')) return true;
   const notProduction = process.env.NODE_ENV !== 'production';
   if (notProduction && (o.includes('localhost') || o.includes('127.0.0.1'))) return true;
   if (notProduction && isLanOrigin(o)) return true;

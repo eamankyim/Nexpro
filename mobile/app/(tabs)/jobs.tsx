@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,8 @@ import {
   Pressable,
   RefreshControl,
   ActivityIndicator,
-  Modal,
-  ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery } from '@tanstack/react-query';
 
@@ -66,27 +64,21 @@ type Job = {
 
 export default function JobsScreen() {
   const router = useRouter();
-  const { activeTenant, activeTenantId, user } = useAuth();
+  const params = useLocalSearchParams<{ openJobId?: string }>();
+  const { activeTenant, activeTenantId } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
-
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [priorityFilter, setPriorityFilter] = useState<string>('all');
-  const [selectedJob, setSelectedJob] = useState<Job | null>(null);
-  const [detailJob, setDetailJob] = useState<Job | null>(null);
 
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isStudio = resolvedType === 'studio';
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['jobs', activeTenantId, statusFilter, priorityFilter],
+    queryKey: ['jobs', activeTenantId],
     queryFn: async () => {
-      const params: { page?: number; limit?: number; status?: string; priority?: string } = {
+      const params: { page?: number; limit?: number } = {
         page: 1,
-        limit: 20,
+        limit: 50,
       };
-      if (statusFilter !== 'all') params.status = statusFilter;
-      if (priorityFilter !== 'all') params.priority = priorityFilter;
       return jobService.getJobs(params);
     },
     enabled: !!activeTenantId && isStudio,
@@ -97,18 +89,31 @@ export default function JobsScreen() {
   });
 
   const jobs = (response?.data || []) as Job[];
+  const openJobId = typeof params.openJobId === 'string' ? params.openJobId : null;
+
+  const totalJobs = jobs.length;
+  const inProgressJobs = jobs.filter((j) => j.status === 'in_progress').length;
+  const completedJobs = jobs.filter((j) => j.status === 'completed').length;
+  const overdueJobs = jobs.filter((j) => {
+    if (!j.dueDate) return false;
+    const due = new Date(j.dueDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return due < today && j.status !== 'completed' && j.status !== 'cancelled';
+  }).length;
   const onRefresh = useCallback(() => refetch(), [refetch]);
 
-  const handleJobPress = useCallback(async (job: Job) => {
-    setSelectedJob(job);
-    try {
-      const res = await jobService.getJobById(job.id);
-      const full = res?.data || res;
-      setDetailJob(full as Job);
-    } catch {
-      setDetailJob(job);
+  const handleJobPress = useCallback((job: Job) => {
+    router.push(`/job/${encodeURIComponent(job.id)}` as any);
+  }, [router]);
+
+  useEffect(() => {
+    if (!openJobId || jobs.length === 0) return;
+    const target = jobs.find((j) => j.id === openJobId);
+    if (target) {
+      router.push(`/job/${encodeURIComponent(target.id)}` as any);
     }
-  }, []);
+  }, [openJobId, jobs, router]);
 
   const handleCreateJob = useCallback(() => {
     router.push('/(tabs)/scan');
@@ -196,43 +201,47 @@ export default function JobsScreen() {
         <Text style={styles.createButtonText}>New Job</Text>
       </Pressable>
 
-      {/* Status filter */}
-      <View style={styles.filterRow}>
-        {['all', 'new', 'in_progress', 'completed', 'on_hold'].map((s) => (
-          <Pressable
-            key={s}
-            onPress={() => setStatusFilter(s)}
-            style={[
-              styles.filterBtn,
-              { borderColor },
-              statusFilter === s && { backgroundColor: colors.tint, borderColor: colors.tint },
-            ]}
-          >
-            <Text style={[styles.filterText, { color: statusFilter === s ? '#fff' : textColor }]}>
-              {s === 'in_progress' ? 'In Progress' : s.charAt(0).toUpperCase() + s.slice(1)}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
-
-      {/* Priority filter */}
-      <View style={styles.filterRow}>
-        {['all', 'low', 'medium', 'high', 'urgent'].map((p) => (
-          <Pressable
-            key={p}
-            onPress={() => setPriorityFilter(p)}
-            style={[
-              styles.filterBtn,
-              { borderColor },
-              priorityFilter === p && { backgroundColor: colors.tint, borderColor: colors.tint },
-            ]}
-          >
-            <Text style={[styles.filterText, { color: priorityFilter === p ? '#fff' : textColor }]}>
-              {p.charAt(0).toUpperCase() + p.slice(1)}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      {/* Stats cards (match web Jobs summary with icons) */}
+      {!isLoading && !isError && totalJobs >= 0 && (
+        <View style={styles.statsRow}>
+          <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
+            <View style={styles.statHeader}>
+              <Text style={[styles.statLabel, { color: mutedColor }]}>Total Jobs</Text>
+              <View style={[styles.statIconWrap, { backgroundColor: 'rgba(22, 101, 52, 0.1)' }]}>
+                <FontAwesome name="briefcase" size={16} color={colors.tint} />
+              </View>
+            </View>
+            <Text style={[styles.statValue, { color: textColor }]}>{totalJobs}</Text>
+          </View>
+          <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
+            <View style={styles.statHeader}>
+              <Text style={[styles.statLabel, { color: mutedColor }]}>In Progress</Text>
+              <View style={[styles.statIconWrap, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
+                <FontAwesome name="clock-o" size={16} color={colors.tint} />
+              </View>
+            </View>
+            <Text style={[styles.statValue, { color: textColor }]}>{inProgressJobs}</Text>
+          </View>
+          <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
+            <View style={styles.statHeader}>
+              <Text style={[styles.statLabel, { color: mutedColor }]}>Completed</Text>
+              <View style={[styles.statIconWrap, { backgroundColor: 'rgba(132, 204, 22, 0.1)' }]}>
+                <FontAwesome name="check-circle" size={16} color="#84cc16" />
+              </View>
+            </View>
+            <Text style={[styles.statValue, { color: textColor }]}>{completedJobs}</Text>
+          </View>
+          <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
+            <View style={styles.statHeader}>
+              <Text style={[styles.statLabel, { color: mutedColor }]}>Overdue</Text>
+              <View style={[styles.statIconWrap, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
+                <FontAwesome name="exclamation-circle" size={16} color="#ef4444" />
+              </View>
+            </View>
+            <Text style={[styles.statValue, { color: textColor }]}>{overdueJobs}</Text>
+          </View>
+        </View>
+      )}
 
       {isLoading ? (
         <View style={styles.center}>
@@ -276,103 +285,6 @@ export default function JobsScreen() {
         />
       )}
 
-      {/* Job detail modal */}
-      <Modal
-        visible={!!selectedJob}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setSelectedJob(null)}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => setSelectedJob(null)}>
-          <Pressable
-            style={[styles.modalContent, { backgroundColor: cardBg }]}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: textColor }]}>
-                {detailJob?.jobNumber || selectedJob?.jobNumber || 'Job details'}
-              </Text>
-              <Pressable onPress={() => setSelectedJob(null)} hitSlop={12}>
-                <FontAwesome name="times" size={22} color={mutedColor} />
-              </Pressable>
-            </View>
-            {detailJob && (
-              <ScrollView style={styles.modalBody}>
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Title</Text>
-                  <Text style={[styles.detailValue, { color: textColor }]}>{detailJob.title}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Customer</Text>
-                  <Text style={[styles.detailValue, { color: textColor }]}>
-                    {detailJob.customer?.name ?? '—'}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Status</Text>
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(detailJob.status) + '20' }]}>
-                    <Text style={[styles.statusText, { color: getStatusColor(detailJob.status) }]}>
-                      {detailJob.status.replace('_', ' ')}
-                    </Text>
-                  </View>
-                </View>
-                {detailJob.priority && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Priority</Text>
-                    <View style={[styles.priorityBadge, { backgroundColor: getPriorityColor(detailJob.priority) + '20' }]}>
-                      <Text style={[styles.priorityText, { color: getPriorityColor(detailJob.priority) }]}>
-                        {detailJob.priority}
-                      </Text>
-                    </View>
-                  </View>
-                )}
-                {detailJob.dueDate && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Due Date</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>
-                      {formatDate(detailJob.dueDate)}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Created</Text>
-                  <Text style={[styles.detailValue, { color: textColor }]}>
-                    {formatDate(detailJob.createdAt)}
-                  </Text>
-                </View>
-                {detailJob.total && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Total</Text>
-                    <Text style={[styles.detailValue, { color: colors.tint, fontSize: 18, fontWeight: '700' }]}>
-                      {formatCurrency(detailJob.total)}
-                    </Text>
-                  </View>
-                )}
-                {(detailJob as any).items?.length > 0 && (
-                  <>
-                    <Text style={[styles.detailSection, { color: textColor }]}>Items</Text>
-                    {(detailJob as any).items.map(
-                      (
-                        item: { description: string; quantity: number; unitPrice: number },
-                        i: number
-                      ) => (
-                        <View key={i} style={styles.itemRow}>
-                          <Text style={[styles.itemName, { color: textColor }]} numberOfLines={1}>
-                            {item.description} x{item.quantity}
-                          </Text>
-                          <Text style={[styles.itemTotal, { color: textColor }]}>
-                            {formatCurrency(item.unitPrice * item.quantity)}
-                          </Text>
-                        </View>
-                      )
-                    )}
-                  </>
-                )}
-              </ScrollView>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
@@ -398,9 +310,43 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   createButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginBottom: 12, flexWrap: 'wrap' },
-  filterBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
-  filterText: { fontSize: 14, fontWeight: '600' },
+  statsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  statCard: {
+    flex: 1,
+    minWidth: '30%',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+  statHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginBottom: 4,
+  },
+  statIconWrap: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statLabel: {
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  statValue: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
   listContent: { padding: 16, paddingBottom: 32 },
   jobCard: {
     padding: 16,
@@ -424,31 +370,4 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', paddingVertical: 48 },
   emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 16 },
   emptySubtitle: { fontSize: 14, marginTop: 8, textAlign: 'center' },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    maxHeight: '80%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
-  },
-  modalTitle: { fontSize: 18, fontWeight: '700' },
-  modalBody: { padding: 20 },
-  detailRow: { marginBottom: 16 },
-  detailLabel: { fontSize: 12, marginBottom: 4 },
-  detailValue: { fontSize: 16, fontWeight: '500' },
-  detailSection: { fontSize: 16, fontWeight: '600', marginTop: 20, marginBottom: 12 },
-  itemRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  itemName: { flex: 1, fontSize: 14 },
-  itemTotal: { fontSize: 14, fontWeight: '600' },
 });

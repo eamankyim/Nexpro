@@ -1,5 +1,6 @@
 const { Notification, UserTenant } = require('../models');
 const { Op } = require('sequelize');
+const { getTenantLogoUrl } = require('../utils/tenantLogo');
 
 const logPrefix = '[ActivityLogger]';
 
@@ -110,28 +111,28 @@ const RECIPIENT_STRATEGY = {
 const ACTIVITY_CONFIG = {
   // JOB ACTIVITIES
   [ACTIVITY_TYPES.JOB_CREATED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
-    channels: [CHANNELS.IN_APP],
+    recipientStrategy: RECIPIENT_STRATEGY.JOB_TEAM,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'normal',
     type: 'job',
     icon: 'file-text'
   },
   [ACTIVITY_TYPES.JOB_ASSIGNED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.ASSIGNED_USER,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'high',
     type: 'job',
     icon: 'team'
   },
   [ACTIVITY_TYPES.JOB_STATUS_CHANGED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.JOB_TEAM,
     channels: [CHANNELS.IN_APP],
     priority: 'normal',
     type: 'job',
     icon: 'swap'
   },
   [ACTIVITY_TYPES.JOB_COMPLETED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.JOB_TEAM,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'high',
     type: 'job',
@@ -140,28 +141,28 @@ const ACTIVITY_CONFIG = {
   
   // INVOICE ACTIVITIES
   [ACTIVITY_TYPES.INVOICE_CREATED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.MANAGERS_AND_ADMINS,
     channels: [CHANNELS.IN_APP],
     priority: 'normal',
     type: 'invoice',
     icon: 'file-add'
   },
   [ACTIVITY_TYPES.INVOICE_SENT]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.MANAGERS_AND_ADMINS,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'normal',
     type: 'invoice',
     icon: 'mail'
   },
   [ACTIVITY_TYPES.INVOICE_PAID]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
-    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL, CHANNELS.SMS],
+    recipientStrategy: RECIPIENT_STRATEGY.MANAGERS_AND_ADMINS,
+    channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'high',
     type: 'payment',
     icon: 'dollar'
   },
   [ACTIVITY_TYPES.INVOICE_OVERDUE]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.MANAGERS_AND_ADMINS,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'high',
     type: 'alert',
@@ -170,7 +171,7 @@ const ACTIVITY_CONFIG = {
   
   // PAYMENT ACTIVITIES
   [ACTIVITY_TYPES.PAYMENT_RECEIVED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.MANAGERS_AND_ADMINS,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'high',
     type: 'payment',
@@ -179,14 +180,14 @@ const ACTIVITY_CONFIG = {
   
   // QUOTE ACTIVITIES
   [ACTIVITY_TYPES.QUOTE_CREATED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.MANAGERS_AND_ADMINS,
     channels: [CHANNELS.IN_APP],
     priority: 'normal',
     type: 'quote',
     icon: 'file-text'
   },
   [ACTIVITY_TYPES.QUOTE_ACCEPTED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.MANAGERS_AND_ADMINS,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'high',
     type: 'quote',
@@ -195,28 +196,28 @@ const ACTIVITY_CONFIG = {
   
   // LEAD ACTIVITIES
   [ACTIVITY_TYPES.LEAD_CREATED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.MANAGERS_AND_ADMINS,
     channels: [CHANNELS.IN_APP],
     priority: 'normal',
     type: 'lead',
     icon: 'user-add'
   },
   [ACTIVITY_TYPES.LEAD_ASSIGNED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.ASSIGNED_USER,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'high',
     type: 'lead',
     icon: 'user'
   },
   [ACTIVITY_TYPES.LEAD_CONVERTED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.LEAD_TEAM,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'high',
     type: 'lead',
     icon: 'check-circle'
   },
   [ACTIVITY_TYPES.LEAD_ACTIVITY_LOGGED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.LEAD_TEAM,
     channels: [CHANNELS.IN_APP],
     priority: 'normal',
     type: 'lead',
@@ -225,21 +226,21 @@ const ACTIVITY_CONFIG = {
   
   // EXPENSE ACTIVITIES
   [ACTIVITY_TYPES.EXPENSE_SUBMITTED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.MANAGERS_AND_ADMINS,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'normal',
     type: 'expense',
     icon: 'file-text'
   },
   [ACTIVITY_TYPES.EXPENSE_APPROVED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.CUSTOM,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'normal',
     type: 'expense',
     icon: 'check-circle'
   },
   [ACTIVITY_TYPES.EXPENSE_REJECTED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.CUSTOM,
     channels: [CHANNELS.IN_APP, CHANNELS.EMAIL],
     priority: 'normal',
     type: 'expense',
@@ -248,7 +249,7 @@ const ACTIVITY_CONFIG = {
   
   // USER ACTIVITIES
   [ACTIVITY_TYPES.USER_INVITED]: {
-    recipientStrategy: RECIPIENT_STRATEGY.EVERYONE,
+    recipientStrategy: RECIPIENT_STRATEGY.CUSTOM,
     channels: [CHANNELS.EMAIL],
     priority: 'high',
     type: 'user',
@@ -400,6 +401,13 @@ const logActivity = async ({
       return { success: false, notifications: [] };
     }
 
+    const {
+      getPreferencesForUsers,
+      isNotificationChannelEnabled
+    } = require('./notificationPreferenceHelper');
+    const prefsMap = await getPreferencesForUsers(recipients);
+    const preferenceCategory = config.type;
+
     // Determine channels (use custom or config default)
     const channels = customChannels || config.channels;
     
@@ -409,7 +417,10 @@ const logActivity = async ({
     // Create notifications for in-app channel
     const notifications = [];
     if (channels.includes(CHANNELS.IN_APP)) {
-      const inAppNotifications = recipients.map(userId => ({
+      const inAppRecipients = recipients.filter((userId) =>
+        isNotificationChannelEnabled(prefsMap.get(userId), preferenceCategory, 'in_app')
+      );
+      const inAppNotifications = inAppRecipients.map(userId => ({
         tenantId,
         userId,
         title,
@@ -423,10 +434,34 @@ const logActivity = async ({
         triggeredBy
       }));
 
-      const created = await Notification.bulkCreate(inAppNotifications);
-      notifications.push(...created);
-      
-      console.log(`${logPrefix} Created ${created.length} in-app notifications for ${activityType}`);
+      if (inAppNotifications.length > 0) {
+        const created = await Notification.bulkCreate(inAppNotifications);
+        notifications.push(...created);
+
+        try {
+          const { emitNotification } = require('./websocketService');
+          for (const n of created) {
+            emitNotification(tenantId, n.userId, {
+              id: n.id,
+              title: n.title,
+              message: n.message,
+              type: n.type,
+              link: n.link,
+              createdAt: n.createdAt
+            });
+          }
+        } catch (wsErr) {
+          if (process.env.NODE_ENV === 'development') {
+            console.warn(`${logPrefix} WebSocket emit failed:`, wsErr?.message);
+          }
+        }
+
+        console.log(`${logPrefix} Created ${created.length} in-app notifications for ${activityType}`);
+      } else {
+        console.log(`${logPrefix} Skipped in-app notifications (no recipients after preference filter)`, {
+          activityType
+        });
+      }
     }
 
     // Implement EMAIL channel
@@ -439,8 +474,8 @@ const logActivity = async ({
         // Get tenant info for email template
         const tenant = await Tenant.findByPk(tenantId);
         const company = {
-          name: tenant?.name || 'ShopWISE',
-          logo: tenant?.logo || '',
+          name: tenant?.name || 'African Business Suite',
+          logo: getTenantLogoUrl(tenant),
           primaryColor: tenant?.metadata?.primaryColor || '#166534'
         };
         
@@ -457,19 +492,21 @@ const logActivity = async ({
         
         for (const user of users) {
           if (user.email) {
+            if (!isNotificationChannelEnabled(prefsMap.get(user.id), preferenceCategory, 'email')) {
+              continue;
+            }
             try {
-              // Create simple notification email
-              const htmlContent = emailTemplates.baseTemplate(`
-                <h2 style="margin-top: 0;">${title}</h2>
-                <p>${message}</p>
-                ${link ? `<div style="text-align: center; margin: 24px 0;">
-                  <a href="${process.env.FRONTEND_URL || 'http://localhost:3000'}${link}" class="button">View Details</a>
-                </div>` : ''}
-                <p style="color: #666; font-size: 12px;">
-                  This is an automated notification from ${company.name}.
-                </p>
-              `, { companyName: company.name, primaryColor: company.primaryColor });
-              
+              const htmlContent = emailTemplates.activityNotificationCard({
+                title,
+                message,
+                link: link || null,
+                company: {
+                  name: company.name,
+                  primaryColor: company.primaryColor,
+                  logoUrl: company.logo
+                }
+              });
+
               await emailService.sendMessage(
                 tenantId,
                 user.email,
@@ -664,6 +701,24 @@ const logJobStatusChanged = async (job, oldStatus, newStatus, triggeredBy = null
   });
 };
 
+const logJobCompleted = async (job, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.JOB_COMPLETED,
+    tenantId: job.tenantId,
+    title: 'Job Completed',
+    message: `Job ${job.jobNumber}${job.title ? ` • ${job.title}` : ''} has been completed.`,
+    context: {
+      jobId: job.id,
+      jobNumber: job.jobNumber,
+      status: job.status,
+      createdBy: job.createdBy,
+      assignedTo: job.assignedTo
+    },
+    triggeredBy,
+    link: `/jobs/${job.id}`
+  });
+};
+
 // INVOICE ACTIVITIES
 const logInvoiceSent = async (invoice, triggeredBy = null) => {
   return logActivity({
@@ -717,6 +772,27 @@ const logPaymentReceived = async (invoice, amount, triggeredBy = null) => {
       invoiceNumber: invoice.invoiceNumber,
       customerId: invoice.customerId,
       amount: amount,
+      createdBy: invoice.job?.createdBy,
+      assignedTo: invoice.job?.assignedTo
+    },
+    triggeredBy,
+    link: `/invoices`
+  });
+};
+
+const logInvoiceOverdue = async (invoice, triggeredBy = null) => {
+  return logActivity({
+    activityType: ACTIVITY_TYPES.INVOICE_OVERDUE,
+    tenantId: invoice.tenantId,
+    title: 'Invoice Overdue',
+    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} is overdue (balance: GHS ${parseFloat(invoice.balance || invoice.totalAmount || 0).toLocaleString()}).`,
+    context: {
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      customerId: invoice.customerId,
+      balance: invoice.balance,
+      totalAmount: invoice.totalAmount,
+      dueDate: invoice.dueDate,
       createdBy: invoice.job?.createdBy,
       assignedTo: invoice.job?.assignedTo
     },
@@ -890,6 +966,26 @@ const logExpenseRejected = async (expense, reason, triggeredBy = null) => {
   });
 };
 
+// USER ACTIVITIES
+const logUserInvited = async (invite, inviterUserId = null) => {
+  const recipients = inviterUserId ? [inviterUserId] : [];
+  return logActivity({
+    activityType: ACTIVITY_TYPES.USER_INVITED,
+    tenantId: invite.tenantId,
+    title: 'User Invited',
+    message: `A new team member has been invited: ${invite.email} (${invite.role || 'member'}).`,
+    context: {
+      inviteId: invite.id,
+      email: invite.email,
+      role: invite.role,
+      name: invite.name
+    },
+    customRecipients: recipients,
+    triggeredBy: inviterUserId,
+    link: '/settings'
+  });
+};
+
 // CUSTOMER ACTIVITIES
 const logCustomerCreated = async (customer, triggeredBy = null) => {
   return logActivity({
@@ -910,20 +1006,37 @@ const logCustomerCreated = async (customer, triggeredBy = null) => {
 
 // MATERIALS ACTIVITIES
 const logLowStock = async (item, tenantId, triggeredBy = null) => {
-  return logActivity({
+  const qty = item.currentStock ?? item.quantityOnHand;
+  const result = await logActivity({
     activityType: ACTIVITY_TYPES.MATERIALS_LOW_STOCK,
     tenantId,
     title: 'Low Stock Alert',
-    message: `${item.name} is running low on stock (${item.currentStock} remaining).`,
+    message: `${item.name} is running low on stock (${qty} remaining).`,
     context: {
       itemId: item.id,
       itemName: item.name,
-      currentStock: item.currentStock,
+      currentStock: qty,
       reorderLevel: item.reorderLevel
     },
     triggeredBy,
     link: `/materials`
   });
+  try {
+    const taskAutomationService = require('./taskAutomationService');
+    await taskAutomationService.createLowStockTask({
+      item: {
+        id: item.id,
+        name: item.name,
+        quantityOnHand: qty,
+        reorderLevel: item.reorderLevel
+      },
+      tenantId,
+      triggeredBy
+    });
+  } catch (automationError) {
+    console.error('[ActivityLogger] Failed to auto-create low-stock task:', automationError?.message);
+  }
+  return result;
 };
 
 // ============================================
@@ -944,11 +1057,13 @@ module.exports = {
   logJobCreated,
   logJobAssigned,
   logJobStatusChanged,
+  logJobCompleted,
   
   // Invoices & Payments
   logInvoiceSent,
   logInvoicePaid,
   logPaymentReceived,
+  logInvoiceOverdue,
   
   // Quotes
   logQuoteAccepted,
@@ -964,6 +1079,9 @@ module.exports = {
   logExpenseSubmitted,
   logExpenseApproved,
   logExpenseRejected,
+  
+  // Users
+  logUserInvited,
   
   // Customers
   logCustomerCreated,

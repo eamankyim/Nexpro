@@ -1,16 +1,24 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, XCircle, Loader2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, Currency, Eye, ChevronLeft, ChevronRight, Filter, RefreshCw, Briefcase, AlertCircle } from 'lucide-react';
+import { Plus, XCircle, Loader2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, Currency, Eye, ChevronLeft, ChevronRight, Filter, RefreshCw, Briefcase, AlertCircle, Archive } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import jobService from '../services/jobService';
 import { useSmartSearch } from '../context/SmartSearchContext';
-import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, PRIORITY_CHIP_CLASSES, STATUS_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS } from '../constants';
+import {
+  SEARCH_PLACEHOLDERS,
+  DEBOUNCE_DELAYS,
+  PRIORITY_CHIP_CLASSES,
+  STATUS_CHIP_CLASSES,
+  STATUS_CHIP_DEFAULT_CLASS,
+  DELIVERY_STATUS_ORDER,
+  DELIVERY_STATUS_LABELS,
+} from '../constants';
 import customerService from '../services/customerService';
 import invoiceService from '../services/invoiceService';
 import pricingService from '../services/pricingService';
@@ -32,7 +40,6 @@ import DashboardTable from '../components/DashboardTable';
 import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
-import FloatingActionButton from '../components/FloatingActionButton';
 import { showSuccess, showError, showWarning, showInfo } from '../utils/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -83,13 +90,54 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Timeline, TimelineItem, TimelineIndicator, TimelineContent, TimelineTitle, TimelineDescription, TimelineTime } from '@/components/ui/timeline';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import { numberInputValue, handleNumberChange, handleIntegerChange, numberOrEmptySchema, integerOrEmptySchema } from '../utils/formUtils';
+
+/** Flatten react-hook-form FieldErrors into a list of readable messages (with field context e.g. "Item 1 – Category is required"). */
+function getJobFormErrorMessages(errors) {
+  if (!errors || typeof errors !== 'object') return [];
+  const messages = [];
+  const fieldLabels = {
+    customerId: 'Customer',
+    title: 'Job title',
+    description: 'Description',
+    startDate: 'Start date',
+    dueDate: 'Due date',
+    assignedTo: 'Assign to',
+    status: 'Status',
+    priority: 'Priority',
+    category: 'Category',
+    quantity: 'Quantity',
+    unitPrice: 'Unit price',
+    discountAmount: 'Discount',
+  };
+  function walk(obj, context = '') {
+    if (!obj || typeof obj !== 'object') return;
+    if (typeof obj.message === 'string') {
+      messages.push(context ? `${context}: ${obj.message}` : obj.message);
+      return;
+    }
+    for (const [key, value] of Object.entries(obj)) {
+      if (key === 'root') continue;
+      const label = fieldLabels[key] || key;
+      const isItemIndex = /^\d+$/.test(key);
+      const nextContext = isItemIndex
+        ? `Item ${Number(key) + 1}`
+        : context && context.startsWith('Item ')
+          ? context
+          : context ? `${context} – ${label}` : label;
+      walk(value, nextContext);
+    }
+  }
+  walk(errors);
+  return messages;
+}
 
 const jobItemSchema = z.object({
   category: z.string().min(1, 'Category is required'),
   description: z.string().min(1, 'Item description is required'),
-  quantity: z.number().min(1, 'Quantity must be at least 1'),
-  unitPrice: z.number().min(0, 'Unit price must be at least 0'),
-  discountAmount: z.number().min(0, 'Discount must be at least 0').default(0),
+  quantity: integerOrEmptySchema(z, 1).refine((v) => v >= 1, 'Quantity must be at least 1'),
+  unitPrice: numberOrEmptySchema(z),
+  discountAmount: numberOrEmptySchema(z),
   paperSize: z.string().optional(),
   pricingMethod: z.string().optional(),
   itemHeight: z.number().optional(),
@@ -100,11 +148,17 @@ const jobItemSchema = z.object({
   discountReason: z.string().optional(),
 });
 
+const deliveryStatusSchema = z
+  .enum(['ready_for_delivery', 'out_for_delivery', 'delivered', 'returned'])
+  .optional()
+  .nullable();
+
 const jobSchema = z.object({
   customerId: z.string().min(1, 'Customer is required'),
   title: z.string().optional(),
   status: z.enum(['new', 'in_progress', 'completed', 'on_hold', 'cancelled']).default('new'),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
+  deliveryStatus: deliveryStatusSchema,
   startDate: z.union([z.date(), z.null(), z.undefined()]).optional(),
   dueDate: z.union([z.date(), z.null(), z.undefined()]).optional(),
   assignedTo: z.string().optional().nullable(),
@@ -129,7 +183,7 @@ const customerSchema = z.object({
   address: z.string().optional(),
   city: z.string().optional(),
   state: z.string().optional(),
-  howDidYouHear: z.string().min(1, 'Select how they heard about you'),
+  howDidYouHear: z.string().optional().or(z.literal('')),
   referralName: z.string().optional(),
 });
 
@@ -138,7 +192,7 @@ const uploadMaxSizeMb = Number.parseFloat(import.meta.env.VITE_UPLOAD_MAX_SIZE_M
 const Jobs = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { activeTenantId } = useAuth();
+  const { activeTenantId, activeTenant } = useAuth();
   const { isMobile } = useResponsive();
   const queryClient = useQueryClient();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
@@ -159,6 +213,7 @@ const Jobs = () => {
   const [jobDetailsLoading, setJobDetailsLoading] = useState(false);
   const [jobToDelete, setJobToDelete] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const isSoftwareTenant = activeTenant?.metadata?.businessSubType === 'software_it_services';
   
   const form = useForm({
     resolver: zodResolver(jobSchema),
@@ -167,6 +222,7 @@ const Jobs = () => {
       title: '',
       status: 'new',
       priority: 'medium',
+      deliveryStatus: null,
       startDate: null,
       dueDate: null,
       assignedTo: null,
@@ -197,6 +253,7 @@ const Jobs = () => {
   });
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [jobBeingUpdated, setJobBeingUpdated] = useState(null);
+  const [updatingJobDelivery, setUpdatingJobDelivery] = useState(false);
   const statusForm = useForm({
     resolver: zodResolver(statusSchema),
     defaultValues: {
@@ -224,7 +281,6 @@ const Jobs = () => {
   const [submittingCustomer, setSubmittingCustomer] = useState(false);
   const [updatingAssignment, setUpdatingAssignment] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
-  const [markingAsPaid, setMarkingAsPaid] = useState(false);
   const [showReferralName, setShowReferralName] = useState(false);
   const [categoryOtherInputs, setCategoryOtherInputs] = useState({}); // Track "Other" inputs per item index
   const [showCustomerSourceOtherInput, setShowCustomerSourceOtherInput] = useState(false);
@@ -232,6 +288,7 @@ const Jobs = () => {
   const [showRegionOtherInput, setShowRegionOtherInput] = useState(false);
   const [regionOtherValue, setRegionOtherValue] = useState('');
   const [editingJobId, setEditingJobId] = useState(null);
+  const jobFormRef = useRef(null);
 
   // Invalidate jobs query - defined early to avoid temporal dead zone
   const invalidateJobs = useCallback(() => {
@@ -450,6 +507,41 @@ const Jobs = () => {
     return byGroup;
   }, [jobItemCategoriesApi]);
 
+  const getItemDescriptionPlaceholder = useCallback(
+    (category) => {
+      // Default placeholder before a category is chosen
+      if (!category) {
+        return isSoftwareTenant
+          ? 'e.g., Website or app feature, scope, and deliverables'
+          : 'e.g., Full color, double-sided, glossy finish';
+      }
+
+      switch (category) {
+        case 'Discovery & Planning':
+          return 'e.g., Requirements workshop, technical scoping, product roadmap';
+        case 'UI/UX Design':
+          return 'e.g., Landing page and dashboard designs, user flows, design system';
+        case 'Frontend Development':
+          return 'e.g., React/Next.js frontend for customer portal and admin dashboard';
+        case 'Backend & API Development':
+          return 'e.g., REST/GraphQL APIs for orders, payments, and reporting';
+        case 'Mobile App Development':
+          return 'e.g., iOS & Android app for customers (Expo/React Native)';
+        case 'Testing & QA':
+          return 'e.g., Regression testing, automated test suite, UAT support';
+        case 'DevOps & Infrastructure':
+          return 'e.g., CI/CD pipelines, cloud environment setup, monitoring';
+        case 'Maintenance & Support':
+          return 'e.g., Monthly support, bug fixes, and minor feature updates';
+        default:
+          return isSoftwareTenant
+            ? 'e.g., Feature breakdown, module, or service description'
+            : 'e.g., Full color, double-sided, glossy finish';
+      }
+    },
+    [isSoftwareTenant]
+  );
+
 useEffect(() => {
   if (assignModalVisible && jobBeingAssigned) {
     assignmentForm.reset({
@@ -549,41 +641,6 @@ useEffect(() => {
       showError(error, 'Failed to delete job');
     }
   }, [queryClient, viewingJob?.id, handleCloseDrawer]);
-
-  const handleMarkAsPaid = useCallback(async (job) => {
-    try {
-      setMarkingAsPaid(true);
-      // Find the invoice for this job
-      const invoice = jobInvoices[job.id];
-      
-      if (!invoice) {
-        showError('No invoice found for this job. Please generate an invoice first.');
-        return;
-      }
-
-      // Update invoice to paid status
-      await invoiceService.update(invoice.id, {
-        status: 'paid',
-        amountPaid: invoice.totalAmount,
-        paidDate: new Date().toISOString()
-      });
-
-      showSuccess(`Invoice ${invoice.invoiceNumber} marked as paid!`);
-      
-      // Refresh job invoices
-      await checkJobInvoice(job.id);
-      invalidateJobs();
-      
-      // Refresh drawer if viewing this job
-      if (drawerVisible && viewingJob?.id === job.id) {
-        await refreshJobDetails(job.id);
-      }
-    } catch (error) {
-      showError(error.error || 'Failed to mark invoice as paid');
-    } finally {
-      setMarkingAsPaid(false);
-    }
-  }, [navigate, queryClient, jobInvoices, drawerVisible, viewingJob]);
 
   const checkJobInvoice = async (jobId) => {
     try {
@@ -728,7 +785,24 @@ useEffect(() => {
     }
   }, [queryClient, jobBeingUpdated, drawerVisible, viewingJob, closeStatusModal, invalidateJobs]);
 
-
+  const handleJobDeliveryChange = useCallback(
+    async (value) => {
+      if (!viewingJob) return;
+      const val = value === '__none__' ? null : value;
+      try {
+        setUpdatingJobDelivery(true);
+        await jobService.update(viewingJob.id, { deliveryStatus: val });
+        await refreshJobDetails(viewingJob.id);
+        showSuccess('Delivery status updated');
+        invalidateJobs();
+      } catch (error) {
+        showError(error?.response?.data?.message || error?.message || 'Failed to update delivery status');
+      } finally {
+        setUpdatingJobDelivery(false);
+      }
+    },
+    [viewingJob, refreshJobDetails, invalidateJobs]
+  );
 
   const handleAddJob = useCallback(async () => {
     setEditingJobId(null);
@@ -849,6 +923,18 @@ useEffect(() => {
         description: jobData.description || '',
         items: (jobData.items || []).map(item => ({
           ...item,
+          // Normalize nullable text fields so Zod string schema does not receive null
+          category: item.category ?? '',
+          description: item.description ?? '',
+          paperSize: item.paperSize ?? undefined,
+          pricingMethod: item.pricingMethod ?? undefined,
+          itemUnit: item.itemUnit ?? undefined,
+          discountReason: item.discountReason ?? undefined,
+          // Normalize nullable numeric optional fields
+          itemHeight: item.itemHeight == null ? undefined : Number(item.itemHeight),
+          itemWidth: item.itemWidth == null ? undefined : Number(item.itemWidth),
+          pricePerSquareFoot: item.pricePerSquareFoot == null ? undefined : Number(item.pricePerSquareFoot),
+          discountPercent: item.discountPercent == null ? undefined : Number(item.discountPercent),
           // Parse unitPrice if it's a string (handle formatted values like "₵ 50,00", "50,00", "50.00", etc.)
           unitPrice: typeof item.unitPrice === 'string' 
             ? parseFloat(item.unitPrice.replace(/[^\d.,-]/g, '').replace(',', '.')) || 0
@@ -1103,20 +1189,24 @@ useEffect(() => {
       }
       
       const response = await customerService.create(values);
+      const created = response?.data ?? response;
       showSuccess('Customer created successfully');
       setCustomerModalVisible(false);
       customerForm.reset();
-      
-      // Refresh customers list
-      await fetchCustomersAndTemplates();
-      
+
+      // Refresh customers list so the new customer appears in the dropdown
+      await queryClient.invalidateQueries({ queryKey: ['customers', 'all'] });
+      await queryClient.invalidateQueries({ queryKey: ['pricingTemplates', 'active'] });
+
       // Auto-select the newly created customer
-      if (response?.data?.id) {
-        form.setValue('customerId', response.data.id);
-        handleCustomerChange(response.data.id);
+      const newId = created?.id ?? response?.id;
+      if (newId) {
+        form.setValue('customerId', newId);
+        handleCustomerChange(newId);
       }
     } catch (error) {
-      showError(error.error || 'Failed to create customer');
+      const message = error?.response?.data?.message ?? error?.message ?? error?.error ?? 'Failed to create customer';
+      showError(message);
     } finally {
       setSubmittingCustomer(false);
     }
@@ -1268,8 +1358,8 @@ useEffect(() => {
     
     // Smart auto-fill for job-level fields if first item
     if (itemIndex === 0 && items.length === 1) {
-      const currentTitle = form.getFieldValue('title');
-      const currentDescription = form.getFieldValue('description');
+      const currentTitle = form.getValues('title');
+      const currentDescription = form.getValues('description');
       
       // Only auto-fill if fields are empty
       if (!currentTitle || currentTitle.trim() === '') {
@@ -1410,6 +1500,7 @@ useEffect(() => {
         description: values.description || null,
         status: values.status || 'new',
         priority: values.priority || 'medium',
+        deliveryStatus: values.deliveryStatus || null,
         jobType: values.jobType || null,
         assignedTo: cleanAssignedTo,
         startDate: formatDate(values.startDate),
@@ -1534,6 +1625,8 @@ useEffect(() => {
     {
       key: 'status',
       label: 'Status',
+      width: '160px',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record?.status} />
     },
     {
@@ -1592,11 +1685,15 @@ useEffect(() => {
           welcomeMessage="Jobs"
           subText="Manage and track all your jobs, services, and orders."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+              <Button
+                variant="outline"
+                onClick={() => setFilterDrawerOpen(true)}
+                size={isMobile ? 'icon' : 'default'}
+              >
                 <Filter className="h-4 w-4" />
                 {!isMobile && <span className="ml-2">Filter</span>}
               </Button>
@@ -1605,15 +1702,15 @@ useEffect(() => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
                 onClick={async () => {
                   setRefreshingJobs(true);
                   await queryClient.invalidateQueries({ queryKey: ['jobs'] });
                   setRefreshingJobs(false);
                 }}
                 disabled={refreshingJobs}
-                size={isMobile ? "icon" : "default"}
+                size={isMobile ? 'icon' : 'default'}
               >
                 {refreshingJobs ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -1626,9 +1723,12 @@ useEffect(() => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button onClick={handleAddJob} size={isMobile ? "icon" : "default"}>
-                <Plus className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">New Job</span>}
+              <Button
+                onClick={handleAddJob}
+                className="min-h-[44px] flex-1 min-w-0 md:flex-none"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                <span>Add Job</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>Create a new job</TooltipContent>
@@ -1654,7 +1754,7 @@ useEffect(() => {
           value={calculatedSummary?.totals?.inProgressJobs || 0}
           icon={Clock}
           iconBgColor="rgba(59, 130, 246, 0.1)"
-          iconColor="#166534"
+          iconColor="#3b82f6"
         />
 
         {/* Completed Card */}
@@ -1690,9 +1790,9 @@ useEffect(() => {
             }}
           >
             {isRefreshing ? (
-              <Loader2 className="h-6 w-6 animate-spin text-[#166534]" />
+              <Loader2 className="h-6 w-6 animate-spin text-brand" />
             ) : (
-              <RefreshCw className="h-6 w-6 text-[#166534]" />
+              <RefreshCw className="h-6 w-6 text-brand" />
             )}
           </div>
         )}
@@ -1723,18 +1823,13 @@ useEffect(() => {
         />
       </div>
 
-      {/* Floating Action Button for Mobile */}
-      <FloatingActionButton
-        onClick={handleAddJob}
-        icon={Plus}
-        label="Add Job"
-        tooltip="Create a new job"
-        show={isMobile}
-      />
-
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent
+          side="right"
+          className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto"
+          style={{ top: 8, bottom: 8, right: 8, height: 'calc(100dvh - 16px)', borderRadius: 8 }}
+        >
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Jobs</SheetTitle>
           </SheetHeader>
@@ -1831,40 +1926,35 @@ useEffect(() => {
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Job Details"
-        width={window.innerWidth < 768 ? '100%' : 720}
         showActions={true}
-        onDelete={viewingJob ? () => handleDeleteJob(viewingJob.id) : null}
-        deleteConfirmText="Are you sure you want to delete this job? This action cannot be undone."
-        extraActions={viewingJob ? [
+        primaryAction={viewingJob ? {
+          label: 'Update Status',
+          icon: <Clock className="h-4 w-4" />,
+          onClick: () => openStatusModal(viewingJob)
+        } : null}
+        moreMenuItems={viewingJob ? [
           {
             key: 'edit',
             label: 'Edit',
-            variant: 'secondary',
             icon: <Edit className="h-4 w-4" />,
             onClick: () => handleEdit(viewingJob)
-          },
-          {
-            key: 'updateStatus',
-            label: 'Update Status',
-            variant: 'default',
-            icon: <Clock className="h-4 w-4" />,
-            onClick: () => openStatusModal(viewingJob)
           },
           ...(jobInvoices[viewingJob.id] ? [{
             key: 'viewInvoice',
             label: 'View Invoice',
-            variant: 'secondary',
             icon: <FileText className="h-4 w-4" />,
             onClick: () => navigate('/invoices', { state: { openInvoiceId: jobInvoices[viewingJob.id].id } })
           }] : []),
-          ...(jobInvoices[viewingJob.id] && jobInvoices[viewingJob.id].status !== 'paid' ? [{
-            key: 'markAsPaid',
-            label: markingAsPaid ? 'Marking...' : 'Mark as Paid',
-            variant: 'secondary',
-            icon: markingAsPaid ? <Loader2 className="h-4 w-4 animate-spin" /> : <Currency className="h-4 w-4" />,
-            onClick: () => handleMarkAsPaid(viewingJob),
-            disabled: markingAsPaid
-          }] : [])
+          {
+            key: 'archive',
+            label: 'Archive',
+            icon: <Archive className="h-4 w-4" />,
+            destructive: true,
+            onClick: () => {
+              setJobToDelete(viewingJob);
+              handleCloseDrawer();
+            }
+          }
         ] : []}
         tabs={viewingJob ? [
           {
@@ -1895,10 +1985,29 @@ useEffect(() => {
                       <DescriptionItem label="Status">
                   <div className="flex items-center gap-2">
                           <StatusChip status={viewingJob.status} />
-                          <Button variant="ghost" size="sm" onClick={() => openStatusModal(viewingJob)} className="text-[#166534] hover:text-[#166534]/80">
+                          <Button variant="ghost" size="sm" onClick={() => openStatusModal(viewingJob)} className="text-brand hover:opacity-80">
                       Update
                     </Button>
                   </div>
+                      </DescriptionItem>
+                      <DescriptionItem label="Delivery (optional)">
+                        <Select
+                          value={viewingJob.deliveryStatus || '__none__'}
+                          onValueChange={handleJobDeliveryChange}
+                          disabled={updatingJobDelivery}
+                        >
+                          <SelectTrigger className="w-full max-w-xs">
+                            <SelectValue placeholder="Not set" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Not set</SelectItem>
+                            {DELIVERY_STATUS_ORDER.map((key) => (
+                              <SelectItem key={key} value={key}>
+                                {DELIVERY_STATUS_LABELS[key]}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </DescriptionItem>
                       <DescriptionItem label="Priority">
                         <Badge
@@ -1920,10 +2029,12 @@ useEffect(() => {
                       <DescriptionItem label="Created By">
                   <div className="flex items-center gap-2">
                     {viewingJob.creator ? (
-                      <>
-                              <Badge variant="outline"><User className="h-3 w-3 mr-1" />{viewingJob.creator.name}</Badge>
-                              <span className="text-sm text-muted-foreground">{viewingJob.creator.email}</span>
-                      </>
+                      <Badge variant="outline">
+                        <User className="h-3 w-3 mr-1" />
+                        {viewingJob.creator.name}
+                      </Badge>
+                    ) : viewingJob.quoteId ? (
+                      <span className="text-sm text-muted-foreground">From quote (customer accepted)</span>
                     ) : (
                       <Badge variant="outline">System</Badge>
                     )}
@@ -1936,12 +2047,11 @@ useEffect(() => {
                               <Badge variant="outline"><User className="h-3 w-3 mr-1" />
                           {viewingJob.assignedUser.name}
                         </Badge>
-                              <span className="text-sm text-muted-foreground">{viewingJob.assignedUser.email}</span>
                       </>
                     ) : (
                       <Badge variant="outline">Unassigned</Badge>
                     )}
-                          <Button variant="ghost" size="sm" onClick={() => openAssignModal(viewingJob)} className="text-[#166534] hover:text-[#166534]/80">
+                          <Button variant="ghost" size="sm" onClick={() => openAssignModal(viewingJob)} className="text-brand hover:opacity-80">
                       Manage
                     </Button>
                   </div>
@@ -1968,7 +2078,7 @@ useEffect(() => {
                     <div className="border rounded-lg px-5 py-4">
                       <Descriptions column={1} className="space-y-2">
                       <DescriptionItem label="Final Price">
-                        <strong className="text-base" style={{ color: '#166534' }}>
+                        <strong className="text-base" style={{ color: 'var(--color-primary)' }}>
                           ₵ {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
                         </strong>
                       </DescriptionItem>
@@ -1977,41 +2087,22 @@ useEffect(() => {
                     const invoice = jobInvoices[viewingJob.id];
                     if (!invoice) {
                       return (
-                        <div className="flex flex-col gap-2">
-                          <Button 
-                            onClick={() => navigate('/invoices')}
-                          >
-                            <FileText className="h-4 w-4 mr-2" />
-                            View Invoice
-                          </Button>
-                                <div className="text-xs text-muted-foreground">
-                            Invoice automatically generated
-                          </div>
+                        <div className="text-xs text-muted-foreground">
+                          Invoice automatically generated
                         </div>
                       );
                     }
                     return (
-                      <div className="flex flex-col gap-2">
-                              <Badge 
-                                variant="outline" 
-                                className={
-                                  invoice.status === 'paid' ? STATUS_CHIP_CLASSES.paid :
-                                  invoice.status === 'overdue' ? STATUS_CHIP_CLASSES.overdue :
-                                  STATUS_CHIP_CLASSES.sent ?? STATUS_CHIP_CLASSES.pending
-                                }
-                              >
-                          {invoice.invoiceNumber} - {invoice.status?.toUpperCase()}
-                        </Badge>
-                        <Button 
-                          size="sm"
-                          onClick={() => {
-                            navigate('/invoices', { state: { openInvoiceId: invoice.id } });
-                            handleCloseDrawer();
-                          }}
-                        >
-                          View Invoice
-                        </Button>
-                      </div>
+                      <Badge 
+                        variant="outline" 
+                        className={
+                          invoice.status === 'paid' ? STATUS_CHIP_CLASSES.paid :
+                          invoice.status === 'overdue' ? STATUS_CHIP_CLASSES.overdue :
+                          STATUS_CHIP_CLASSES.sent ?? STATUS_CHIP_CLASSES.pending
+                        }
+                      >
+                        {invoice.invoiceNumber} - {invoice.status?.toUpperCase()}
+                      </Badge>
                     );
                   })()}
                       </DescriptionItem>
@@ -2059,7 +2150,7 @@ useEffect(() => {
                             </div>
                             <div className="col-span-2 text-right">
                               <div className="text-xs text-muted-foreground mb-1">Total</div>
-                              <div className="font-bold text-sm" style={{ color: '#166534' }}>
+                              <div className="font-bold text-sm" style={{ color: 'var(--color-primary)' }}>
                                 ₵ {(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
                               </div>
                             </div>
@@ -2068,7 +2159,7 @@ useEffect(() => {
                       ))}
                       <div className="border border-border/50 rounded-md p-4 flex justify-between items-center bg-muted/30">
                         <strong className="text-base font-semibold">Total:</strong>
-                        <strong className="text-lg font-bold" style={{ color: '#166534' }}>
+                        <strong className="text-lg font-bold" style={{ color: 'var(--color-primary)' }}>
                           ₵ {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
                         </strong>
                       </div>
@@ -2157,7 +2248,9 @@ useEffect(() => {
                                 <TimelineTitle className="text-foreground">
                                   {activity.isCreated ? (
                                     <>
-                                      {activity.changedByUser?.name || viewingJob?.creator?.name || 'System'} created job {viewingJob?.jobNumber}
+                                      {viewingJob?.quoteId && !viewingJob?.creator
+                                        ? 'Job created automatically from quote (customer accepted)'
+                                        : `${activity.changedByUser?.name || viewingJob?.creator?.name || 'System'} created job ${viewingJob?.jobNumber}`}
                                       {activity.status && (
                                         <StatusChip status={activity.status} className="ml-2" />
                                       )}
@@ -2180,14 +2273,27 @@ useEffect(() => {
                                 {(activity.isCreated || activity.isUpdated) && (
                                   <TimelineDescription className="text-foreground">
                                     {activity.isCreated ? (
-                                      <>Created by: {activity.changedByUser?.name || viewingJob?.creator?.name || 'System'}</>
+                                      viewingJob?.quoteId && !viewingJob?.creator
+                                        ? 'Created via quote acceptance (no user action)'
+                                        : (
+                                          <>
+                                            Created by: {activity.changedByUser?.name || viewingJob?.creator?.name || 'System'}
+                                            {(activity.changedByUser?.email || viewingJob?.creator?.email) && (
+                                              <span className="ml-1">
+                                                ({activity.changedByUser?.email || viewingJob?.creator?.email})
+                                              </span>
+                                            )}
+                                          </>
+                                        )
                                     ) : (
-                                      <>Updated by: {activity.changedByUser?.name || viewingJob?.creator?.name || 'System'}</>
-                                    )}
-                                    {(activity.changedByUser?.email || (activity.isCreated && viewingJob?.creator?.email)) && (
-                                      <span className="ml-1">
-                                        ({activity.changedByUser?.email || viewingJob?.creator?.email})
-                                      </span>
+                                      <>
+                                        Updated by: {activity.changedByUser?.name || viewingJob?.creator?.name || 'System'}
+                                        {(activity.changedByUser?.email || viewingJob?.creator?.email) && (
+                                          <span className="ml-1">
+                                            ({activity.changedByUser?.email || viewingJob?.creator?.email})
+                                          </span>
+                                        )}
+                                      </>
                                     )}
                                   </TimelineDescription>
                                 )}
@@ -2235,15 +2341,30 @@ useEffect(() => {
             }}>
               Cancel
             </Button>
-            <Button form="job-form" type="submit" loading={submittingJob}>
+            <Button
+              type="button"
+              onClick={() => jobFormRef.current?.requestSubmit()}
+              loading={submittingJob}
+            >
               {editingJobId ? 'Update Job' : 'Create Job'}
             </Button>
           </>
         }
       >
           <Form {...form}>
-            <form id="job-form" onSubmit={form.handleSubmit(handleSubmit)} className="space-y-4">
-              <div className="grid grid-cols-2 gap-2 md:gap-4">
+            <form
+              id="job-form"
+              ref={jobFormRef}
+              onSubmit={form.handleSubmit(handleSubmit, (errors) => {
+                const list = getJobFormErrorMessages(errors);
+                const message = list.length
+                  ? `Please fix the following: ${list.join('. ')}`
+                  : 'Please fix the errors in the form before saving.';
+                showError(message);
+              })}
+              className="space-y-4"
+            >
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-4">
                 {!customerModalVisible && (
                 <FormField
                   control={form.control}
@@ -2350,6 +2471,35 @@ useEffect(() => {
                 />
               </div>
 
+              <FormField
+                control={form.control}
+                name="deliveryStatus"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Delivery status (optional)</FormLabel>
+                    <Select
+                      onValueChange={(v) => field.onChange(v === '__none__' ? null : v)}
+                      value={field.value || '__none__'}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Not set" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__none__">Not set</SelectItem>
+                        {DELIVERY_STATUS_ORDER.map((key) => (
+                          <SelectItem key={key} value={key}>
+                            {DELIVERY_STATUS_LABELS[key]}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
               <div className="grid grid-cols-2 gap-2 md:gap-4">
                 <FormField
                   control={form.control}
@@ -2427,6 +2577,7 @@ useEffect(() => {
                       <div className="mb-4">
                         <Label>Select Pricing Template (Optional)</Label>
                             <Select
+                          value={selectedTemplates[index]?.id || undefined}
                           onValueChange={(value) => handleTemplateSelect(value, index)}
                         >
                           <SelectTrigger className="mt-2">
@@ -2544,7 +2695,12 @@ useEffect(() => {
                         <FormItem>
                           <FormLabel>Item Description</FormLabel>
                           <FormControl>
-                            <Input placeholder="e.g., Full color, double-sided, glossy finish" {...field} />
+                            <Input
+                              placeholder={getItemDescriptionPlaceholder(
+                                (form.getValues('items') || [])[index]?.category
+                              )}
+                              {...field}
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -2584,7 +2740,7 @@ useEffect(() => {
                     />
 
                     {/* Only show the 4 essential fields + discount */}
-                    <div className="grid grid-cols-4 gap-2 md:gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
                       <FormField
                         control={form.control}
                         name={`items.${index}.quantity`}
@@ -2594,15 +2750,17 @@ useEffect(() => {
                             <FormControl>
                               <Input
                                 type="number"
-                            placeholder="1"
-                            min={1}
+                                placeholder="1"
+                                min={1}
                                 {...field}
+                                value={numberInputValue(field.value)}
                                 onChange={(e) => {
-                                  const value = parseInt(e.target.value) || 1;
-                                  field.onChange(value);
-                                  handleQuantityChange(index, value);
+                                  handleIntegerChange(e, (v) => {
+                                    field.onChange(v);
+                                    const num = v === '' ? 1 : (typeof v === 'number' ? v : parseInt(String(v), 10) || 1);
+                                    handleQuantityChange(index, num);
+                                  });
                                 }}
-                                value={field.value || 1}
                               />
                             </FormControl>
                             <FormMessage />
@@ -2620,13 +2778,13 @@ useEffect(() => {
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">GHS</span>
                                 <Input
                                   type="number"
-                            placeholder="0.00"
-                            min={0}
+                                  placeholder="0.00"
+                                  min={0}
                                   step="0.01"
                                   className="pl-12"
                                   {...field}
-                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                  value={field.value || ''}
+                                  value={numberInputValue(field.value)}
+                                  onChange={(e) => handleNumberChange(e, field.onChange)}
                                 />
                               </div>
                             </FormControl>
@@ -2645,13 +2803,13 @@ useEffect(() => {
                                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">GHS</span>
                                 <Input
                                   type="number"
-                            placeholder="0.00"
-                            min={0}
+                                  placeholder="0.00"
+                                  min={0}
                                   step="0.01"
                                   className="pl-12"
                                   {...field}
-                                  onChange={(e) => field.onChange(parseFloat(e.target.value) || 0)}
-                                  value={field.value || ''}
+                                  value={numberInputValue(field.value)}
+                                  onChange={(e) => handleNumberChange(e, field.onChange)}
                                 />
                               </div>
                             </FormControl>
@@ -3045,7 +3203,7 @@ useEffect(() => {
                 name="howDidYouHear" 
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>How did you hear about us?</FormLabel>
+                    <FormLabel>How did you hear about us? (optional)</FormLabel>
                     <Select onValueChange={(value) => {
                       field.onChange(value);
                       handleHowDidYouHearChange(value);

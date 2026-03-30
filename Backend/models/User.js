@@ -76,6 +76,11 @@ const User = sequelize.define('User', {
     type: DataTypes.DATE,
     allowNull: true,
     field: 'email_verified_at'
+  },
+  notificationPreferences: {
+    type: DataTypes.JSONB,
+    allowNull: true,
+    defaultValue: null
   }
 }, {
   timestamps: true,

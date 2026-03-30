@@ -1,5 +1,22 @@
 import api from './api';
 
+/**
+ * Tenant id from a membership row (API or localStorage). Handles camelCase, snake_case, or nested tenant only.
+ * @param {object|null|undefined} m
+ * @returns {string|null}
+ */
+const membershipTenantId = (m) => {
+  if (!m || typeof m !== 'object') return null;
+  const direct = m.tenantId ?? m.tenant_id;
+  if (direct != null && direct !== '') return String(direct);
+  const nested = m.tenant;
+  if (nested && typeof nested === 'object') {
+    const tid = nested.id ?? nested.tenantId ?? nested.tenant_id;
+    if (tid != null && tid !== '') return String(tid);
+  }
+  return null;
+};
+
 const STORAGE_KEYS = {
   token: 'token',
   user: 'user',
@@ -7,6 +24,10 @@ const STORAGE_KEYS = {
   activeTenant: 'activeTenantId',
 };
 
+/**
+ * Persists session. Prefer payloads from GET /auth/me so each membership.tenant includes
+ * effectiveFeatureFlags (computed from DB plan + overrides). Login/register bodies alone may omit flags.
+ */
 const persistAuthPayload = (payload = {}) => {
   const { user, token, memberships = [], defaultTenantId } = payload;
 
@@ -22,8 +43,8 @@ const persistAuthPayload = (payload = {}) => {
 
   const preferredTenantId =
     defaultTenantId ||
-    memberships.find((membership) => membership.isDefault)?.tenantId ||
-    memberships[0]?.tenantId ||
+    membershipTenantId(memberships.find((membership) => membership.isDefault)) ||
+    membershipTenantId(memberships[0]) ||
     null;
 
   if (preferredTenantId) {
@@ -74,6 +95,15 @@ const authService = {
     return { ...response, data: payload };
   },
 
+  /**
+   * Check if an email is already registered.
+   * Returns { success, data: { exists: boolean } }
+   */
+  checkEmailAvailability: async (email) => {
+    const response = await api.post('/auth/check-email', { email });
+    return response?.data || response || {};
+  },
+
   // Get current user
   getCurrentUser: async () => {
     return await api.get('/auth/me');
@@ -82,6 +112,15 @@ const authService = {
   // Update user details
   updateDetails: async (userData) => {
     return await api.put('/auth/updatedetails', userData);
+  },
+
+  /**
+   * Staff notification preferences (in-app bell + optional email to account address).
+   * @param {Record<string, { in_app?: boolean, email?: boolean }>} categories
+   */
+  updateNotificationPreferences: async (categories) => {
+    const response = await api.patch('/auth/notification-preferences', { categories });
+    return response?.data || response || {};
   },
 
   // Update password
@@ -138,15 +177,14 @@ const authService = {
   /**
    * Google OAuth sign-in or sign-up.
    * @param {string} idToken - Google ID token from credentialResponse.credential
-   * @param {Object} options - Optional: { signUp: boolean, businessType: string, companyName: string }
+   * @param {Object} options - Optional: { signUp: boolean, companyName: string }
    * @returns {Promise<{ data }>} - Same shape as login (user, token, memberships, defaultTenantId)
    */
   googleAuth: async (idToken, options = {}) => {
-    const { signUp = false, businessType, companyName } = options;
+    const { signUp = false, companyName } = options;
     const response = await api.post('/auth/google', {
       idToken,
       signUp,
-      ...(businessType && { businessType }),
       ...(companyName && { companyName }),
     });
     const payload = response?.data || response || {};
@@ -155,6 +193,7 @@ const authService = {
   },
 
   persistAuthPayload,
+  membershipTenantId,
   clearAuthStorage,
   setActiveTenantId,
   getStoredUser: () => {

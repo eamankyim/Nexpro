@@ -151,9 +151,10 @@ exports.calculatePrice = async (req, res, next) => {
   try {
     const { jobType, paperType, paperSize, colorType, quantity, additionalOptions } = req.body;
 
-    // Find matching pricing template
+    // Find matching pricing template (tenant-scoped so printing press and others get their own)
     const template = await PricingTemplate.findOne({
       where: {
+        tenantId: req.tenantId,
         isActive: true,
         ...(jobType && { jobType }),
         ...(paperType && { paperType }),

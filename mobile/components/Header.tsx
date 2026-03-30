@@ -11,12 +11,14 @@ import {
 import { useRouter, usePathname } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '@/context/AuthContext';
 import { resolveImageUrl } from '@/utils/fileUtils';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { BackButton } from '@/components/BackButton';
+import { notificationService } from '@/services/notificationService';
 
 /**
  * Mobile header with search bar, notification bell, and user avatar.
@@ -34,11 +36,20 @@ export function Header() {
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const { user } = useAuth();
+  const { user, activeTenantId } = useAuth();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
 
   const [searchValue, setSearchValue] = useState('');
+
+  const { data: notificationSummary } = useQuery({
+    queryKey: ['notifications', 'summary', activeTenantId],
+    queryFn: () => notificationService.getSummary(),
+    enabled: !!activeTenantId,
+    staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
+  });
+  const unreadCount = notificationSummary?.data?.unread ?? 0;
 
   const showBack = BACK_SCREENS.some((s) => pathname?.includes(s));
   const backScreenTitle = BACK_SCREENS.find((s) => pathname?.includes(s));
@@ -136,6 +147,13 @@ export function Header() {
             hitSlop={8}
           >
             <FontAwesome name="bell" size={22} color={colors.text} />
+            {unreadCount > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </Text>
+              </View>
+            )}
           </Pressable>
         </View>
       </View>
@@ -208,6 +226,25 @@ const styles = StyleSheet.create({
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
+  },
+  notificationBadge: {
+    position: 'absolute',
+    top: 2,
+    right: 0,
+    minWidth: 18,
+    height: 18,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: '#dc2626',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  notificationBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '700',
+    lineHeight: 12,
   },
   iconButtonPressed: {
     opacity: 0.7,

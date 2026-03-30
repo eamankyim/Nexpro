@@ -1,5 +1,5 @@
 const { sequelize } = require('../config/database');
-const { Job, Expense, Customer, Vendor, Invoice, Tenant, Sale, SaleItem, InventoryItem } = require('../models');
+const { Job, Expense, Customer, Vendor, Invoice, Tenant, Sale, SaleItem, InventoryItem, Product } = require('../models');
 const { Op } = require('sequelize');
 const config = require('../config/config');
 const { getPagination } = require('../utils/paginationUtils');
@@ -235,7 +235,7 @@ exports.getDashboardOverview = async (req, res, next) => {
       SELECT 
         COALESCE(SUM(CASE WHEN status = 'paid' THEN "amountPaid" ELSE 0 END), 0) as "totalRevenue",
         COALESCE(SUM(CASE WHEN status = 'paid' AND "paidDate" BETWEEN :monthStart AND :monthEnd THEN "amountPaid" ELSE 0 END), 0) as "thisMonthRevenue",
-        COALESCE(SUM(CASE WHEN status != 'paid' THEN balance ELSE 0 END), 0) as "outstandingBalance"
+        COALESCE(SUM(CASE WHEN status NOT IN ('paid', 'cancelled') AND balance > 0 THEN balance ELSE 0 END), 0) as "outstandingBalance"
         ${hasDateFilter ? `,COALESCE(SUM(CASE WHEN status = 'paid' AND "paidDate" BETWEEN :filterStart AND :filterEnd THEN "amountPaid" ELSE 0 END), 0) as "filteredRevenue"` : ''}
         ${prevPeriod ? `,COALESCE(SUM(CASE WHEN status = 'paid' AND "paidDate" BETWEEN :prevStart AND :prevEnd THEN "amountPaid" ELSE 0 END), 0) as "prevRevenue"` : ''}
       FROM invoices WHERE "tenantId" = :tenantId
@@ -333,7 +333,7 @@ exports.getDashboardOverview = async (req, res, next) => {
           SELECT 
             COUNT(*) as "totalInventoryItems",
             COUNT(CASE WHEN "quantityOnHand" <= "reorderLevel" THEN 1 END) as "lowStockItems"
-          FROM inventory_items WHERE "tenantId" = :tenantId AND "isActive" = true
+          FROM materials_items WHERE "tenantId" = :tenantId AND "isActive" = true
         `, { replacements: { tenantId }, type: sequelize.QueryTypes.SELECT })
         : Promise.resolve([{}])),
       // Recent sales (shop)
@@ -356,6 +356,32 @@ exports.getDashboardOverview = async (req, res, next) => {
         GROUP BY "SaleItem"."productId","SaleItem"."name" 
         ORDER BY SUM("SaleItem"."total") DESC LIMIT 5
       `, { replacements: { tenantId, thirtyDaysAgo: thirtyDaysAgo.toISOString() }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([])),
+      // Stock alerts for shop/pharmacy: low-stock and expiring products (from products table)
+      safeQuery((businessType === 'shop' || businessType === 'pharmacy') ? Product.findAll({
+        where: {
+          tenantId,
+          isActive: true,
+          trackStock: true,
+          [Op.and]: [
+            sequelize.where(sequelize.col('quantityOnHand'), Op.lte, sequelize.col('reorderLevel')),
+            sequelize.where(sequelize.col('quantityOnHand'), Op.gte, 0)
+          ]
+        },
+        attributes: ['id', 'name', 'quantityOnHand', 'reorderLevel', 'unit'],
+        limit: 20,
+        raw: true
+      }) : Promise.resolve([])),
+      safeQuery((businessType === 'shop' || businessType === 'pharmacy') ? sequelize.query(`
+        SELECT id, name, unit, metadata->>'expiryDate' as "expiryDate"
+        FROM products
+        WHERE "tenantId" = :tenantId AND "isActive" = true
+          AND metadata ? 'expiryDate'
+          AND (metadata->>'expiryDate')::date IS NOT NULL
+          AND (metadata->>'expiryDate')::date >= CURRENT_DATE
+          AND (metadata->>'expiryDate')::date <= CURRENT_DATE + INTERVAL '30 days'
+        ORDER BY (metadata->>'expiryDate')::date ASC
+        LIMIT 20
+      `, { replacements: { tenantId }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([]))
     ];
 
     const results = await Promise.all(batch);
@@ -370,7 +396,9 @@ exports.getDashboardOverview = async (req, res, next) => {
       salesStatsResult,
       inventoryStatsResult,
       recentSales,
-      topProducts
+      topProducts,
+      lowStockProductsResult,
+      expiringProductsResult
     ] = results;
 
     // Parse consolidated results (handle array vs object)
@@ -421,6 +449,34 @@ exports.getDashboardOverview = async (req, res, next) => {
     // Inventory stats
     const lowStockItems = parseInt(inventoryStats.lowStockItems) || 0;
     const totalInventoryItems = parseInt(inventoryStats.totalInventoryItems) || 0;
+
+    // Stock alerts for shop/pharmacy (from products table)
+    let stockAlerts = null;
+    if (businessType === 'shop' || businessType === 'pharmacy') {
+      const lowStockList = Array.isArray(lowStockProductsResult) ? lowStockProductsResult : [];
+      const lowStock = lowStockList.map(row => ({
+        id: row.id,
+        name: row.name,
+        quantityOnHand: Number(parseFloat(row.quantityOnHand || 0)),
+        reorderLevel: Number(parseFloat(row.reorderLevel || 0)),
+        unit: row.unit || 'pcs'
+      }));
+      const expiringRaw = Array.isArray(expiringProductsResult) ? expiringProductsResult : [];
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const expiring = expiringRaw.map(row => {
+        const expDate = row.expiryDate ? new Date(row.expiryDate) : null;
+        const daysUntilExpiry = expDate ? Math.ceil((expDate - today) / (1000 * 60 * 60 * 24)) : 0;
+        return {
+          id: row.id,
+          name: row.name,
+          unit: row.unit || 'pcs',
+          expiryDate: row.expiryDate,
+          daysUntilExpiry
+        };
+      });
+      stockAlerts = { lowStock, expiring };
+    }
 
     // Previous period comparison values
     const prevRevenue = prevPeriod ? (
@@ -520,7 +576,8 @@ exports.getDashboardOverview = async (req, res, next) => {
       thisMonth: currentMonthSummary,
       allTime: allTimeSummary,
       recentJobs: Array.isArray(recentJobs) ? recentJobs : [],
-      shopData
+      shopData,
+      ...(stockAlerts ? { stockAlerts } : {})
     };
 
     // Add filtered period data if date filter is applied

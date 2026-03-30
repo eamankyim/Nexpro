@@ -1,18 +1,33 @@
-const { Customer, Invoice, Expense, Job, Sale, Tenant } = require('../models');
+const { Customer, Invoice, Expense, Job, Sale, Tenant, Setting } = require('../models');
 const { Op } = require('sequelize');
+const { sequelize } = require('../config/database');
 const openaiService = require('../services/openaiService');
 
 /**
  * Build tenant-scoped context for the AI assistant (this month + last 3 months).
  * Used to ground answers in actual business data.
  * @param {string} tenantId - Tenant ID
- * @returns {Promise<Object>} Context blob: { businessType, thisMonth, last3Months }
+ * @returns {Promise<Object>} Context blob: { businessType, tenantName, workspaceContact, thisMonth, last3Months, receivables }
  */
 async function getAssistantContext(tenantId) {
-  const tenant = await Tenant.findByPk(tenantId, {
-    attributes: ['id', 'businessType', 'name']
-  });
+  const [tenant, orgSetting] = await Promise.all([
+    Tenant.findByPk(tenantId, {
+      attributes: ['id', 'businessType', 'name', 'metadata']
+    }),
+    Setting.findOne({
+      where: { tenantId, key: 'organization' },
+      attributes: ['value']
+    })
+  ]);
   const businessType = tenant?.businessType || 'printing_press';
+  const meta = tenant?.metadata || {};
+  const org = orgSetting?.value || {};
+  const workspaceContact = {
+    businessName: tenant?.name || 'Business',
+    email: String(org.email || meta.email || '').trim() || null,
+    phone: String(org.phone || meta.phone || '').trim() || null,
+    website: String(org.website || meta.website || '').trim() || null
+  };
 
   const today = new Date();
   const firstDayOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -32,7 +47,11 @@ async function getAssistantContext(tenantId) {
     thisMonthExpenses,
     last3MonthsRevenue,
     last3MonthsExpenses,
-    last3MonthsNewCustomers
+    last3MonthsNewCustomers,
+    totalOutstandingRaw,
+    overdueOutstandingRaw,
+    outstandingInvoiceCount,
+    topDebtorsRows
   ] = await Promise.all([
     Customer.count({ where: { tenantId, isActive: true } }),
     Customer.count({
@@ -90,6 +109,49 @@ async function getAssistantContext(tenantId) {
         isActive: true,
         createdAt: { [Op.between]: [firstDayThreeMonthsAgo, lastDayOfMonth] }
       }
+    }),
+    Invoice.sum('balance', {
+      where: {
+        tenantId,
+        balance: { [Op.gt]: 0 },
+        status: { [Op.notIn]: ['paid', 'cancelled'] }
+      }
+    }) || 0,
+    Invoice.sum('balance', {
+      where: {
+        tenantId,
+        balance: { [Op.gt]: 0 },
+        dueDate: { [Op.lt]: today },
+        status: { [Op.notIn]: ['paid', 'cancelled'] }
+      }
+    }) || 0,
+    Invoice.count({
+      where: {
+        tenantId,
+        balance: { [Op.gt]: 0 },
+        status: { [Op.notIn]: ['paid', 'cancelled'] }
+      }
+    }),
+    Invoice.findAll({
+      attributes: [
+        'customerId',
+        [sequelize.fn('SUM', sequelize.col('balance')), 'outstanding']
+      ],
+      where: {
+        tenantId,
+        balance: { [Op.gt]: 0 },
+        status: { [Op.notIn]: ['paid', 'cancelled'] }
+      },
+      include: [
+        {
+          model: Customer,
+          as: 'customer',
+          attributes: ['id', 'name', 'company']
+        }
+      ],
+      group: ['customerId', 'customer.id'],
+      order: [[sequelize.literal('outstanding'), 'DESC']],
+      limit: 5
     })
   ]);
 
@@ -110,11 +172,31 @@ async function getAssistantContext(tenantId) {
     range: { start: firstDayThreeMonthsAgo.toISOString(), end: lastDayOfMonth.toISOString() }
   };
 
+  const totalOutstanding = Number(parseFloat(totalOutstandingRaw || 0).toFixed(2));
+  const overdueOutstanding = Number(parseFloat(overdueOutstandingRaw || 0).toFixed(2));
+  const topDebtors = (topDebtorsRows || []).map((row) => {
+    const c = row.customer || {};
+    return {
+      customerId: row.customerId || null,
+      customerName: c.company || c.name || 'Unknown customer',
+      outstanding: Number(parseFloat(row.get ? row.get('outstanding') : row.outstanding || 0).toFixed(2))
+    };
+  });
+  const receivables = {
+    totalOutstanding,
+    overdueOutstanding,
+    outstandingInvoiceCount: Number(outstandingInvoiceCount || 0),
+    overdueRatioPercent: totalOutstanding > 0 ? Number(((overdueOutstanding / totalOutstanding) * 100).toFixed(2)) : 0,
+    topDebtors
+  };
+
   return {
     businessType,
     tenantName: tenant?.name || 'Business',
+    workspaceContact,
     thisMonth,
-    last3Months
+    last3Months,
+    receivables
   };
 }
 

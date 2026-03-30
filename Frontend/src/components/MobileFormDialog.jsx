@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import { useResponsive } from '@/hooks/useResponsive';
 import BottomSheet from './BottomSheet';
 import {
@@ -30,6 +31,7 @@ const MobileFormDialog = ({
   className,
 }) => {
   const { isMobile } = useResponsive();
+  const descriptionId = useId();
 
   if (isMobile) {
     return (
@@ -51,6 +53,7 @@ const MobileFormDialog = ({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
+        aria-describedby={description ? descriptionId : undefined}
         className={cn(
           '!flex flex-col w-full sm:w-[var(--modal-w-lg)] sm:min-w-[min(90vw,20rem)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)] overflow-hidden gap-0 p-0',
           className
@@ -58,7 +61,7 @@ const MobileFormDialog = ({
       >
         <DialogHeader className="flex-shrink-0 px-6 pt-6 pb-4 pr-12 border-b border-gray-200">
           <DialogTitle>{title}</DialogTitle>
-          {description && <DialogDescription>{description}</DialogDescription>}
+          {description && <DialogDescription id={descriptionId}>{description}</DialogDescription>}
         </DialogHeader>
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-6 py-4 space-y-4">
           {children}

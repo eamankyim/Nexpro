@@ -1,8 +1,12 @@
-const { Quote, QuoteItem, Customer, User, Job, JobItem, JobStatusHistory, QuoteActivity, Sale, SaleItem, SaleActivity } = require('../models');
+const crypto = require('crypto');
+const { Quote, QuoteItem, Customer, User, Job, JobItem, JobStatusHistory, QuoteActivity, Sale, SaleItem, SaleActivity, Setting, Tenant } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { getPagination } = require('../utils/paginationUtils');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const activityLogger = require('../services/activityLogger');
+const { getTaxConfigForTenant } = require('../utils/taxConfig');
+const { computeQuoteTaxSummary, computeDocumentTax } = require('../utils/taxCalculation');
 
 const generateQuoteNumber = async (tenantId) => {
   const date = new Date();
@@ -37,6 +41,8 @@ const formatQuoteResponse = (quote) => ({
   validUntil: quote.validUntil,
   subtotal: quote.subtotal,
   discountTotal: quote.discountTotal,
+  taxRate: quote.taxRate,
+  taxAmount: quote.taxAmount,
   totalAmount: quote.totalAmount,
   notes: quote.notes,
   createdBy: quote.createdBy,
@@ -129,6 +135,36 @@ exports.getQuotes = async (req, res, next) => {
   }
 };
 
+// @desc    Export quotes to CSV
+// @route   GET /api/quotes/export
+// @access  Private (admin, manager)
+exports.exportQuotes = async (req, res, next) => {
+  try {
+    const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
+    const where = applyTenantFilter(req.tenantId, {});
+
+    const quotes = await Quote.findAll({
+      where,
+      include: [{ model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email'] }],
+      order: [['createdAt', 'DESC']],
+      raw: false,
+    });
+    const rows = quotes.map((q) => {
+      const plain = q.get({ plain: true });
+      return { ...plain, customer: plain.customer || {} };
+    });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No quotes to export' });
+    }
+
+    const filename = `quotes_${new Date().toISOString().split('T')[0]}`;
+    sendCSV(res, rows, `${filename}.csv`, COLUMN_DEFINITIONS.quotes);
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.getQuote = async (req, res, next) => {
   try {
     const quote = await Quote.findOne({
@@ -166,12 +202,22 @@ exports.getQuote = async (req, res, next) => {
   }
 };
 
+const DEFAULT_QUOTE_SEND_MESSAGE = 'Please find your quote below. Click the button to view the full details and accept when you are ready.';
+
 exports.createQuote = async (req, res, next) => {
   try {
-    const { items = [], ...quoteData } = sanitizePayload(req.body);
+    const payload = sanitizePayload(req.body);
+    const { items = [], autoSendToCustomer = true, sendMessage, taxRate: bodyTaxRate, ...quoteData } = payload;
 
     const quoteNumber = await generateQuoteNumber(req.tenantId);
     const totals = calculateTotals(items);
+    const taxConfig = await getTaxConfigForTenant(req.tenantId);
+    const taxSummary = computeQuoteTaxSummary(
+      parseFloat(totals.subtotal),
+      parseFloat(totals.discountTotal),
+      taxConfig,
+      bodyTaxRate
+    );
 
     const quote = await Quote.create({
       ...quoteData,
@@ -179,7 +225,9 @@ exports.createQuote = async (req, res, next) => {
       quoteNumber,
       subtotal: totals.subtotal,
       discountTotal: totals.discountTotal,
-      totalAmount: totals.totalAmount,
+      taxRate: taxSummary.appliedTaxRate.toFixed(2),
+      taxAmount: taxSummary.taxAmount.toFixed(2),
+      totalAmount: taxSummary.total.toFixed(2),
       createdBy: req.user?.id || null
     });
 
@@ -187,6 +235,7 @@ exports.createQuote = async (req, res, next) => {
       const quoteItems = items.map((item) => ({
         quoteId: quote.id,
         tenantId: req.tenantId,
+        productId: item.productId || null,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
@@ -208,63 +257,568 @@ exports.createQuote = async (req, res, next) => {
       ]
     });
 
-    // Create activity for quote creation
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+    let viewToken = fullQuote.viewToken;
+    if (!viewToken) {
+      viewToken = crypto.randomBytes(32).toString('hex');
+      await Quote.update({ viewToken }, { where: applyTenantFilter(req.tenantId, { id: quote.id }) });
+      fullQuote.viewToken = viewToken;
+    }
+    const quoteLink = `${frontendUrl}/view-quote/${viewToken}`;
+    const shouldSendToCustomer = autoSendToCustomer !== false && autoSendToCustomer !== 'false';
+
+    const delivery = {};
+
+    let quoteSentViaAnyChannel = false;
+
+    if (shouldSendToCustomer) {
+      // Send WhatsApp notification if enabled and customer has phone
+      try {
+        const whatsappService = require('../services/whatsappService');
+        const whatsappTemplates = require('../services/whatsappTemplates');
+        const config = await whatsappService.getConfig(req.tenantId);
+
+        if (config && fullQuote.customer && fullQuote.customer.phone) {
+          const phoneNumber = whatsappService.validatePhoneNumber(fullQuote.customer.phone);
+          if (phoneNumber) {
+            const parameters = whatsappTemplates.prepareQuoteDelivery(
+              fullQuote,
+              fullQuote.customer,
+              quoteLink
+            );
+
+            const whatsappResult = await whatsappService.sendMessage(
+              req.tenantId,
+              phoneNumber,
+              'quote_delivery',
+              parameters
+            ).catch(error => {
+              console.error('[Quote] WhatsApp send failed:', error);
+              return { success: false, error: error?.message || 'WhatsApp send failed' };
+            });
+            if (whatsappResult?.success) {
+              quoteSentViaAnyChannel = true;
+              delivery.whatsappSent = true;
+              console.log('[Quote] WhatsApp delivery quoteNumber=%s result=sent', fullQuote.quoteNumber);
+            } else {
+              delivery.whatsappSent = false;
+              delivery.whatsappError = whatsappResult?.error || 'WhatsApp send failed';
+              console.log('[Quote] WhatsApp delivery quoteNumber=%s result=failed: %s', fullQuote.quoteNumber, delivery.whatsappError);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[Quote] WhatsApp integration error:', error);
+        delivery.whatsappSent = false;
+        delivery.whatsappError = error?.message || 'WhatsApp integration error';
+      }
+
+      // Send SMS notification if enabled and customer has phone (use suggested or custom message)
+      try {
+        const smsService = require('../services/smsService');
+        const smsConfig = await smsService.getResolvedConfig(req.tenantId);
+        if (smsConfig && fullQuote.customer && fullQuote.customer.phone) {
+          const smsPhone = smsService.validatePhoneNumber(fullQuote.customer.phone);
+          if (smsPhone && smsService.checkRateLimit(req.tenantId)) {
+            const intro = (typeof sendMessage === 'string' && sendMessage.trim())
+              ? sendMessage.trim()
+              : DEFAULT_QUOTE_SEND_MESSAGE;
+            const orgSetting = await Setting.findOne({ where: { tenantId: req.tenantId, key: 'organization' } });
+            const businessName = orgSetting?.value?.name || 'Our team';
+            const smsMessage = `${intro} ${businessName}. View: ${quoteLink}`.substring(0, 160);
+            const smsResult = await smsService.sendMessage(req.tenantId, smsPhone, smsMessage).catch(error => {
+              console.error('[Quote] SMS send failed:', error);
+              return { success: false, error: error?.message || 'SMS send failed' };
+            });
+            if (smsResult?.success) {
+              quoteSentViaAnyChannel = true;
+              delivery.smsSent = true;
+              console.log('[Quote] SMS delivery quoteNumber=%s result=sent', fullQuote.quoteNumber);
+            } else {
+              delivery.smsSent = false;
+              delivery.smsError = smsResult?.error || 'SMS send failed';
+              console.log('[Quote] SMS delivery quoteNumber=%s result=failed: %s', fullQuote.quoteNumber, delivery.smsError);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[Quote] SMS integration error:', error);
+        delivery.smsSent = false;
+        delivery.smsError = error?.message || 'SMS integration error';
+      }
+
+      // Send email if tenant has email configured and customer has email
+      let quoteSentViaEmail = false;
+      let quoteEmailReason = '';
+      try {
+        const emailService = require('../services/emailService');
+        const emailTemplates = require('../services/emailTemplates');
+        const emailConfig = await emailService.getConfig(req.tenantId);
+        const customerEmail = fullQuote.customer?.email?.trim();
+        if (!emailConfig) {
+          quoteEmailReason = 'tenant email not configured';
+          delivery.emailSent = false;
+          delivery.emailError = 'Turn on and configure Email in Settings → Integrations to send quotes by email.';
+        } else if (!customerEmail) {
+          quoteEmailReason = 'customer has no email address';
+          delivery.emailSent = false;
+          delivery.emailError = 'Customer has no email address. Add email in Customers to send the quote by email.';
+        } else {
+          const orgSetting = await Setting.findOne({ where: { tenantId: req.tenantId, key: 'organization' } });
+          const tenant = await Tenant.findByPk(req.tenantId);
+          const org = orgSetting?.value || {};
+          const company = {
+            name: org.name || tenant?.name || 'Our team',
+            logo: org.logoUrl || tenant?.metadata?.logo || '',
+            primaryColor: org.primaryColor || tenant?.metadata?.primaryColor || '#166534'
+          };
+          const customMessage = (typeof sendMessage === 'string' && sendMessage.trim())
+            ? sendMessage.trim()
+            : DEFAULT_QUOTE_SEND_MESSAGE;
+          const quoteForEmail = {
+            quoteNumber: fullQuote.quoteNumber,
+            title: fullQuote.title || 'Your quote',
+            totalAmount: fullQuote.totalAmount,
+            currency: fullQuote.currency || 'GHS',
+            items: (fullQuote.items || []).map(i => ({
+              description: i.description,
+              quantity: i.quantity,
+              unitPrice: i.unitPrice,
+              total: i.total
+            }))
+          };
+          const { subject, html, text } = emailTemplates.quoteNotification(
+            quoteForEmail,
+            fullQuote.customer,
+            quoteLink,
+            company,
+            customMessage
+          );
+          const result = await emailService.sendMessage(req.tenantId, customerEmail, subject, html, text);
+          if (result.success) {
+            quoteSentViaEmail = true;
+            quoteSentViaAnyChannel = true;
+            quoteEmailReason = `messageId=${result.messageId || 'n/a'}`;
+            delivery.emailSent = true;
+          } else {
+            quoteEmailReason = `send failed: ${result.error}`;
+            delivery.emailSent = false;
+            delivery.emailError = result.error;
+          }
+        }
+      } catch (error) {
+        quoteEmailReason = `error: ${error.message}`;
+        delivery.emailSent = false;
+        delivery.emailError = error.message || 'Email send failed';
+      }
+      // Single line so logs clearly show whether email was sent (easy to grep: "Email delivery")
+      console.log('[Quote] Email delivery quoteNumber=%s result=%s', fullQuote.quoteNumber, quoteSentViaEmail ? 'sent' : `failed: ${quoteEmailReason}`);
+
+      if (quoteSentViaAnyChannel) {
+        await Quote.update({ status: 'sent' }, { where: applyTenantFilter(req.tenantId, { id: quote.id }) });
+        fullQuote.status = 'sent';
+      }
+    }
+
+    // Create activity for quote creation (after auto-send so we can note if sent to customer)
+    const sentChannels = [];
+    if (delivery.emailSent) sentChannels.push('Email');
+    if (delivery.whatsappSent) sentChannels.push('WhatsApp');
+    if (delivery.smsSent) sentChannels.push('SMS');
+    const sentNote = sentChannels.length > 0
+      ? ` Quote sent to customer via ${sentChannels.join(', ')}.`
+      : '';
     await QuoteActivity.create({
       quoteId: quote.id,
       tenantId: req.tenantId,
       type: 'note',
       subject: 'Quote Created',
-      notes: `Quote ${quoteNumber} created`,
+      notes: `Quote ${quoteNumber} created.${sentNote}`.trim(),
       createdBy: req.user?.id || null,
       metadata: {
-        action: 'created'
+        action: 'created',
+        ...(sentChannels.length > 0 && { sentToCustomerVia: sentChannels })
       }
     });
 
     res.status(201).json({
       success: true,
-      data: formatQuoteResponse(fullQuote)
+      data: formatQuoteResponse(fullQuote),
+      ...(Object.keys(delivery).length > 0 && { delivery })
     });
-
-    // Send WhatsApp notification if enabled and customer has phone
-    try {
-      const whatsappService = require('../services/whatsappService');
-      const whatsappTemplates = require('../services/whatsappTemplates');
-      const config = await whatsappService.getConfig(req.tenantId);
-      
-      if (config && fullQuote.customer && fullQuote.customer.phone) {
-        const phoneNumber = whatsappService.validatePhoneNumber(fullQuote.customer.phone);
-        if (phoneNumber) {
-          const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-          const quoteLink = `${frontendUrl}/quotes/${fullQuote.id}`;
-          const parameters = whatsappTemplates.prepareQuoteDelivery(
-            fullQuote,
-            fullQuote.customer,
-            quoteLink
-          );
-          
-          await whatsappService.sendMessage(
-            req.tenantId,
-            phoneNumber,
-            'quote_delivery',
-            parameters
-          ).catch(error => {
-            console.error('[Quote] WhatsApp send failed:', error);
-          });
-        }
-      }
-    } catch (error) {
-      console.error('[Quote] WhatsApp integration error:', error);
-    }
   } catch (error) {
     console.error('Error creating quote:', error);
     next(error);
   }
 };
 
+/**
+ * Get quote by view token (public – no auth). Used for customer-facing "View your quote" links.
+ * @route GET /api/public/quotes/view/:token
+ */
+/**
+ * Public: customer responds to quote (accept / reject / comment) via view link.
+ * @route   POST /api/public/quotes/view/:token/respond
+ * @body    { action: 'accept'|'reject'|'comment', comment?: string }
+ */
+exports.respondToQuoteByToken = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    const { action, comment } = req.body || {};
+    const normalizedAction = (action || '').toLowerCase();
+
+    if (!['accept', 'reject', 'comment'].includes(normalizedAction)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid action. Use accept, reject, or comment.'
+      });
+    }
+
+    const quote = await Quote.findOne({
+      where: { viewToken: token },
+      include: [{ model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email', 'phone'] }]
+    });
+
+    if (!quote) {
+      return res.status(404).json({
+        success: false,
+        message: 'Quote not found or link has expired'
+      });
+    }
+
+    const tenantId = quote.tenantId;
+
+    if (normalizedAction === 'comment') {
+      const noteText = (typeof comment === 'string' && comment.trim()) ? comment.trim() : 'No comment provided';
+      await QuoteActivity.create({
+        quoteId: quote.id,
+        tenantId,
+        type: 'note',
+        subject: 'Customer comment',
+        notes: noteText,
+        createdBy: null,
+        metadata: { source: 'customer_response', action: 'comment' }
+      });
+      return res.status(200).json({
+        success: true,
+        data: { quote: formatQuoteResponse(quote), message: 'Thank you. Your comment has been sent to the team.' }
+      });
+    }
+
+    if (quote.status === 'accepted' || quote.status === 'declined') {
+      return res.status(400).json({
+        success: false,
+        message: 'This quote has already been responded to.'
+      });
+    }
+
+    if (normalizedAction === 'reject') {
+      await quote.update({ status: 'declined' });
+      const reason = (typeof comment === 'string' && comment.trim()) ? comment.trim() : '';
+      await QuoteActivity.create({
+        quoteId: quote.id,
+        tenantId,
+        type: 'status_change',
+        subject: 'Customer declined',
+        notes: reason ? `Customer declined. Reason: ${reason}` : 'Customer declined.',
+        createdBy: null,
+        metadata: { source: 'customer_response', action: 'reject', reason }
+      });
+      const updated = await Quote.findOne({
+        where: { id: quote.id },
+        include: [{ model: Customer, as: 'customer' }, { model: QuoteItem, as: 'items' }]
+      });
+      return res.status(200).json({
+        success: true,
+        data: { quote: formatQuoteResponse(updated), message: 'Thank you for letting us know.' }
+      });
+    }
+
+    // accept
+    await quote.update({ status: 'accepted', acceptedAt: new Date() });
+    const acceptNote = (typeof comment === 'string' && comment.trim()) ? ` Customer note: ${comment.trim()}` : '';
+    await QuoteActivity.create({
+      quoteId: quote.id,
+      tenantId,
+      type: 'status_change',
+      subject: 'Customer accepted',
+      notes: `Customer accepted this quote.${acceptNote}`.trim(),
+      createdBy: null,
+      metadata: { source: 'customer_response', action: 'accept', comment: comment || '' }
+    });
+
+    let jobId = null;
+    let invoiceId = null;
+    const tenant = await Tenant.findByPk(tenantId, { attributes: ['businessType'] });
+    const businessType = tenant?.businessType || 'printing_press';
+    const isShop = businessType === 'shop';
+    const workflowSetting = await Setting.findOne({ where: { tenantId, key: 'quote-workflow' } });
+    const onAccept = workflowSetting?.value?.onAccept || 'record_only';
+
+    if (onAccept === 'create_job_invoice_and_send') {
+      try {
+        const { createInvoiceFromQuoteInternal, createInvoiceFromJobInternal, sendInvoiceToCustomer } = require('./invoiceController');
+        if (isShop) {
+          // Shop flow: accept quote → create invoice from quote (no job); when customer pays, sale is created in invoiceController
+          const invoice = await createInvoiceFromQuoteInternal(tenantId, quote.id, quote.createdBy);
+          if (invoice) {
+            invoiceId = invoice.id;
+            await sendInvoiceToCustomer(tenantId, invoice);
+          }
+        } else {
+          // Studio flow: accept quote → create job + invoice from job
+          const jobResult = await convertQuoteToJobInternal(tenantId, quote.id, null);
+          if (jobResult && jobResult.job) {
+            jobId = jobResult.job.id;
+            const invoice = await createInvoiceFromJobInternal(tenantId, jobResult.job.id, quote.createdBy);
+            if (invoice) {
+              invoiceId = invoice.id;
+              await sendInvoiceToCustomer(tenantId, invoice);
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[Quote] respondToQuoteByToken auto job/invoice/send failed:', err?.message);
+      }
+    }
+
+    const updatedQuote = await Quote.findOne({
+      where: { id: quote.id },
+      include: [{ model: Customer, as: 'customer' }, { model: QuoteItem, as: 'items' }]
+    });
+
+    // Notify tenant by email when quote is accepted (use business/org email; don't fail response if send fails)
+    try {
+      const orgSetting = await Setting.findOne({ where: { tenantId, key: 'organization' } });
+      const organization = (orgSetting && orgSetting.value) ? orgSetting.value : {};
+      const tenantEmail = organization.email || null;
+      if (tenantEmail && typeof tenantEmail === 'string' && tenantEmail.includes('@')) {
+        const emailService = require('../services/emailService');
+        const emailTemplates = require('../services/emailTemplates');
+        const frontendUrl = process.env.FRONTEND_URL || '';
+        const { subject, html, text } = emailTemplates.quoteAcceptedNotifyTenant(
+          updatedQuote,
+          { name: organization.name, primaryColor: organization.primaryColor, logo: organization.logoUrl },
+          frontendUrl
+        );
+        await emailService.sendMessage(tenantId, tenantEmail, subject, html, text);
+      }
+    } catch (emailErr) {
+      console.error('[Quote] respondToQuoteByToken notify-tenant email failed:', emailErr?.message);
+    }
+
+    const message = invoiceId
+      ? (isShop
+        ? 'Thank you for accepting. An invoice has been created; you will receive it by email shortly. Once paid, your order will be completed.'
+        : 'Thank you for accepting. A job and invoice have been created; you will receive the invoice by email shortly.')
+      : 'Thank you for accepting. The team has been notified.';
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        quote: formatQuoteResponse(updatedQuote),
+        message,
+        ...(jobId && { jobId }),
+        ...(invoiceId && { invoiceId })
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Internal: convert quote to job (used by authenticated convertQuoteToJob and by public respond when auto-flow is on).
+ * @param {string} tenantId
+ * @param {string} quoteId
+ * @param {string|null} createdBy
+ * @returns {Promise<{ job: Object }|null>}
+ */
+async function convertQuoteToJobInternal(tenantId, quoteId, createdBy) {
+  const transaction = await sequelize.transaction();
+  try {
+    const quote = await Quote.findOne({
+      where: applyTenantFilter(tenantId, { id: quoteId }),
+      transaction,
+      lock: transaction.LOCK.UPDATE
+    });
+    if (!quote) {
+      await transaction.rollback();
+      return null;
+    }
+
+    const existingJob = await Job.findOne({
+      where: applyTenantFilter(tenantId, { quoteId: quote.id }),
+      transaction
+    });
+    if (existingJob) {
+      await transaction.commit();
+      return { job: existingJob };
+    }
+
+    const quoteItems = await QuoteItem.findAll({
+      where: applyTenantFilter(tenantId, { quoteId: quote.id }),
+      transaction
+    });
+
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const lastJob = await Job.findOne({
+      where: { tenantId, jobNumber: { [Op.like]: `JOB-${year}${month}%` } },
+      order: [['createdAt', 'DESC']],
+      transaction
+    });
+    let sequence = 1;
+    if (lastJob) {
+      const lastSequence = parseInt(lastJob.jobNumber.split('-')[2], 10);
+      sequence = lastSequence + 1;
+    }
+    const jobNumber = `JOB-${year}${month}-${String(sequence).padStart(4, '0')}`;
+
+    const job = await Job.create({
+      jobNumber,
+      quoteId: quote.id,
+      customerId: quote.customerId,
+      title: quote.title,
+      description: quote.description,
+      status: 'new',
+      priority: 'medium',
+      quotedPrice: quote.totalAmount,
+      finalPrice: quote.totalAmount,
+      notes: quote.notes,
+      tenantId,
+      createdBy: createdBy || null
+    }, { transaction });
+
+    if (quoteItems.length) {
+      const jobItems = quoteItems.map(item => ({
+        jobId: job.id,
+        quoteItemId: item.id,
+        tenantId,
+        category: item.description,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        totalPrice: item.total,
+        specifications: item.metadata || {}
+      }));
+      await JobItem.bulkCreate(jobItems, { transaction });
+    }
+
+    await JobStatusHistory.create({
+      jobId: job.id,
+      status: 'new',
+      comment: `Job created from quote ${quote.quoteNumber} (customer accepted)`,
+      changedBy: createdBy || null,
+      tenantId
+    }, { transaction });
+
+    await QuoteActivity.create({
+      quoteId: quote.id,
+      tenantId,
+      type: 'conversion',
+      subject: 'Quote Converted to Job',
+      notes: `Quote converted to job ${jobNumber} (customer accepted online)`,
+      createdBy: createdBy || null,
+      metadata: { jobId: job.id, jobNumber }
+    }, { transaction });
+
+    await transaction.commit();
+
+    try {
+      await activityLogger.logJobCreated(job, createdBy);
+      if (job.assignedTo) {
+        await activityLogger.logJobAssigned(job, createdBy);
+      }
+    } catch (logErr) {
+      console.error('[convertQuoteToJobInternal] Job activity log failed:', logErr?.message);
+    }
+
+    try {
+      const { maybeSendJobTrackingEmailOnJobCreated } = require('../services/jobCustomerTrackingService');
+      await maybeSendJobTrackingEmailOnJobCreated({
+        tenantId,
+        jobId: job.id,
+        triggeredByUserId: createdBy
+      });
+    } catch (trackMailErr) {
+      console.error('[convertQuoteToJobInternal] Job tracking email failed:', trackMailErr?.message);
+    }
+
+    return { job };
+  } catch (err) {
+    if (transaction && !transaction.finished) await transaction.rollback();
+    throw err;
+  }
+}
+
+exports.getQuoteByViewToken = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+
+    const quote = await Quote.findOne({
+      where: { viewToken: token },
+      include: [
+        { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email', 'phone'] },
+        { model: QuoteItem, as: 'items' }
+      ]
+    });
+
+    if (!quote) {
+      return res.status(404).json({
+        success: false,
+        message: 'Quote not found or link has expired'
+      });
+    }
+
+    const tenantId = quote.tenantId;
+    const orgSetting = await Setting.findOne({ where: { tenantId, key: 'organization' } });
+    const tenant = await Tenant.findByPk(tenantId);
+    const orgValue = orgSetting?.value || {};
+    const metadata = tenant?.metadata || {};
+
+    const organization = {
+      name: orgValue.name ?? tenant?.name ?? '',
+      legalName: orgValue.legalName ?? '',
+      email: orgValue.email ?? metadata.email ?? '',
+      phone: orgValue.phone ?? metadata.phone ?? '',
+      website: orgValue.website ?? metadata.website ?? '',
+      logoUrl: orgValue.logoUrl ?? metadata.logo ?? '',
+      primaryColor: metadata.primaryColor || orgValue.primaryColor || '#166534',
+      address: orgValue.address ?? {},
+      paymentDetails: orgValue.paymentDetails ?? ''
+    };
+
+    // So the view-quote page can show "Your comment has been sent" after refresh (comment doesn't change quote status)
+    const latestCustomerResponse = await QuoteActivity.findOne({
+      where: { quoteId: quote.id, tenantId },
+      order: [['createdAt', 'DESC']],
+      attributes: ['metadata'],
+      raw: true
+    });
+    const meta = latestCustomerResponse?.metadata || {};
+    const customerResponseSummary = (meta.source === 'customer_response' && meta.action)
+      ? { responded: true, lastAction: meta.action }
+      : null;
+
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.status(200).json({
+      success: true,
+      data: {
+        quote: formatQuoteResponse(quote),
+        organization,
+        ...(customerResponseSummary && { customerResponseSummary })
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.updateQuote = async (req, res, next) => {
   try {
-    const { items = [], ...quoteData } = sanitizePayload(req.body);
+    const { items = [], taxRate: bodyTaxRate, ...quoteData } = sanitizePayload(req.body);
 
     const quote = await Quote.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
@@ -287,12 +841,22 @@ exports.updateQuote = async (req, res, next) => {
 
     const previousStatus = quote.status;
     const totals = calculateTotals(items);
+    const taxConfig = await getTaxConfigForTenant(req.tenantId);
+    const rateOverride = bodyTaxRate !== undefined ? bodyTaxRate : quote.taxRate;
+    const taxSummary = computeQuoteTaxSummary(
+      parseFloat(totals.subtotal),
+      parseFloat(totals.discountTotal),
+      taxConfig,
+      rateOverride
+    );
 
     await quote.update({
       ...quoteData,
       subtotal: totals.subtotal,
       discountTotal: totals.discountTotal,
-      totalAmount: totals.totalAmount
+      taxRate: taxSummary.appliedTaxRate.toFixed(2),
+      taxAmount: taxSummary.taxAmount.toFixed(2),
+      totalAmount: taxSummary.total.toFixed(2)
     });
 
     if (quoteData.status && quoteData.status !== previousStatus && quoteData.status) {
@@ -335,6 +899,7 @@ exports.updateQuote = async (req, res, next) => {
       const quoteItems = items.map((item) => ({
         quoteId: quote.id,
         tenantId: req.tenantId,
+        productId: item.productId || null,
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
@@ -362,6 +927,60 @@ exports.updateQuote = async (req, res, next) => {
     });
   } catch (error) {
     console.error(`Error updating quote ${req.params.id}:`, error);
+    next(error);
+  }
+};
+
+const STATUS_NEXT = { draft: 'sent', sent: 'accepted' };
+const STATUS_LABELS = { draft: 'Draft', sent: 'Sent', accepted: 'Accepted', declined: 'Declined', expired: 'Expired' };
+
+exports.updateQuoteStatus = async (req, res, next) => {
+  try {
+    const { status } = req.body;
+    const quote = await Quote.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
+
+    if (!quote) {
+      return res.status(404).json({ success: false, message: 'Quote not found' });
+    }
+
+    const nextStatus = STATUS_NEXT[quote.status];
+    if (!nextStatus || status !== nextStatus) {
+      return res.status(400).json({
+        success: false,
+        message: `Quote can only be marked as ${STATUS_LABELS[nextStatus] || 'next status'} from ${STATUS_LABELS[quote.status]}`
+      });
+    }
+
+    const previousStatus = quote.status;
+    await quote.update({
+      status,
+      ...(status === 'accepted' ? { acceptedAt: new Date() } : {})
+    });
+
+    await QuoteActivity.create({
+      quoteId: quote.id,
+      tenantId: req.tenantId,
+      type: 'status_change',
+      subject: 'Status Updated',
+      notes: `Status changed from ${STATUS_LABELS[previousStatus]} to ${STATUS_LABELS[status]}`,
+      createdBy: req.user?.id || null,
+      metadata: { oldStatus: previousStatus, newStatus: status }
+    });
+
+    const updated = await Quote.findOne({
+      where: applyTenantFilter(req.tenantId, { id: quote.id }),
+      include: [
+        { model: Customer, as: 'customer' },
+        { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
+        { model: QuoteItem, as: 'items' }
+      ]
+    });
+
+    res.status(200).json({ success: true, data: formatQuoteResponse(updated) });
+  } catch (error) {
+    console.error(`Error updating quote status ${req.params.id}:`, error);
     next(error);
   }
 };
@@ -477,6 +1096,16 @@ exports.convertQuoteToJob = async (req, res, next) => {
 
     const jobNumber = `JOB-${year}${month}-${String(sequence).padStart(4, '0')}`;
 
+    // Optional job fields from request body (startDate, dueDate, assignedTo)
+    const { startDate, dueDate, assignedTo } = req.body || {};
+
+    // Normalize optional dates to Date objects if provided
+    const parseDate = (value) => {
+      if (!value) return null;
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? null : d;
+    };
+
     const job = await Job.create({
       jobNumber,
       quoteId: quote.id,
@@ -489,7 +1118,10 @@ exports.convertQuoteToJob = async (req, res, next) => {
       finalPrice: quote.totalAmount,
       notes: quote.notes,
       tenantId: req.tenantId,
-      createdBy: req.user?.id || null
+      createdBy: req.user?.id || null,
+      startDate: parseDate(startDate),
+      dueDate: parseDate(dueDate),
+      assignedTo: assignedTo || null
     }, { transaction });
 
     if (quoteItems && quoteItems.length) {
@@ -562,6 +1194,42 @@ exports.convertQuoteToJob = async (req, res, next) => {
         { model: QuoteItem, as: 'items' }
       ]
     });
+
+    try {
+      await activityLogger.logJobCreated(jobWithDetails, req.user?.id || null);
+      if (jobWithDetails.assignedTo) {
+        await activityLogger.logJobAssigned(jobWithDetails, req.user?.id || null);
+      }
+    } catch (logErr) {
+      console.error('Failed to log job created/assigned activity:', logErr?.message);
+    }
+
+    if (jobWithDetails.assignedTo && jobWithDetails.assignedUser?.email) {
+      const { sendJobAssignedEmailToAssignee } = require('../services/jobAssigneeEmailService');
+      sendJobAssignedEmailToAssignee({
+        tenantId: req.tenantId,
+        job: jobWithDetails,
+        assignee: jobWithDetails.assignedUser,
+        assignedByUser: req.user || null
+      });
+    }
+
+    try {
+      const { maybeSendJobTrackingEmailOnJobCreated } = require('../services/jobCustomerTrackingService');
+      await maybeSendJobTrackingEmailOnJobCreated({
+        tenantId: req.tenantId,
+        jobId: jobWithDetails.id,
+        triggeredByUserId: req.user?.id || null
+      });
+    } catch (trackMailErr) {
+      console.error('[convertQuoteToJob] Job tracking email failed:', trackMailErr?.message);
+    }
+
+    try {
+      await activityLogger.logQuoteAccepted(updatedQuote, req.user?.id || null);
+    } catch (logErr) {
+      console.error('Failed to log quote accepted activity:', logErr?.message);
+    }
 
     res.status(200).json({
       success: true,
@@ -715,13 +1383,15 @@ exports.convertQuoteToSale = async (req, res, next) => {
     const sequence = String(count + 1).padStart(4, '0');
     const saleNumber = `${prefix}-${dateStr}-${sequence}`;
 
-    // Calculate totals from quote
     const subtotal = parseFloat(quote.subtotal || 0);
     const discount = parseFloat(quote.discountTotal || 0);
-    const tax = 0; // Quotes don't have tax, can be added later
-    const total = subtotal - discount + tax;
+    const tax = parseFloat(quote.taxAmount || 0);
+    const total = parseFloat(quote.totalAmount || 0);
     const amountPaid = paymentMethod === 'credit' ? 0 : total;
     const change = 0;
+
+    const taxConfig = await getTaxConfigForTenant(req.tenantId);
+    const taxSummary = computeQuoteTaxSummary(subtotal, discount, taxConfig, quote.taxRate);
 
     // Create sale
     const sale = await Sale.create({
@@ -741,7 +1411,13 @@ exports.convertQuoteToSale = async (req, res, next) => {
       notes: `Converted from quote ${quote.quoteNumber}`,
       metadata: {
         quoteId: quote.id,
-        quoteNumber: quote.quoteNumber
+        quoteNumber: quote.quoteNumber,
+        taxDetail: {
+          ratePercent: parseFloat(quote.taxRate) || 0,
+          pricesAreTaxInclusive: taxConfig.pricesAreTaxInclusive,
+          taxableExclusive: taxSummary.netTaxable,
+          taxAmount: tax
+        }
       }
     }, { transaction });
 
@@ -749,20 +1425,38 @@ exports.convertQuoteToSale = async (req, res, next) => {
     // Note: SaleItems require productId, but quotes may not have products
     // For now, we'll create sale items with minimal product info
     // In production, you might want to require products to be linked to quotes first
+    const linesForTax = (quoteItems || []).map((qi) => ({
+      quantity: qi.quantity,
+      unitPrice: qi.unitPrice,
+      discount: qi.discountAmount || 0
+    }));
+    const lineTaxBreakdown =
+      linesForTax.length > 0
+        ? computeDocumentTax({
+            lines: linesForTax,
+            cartDiscount: 0,
+            config: {
+              ...taxConfig,
+              enabled: tax > 0,
+              defaultRatePercent: parseFloat(quote.taxRate) || taxConfig.defaultRatePercent
+            }
+          }).lineResults
+        : [];
+
     if (quoteItems && quoteItems.length) {
-      for (const quoteItem of quoteItems) {
-        // Try to find a product by description or create a placeholder
-        // For now, we'll require productId in metadata or skip items without products
+      for (let qi = 0; qi < quoteItems.length; qi++) {
+        const quoteItem = quoteItems[qi];
         const productId = quoteItem.metadata?.productId || null;
-        
+
         if (!productId) {
-          // Skip items without productId - in production, you might want to handle this differently
           console.warn(`Skipping quote item ${quoteItem.id} - no productId found`);
           continue;
-        }        const itemSubtotal = parseFloat(quoteItem.quantity || 0) * parseFloat(quoteItem.unitPrice || 0);
+        }
+        const itemSubtotal = parseFloat(quoteItem.quantity || 0) * parseFloat(quoteItem.unitPrice || 0);
         const itemDiscount = parseFloat(quoteItem.discountAmount || 0);
-        const itemTax = 0;
-        const itemTotal = itemSubtotal - itemDiscount + itemTax;
+        const lr = lineTaxBreakdown[qi] || { tax: 0, exclusive: 0, gross: 0 };
+        const itemTax = lr.tax;
+        const itemTotal = Math.round((lr.exclusive + lr.tax) * 100) / 100;
 
         await SaleItem.create({
           saleId: sale.id,

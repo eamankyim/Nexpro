@@ -16,7 +16,7 @@ import {
 /**
  * MobileCardView - Card-based layout for mobile devices
  * @param {Array} data - Array of data objects
- * @param {Array} columns - Array of column definitions with { key, label, render }
+ * @param {Array} columns - Column definitions: { key, label, render, hidden?, mobileDashboardPlacement?: 'headerEnd' } (headerEnd = top-right opposite first column in list + grid card views)
  * @param {boolean} loading - Loading state
  * @param {Object} emptyState - EmptyState config { icon, title, description, primaryAction, secondaryAction }
  * @param {string} emptyDescription - (Legacy) Description text when empty
@@ -103,13 +103,36 @@ const MobileCardView = memo(({
     [columns]
   );
 
+  /** Shown top-right opposite the title row in dashboard card style (e.g. invoice status). */
+  const headerEndColumns = useMemo(
+    () => visibleColumns.filter((col) => col.mobileDashboardPlacement === 'headerEnd'),
+    [visibleColumns]
+  );
+
+  const layoutColumns = useMemo(
+    () => visibleColumns.filter((col) => col.mobileDashboardPlacement !== 'headerEnd'),
+    [visibleColumns]
+  );
+
+  /** Mobile list: dashboard-style row. Grid/desktop cards: default stacked layout. */
+  const useDashboardCardStyle = isMobile && !gridLayout;
+
   const primaryColumns = useMemo(() => {
-    return visibleColumns.slice(0, 3);
-  }, [visibleColumns]);
+    if (useDashboardCardStyle) return layoutColumns.slice(0, 3);
+    // Grid / desktop card: first column is title row with headerEnd; body starts at index 1
+    if (headerEndColumns.length > 0 && layoutColumns.length > 0) {
+      return layoutColumns.slice(1, 4);
+    }
+    return layoutColumns.slice(0, 3);
+  }, [useDashboardCardStyle, layoutColumns, headerEndColumns.length]);
 
   const secondaryColumns = useMemo(() => {
-    return visibleColumns.slice(3);
-  }, [visibleColumns]);
+    if (useDashboardCardStyle) return layoutColumns.slice(3);
+    if (headerEndColumns.length > 0 && layoutColumns.length > 0) {
+      return layoutColumns.slice(4);
+    }
+    return layoutColumns.slice(3);
+  }, [useDashboardCardStyle, layoutColumns, headerEndColumns.length]);
 
   // Find actions column
   const actionsColumn = useMemo(() => {
@@ -178,9 +201,6 @@ const MobileCardView = memo(({
   const cardsContainerClass = gridLayout
     ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4'
     : isMobile ? 'space-y-2' : 'space-y-3';
-
-  // Dashboard-style: separate cards like sales cards (no label: value pairs, cleaner layout)
-  const useDashboardCardStyle = isMobile && !gridLayout;
 
   if (loading) {
     return (
@@ -306,7 +326,7 @@ const MobileCardView = memo(({
             <CardContent className={cn(isMobile ? "px-4 py-3" : "p-4", cardImageUrl && "pt-3")}>
               {useDashboardCardStyle ? (
                 <>
-                  {/* Dashboard-style: primary row (name + category badge) - like sales cards */}
+                  {/* Dashboard-style: stacked identity rows on left + status on right */}
                   <div className="flex justify-between items-start gap-2">
                     <div className="min-w-0 flex-1">
                       {primaryColumns[0] && (
@@ -314,6 +334,13 @@ const MobileCardView = memo(({
                           {primaryColumns[0].render
                             ? primaryColumns[0].render(item[primaryColumns[0].key], item, index)
                             : (item[primaryColumns[0].key] ?? '—')}
+                        </div>
+                      )}
+                      {primaryColumns[1] && (
+                        <div className="text-foreground mt-0.5 break-words">
+                          {primaryColumns[1].render
+                            ? primaryColumns[1].render(item[primaryColumns[1].key], item, index)
+                            : (item[primaryColumns[1].key] ?? '—')}
                         </div>
                       )}
                       {primaryColumns[2] && (
@@ -324,11 +351,15 @@ const MobileCardView = memo(({
                         </div>
                       )}
                     </div>
-                    {primaryColumns[1] && (
-                      <div className="shrink-0">
-                        {primaryColumns[1].render
-                          ? primaryColumns[1].render(item[primaryColumns[1].key], item, index)
-                          : (item[primaryColumns[1].key] ?? '—')}
+                    {headerEndColumns.length > 0 && (
+                      <div className="shrink-0 flex flex-col items-end gap-1 text-right">
+                        {headerEndColumns.map((col) => (
+                          <div key={col.key}>
+                            {col.render
+                              ? col.render(item[col.key], item, index)
+                              : (item[col.key] ?? '—')}
+                          </div>
+                        ))}
                       </div>
                     )}
                   </div>
@@ -351,6 +382,25 @@ const MobileCardView = memo(({
                 </>
               ) : (
                 <>
+                  {/* Grid / tablet: title + status (headerEnd) on one row */}
+                  {!useDashboardCardStyle && headerEndColumns.length > 0 && layoutColumns[0] && (
+                    <div className="flex justify-between items-start gap-2 mb-3 pb-3 border-b border-border">
+                      <div className="min-w-0 flex-1 text-foreground font-medium">
+                        {layoutColumns[0].render
+                          ? layoutColumns[0].render(item[layoutColumns[0].key], item, index)
+                          : (item[layoutColumns[0].key] ?? '—')}
+                      </div>
+                      <div className="shrink-0 flex flex-col items-end gap-1 text-right">
+                        {headerEndColumns.map((col) => (
+                          <div key={col.key}>
+                            {col.render
+                              ? col.render(item[col.key], item, index)
+                              : (item[col.key] ?? '—')}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {/* Default: label-value layout (no labels when showLabelsInCardView is false) */}
                   <div className="space-y-2 mb-3">
                     {primaryColumns.map((column) => {
@@ -439,8 +489,10 @@ const MobileCardView = memo(({
       {/* Pagination - always at bottom, outside grid */}
       {totalItems > 0 && (
         <div className={cn(
-          "flex flex-col sm:flex-row items-center justify-between gap-3 w-full border-t border-gray-200 mt-4",
-          isMobile ? "py-3 px-4" : "py-4 px-2"
+          'flex flex-col sm:flex-row items-center justify-between gap-3 w-full',
+          gridLayout
+            ? 'mt-6'
+            : cn('mt-4 border-t border-gray-200', isMobile ? 'py-3 px-4' : 'py-4 px-2')
         )}>
           <div className="text-sm text-muted-foreground text-center sm:text-left">
             Showing {startIndex} to {endIndex} of {totalItems} items

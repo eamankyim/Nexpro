@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils"
 
 export function Steps({ current = 0, children, className, ...props }) {
   return (
-    <div className={cn("flex items-center", className)} {...props}>
+    <div className={cn("flex items-center gap-6", className)} {...props}>
       {children}
     </div>
   )
@@ -33,10 +33,10 @@ export function Step({
       onClick={onClick}
       {...props}
     >
-      <div className="flex flex-col items-center">
+      <div className="flex items-center gap-2">
         <div
           className={cn(
-            "flex h-10 w-10 items-center justify-center rounded-full border transition-colors",
+            "flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-colors",
             isCompleted && "bg-primary border-primary text-primary-foreground",
             isActive && !isCompleted && "border-primary text-primary",
             !isActive && !isCompleted && "border-muted text-muted-foreground"
@@ -49,10 +49,10 @@ export function Step({
           )}
         </div>
         {title && (
-          <div className="mt-2 text-center">
+          <div className="text-left">
             <div
               className={cn(
-                "text-sm font-medium",
+                "text-sm font-medium whitespace-nowrap",
                 isActive && "text-primary",
                 !isActive && "text-muted-foreground"
               )}
@@ -70,7 +70,7 @@ export function Step({
       {index < React.Children.count(props.children?.props?.children) - 1 && (
         <div
           className={cn(
-            "h-0.5 w-16 mx-2 transition-colors",
+            "h-0.5 w-12 mx-4 flex-shrink-0 transition-colors",
             isCompleted ? "bg-primary" : "bg-muted"
           )}
         />

@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Crown,
   Lightbulb,
   LogOut,
   Settings,
@@ -9,6 +8,7 @@ import {
   User,
   ChevronDown,
   Search,
+  Sparkles,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -36,7 +36,7 @@ import { cn } from '@/lib/utils';
 
 export function Header() {
   const navigate = useNavigate();
-  const { user, logout, activeTenant } = useAuth();
+  const { user, logout, activeTenant, isManager } = useAuth();
   const { hintMode, toggleHintMode } = useHintMode();
   const { placeholder, scope, searchValue, setSearchValue } = useSmartSearch();
   const { isMobile, isTablet } = useResponsive();
@@ -48,10 +48,9 @@ export function Header() {
 
   const handleNavigateToSabito = () => {
     const token = localStorage.getItem('token');
-    const sabitoUrl = import.meta.env.VITE_SABITO_URL || 'http://localhost:5175';
-    const url = token 
-      ? `${sabitoUrl}?nexproToken=${token}`
-      : sabitoUrl;
+    // Default to production Sabito app when env var is not set
+    const sabitoUrl = import.meta.env.VITE_SABITO_URL || 'https://myapp.sabito.app';
+    const url = token ? `${sabitoUrl}?nexproToken=${token}` : sabitoUrl;
     window.location.href = url;
   };
 
@@ -114,36 +113,7 @@ export function Header() {
     }
   };
 
-  const userMenuItems = [
-    {
-      label: 'Take Tour',
-      icon: null, // Will use TourButton component
-      isTourButton: true,
-    },
-    {
-      label: 'Hint Mode',
-      icon: Lightbulb,
-      isHintMode: true,
-    },
-    {
-      label: 'Settings',
-      icon: Settings,
-      onClick: () => navigate('/settings'),
-    },
-    {
-      label: 'Open Sabito',
-      icon: LinkIcon,
-      onClick: handleNavigateToSabito,
-    },
-    {
-      label: 'Logout',
-      icon: LogOut,
-      onClick: () => {
-        logout();
-        navigate('/login');
-      },
-    },
-  ];
+  const closeMenu = () => setUserMenuOpen(false);
 
   return (
     <header 
@@ -156,10 +126,10 @@ export function Header() {
         ref={searchContainerRef}
         className={cn(
           "flex h-16 items-center justify-between gap-1.5 md:gap-2 lg:gap-4 transition-all duration-300",
-          // Responsive horizontal padding: mobile (24px to match Login), tablet (24px), desktop (40px)
-          "px-6 md:px-6 lg:px-10",
+          // Responsive horizontal padding: compact on very small devices
+          "px-4 sm:px-6 lg:px-10",
           // When search is expanded on mobile, keep consistent padding
-          isMobile && isSearchExpanded && "px-6"
+          isMobile && isSearchExpanded && "px-4"
         )}
         style={{
           paddingLeft: safeAreaInsets.left > 0 
@@ -202,7 +172,7 @@ export function Header() {
                       onClick={() => setSearchValue('')}
                       className="absolute right-3 top-1/2 transform -translate-y-1/2 h-5 w-5 flex items-center justify-center rounded-full hover:bg-muted transition-colors"
                     >
-                      <X className="h-3 w-3 text-muted-foreground" />
+                      <X className="h-6 w-6 text-muted-foreground" />
                     </button>
                   )}
                 </div>
@@ -212,7 +182,7 @@ export function Header() {
                   onClick={handleSearchClose}
                   className="min-h-[44px] min-w-[44px] flex-shrink-0"
                 >
-                  <X className="h-5 w-5" />
+                  <X className="h-6 w-6" />
                 </Button>
               </div>
             ) : (
@@ -251,29 +221,50 @@ export function Header() {
         {/* Right side: Upgrade button, Notifications, User menu - Hide when search expanded on mobile */}
         {(!isMobile || !isSearchExpanded) && (
           <div className="flex items-center gap-1.5 md:gap-2 lg:gap-3 flex-shrink-0">
-            {/* Upgrade to Pro Button - Icon only on mobile, full text on tablet+ */}
-            {activeTenant && (activeTenant.plan === 'trial' || activeTenant.plan === 'free') && (
+            {/* Upgrade to Pro button hidden for now.
+            {isManager && activeTenant && activeTenant.plan === 'trial' && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     size={isMobile ? "icon" : "sm"}
                     onClick={() => navigate('/checkout')}
-                className={cn(
-                  "bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-600 hover:to-amber-700 text-white",
-                  isMobile ? "h-11 w-11" : "hidden sm:flex",
-                  // Ensure minimum touch target
-                  "min-h-[44px] min-w-[44px]"
-                )}
-                style={{ borderRadius: '32px' }}
-              >
-                <Crown className={cn("h-4 w-4", !isMobile && "mr-2")} />
-                {!isMobile && <span>Upgrade to Pro</span>}
-              </Button>
+                    className={cn(
+                      "bg-gradient-to-r from-yellow-500 to-amber-600 hover:from-yellow-600 hover:to-amber-700 text-white",
+                      isMobile ? "h-11 w-11" : "hidden sm:flex",
+                      "min-h-[44px] min-w-[44px]"
+                    )}
+                    style={{ borderRadius: '32px' }}
+                  >
+                    <Crown className={cn("h-4 w-4", !isMobile && "mr-2")} />
+                    {!isMobile && <span>Upgrade Plan</span>}
+                  </Button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">Upgrade your plan for more features and capacity</TooltipContent>
               </Tooltip>
             )}
+            */}
             
+            {/* Ask AI */}
+            {isManager && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size={isMobile ? 'icon' : 'sm'}
+                    onClick={() => navigate('/ask-ai')}
+                    className={cn(
+                      isMobile ? 'min-h-[44px] min-w-[44px]' : 'h-9',
+                      'border-border'
+                    )}
+                  >
+                    <Sparkles className={cn('h-4 w-4', !isMobile && 'mr-2')} />
+                    {!isMobile && <span>Ask AI</span>}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Open AI assistant page</TooltipContent>
+              </Tooltip>
+            )}
+
             {/* Notification Bell */}
             <Tooltip>
               <TooltipTrigger asChild>
@@ -291,11 +282,11 @@ export function Header() {
                   variant="ghost" 
                   className={cn(
                     "flex items-center gap-2 h-auto hover:bg-muted rounded-[32px] bg-muted",
-                    // Responsive padding: mobile (p-2), tablet+ (p-1.5)
-                    isMobile ? "p-2 min-h-[44px] min-w-[44px]" : "p-1.5"
+                    // Keep touch target and use 3px horizontal padding.
+                    isMobile ? "px-[3px] py-0 min-h-[44px] min-w-[44px]" : "px-[3px] py-0"
                   )}
                 >
-                  <Avatar className="h-8 w-8">
+                  <Avatar className={cn("h-8 w-8", isMobile ? "!rounded-md" : "")}>
                     <AvatarImage src={resolveImageUrl(user?.profilePicture || '') || undefined} />
                     <AvatarFallback>
                       <User className="h-4 w-4" />
@@ -313,49 +304,75 @@ export function Header() {
                   )} />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                {userMenuItems.map((item, index) => (
-                  <div key={index}>
-                    {index === 2 && <DropdownMenuSeparator />}
-                    {item.isTourButton ? (
-                      <div
-                        className="px-2 py-1.5"
-                        onClick={() => setUserMenuOpen(false)}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setUserMenuOpen(false); }}
-                        role="presentation"
-                      >
-                        <TourButton
-                          variant="ghost"
-                          className="w-full justify-start h-auto py-2"
-                        />
-                      </div>
-                    ) : item.isHintMode ? (
-                      <div className="flex items-center justify-between gap-3 px-2 py-2 min-h-[44px]">
-                        {item.icon && <item.icon className="h-4 w-4 text-muted-foreground shrink-0" />}
-                        <span className="text-sm font-medium flex-1">{item.label}</span>
-                        <Switch
-                          checked={hintMode}
-                          onCheckedChange={(checked) => {
-                            toggleHintMode(checked);
-                            setUserMenuOpen(false);
-                          }}
-                        />
-                      </div>
-                    ) : (
-                      <DropdownMenuItem 
-                        onClick={() => {
-                          setUserMenuOpen(false);
-                          item.onClick?.();
-                        }}
-                        className="min-h-[44px]"
-                      >
-                        {item.icon && <item.icon className="mr-2 h-4 w-4" />}
-                        <span>{item.label}</span>
-                      </DropdownMenuItem>
-                    )}
-                    {(index === 0 || index === 2) && <DropdownMenuSeparator />}
-                  </div>
-                ))}
+              <DropdownMenuContent align="end" className="w-56 p-0">
+                <div
+                  className="p-0"
+                  onClick={closeMenu}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') closeMenu(); }}
+                  role="presentation"
+                >
+                  <TourButton
+                    variant="ghost"
+                    className="w-full justify-start min-h-[44px] rounded-sm px-2"
+                  />
+                </div>
+                <DropdownMenuSeparator className="mx-0 my-0" />
+                <div className="flex items-center justify-between gap-3 px-2 py-2 min-h-[44px]">
+                  <Lightbulb className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="text-sm font-medium flex-1">Hint Mode</span>
+                  <Switch
+                    checked={hintMode}
+                    onCheckedChange={(checked) => {
+                      toggleHintMode(checked);
+                      closeMenu();
+                    }}
+                  />
+                </div>
+                <DropdownMenuSeparator className="mx-0 my-0" />
+                <DropdownMenuItem
+                  onClick={() => {
+                    closeMenu();
+                    navigate('/profile');
+                  }}
+                  className="min-h-[44px]"
+                >
+                  <User className="mr-2 h-4 w-4" />
+                  <span>Profile</span>
+                </DropdownMenuItem>
+                {isManager && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      closeMenu();
+                      navigate('/settings');
+                    }}
+                    className="min-h-[44px]"
+                  >
+                    <Settings className="mr-2 h-4 w-4" />
+                    <span>Settings</span>
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator className="mx-0 my-0" />
+                <DropdownMenuItem
+                  onClick={() => {
+                    closeMenu();
+                    handleNavigateToSabito();
+                  }}
+                  className="min-h-[44px]"
+                >
+                  <LinkIcon className="mr-2 h-4 w-4" />
+                  <span>Open Sabito</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    closeMenu();
+                    logout();
+                    navigate('/login');
+                  }}
+                  className="min-h-[44px]"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  <span>Logout</span>
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>

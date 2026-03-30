@@ -99,7 +99,6 @@ export default function CustomersScreen() {
   const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
   const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const inputBg = resolvedTheme === 'dark' ? '#27272a' : '#f3f4f6';
   const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
   const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
 
@@ -133,18 +132,6 @@ export default function CustomersScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: bg }]}>
-      {/* Search */}
-      <View style={[styles.searchContainer, { backgroundColor: inputBg }]}>
-        <FontAwesome name="search" size={16} color={mutedColor} style={styles.searchIcon} />
-        <TextInput
-          style={[styles.searchInput, { color: textColor }]}
-          placeholder="Search customers..."
-          placeholderTextColor={mutedColor}
-          value={searchText}
-          onChangeText={setSearchText}
-        />
-      </View>
-
       {/* Add customer FAB */}
       <Pressable
         onPress={() => setAddModalVisible(true)}
@@ -294,16 +281,6 @@ export default function CustomersScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    margin: 16,
-    paddingHorizontal: 14,
-    borderRadius: 12,
-    minHeight: 44,
-  },
-  searchIcon: { marginRight: 10 },
-  searchInput: { flex: 1, fontSize: 16, paddingVertical: 10 },
   listContent: { paddingHorizontal: 16, paddingBottom: 80 },
   customerCard: {
     padding: 16,
@@ -346,7 +323,7 @@ const styles = StyleSheet.create({
   modalContent: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '85%',
+    maxHeight: '80%',
   },
   modalHeader: {
     flexDirection: 'row',

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const dayjs = require('dayjs');
 const { sequelize } = require('../config/database');
+const { Op } = require('sequelize');
 const config = require('../config/config');
 const { Tenant, User, UserTenant, Setting, EmailVerificationToken } = require('../models');
 const { seedDefaultCategories, seedDefaultEquipmentCategories } = require('../utils/categorySeeder');
@@ -13,6 +14,11 @@ const generateToken = (userId) =>
   jwt.sign({ id: userId }, config.jwt.secret, {
     expiresIn: config.jwt.expire,
   });
+
+const normalizePhone = (phone) => {
+  if (!phone || typeof phone !== 'string') return phone;
+  return phone.replace(/\s+/g, '').trim();
+};
 
 const slugify = (value = '') => {
   return value
@@ -82,6 +88,22 @@ exports.signupTenant = async (req, res, next) => {
       });
     }
 
+    const normalizedCompanyPhone = companyPhone ? normalizePhone(companyPhone) : null;
+
+    if (normalizedCompanyPhone) {
+      const existingTenantWithPhone = await Tenant.findOne({
+        where: sequelize.where(sequelize.json('metadata.phone'), normalizedCompanyPhone),
+      });
+
+      if (existingTenantWithPhone) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'This business phone number is already used by another workspace. Use a different phone number.',
+        });
+      }
+    }
+
     const transaction = await sequelize.transaction();
 
     try {
@@ -94,7 +116,7 @@ exports.signupTenant = async (req, res, next) => {
       const metadata = {
         website: companyWebsite || null,
         email: companyEmail || null,
-        phone: companyPhone || null,
+        phone: normalizedCompanyPhone || null,
         signupSource: 'self_service',
       };
 
@@ -105,7 +127,7 @@ exports.signupTenant = async (req, res, next) => {
       } else if (businessType === 'shop' && !shopType) {
         console.log('[tenant] createTenant businessType=shop shopType=missing (no type-specific categories)');
       } else {
-        console.log('[tenant] createTenant businessType=%s shopType=n/a', businessType || 'printing_press');
+        console.log('[tenant] createTenant businessType=%s shopType=n/a', businessType || 'shop');
       }
 
       // Add businessInfo to metadata if provided
@@ -113,9 +135,10 @@ exports.signupTenant = async (req, res, next) => {
         metadata.businessInfo = businessInfo;
       }
 
-      // Resolve business type (legacy types like 'printing_press' become 'studio')
+      // Resolve business type (legacy types like 'printing_press' become 'studio').
+      // When businessType is not provided, default to 'shop' and let onboarding refine it.
       const { resolveBusinessType } = require('../config/businessTypes');
-      const finalBusinessType = resolveBusinessType(businessType || 'printing_press');
+      const finalBusinessType = resolveBusinessType(businessType || 'shop');
       
       // If businessType is a legacy studio type, set studioType in metadata
       if (['printing_press', 'mechanic', 'barber', 'salon'].includes(businessType)) {
@@ -170,7 +193,7 @@ exports.signupTenant = async (req, res, next) => {
               name: trimmedCompanyName,
               legalName: trimmedCompanyName,
               email: companyEmail || normalizedEmail,
-              phone: companyPhone || '',
+              phone: normalizedCompanyPhone || '',
               website: companyWebsite || '',
               logoUrl: '',
               address: {
@@ -240,11 +263,11 @@ exports.signupTenant = async (req, res, next) => {
         token: verificationToken,
         expiresAt: verificationExpiresAt,
       }).then(() => {
-        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+        const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
         const verifyLink = `${frontendUrl}/verify-email?token=${verificationToken}`;
-        const company = { name: trimmedCompanyName };
+        const company = { name: process.env.APP_NAME || 'ABS' };
         const { subject, html, text } = emailVerificationTemplate(user, verifyLink, company);
-        return emailService.sendPlatformMessage(normalizedEmail, subject, html, text);
+        return emailService.sendPlatformMessage(normalizedEmail, subject, html, text, [], { categories: ['transactional', 'signup'] });
       }).then((result) => {
         if (result?.success) console.log('[signup] Verification email sent to', normalizedEmail);
       }).catch((err) => {
@@ -283,11 +306,71 @@ exports.signupTenant = async (req, res, next) => {
   }
 };
 
+/**
+ * @desc    Check if a business phone is already used by another workspace
+ * @route   POST /api/tenants/check-business-phone
+ * @access  Private
+ */
+exports.checkBusinessPhone = async (req, res, next) => {
+  try {
+    const { phone } = req.body || {};
+    const tenantId = req.tenantId || null;
+
+    if (!phone || typeof phone !== 'string') {
+      return res.status(400).json({
+        success: false,
+        message: 'Phone number is required',
+      });
+    }
+
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Enter a valid phone number',
+      });
+    }
+
+    const whereClause = tenantId
+      ? {
+          [Op.and]: [
+            { id: { [Op.ne]: tenantId } },
+            sequelize.where(sequelize.json('metadata.phone'), normalizedPhone),
+          ],
+        }
+      : sequelize.where(sequelize.json('metadata.phone'), normalizedPhone);
+
+    const existingTenant = await Tenant.findOne({
+      where: whereClause,
+      attributes: ['id'],
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        exists: Boolean(existingTenant),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Complete onboarding
 // @route   POST /api/tenants/onboarding
 // @access  Private
 exports.completeOnboarding = async (req, res, next) => {
-  const { businessType, shopType, industry, companyName, companyEmail, companyPhone, companyWebsite, companyAddress } = req.body;
+  const {
+    businessType,
+    shopType,
+    businessSubType,
+    industry,
+    companyName,
+    companyEmail,
+    companyPhone,
+    companyWebsite,
+    companyAddress,
+  } = req.body;
   const companyLogo = req.file;
   const tenantId = req.tenantId;
 
@@ -313,6 +396,28 @@ exports.completeOnboarding = async (req, res, next) => {
       });
     }
 
+    const normalizedCompanyPhone =
+      typeof companyPhone === 'string' && companyPhone.trim() ? normalizePhone(companyPhone) : null;
+
+    if (normalizedCompanyPhone && normalizedCompanyPhone !== tenant.metadata?.phone) {
+      const existingTenantWithPhone = await Tenant.findOne({
+        where: {
+          [Op.and]: [
+            { id: { [Op.ne]: tenantId } },
+            sequelize.where(sequelize.json('metadata.phone'), normalizedCompanyPhone),
+          ],
+        },
+      });
+
+      if (existingTenantWithPhone) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'This business phone number is already used by another workspace. Use a different phone number.',
+        });
+      }
+    }
+
     // Update tenant with onboarding data
     const updates = {};
     
@@ -330,6 +435,12 @@ exports.completeOnboarding = async (req, res, next) => {
       completedAt: new Date().toISOString()
     };
     
+    // Store business sub-type (everyday label) in metadata for analytics and routing
+    if (businessSubType) {
+      metadata.businessSubType = businessSubType;
+      console.log('[tenant] completeOnboarding tenantId=%s businessSubType=%s', tenantId, businessSubType);
+    }
+    
     // Store shop type in metadata (for shop business type)
     if (businessType === 'shop' && shopType) {
       metadata.shopType = shopType;
@@ -342,7 +453,7 @@ exports.completeOnboarding = async (req, res, next) => {
 
     // Store business contact information in metadata
     if (companyEmail) metadata.email = companyEmail;
-    if (companyPhone) metadata.phone = companyPhone;
+    if (normalizedCompanyPhone) metadata.phone = normalizedCompanyPhone;
     if (companyWebsite) metadata.website = companyWebsite;
     if (companyAddress) metadata.address = companyAddress;
     
@@ -374,10 +485,13 @@ exports.completeOnboarding = async (req, res, next) => {
       name: trimmedCompanyName,
       legalName: orgValue.legalName || trimmedCompanyName,
       email: companyEmail || orgValue.email || tenant.metadata?.email || '',
-      phone: companyPhone || orgValue.phone || tenant.metadata?.phone || '',
+      phone: normalizedCompanyPhone || orgValue.phone || tenant.metadata?.phone || '',
       website: companyWebsite || orgValue.website || tenant.metadata?.website || '',
       address: addressUpdate
     };
+    if (metadata.logo) {
+      orgUpdate.logoUrl = metadata.logo;
+    }
     orgSetting.value = orgUpdate;
     await orgSetting.save();
     

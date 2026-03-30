@@ -2,7 +2,7 @@
 
 ## How it works
 
-1. **Create an invoice** (from a Job, Sale, or manually) in ShopWISE.
+1. **Create an invoice** (from a Job, Sale, or manually) in African Business Suite.
 2. **Send the invoice** to the customer:
    - In **Invoices**, open the invoice and use **Send**, or use the row action **Send**.
    - The backend generates a unique payment link and (if configured) sends it by **email** and/or **WhatsApp**.
@@ -35,7 +35,7 @@ Customers can pay with **card or mobile money** via Paystack:
   No special license. It’s just sending a document/link. Normal business and data-protection rules apply (e.g. only send to the right customer, protect personal data).
 
 - **Accepting payment online (card, mobile money, etc.)**  
-  You don’t get a separate “payment license” yourself. You use a **licensed payment provider** (e.g. **Paystack** in Ghana/Nigeria). They are licensed (e.g. by the Bank of Ghana). You sign their merchant agreement and use their API/checkout. ShopWISE can record the payment when the provider confirms it; online collection is done through the provider.
+  You don’t get a separate “payment license” yourself. You use a **licensed payment provider** (e.g. **Paystack** in Ghana/Nigeria). They are licensed (e.g. by the Bank of Ghana). You sign their merchant agreement and use their API/checkout. African Business Suite can record the payment when the provider confirms it; online collection is done through the provider.
 
 - **What’s in the app today**  
   The public pay page offers **Pay with Card or Mobile Money** (Paystack) and **Record payment manually** (bank transfer, cash, etc.). Paystack collects the money; the webhook records it on the invoice. No separate payment license is needed; Paystack is the licensed provider.

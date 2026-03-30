@@ -132,7 +132,7 @@ const toExcel = async (data, options = {}) => {
   }
 
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'ShopWISE';
+  workbook.creator = 'African Business Suite';
   workbook.created = new Date();
 
   const worksheet = workbook.addWorksheet(sheetName);
@@ -401,9 +401,43 @@ const COLUMN_DEFINITIONS = {
     { key: 'status', header: 'Status' },
     { key: 'priority', header: 'Priority' },
     { key: 'dueDate', header: 'Due Date', type: 'date' },
-    { key: 'totalAmount', header: 'Amount', type: 'currency' },
-    { key: 'assignee.name', header: 'Assigned To' },
+    { key: 'finalPrice', header: 'Amount', type: 'currency' },
+    { key: 'assignedUser.name', header: 'Assigned To' },
     { key: 'createdAt', header: 'Created', type: 'datetime' },
+  ],
+  quotes: [
+    { key: 'quoteNumber', header: 'Quote #' },
+    { key: 'customer.name', header: 'Customer' },
+    { key: 'title', header: 'Title' },
+    { key: 'status', header: 'Status' },
+    { key: 'validUntil', header: 'Valid Until', type: 'date' },
+    { key: 'subtotal', header: 'Subtotal', type: 'currency' },
+    { key: 'discountTotal', header: 'Discount', type: 'currency' },
+    { key: 'totalAmount', header: 'Total', type: 'currency' },
+    { key: 'createdAt', header: 'Created', type: 'datetime' },
+  ],
+  vendors: [
+    { key: 'name', header: 'Name' },
+    { key: 'company', header: 'Company' },
+    { key: 'email', header: 'Email' },
+    { key: 'phone', header: 'Phone' },
+    { key: 'address', header: 'Address' },
+    { key: 'category', header: 'Category' },
+    { key: 'paymentTerms', header: 'Payment Terms' },
+    { key: 'balance', header: 'Balance', type: 'currency' },
+    { key: 'isActive', header: 'Active', type: 'boolean' },
+    { key: 'createdAt', header: 'Created', type: 'datetime' },
+  ],
+  equipment: [
+    { key: 'name', header: 'Name' },
+    { key: 'serialNumber', header: 'Serial #' },
+    { key: 'category.name', header: 'Category' },
+    { key: 'vendor.name', header: 'Vendor' },
+    { key: 'purchaseDate', header: 'Purchase Date', type: 'date' },
+    { key: 'purchaseValue', header: 'Purchase Value', type: 'currency' },
+    { key: 'location', header: 'Location' },
+    { key: 'status', header: 'Status' },
+    { key: 'isActive', header: 'Active', type: 'boolean' },
   ],
 };
 

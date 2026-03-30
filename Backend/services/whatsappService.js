@@ -3,6 +3,94 @@ const crypto = require('crypto');
 const { formatToE164, isValidPhoneNumber } = require('../utils/phoneUtils');
 const { Setting } = require('../models');
 
+/**
+ * Mask E.164 for logs (no full number).
+ * @param {string} e164
+ * @returns {string}
+ */
+function maskPhoneForLog(e164) {
+  if (!e164 || typeof e164 !== 'string') return '***';
+  if (e164.length <= 6) return `${e164.slice(0, 2)}***`;
+  return `${e164.slice(0, 4)}***${e164.slice(-2)}`;
+}
+
+/**
+ * Non-reversible fingerprint of token for correlating logs (never log raw token).
+ * @param {string} token
+ * @returns {string}
+ */
+function accessTokenFingerprint(token) {
+  if (!token || typeof token !== 'string') return 'none';
+  return crypto.createHash('sha256').update(token, 'utf8').digest('hex').slice(0, 12);
+}
+
+/**
+ * Normalize Meta Graph API error from axios response.
+ * @param {import('axios').AxiosError} error
+ * @returns {{ httpStatus: number|null, metaMessage: string, metaType?: string, metaCode?: number, metaSubcode?: number, fbtraceId?: string, errorBodyPreview?: string }}
+ */
+function extractMetaGraphError(error) {
+  const status = error.response?.status ?? null;
+  const data = error.response?.data;
+  const meta = data?.error && typeof data.error === 'object' ? data.error : null;
+  const message =
+    meta?.message ||
+    meta?.error_user_msg ||
+    data?.message ||
+    error.message ||
+    'Unknown error';
+  let preview = '';
+  try {
+    const s = typeof data === 'object' ? JSON.stringify(data) : String(data);
+    preview = s.length > 800 ? `${s.slice(0, 800)}…` : s;
+  } catch {
+    preview = String(error.message);
+  }
+  return {
+    httpStatus: status,
+    metaMessage: message,
+    metaType: meta?.type,
+    metaCode: typeof meta?.code === 'number' ? meta.code : undefined,
+    metaSubcode: meta?.error_subcode ?? meta?.subcode,
+    fbtraceId: meta?.fbtrace_id,
+    errorBodyPreview: preview
+  };
+}
+
+/**
+ * Build WhatsApp template body parameter payload.
+ * Supports both positional values ("text only") and named values
+ * for templates that use placeholders like {{customer_name}}.
+ *
+ * Accepted input examples:
+ * - "Eric"
+ * - { text: "Eric" }
+ * - { name: "customer_name", text: "Eric" }
+ * - { parameterName: "customer_name", value: "Eric" }
+ *
+ * @param {unknown} param
+ * @returns {{ type: 'text', text: string, parameter_name?: string }}
+ */
+function toTemplateParameter(param) {
+  if (param && typeof param === 'object' && !Array.isArray(param)) {
+    const p = /** @type {{ text?: unknown, value?: unknown, name?: unknown, parameterName?: unknown }} */ (param);
+    const textValue = p.text ?? p.value ?? '';
+    const parameterName = p.parameterName ?? p.name;
+    const payload = {
+      type: 'text',
+      text: String(textValue)
+    };
+    if (typeof parameterName === 'string' && parameterName.trim()) {
+      payload.parameter_name = parameterName.trim();
+    }
+    return payload;
+  }
+  return {
+    type: 'text',
+    text: String(param ?? '')
+  };
+}
+
 class WhatsAppService {
   constructor() {
     this.apiVersion = process.env.WHATSAPP_API_VERSION || 'v21.0';
@@ -67,13 +155,18 @@ class WhatsAppService {
    * @param {string} tenantId - Tenant ID
    * @param {string} phoneNumber - Recipient phone number (E.164 format)
    * @param {string} templateName - Template name (must be pre-approved in Meta)
-   * @param {Array} parameters - Template parameters
+   * @param {Array} parameters - Template body parameters
    * @param {string} language - Template language (default: 'en')
+   * @param {{ buttonParameters?: Array<string>, buttonIndex?: number }} [options] - Optional template button URL params
    * @returns {Promise<Object>} - API response
    */
-  async sendMessage(tenantId, phoneNumber, templateName, parameters = [], language = 'en') {
+  async sendMessage(tenantId, phoneNumber, templateName, parameters = [], language = 'en', options = {}) {
+    /** @type {null | { phoneNumberId: string, accessToken: string }} */
+    let config = null;
+    /** @type {string|null} */
+    let formattedPhone = null;
     try {
-      const config = await this.getConfig(tenantId);
+      config = await this.getConfig(tenantId);
       if (!config) {
         return {
           success: false,
@@ -82,7 +175,7 @@ class WhatsAppService {
       }
 
       // Validate phone number
-      const formattedPhone = this.validatePhoneNumber(phoneNumber);
+      formattedPhone = this.validatePhoneNumber(phoneNumber);
       if (!formattedPhone) {
         return {
           success: false,
@@ -99,6 +192,25 @@ class WhatsAppService {
       }
 
       const url = `${this.baseUrl}/${config.phoneNumberId}/messages`;
+      const components = [
+        {
+          type: 'body',
+          parameters: parameters.map(toTemplateParameter)
+        }
+      ];
+
+      if (Array.isArray(options.buttonParameters) && options.buttonParameters.length > 0) {
+        components.push({
+          type: 'button',
+          sub_type: 'url',
+          index: String(typeof options.buttonIndex === 'number' ? options.buttonIndex : 0),
+          parameters: options.buttonParameters.map((value) => ({
+            type: 'text',
+            text: String(value ?? '')
+          }))
+        });
+      }
+
       const payload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',
@@ -109,15 +221,7 @@ class WhatsAppService {
           language: {
             code: language
           },
-          components: [
-            {
-              type: 'body',
-              parameters: parameters.map(param => ({
-                type: 'text',
-                text: String(param)
-              }))
-            }
-          ]
+          components
         }
       };
 
@@ -143,10 +247,33 @@ class WhatsAppService {
       };
 
     } catch (error) {
-      console.error('[WhatsApp] Error sending message:', {
-        error: error.response?.data || error.message,
+      const meta = extractMetaGraphError(error);
+      let recipientMasked = formattedPhone ? maskPhoneForLog(formattedPhone) : '***';
+      if (recipientMasked === '***' && error.config?.data) {
+        try {
+          const body = JSON.parse(error.config.data);
+          recipientMasked = maskPhoneForLog(body?.to);
+        } catch {
+          /* keep *** */
+        }
+      }
+
+      console.error('[WhatsApp] Send failed', {
         tenantId,
-        templateName
+        templateName,
+        language,
+        phoneNumberId: config?.phoneNumberId ?? 'unknown',
+        recipientMasked,
+        tokenFingerprint: config?.accessToken ? accessTokenFingerprint(config.accessToken) : 'none',
+        paramCount: parameters.length,
+        buttonParamCount: Array.isArray(options?.buttonParameters) ? options.buttonParameters.length : 0,
+        httpStatus: meta.httpStatus,
+        metaCode: meta.metaCode,
+        metaSubcode: meta.metaSubcode,
+        metaType: meta.metaType,
+        metaMessage: meta.metaMessage,
+        fbtraceId: meta.fbtraceId,
+        errorBodyPreview: meta.errorBodyPreview
       });
 
       // Handle specific error cases
@@ -154,21 +281,32 @@ class WhatsAppService {
         return {
           success: false,
           error: 'Rate limit exceeded',
-          retryAfter: error.response.headers['retry-after']
+          retryAfter: error.response.headers['retry-after'],
+          meta
         };
       }
 
       if (error.response?.status === 400) {
         return {
           success: false,
-          error: error.response.data?.error?.message || 'Invalid request',
-          details: error.response.data?.error
+          error: meta.metaMessage || 'Invalid request',
+          details: error.response.data?.error,
+          meta
+        };
+      }
+
+      if (error.response?.status === 401 || error.response?.status === 403) {
+        return {
+          success: false,
+          error: meta.metaMessage || `WhatsApp API ${error.response.status}`,
+          meta
         };
       }
 
       return {
         success: false,
-        error: error.message || 'Failed to send WhatsApp message'
+        error: meta.metaMessage || error.message || 'Failed to send WhatsApp message',
+        meta
       };
     }
   }
@@ -181,8 +319,10 @@ class WhatsAppService {
    * @returns {Promise<Object>} - API response
    */
   async sendTextMessage(tenantId, phoneNumber, message) {
+    let config = null;
+    let formattedPhone = null;
     try {
-      const config = await this.getConfig(tenantId);
+      config = await this.getConfig(tenantId);
       if (!config) {
         return {
           success: false,
@@ -190,7 +330,7 @@ class WhatsAppService {
         };
       }
 
-      const formattedPhone = this.validatePhoneNumber(phoneNumber);
+      formattedPhone = this.validatePhoneNumber(phoneNumber);
       if (!formattedPhone) {
         return {
           success: false,
@@ -231,10 +371,24 @@ class WhatsAppService {
       };
 
     } catch (error) {
-      console.error('[WhatsApp] Error sending text message:', error.response?.data || error.message);
+      const meta = extractMetaGraphError(error);
+      console.error('[WhatsApp] Text send failed', {
+        tenantId,
+        phoneNumberId: config?.phoneNumberId ?? 'unknown',
+        recipientMasked: formattedPhone ? maskPhoneForLog(formattedPhone) : '***',
+        tokenFingerprint: config?.accessToken ? accessTokenFingerprint(config.accessToken) : 'none',
+        httpStatus: meta.httpStatus,
+        metaCode: meta.metaCode,
+        metaSubcode: meta.metaSubcode,
+        metaType: meta.metaType,
+        metaMessage: meta.metaMessage,
+        fbtraceId: meta.fbtraceId,
+        errorBodyPreview: meta.errorBodyPreview
+      });
       return {
         success: false,
-        error: error.response?.data?.error?.message || error.message
+        error: meta.metaMessage || error.message,
+        meta
       };
     }
   }
@@ -263,9 +417,22 @@ class WhatsAppService {
         data: response.data
       };
     } catch (error) {
+      const meta = extractMetaGraphError(error);
+      console.error('[WhatsApp] testConnection failed', {
+        phoneNumberId,
+        tokenFingerprint: accessTokenFingerprint(accessToken),
+        httpStatus: meta.httpStatus,
+        metaCode: meta.metaCode,
+        metaSubcode: meta.metaSubcode,
+        metaType: meta.metaType,
+        metaMessage: meta.metaMessage,
+        fbtraceId: meta.fbtraceId,
+        errorBodyPreview: meta.errorBodyPreview
+      });
       return {
         success: false,
-        error: error.response?.data?.error?.message || error.message
+        error: meta.metaMessage || error.message,
+        meta
       };
     }
   }
@@ -278,18 +445,22 @@ class WhatsAppService {
    * @returns {boolean} - True if signature is valid
    */
   verifyWebhookSignature(signature, payload, appSecret) {
-    if (!signature || !appSecret) return false;
+    if (!signature || !appSecret || typeof payload !== 'string') return false;
 
-    const hash = crypto
-      .createHmac('sha256', appSecret)
-      .update(payload)
-      .digest('hex');
+    try {
+      const hash = crypto
+        .createHmac('sha256', appSecret)
+        .update(payload, 'utf8')
+        .digest('hex');
 
-    const expectedSignature = `sha256=${hash}`;
-    return crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expectedSignature)
-    );
+      const expectedSignature = `sha256=${hash}`;
+      const sigBuf = Buffer.from(String(signature).trim(), 'utf8');
+      const expBuf = Buffer.from(expectedSignature, 'utf8');
+      if (sigBuf.length !== expBuf.length) return false;
+      return crypto.timingSafeEqual(sigBuf, expBuf);
+    } catch {
+      return false;
+    }
   }
 
   /**

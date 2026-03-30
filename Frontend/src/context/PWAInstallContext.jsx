@@ -2,12 +2,14 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 
 const PWAInstallContext = createContext(null);
 
+const ua = () => (typeof navigator !== 'undefined' ? navigator.userAgent : '');
+
 /**
  * Detects if the device is running iOS
  */
 const isIOS = () => {
   if (typeof window === 'undefined' || typeof navigator === 'undefined') return false;
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+  return /iPad|iPhone|iPod/.test(ua()) && !window.MSStream;
 };
 
 /**
@@ -21,6 +23,18 @@ const isStandalone = () => {
   );
 };
 
+/** Opera Mini (does not support PWA install) */
+const isOperaMini = () => /Opera Mini|OPR\/.*Mini/i.test(ua());
+
+/** Safari desktop (Mac) – no beforeinstallprompt */
+const isSafariDesktop = () => !isIOS() && /Safari/i.test(ua()) && !/Chrome|Chromium|Firefox|Edg/i.test(ua());
+
+/** Firefox */
+const isFirefox = () => /Firefox|FxiOS/i.test(ua());
+
+/** Edge (may or may not fire beforeinstallprompt) */
+const isEdge = () => /Edg\//i.test(ua());
+
 /**
  * PWA Install Provider
  * Captures beforeinstallprompt event and manages install state
@@ -30,9 +44,11 @@ export const PWAInstallProvider = ({ children }) => {
   const [isInstalled, setIsInstalled] = useState(false);
   const [isIOSDevice, setIsIOSDevice] = useState(false);
   const [showIOSInstructions, setShowIOSInstructions] = useState(false);
+  const [installVariant, setInstallVariant] = useState(null);
 
   useEffect(() => {
-    setIsIOSDevice(isIOS());
+    const ios = isIOS();
+    setIsIOSDevice(ios);
     setIsInstalled(isStandalone());
 
     const handleBeforeInstallPrompt = (e) => {
@@ -59,6 +75,35 @@ export const PWAInstallProvider = ({ children }) => {
       window.removeEventListener('appinstalled', handleAppInstalled);
     };
   }, []);
+
+  // Derive install variant for banner messaging (Safari desktop, Firefox, Edge, Opera Mini)
+  useEffect(() => {
+    if (isInstalled) {
+      setInstallVariant(null);
+      return;
+    }
+    if (isOperaMini()) {
+      setInstallVariant('opera-mini');
+      return;
+    }
+    if (isIOSDevice) {
+      setInstallVariant('ios');
+      return;
+    }
+    if (isSafariDesktop()) {
+      setInstallVariant('safari-desktop');
+      return;
+    }
+    if (isFirefox()) {
+      setInstallVariant('firefox');
+      return;
+    }
+    if (isEdge() && !deferredPrompt) {
+      setInstallVariant('edge-manual');
+      return;
+    }
+    setInstallVariant(deferredPrompt ? 'native' : null);
+  }, [isInstalled, isIOSDevice, deferredPrompt]);
 
   /**
    * Triggers the native install prompt (Chrome/Android)
@@ -99,14 +144,19 @@ export const PWAInstallProvider = ({ children }) => {
   }, []);
 
   /**
-   * Determines if the install option should be shown
-   * - Not already installed
-   * - Either has deferred prompt (Chrome/Android) or is iOS
+   * True when native install is available (Chrome/Android prompt or iOS Add to Home Screen).
    */
   const canInstall = !isInstalled && (!!deferredPrompt || isIOSDevice);
 
+  /**
+   * True when we should show the install banner/area (includes Opera Mini, Safari desktop, Firefox, Edge with message only).
+   */
+  const showInstallBanner = !isInstalled && (!!deferredPrompt || isIOSDevice || installVariant === 'opera-mini' || installVariant === 'safari-desktop' || installVariant === 'firefox' || installVariant === 'edge-manual');
+
   const value = {
     canInstall,
+    showInstallBanner,
+    installVariant,
     isInstalled,
     isIOSDevice,
     showIOSInstructions,

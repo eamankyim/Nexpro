@@ -9,7 +9,6 @@ import WelcomeSection from '../components/WelcomeSection';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import DashboardTable from '../components/DashboardTable';
 import ViewToggle from '../components/ViewToggle';
-import FloatingActionButton from '../components/FloatingActionButton';
 import {
   Plus,
   RefreshCw,
@@ -637,6 +636,7 @@ const Leads = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => (
         <StatusChip status={record.status} />
       )
@@ -880,11 +880,15 @@ const Leads = () => {
           welcomeMessage="Leads"
           subText="Track prospects and follow-ups for customer service and marketing."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
+              <Button
+                variant="outline"
+                onClick={() => setFilterDrawerOpen(true)}
+                size={isMobile ? 'icon' : 'default'}
+              >
                 <Filter className="h-4 w-4" />
                 {!isMobile && <span className="ml-2">Filter</span>}
               </Button>
@@ -893,14 +897,14 @@ const Leads = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button 
-                variant="outline" 
-                onClick={async () => { 
-                  await fetchLeads(true); 
-                  fetchSummary(); 
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  await fetchLeads(true);
+                  fetchSummary();
                 }}
                 disabled={refreshingLeads}
-                size={isMobile ? "icon" : "default"}
+                size={isMobile ? 'icon' : 'default'}
               >
                 {refreshingLeads ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -913,9 +917,12 @@ const Leads = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button onClick={() => openLeadModal()} size={isMobile ? "icon" : "default"}>
-                <Plus className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">New Lead</span>}
+              <Button
+                onClick={() => openLeadModal()}
+                className="min-h-[44px] flex-1 min-w-0 md:flex-none"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                <span>Add Lead</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>Add a new lead</TooltipContent>
@@ -985,9 +992,9 @@ const Leads = () => {
             }}
           >
             {isRefreshing ? (
-              <Loader2 className="h-6 w-6 animate-spin text-[#166534]" />
+              <Loader2 className="h-6 w-6 animate-spin text-brand" />
             ) : (
-              <RefreshCw className="h-6 w-6 text-[#166534]" />
+              <RefreshCw className="h-6 w-6 text-brand" />
             )}
           </div>
         )}
@@ -1015,21 +1022,18 @@ const Leads = () => {
         />
       </div>
 
-      {/* Floating Action Button for Mobile */}
-      <FloatingActionButton
-        onClick={() => openLeadModal()}
-        icon={Plus}
-        label="Add Lead"
-        tooltip="Add a new lead"
-        show={isMobile}
-      />
-
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
         <SheetContent 
           side="right" 
           className="w-full sm:max-w-lg overflow-y-auto" 
-          style={{ borderRadius: '8px', top: '8px', bottom: '8px', right: '8px', height: 'calc(100vh - 16px)' }}
+          style={{
+            borderRadius: '8px',
+            top: '8px',
+            bottom: '8px',
+            right: '8px',
+            height: 'calc(100dvh - 16px)',
+          }}
         >
           <SheetHeader className="border-b pb-4 mb-4" style={{ marginLeft: '-24px', marginRight: '-24px', paddingLeft: '24px', paddingRight: '24px' }}>
             <SheetTitle className="text-lg font-semibold">Select filters below</SheetTitle>

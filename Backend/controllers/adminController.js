@@ -1,21 +1,61 @@
+const crypto = require('crypto');
 const dayjs = require('dayjs');
 const jwt = require('jsonwebtoken');
 const { Op, QueryTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const { getPagination } = require('../utils/paginationUtils');
-const { Tenant, User, UserTenant, Notification, Vendor, Job } = require('../models');
+const {
+  Tenant,
+  User,
+  UserTenant,
+  Notification,
+  Vendor,
+  Job,
+  InviteToken,
+  SubscriptionPlan,
+  TenantAccessAudit,
+  Setting
+} = require('../models');
+const emailService = require('../services/emailService');
+const { inviteTenantEmail } = require('../services/emailTemplates');
+const {
+  ACCESS_STATES,
+  normalizeFeatureOverrides,
+  getTenantEffectiveEntitlements
+} = require('../utils/tenantEntitlements');
 
 const PLAN_PRICING = {
   trial: 0,
-  standard: 799,
-  pro: 1299,
+  starter: 129,
+  professional: 250,
+  enterprise: 0, // contact sales
 };
+
+const PLAN_ALIASES = {
+  free: 'trial',
+  standard: 'starter',
+  pro: 'professional',
+  launch: 'starter',
+  scale: 'professional',
+};
+
+const normalizePlanId = (plan = '') => PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
 
 const generateToken = (id) =>
   jwt.sign({ id }, config.jwt.secret, {
     expiresIn: config.jwt.expire,
   });
+
+const getFrontendBaseUrl = () => {
+  const raw = process.env.FRONTEND_URL || 'http://localhost:3000';
+  try {
+    const parsed = new URL(raw);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch (_err) {
+    return raw.replace(/\/+$/, '').replace(/\/onboarding$/i, '');
+  }
+};
 
 const serverStartedAt = new Date();
 
@@ -78,7 +118,12 @@ exports.getTenants = async (req, res, next) => {
 
     const where = {};
     if (plan) {
-      where.plan = plan;
+      const normalizedPlan = normalizePlanId(plan);
+      const aliasKeysForPlan = Object.entries(PLAN_ALIASES)
+        .filter(([, canonical]) => canonical === normalizedPlan)
+        .map(([alias]) => alias);
+      const matchedPlans = Array.from(new Set([normalizedPlan, ...aliasKeysForPlan]));
+      where.plan = matchedPlans.length > 1 ? { [Op.in]: matchedPlans } : normalizedPlan;
     }
     if (status) {
       where.status = status;
@@ -120,9 +165,26 @@ exports.getTenants = async (req, res, next) => {
       Tenant.count({ where })
     ]);
 
+    const tenantIds = tenants.map((t) => t.id);
+    const primaryEmailsByTenant = {};
+    if (tenantIds.length > 0) {
+      const firstMemberships = await UserTenant.findAll({
+        where: { tenantId: tenantIds },
+        attributes: ['tenantId', 'userId'],
+        include: [{ model: User, as: 'user', attributes: ['email'], required: true }],
+        order: [['createdAt', 'ASC']]
+      });
+      firstMemberships.forEach((ut) => {
+        if (primaryEmailsByTenant[ut.tenantId] == null && ut.user?.email) {
+          primaryEmailsByTenant[ut.tenantId] = ut.user.email;
+        }
+      });
+    }
+
     const serialized = tenants.map((tenant) => {
       const item = tenant.toJSON();
       item.userCount = Number(item.userCount) || 0;
+      item.primaryUserEmail = primaryEmailsByTenant[tenant.id] || null;
       return item;
     });
 
@@ -135,6 +197,131 @@ exports.getTenants = async (req, res, next) => {
         total,
         totalPages: Math.ceil(total / limit)
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Invite a new tenant (platform admin only). Creates an invite token and sends email with signup link.
+ * Invitee opens /signup?token=... and completes signup; backend then creates tenant + user as owner.
+ * @route   POST /api/admin/tenants/invite
+ */
+exports.inviteTenant = async (req, res, next) => {
+  try {
+    const { email, name } = req.body || {};
+    const inviteRequestId = `adm_inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+    if (!email || !String(email).trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required',
+      });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+
+    const existingUser = await User.findOne({ where: { email: normalizedEmail } });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'A user with this email already exists.',
+      });
+    }
+
+    const existingInvite = await InviteToken.findOne({
+      where: {
+        email: normalizedEmail,
+        inviteType: 'new_tenant',
+        used: false,
+        tenantId: null,
+        expiresAt: { [Op.gt]: new Date() },
+      },
+    });
+    if (existingInvite) {
+      const frontendUrl = getFrontendBaseUrl();
+      const inviteUrl = `${frontendUrl}/signup?token=${existingInvite.token}`;
+      return res.status(400).json({
+        success: false,
+        message: 'An active invite already exists for this email. Revoke it or use the existing link.',
+        data: { inviteUrl, invite: existingInvite },
+      });
+    }
+
+    const token = crypto.randomBytes(16).toString('hex');
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+
+    const invite = await InviteToken.create({
+      token,
+      email: normalizedEmail,
+      name: name ? String(name).trim() || null : null,
+      role: 'admin',
+      inviteType: 'new_tenant',
+      tenantId: null,
+      createdBy: req.user.id,
+      expiresAt,
+      used: false,
+    });
+    console.log('[Admin Invite] Invite created', {
+      inviteRequestId,
+      inviteId: invite.id,
+      inviteType: 'new_tenant',
+      email: normalizedEmail,
+      createdBy: req.user?.id,
+      expiresAt: invite.expiresAt,
+    });
+
+    const frontendUrl = getFrontendBaseUrl();
+    const inviteUrl = `${frontendUrl}/signup?token=${token}`;
+    const inviterName = req.user?.name || req.user?.email || 'African Business Suite';
+
+    setImmediate(async () => {
+      try {
+        const platformConfig = emailService.getPlatformConfig?.();
+        console.log('[Admin Invite Email] Dispatch started', {
+          inviteRequestId,
+          inviteId: invite.id,
+          to: normalizedEmail,
+          inviterUserId: req.user?.id,
+          provider: platformConfig?.provider || 'unknown',
+          fromEmail: platformConfig?.fromEmail || null,
+          frontendUrl,
+        });
+        const { subject, html, text } = inviteTenantEmail(normalizedEmail, inviteUrl, inviterName);
+        const result = await emailService.sendPlatformMessage(
+          normalizedEmail,
+          subject,
+          html,
+          text,
+          [],
+          { categories: ['transactional', 'signup'] }
+        );
+        if (!result?.success) {
+          throw new Error(result?.error || 'Invite email send failed');
+        }
+        console.log('[Admin Invite Email] Dispatch success', {
+          inviteRequestId,
+          inviteId: invite.id,
+          to: normalizedEmail,
+          messageId: result?.messageId || null,
+          provider: platformConfig?.provider || 'unknown',
+        });
+      } catch (err) {
+        console.error('[Admin Invite Email] Dispatch failed', {
+          inviteRequestId,
+          inviteId: invite.id,
+          to: normalizedEmail,
+          error: err?.message,
+          stack: err?.stack,
+        });
+      }
+    });
+
+    res.status(201).json({
+      success: true,
+      data: { invite, inviteUrl },
     });
   } catch (error) {
     next(error);
@@ -293,10 +480,12 @@ exports.getTenantMetrics = async (req, res, next) => {
       raw: true
     });
 
-    const planDistribution = planDistributionRaw.map((row) => ({
-      plan: row.plan || 'unknown',
-      count: Number(row.count) || 0
-    }));
+    const planCounts = planDistributionRaw.reduce((acc, row) => {
+      const normalizedPlan = normalizePlanId(row.plan || 'unknown');
+      acc[normalizedPlan] = (acc[normalizedPlan] || 0) + (Number(row.count) || 0);
+      return acc;
+    }, {});
+    const planDistribution = Object.entries(planCounts).map(([plan, count]) => ({ plan, count }));
 
     const statusDistribution = statusDistributionRaw.map((row) => ({
       status: row.status || 'unknown',
@@ -450,10 +639,173 @@ exports.getTenantById = async (req, res, next) => {
 
     const tenantData = tenant.toJSON();
     tenantData.organizationSettings = organizationSettings;
+    tenantData.accessControl = await getTenantEffectiveEntitlements(tenant, {
+      logContext: 'admin_tenant_detail',
+    });
 
     res.status(200).json({
       success: true,
       data: tenantData
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.updateTenantAccess = async (req, res, next) => {
+  try {
+    const { plan, accessState, featureOverrides, note } = req.body || {};
+    const tenant = await Tenant.findByPk(req.params.id);
+
+    if (!tenant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found'
+      });
+    }
+
+    const beforeSnapshot = {
+      plan: tenant.plan,
+      accessState: tenant?.metadata?.entitlements?.accessState || null,
+      featureOverrides: tenant?.metadata?.entitlements?.featureOverrides || {},
+      note: tenant?.metadata?.entitlements?.note || ''
+    };
+
+    if (plan != null) {
+      const nextPlan = String(plan).trim();
+      if (!nextPlan) {
+        return res.status(400).json({
+          success: false,
+          message: 'Plan cannot be empty'
+        });
+      }
+      const planExists = await SubscriptionPlan.findOne({
+        where: { planId: nextPlan },
+        attributes: ['id']
+      });
+      if (!planExists) {
+        return res.status(400).json({
+          success: false,
+          message: `Plan "${nextPlan}" is not active or does not exist`
+        });
+      }
+      tenant.plan = nextPlan;
+    }
+
+    if (accessState != null && !ACCESS_STATES.includes(accessState)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid accessState. Expected one of: ${ACCESS_STATES.join(', ')}`
+      });
+    }
+
+    const metadata = tenant.metadata && typeof tenant.metadata === 'object' ? { ...tenant.metadata } : {};
+    const entitlements = metadata.entitlements && typeof metadata.entitlements === 'object'
+      ? { ...metadata.entitlements }
+      : {};
+
+    if (accessState != null) {
+      entitlements.accessState = accessState;
+    }
+    if (featureOverrides != null) {
+      entitlements.featureOverrides = normalizeFeatureOverrides(featureOverrides);
+    }
+    if (note != null) {
+      entitlements.note = String(note).trim().slice(0, 500);
+    }
+
+    entitlements.updatedAt = new Date().toISOString();
+    entitlements.updatedBy = req.user?.id || null;
+
+    metadata.entitlements = entitlements;
+    tenant.metadata = metadata;
+
+    await tenant.save();
+
+    if (plan != null) {
+      const [subSetting] = await Setting.findOrCreate({
+        where: { tenantId: tenant.id, key: 'subscription' },
+        defaults: {
+          tenantId: tenant.id,
+          key: 'subscription',
+          value: {},
+        },
+      });
+      const prevSub =
+        subSetting.value && typeof subSetting.value === 'object' ? { ...subSetting.value } : {};
+      const nextPlan = tenant.plan;
+      prevSub.plan = nextPlan;
+      prevSub.status =
+        nextPlan === 'trial'
+          ? prevSub.status === 'active'
+            ? 'trialing'
+            : prevSub.status || 'trialing'
+          : 'active';
+      subSetting.value = prevSub;
+      await subSetting.save();
+    }
+
+    const afterSnapshot = {
+      plan: tenant.plan,
+      accessState: metadata?.entitlements?.accessState || null,
+      featureOverrides: metadata?.entitlements?.featureOverrides || {},
+      note: metadata?.entitlements?.note || ''
+    };
+
+    await TenantAccessAudit.create({
+      tenantId: tenant.id,
+      actorUserId: req.user?.id || null,
+      action: 'tenant_access_updated',
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      reason: metadata?.entitlements?.note || null
+    });
+
+    const freshTenant = await Tenant.findByPk(tenant.id);
+    const accessControl = await getTenantEffectiveEntitlements(freshTenant, {
+      logContext: 'admin_update_tenant_access',
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        id: tenant.id,
+        plan: tenant.plan,
+        metadata: tenant.metadata,
+        accessControl
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getTenantAccessAudit = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id, { attributes: ['id'] });
+    if (!tenant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found'
+      });
+    }
+
+    const logs = await TenantAccessAudit.findAll({
+      where: { tenantId: tenant.id },
+      include: [
+        {
+          model: User,
+          as: 'actor',
+          attributes: ['id', 'name', 'email']
+        }
+      ],
+      order: [['createdAt', 'DESC']],
+      limit: 50
+    });
+
+    res.status(200).json({
+      success: true,
+      data: logs
     });
   } catch (error) {
     next(error);
@@ -538,12 +890,15 @@ exports.getBillingSummary = async (req, res, next) => {
       }
     });
 
-    const planBreakdown = planBreakdownRaw.map((row) => ({
-      plan: row.plan,
+    const planBreakdown = planBreakdownRaw.map((row) => {
+      const normalizedPlan = normalizePlanId(row.plan);
+      return {
+      plan: normalizedPlan,
       count: Number(row.count) || 0,
-      price: PLAN_PRICING[row.plan] || 0,
-      mrr: (PLAN_PRICING[row.plan] || 0) * (Number(row.count) || 0)
-    }));
+      price: PLAN_PRICING[normalizedPlan] || 0,
+      mrr: (PLAN_PRICING[normalizedPlan] || 0) * (Number(row.count) || 0)
+    };
+    });
 
     const estimatedMRR = planBreakdown.reduce((acc, item) => acc + item.mrr, 0);
     const payingTenants = planBreakdown.reduce((acc, item) => acc + item.count, 0);

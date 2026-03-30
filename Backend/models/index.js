@@ -70,6 +70,9 @@ const UserWeekFocus = require('./UserWeekFocus');
 const UserTask = require('./UserTask');
 const UserChecklist = require('./UserChecklist');
 const UserChecklistItem = require('./UserChecklistItem');
+const TenantAccessAudit = require('./TenantAccessAudit');
+const AutomationRule = require('./AutomationRule');
+const AutomationRun = require('./AutomationRun');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -523,6 +526,19 @@ Shop.hasMany(FootTraffic, { foreignKey: 'shopId', as: 'footTraffic' });
 FootTraffic.belongsTo(User, { foreignKey: 'recordedBy', as: 'recorder' });
 User.hasMany(FootTraffic, { foreignKey: 'recordedBy', as: 'recordedTraffic' });
 
+// Tenant access audit relationships
+Tenant.hasMany(TenantAccessAudit, { foreignKey: 'tenantId', as: 'accessAuditLogs' });
+TenantAccessAudit.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+User.hasMany(TenantAccessAudit, { foreignKey: 'actorUserId', as: 'tenantAccessAuditEntries' });
+TenantAccessAudit.belongsTo(User, { foreignKey: 'actorUserId', as: 'actor' });
+
+Tenant.hasMany(AutomationRule, { foreignKey: 'tenantId', as: 'automationRules' });
+AutomationRule.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+AutomationRule.hasMany(AutomationRun, { foreignKey: 'ruleId', as: 'runs' });
+AutomationRun.belongsTo(AutomationRule, { foreignKey: 'ruleId', as: 'rule' });
+Tenant.hasMany(AutomationRun, { foreignKey: 'tenantId', as: 'automationRuns' });
+AutomationRun.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
 module.exports = {
   User,
   Customer,
@@ -595,7 +611,10 @@ module.exports = {
   UserWeekFocus,
   UserTask,
   UserChecklist,
-  UserChecklistItem
+  UserChecklistItem,
+  TenantAccessAudit,
+  AutomationRule,
+  AutomationRun
 };
 
 

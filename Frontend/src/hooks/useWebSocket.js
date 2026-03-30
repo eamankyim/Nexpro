@@ -3,8 +3,8 @@ import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../services/api';
 
-/** Production WebSocket base URL when app is on ShopWISE Africa domains */
-const SHOPWISE_AFRICA_WS_URL = 'https://api.shopwiseafrica.com';
+/** Production WebSocket base URL when app is on ABS / African Business Suite production domains */
+const ABS_WS_URL = 'https://api.africanbusinesssuite.com';
 
 const getWsUrl = () => {
   const explicit = import.meta.env.VITE_WS_URL?.trim();
@@ -18,12 +18,18 @@ const getWsUrl = () => {
   }
   if (typeof window !== 'undefined') {
     const { hostname } = window.location;
-    if (hostname === 'myapp.shopwiseafrica.com' || hostname === 'shopwiseafrica.com') return SHOPWISE_AFRICA_WS_URL;
+    if (hostname === 'myapp.africanbusinesssuite.com' || hostname === 'africanbusinesssuite.com') return ABS_WS_URL;
   }
   return 'http://localhost:5001';
 };
 
 const WS_URL = getWsUrl();
+
+/** When 'false' or '0', skip Socket.IO connection (backend may not have /socket.io/). Set in .env to reduce 404 log spam. */
+const isWsEnabled = () => {
+  const v = import.meta.env.VITE_WS_ENABLED;
+  return v !== 'false' && v !== '0';
+};
 
 /**
  * useWebSocket hook
@@ -57,14 +63,26 @@ export const useWebSocket = (options = {}) => {
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
 
-  // Get auth token
+  /** Stable key so inline `channels={[]}` does not recreate the socket every render */
+  const channelsKey = JSON.stringify(Array.isArray(channels) ? channels : []);
+
+  /** Always call latest handlers without listing them in the effect deps (avoids reconnect loops) */
+  const handlersRef = useRef({});
+  handlersRef.current = {
+    onSaleCreated,
+    onSaleUpdated,
+    onInventoryAlert,
+    onNotification,
+    onTrafficUpdate,
+    onDashboardUpdate
+  };
+
   const getToken = useCallback(() => {
     return localStorage.getItem('token');
   }, []);
 
-  // Initialize socket connection
   useEffect(() => {
-    if (!enabled || !user || !activeTenantId) {
+    if (!isWsEnabled() || !enabled || !user?.id || !activeTenantId) {
       return;
     }
 
@@ -74,7 +92,14 @@ export const useWebSocket = (options = {}) => {
       return;
     }
 
-    // Create socket connection
+    let channelList = [];
+    try {
+      channelList = JSON.parse(channelsKey);
+      if (!Array.isArray(channelList)) channelList = [];
+    } catch {
+      channelList = [];
+    }
+
     const socket = io(WS_URL, {
       auth: { token, tenantId: activeTenantId },
       query: { token, tenantId: activeTenantId },
@@ -88,15 +113,13 @@ export const useWebSocket = (options = {}) => {
 
     socketRef.current = socket;
 
-    // Connection handlers
     socket.on('connect', () => {
       console.log('[WebSocket] Connected');
       setIsConnected(true);
       reconnectAttempts.current = 0;
 
-      // Subscribe to channels
-      if (channels.length > 0) {
-        socket.emit('subscribe', channels);
+      if (channelList.length > 0) {
+        socket.emit('subscribe', channelList);
       }
     });
 
@@ -106,10 +129,9 @@ export const useWebSocket = (options = {}) => {
     });
 
     socket.on('connect_error', (error) => {
-      console.error('[WebSocket] Connection error:', error.message);
+      const msg = error?.message || (typeof error === 'string' ? error : 'websocket error');
+      console.error('[WebSocket] Connection error:', msg);
 
-      // If the backend rejects our JWT (e.g. token from a different environment or expired),
-      // clear local auth so the user is forced to log in again with a fresh token.
       if (error?.message === 'Invalid authentication token') {
         try {
           localStorage.removeItem('token');
@@ -127,93 +149,71 @@ export const useWebSocket = (options = {}) => {
       }
     });
 
-    // Event handlers
     socket.on('sale:created', (data) => {
       setLastMessage({ type: 'sale:created', data, timestamp: new Date() });
-      onSaleCreated?.(data);
+      handlersRef.current.onSaleCreated?.(data);
     });
 
     socket.on('sale:updated', (data) => {
       setLastMessage({ type: 'sale:updated', data, timestamp: new Date() });
-      onSaleUpdated?.(data);
+      handlersRef.current.onSaleUpdated?.(data);
     });
 
     socket.on('inventory:alert', (data) => {
       setLastMessage({ type: 'inventory:alert', data, timestamp: new Date() });
-      onInventoryAlert?.(data);
+      handlersRef.current.onInventoryAlert?.(data);
     });
 
     socket.on('notification', (data) => {
       setLastMessage({ type: 'notification', data, timestamp: new Date() });
-      onNotification?.(data);
+      handlersRef.current.onNotification?.(data);
     });
 
     socket.on('traffic:update', (data) => {
       setLastMessage({ type: 'traffic:update', data, timestamp: new Date() });
-      onTrafficUpdate?.(data);
+      handlersRef.current.onTrafficUpdate?.(data);
     });
 
     socket.on('dashboard:update', (data) => {
       setLastMessage({ type: 'dashboard:update', data, timestamp: new Date() });
-      onDashboardUpdate?.(data);
+      handlersRef.current.onDashboardUpdate?.(data);
     });
 
-    socket.on('pong', () => {
-      // Server responded to ping
-    });
+    socket.on('pong', () => {});
 
-    // Cleanup
     return () => {
-      if (socket) {
-        socket.off('connect');
-        socket.off('disconnect');
-        socket.off('connect_error');
-        socket.off('sale:created');
-        socket.off('sale:updated');
-        socket.off('inventory:alert');
-        socket.off('notification');
-        socket.off('traffic:update');
-        socket.off('dashboard:update');
-        socket.off('pong');
-        socket.disconnect();
-      }
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('connect_error');
+      socket.off('sale:created');
+      socket.off('sale:updated');
+      socket.off('inventory:alert');
+      socket.off('notification');
+      socket.off('traffic:update');
+      socket.off('dashboard:update');
+      socket.off('pong');
+      socket.disconnect();
     };
-  }, [
-    enabled,
-    user,
-    activeTenantId,
-    getToken,
-    channels,
-    onSaleCreated,
-    onSaleUpdated,
-    onInventoryAlert,
-    onNotification,
-    onTrafficUpdate,
-    onDashboardUpdate
-  ]);
+  }, [enabled, user?.id, activeTenantId, getToken, channelsKey]);
 
-  // Subscribe to additional channels
   const subscribe = useCallback((newChannels) => {
     if (socketRef.current?.connected && Array.isArray(newChannels)) {
       socketRef.current.emit('subscribe', newChannels);
     }
   }, []);
 
-  // Unsubscribe from channels
   const unsubscribe = useCallback((channelsToRemove) => {
     if (socketRef.current?.connected && Array.isArray(channelsToRemove)) {
       socketRef.current.emit('unsubscribe', channelsToRemove);
     }
   }, []);
 
-  // Ping server to check connection
   const ping = useCallback(() => {
     if (socketRef.current?.connected) {
       socketRef.current.emit('ping');
     }
   }, []);
 
-  // Force reconnect
   const reconnect = useCallback(() => {
     if (socketRef.current) {
       socketRef.current.disconnect();

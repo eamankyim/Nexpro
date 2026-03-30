@@ -10,7 +10,20 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ORDER_STATUSES, ORDER_STATUS_LABELS, SHOP_TYPES } from '../constants';
+import {
+  ORDER_STATUSES,
+  ORDER_STATUS_LABELS,
+  SHOP_TYPES,
+  DELIVERY_STATUS_ORDER,
+  DELIVERY_STATUS_LABELS,
+} from '../constants';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { resolveImageUrl } from '../utils/fileUtils';
 
 const POLL_INTERVAL_MS = 12000; // 12 seconds
@@ -63,7 +76,29 @@ const groupOrderItems = (items) => {
   return Object.values(map);
 };
 
-const OrderCard = ({ order, onStatusChange, loadingId, dragHandleProps, touchFriendly }) => {
+function DeliveryStatusSelect({ order, loadingId, onDeliveryChange, triggerClassName }) {
+  return (
+    <Select
+      value={order.deliveryStatus || '__none__'}
+      onValueChange={(v) => onDeliveryChange(order, v)}
+      disabled={loadingId === order.id}
+    >
+      <SelectTrigger className={triggerClassName || 'h-8 text-xs w-full max-w-[200px]'} aria-label="Delivery status">
+        <SelectValue placeholder="Delivery" />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__">Delivery: not set</SelectItem>
+        {DELIVERY_STATUS_ORDER.map((key) => (
+          <SelectItem key={key} value={key}>
+            {DELIVERY_STATUS_LABELS[key]}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+const OrderCard = ({ order, onStatusChange, onDeliveryChange, loadingId, dragHandleProps, touchFriendly }) => {
   const groupedItems = groupOrderItems(order.items);
   const customerName = order.customer?.name || 'Walk-in';
   const timeAgo = order.createdAt ? dayjs(order.createdAt).fromNow() : '';
@@ -143,13 +178,21 @@ const OrderCard = ({ order, onStatusChange, loadingId, dragHandleProps, touchFri
           {order.orderStatus === ORDER_STATUSES.READY && (
             <Button
               size="sm"
-              className={touchFriendly ? 'min-h-[44px] min-w-[44px] text-xs bg-[#166534] hover:bg-[#14532d]' : 'h-7 text-xs bg-[#166534] hover:bg-[#14532d]'}
+              className={touchFriendly ? 'min-h-[44px] min-w-[44px] text-xs bg-brand hover:bg-brand-dark' : 'h-7 text-xs bg-brand hover:bg-brand-dark'}
               disabled={loadingId === order.id}
               onClick={() => onStatusChange(order, ORDER_STATUSES.COMPLETED)}
             >
               {loadingId === order.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Complete'}
             </Button>
           )}
+        </div>
+        <div className="pt-2 border-t border-border">
+          <DeliveryStatusSelect
+            order={order}
+            loadingId={loadingId}
+            onDeliveryChange={onDeliveryChange}
+            triggerClassName={touchFriendly ? 'h-10 text-sm w-full max-w-none' : 'h-8 text-xs w-full max-w-[220px]'}
+          />
         </div>
       </CardContent>
     </Card>
@@ -159,7 +202,10 @@ const OrderCard = ({ order, onStatusChange, loadingId, dragHandleProps, touchFri
 const Orders = () => {
   const { activeTenant } = useAuth();
   const { isMobile } = useResponsive();
-  const shopType = activeTenant?.metadata?.shopType;
+  const shopType =
+    activeTenant?.metadata?.businessSubType ||
+    activeTenant?.metadata?.shopType ||
+    null;
   const isRestaurant = shopType === SHOP_TYPES.RESTAURANT;
 
   const [orders, setOrders] = useState([]);
@@ -228,6 +274,23 @@ const Orders = () => {
     [fetchOrders]
   );
 
+  const handleDeliveryChange = useCallback(
+    async (order, value) => {
+      const val = value === '__none__' ? null : value;
+      setLoadingId(order.id);
+      try {
+        await saleService.updateDeliveryStatus(order.id, val);
+        showSuccess('Delivery status updated');
+        await fetchOrders();
+      } catch (err) {
+        showError(err, 'Failed to update delivery status');
+      } finally {
+        setLoadingId(null);
+      }
+    },
+    [fetchOrders]
+  );
+
   const handleDragStart = useCallback(() => {
     isDraggingRef.current = true;
   }, []);
@@ -266,7 +329,7 @@ const Orders = () => {
     <div onClick={() => setHasInteracted(true)}>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold">Kitchen Orders</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <Tooltip>
             <TooltipTrigger asChild>
               <select
@@ -353,6 +416,7 @@ const Orders = () => {
                                 <OrderCard
                                   order={order}
                                   onStatusChange={handleStatusChange}
+                                  onDeliveryChange={handleDeliveryChange}
                                   loadingId={loadingId}
                                   dragHandleProps={draggableProvided.dragHandleProps}
                                   touchFriendly={isMobile}
@@ -438,13 +502,19 @@ const Orders = () => {
                   {order.orderStatus === ORDER_STATUSES.READY && (
                     <Button
                       size="sm"
-                      className="bg-[#166534] hover:bg-[#14532d]"
+                      className="bg-brand hover:bg-brand-dark"
                       disabled={loadingId === order.id}
                       onClick={() => handleStatusChange(order, ORDER_STATUSES.COMPLETED)}
                     >
                       {loadingId === order.id ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Complete'}
                     </Button>
                   )}
+                  <DeliveryStatusSelect
+                    order={order}
+                    loadingId={loadingId}
+                    onDeliveryChange={handleDeliveryChange}
+                    triggerClassName="h-8 text-xs w-[min(200px,100%)]"
+                  />
                 </div>
               </CardContent>
             </Card>

@@ -50,9 +50,9 @@ const testStorageCalculation = async () => {
         // Check actual directories
         const uploadsDir = path.join(__dirname, '../uploads');
         const directories = [
-          `jobs/${tenant.id}`,
-          `employees/${tenant.id}`,
-          `settings/${tenant.id}`
+          `products/${tenant.id}`,
+          `expenses/${tenant.id}`,
+          `settings/${tenant.id}`,
         ];
         
         console.log('\n3️⃣ Checking actual directories...');

@@ -1,17 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  CartesianGrid,
-  ResponsiveContainer,
-  LineChart,
-  Line,
-  BarChart,
-  Bar,
-} from 'recharts';
+import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import dayjs from 'dayjs';
 import { Loader2 } from 'lucide-react';
 import { useResponsive } from '../../hooks/useResponsive';
@@ -33,6 +20,8 @@ const defaultRange = [
   dayjs().subtract(29, 'day').startOf('day'),
   dayjs().endOf('day'),
 ];
+
+const AdminReportsCharts = lazy(() => import('./AdminReportsCharts'));
 
 const AdminReports = () => {
   const { isMobile } = useResponsive();
@@ -216,155 +205,82 @@ const AdminReports = () => {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>New signups trend</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {revenueLoading ? (
-              <div className="flex justify-center h-[280px] items-center">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={280}>
-                <AreaChart data={revenueSeries}>
-                  <defs>
-                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#2f80ed" stopOpacity={0.8} />
-                      <stop offset="95%" stopColor="#2f80ed" stopOpacity={0.1} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tickFormatter={(value) => dayjs(value).format('MMM D')} />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip
-                    formatter={(value) => `${Number(value).toLocaleString()} signups`}
-                    labelFormatter={(value) => dayjs(value).format('MMMM D, YYYY')}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="revenue"
-                    stroke="#2f80ed"
-                    fill="url(#colorRevenue)"
-                    strokeWidth={2}
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle>Platform expenses</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {expenseLoading ? (
-              <div className="flex justify-center h-[280px] items-center">
-                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : expenseSeries.length > 0 ? (
-              <ResponsiveContainer width="100%" height={280}>
-                <LineChart data={expenseSeries}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tickFormatter={(value) => dayjs(value).format('MMM D')} />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip
-                    formatter={(value) => `₵ ${Number(value).toLocaleString()}`}
-                    labelFormatter={(value) => dayjs(value).format('MMMM D, YYYY')}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="expenses"
-                    stroke="#eb5757"
-                    strokeWidth={2}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-sm text-muted-foreground py-8">No platform expenses tracked yet.</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle>Pipeline</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {pipeline ? (
-              <BarChart width={360} height={260} data={[
-                { name: 'Paying tenants', value: pipeline.activeJobs },
-                { name: 'Trialing tenants', value: pipeline.openLeads },
-                { name: 'New this month', value: pipeline.pendingInvoices },
-              ]}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="name" />
-                <YAxis allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="value" fill="#9b51e0" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            ) : (
-              <p className="text-sm text-muted-foreground">No pipeline data available.</p>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Top paying tenants</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {isMobile ? (
-              <div className="flex flex-col gap-3">
-                {topCustomers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No paying tenants</p>
-                ) : (
-                  topCustomers.map((record) => (
-                    <div
-                      key={record.tenant?.id || record.tenantId}
-                      className="rounded-lg border border-border p-4"
-                    >
-                      <p className="font-semibold text-foreground">{record.tenant?.name || '—'}</p>
-                      <p className="text-xs text-muted-foreground">{record.tenant?.company || record.tenant?.plan || '—'}</p>
-                      <div className="mt-3 pt-3 border-t border-border flex items-center gap-2">
-                        <span className="font-medium text-foreground">₵ {Number(record.totalRevenue || 0).toLocaleString()}/mo</span>
-                        <span className="text-xs text-muted-foreground">{record.tenant?.plan || '—'}</span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Tenant</TableHead>
-                    <TableHead>Plan value (₵/mo)</TableHead>
-                    <TableHead>Plan</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {topCustomers.map((record) => (
-                    <TableRow key={record.tenant?.id || record.tenantId}>
-                      <TableCell>
-                        <div>
+      <Suspense
+        fallback={
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <div className="h-[280px] rounded-lg border border-border bg-muted/30 animate-pulse" />
+              <div className="h-[280px] rounded-lg border border-border bg-muted/30 animate-pulse" />
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div className="h-[260px] rounded-lg border border-border bg-muted/30 animate-pulse" />
+              <div className="lg:col-span-2 h-[200px] rounded-lg border border-border bg-muted/30 animate-pulse" />
+            </div>
+          </div>
+        }
+      >
+        <AdminReportsCharts
+          revenueLoading={revenueLoading}
+          expenseLoading={expenseLoading}
+          revenueSeries={revenueSeries}
+          expenseSeries={expenseSeries}
+          pipeline={pipeline}
+          topCustomersSlot={
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle>Top paying tenants</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {isMobile ? (
+                  <div className="flex flex-col gap-3">
+                    {topCustomers.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No paying tenants</p>
+                    ) : (
+                      topCustomers.map((record) => (
+                        <div
+                          key={record.tenant?.id || record.tenantId}
+                          className="rounded-lg border border-border p-4"
+                        >
                           <p className="font-semibold text-foreground">{record.tenant?.name || '—'}</p>
                           <p className="text-xs text-muted-foreground">{record.tenant?.company || record.tenant?.plan || '—'}</p>
+                          <div className="mt-3 pt-3 border-t border-border flex items-center gap-2">
+                            <span className="font-medium text-foreground">₵ {Number(record.totalRevenue || 0).toLocaleString()}/mo</span>
+                            <span className="text-xs text-muted-foreground">{record.tenant?.plan || '—'}</span>
+                          </div>
                         </div>
-                      </TableCell>
-                      <TableCell>₵ {Number(record.totalRevenue || 0).toLocaleString()}</TableCell>
-                      <TableCell>{record.tenant?.plan || '—'}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                      ))
+                    )}
+                  </div>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Tenant</TableHead>
+                        <TableHead>Plan value (₵/mo)</TableHead>
+                        <TableHead>Plan</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {topCustomers.map((record) => (
+                        <TableRow key={record.tenant?.id || record.tenantId}>
+                          <TableCell>
+                            <div>
+                              <p className="font-semibold text-foreground">{record.tenant?.name || '—'}</p>
+                              <p className="text-xs text-muted-foreground">{record.tenant?.company || record.tenant?.plan || '—'}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>₵ {Number(record.totalRevenue || 0).toLocaleString()}</TableCell>
+                          <TableCell>{record.tenant?.plan || '—'}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          }
+        />
+      </Suspense>
 
       <Card>
         <CardHeader>

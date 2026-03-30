@@ -107,8 +107,14 @@ export default function ScanScreen() {
   });
 
   const createJobMutation = useMutation({
-    mutationFn: (d: { customerId: string; title: string; description?: string; dueDate?: string }) =>
-      jobService.createJob(d),
+    mutationFn: (d: {
+      customerId: string;
+      title: string;
+      description?: string;
+      dueDate?: string;
+      status?: string;
+      priority?: string;
+    }) => jobService.createJob(d),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['jobs'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard'] });
@@ -156,6 +162,8 @@ export default function ScanScreen() {
       title: jobForm.title.trim(),
       description: jobForm.description.trim() || undefined,
       dueDate: jobForm.dueDate || undefined,
+      status: 'new',
+      priority: 'medium',
     });
   }, [jobForm, createJobMutation]);
 

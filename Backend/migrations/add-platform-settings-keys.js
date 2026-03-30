@@ -7,11 +7,11 @@ const SEED_KEYS = [
   {
     key: 'platform:branding',
     value: {
-      appName: 'ShopWISE',
+      appName: 'African Business Suite',
       primaryColor: '#2f80ed',
       secondaryColor: '#9b51e0',
       logoUrl: '',
-      emailFooter: 'Thank you for using ShopWISE.',
+      emailFooter: 'Thank you for using African Business Suite.',
     },
   },
   {

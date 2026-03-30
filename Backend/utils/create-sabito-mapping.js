@@ -24,7 +24,7 @@ const createMapping = async () => {
   try {
     console.log('🔗 Creating Sabito tenant mapping...');
     console.log(`   Sabito Business ID: ${sabitoBusinessId}`);
-    console.log(`   ShopWISE Tenant ID: ${nexproTenantId}`);
+    console.log(`   ABS Tenant ID: ${nexproTenantId}`);
     console.log(`   Business Name: ${businessName || 'N/A'}`);
 
     // Test database connection
@@ -36,7 +36,7 @@ const createMapping = async () => {
       console.error(`❌ Error: Tenant not found with ID: ${nexproTenantId}`);
       console.error('');
       console.error('To find your tenant ID:');
-      console.error('  1. Log into ShopWISE');
+      console.error('  1. Log into ABS');
       console.error('  2. Open browser console (F12)');
       console.error('  3. Run: localStorage.getItem("activeTenantId")');
       process.exit(1);

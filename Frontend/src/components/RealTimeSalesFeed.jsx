@@ -51,12 +51,14 @@ const RealTimeSalesFeed = ({ shopId = null }) => {
 
   // Handle new sale
   const handleSaleCreated = useCallback((data) => {
-    const sale = data.sale;
+    const sale = data?.sale;
+    if (!sale?.id) return;
+
     addFeedItem({
       id: `sale-${sale.id}-${Date.now()}`,
       type: 'sale',
-      title: `New Sale: ${sale.saleNumber}`,
-      description: `${sale.customerName} - ${formatCurrency(sale.total)}`,
+      title: `New Sale: ${sale.saleNumber ?? sale.id}`,
+      description: `${sale.customerName ?? 'Customer'} - ${formatCurrency(sale.total)}`,
       amount: sale.total,
       timestamp: data.timestamp,
       icon: ShoppingCart,
@@ -75,14 +77,18 @@ const RealTimeSalesFeed = ({ shopId = null }) => {
 
   // Handle inventory alert
   const handleInventoryAlert = useCallback((data) => {
-    const { product, alertType } = data;
+    const product = data?.product;
+    const alertType = data?.alertType;
+    if (!product?.id) return;
+
     const isOutOfStock = alertType === 'out_of_stock';
-    
+    const label = product.name || product.sku || 'Product';
+
     addFeedItem({
       id: `inventory-${product.id}-${Date.now()}`,
       type: 'inventory',
       title: isOutOfStock ? 'Out of Stock' : 'Low Stock Alert',
-      description: `${product.name} (${product.sku})`,
+      description: `${label}${product.sku ? ` (${product.sku})` : ''}`,
       quantity: product.quantity,
       timestamp: data.timestamp,
       icon: AlertTriangle,
@@ -96,9 +102,7 @@ const RealTimeSalesFeed = ({ shopId = null }) => {
 
     // Show warning
     showWarning(
-      isOutOfStock 
-        ? `${product.name} is out of stock!` 
-        : `${product.name} is running low`
+      isOutOfStock ? `${label} is out of stock!` : `${label} is running low`
     );
   }, [addFeedItem, queryClient]);
 

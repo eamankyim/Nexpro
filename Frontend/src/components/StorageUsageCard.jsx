@@ -90,7 +90,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
             <Cloud className="h-4 w-4" />
             Storage Usage
             {planName && (
-              <Badge className="ml-2" style={{ backgroundColor: '#166534' }}>
+              <Badge variant="secondary" className="ml-2 border-0">
                 {planName} Plan
               </Badge>
             )}
@@ -195,7 +195,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <div className="flex items-center gap-2 text-sm">
-                        <Info className="h-4 w-4 text-[#166534]" />
+                        <Info className="h-4 w-4 text-brand" />
                         <span>
                           Need more storage? Add 100GB for <strong>₵ {price100GB}</strong>
                         </span>

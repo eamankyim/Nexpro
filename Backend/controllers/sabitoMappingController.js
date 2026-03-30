@@ -1,7 +1,7 @@
 const { SabitoTenantMapping, Tenant } = require('../models');
 
 /**
- * Create or update Sabito business ID to ShopWISE tenant ID mapping
+ * Create or update Sabito business ID to ABS tenant ID mapping
  * POST /api/sabito/mappings
  * Headers: Authorization: Bearer <token>, X-Tenant-ID: <tenant-id>
  */

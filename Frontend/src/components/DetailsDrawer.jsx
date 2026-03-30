@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useResponsive } from '@/hooks/useResponsive';
-import { Pencil, Trash2, Printer, CheckCircle, Download, X, FileText, Share2, Archive, Loader2 } from 'lucide-react';
+import { Pencil, Trash2, Printer, CheckCircle, Download, X, FileText, Share2, Archive, Loader2, MoreVertical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { 
@@ -17,6 +17,13 @@ import {
   TabsTrigger, 
   TabsContent 
 } from '@/components/ui/tabs';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import DrawerSectionCard from '@/components/DrawerSectionCard';
 import {
@@ -31,6 +38,12 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
 /**
@@ -52,6 +65,8 @@ import { cn } from '@/lib/utils';
  * @param {String} deleteConfirmText - Custom delete confirmation description
  * @param {String} deleteButtonLabel - Custom delete button label (default: 'Archive')
  * @param {String} cancelButtonLabel - Custom cancel button label (default: 'Cancel')
+ * @param {Object} primaryAction - When set with moreMenuItems, footer shows only primary button + More dropdown. { label, onClick, disabled, icon }
+ * @param {Array} moreMenuItems - When set with primaryAction, items for the More dropdown. [{ label, onClick, icon?, destructive? }]
  */
 const DetailsDrawer = ({ 
   open, 
@@ -74,7 +89,9 @@ const DetailsDrawer = ({
   deleteConfirmTitle = 'Archive this item?',
   deleteConfirmText = 'You can restore it anytime from filters.',
   deleteButtonLabel = 'Archive',
-  cancelButtonLabel = 'Cancel'
+  cancelButtonLabel = 'Cancel',
+  primaryAction = null,
+  moreMenuItems = []
 }) => {
   const { isMobile } = useResponsive();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -116,8 +133,8 @@ const DetailsDrawer = ({
             "shadow-none p-0 rounded-lg flex flex-col overflow-x-hidden",
             isMobile && "w-full max-w-[calc(100vw-16px)]"
           )}
-          style={{ 
-            width: isMobile ? '100%' : (typeof width === 'string' ? width : `${width}px`), 
+          style={{
+            width: isMobile ? '100%' : (typeof width === 'string' ? width : `${width}px`),
             minWidth: isMobile ? undefined : '30vw',
             maxWidth: isMobile ? 'calc(100vw - 16px)' : 'calc(90vw - 16px)',
             marginLeft: '8px',
@@ -125,8 +142,8 @@ const DetailsDrawer = ({
             marginTop: '8px',
             marginBottom: '8px',
             borderRadius: '8px',
-            height: 'calc(100vh - 16px)',
-            maxHeight: 'calc(100vh - 16px)'
+            height: 'calc(100dvh - 16px)',
+            maxHeight: 'calc(100dvh - 16px)',
           }}
         >
           <div className="flex-shrink-0">
@@ -152,13 +169,33 @@ const DetailsDrawer = ({
             ) : tabs && tabs.length > 0 ? (
               <Tabs value={activeTab || tabs[0]?.key} onValueChange={setActiveTab} className="w-full" key={tabs.map(t => t.key).join('-')}>
                 <div className="px-6">
-                  <TabsList className="mb-4 w-full">
-                    {tabs.map(tab => (
-                      <TabsTrigger key={tab.key} value={tab.key} className="flex-1">
-                        {tab.label}
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
+                  {isMobile ? (
+                    <div className="mb-4">
+                      <Select
+                        value={activeTab || tabs[0]?.key}
+                        onValueChange={setActiveTab}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue placeholder="Select section" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {tabs.map((tab) => (
+                            <SelectItem key={tab.key} value={tab.key}>
+                              {tab.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : (
+                    <TabsList className="mb-4 w-full">
+                      {tabs.map(tab => (
+                        <TabsTrigger key={tab.key} value={tab.key} className="flex-1">
+                          {tab.label}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  )}
                 </div>
                 <div className="border-b border-gray-200 w-full" aria-hidden />
                 {tabs.map(tab => (
@@ -176,7 +213,73 @@ const DetailsDrawer = ({
             )}
           </div>
 
-          {showActions && (onEdit || onDelete || onDownload || onPrint || onMarkPaid || extraActions.length > 0) && (
+          {showActions && (primaryAction || moreMenuItems.length > 0) ? (
+            <div className="flex-shrink-0 bg-background border-t border-border">
+              <div className="p-6 flex flex-wrap gap-2 justify-end">
+                {moreMenuItems.length > 0 && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <SecondaryButton>
+                        <MoreVertical className="h-4 w-4 mr-2" />
+                        More
+                      </SecondaryButton>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {moreMenuItems.map((item, index) => {
+                        const isArchive = item.key === 'archive' && onDelete;
+                        const handleClick = isArchive ? () => setDeleteDialogOpen(true) : (item.disabled ? undefined : item.onClick);
+                        return (
+                          <DropdownMenuItem
+                            key={item.key || index}
+                            onClick={handleClick}
+                            disabled={item.disabled}
+                            className={cn('flex items-center gap-2', item.destructive && 'text-destructive focus:text-destructive')}
+                          >
+                            {item.icon && item.icon}
+                            {item.label}
+                          </DropdownMenuItem>
+                        );
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+                {primaryAction && (
+                  <Button
+                    onClick={primaryAction.onClick}
+                    disabled={primaryAction.disabled}
+                  >
+                    {primaryAction.icon && <span className="mr-2">{primaryAction.icon}</span>}
+                    {primaryAction.label}
+                  </Button>
+                )}
+              </div>
+            </div>
+          ) : null}
+          {showActions && (primaryAction || moreMenuItems.length > 0) && onDelete && (
+            <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{deleteConfirmTitle}</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {deleteConfirmText}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{cancelButtonLabel}</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      onDelete();
+                      setDeleteDialogOpen(false);
+                    }}
+                    className="bg-secondary text-secondary-foreground hover:bg-secondary/90"
+                  >
+                    {deleteButtonLabel}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+          {showActions && !primaryAction && (onEdit || onDelete || onDownload || onPrint || onMarkPaid || extraActions.length > 0) && (
             <div className="flex-shrink-0 bg-background border-t border-border">
               <div className="p-6 flex flex-wrap gap-2 justify-end">
                 {onDownload && (

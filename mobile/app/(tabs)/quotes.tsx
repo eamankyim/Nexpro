@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery } from '@tanstack/react-query';
+import { useRouter } from 'expo-router';
 
 import { quoteService } from '@/services/quoteService';
 import { useAuth } from '@/context/AuthContext';
@@ -52,6 +53,7 @@ type Quote = {
 };
 
 export default function QuotesScreen() {
+  const router = useRouter();
   const { activeTenant, activeTenantId } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
@@ -59,6 +61,7 @@ export default function QuotesScreen() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
   const [detailQuote, setDetailQuote] = useState<Quote | null>(null);
+  const [converting, setConverting] = useState(false);
 
   const businessType = activeTenant?.businessType ?? 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
@@ -85,14 +88,38 @@ export default function QuotesScreen() {
 
   const handleQuotePress = useCallback(async (quote: Quote) => {
     setSelectedQuote(quote);
+    // Immediately show basic details while loading full quote from API
+    setDetailQuote(quote);
     try {
       const res = await quoteService.getQuoteById(quote.id);
       const full = res?.data || res;
       setDetailQuote(full as Quote);
     } catch {
+      // Keep basic quote info if full fetch fails
       setDetailQuote(quote);
     }
   }, []);
+
+  const handleConvertToJob = useCallback(async () => {
+    if (!detailQuote) return;
+    setConverting(true);
+    try {
+      const res = await quoteService.convertToJob(detailQuote.id);
+      const data = res?.data ?? res;
+      const job: any = data?.job ?? data?.data?.job ?? data;
+      // Simple mobile feedback; jobNumber may be undefined if shape differs
+      const jobNumber = job?.jobNumber ? ` ${job.jobNumber}` : '';
+      alert(`Quote converted to job${jobNumber}.`);
+      setSelectedQuote(null);
+      setDetailQuote(null);
+      refetch();
+    } catch (err: any) {
+      console.error('Failed to convert quote to job:', err);
+      alert(err?.response?.data?.message || 'Failed to convert quote to job.');
+    } finally {
+      setConverting(false);
+    }
+  }, [detailQuote, refetch]);
 
   const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
@@ -161,7 +188,24 @@ export default function QuotesScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: bg }]}>
-      {/* Status filter */}
+      <View style={styles.headerRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.pageTitle, { color: textColor }]}>Quotes</Text>
+          <Text style={[styles.pageSubtitle, { color: mutedColor }]}>
+            Create quotes and convert them into jobs.
+          </Text>
+        </View>
+        {isPrintingPress && (
+          <Pressable
+            onPress={() => router.push('/quotes-new')}
+            style={[styles.newQuoteButton, { borderColor }]}
+          >
+            <FontAwesome name="file-text-o" size={14} color={colors.tint} />
+            <Text style={[styles.newQuoteButtonText, { color: colors.tint }]}>New quote</Text>
+          </Pressable>
+        )}
+      </View>
+
       <View style={styles.filterRow}>
         {['all', 'draft', 'sent', 'accepted', 'declined'].map((s) => (
           <Pressable
@@ -301,6 +345,22 @@ export default function QuotesScreen() {
                 )}
               </ScrollView>
             )}
+            {detailQuote && isPrintingPress && (
+              <View style={styles.modalFooter}>
+                <Pressable
+                  style={[
+                    styles.convertButton,
+                    converting && styles.convertButtonDisabled,
+                  ]}
+                  onPress={handleConvertToJob}
+                  disabled={converting}
+                >
+                  <Text style={styles.convertButtonText}>
+                    {converting ? 'Converting…' : 'Convert to job'}
+                  </Text>
+                </Pressable>
+              </View>
+            )}
           </Pressable>
         </Pressable>
       </Modal>
@@ -310,6 +370,31 @@ export default function QuotesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 8,
+    gap: 12,
+  },
+  pageTitle: { fontSize: 20, fontWeight: '700' },
+  pageSubtitle: { fontSize: 13 },
+  newQuoteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    backgroundColor: '#fff',
+  },
+  newQuoteButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   loadingText: { marginTop: 12, fontSize: 14 },
   retryButton: {
@@ -371,4 +456,24 @@ const styles = StyleSheet.create({
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
   itemName: { flex: 1, fontSize: 14 },
   itemTotal: { fontSize: 14, fontWeight: '600' },
+  modalFooter: {
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+  },
+  convertButton: {
+    height: 48,
+    borderRadius: 8,
+    backgroundColor: '#166534',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  convertButtonDisabled: {
+    opacity: 0.7,
+  },
+  convertButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
 });

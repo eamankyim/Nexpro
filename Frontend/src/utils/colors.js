@@ -66,6 +66,9 @@ export const colors = {
   linkHover: '#0f4a22',
 };
 
+/** App default primary hex — use when tenant brand color is missing (e.g. public tracking). Same as `colors.primary`. */
+export const DEFAULT_APP_PRIMARY_HEX = colors.primary;
+
 /**
  * Get HSL values for CSS variables
  */

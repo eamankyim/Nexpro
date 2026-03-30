@@ -57,16 +57,6 @@ import settingsService from '../services/settingsService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
 import { CURRENCY, DEFAULT_TENANT_NAMES, getWorkspaceDisplayName } from '../constants';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RechartsTooltip,
-  Legend,
-  ResponsiveContainer
-} from 'recharts';
 import dayjs from 'dayjs';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
 import isoWeek from 'dayjs/plugin/isoWeek';
@@ -104,27 +94,33 @@ const Dashboard = () => {
     enabled: !!activeTenantId,
     staleTime: 2 * 60 * 1000, // 2 min cache
     refetchOnWindowFocus: false,
+    // Keep dashboard figures fresh after payments/invoice changes without manual refresh.
+    refetchInterval: 45 * 1000,
+    refetchIntervalInBackground: true,
   });
 
   // Deferred until after overview has been fetched so initial dashboard load is faster.
   const { data: notificationsData, isLoading: loadingNotifications } = useQuery({
     queryKey: [...NOTIFICATION_LIST_QUERY_KEY, activeTenantId, 1],
-    queryFn: () => notificationService.getNotifications({ page: 1, limit: 10 }),
+    queryFn: () => notificationService.getNotifications({ page: 1, limit: 5 }),
     enabled: !!activeTenantId && overviewFetched,
     staleTime: 60 * 1000,
     refetchOnWindowFocus: false,
   });
-  const notifications = useMemo(
-    () => (notificationsData?.success && Array.isArray(notificationsData?.data) ? notificationsData.data : []),
-    [notificationsData]
-  );
+  const notifications = useMemo(() => {
+    const raw =
+      notificationsData?.success && Array.isArray(notificationsData?.data)
+        ? notificationsData.data
+        : [];
+    return raw.filter((n) => n && typeof n === 'object').slice(0, 5);
+  }, [notificationsData]);
   const [comparisonData, setComparisonData] = useState(null);
   const [comparisonLoading, setComparisonLoading] = useState(false);
   const queryClient = useQueryClient();
 
   // Fetch organization settings (for display name, logo, etc.)
-  const { data: organizationData } = useQuery({
-    queryKey: ['settings', 'organization'],
+  const { data: organizationData, isPending: organizationSettingsPending } = useQuery({
+    queryKey: ['settings', 'organization', activeTenantId],
     queryFn: () => settingsService.getOrganizationSettings(),
     enabled: !!activeTenantId,
   });
@@ -320,14 +316,14 @@ const Dashboard = () => {
     if (diffHours < 0) {
       return {
         color: 'red',
-        label: `Overdue · was due ${due.fromNow()}`,
+        label: `Overdue ${due.fromNow()}`,
         formatted
       };
     }
 
     if (diffHours <= 24) {
       return {
-        color: 'red',
+        color: 'orange',
         label: `Due ${due.fromNow()}`,
         formatted
       };
@@ -335,14 +331,14 @@ const Dashboard = () => {
 
     if (diffHours <= 72) {
       return {
-        color: 'orange',
-        label: `Upcoming · due ${due.fromNow()}`,
+        color: 'green',
+        label: `Due ${due.fromNow()}`,
         formatted
       };
     }
 
     return {
-      color: 'default',
+      color: 'green',
       label: `Due ${due.fromNow()}`,
       formatted
     };
@@ -358,16 +354,25 @@ const Dashboard = () => {
     if (activeTenant?.businessType === 'shop' || activeTenant?.businessType === 'pharmacy') {
       // Transform sales data to match the expected format for the table
       const recentSales = displayData?.shopData?.recentSales || [];
-      return recentSales.map(sale => ({
-        id: sale.id,
-        jobNumber: sale.saleNumber,
-        title: `₵ ${sale.total?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-        customer: sale.customer ? { name: sale.customer.name } : null,
-        status: 'completed',
-        createdAt: sale.createdAt,
-        dueDate: null, // Sales don't have due dates
-        paymentMethod: sale.paymentMethod
-      }));
+      return recentSales
+        .filter((sale) => sale && typeof sale === 'object' && sale.id)
+        .map((sale) => {
+          const cust = sale.customer;
+          const custName =
+            (cust && typeof cust === 'object' && (cust.name || cust.customerName)) ||
+            sale.customerName ||
+            null;
+          return {
+            id: sale.id,
+            jobNumber: sale.saleNumber,
+            title: `₵ ${sale.total?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            customer: custName ? { name: custName } : null,
+            status: 'completed',
+            createdAt: sale.createdAt,
+            dueDate: null,
+            paymentMethod: sale.paymentMethod,
+          };
+        });
     }
     return displayData?.recentJobs || [];
   }, [displayData, activeTenant?.businessType]);
@@ -420,10 +425,13 @@ const Dashboard = () => {
     return !!(name && name.trim() && !DEFAULT_TENANT_NAMES.includes(name));
   }, [activeTenant?.name]);
 
-  // Check if tenant has a phone number (required in onboarding)
   const hasCompanyPhone = useMemo(() => {
-    return !!(organization?.phone && organization.phone.trim());
+    return !!(organization?.phone && String(organization.phone).trim());
   }, [organization?.phone]);
+
+  const hasOrganizationEmail = useMemo(() => {
+    return !!(organization?.email && String(organization.email).trim());
+  }, [organization?.email]);
 
   // Display name: business name when set up, "Workspace" when not
   const displayName = useMemo(
@@ -431,29 +439,43 @@ const Dashboard = () => {
     [activeTenant?.name, organization?.name]
   );
 
-  // Check if onboarding is incomplete
-  // Onboarding is considered complete if:
-  // 1. completedAt exists in metadata, OR
-  // 2. Required onboarding fields are present (company name and phone)
+  // Onboarding complete: metadata marker, or real workspace name + business contact (phone or org email).
   const onboardingCompleted = useMemo(() => {
-    // Explicitly marked as complete
     if (activeTenant?.metadata?.onboarding?.completedAt) {
       return true;
     }
-    // Implicitly complete if required onboarding fields are present
-    return hasBusinessName && hasCompanyPhone;
-  }, [activeTenant?.metadata?.onboarding?.completedAt, hasBusinessName, hasCompanyPhone]);
+    return hasBusinessName && (hasCompanyPhone || hasOrganizationEmail);
+  }, [
+    activeTenant?.metadata?.onboarding?.completedAt,
+    hasBusinessName,
+    hasCompanyPhone,
+    hasOrganizationEmail,
+  ]);
   
-  const showSetupBanner = useMemo(() => !onboardingCompleted && !wasInvited, [onboardingCompleted, wasInvited]);
+  const showSetupBanner = useMemo(() => {
+    if (wasInvited) return false;
+    if (organizationSettingsPending) return false;
+    return !onboardingCompleted;
+  }, [wasInvited, organizationSettingsPending, onboardingCompleted]);
 
   // Welcome messages based on mode
   const welcomeMessages = useMemo(() => ({
-    shop: "Welcome to ShopWISE for Shops 👋",
-    pharmacy: "Welcome to ShopWISE for Pharmacies 👋",
-    printing_press: "Welcome to ShopWISE for Studios 👋"
+    shop: "Welcome to ABS for Shops 👋",
+    pharmacy: "Welcome to ABS for Pharmacies 👋",
+    printing_press: "Welcome to ABS for Studios 👋"
   }), []);
 
   const welcomeMessage = useMemo(() => welcomeMessages[businessType] || welcomeMessages.printing_press, [welcomeMessages, businessType]);
+
+  // Stock & expiry alerts (shop/pharmacy only)
+  const stockAlerts = useMemo(() => displayData?.stockAlerts || null, [displayData?.stockAlerts]);
+  const stockAlertsActiveCount = useMemo(() => {
+    if (!stockAlerts) return 0;
+    const low = (stockAlerts.lowStock || []).length;
+    const exp = (stockAlerts.expiring || []).length;
+    return low + exp;
+  }, [stockAlerts]);
+  const showStockAlerts = useMemo(() => (isShop || isPharmacy) && stockAlerts && stockAlertsActiveCount > 0, [isShop, isPharmacy, stockAlerts, stockAlertsActiveCount]);
 
   // Full-page skeletons only on initial load when we have no data yet
   if (loading && !overview) {
@@ -490,7 +512,7 @@ const Dashboard = () => {
           </p>
           <Button
             onClick={() => refetchOverview()}
-            className="bg-[#166534] hover:bg-[#14532d] text-white"
+            className="bg-brand hover:bg-brand-dark text-white"
           >
             <RefreshCw className="h-4 w-4 mr-2" />
             Try again
@@ -512,9 +534,9 @@ const Dashboard = () => {
           }}
         >
           {isRefreshing ? (
-            <Loader2 className="h-6 w-6 animate-spin text-[#166534]" />
+            <Loader2 className="h-6 w-6 animate-spin text-brand" />
           ) : (
-            <RefreshCw className="h-6 w-6 text-[#166534]" />
+            <RefreshCw className="h-6 w-6 text-brand" />
           )}
         </div>
       )}
@@ -525,20 +547,24 @@ const Dashboard = () => {
       {showSetupBanner && (
         <div
           data-setup-banner
-          className="mb-6 rounded-lg border border-gray-200 p-6"
+          className="mb-6 rounded-lg border border-gray-200 p-4 sm:p-6"
           style={{ backgroundColor: '#060A00' }}
         >
-          <div className="flex items-center gap-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#a3e635]">
-                <Sparkles className="h-5 w-5 text-[#166534]" />
-              </div>
-              <div className="flex-1 min-w-0">
-              <h3 className="text-lg font-semibold text-white mb-1">Finish setting up your business</h3>
-              <p className="text-base text-gray-300">Complete your business profile to get the most out of ShopWISE.</p>
+              <Sparkles className="h-5 w-5 text-brand" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h3 className="text-base sm:text-lg font-semibold text-white mb-1">
+                Finish setting up your business
+              </h3>
+              <p className="text-sm sm:text-base text-gray-300">
+                Complete your business profile to get the most out of African Business Suite.
+              </p>
             </div>
             <Button
               onClick={() => navigate('/onboarding')}
-              className="shrink-0 text-foreground"
+              className="w-full sm:w-auto mt-2 sm:mt-0 shrink-0 text-foreground"
               style={{
                 backgroundColor: '#a3e635',
                 borderColor: '#a3e635',
@@ -562,7 +588,7 @@ const Dashboard = () => {
       )}
 
       {/* Main dashboard content: greeting, filters, stats cards, recent activity, notice board */}
-      <div className="space-y-6" data-tour="dashboard-main">
+      <div className="space-y-4 md:space-y-6" data-tour="dashboard-main">
       {/* Greeting Section */}
       <WelcomeSection
         welcomeMessage={welcomeMessage}
@@ -585,7 +611,7 @@ const Dashboard = () => {
       {/* Non-blocking refetch indicator */}
       {isRefetching && (
         <div className="flex items-center gap-2 text-sm text-gray-600 mb-2">
-          <Loader2 className="h-4 w-4 animate-spin text-[#166534]" />
+          <Loader2 className="h-4 w-4 animate-spin text-brand" />
           <span>Updating...</span>
         </div>
       )}
@@ -601,7 +627,58 @@ const Dashboard = () => {
         comparisonData={comparisonData}
         comparisonLoading={comparisonLoading}
         activeFilter={activeFilter}
+        loading={overviewLoading}
       />
+
+      {/* Stock & expiry alerts (shop/pharmacy) */}
+      {showStockAlerts && (
+        <Card className="border border-gray-200">
+          <CardHeader className="pb-2 flex flex-row items-center justify-between">
+            <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-600" aria-hidden />
+              Alerts
+            </CardTitle>
+            <Badge variant="secondary" className="shrink-0">
+              {stockAlertsActiveCount} active
+            </Badge>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <ul className="space-y-2">
+              {(stockAlerts.lowStock || [])
+                .filter((item) => item && typeof item === 'object')
+                .map((item, idx) => (
+                <li key={`low-${item.id ?? idx}`} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-foreground font-medium truncate">
+                    {item.name ?? item.sku ?? 'Product'}
+                  </span>
+                  <span className="text-amber-700 shrink-0">Low stock ({Number(item.quantityOnHand)} left)</span>
+                </li>
+              ))}
+              {(stockAlerts.expiring || [])
+                .filter((item) => item && typeof item === 'object')
+                .map((item, idx) => (
+                <li key={`exp-${item.id ?? idx}`} className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-foreground font-medium truncate">
+                    {item.name ?? item.sku ?? 'Product'}
+                  </span>
+                  <span className="text-amber-700 shrink-0">
+                    Expires in {item.daysUntilExpiry === 0 ? 'today' : item.daysUntilExpiry === 1 ? '1 day' : `${item.daysUntilExpiry} days`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3 w-full"
+              onClick={() => navigate('/products')}
+            >
+              View products
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {isStaffShopOrPharmacy ? (
         <div className="mt-8">
@@ -627,7 +704,7 @@ const Dashboard = () => {
             </Card>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {staffProducts.map((product) => (
+              {staffProducts.filter((p) => p && typeof p === 'object' && p.id).map((product) => (
                 <Card
                   key={product.id}
                   className="border border-gray-200 cursor-pointer transition-colors hover:border-green-500 hover:bg-green-50"
@@ -637,7 +714,9 @@ const Dashboard = () => {
                     <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center mb-2">
                       <Package className="h-5 w-5 text-gray-500" />
                     </div>
-                    <p className="font-medium text-foreground text-center line-clamp-2 text-sm">{product.name}</p>
+                    <p className="font-medium text-foreground text-center line-clamp-2 text-sm">
+                      {product.name ?? product.sku ?? 'Product'}
+                    </p>
                     <p className="text-green-700 font-semibold text-sm mt-1">
                       {CURRENCY.SYMBOL} {Number(product.sellingPrice ?? 0).toFixed(CURRENCY.DECIMAL_PLACES)}
                     </p>
@@ -678,7 +757,8 @@ const Dashboard = () => {
                 </div>
               ) : (
                 <div className="flex flex-col gap-3 sm:gap-4 min-w-0">
-                  {notifications.map((notification) => {
+                  {notifications.map((notification, nIdx) => {
+                    if (!notification || typeof notification !== 'object') return null;
                     // Parse notification text to bold numbers, percentages, status terms, and key phrases
                     let text = notification.message || notification.title || '';
                     
@@ -727,10 +807,10 @@ const Dashboard = () => {
                     
                     return (
                       <div
-                        key={notification.id}
+                        key={notification.id != null ? String(notification.id) : `notice-${nIdx}`}
                         className="flex items-start gap-2 sm:gap-3 min-h-[44px] py-1 min-w-0"
                       >
-                        <ChevronRight className="h-4 w-4 text-[#166534] mt-0.5 shrink-0" aria-hidden />
+                        <ChevronRight className="h-4 w-4 text-brand mt-0.5 shrink-0" aria-hidden />
                         <div 
                           className="flex-1 min-w-0 text-sm text-muted-foreground leading-relaxed font-normal break-words overflow-hidden"
                           dangerouslySetInnerHTML={{ __html: text }}

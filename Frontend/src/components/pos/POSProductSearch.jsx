@@ -7,13 +7,13 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate } from 'react-router-dom';
 import { Search, Camera, X, Package, AlertCircle, Loader2, List, LayoutGrid, Plus, Circle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -87,7 +87,7 @@ const ProductItem = ({ product, onSelect, quantityInCart = 0 }) => {
           />
         )}
         {inCart && (
-          <span className="absolute -top-1 -right-1 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-[#166534] text-white font-medium">
+          <span className="absolute -top-1 -right-1 z-20 flex h-8 w-8 items-center justify-center rounded-full bg-brand text-white font-medium">
             <Plus className="h-4 w-4" />
           </span>
         )}
@@ -110,7 +110,7 @@ const ProductItem = ({ product, onSelect, quantityInCart = 0 }) => {
       {/* Stock and price */}
       <div className="text-right flex-shrink-0 flex flex-col items-end gap-1">
         {inCart && (
-          <Badge className="text-sm py-1.5 px-3 bg-[#166534] text-white border-0 gap-1.5 min-h-[32px]">
+          <Badge className="text-sm py-1.5 px-3 bg-brand text-white border-0 gap-1.5 min-h-[32px]">
             <Plus className="h-4 w-4" />
             {quantityInCart}
           </Badge>
@@ -144,7 +144,7 @@ const ProductItem = ({ product, onSelect, quantityInCart = 0 }) => {
 /**
  * Product card for grid view
  */
-const ProductCard = ({ product, onSelect, quantityInCart = 0 }) => {
+const ProductCard = ({ product, onSelect, quantityInCart = 0, onAdjustQuantity, isMobile }) => {
   const trackStock = product.trackStock !== false;
   const qty = Number(product.quantityOnHand);
   const reorderLevel = Number(product.reorderLevel);
@@ -169,9 +169,37 @@ const ProductCard = ({ product, onSelect, quantityInCart = 0 }) => {
           onClick={() => !isOutOfStock && onSelect(product)}
         >
       {inCart && (
-        <div className="absolute top-2 right-2 z-20 flex h-9 min-w-[36px] items-center justify-center gap-1 rounded-full bg-[#166534] px-2.5 text-white text-sm font-semibold">
-          <Plus className="h-4 w-4" />
-          {quantityInCart}
+        <div className="absolute top-2 right-2 z-20">
+          {isMobile && onAdjustQuantity ? (
+            <div className="flex items-center gap-1 rounded-full bg-brand text-white text-xs font-semibold px-1.5 py-0.5">
+              <button
+                type="button"
+                className="h-6 w-6 flex items-center justify-center rounded-full bg-brand-dark"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAdjustQuantity(-1);
+                }}
+              >
+                -
+              </button>
+              <span className="min-w-[1.75rem] text-center">{quantityInCart}</span>
+              <button
+                type="button"
+                className="h-6 w-6 flex items-center justify-center rounded-full bg-white text-brand"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAdjustQuantity(1);
+                }}
+              >
+                <Plus className="h-3 w-3" />
+              </button>
+            </div>
+          ) : (
+            <div className="flex h-9 min-w-[36px] items-center justify-center gap-1 rounded-full bg-brand px-2.5 text-white text-sm font-semibold">
+              <Plus className="h-4 w-4" />
+              {quantityInCart}
+            </div>
+          )}
         </div>
       )}
       <div className="w-full aspect-square bg-muted rounded-md flex items-center justify-center flex-shrink-0 mb-2 relative overflow-hidden">
@@ -846,7 +874,7 @@ const QRCodeScanner = ({
                   <TooltipTrigger asChild>
                     <Button
                       onClick={handleStartScanner}
-                      className={`${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} px-8`}
+                      className={`${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} px-8`}
                       loading={isStarting}
                     >
                       <>
@@ -880,7 +908,7 @@ const QRCodeScanner = ({
                     </ol>
                     <Button
                       onClick={() => window.location.reload()}
-                      className={`${isMobile ? 'h-10 text-sm' : 'h-11'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                      className={`${isMobile ? 'h-10 text-sm' : 'h-11'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                     >
                       Try Again
                     </Button>
@@ -898,7 +926,7 @@ const QRCodeScanner = ({
               {isStarting && (
                 <div className="absolute inset-0 flex items-center justify-center bg-background z-10">
                   <div className="text-center">
-                    <Loader2 className={`${isMobile ? 'h-8 w-8' : 'h-10 w-10'} animate-spin text-[#166534] mx-auto`} />
+                    <Loader2 className={`${isMobile ? 'h-8 w-8' : 'h-10 w-10'} animate-spin text-brand mx-auto`} />
                     <p className={`${isMobile ? 'text-sm' : 'text-base'} text-muted-foreground mt-2`}>Starting camera...</p>
                   </div>
                 </div>
@@ -940,7 +968,7 @@ const QRCodeScanner = ({
             <TooltipTrigger asChild>
               <Button 
                 onClick={handleDone}
-                className={`flex-1 ${isMobile ? 'h-11' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                className={`flex-1 ${isMobile ? 'h-11' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                 disabled={scannedCount === 0}
               >
                 Done ({scannedCount})
@@ -988,7 +1016,7 @@ const QRCodeScanner = ({
                 <TooltipTrigger asChild>
                   <Button
                     onClick={handleStartScanner}
-                    className={`${isMobile ? 'h-11 text-sm' : 'h-12 text-base'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} px-6`}
+                    className={`${isMobile ? 'h-11 text-sm' : 'h-12 text-base'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} px-6`}
                     loading={isStarting}
                   >
                     <>
@@ -1014,7 +1042,7 @@ const QRCodeScanner = ({
                   </p>
                   <Button
                     onClick={() => window.location.reload()}
-                    className={`${isMobile ? 'h-9 text-xs' : 'h-10 text-sm'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                    className={`${isMobile ? 'h-9 text-xs' : 'h-10 text-sm'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                   >
                     Try Again
                   </Button>
@@ -1030,7 +1058,7 @@ const QRCodeScanner = ({
               {isStarting && (
                 <div className="absolute inset-0 flex items-center justify-center bg-background/80 z-10">
                   <div className="text-center">
-                    <Loader2 className={`${isMobile ? 'h-8 w-8' : 'h-10 w-10'} animate-spin text-[#166534] mx-auto`} />
+                    <Loader2 className={`${isMobile ? 'h-8 w-8' : 'h-10 w-10'} animate-spin text-brand mx-auto`} />
                     <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground mt-2`}>Starting camera...</p>
                   </div>
                 </div>
@@ -1074,7 +1102,7 @@ const QRCodeScanner = ({
                 <TooltipTrigger asChild>
                   <Button 
                     onClick={handleDone}
-                    className={`${isMobile ? 'h-11 flex-1' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                    className={`${isMobile ? 'h-11 flex-1' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                     disabled={scannedCount === 0}
                   >
                     Done ({scannedCount})
@@ -1100,6 +1128,110 @@ const QRCodeScanner = ({
 };
 
 const BROWSE_LIST_SIZE = 60;
+const POS_RESULTS_VIRT_MIN = 32;
+const POS_LIST_ROW_EST = 92;
+const POS_GRID_ROW_EST = 172;
+
+function POSVirtualProductList({ scrollRef, results, onSelect, cartQuantityByProductId }) {
+  const virtualizer = useVirtualizer({
+    count: results.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => POS_LIST_ROW_EST,
+    overscan: 6,
+  });
+  return (
+    <div
+      className="relative w-full"
+      style={{ height: virtualizer.getTotalSize() }}
+    >
+      {virtualizer.getVirtualItems().map((vi) => {
+        const product = results[vi.index];
+        return (
+          <div
+            key={product.id}
+            data-index={vi.index}
+            ref={virtualizer.measureElement}
+            className="absolute left-0 top-0 w-full"
+            style={{
+              transform: `translateY(${vi.start}px)`,
+              height: `${vi.size}px`,
+            }}
+          >
+            <ProductItem
+              product={product}
+              onSelect={onSelect}
+              quantityInCart={cartQuantityByProductId[product.id] || 0}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function POSVirtualProductGrid({
+  scrollRef,
+  results,
+  columnCount,
+  onSelect,
+  cartQuantityByProductId,
+  onAdjustProductQuantity,
+  isMobile,
+}) {
+  const rowCount = Math.ceil(results.length / columnCount);
+  const virtualizer = useVirtualizer({
+    count: rowCount,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => POS_GRID_ROW_EST,
+    overscan: 4,
+  });
+  return (
+    <div
+      className="relative w-full"
+      style={{ height: virtualizer.getTotalSize() }}
+    >
+      {virtualizer.getVirtualItems().map((vi) => {
+        const start = vi.index * columnCount;
+        const rowProducts = results.slice(start, start + columnCount);
+        return (
+          <div
+            key={vi.key}
+            data-index={vi.index}
+            ref={virtualizer.measureElement}
+            className="absolute left-0 top-0 w-full px-0.5"
+            style={{
+              transform: `translateY(${vi.start}px)`,
+              height: `${vi.size}px`,
+            }}
+          >
+            <div
+              className={cn(
+                'grid h-full gap-2',
+                columnCount === 2 && 'grid-cols-2',
+                columnCount === 3 && 'grid-cols-3'
+              )}
+            >
+              {rowProducts.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  onSelect={onSelect}
+                  quantityInCart={cartQuantityByProductId[product.id] || 0}
+                  onAdjustQuantity={
+                    onAdjustProductQuantity
+                      ? (delta) => onAdjustProductQuantity(product.id, delta)
+                      : undefined
+                  }
+                  isMobile={isMobile}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 /**
  * Main POSProductSearch component
@@ -1113,6 +1245,7 @@ const BROWSE_LIST_SIZE = 60;
  * @param {boolean} [props.productsLoading] - True while products are loading (show loading state)
  * @param {Object} [props.cartQuantityByProductId] - Map of productId -> quantity in cart (for in-cart indicator)
  * @param {boolean} [props.fillHeight] - If true, the results area uses flex-1 to fill available height (e.g. in POS layout)
+ * @param {function} [props.onAdjustProductQuantity] - Optional: (productId, delta) => void, for mobile +/- quantity controls
  */
 const POSProductSearch = ({
   onSearch,
@@ -1123,7 +1256,8 @@ const POSProductSearch = ({
   allProducts = [],
   productsLoading = false,
   cartQuantityByProductId = {},
-  fillHeight = false
+  fillHeight = false,
+  onAdjustProductQuantity,
 }) => {
   const navigate = useNavigate();
   const { isMobile } = useResponsive();
@@ -1135,6 +1269,7 @@ const POSProductSearch = ({
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [viewMode, setViewMode] = useState('card');
   const inputRef = useRef(null);
+  const posResultsScrollRef = useRef(null);
 
   const debouncedQuery = useDebounce(searchQuery, DEBOUNCE_DELAYS.SEARCH);
 
@@ -1264,7 +1399,7 @@ const POSProductSearch = ({
   return (
     <Card className={cn('border border-border', fillHeight && 'flex flex-col min-h-0 flex-1')}>
       <CardContent className={cn('p-4', fillHeight && 'flex flex-col flex-1 min-h-0')}>
-        {/* Search input, filter, camera */}
+        {/* Search input and category filter (primary Scan button lives in POS header) */}
         <div className="flex gap-2 flex-shrink-0 items-center">
           <Tooltip>
             <TooltipTrigger asChild>
@@ -1273,10 +1408,10 @@ const POSProductSearch = ({
                 <Input
                   ref={inputRef}
                   type="text"
-                  placeholder="Search by name, SKU, or scan barcode/QR..."
+                  placeholder={isMobile ? 'Search' : 'Search by name, SKU, or scan barcode/QR...'}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10 pr-10 h-12 text-lg"
+                  className="pl-10 pr-10 h-12 text-base sm:text-lg"
                   autoComplete="off"
                 />
             {(searchQuery || isSearching) && (
@@ -1298,7 +1433,7 @@ const POSProductSearch = ({
             <TooltipContent>Type product name or scan barcode</TooltipContent>
           </Tooltip>
           <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-            <SelectTrigger className="w-[140px] sm:w-[160px] h-12 flex-shrink-0 border border-border">
+            <SelectTrigger className="min-w-0 w-[120px] sm:w-[140px] md:w-[160px] h-12 flex-shrink-0 border border-border">
               <SelectValue placeholder="All categories" />
             </SelectTrigger>
             <SelectContent>
@@ -1332,19 +1467,6 @@ const POSProductSearch = ({
               </Button>
             </div>
           )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-12 w-12 flex-shrink-0"
-                onClick={() => setScannerOpen(true)}
-              >
-                <Camera className="h-5 w-5" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Scan barcode to add product</TooltipContent>
-          </Tooltip>
         </div>
 
         {/* Offline indicator */}
@@ -1365,36 +1487,71 @@ const POSProductSearch = ({
 
         {/* Search results / browse list */}
         {results.length > 0 && (
-          <ScrollArea
+          <div
+            ref={posResultsScrollRef}
             className={cn(
-              'mt-4',
-              fillHeight ? 'flex-1 min-h-0' : 'max-h-80'
+              'mt-4 overflow-y-auto overflow-x-hidden rounded-md border border-transparent',
+              fillHeight ? 'flex-1 min-h-0' : 'max-h-80',
+              isMobile && 'pb-16'
             )}
           >
-            {(isMobile ? 'card' : viewMode) === 'list' ? (
-              <div className="space-y-1">
-                {results.map((product) => (
-                  <ProductItem
-                    key={product.id}
-                    product={product}
+            {(() => {
+              const effectiveMode = (isMobile ? 'card' : viewMode) === 'list' ? 'list' : 'grid';
+              const useVirt = results.length >= POS_RESULTS_VIRT_MIN;
+              if (useVirt && effectiveMode === 'list') {
+                return (
+                  <POSVirtualProductList
+                    scrollRef={posResultsScrollRef}
+                    results={results}
                     onSelect={handleSelectProduct}
-                    quantityInCart={cartQuantityByProductId[product.id] || 0}
+                    cartQuantityByProductId={cartQuantityByProductId}
                   />
-                ))}
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                {results.map((product) => (
-                  <ProductCard
-                    key={product.id}
-                    product={product}
+                );
+              }
+              if (useVirt && effectiveMode === 'grid') {
+                return (
+                  <POSVirtualProductGrid
+                    scrollRef={posResultsScrollRef}
+                    results={results}
+                    columnCount={isMobile ? 2 : 3}
                     onSelect={handleSelectProduct}
-                    quantityInCart={cartQuantityByProductId[product.id] || 0}
+                    cartQuantityByProductId={cartQuantityByProductId}
+                    onAdjustProductQuantity={onAdjustProductQuantity}
+                    isMobile={isMobile}
                   />
-                ))}
-              </div>
-            )}
-          </ScrollArea>
+                );
+              }
+              return effectiveMode === 'list' ? (
+                <div className="space-y-1">
+                  {results.map((product) => (
+                    <ProductItem
+                      key={product.id}
+                      product={product}
+                      onSelect={handleSelectProduct}
+                      quantityInCart={cartQuantityByProductId[product.id] || 0}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                  {results.map((product) => (
+                    <ProductCard
+                      key={product.id}
+                      product={product}
+                      onSelect={handleSelectProduct}
+                      quantityInCart={cartQuantityByProductId[product.id] || 0}
+                      onAdjustQuantity={
+                        onAdjustProductQuantity
+                          ? (delta) => onAdjustProductQuantity(product.id, delta)
+                          : undefined
+                      }
+                      isMobile={isMobile}
+                    />
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
         )}
 
         {/* No results message - only when user has typed a search */}
@@ -1425,7 +1582,7 @@ const POSProductSearch = ({
                 <p className="text-sm">Add your products first before you can start selling.</p>
                 <Button
                   onClick={() => navigate('/products?add=1')}
-                  className="bg-[#166534] hover:bg-[#14532d] text-white"
+                  className="bg-brand hover:bg-brand-dark text-white"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Add Your First Product

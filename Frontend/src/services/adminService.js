@@ -4,14 +4,21 @@ const getSummary = async () => api.get('/admin/summary');
 
 const getTenants = async (params = {}) => api.get('/admin/tenants', { params });
 
+/** Invite a new tenant (platform admin). Sends email with signup link; invitee creates account and becomes owner. */
+const inviteTenant = async (payload) => api.post('/admin/tenants/invite', payload);
+
 const getTenantMetrics = async () => api.get('/admin/metrics/tenants');
 
 const getAlerts = async () => api.get('/admin/alerts');
 
 const getTenantDetail = async (tenantId) => api.get(`/admin/tenants/${tenantId}`);
+const getTenantAccessAudit = async (tenantId) => api.get(`/admin/tenants/${tenantId}/access-audit`);
 
 const updateTenantStatus = async (tenantId, action) =>
   api.patch(`/admin/tenants/${tenantId}/status`, { action });
+
+const updateTenantAccess = async (tenantId, payload) =>
+  api.patch(`/admin/tenants/${tenantId}/access`, payload);
 
 const updateTenantBranding = async (tenantId, payload) =>
   api.patch(`/admin/tenants/${tenantId}/branding`, payload);
@@ -94,6 +101,8 @@ const reorderSubscriptionPlans = async (planOrders) =>
 const syncPaystackPlans = async () => api.post('/platform-settings/plans/sync-paystack');
 
 const getFeatureCatalog = async () => api.get('/platform-settings/features');
+const getFeatureMatrix = async () => api.get('/platform-settings/feature-matrix');
+const updateFeatureMatrix = async (matrix) => api.put('/platform-settings/feature-matrix', { matrix });
 
 const getModules = async () => api.get('/platform-settings/modules');
 
@@ -152,10 +161,13 @@ const getUserPermissions = async (userId) => api.get(`/platform-admin/users/${us
 export default {
   getSummary,
   getTenants,
+  inviteTenant,
   getTenantMetrics,
   getAlerts,
   getTenantDetail,
+  getTenantAccessAudit,
   updateTenantStatus,
+  updateTenantAccess,
   updateTenantBranding,
   getBillingSummary,
   getBillingTenants,
@@ -182,6 +194,8 @@ export default {
   reorderSubscriptionPlans,
   syncPaystackPlans,
   getFeatureCatalog,
+  getFeatureMatrix,
+  updateFeatureMatrix,
   getModules,
   // Admin Leads
   getAdminLeads,

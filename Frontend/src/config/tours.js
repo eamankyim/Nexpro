@@ -11,7 +11,7 @@ export const TOUR_STEPS = {
   WELCOME: {
     id: 'welcome',
     target: '[data-tour="dashboard-main"]',
-    content: 'Welcome to ShopWISE! This is your dashboard. Here you’ll see your summary cards (revenue, expenses, profit), recent sales or jobs, and the notice board with updates. Use the steps ahead to explore the rest of the app.',
+    content: 'Welcome to African Business Suite! This is your dashboard. Here you’ll see your summary cards (revenue, expenses, profit), recent sales or jobs, and the notice board with updates. Use the steps ahead to explore the rest of the app.',
     placement: 'bottom',
     disableBeacon: true
   },
@@ -402,7 +402,13 @@ export const TOUR_IDS = {
 /**
  * Tour configuration for React Joyride
  */
-export const getJoyrideConfig = (businessType, run = false) => {
+/**
+ * @param {string} businessType
+ * @param {boolean} run
+ * @param {string} [brandPrimaryHex] - workspace primary (hex), e.g. from organization settings
+ */
+export const getJoyrideConfig = (businessType, run = false, brandPrimaryHex = '#166534') => {
+  const primary = /^#[0-9A-Fa-f]{6}$/.test(brandPrimaryHex || '') ? brandPrimaryHex : '#166534';
   const steps = getTourSteps(businessType, false);
 
   // Filter out steps whose targets are not present in the DOM to avoid
@@ -434,7 +440,7 @@ export const getJoyrideConfig = (businessType, run = false) => {
     run,
     styles: {
       options: {
-        primaryColor: '#166534',
+        primaryColor: primary,
         zIndex: 10000
       },
       tooltip: {
@@ -448,7 +454,7 @@ export const getJoyrideConfig = (businessType, run = false) => {
         textAlign: 'left'
       },
       buttonNext: {
-        backgroundColor: '#166534',
+        backgroundColor: primary,
         borderRadius: '6px',
         border: 'none',
         color: '#fff',
@@ -457,7 +463,7 @@ export const getJoyrideConfig = (businessType, run = false) => {
         padding: '8px 16px'
       },
       buttonBack: {
-        color: '#166534',
+        color: primary,
         marginRight: '8px',
         fontSize: '14px',
         fontWeight: '500'
@@ -467,8 +473,8 @@ export const getJoyrideConfig = (businessType, run = false) => {
         fontSize: '14px'
       },
       beacon: {
-        inner: '#166534',
-        outer: '#166534'
+        inner: primary,
+        outer: primary
       }
     },
     locale: {

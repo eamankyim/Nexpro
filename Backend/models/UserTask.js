@@ -41,6 +41,10 @@ const UserTask = sequelize.define('UserTask', {
     type: DataTypes.DATEONLY,
     allowNull: true
   },
+  startDate: {
+    type: DataTypes.DATEONLY,
+    allowNull: true
+  },
   priority: {
     type: DataTypes.STRING,
     allowNull: true,
@@ -64,6 +68,27 @@ const UserTask = sequelize.define('UserTask', {
     type: DataTypes.BOOLEAN,
     allowNull: false,
     defaultValue: false
+  },
+  sourceType: {
+    type: DataTypes.STRING(50),
+    allowNull: true
+  },
+  sourceId: {
+    type: DataTypes.STRING(120),
+    allowNull: true
+  },
+  sourceEvent: {
+    type: DataTypes.STRING(80),
+    allowNull: true
+  },
+  dedupeKey: {
+    type: DataTypes.STRING(255),
+    allowNull: true
+  },
+  metadata: {
+    type: DataTypes.JSONB,
+    allowNull: false,
+    defaultValue: {}
   }
 }, {
   timestamps: true,

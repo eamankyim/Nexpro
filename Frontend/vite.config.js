@@ -1,11 +1,26 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
 const projectRoot = path.resolve(__dirname);
 
-export default defineConfig({
-  plugins: [react()],
+export default defineConfig(({ mode }) => ({
+  plugins: [
+    react(),
+    VitePWA({
+      registerType: 'prompt', // User sees "New version available" and can refresh to load update
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
+      injectManifest: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3MB
+      },
+      manifest: false, // We use existing public/manifest.json
+      dev: false, // No SW in dev to avoid cache/HMR issues
+    }),
+  ],
   resolve: {
     alias: {
       '@': path.join(projectRoot, 'src'),
@@ -63,7 +78,7 @@ export default defineConfig({
           // Forms
           'forms-vendor': ['react-hook-form', '@hookform/resolvers', 'zod'],
           // Data fetching
-          'query-vendor': ['@tanstack/react-query', '@tanstack/react-table'],
+          'query-vendor': ['@tanstack/react-query', '@tanstack/react-table', '@tanstack/react-virtual'],
           // Utilities
           'utils-vendor': ['dayjs', 'axios', 'html2pdf.js', 'date-fns'],
           // Icons (lucide-react only - @ant-design/icons removed)
@@ -72,7 +87,17 @@ export default defineConfig({
       },
     },
     chunkSizeWarningLimit: 1000, // Increase limit to 1MB per chunk
-  },
-});
+    minify: mode === 'production' ? 'terser' : 'esbuild',
+    terserOptions:
+      mode === 'production'
+        ? {
+            compress: {
+              pure_funcs: ['console.log', 'console.info', 'console.debug', 'console.trace'],
+              passes: 2
+            }
+          }
+        : undefined
+  }
+}));
 
 

@@ -4,10 +4,13 @@ const { loadPlatformAdminPermissions, requirePlatformAdminPermission, requireAny
 const {
   getPlatformSummary,
   getTenants,
+  inviteTenant,
   bootstrapPlatformAdmin,
   getTenantMetrics,
   getPlatformAlerts,
   getTenantById,
+  getTenantAccessAudit,
+  updateTenantAccess,
   getTenantVendors,
   getTenantJobs,
   updateTenantStatus,
@@ -139,6 +142,7 @@ router.get('/summary', requirePlatformAdminPermission('overview.view'), getPlatf
  *         description: List of tenants with plan and usage info.
  */
 router.get('/tenants', getTenants);
+router.post('/tenants/invite', requirePlatformAdminPermission('tenants.create'), inviteTenant);
 
 /**
  * @swagger
@@ -191,6 +195,7 @@ router.get('/alerts', getPlatformAlerts);
 router.get('/tenants/:id/vendors', requirePlatformAdminPermission('expenses.manage'), getTenantVendors);
 router.get('/tenants/:id/jobs', requirePlatformAdminPermission('expenses.manage'), getTenantJobs);
 router.get('/tenants/:id', requirePlatformAdminPermission('tenants.view'), getTenantById);
+router.get('/tenants/:id/access-audit', requirePlatformAdminPermission('tenants.view'), getTenantAccessAudit);
 
 /**
  * @swagger
@@ -226,6 +231,7 @@ router.get('/tenants/:id', requirePlatformAdminPermission('tenants.view'), getTe
  *         description: Tenant not found.
  */
 router.patch('/tenants/:id/status', requirePlatformAdminPermission('tenants.manage_status'), updateTenantStatus);
+router.patch('/tenants/:id/access', requirePlatformAdminPermission('tenants.update'), updateTenantAccess);
 
 /**
  * @swagger

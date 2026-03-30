@@ -330,7 +330,7 @@ const AdminRoles = () => {
       key: 'actions',
       title: 'Actions',
       render: (_, record) => (
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 sm:ml-auto">
           <Button
             variant="outline"
             size="sm"

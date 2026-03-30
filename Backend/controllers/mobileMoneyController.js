@@ -1,8 +1,15 @@
-const { Sale, Invoice, Payment } = require('../models');
+const { Sale, Invoice, Payment, Tenant } = require('../models');
 const mobileMoneyService = require('../services/mobileMoneyService');
+const { getResolvedMtnConfigForTenant } = require('../services/tenantMomoCollectionService');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { sequelize } = require('../config/database');
 const { emitNewSale } = require('../services/websocketService');
+
+async function loadMtnRuntimeForTenant(tenantId) {
+  const tenant = await Tenant.findByPk(tenantId);
+  if (!tenant) return null;
+  return getResolvedMtnConfigForTenant(tenant);
+}
 
 /**
  * Initiate mobile money payment for a sale
@@ -42,14 +49,25 @@ exports.initiatePayment = async (req, res) => {
       });
     }
 
-    // Request payment
+    let mtnConfig;
+    if (detectedProvider === 'MTN') {
+      mtnConfig = await loadMtnRuntimeForTenant(tenantId);
+      if (!mtnConfig) {
+        return res.status(503).json({
+          success: false,
+          error: 'MTN MoMo Collection is not configured. Add API credentials in Settings → Payments or set server MTN env vars.'
+        });
+      }
+    }
+
     const result = await mobileMoneyService.requestPayment({
       phoneNumber,
       amount: parseFloat(amount),
       currency,
       externalId,
       provider: detectedProvider,
-      payerMessage: payerMessage || 'Payment for your purchase'
+      payerMessage: payerMessage || 'Payment for your purchase',
+      mtnConfig
     });
 
     if (!result.success) {
@@ -133,7 +151,19 @@ exports.checkPaymentStatus = async (req, res) => {
       });
     }
 
-    const result = await mobileMoneyService.checkPaymentStatus(referenceId, provider.toUpperCase());
+    const prov = provider.toUpperCase();
+    let mtnConfig;
+    if (prov === 'MTN') {
+      mtnConfig = await loadMtnRuntimeForTenant(req.tenantId);
+      if (!mtnConfig) {
+        return res.status(503).json({
+          success: false,
+          error: 'MTN MoMo is not configured for this workspace'
+        });
+      }
+    }
+
+    const result = await mobileMoneyService.checkPaymentStatus(referenceId, prov, mtnConfig);
 
     res.json({
       success: true,
@@ -182,10 +212,22 @@ exports.pollSalePayment = async (req, res) => {
       });
     }
 
-    // Check status with provider
+    let mtnConfig;
+    if (mobileMoneyRef.provider === 'MTN') {
+      mtnConfig = await loadMtnRuntimeForTenant(tenantId);
+      if (!mtnConfig) {
+        await transaction.rollback();
+        return res.status(503).json({
+          success: false,
+          error: 'MTN MoMo is not configured for this workspace'
+        });
+      }
+    }
+
     const result = await mobileMoneyService.checkPaymentStatus(
-      mobileMoneyRef.referenceId, 
-      mobileMoneyRef.provider
+      mobileMoneyRef.referenceId,
+      mobileMoneyRef.provider,
+      mtnConfig
     );
 
     // Update sale metadata with latest status
@@ -252,8 +294,13 @@ exports.validatePhoneNumber = async (req, res) => {
     const { provider } = req.query;
 
     const detectedProvider = provider || mobileMoneyService.detectProvider(phoneNumber);
-    
-    const result = await mobileMoneyService.validateAccount(phoneNumber, detectedProvider);
+
+    let mtnConfig;
+    if (detectedProvider === 'MTN') {
+      mtnConfig = await loadMtnRuntimeForTenant(req.tenantId);
+    }
+
+    const result = await mobileMoneyService.validateAccount(phoneNumber, detectedProvider, mtnConfig);
 
     res.json({
       success: true,

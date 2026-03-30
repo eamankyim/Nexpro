@@ -8,6 +8,7 @@ import { User, Mail, Loader2, Eye, EyeOff, RefreshCw, HelpCircle } from 'lucide-
 import authService from '../services/authService';
 import inviteService from '../services/inviteService';
 import { useAuth } from '../context/AuthContext';
+import { usePublicConfig } from '../context/PublicConfigContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
 import { Button } from '@/components/ui/button';
@@ -19,7 +20,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { AlertCircle } from 'lucide-react';
 import { calculatePasswordStrength } from '../utils/passwordStrength';
 import africanWomanImage from '../assets/African focused woman.png';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import confetti from 'canvas-confetti';
 
 /** Minimum time (ms) the loading animation runs before transitioning to success. Both lines: 0–2.6s first, 2.6–5.2s second. */
@@ -48,8 +48,6 @@ const inviteStep2Schema = z.object({
   path: ["confirmPassword"],
 });
 
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
-
 const Signup = () => {
   const [loading, setLoading] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -60,8 +58,10 @@ const Signup = () => {
   const [currentStep, setCurrentStep] = useState(1); // 1 = name/email, 2 = password
   const [signupData, setSignupData] = useState({ name: '', email: '' });
   const [searchParams, setSearchParams] = useSearchParams();
+  const token = searchParams.get('token');
   const navigate = useNavigate();
-  const { tenantSignup, register: registerWithAuth, googleAuth, isAuthenticated, activeTenant } = useAuth();
+  const { tenantSignup, register: registerWithAuth, googleAuth, logout, isAuthenticated, user, activeTenant, wasInvited } = useAuth();
+  const { googleClientId } = usePublicConfig();
   const [registeredAsPlatformAdmin, setRegisteredAsPlatformAdmin] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
@@ -70,39 +70,10 @@ const Signup = () => {
   const [welcomeErrorMessage, setWelcomeErrorMessage] = useState('');
   const overlayStartTimeRef = useRef(null);
   const { isMobile } = useResponsive();
+  const [checkingEmail, setCheckingEmail] = useState(false);
+  const [registeredAsInvitedMember, setRegisteredAsInvitedMember] = useState(false);
 
-  // Mode detection from URL
-  const modeParam = searchParams.get('mode');
-  const validModes = ['shop', 'studio', 'pharmacy'];
-  const selectedMode = validModes.includes(modeParam) ? modeParam : 'shop'; // Default to shop
-
-  // Mode to businessType mapping
-  const modeToBusinessType = {
-    shop: 'shop',
-    studio: 'printing_press',
-    pharmacy: 'pharmacy'
-  };
-
-  // Copy for selected mode (shown in badge under tabs)
-  const modeCopy = {
-    shop: {
-      contextLine: "You're setting up ShopWISE for Shops",
-      subtext: "This business includes inventory, sales, and POS tools."
-    },
-    studio: {
-      contextLine: "You're setting up ShopWISE for Studios",
-      subtext: "This business includes jobs, services, quotes, and production workflows."
-    },
-    pharmacy: {
-      contextLine: "You're setting up ShopWISE for Pharmacies",
-      subtext: "This business includes prescriptions and drug inventory."
-    }
-  };
-
-  // Handle mode change via tabs
-  const handleModeChange = (newMode) => {
-    setSearchParams({ mode: newMode }, { replace: true });
-  };
+  // We no longer choose business type here – signup is generic, onboarding sets shop/studio/pharmacy.
 
   // Sync overlay phase with welcome status; enforce minimum display time for full two-line animation
   useEffect(() => {
@@ -120,16 +91,19 @@ const Signup = () => {
 
   // Redirect authenticated users only if they're not in the signup process.
   // When showWelcomeScreen is true (post-signup overlay), do NOT auto-redirect so the user must click the CTA.
+  // When ?token= is present (team/workspace invite), NEVER auto-redirect: user must complete invite signup
+  // (or sign out first if another account is logged in).
   useEffect(() => {
+    if (token) return;
     if (isAuthenticated && !isSubmitting && !showWelcomeScreen) {
       const onboardingCompleted = activeTenant?.metadata?.onboarding?.completedAt;
-      if (onboardingCompleted) {
+      if (onboardingCompleted || wasInvited) {
         navigate('/dashboard', { replace: true });
       } else {
         navigate('/onboarding', { replace: true });
       }
     }
-  }, [isAuthenticated, activeTenant, navigate, isSubmitting, showWelcomeScreen]);
+  }, [token, isAuthenticated, activeTenant, navigate, isSubmitting, showWelcomeScreen, wasInvited]);
 
   const form = useForm({
     resolver: zodResolver(signupSchema),
@@ -156,10 +130,9 @@ const Signup = () => {
     },
   });
 
-  const token = searchParams.get('token');
   const passwordValue = passwordForm.watch('password');
   const invitePasswordValue = inviteStep2Form.watch('password');
-  const activePassword = (token && inviteData && currentStep === 2) ? invitePasswordValue : passwordValue;
+  const activePassword = token && inviteData ? invitePasswordValue : passwordValue;
 
   useEffect(() => {
     // Only validate invite token if token is provided
@@ -179,12 +152,13 @@ const Signup = () => {
     }
   }, [activePassword]);
 
-  // Pre-fill invite step 2 name when entering step 2 if backend provided it
+  // Pre-fill invite name when backend provided it (omit inviteStep2Form from deps — unstable ref can cause setValue loops / flicker)
   useEffect(() => {
-    if (token && inviteData && currentStep === 2 && inviteData.name) {
+    if (token && inviteData?.name) {
       inviteStep2Form.setValue('name', inviteData.name);
     }
-  }, [token, inviteData, currentStep]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- inviteStep2Form identity may change; setValue is stable
+  }, [token, inviteData?.name]);
 
   // Confetti only while loading (Option 1: no confetti on success or error)
   useEffect(() => {
@@ -206,8 +180,9 @@ const Signup = () => {
     setValidating(true);
     try {
       const response = await inviteService.validateInvite(token);
-      setInviteData(response.data);
-      // Invite flow always starts at step 1 (summary); do not skip to step 2
+      const body = response?.data ?? response;
+      const invitePayload = body?.data ?? body;
+      setInviteData(invitePayload);
       setValidating(false);
     } catch (error) {
       console.log('Validate error:', error.response);
@@ -217,8 +192,50 @@ const Signup = () => {
   };
 
   const onSubmit = async (values) => {
-    // Step 1: Save name and email, move to password step (public signup only)
-    setSignupData(values);
+    // Step 1: Validate email availability before moving to password step
+    const trimmedName = values.name?.trim() || '';
+    const trimmedEmail = values.email?.trim().toLowerCase() || '';
+
+    // Ensure form state uses trimmed values
+    form.setValue('name', trimmedName);
+    form.setValue('email', trimmedEmail);
+
+    try {
+      setCheckingEmail(true);
+      const result = await authService.checkEmailAvailability(trimmedEmail);
+      const exists =
+        result?.data?.exists ??
+        result?.exists ??
+        false;
+
+      console.log('[Signup] Email availability check', {
+        email: trimmedEmail,
+        exists,
+      });
+
+      if (exists) {
+        form.setError('email', {
+          type: 'manual',
+          message: 'An account with this email already exists. Please sign in instead.',
+        });
+        return;
+      }
+    } catch (err) {
+      console.error('[Signup] Failed to check email availability', err);
+      const status = err?.response?.status;
+      const message = status === 404
+        ? 'Email check is unavailable. Restart the backend server and try again, or sign in if you already have an account.'
+        : err?.response?.data?.message || err?.message || 'Could not verify email. Please try again.';
+      form.setError('email', {
+        type: 'manual',
+        message,
+      });
+      return;
+    } finally {
+      setCheckingEmail(false);
+    }
+
+    setSignupData({ name: trimmedName, email: trimmedEmail });
     setCurrentStep(2);
   };
 
@@ -242,6 +259,7 @@ const Signup = () => {
       console.log('[Signup] Invite register API responded in', apiMs, 'ms');
       const data = response?.data ?? response;
       setRegisteredAsPlatformAdmin(Boolean(data?.isPlatformAdmin));
+      setRegisteredAsInvitedMember(Boolean(inviteData?.inviteType !== 'new_tenant' && inviteData?.inviteType !== 'platform_admin'));
       setWelcomeStatus('success');
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || 'Something went wrong. Please try again.';
@@ -261,7 +279,6 @@ const Signup = () => {
     setLoading(true);
     setIsSubmitting(true);
     try {
-      const businessType = modeToBusinessType[selectedMode];
       const payload = {
         companyName: 'My Business', // Placeholder; user sets real business name in onboarding
         companyEmail: signupData.email,
@@ -269,7 +286,6 @@ const Signup = () => {
         adminEmail: signupData.email,
         password: values.password,
         plan: 'trial',
-        businessType: businessType,
       };
       const apiStart = Date.now();
       await tenantSignup(payload);
@@ -297,10 +313,8 @@ const Signup = () => {
       setLoading(true);
       setIsSubmitting(true);
       try {
-        const businessType = modeToBusinessType[selectedMode];
         await googleAuth(idToken, {
           signUp: true,
-          businessType,
           companyName: 'My Business',
         });
         setRegisteredAsPlatformAdmin(false);
@@ -314,7 +328,7 @@ const Signup = () => {
         setIsSubmitting(false);
       }
     },
-    [googleAuth, selectedMode]
+    [googleAuth]
   );
 
   const handleGoogleSignupError = useCallback(() => {
@@ -379,24 +393,36 @@ const Signup = () => {
                   animation: signupWelcomeLineInOut 2.6s ease-in-out 2.6s forwards;
                 }
               `}</style>
-              <h2 className="signup-welcome-line-1 text-2xl sm:text-3xl md:text-4xl font-semibold">Welcome to ShopWISE</h2>
+              <h2 className="signup-welcome-line-1 text-2xl sm:text-3xl md:text-4xl font-semibold">Welcome to African Business Suite</h2>
               <h2 className="signup-welcome-line-2 text-xl sm:text-2xl md:text-4xl font-semibold text-white text-pretty px-1">The one platform you will ever need to transform your business.</h2>
             </div>
           )}
           {overlayPhase === 'success' && (
             <div className="text-center max-w-md space-y-6 px-4">
               <h2 className="text-2xl sm:text-3xl md:text-4xl font-semibold">Account created.</h2>
-              {!registeredAsPlatformAdmin && (
-                <p className="text-base text-gray-400">We&apos;ve sent a verification link to your email. You can continue to setup now.</p>
-              )}
               <p className="text-lg text-gray-300">
-                {registeredAsPlatformAdmin ? 'You can now access the Control Panel.' : 'Continue to setup your business.'}
+                {registeredAsPlatformAdmin
+                  ? 'You can now access the Control Panel.'
+                  : registeredAsInvitedMember
+                    ? 'You can now access your team workspace.'
+                    : 'Continue to setup your business.'}
               </p>
               <Button
-                className="bg-[#166534] hover:bg-[#14532d] text-white px-8 py-3 text-base"
-                onClick={() => navigate(registeredAsPlatformAdmin ? '/admin' : '/onboarding', { replace: true })}
+                className="bg-brand hover:bg-brand-dark text-white px-8 py-3 text-base"
+                onClick={() => navigate(
+                  registeredAsPlatformAdmin
+                    ? '/admin'
+                    : registeredAsInvitedMember
+                      ? '/dashboard'
+                      : '/onboarding',
+                  { replace: true }
+                )}
               >
-                {registeredAsPlatformAdmin ? 'Go to Control Panel' : 'Continue to setup'}
+                {registeredAsPlatformAdmin
+                  ? 'Go to Control Panel'
+                  : registeredAsInvitedMember
+                    ? 'Go to Dashboard'
+                    : 'Continue to setup'}
               </Button>
             </div>
           )}
@@ -429,56 +455,50 @@ const Signup = () => {
           <div className={`flex-1 ${isMobile ? 'px-6 py-4' : 'p-12'} flex flex-col justify-center ${isMobile ? 'min-h-screen overflow-y-auto' : ''}`}>
             <div className={`${isMobile ? 'w-full' : 'max-w-md'} mx-auto w-full`}>
               {/* Logo */}
-              <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-[#166534]`}>ShopWISE</h1>
+              <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-brand`}>ABS</h1>
               
               {/* Heading */}
               <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-foreground`}>
-                {token && inviteData ? 'Join ShopWISE' : 'Sign up'}
+                {token && inviteData ? 'Join African Business Suite' : 'Sign up'}
               </h2>
+              {token && inviteData && isAuthenticated && !showWelcomeScreen && (
+                <Alert className="mb-6 border-border bg-muted/50">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Different account signed in</AlertTitle>
+                  <AlertDescription className="space-y-3">
+                    <p>
+                      You&apos;re signed in as <strong>{user?.email || 'another user'}</strong>. To accept this invite you must create the invited account—sign out first, then complete signup below.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full sm:w-auto border-border"
+                      onClick={() => logout()}
+                    >
+                      Sign out and continue
+                    </Button>
+                  </AlertDescription>
+                </Alert>
+              )}
               {!token && !inviteData && (
                 <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-gray-600`}>One place for your business.</p>
               )}
               {token && inviteData && (
                 <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-gray-600`}>
-                  {!inviteData.tenant || inviteData.inviteType === 'platform_admin'
-                    ? 'You have been invited to join as a platform administrator. Set your name and password below.'
-                    : `You have been invited to join ${inviteData.tenant?.name || 'this business'} as ${inviteData.role ? String(inviteData.role).charAt(0).toUpperCase() + String(inviteData.role).slice(1) : 'a member'}.`
+                  {isAuthenticated && !showWelcomeScreen
+                    ? 'Sign out above to continue—then set your name and password to join with this invite.'
+                    : inviteData.inviteType === 'platform_admin'
+                      ? 'You have been invited to join as a platform administrator. Set your name and password below.'
+                      : inviteData.inviteType === 'new_tenant'
+                        ? "You've been invited to create your workspace. Set your name and password below."
+                        : `You have been invited to join ${inviteData.tenant?.name || 'this business'} as ${inviteData.role ? String(inviteData.role).charAt(0).toUpperCase() + String(inviteData.role).slice(1) : 'a member'}.`
                   }
                 </p>
               )}
 
-              {/* Mode Selection Tabs - Only show for public signup, not invites */}
-              {!token && !inviteData && currentStep === 1 && (
-                <div className={isMobile ? "mb-4" : "mb-6"}>
-                  <Tabs value={selectedMode} onValueChange={handleModeChange} className="w-full">
-                    <TabsList className="grid w-full grid-cols-3">
-                      <TabsTrigger value="shop" className={isMobile ? "text-xs px-2" : ""}>Shops</TabsTrigger>
-                      <TabsTrigger value="studio" className={isMobile ? "text-xs px-2" : ""}>Studios</TabsTrigger>
-                      <TabsTrigger value="pharmacy" className={isMobile ? "text-xs px-2" : ""}>Pharmacies</TabsTrigger>
-                    </TabsList>
-                  </Tabs>
-                  <div className="mt-3 w-full flex flex-col gap-0.5 rounded-lg border border-[#166534] bg-[#166534]/5 px-3 py-2 text-left">
-                    <span className="text-sm font-medium text-foreground">
-                      {modeCopy[selectedMode].contextLine}
-                    </span>
-                    <span className="text-xs text-gray-600">
-                      {modeCopy[selectedMode].subtext}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Invite step 1: summary only (email, role, tenant) + Continue */}
-              {token && inviteData && currentStep === 1 ? (
-                <Button
-                  type="button"
-                  className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
-                  onClick={() => setCurrentStep(2)}
-                >
-                  Continue
-                </Button>
-              ) : token && inviteData && currentStep === 2 ? (
-                /* Invite step 2: Full name, Password, Confirm password; show invited email */
+              {/* Invite: go straight to account form (email/tenant/role shown in heading copy above) */}
+              {token && inviteData ? (
+                !isAuthenticated ? (
                 <Form {...inviteStep2Form}>
                   <form onSubmit={inviteStep2Form.handleSubmit(onInviteStep2Submit)} className={isMobile ? "space-y-4" : "space-y-6"}>
                     {inviteData?.email && (
@@ -513,7 +533,7 @@ const Signup = () => {
                                   </span>
                                 </TooltipTrigger>
                                 <TooltipContent side="right" className="max-w-xs">
-                                  Enter your full name (personal name, not business name). You&apos;ll set up your business details after account creation.
+                                  Enter your full name (personal name, not the business name). This is how you&apos;ll appear in the workspace.
                                 </TooltipContent>
                               </Tooltip>
                             </TooltipProvider>
@@ -523,7 +543,7 @@ const Signup = () => {
                               <User className={`absolute left-3 top-1/2 transform -translate-y-1/2 ${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-gray-400`} />
                               <Input
                                 {...field}
-                                className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-brand focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-brand focus-visible:border`}
                                 placeholder="e.g. John Doe"
                               />
                             </div>
@@ -543,7 +563,7 @@ const Signup = () => {
                               <Input
                                 {...field}
                                 type={showPassword ? 'text' : 'password'}
-                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-brand focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-brand focus-visible:border`}
                                 placeholder="Password"
                               />
                               <button
@@ -558,11 +578,11 @@ const Signup = () => {
                           {activePassword && passwordStrength.feedback && (
                             <div className={`flex items-center gap-2 ${isMobile ? 'mt-1' : 'mt-2'}`}>
                               <div className={`w-2 h-2 rounded-full ${
-                                passwordStrength.strength === 'strong' ? 'bg-[#166534]' :
+                                passwordStrength.strength === 'strong' ? 'bg-brand' :
                                 passwordStrength.strength === 'medium' ? 'bg-[#a3e635]' : 'bg-red-500'
                               }`} />
                               <span className={`${isMobile ? 'text-xs' : 'text-sm'} ${
-                                passwordStrength.strength === 'strong' ? 'text-[#166534]' :
+                                passwordStrength.strength === 'strong' ? 'text-brand' :
                                 passwordStrength.strength === 'medium' ? 'text-[#a3e635]' : 'text-red-600'
                               }`}>
                                 {passwordStrength.feedback}
@@ -584,7 +604,7 @@ const Signup = () => {
                               <Input
                                 {...field}
                                 type={showPassword ? 'text' : 'password'}
-                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-brand focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-brand focus-visible:border`}
                                 placeholder="Confirm Password"
                               />
                               <button
@@ -600,31 +620,21 @@ const Signup = () => {
                         </FormItem>
                       )}
                     />
-                    <div className={`flex ${isMobile ? 'gap-2' : 'gap-3'}`}>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className={`flex-1 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
-                        onClick={() => setCurrentStep(1)}
-                        disabled={loading}
-                      >
-                        Back
-                      </Button>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="submit"
-                            className={`flex-1 ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
-                            loading={loading}
-                          >
-                            Create Account
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Create my account</TooltipContent>
-                      </Tooltip>
-                    </div>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="submit"
+                          className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
+                          loading={loading}
+                        >
+                          Create Account
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Create my account</TooltipContent>
+                    </Tooltip>
                   </form>
                 </Form>
+                ) : null
               ) : currentStep === 1 ? (
                 /* Public signup step 1: Full name + Email + mode tabs */
                 <>
@@ -655,7 +665,7 @@ const Signup = () => {
                                 <User className={`absolute left-3 top-1/2 transform -translate-y-1/2 ${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-gray-400`} />
                                 <Input
                                   {...field}
-                                  className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                  className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-brand focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-brand focus-visible:border`}
                                   placeholder="e.g. John Doe"
                                 />
                               </div>
@@ -675,7 +685,7 @@ const Signup = () => {
                                 <Mail className={`absolute left-3 top-1/2 transform -translate-y-1/2 ${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} text-gray-400`} />
                                 <Input
                                   {...field}
-                                  className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                  className={`pl-10 ${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-brand focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-brand focus-visible:border`}
                                   placeholder="Please enter a valid email address"
                                 />
                               </div>
@@ -686,12 +696,12 @@ const Signup = () => {
                       />
                       <Button
                         type="submit"
-                        className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
-                        disabled={loading}
+                        className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
+                        disabled={loading || checkingEmail}
                       >
                         Continue
                       </Button>
-                      {GOOGLE_CLIENT_ID && (
+                      {googleClientId && (
                         <>
                           <div className={`relative ${isMobile ? 'my-4' : 'my-6'}`}>
                             <div className="absolute inset-0 flex items-center">
@@ -701,7 +711,7 @@ const Signup = () => {
                               <span className="bg-card px-2 text-muted-foreground">Or</span>
                             </div>
                           </div>
-                          <div className="flex justify-center">
+                          <div className="flex justify-center w-full">
                             <GoogleLogin
                               onSuccess={handleGoogleSignupSuccess}
                               onError={handleGoogleSignupError}
@@ -711,6 +721,8 @@ const Signup = () => {
                               type="standard"
                               text="signup_with"
                               shape="rectangular"
+                              // Google button has a fixed pixel width range; choose near-card width
+                              width={isMobile ? '340' : '360'}
                             />
                           </div>
                         </>
@@ -724,7 +736,7 @@ const Signup = () => {
                   <form onSubmit={passwordForm.handleSubmit(onPasswordSubmit)} className={isMobile ? "space-y-4" : "space-y-6"}>
                     <div className={isMobile ? "mb-3" : "mb-4"}>
                       <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-gray-600`}>
-                        Welcome, <strong>{signupData.name}</strong>! Let's set up your password.
+                        Welcome, <strong>{signupData?.name?.trim() || 'there'}</strong>! Let&apos;s set up your password.
                       </p>
                     </div>
                     <FormField
@@ -738,7 +750,7 @@ const Signup = () => {
                               <Input
                                 {...field}
                                 type={showPassword ? 'text' : 'password'}
-                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-brand focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-brand focus-visible:border`}
                                 placeholder="Password"
                               />
                               <button
@@ -753,11 +765,11 @@ const Signup = () => {
                           {activePassword && passwordStrength.feedback && (
                             <div className={`flex items-center gap-2 ${isMobile ? 'mt-1' : 'mt-2'}`}>
                               <div className={`w-2 h-2 rounded-full ${
-                                passwordStrength.strength === 'strong' ? 'bg-[#166534]' :
+                                passwordStrength.strength === 'strong' ? 'bg-brand' :
                                 passwordStrength.strength === 'medium' ? 'bg-[#a3e635]' : 'bg-red-500'
                               }`} />
                               <span className={`${isMobile ? 'text-xs' : 'text-sm'} ${
-                                passwordStrength.strength === 'strong' ? 'text-[#166534]' :
+                                passwordStrength.strength === 'strong' ? 'text-brand' :
                                 passwordStrength.strength === 'medium' ? 'text-[#a3e635]' : 'text-red-600'
                               }`}>
                                 {passwordStrength.feedback}
@@ -779,7 +791,7 @@ const Signup = () => {
                               <Input
                                 {...field}
                                 type={showPassword ? 'text' : 'password'}
-                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-[#166534] focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-[#166534] focus-visible:border`}
+                                className={`${isMobile ? 'h-[44px]' : 'h-12'} border-gray-300 ${isMobile ? 'rounded-md' : 'rounded-lg'} pr-10 bg-card border border-border text-foreground placeholder:text-muted-foreground focus:border-brand focus:border focus:ring-0 focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-brand focus-visible:border`}
                                 placeholder="Confirm Password"
                               />
                               <button
@@ -809,7 +821,7 @@ const Signup = () => {
                         <TooltipTrigger asChild>
                           <Button
                             type="submit"
-                            className={`flex-1 ${isMobile ? 'h-[44px]' : 'h-12'} bg-[#166534] hover:bg-[#14532d] text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
+                            className={`flex-1 ${isMobile ? 'h-[44px]' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
                             loading={loading}
                           >
                             Create Account
@@ -822,19 +834,20 @@ const Signup = () => {
                 </Form>
               )}
 
-              {/* Legal Text - only show on first step */}
-              {currentStep === 1 && (
+              {/* Legal: public signup step 1, or invite form (same page as signup) */}
+              {((currentStep === 1 && !token) ||
+                (token && inviteData && !isAuthenticated && !showWelcomeScreen)) && (
                 <>
                   <p className="text-xs text-gray-500 mt-6 text-center">
-                    By continuing, you are agreeing to ShopWISE's{' '}
-                    <a href="#" className="text-[#166534] hover:underline">Terms of Service</a>
+                    By continuing, you are agreeing to African Business Suite's{' '}
+                    <a href="#" className="text-brand hover:underline">Terms of Service</a>
                     {' '}and{' '}
-                    <a href="#" className="text-[#166534] hover:underline">Privacy Policy</a>.
+                    <a href="#" className="text-brand hover:underline">Privacy Policy</a>.
                   </p>
                   {!token && !inviteData && (
                     <p className="text-sm text-gray-600 mt-4 text-center">
                       Already have an account?{' '}
-                      <Link to="/login" className="text-[#166534] hover:underline font-medium">
+                      <Link to="/login" className="text-brand hover:underline font-medium">
                         Sign in here
                       </Link>
                     </p>
@@ -861,14 +874,14 @@ const Signup = () => {
                 <div className="absolute top-8 right-8 space-y-3">
                   <div className="bg-card border border-border p-4 w-48">
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="w-8 h-8 bg-[#166534] rounded flex items-center justify-center text-white font-bold text-sm">io</div>
+                      <div className="w-8 h-8 bg-brand rounded flex items-center justify-center text-white font-bold text-sm">io</div>
                       <div className="flex-1 h-px bg-border"></div>
                     </div>
                     <div className="text-2xl font-semibold text-foreground">₵1,200.00</div>
                   </div>
                   <div className="bg-card border border-border p-4 w-48">
                     <div className="flex items-center gap-2 mb-2">
-                      <div className="w-8 h-8 bg-[#a3e635] rounded flex items-center justify-center text-[#166534] font-bold text-sm">qb</div>
+                      <div className="w-8 h-8 bg-[#a3e635] rounded flex items-center justify-center text-brand font-bold text-sm">qb</div>
                       <div className="flex-1 h-px bg-border"></div>
                     </div>
                     <div className="text-2xl font-semibold text-foreground">₵1,200.00</div>

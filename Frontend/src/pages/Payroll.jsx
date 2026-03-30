@@ -169,6 +169,7 @@ const Payroll = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record?.status} />
     },
     {
@@ -714,7 +715,7 @@ const Payroll = () => {
                                         : selectedIds.filter((id) => id !== idStr);
                                       field.onChange(next);
                                     }}
-                                    className="h-4 w-4 rounded-md border-2 border-gray-300 data-[state=checked]:bg-[#166534] data-[state=checked]:border-[#166534] data-[state=checked]:text-white focus-visible:ring-[#166534] focus-visible:ring-2 focus-visible:ring-offset-2 transition-all duration-200 hover:border-[#166534]"
+                                    className="h-4 w-4 rounded-md border-2 border-gray-300 data-[state=checked]:bg-brand data-[state=checked]:border-brand data-[state=checked]:text-white focus-visible:ring-brand focus-visible:ring-2 focus-visible:ring-offset-2 transition-all duration-200 hover:border-brand"
                                   />
                                   <label
                                     htmlFor={`emp-${emp.id}`}

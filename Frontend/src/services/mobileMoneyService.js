@@ -73,6 +73,7 @@ const mobileMoneyService = {
       const prefix = cleaned.substring(3, 5);
       if (['24', '54', '55', '59'].includes(prefix)) return 'MTN';
       if (['26', '27', '57'].includes(prefix)) return 'AIRTEL';
+      if (['20', '50'].includes(prefix)) return 'VODAFONE';
     }
     
     // Uganda prefixes

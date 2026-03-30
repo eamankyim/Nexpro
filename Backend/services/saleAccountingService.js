@@ -46,12 +46,10 @@ const createSaleRevenueJournal = async (tenantId, saleId, userId = null) => {
   if (!sale) return null;
 
   const totalAmount = parseFloat(sale.total || 0);
-  const subtotal = parseFloat(sale.subtotal || totalAmount);
-  const discountAmount = parseFloat(sale.discount || 0);
   const taxAmount = parseFloat(sale.tax || 0);
-  
-  // Revenue is subtotal minus discount (pre-tax amount)
-  const revenueAmount = subtotal - discountAmount;
+
+  // Revenue excludes VAT: cash total minus tax (works for tax-inclusive and tax-exclusive totals)
+  const revenueAmount = Math.max(0, totalAmount - taxAmount);
   
   if (!totalAmount || Number.isNaN(totalAmount) || totalAmount <= 0) return null;
 
@@ -103,11 +101,10 @@ const createSaleRevenueJournal = async (tenantId, saleId, userId = null) => {
     status: 'posted',
     source: 'sale_revenue',
     sourceId: saleId,
-    metadata: { 
+    metadata: {
       saleId,
-      subtotal,
-      taxAmount,
-      discountAmount
+      revenueAmount,
+      taxAmount
     },
     userId,
     lines

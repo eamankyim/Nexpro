@@ -222,7 +222,7 @@ const Prescriptions = () => {
         </div>
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button className="bg-[#166534] hover:bg-[#14532d] text-white">
+            <Button className="bg-brand hover:bg-brand-dark text-white">
               <Plus className="h-4 w-4 mr-2" />New Prescription
             </Button>
           </TooltipTrigger>
@@ -259,7 +259,7 @@ const Prescriptions = () => {
             </div>
             <Tooltip>
               <TooltipTrigger asChild>
-                <SecondaryButton onClick={fetchPrescriptions} size={isMobile ? 'icon' : 'default'} className="text-[#166534] border-[#166534] hover:bg-[#166534]/10">
+                <SecondaryButton onClick={fetchPrescriptions} size={isMobile ? 'icon' : 'default'} className="text-brand border-brand hover:bg-brand-10">
                   <RefreshCw className="h-4 w-4" />
                 </SecondaryButton>
               </TooltipTrigger>

@@ -1,4 +1,194 @@
 const axios = require('axios');
+const os = require('os');
+
+const LOG_PREFIX = '[Paystack]';
+
+/**
+ * sk_live / sk_test / missing — never log full keys.
+ * @param {string|undefined} secretKey
+ * @returns {'missing'|'sk_live'|'sk_test'|'sk_unknown'}
+ */
+function resolvePaystackKeyMode(secretKey) {
+  if (!secretKey || typeof secretKey !== 'string') return 'missing';
+  if (secretKey.startsWith('sk_live')) return 'sk_live';
+  if (secretKey.startsWith('sk_test')) return 'sk_test';
+  return 'sk_unknown';
+}
+
+/**
+ * Rich, safe diagnostics when a Paystack HTTP call fails (pinpoints network vs auth vs WAF/HTML).
+ * @param {string} operation
+ * @param {import('axios').AxiosError} error
+ * @param {PaystackService|null} instance - PaystackService singleton
+ * @param {Record<string, unknown>} [extra] - e.g. { logId }
+ */
+function collectPaystackFailureDiagnostics(operation, error, instance, extra = {}) {
+  const res = error?.response;
+  const body = res?.data;
+  const h = res?.headers || {};
+  const pick = (name) => h[name] ?? h[String(name).toLowerCase()];
+  const contentType = pick('content-type');
+  const cfRay = pick('cf-ray');
+  const serverHdr = pick('server');
+  const cacheStatus = pick('cf-cache-status');
+
+  let responseBodyInfo;
+  if (paystackResponseIsUnusableHtml(body)) {
+    const len = typeof body === 'string' ? body.length : typeof body === 'object' && body?.message ? String(body.message).length : 0;
+    responseBodyInfo = {
+      shape: 'html_or_cloudflare_challenge',
+      approximateLength: len || (typeof body === 'string' ? body.length : undefined)
+    };
+  } else if (typeof body === 'string') {
+    responseBodyInfo = {
+      shape: 'text',
+      length: body.length,
+      preview: body.trim().slice(0, 120)
+    };
+  } else if (body && typeof body === 'object') {
+    responseBodyInfo = {
+      shape: 'json',
+      keys: Object.keys(body).slice(0, 15),
+      message: typeof body.message === 'string' ? body.message.slice(0, 200) : undefined
+    };
+  } else {
+    responseBodyInfo = { shape: body == null ? 'empty' : typeof body };
+  }
+
+  let paystackApiHost = 'unknown';
+  try {
+    paystackApiHost = new URL(instance?.baseURL || 'https://api.paystack.co').host;
+  } catch {
+    paystackApiHost = 'parse_error';
+  }
+
+  let requestHostPath;
+  try {
+    const u = new URL(error?.config?.url || '', instance?.baseURL || 'https://api.paystack.co');
+    requestHostPath = `${u.host}${u.pathname}${u.search ? u.search.slice(0, 100) : ''}`;
+  } catch {
+    requestHostPath = error?.config?.url ? String(error.config.url).slice(0, 160) : undefined;
+  }
+
+  return {
+    ...extra,
+    operation,
+    where: 'backend_outbound_axios_to_paystack',
+    paystackApiHost,
+    baseURLConfigured: instance?.baseURL,
+    keyMode: resolvePaystackKeyMode(instance?.secretKey),
+    nodeEnv: process.env.NODE_ENV,
+    processHostname: process.env.HOSTNAME || os.hostname(),
+    axiosMessage: error?.message,
+    axiosCode: error?.code,
+    axiosErrno: error?.errno,
+    syscall: error?.syscall,
+    connectAddress: error?.address,
+    connectPort: error?.port,
+    dnsLookupHost: error?.hostname,
+    httpStatus: res?.status,
+    httpStatusText: res?.statusText,
+    responseContentType: contentType ? String(contentType).slice(0, 120) : undefined,
+    cfRay: cfRay ? String(cfRay) : undefined,
+    cfCacheStatus: cacheStatus ? String(cacheStatus) : undefined,
+    responseServerHeader: serverHdr ? String(serverHdr).slice(0, 100) : undefined,
+    requestMethod: (error?.config?.method || 'get').toUpperCase(),
+    requestHostPath,
+    responseBody: responseBodyInfo,
+    likelyCloudflareChallengeHtml: paystackResponseIsUnusableHtml(body)
+  };
+}
+
+/**
+ * Single structured error line for all Paystack API failures.
+ * @param {string} operation
+ * @param {import('axios').AxiosError} error
+ * @param {PaystackService|null} instance
+ * @param {{ logId?: string }} [opts]
+ */
+function logPaystackRequestFailure(operation, error, instance, opts = {}) {
+  const summary = paystackErrorSummary(operation, error);
+  const diagnostics = collectPaystackFailureDiagnostics(operation, error, instance, opts);
+  console.error(LOG_PREFIX, 'REQUEST_FAILED', {
+    ...summary,
+    diagnostics
+  });
+}
+
+/**
+ * Safe summary of error.response.data for logs (avoid dumping HTML or huge bodies)
+ */
+function paystackErrorSummary(operation, error) {
+  const status = error?.response?.status;
+  const body = error?.response?.data;
+  const isHtml = typeof body === 'string' && (body && (body.includes('<html') || body.includes('Just a moment')));
+  const summary = {
+    operation,
+    status,
+    message: error?.message,
+    code: error?.code,
+    url: error?.config?.url || error?.config?.baseURL
+  };
+  if (isHtml) {
+    summary.responseBody = '(Cloudflare/challenge HTML – server request blocked)';
+  } else if (body != null) {
+    summary.responseBody = typeof body === 'object' && body.message ? body.message : (typeof body === 'string' ? body.slice(0, 200) : body);
+  }
+  return summary;
+}
+
+/**
+ * True if Paystack/axios response body is a Cloudflare challenge or other HTML (must not be sent to browsers as JSON message).
+ * @param {unknown} body - error.response.data
+ * @returns {boolean}
+ */
+function paystackResponseIsUnusableHtml(body) {
+  if (body == null) return false;
+  if (typeof body === 'string') {
+    const t = body.trim();
+    return (
+      /<!DOCTYPE\s+html/i.test(t) ||
+      /<html[\s>]/i.test(t) ||
+      /Just a moment/i.test(t) ||
+      (t.startsWith('<') && t.length > 200)
+    );
+  }
+  if (typeof body === 'object' && typeof body.message === 'string') {
+    return paystackResponseIsUnusableHtml(body.message);
+  }
+  return false;
+}
+
+/**
+ * Safe string for JSON `message` fields — never HTML challenge pages.
+ * @param {import('axios').AxiosError} error
+ * @param {{ blocked?: string }} [fallbacks]
+ * @returns {string|null}
+ */
+function userFacingPaystackErrorMessage(error, fallbacks = {}) {
+  const status = error?.response?.status;
+  const body = error?.response?.data;
+
+  if (paystackResponseIsUnusableHtml(body)) {
+    return (
+      fallbacks.blocked ||
+      'Payment provider could not be reached from our servers (temporary network block). Please try again in a few minutes or contact support if this continues.'
+    );
+  }
+
+  if (typeof body === 'object' && body && typeof body.message === 'string') {
+    const m = body.message.trim();
+    if (m && !paystackResponseIsUnusableHtml(m)) return m;
+  }
+
+  if (typeof body === 'string') {
+    const t = body.trim();
+    if (t && !paystackResponseIsUnusableHtml(t) && t.length <= 400) return t;
+  }
+
+  if (status === 401) return fallbacks.unauthorized || null;
+  return null;
+}
 
 /**
  * Paystack Service
@@ -8,13 +198,38 @@ class PaystackService {
   constructor() {
     this.secretKey = process.env.PAYSTACK_SECRET_KEY;
     this.publicKey = process.env.PAYSTACK_PUBLIC_KEY;
-    this.baseURL = process.env.PAYSTACK_BASE_URL || 'https://api.paystack.co';
+    let baseURL = (process.env.PAYSTACK_BASE_URL || 'https://api.paystack.co').trim().replace(/\/$/, '');
+    // Dashboard/docs links use paystack.com; the REST API host is api.paystack.co. Using .com often returns Cloudflare challenge HTML to servers (403), not JSON.
+    if (/^https?:\/\/api\.paystack\.com\b/i.test(baseURL)) {
+      const corrected = baseURL.replace(/api\.paystack\.com/gi, 'api.paystack.co');
+      console.warn(
+        `${LOG_PREFIX} PAYSTACK_BASE_URL was set to api.paystack.com — Paystack’s API is at api.paystack.co. Using:`,
+        corrected
+      );
+      baseURL = corrected;
+    }
+    this.baseURL = baseURL;
     /** Optional subaccount code for split payments (e.g. ACCT_xxxxx) */
     this.subaccountCode = process.env.PAYSTACK_SUBACCOUNT_CODE || null;
 
     if (!this.secretKey) {
       console.warn('[Paystack] PAYSTACK_SECRET_KEY not set. Paystack features will be disabled.');
     }
+
+    let paystackHost = 'unknown';
+    try {
+      paystackHost = new URL(this.baseURL).host;
+    } catch {
+      paystackHost = 'invalid_base_url';
+    }
+    console.log(`${LOG_PREFIX} client ready`, {
+      paystackApiHost: paystackHost,
+      baseURL: this.baseURL,
+      keyMode: resolvePaystackKeyMode(this.secretKey),
+      hasPublicKey: Boolean(this.publicKey),
+      nodeEnv: process.env.NODE_ENV,
+      processHostname: process.env.HOSTNAME || os.hostname()
+    });
   }
 
   /**
@@ -41,7 +256,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error creating customer:', error.response?.data || error.message);
+      logPaystackRequestFailure('createCustomer', error, this);
       throw error;
     }
   }
@@ -59,7 +274,8 @@ class PaystackService {
         callback_url: params.callback_url,
         reference: params.reference,
         metadata: params.metadata,
-        channels: params.channels || ['card', 'bank', 'mobile_money', 'bank_transfer']
+        // Default: card only; use direct MoMo APIs for mobile money elsewhere
+        channels: params.channels || ['card']
       };
       if (params.plan) {
         payload.plan = params.plan;
@@ -77,7 +293,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error initializing transaction:', error.response?.data || error.message);
+      logPaystackRequestFailure('initializeTransaction', error, this);
       throw error;
     }
   }
@@ -105,7 +321,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error creating subscription:', error.response?.data || error.message);
+      logPaystackRequestFailure('createSubscription', error, this);
       throw error;
     }
   }
@@ -123,7 +339,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error getting subscription:', error.response?.data || error.message);
+      logPaystackRequestFailure('getSubscription', error, this);
       throw error;
     }
   }
@@ -143,7 +359,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error disabling subscription:', error.response?.data || error.message);
+      logPaystackRequestFailure('disableSubscription', error, this);
       throw error;
     }
   }
@@ -163,7 +379,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error enabling subscription:', error.response?.data || error.message);
+      logPaystackRequestFailure('enableSubscription', error, this);
       throw error;
     }
   }
@@ -181,7 +397,107 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error verifying transaction:', error.response?.data || error.message);
+      logPaystackRequestFailure('verifyTransaction', error, this);
+      throw error;
+    }
+  }
+
+  /**
+   * List transactions (platform secret sees whole integration; filter by tenant in app code).
+   * @param {{ page?: number, perPage?: number, from?: string, to?: string, status?: string }} params - ISO datetimes for from/to per Paystack docs
+   * @returns {Promise<object>} Paystack envelope { status, data, meta }
+   */
+  async listTransactions(params = {}) {
+    if (!this.secretKey) {
+      const err = new Error('Paystack is not configured');
+      err.code = 'PAYSTACK_NOT_CONFIGURED';
+      throw err;
+    }
+    const qs = new URLSearchParams();
+    const perPage = Math.min(100, Math.max(1, Number(params.perPage) || 50));
+    const page = Math.max(1, Number(params.page) || 1);
+    qs.set('perPage', String(perPage));
+    qs.set('page', String(page));
+    if (params.from) qs.set('from', params.from);
+    if (params.to) qs.set('to', params.to);
+    if (params.status) qs.set('status', params.status);
+    const query = qs.toString();
+    const url = `${this.baseURL}/transaction?${query}`;
+    try {
+      const response = await axios.get(url, { headers: this.getHeaders() });
+      return response.data;
+    } catch (error) {
+      logPaystackRequestFailure('listTransactions', error, this);
+      throw error;
+    }
+  }
+
+  /**
+   * Charge a customer via Mobile Money (POS)
+   * @param {Object} params
+   * @param {String} params.email - Customer email
+   * @param {Number} params.amount - Amount in main units (e.g. 14.0 for ₵14.00)
+   * @param {String} params.reference - Unique transaction reference
+   * @param {String} params.phoneNumber - Customer MoMo phone (233XXXXXXXXX or local formats)
+   * @param {String} params.provider - Logical provider (MTN, AIRTEL, TELECEL/VODAFONE)
+   * @param {Object} params.metadata - Additional metadata to send to Paystack
+   * @param {String} [params.subaccount] - Paystack subaccount code (ACCT_xxx) for split at charge; when set, tenant share goes to their bank
+   * @param {Number} [params.transaction_charge] - Optional transaction charge for split (Paystack docs)
+   * @param {String} [params.bearer] - Optional bearer for split (account | subaccount)
+   * @returns {Promise<Object>} Paystack charge result
+   */
+  async chargeMobileMoney({ email, amount, reference, phoneNumber, provider, metadata, subaccount, transaction_charge, bearer }) {
+    if (!this.secretKey) {
+      console.warn('[Paystack] chargeMobileMoney called without PAYSTACK_SECRET_KEY');
+      return {
+        status: false,
+        message: 'Paystack is not configured'
+      };
+    }
+
+    try {
+      const normalizedAmount = Math.round(Number(amount || 0) * 100);
+      const cleanedPhone = String(phoneNumber || '').replace(/\\s+/g, '');
+      const providerCode = (() => {
+        const upper = String(provider || '').toUpperCase();
+        if (upper === 'MTN') return 'mtn';
+        if (upper === 'AIRTEL' || upper === 'ATL') return 'atl';
+        // Telecel is ex-Vodafone in GH – map to vod where supported
+        if (upper === 'TELECEL' || upper === 'VODAFONE' || upper === 'VOD') return 'vod';
+        return 'mtn';
+      })();
+
+      const payload = {
+        email,
+        amount: String(normalizedAmount),
+        currency: 'GHS',
+        reference,
+        mobile_money: {
+          phone: cleanedPhone,
+          provider: providerCode
+        },
+        metadata: metadata || {}
+      };
+      if (subaccount) payload.subaccount = subaccount;
+      if (transaction_charge != null) payload.transaction_charge = transaction_charge;
+      if (bearer) payload.bearer = bearer;
+
+      const response = await axios.post(
+        `${this.baseURL}/charge`,
+        payload,
+        { headers: this.getHeaders() }
+      );
+
+      const data = response.data;
+      console.log('[MoMo] Paystack /charge response:', {
+        status: data?.status,
+        message: data?.message,
+        dataStatus: data?.data?.status,
+        hasData: !!data?.data
+      });
+      return data;
+    } catch (error) {
+      logPaystackRequestFailure('chargeMobileMoney', error, this);
       throw error;
     }
   }
@@ -199,7 +515,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error getting plan:', error.response?.data || error.message);
+      logPaystackRequestFailure('getPlan', error, this);
       throw error;
     }
   }
@@ -216,7 +532,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error listing plans:', error.response?.data || error.message);
+      logPaystackRequestFailure('listPlans', error, this);
       throw error;
     }
   }
@@ -227,6 +543,15 @@ class PaystackService {
    * @returns {Promise<Object>} { subaccount_code, ... }
    */
   async createSubaccount(params) {
+    const url = `${this.baseURL}/subaccount`;
+    const logId = `sub-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    console.log(`${LOG_PREFIX} [${logId}] createSubaccount REQUEST:`, {
+      url,
+      hasSecretKey: Boolean(this.secretKey),
+      business_name: params.business_name ? `${String(params.business_name).slice(0, 30)}...` : undefined,
+      bank_code: params.bank_code ? `${String(params.bank_code).slice(0, 6)}...` : undefined,
+      account_number_length: params.account_number ? String(params.account_number).length : 0
+    });
     try {
       const payload = {
         business_name: params.business_name,
@@ -239,14 +564,18 @@ class PaystackService {
       if (params.description) payload.description = params.description;
       if (params.currency) payload.currency = params.currency;
 
-      const response = await axios.post(
-        `${this.baseURL}/subaccount`,
-        payload,
-        { headers: this.getHeaders() }
-      );
-      return response.data;
+      const response = await axios.post(url, payload, { headers: this.getHeaders() });
+      const data = response?.data;
+      const subaccountCode = data?.data?.subaccount_code || data?.subaccount_code;
+      console.log(`${LOG_PREFIX} [${logId}] createSubaccount SUCCESS:`, {
+        status: response?.status,
+        hasSubaccountCode: Boolean(subaccountCode),
+        subaccountCodePrefix: subaccountCode ? String(subaccountCode).slice(0, 12) + '...' : null
+      });
+      return data;
     } catch (error) {
-      console.error('[Paystack] Error creating subaccount:', error.response?.data || error.message);
+      const summary = paystackErrorSummary('createSubaccount', error);
+      console.error(`${LOG_PREFIX} [${logId}] createSubaccount ERROR:`, summary);
       throw error;
     }
   }
@@ -257,18 +586,26 @@ class PaystackService {
    * @returns {Promise<Object>} Banks list { data: [{ code, name, ... }] }
    */
   async listBanks(params = {}) {
+    const logId = `banks-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const qs = new URLSearchParams();
+    if (params.country) qs.set('country', params.country);
+    if (params.currency) qs.set('currency', params.currency);
+    if (params.type) qs.set('type', params.type);
+    const query = qs.toString();
+    const url = `${this.baseURL}/bank${query ? `?${query}` : ''}`;
+    console.log(`${LOG_PREFIX} [${logId}] listBanks REQUEST:`, { params, url, hasSecretKey: Boolean(this.secretKey) });
     try {
-      const qs = new URLSearchParams();
-      if (params.country) qs.set('country', params.country);
-      if (params.currency) qs.set('currency', params.currency);
-      // For Ghana bank accounts: type=ghipps (bank channels, not mobile_money)
-      if (params.type) qs.set('type', params.type);
-      const query = qs.toString();
-      const url = `${this.baseURL}/bank${query ? `?${query}` : ''}`;
       const response = await axios.get(url, { headers: this.getHeaders() });
-      return response.data;
+      const data = response?.data;
+      const list = Array.isArray(data) ? data : (data?.data ?? []);
+      console.log(`${LOG_PREFIX} [${logId}] listBanks SUCCESS:`, {
+        status: response?.status,
+        listLength: list?.length ?? 0,
+        firstItem: list?.[0] ? { code: list[0].code, name: (list[0].name || '').slice(0, 30), type: list[0].type } : null
+      });
+      return data;
     } catch (error) {
-      console.error('[Paystack] Error listing banks:', error.response?.data || error.message);
+      logPaystackRequestFailure('listBanks', error, this, { logId, listBanksParams: params, listBanksUrl: url });
       throw error;
     }
   }
@@ -296,7 +633,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error creating plan:', error.response?.data || error.message);
+      logPaystackRequestFailure('createPlan', error, this);
       throw error;
     }
   }
@@ -346,7 +683,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error creating transfer recipient:', error.response?.data || error.message);
+      logPaystackRequestFailure('createTransferRecipient', error, this);
       throw error;
     }
   }
@@ -371,7 +708,7 @@ class PaystackService {
       );
       return response.data;
     } catch (error) {
-      console.error('[Paystack] Error initiating transfer:', error.response?.data || error.message);
+      logPaystackRequestFailure('initiateTransfer', error, this);
       throw error;
     }
   }
@@ -380,7 +717,14 @@ class PaystackService {
    * Map MoMo provider to Paystack bank_code (Ghana)
    */
   getMoMoBankCode(provider) {
-    const map = { MTN: 'MTN', AIRTEL: 'ATL' };
+    const map = {
+      MTN: 'MTN',
+      AIRTEL: 'ATL',
+      ATL: 'ATL',
+      TELECEL: 'VOD',
+      VODAFONE: 'VOD',
+      VOD: 'VOD'
+    };
     return map[(provider || '').toUpperCase()] || 'MTN';
   }
 
@@ -401,5 +745,8 @@ class PaystackService {
   }
 }
 
-module.exports = new PaystackService();
+const paystackServiceSingleton = new PaystackService();
+module.exports = paystackServiceSingleton;
+module.exports.paystackResponseIsUnusableHtml = paystackResponseIsUnusableHtml;
+module.exports.userFacingPaystackErrorMessage = userFacingPaystackErrorMessage;
 

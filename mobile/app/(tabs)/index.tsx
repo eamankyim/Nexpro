@@ -7,18 +7,21 @@ import {
   RefreshControl,
   Pressable,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import FontAwesome from '@expo/vector-icons/FontAwesome';
+import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '@/context/AuthContext';
 import { dashboardService } from '@/services/dashboardService';
-import { CURRENCY, STUDIO_TYPES } from '@/constants';
+import { authService } from '@/services/auth';
+import { CURRENCY, STUDIO_TYPES, DEFAULT_TENANT_NAMES } from '@/constants';
 import Colors from '@/constants/Colors';
 import { useTheme } from '@/context/ThemeContext';
 
-type FilterType = 'today' | 'week' | 'month';
+type FilterType = 'today' | 'week' | 'month' | 'year';
 
 function formatDateRange(filterType: FilterType): { start: string; end: string } {
   const today = new Date();
@@ -34,8 +37,10 @@ function formatDateRange(filterType: FilterType): { start: string; end: string }
     const day = start.getDay();
     const diff = start.getDate() - day + (day === 0 ? -6 : 1);
     start.setDate(diff);
-  } else {
+  } else if (filterType === 'month') {
     start = new Date(today.getFullYear(), today.getMonth(), 1);
+  } else {
+    start = new Date(today.getFullYear(), 0, 1);
   }
   start.setHours(0, 0, 0, 0);
   return {
@@ -48,14 +53,91 @@ function formatCurrency(value: number): string {
   return `${CURRENCY.SYMBOL} ${(value ?? 0).toFixed(CURRENCY.DECIMAL_PLACES)}`;
 }
 
+function getDueDateBadge(
+  dueDate: string | null | undefined
+): { label: string; bg: string; text: string; border: string } {
+  if (!dueDate) {
+    return { label: 'No due date', bg: '#f3f4f6', text: '#374151', border: '#d1d5db' };
+  }
+
+  const due = new Date(dueDate);
+  if (Number.isNaN(due.getTime())) {
+    return { label: 'No due date', bg: '#f3f4f6', text: '#374151', border: '#d1d5db' };
+  }
+
+  const now = new Date();
+  const diffMs = due.getTime() - now.getTime();
+  const diffHours = Math.round(diffMs / (1000 * 60 * 60));
+  const absHours = Math.abs(diffHours);
+
+  if (diffHours < 0) {
+    const daysOverdue = Math.max(1, Math.round(absHours / 24));
+    return {
+      label: `Overdue ${daysOverdue}d`,
+      bg: '#fee2e2',
+      text: '#b91c1c',
+      border: '#fca5a5',
+    };
+  }
+
+  if (diffHours <= 24) {
+    return {
+      label: `Due in ${Math.max(1, diffHours)}h`,
+      bg: '#ffedd5',
+      text: '#c2410c',
+      border: '#fdba74',
+    };
+  }
+
+  const days = Math.max(1, Math.round(diffHours / 24));
+  return {
+    label: `Due in ${days}d`,
+    bg: '#dcfce7',
+    text: '#166534',
+    border: '#86efac',
+  };
+}
+
 export default function DashboardScreen() {
   const router = useRouter();
-  const { user, activeTenant, activeTenantId } = useAuth();
+  const { user, activeTenant, activeTenantId, wasInvited, refreshAuth } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
 
   const [filterType, setFilterType] = useState<FilterType>('today');
+  const [resendLoading, setResendLoading] = useState(false);
   const dateRange = useMemo(() => formatDateRange(filterType), [filterType]);
+
+  const hasBusinessName = useMemo(() => {
+    const name = activeTenant?.name;
+    return !!(name && typeof name === 'string' && name.trim() && !DEFAULT_TENANT_NAMES.includes(name));
+  }, [activeTenant?.name]);
+
+  const hasCompanyPhone = useMemo(() => {
+    return !!(activeTenant?.metadata?.phone && String(activeTenant.metadata.phone).trim());
+  }, [activeTenant?.metadata?.phone]);
+
+  const onboardingCompleted = useMemo(() => {
+    if (activeTenant?.metadata?.onboarding?.completedAt) return true;
+    return hasBusinessName && hasCompanyPhone;
+  }, [activeTenant?.metadata?.onboarding?.completedAt, hasBusinessName, hasCompanyPhone]);
+
+  const showSetupBanner = useMemo(() => !onboardingCompleted && !wasInvited, [onboardingCompleted, wasInvited]);
+  const showVerifyEmailBanner = useMemo(() => Boolean(user && !user.emailVerifiedAt), [user, user?.emailVerifiedAt]);
+
+  const handleResendVerification = useCallback(async () => {
+    setResendLoading(true);
+    try {
+      await authService.resendVerification();
+      Alert.alert('Done', 'Verification email sent. Check your inbox.');
+      await refreshAuth();
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to send. Try again later.';
+      Alert.alert('Error', msg);
+    } finally {
+      setResendLoading(false);
+    }
+  }, [refreshAuth]);
 
   const { data: overviewResponse, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['dashboard', 'overview', activeTenantId, dateRange.start, dateRange.end, filterType],
@@ -76,6 +158,7 @@ export default function DashboardScreen() {
   const isShop = businessType === 'shop';
   const isPharmacy = businessType === 'pharmacy';
   const isStudio = STUDIO_TYPES.includes(businessType);
+  const isPrintingPress = businessType === 'printing_press';
 
   // Match web app pattern: overviewResponse?.data || overviewResponse
   const overview = overviewResponse?.data || overviewResponse;
@@ -99,12 +182,15 @@ export default function DashboardScreen() {
     if (isStudio) {
       actions.push({ label: 'New job', icon: 'plus', route: '/(tabs)/scan' });
       actions.push({ label: 'Add customer', icon: 'user-plus', route: '/(tabs)/customers?add=1' });
+      if (isPrintingPress) {
+        actions.push({ label: 'New quote', icon: 'file-text-o', route: '/(tabs)/quotes' });
+      }
     }
     if (isShop || isPharmacy) {
       actions.push({ label: 'Restock', icon: 'archive', route: '/(tabs)/scan' });
     }
     return actions;
-  }, [isShop, isPharmacy, isStudio]);
+  }, [isShop, isPharmacy, isStudio, isPrintingPress]);
 
   const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
@@ -145,9 +231,52 @@ export default function DashboardScreen() {
         Welcome{user?.name ? `, ${user.name}` : ''}
       </Text>
 
+      {/* Verify email banner (matches web MainLayout) */}
+      {showVerifyEmailBanner && (
+        <View style={styles.verifyBanner}>
+          <Ionicons name="mail-outline" size={20} color="#b45309" />
+          <View style={styles.verifyBannerText}>
+            <Text style={styles.verifyBannerTitle}>Verify your email</Text>
+            <Text style={styles.verifyBannerSubtitle}>
+              We sent a link to your email. Click it to verify, or resend below.
+            </Text>
+          </View>
+          <Pressable
+            style={styles.verifyBannerButton}
+            onPress={handleResendVerification}
+            disabled={resendLoading}
+          >
+            {resendLoading ? (
+              <ActivityIndicator size="small" color="#b45309" />
+            ) : (
+              <Text style={styles.verifyBannerButtonText}>Resend link</Text>
+            )}
+          </Pressable>
+        </View>
+      )}
+
+      {/* Complete onboarding banner (mobile-friendly card) */}
+      {showSetupBanner && (
+        <Pressable
+          style={[styles.setupBanner, { backgroundColor: cardBg, borderColor }]}
+          onPress={() => router.push('/onboarding' as any)}
+        >
+          <View style={styles.setupBannerIcon}>
+            <Ionicons name="sparkles" size={22} color="#166534" />
+          </View>
+          <View style={styles.setupBannerText}>
+            <Text style={styles.setupBannerTitle}>Finish setting up your business</Text>
+            <Text style={styles.setupBannerSubtitle}>
+              Complete your business profile to get the most out of African Business Suite.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={mutedColor} />
+        </Pressable>
+      )}
+
       {/* Date filter */}
       <View style={styles.filterRow}>
-        {(['today', 'week', 'month'] as const).map((f) => (
+        {(['today', 'week', 'month', 'year'] as const).map((f) => (
           <Pressable
             key={f}
             onPress={() => setFilterType(f)}
@@ -163,7 +292,13 @@ export default function DashboardScreen() {
                 { color: filterType === f ? '#fff' : textColor },
               ]}
             >
-              {f.charAt(0).toUpperCase() + f.slice(1)}
+              {f === 'today'
+                ? 'Today'
+                : f === 'week'
+                  ? 'This Week'
+                  : f === 'month'
+                    ? 'This Month'
+                    : 'This Year'}
             </Text>
           </Pressable>
         ))}
@@ -234,10 +369,11 @@ export default function DashboardScreen() {
         <>
           <Text style={[styles.sectionTitle, { color: textColor }]}>In progress</Text>
           <View style={[styles.jobsCard, { backgroundColor: cardBg, borderColor }]}>
-            {recentJobs.slice(0, 5).map((job: { id: string; title: string; jobNumber?: string; status: string; customer?: { name: string } }) => (
+            {recentJobs.slice(0, 5).map((job: { id: string; title: string; jobNumber?: string; status: string; dueDate?: string; customer?: { name: string } }) => (
               <Pressable
                 key={job.id}
                 style={({ pressed }) => [styles.jobRow, pressed && styles.pressed]}
+                onPress={() => router.push(`/(tabs)/jobs?openJobId=${encodeURIComponent(job.id)}` as any)}
               >
                 <View style={styles.jobInfo}>
                   <Text style={[styles.jobTitle, { color: textColor }]} numberOfLines={1}>
@@ -247,7 +383,22 @@ export default function DashboardScreen() {
                     {job.customer?.name ?? '—'}
                   </Text>
                 </View>
-                <FontAwesome name="chevron-right" size={14} color={mutedColor} />
+                <View style={styles.jobRight}>
+                  <View
+                    style={[
+                      styles.statusBadge,
+                      {
+                        backgroundColor: getDueDateBadge(job.dueDate).bg,
+                        borderColor: getDueDateBadge(job.dueDate).border,
+                      },
+                    ]}
+                  >
+                    <Text style={[styles.statusBadgeText, { color: getDueDateBadge(job.dueDate).text }]}>
+                      {getDueDateBadge(job.dueDate).label}
+                    </Text>
+                  </View>
+                  <FontAwesome name="chevron-right" size={14} color={mutedColor} />
+                </View>
               </Pressable>
             ))}
           </View>
@@ -275,6 +426,51 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: 16,
   },
+  verifyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 16,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 83, 9, 0.5)',
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+  },
+  verifyBannerText: { flex: 1, minWidth: 0 },
+  verifyBannerTitle: { fontSize: 15, fontWeight: '600', color: '#111' },
+  verifyBannerSubtitle: { fontSize: 13, color: '#6b7280', marginTop: 2 },
+  verifyBannerButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(180, 83, 9, 0.5)',
+    minWidth: 90,
+    alignItems: 'center',
+  },
+  verifyBannerButtonText: { fontSize: 14, fontWeight: '600', color: '#b45309' },
+  setupBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  setupBannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#a3e635',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  setupBannerText: { flex: 1, minWidth: 0 },
+  setupBannerTitle: { fontSize: 15, fontWeight: '600' },
+  setupBannerSubtitle: { fontSize: 13, marginTop: 4 },
   filterRow: {
     flexDirection: 'row',
     gap: 8,
@@ -376,6 +572,23 @@ const styles = StyleSheet.create({
   jobCustomer: {
     fontSize: 13,
     marginTop: 2,
+  },
+  statusBadge: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    marginLeft: 10,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  jobRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginLeft: 10,
   },
   subtitle: {
     fontSize: 14,

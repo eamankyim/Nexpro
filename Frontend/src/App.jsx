@@ -1,7 +1,9 @@
-import { BrowserRouter as Router, Routes, Route, Navigate, useSearchParams, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, lazy, Suspense } from 'react';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { BrandingProvider } from './context/BrandingContext';
+import { PublicConfigProvider, usePublicConfig } from './context/PublicConfigContext';
 import { HintModeProvider } from './context/HintModeContext';
 import { ThemeProvider } from './context/ThemeContext';
 import { PWAInstallProvider } from './context/PWAInstallContext';
@@ -11,8 +13,11 @@ import PlatformRoute from './components/PlatformRoute';
 import MainLayout from './layouts/MainLayout';
 import AdminLayout from './layouts/AdminLayout';
 import ErrorBoundary from './components/ErrorBoundary';
+import RequireWorkspaceManager from './components/RequireWorkspaceManager';
 import TableSkeleton from './components/TableSkeleton';
+import { SHOW_SHOPS } from './constants';
 import PWAInstallBanner from './components/PWAInstallBanner';
+import PWAUpdatePrompt from './components/PWAUpdatePrompt';
 import { useSwipeBack } from './hooks/useSwipeBack';
 import { useIOSKeyboardFix } from './hooks/useKeyboardHandling';
 import Products from './pages/Products';
@@ -25,9 +30,15 @@ const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const VerifyEmail = lazy(() => import('./pages/VerifyEmail'));
 const PayInvoice = lazy(() => import('./pages/PayInvoice'));
+const ViewQuote = lazy(() => import('./pages/ViewQuote'));
+const TrackJob = lazy(() => import('./pages/TrackJob'));
+const TenantTrackLookup = lazy(() => import('./pages/TenantTrackLookup'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Customers = lazy(() => import('./pages/Customers'));
+const Marketing = lazy(() => import('./pages/Marketing'));
+const AskAI = lazy(() => import('./pages/AskAI'));
+const Automations = lazy(() => import('./pages/Automations'));
 const Vendors = lazy(() => import('./pages/Vendors'));
 const Jobs = lazy(() => import('./pages/Jobs'));
 const Invoices = lazy(() => import('./pages/Invoices'));
@@ -35,6 +46,7 @@ const Quotes = lazy(() => import('./pages/Quotes'));
 const Expenses = lazy(() => import('./pages/Expenses'));
 const Pricing = lazy(() => import('./pages/Pricing'));
 const Reports = lazy(() => import('./pages/Reports'));
+const ExportData = lazy(() => import('./pages/ExportData'));
 const Materials = lazy(() => import('./pages/Materials'));
 const Equipment = lazy(() => import('./pages/Equipment'));
 const Leads = lazy(() => import('./pages/Leads'));
@@ -51,7 +63,6 @@ const Shops = lazy(() => import('./pages/Shops'));
 const Pharmacies = lazy(() => import('./pages/Pharmacies'));
 const Drugs = lazy(() => import('./pages/Drugs'));
 const Prescriptions = lazy(() => import('./pages/Prescriptions'));
-const FootTraffic = lazy(() => import('./pages/FootTraffic'));
 const AdminOverview = lazy(() => import('./pages/admin/AdminOverview'));
 const AdminTenants = lazy(() => import('./pages/admin/AdminTenants'));
 const AdminLeads = lazy(() => import('./pages/admin/AdminLeads'));
@@ -64,13 +75,14 @@ const AdminHealth = lazy(() => import('./pages/admin/AdminHealth'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
 const AdminCustomers = lazy(() => import('./pages/admin/AdminCustomers'));
-const Workspace = lazy(() => import('./pages/Workspace'));
+const Tasks = lazy(() => import('./pages/Tasks'));
+const Deliveries = lazy(() => import('./pages/Deliveries'));
 
 // Loading fallback component
 const PageLoader = () => (
   <div className="flex items-center justify-center min-h-screen">
     <div className="text-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-[#166534] mx-auto mb-4"></div>
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand mx-auto mb-4"></div>
       <p className="text-gray-600">Loading...</p>
     </div>
   </div>
@@ -86,15 +98,32 @@ const WorkspaceRoot = () => {
   return <MainLayout />;
 };
 
+const FeatureRoute = ({ featureKey, children, fallback = '/dashboard' }) => {
+  const { hasFeature } = useAuth();
+  if (typeof hasFeature === 'function' && !hasFeature(featureKey)) {
+    return <Navigate to={fallback} replace />;
+  }
+  return children;
+};
+
+/** Backend Sabito SSO redirects here with ?token=JWT&success=true — must not hit * → /dashboard (strips query). */
+const SsoCallbackScreen = () => (
+  <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6">
+    <div className="h-10 w-10 animate-spin rounded-full border-2 border-brand border-t-transparent" />
+    <p className="text-sm text-muted-foreground">Signing you in…</p>
+  </div>
+);
+
 // SSO Handler Component
 const SSOHandler = () => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { pathname } = useLocation();
   const { sabitoSSO, loginWithToken } = useAuth();
 
   useEffect(() => {
     const sabitoToken = searchParams.get('sabitoToken');
-    const nexproToken = searchParams.get('token'); // From GET /sso callback
-    
+    const nexproToken = searchParams.get('token'); // JWT from GET /sso → /sso-callback only
+
     if (sabitoToken) {
       // Remove token from URL
       searchParams.delete('sabitoToken');
@@ -112,13 +141,16 @@ const SSOHandler = () => {
           // Redirect to login page on error
           window.location.href = '/login?error=sso_failed';
         });
-    } else if (nexproToken && searchParams.get('success') === 'true') {
-      // Handle GET /sso callback with ShopWISE token
+    } else if (
+      pathname === '/sso-callback' &&
+      nexproToken &&
+      searchParams.get('success') === 'true'
+    ) {
+      // Handle GET /sso callback with ABS token (only on this path — not /signup?token= invite links)
       searchParams.delete('token');
       searchParams.delete('success');
       setSearchParams(searchParams, { replace: true });
-      
-      // Store token and login
+
       localStorage.setItem('token', nexproToken);
       loginWithToken(nexproToken)
         .then(() => {
@@ -129,7 +161,7 @@ const SSOHandler = () => {
           window.location.href = '/login?error=sso_failed';
         });
     }
-  }, [searchParams, sabitoSSO, loginWithToken, setSearchParams]);
+  }, [pathname, searchParams, sabitoSSO, loginWithToken, setSearchParams]);
 
   return null;
 };
@@ -163,6 +195,9 @@ function AppContent() {
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
           <Route path="/pay-invoice/:token" element={<PayInvoice />} />
+            <Route path="/view-quote/:token" element={<ViewQuote />} />
+            <Route path="/track-job/:token" element={<TrackJob />} />
+            <Route path="/track/:tenantSlug" element={<TenantTrackLookup />} />
           <Route
             path="/onboarding"
             element={
@@ -182,40 +217,45 @@ function AppContent() {
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
             <Route path="dashboard" element={<Dashboard />} />
-            <Route path="workspace" element={<Workspace />} />
-            <Route path="customers" element={<Customers />} />
-            <Route path="vendors" element={<Vendors />} />
-            <Route path="jobs" element={<Jobs />} />
-            <Route path="sales" element={<Sales />} />
-            <Route path="orders" element={<Orders />} />
-            <Route path="quotes" element={<Quotes />} />
-            <Route path="invoices" element={<Invoices />} />
-            <Route path="expenses" element={<Expenses />} />
-            <Route path="pricing" element={<Pricing />} />
-            <Route path="leads" element={<Leads />} />
+            <Route path="workspace" element={<Navigate to="/dashboard" replace />} />
+            <Route path="tasks" element={<Tasks />} />
+            <Route path="customers" element={<FeatureRoute featureKey="crm"><Customers /></FeatureRoute>} />
+            <Route path="marketing" element={<FeatureRoute featureKey="marketing"><RequireWorkspaceManager><Marketing /></RequireWorkspaceManager></FeatureRoute>} />
+            <Route path="automations" element={<FeatureRoute featureKey="automations"><RequireWorkspaceManager><Automations /></RequireWorkspaceManager></FeatureRoute>} />
+            <Route path="ask-ai" element={<RequireWorkspaceManager><AskAI /></RequireWorkspaceManager>} />
+            <Route path="vendors" element={<FeatureRoute featureKey="crm"><Vendors /></FeatureRoute>} />
+            <Route path="jobs" element={<FeatureRoute featureKey="jobAutomation"><Jobs /></FeatureRoute>} />
+            <Route path="deliveries" element={<FeatureRoute featureKey="deliveries"><Deliveries /></FeatureRoute>} />
+            <Route path="sales" element={<FeatureRoute featureKey="paymentsExpenses"><Sales /></FeatureRoute>} />
+            <Route path="orders" element={<FeatureRoute featureKey="orders"><Orders /></FeatureRoute>} />
+            <Route path="quotes" element={<FeatureRoute featureKey="quoteAutomation"><Quotes /></FeatureRoute>} />
+            <Route path="invoices" element={<FeatureRoute featureKey="invoices"><Invoices /></FeatureRoute>} />
+            <Route path="expenses" element={<FeatureRoute featureKey="expenses"><Expenses /></FeatureRoute>} />
+            <Route path="pricing" element={<FeatureRoute featureKey="pricingTemplates"><Pricing /></FeatureRoute>} />
+            <Route path="leads" element={<FeatureRoute featureKey="leadPipeline"><Leads /></FeatureRoute>} />
             <Route path="reports">
-              <Route index element={<Navigate to="/reports/overview" replace />} />
-              <Route path="overview" element={<Reports />} />
-              <Route path="smart-report" element={<Reports />} />
-              <Route path="compliance" element={<Reports />} />
+              <Route index element={<FeatureRoute featureKey="reports"><Navigate to="/reports/overview" replace /></FeatureRoute>} />
+              <Route path="overview" element={<FeatureRoute featureKey="reports"><RequireWorkspaceManager><Reports /></RequireWorkspaceManager></FeatureRoute>} />
+              <Route path="smart-report" element={<FeatureRoute featureKey="reports"><RequireWorkspaceManager><Reports /></RequireWorkspaceManager></FeatureRoute>} />
+              <Route path="compliance" element={<FeatureRoute featureKey="reports"><RequireWorkspaceManager><Reports /></RequireWorkspaceManager></FeatureRoute>} />
             </Route>
-            <Route path="materials" element={<Materials />} />
+            <Route path="export-data" element={<FeatureRoute featureKey="advancedReporting"><RequireWorkspaceManager><ExportData /></RequireWorkspaceManager></FeatureRoute>} />
+            <Route path="materials" element={<FeatureRoute featureKey="materials"><Materials /></FeatureRoute>} />
             <Route path="inventory" element={<Navigate to="/materials" replace />} />
             <Route path="assets" element={<Navigate to="/materials" replace />} />
-            <Route path="equipment" element={<Equipment />} />
-            <Route path="employees" element={<Employees />} />
-            <Route path="payroll" element={<Payroll />} />
-            <Route path="accounting" element={<Accounting />} />
-            <Route path="shops" element={<Shops />} />
-            <Route path="pharmacies" element={<Pharmacies />} />
-            <Route path="products" element={<Products />} />
-            <Route path="drugs" element={<Drugs />} />
-            <Route path="prescriptions" element={<Prescriptions />} />
-            <Route path="foot-traffic" element={<FootTraffic />} />
-            <Route path="users" element={<Users />} />
+            <Route path="equipment" element={<FeatureRoute featureKey="materials"><Equipment /></FeatureRoute>} />
+            <Route path="employees" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Employees /></RequireWorkspaceManager></FeatureRoute>} />
+            <Route path="payroll" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Payroll /></RequireWorkspaceManager></FeatureRoute>} />
+            <Route path="accounting" element={<FeatureRoute featureKey="accounting"><RequireWorkspaceManager><Accounting /></RequireWorkspaceManager></FeatureRoute>} />
+            <Route path="shops" element={SHOW_SHOPS ? <FeatureRoute featureKey="shopsModule"><Shops /></FeatureRoute> : <Navigate to="/dashboard" replace />} />
+            <Route path="pharmacies" element={<FeatureRoute featureKey="pharmacyOps"><Pharmacies /></FeatureRoute>} />
+            <Route path="products" element={<FeatureRoute featureKey="products"><Products /></FeatureRoute>} />
+            <Route path="drugs" element={<FeatureRoute featureKey="pharmacyOps"><Drugs /></FeatureRoute>} />
+            <Route path="prescriptions" element={<FeatureRoute featureKey="pharmacyOps"><Prescriptions /></FeatureRoute>} />
+            <Route path="users" element={<FeatureRoute featureKey="roleManagement"><RequireWorkspaceManager><Users /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="profile" element={<Profile />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="checkout" element={<Checkout />} />
+            <Route path="settings" element={<RequireWorkspaceManager><Settings /></RequireWorkspaceManager>} />
+            <Route path="checkout" element={<RequireWorkspaceManager><Checkout /></RequireWorkspaceManager>} />
           </Route>
 
           <Route
@@ -241,6 +281,8 @@ function AppContent() {
             <Route path="roles" element={<Navigate to="/admin/settings?tab=roles" replace />} />
             <Route path="reports" element={<AdminReports />} />
             <Route path="health" element={<AdminHealth />} />
+            <Route path="workspace" element={<Navigate to="/admin/tasks" replace />} />
+            <Route path="tasks" element={<Tasks />} />
             <Route path="settings" element={<AdminSettings />} />
           </Route>
 
@@ -252,23 +294,40 @@ function AppContent() {
   );
 }
 
-const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+function GoogleAuthWrapper({ children }) {
+  const { googleClientId } = usePublicConfig();
+  useEffect(() => {
+    const masked = googleClientId ? `${googleClientId.substring(0, 15)}...` : '(empty)';
+    console.log('[App] GoogleOAuthProvider clientId:', masked);
+  }, [googleClientId]);
+  // Do not use key={googleClientId} here — it remounts the entire subtree (Router, auth), causing full-screen flashes.
+  return (
+    <GoogleOAuthProvider clientId={googleClientId || ''}>
+      {children}
+    </GoogleOAuthProvider>
+  );
+}
 
 function App() {
   return (
     <ErrorBoundary>
-      <GoogleOAuthProvider clientId={googleClientId}>
-        <ThemeProvider>
-          <PWAInstallProvider>
-            <AuthProvider>
-              <HintModeProvider>
-                <AppContent />
-                <PWAInstallBanner />
-              </HintModeProvider>
-            </AuthProvider>
-          </PWAInstallProvider>
-        </ThemeProvider>
-      </GoogleOAuthProvider>
+      <PublicConfigProvider>
+        <GoogleAuthWrapper>
+          <ThemeProvider>
+            <PWAInstallProvider>
+              <AuthProvider>
+                <BrandingProvider>
+                  <HintModeProvider>
+                    <AppContent />
+                    <PWAInstallBanner />
+                    <PWAUpdatePrompt />
+                  </HintModeProvider>
+                </BrandingProvider>
+              </AuthProvider>
+            </PWAInstallProvider>
+          </ThemeProvider>
+        </GoogleAuthWrapper>
+      </PublicConfigProvider>
     </ErrorBoundary>
   );
 }

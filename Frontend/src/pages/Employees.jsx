@@ -29,6 +29,7 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import employeeService from '../services/employeeService';
 import customDropdownService from '../services/customDropdownService';
 import { showSuccess, showError, showWarning } from '../utils/toast';
+import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 import ActionColumn from '../components/ActionColumn';
 import StatusChip from '../components/StatusChip';
 import TableSkeleton from '../components/TableSkeleton';
@@ -464,22 +465,7 @@ const EmployeeForm = ({ currentStep, form, savingDepartment, setSavingDepartment
             name="department"
             render={({ field }) => (
               <FormItem>
-                <div className="flex items-center justify-between">
-                  <FormLabel>Department (optional)</FormLabel>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-auto py-1 px-2 text-xs text-muted-foreground hover:text-foreground"
-                    onClick={() => {
-                      setShowDepartmentCreateInput(true);
-                      setShowJobTitleCreateInput(false);
-                    }}
-                  >
-                    <Plus className="h-3 w-3 mr-1" />
-                    Add department
-                  </Button>
-                </div>
+                <FormLabel>Department (optional)</FormLabel>
                 <Select value={field.value} onValueChange={(value) => {
                   if (value === '__CREATE__') {
                     handleDepartmentChange('__CREATE__');
@@ -714,11 +700,8 @@ const EmployeeForm = ({ currentStep, form, savingDepartment, setSavingDepartment
                       min={0}
                       step="0.01"
                       placeholder="0.00"
-                      value={field.value || ''}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        field.onChange(value === '' ? 0 : parseFloat(value) || 0);
-                      }}
+                      value={numberInputValue(field.value)}
+                      onChange={(e) => handleNumberChange(e, field.onChange)}
                     />
                   </div>
                 </FormControl>
@@ -935,7 +918,7 @@ const Employees = () => {
     hireDate: z.any().optional(),
     endDate: z.any().optional(),
     salaryType: z.enum(['salary', 'hourly', 'commission']).default('salary'),
-    salaryAmount: z.number().min(0, 'Enter a base amount').default(0),
+    salaryAmount: numberOrEmptySchema(z),
     payFrequency: z.enum(['monthly', 'biweekly', 'weekly', 'daily']).default('monthly'),
     bankName: z.string().optional(),
     customBankName: z.string().optional(),
@@ -1313,6 +1296,7 @@ const Employees = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record?.status} />
     },
     {
@@ -1681,7 +1665,7 @@ const Employees = () => {
           welcomeMessage="Employees"
           subText="Manage your team, payroll readiness, and HR records."
         />
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="outline" onClick={() => setFilterDrawerOpen(true)} size={isMobile ? "icon" : "default"}>
@@ -1714,9 +1698,9 @@ const Employees = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button onClick={handleOpenCreate} size={isMobile ? "icon" : "default"}>
+              <Button onClick={handleOpenCreate} className="flex-1 min-w-0 md:flex-none">
                 <Plus className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">New Employee</span>}
+                <span className="ml-2">New Employee</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>Add a new employee</TooltipContent>
@@ -1785,7 +1769,11 @@ const Employees = () => {
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent
+          side="right"
+          className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto"
+          style={{ top: 8, bottom: 8, right: 8, height: 'calc(100dvh - 16px)', borderRadius: 8 }}
+        >
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Employees</SheetTitle>
           </SheetHeader>

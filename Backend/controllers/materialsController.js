@@ -11,6 +11,7 @@ const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
+const activityLogger = require('../services/activityLogger');
 
 const logMaterialsDebug = (...args) => {
   if (config.nodeEnv === 'development') {
@@ -245,6 +246,36 @@ exports.getMaterialsItems = async (req, res, next) => {
       },
       data: rows
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Export materials items to CSV
+// @route   GET /api/materials/items/export
+// @access  Private (admin, manager)
+exports.exportMaterialsItems = async (req, res, next) => {
+  try {
+    const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
+    const where = applyTenantFilter(req.tenantId, {});
+
+    const items = await MaterialItem.findAll({
+      where,
+      order: [['name', 'ASC']],
+      include: buildItemInclude(),
+      raw: false,
+    });
+    const rows = items.map((item) => {
+      const plain = item.get({ plain: true });
+      return { ...plain, category: plain.category || {}, preferredVendor: plain.preferredVendor || {} };
+    });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No materials to export' });
+    }
+
+    const filename = `materials_${new Date().toISOString().split('T')[0]}`;
+    sendCSV(res, rows, `${filename}.csv`, COLUMN_DEFINITIONS.inventory);
   } catch (error) {
     next(error);
   }
@@ -677,6 +708,19 @@ exports.adjustMaterialItem = async (req, res, next) => {
       include: buildItemInclude()
     });
 
+    const reorderLevel = parseDecimal(updatedItem.reorderLevel);
+    if (movement.newQuantity <= reorderLevel && movement.previousQuantity > reorderLevel) {
+      try {
+        await activityLogger.logLowStock(
+          { id: refreshedItem.id, name: refreshedItem.name, quantityOnHand: refreshedItem.quantityOnHand, reorderLevel: refreshedItem.reorderLevel },
+          req.tenantId,
+          req.user?.id
+        );
+      } catch (logErr) {
+        console.error('[Materials] logLowStock failed:', logErr?.message);
+      }
+    }
+
     res.status(200).json({
       success: true,
       message: 'Material adjustment recorded',
@@ -726,6 +770,19 @@ exports.recordUsageForJob = async (req, res, next) => {
       userId: req.user?.id
     });
 
+    const reorderLevel = parseDecimal(updatedItem.reorderLevel);
+    if (movement.newQuantity <= reorderLevel && movement.previousQuantity > reorderLevel) {
+      try {
+        await activityLogger.logLowStock(
+          { id: updatedItem.id, name: updatedItem.name, quantityOnHand: updatedItem.quantityOnHand, reorderLevel: updatedItem.reorderLevel },
+          req.tenantId,
+          req.user?.id
+        );
+      } catch (logErr) {
+        console.error('[Materials] logLowStock failed:', logErr?.message);
+      }
+    }
+
     const refreshedItem = await MaterialItem.findOne({
       where: applyTenantFilter(req.tenantId, { id: updatedItem.id }),
       include: buildItemInclude()
@@ -760,7 +817,123 @@ exports.deleteMaterialItem = async (req, res, next) => {
   }
 };
 
+// @desc    Bulk create materials
+// @route   POST /api/materials/items/bulk
+// @access  Private (admin, manager)
+exports.bulkCreateMaterials = async (req, res, next) => {
+  try {
+    const { materials } = req.body;
+    const { bulkCreate } = require('../utils/bulkOperations');
 
+    if (!Array.isArray(materials) || materials.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of materials'
+      });
+    }
 
+    const result = await bulkCreate(MaterialItem, materials, {
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      continueOnError: true,
+      maxBatchSize: 100,
+    });
+
+    res.status(result.success ? 201 : 207).json({
+      success: result.success,
+      ...result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get CSV template for materials bulk import
+// @route   GET /api/materials/items/import/template
+// @access  Private (admin, manager)
+exports.getMaterialsImportTemplate = (req, res) => {
+  const { getTemplateCSV } = require('../utils/importParse');
+  const csv = getTemplateCSV('materials');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="materials_import_template.csv"');
+  res.send(csv);
+};
+
+// @desc    Bulk import materials from CSV/Excel
+// @route   POST /api/materials/items/import
+// @access  Private (admin, manager)
+exports.importMaterials = async (req, res, next) => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+    const { parseImportFile } = require('../utils/importParse');
+    const { bulkCreate } = require('../utils/bulkOperations');
+    const mime = req.file.mimetype || '';
+    const ext = (req.file.originalname || '').toLowerCase().slice(-5);
+    const { mapped, errors: parseErrors } = await parseImportFile(
+      req.file.buffer,
+      mime || ext,
+      'materials'
+    );
+
+    if (parseErrors.length > 0 && mapped.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid file or rows',
+        errors: parseErrors,
+      });
+    }
+
+    const categoryNames = [...new Set(mapped.map((m) => m.categoryName).filter(Boolean))];
+    const categories =
+      categoryNames.length > 0
+        ? await MaterialCategory.findAll({
+            where: applyTenantFilter(req.tenantId, { name: { [Op.in]: categoryNames } }),
+            attributes: ['id', 'name'],
+            raw: true,
+          })
+        : [];
+    const categoryByName = Object.fromEntries(categories.map((c) => [c.name, c.id]));
+
+    const materials = mapped.map((m) => {
+      const rec = {
+        name: m.name,
+        sku: m.sku || null,
+        description: m.description || null,
+        categoryId: m.categoryName ? categoryByName[m.categoryName] || null : null,
+        unit: (m.unit && String(m.unit).trim()) || 'pcs',
+        quantityOnHand: Number(m.quantityOnHand) ?? 0,
+        reorderLevel: Number(m.reorderLevel) ?? 0,
+        unitCost: Number(m.unitCost) ?? 0,
+        location: m.location || null,
+        isActive: m.isActive !== false,
+      };
+      return sanitizePayload(rec);
+    });
+
+    const result = await bulkCreate(MaterialItem, materials, {
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      continueOnError: true,
+      maxBatchSize: 100,
+    });
+
+    const allErrors = [
+      ...parseErrors.map((e) => ({ row: e.row, message: e.message })),
+      ...result.errors.map((e) => ({ row: e.index + 2, message: e.error })),
+    ];
+    res.status(result.success ? 201 : 207).json({
+      success: result.success,
+      successCount: result.successCount,
+      errorCount: allErrors.length,
+      totalProcessed: mapped.length,
+      created: result.created,
+      errors: allErrors.length ? allErrors : result.errors,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
 

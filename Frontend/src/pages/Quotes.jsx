@@ -18,14 +18,20 @@ import {
   Filter,
   RefreshCw,
   Receipt,
-  MessageSquare
+  MessageSquare,
+  Send,
+  Pencil,
+  Trash2
 } from 'lucide-react';
 import { generatePDF } from '../utils/pdfUtils';
 import dayjs from 'dayjs';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import quoteService from '../services/quoteService';
+import offlineQueueService from '../services/offlineQueueService';
 import customerService from '../services/customerService';
+import productService from '../services/productService';
 import settingsService from '../services/settingsService';
+import userService from '../services/userService';
 import { useQuery } from '@tanstack/react-query';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -39,6 +45,13 @@ import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError } from '../utils/toast';
+import {
+  numberInputValue,
+  handleNumberChange,
+  handleIntegerChange,
+  numberOrEmptySchema,
+  integerOrEmptySchema,
+} from '../utils/formUtils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -94,7 +107,10 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import { Switch } from '@/components/ui/switch';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
+
+const DEFAULT_QUOTE_SEND_MESSAGE = 'Please find your quote below. Click the button to view the full details and accept when you are ready.';
 
 const statusOptions = [
   { value: 'draft', label: 'Draft' },
@@ -105,10 +121,11 @@ const statusOptions = [
 ];
 
 const quoteItemSchema = z.object({
+  productId: z.string().optional().or(z.literal('')),
   description: z.string().min(1, 'Description is required'),
-  quantity: z.number().min(1, 'Quantity must be at least 1'),
-  unitPrice: z.number().min(0, 'Unit price must be at least 0'),
-  discountAmount: z.number().min(0, 'Discount must be at least 0').default(0),
+  quantity: integerOrEmptySchema(z, 1).refine((v) => v >= 1, 'Quantity must be at least 1'),
+  unitPrice: numberOrEmptySchema(z),
+  discountAmount: numberOrEmptySchema(z),
 });
 
 const quickCustomerSchema = z.object({
@@ -126,6 +143,23 @@ const quoteSchema = z.object({
   validUntil: z.date().optional().nullable(),
   notes: z.string().optional(),
   items: z.array(quoteItemSchema).min(1, 'At least one item is required'),
+  autoSendToCustomer: z.boolean().optional(),
+  sendMessage: z.string().optional(),
+  taxRate: z
+    .any()
+    .optional()
+    .transform((v) => {
+      if (v === '' || v === undefined || v === null) return undefined;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    })
+    .refine((v) => v === undefined || (v >= 0 && v <= 100), { message: 'Tax rate must be between 0 and 100' }),
+});
+
+const convertToJobSchema = z.object({
+  startDate: z.date().optional().nullable(),
+  dueDate: z.date().optional().nullable(),
+  assignedTo: z.string().optional().nullable(),
 });
 
 const Quotes = () => {
@@ -156,6 +190,9 @@ const Quotes = () => {
   const [loadingActivities, setLoadingActivities] = useState(false);
   const [customerAddModalOpen, setCustomerAddModalOpen] = useState(false);
   const [addingCustomer, setAddingCustomer] = useState(false);
+  const [convertJobModalOpen, setConvertJobModalOpen] = useState(false);
+  const [quoteToConvert, setQuoteToConvert] = useState(null);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
 
   // Organization branding for printable quotes
   const { data: organizationData } = useQuery({
@@ -166,6 +203,24 @@ const Quotes = () => {
 
   const organization = organizationData?.data?.data || organizationData?.data || {};
 
+  const { data: teamMembers = [] } = useQuery({
+    queryKey: ['teamMembers', 'active'],
+    queryFn: async () => {
+      const response = await userService.getAll({ limit: 100, isActive: 'true' });
+      const data = response?.data || response;
+      return data?.data || data || [];
+    },
+    staleTime: 5 * 60 * 1000,
+    cacheTime: 10 * 60 * 1000,
+  });
+
+  const { data: notificationChannels } = useQuery({
+    queryKey: ['settings', 'notification-channels'],
+    queryFn: () => settingsService.getNotificationChannels(),
+    enabled: quoteModalVisible && !editingQuote,
+    staleTime: 60 * 1000,
+  });
+
   const form = useForm({
     resolver: zodResolver(quoteSchema),
     defaultValues: {
@@ -175,7 +230,10 @@ const Quotes = () => {
       status: 'draft',
       validUntil: null,
       notes: '',
-      items: [{ description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+      items: [{ productId: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+      autoSendToCustomer: false,
+      sendMessage: DEFAULT_QUOTE_SEND_MESSAGE,
+      taxRate: '',
     },
   });
 
@@ -187,6 +245,15 @@ const Quotes = () => {
   const customerForm = useForm({
     resolver: zodResolver(quickCustomerSchema),
     defaultValues: { name: '', company: '', email: '', phone: '' },
+  });
+
+  const convertJobForm = useForm({
+    resolver: zodResolver(convertToJobSchema),
+    defaultValues: {
+      startDate: null,
+      dueDate: null,
+      assignedTo: null,
+    },
   });
 
   const fetchCustomers = useCallback(async () => {
@@ -267,7 +334,8 @@ const Quotes = () => {
         status: 'draft',
         validUntil: null,
         notes: '',
-        items: [{ description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+        items: [{ productId: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+        taxRate: '',
       });
       setQuoteModalVisible(true);
       setSearchParams((prev) => {
@@ -374,6 +442,26 @@ const Quotes = () => {
     }
   };
 
+  const nextStatusMap = { draft: 'sent', sent: 'accepted' };
+  const nextStatusLabel = (status) => (status === 'sent' ? 'Sent' : status === 'accepted' ? 'Accepted' : status);
+
+  const handleMarkStatus = async (quote, newStatus) => {
+    setUpdatingStatus(true);
+    try {
+      await quoteService.updateStatus(quote.id, newStatus);
+      showSuccess(`Quote marked as ${nextStatusLabel(newStatus)}`);
+      fetchQuotes();
+      if (viewingQuote?.id === quote.id) {
+        const res = await quoteService.getById(quote.id);
+        setViewingQuote(res?.data ?? res);
+      }
+    } catch (err) {
+      showError(err, 'Failed to update status');
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
   const handleView = (quote) => {
     setViewingQuote(quote);
     setDrawerVisible(true);
@@ -393,7 +481,10 @@ const Quotes = () => {
       status: 'draft',
       validUntil: null,
       notes: '',
-      items: [{ description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+      items: [{ productId: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
+      autoSendToCustomer: false,
+      sendMessage: DEFAULT_QUOTE_SEND_MESSAGE,
+      taxRate: '',
     });
     setEditingQuote(null);
     setQuoteModalVisible(true);
@@ -429,11 +520,16 @@ const Quotes = () => {
       validUntil: details.validUntil ? new Date(details.validUntil) : null,
       notes: details.notes || '',
       items: (details.items || []).map((item) => ({
+        productId: item.productId || '',
         description: item.description,
         quantity: item.quantity,
         unitPrice: parseFloat(item.unitPrice),
         discountAmount: parseFloat(item.discountAmount || 0)
-      }))
+      })),
+      taxRate:
+        details.taxRate !== undefined && details.taxRate !== null && details.taxRate !== ''
+          ? parseFloat(details.taxRate)
+          : ''
     });
     setQuoteModalVisible(true);
   };
@@ -446,8 +542,17 @@ const Quotes = () => {
   const handleDeleteConfirm = async () => {
     if (!deleteQuoteId) return;
     try {
-      await quoteService.delete(deleteQuoteId);
-      showSuccess('Quote deleted successfully');
+      if (!navigator.onLine) {
+        await offlineQueueService.queueAction(
+          offlineQueueService.OFFLINE_ACTION_TYPES.QUOTE,
+          'delete',
+          { id: deleteQuoteId }
+        );
+        showSuccess('Saved offline. Will sync when connected.');
+      } else {
+        await quoteService.delete(deleteQuoteId);
+        showSuccess('Quote deleted successfully');
+      }
       fetchQuotes();
       if (viewingQuote?.id === deleteQuoteId) {
         handleCloseDrawer();
@@ -468,20 +573,76 @@ const Quotes = () => {
       validUntil: values.validUntil ? dayjs(values.validUntil).format('YYYY-MM-DD') : null,
       notes: values.notes,
       items: (values.items || []).map((item) => ({
+        ...(item.productId && { productId: item.productId }),
         description: item.description,
         quantity: Number(item.quantity || 0),
         unitPrice: Number(item.unitPrice || 0),
         discountAmount: Number(item.discountAmount || 0)
       }))
     };
+    if (organization.tax?.enabled && values.taxRate !== undefined && values.taxRate !== '') {
+      payload.taxRate = Number(values.taxRate);
+    }
+    if (!editingQuote) {
+      payload.autoSendToCustomer = values.autoSendToCustomer === true;
+      if (values.sendMessage && String(values.sendMessage).trim()) {
+        payload.sendMessage = String(values.sendMessage).trim();
+      }
+      if (payload.autoSendToCustomer) {
+        try {
+          const channels = await settingsService.getNotificationChannels();
+          const data = channels?.data ?? channels;
+          const hasChannel = !!(data?.email || data?.whatsapp || data?.sms);
+          if (!hasChannel) {
+            showError('Configure at least one of Email, WhatsApp, or SMS in Settings to auto-send quotes to customers.');
+            return;
+          }
+          const selectedCustomer = customers.find((c) => c.id === values.customerId);
+          const customerHasEmail = selectedCustomer?.email?.trim?.();
+          const customerHasPhone = selectedCustomer?.phone?.trim?.();
+          if (data?.email && (!selectedCustomer || !customerHasEmail)) {
+            showError('Selected customer has no email address. Add email in Customers to send the quote via email, or turn off auto-send.');
+            return;
+          }
+          if ((data?.whatsapp || data?.sms) && (!selectedCustomer || !customerHasPhone)) {
+            showError('Selected customer has no phone number. Add phone in Customers to send the quote via WhatsApp or SMS, or turn off auto-send.');
+            return;
+          }
+        } catch (err) {
+          showError(err, 'Could not check notification settings.');
+          return;
+        }
+      }
+    }
 
     try {
-      if (editingQuote) {
+      if (!navigator.onLine) {
+        const action = editingQuote ? 'update' : 'create';
+        const data = editingQuote ? { ...payload, id: editingQuote.id } : payload;
+        await offlineQueueService.queueAction(
+          offlineQueueService.OFFLINE_ACTION_TYPES.QUOTE,
+          action,
+          data
+        );
+        showSuccess('Saved offline. Will sync when connected.');
+      } else if (editingQuote) {
         await quoteService.update(editingQuote.id, payload);
         showSuccess('Quote updated successfully');
       } else {
-        await quoteService.create(payload);
+        const createRes = await quoteService.create(payload);
         showSuccess('Quote created successfully');
+        const delivery = createRes?.data?.delivery;
+        if (delivery) {
+          if (delivery.emailSent === false && delivery.emailError) {
+            showError(delivery.emailError, 'Quote created but email could not be sent');
+          }
+          if (delivery.whatsappSent === false && delivery.whatsappError) {
+            showError(delivery.whatsappError, 'Quote created but WhatsApp could not be sent');
+          }
+          if (delivery.smsSent === false && delivery.smsError) {
+            showError(delivery.smsError, 'Quote created but SMS could not be sent');
+          }
+        }
       }
       setQuoteModalVisible(false);
       form.reset();
@@ -496,14 +657,48 @@ const Quotes = () => {
   const businessType = activeTenant?.businessType || 'printing_press';
   const isShop = businessType === 'shop';
 
-  const handleConvertToJob = async (quote) => {
+  const { data: productsData } = useQuery({
+    queryKey: ['products', 'list', activeTenant?.id],
+    queryFn: async () => {
+      const res = await productService.getProducts({ limit: 200 });
+      return res?.data ?? res;
+    },
+    enabled: isShop && !!activeTenant?.id,
+    staleTime: 2 * 60 * 1000,
+  });
+  const products = useMemo(() => {
+    const d = productsData?.data ?? productsData;
+    return Array.isArray(d) ? d : [];
+  }, [productsData]);
+
+  const openConvertToJobModal = useCallback((quote) => {
+    if (!quote) return;
+    setQuoteToConvert(quote);
+    convertJobForm.reset({
+      startDate: null,
+      dueDate: null,
+      assignedTo: null,
+    });
+    setConvertJobModalOpen(true);
+  }, [convertJobForm]);
+
+  const handleConvertToJob = useCallback(async (values) => {
+    if (!quoteToConvert) return;
     setConverting(true);
     try {
-      const response = await quoteService.convertToJob(quote.id);
+      const payload = {
+        assignedTo: values.assignedTo || null,
+        startDate: values.startDate ? dayjs(values.startDate).format('YYYY-MM-DD') : null,
+        dueDate: values.dueDate ? dayjs(values.dueDate).format('YYYY-MM-DD') : null,
+      };
+      const response = await quoteService.convertToJob(quoteToConvert.id, payload);
       const data = response?.data ?? response;
       const job = data?.data?.job ?? data?.job ?? data;
       showSuccess(`Quote converted to job ${job?.jobNumber || ''}`.trim());
       fetchQuotes();
+      setConvertJobModalOpen(false);
+      setQuoteToConvert(null);
+      convertJobForm.reset();
       if (job) {
         navigate('/jobs');
       }
@@ -513,7 +708,7 @@ const Quotes = () => {
     } finally {
       setConverting(false);
     }
-  };
+  }, [quoteToConvert, fetchQuotes, navigate, convertJobForm]);
 
   const handleConvertToSale = async (quote) => {
     setConverting(true);
@@ -614,6 +809,7 @@ const Quotes = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record?.status} />
     },
     {
@@ -633,35 +829,11 @@ const Quotes = () => {
         <ActionColumn
           record={record}
           onView={handleView}
-          extraActions={[
-            record.status !== 'accepted' && record.status !== 'declined' && record.status !== 'expired' && !isShop && {
-              key: 'convert-job',
-              label: 'Convert to Job',
-              variant: 'default',
-              icon: <FilePlus className="h-4 w-4" />,
-              onClick: () => handleConvertToJob(record),
-              disabled: converting
-            },
-            record.status !== 'accepted' && record.status !== 'declined' && record.status !== 'expired' && isShop && {
-              key: 'convert-sale',
-              label: 'Convert to Sale',
-              variant: 'default',
-              icon: <FilePlus className="h-4 w-4" />,
-              onClick: () => handleConvertToSale(record),
-              disabled: converting
-            },
-            {
-              key: 'edit',
-              label: 'Edit',
-              variant: 'secondary',
-              icon: <FileText className="h-4 w-4" />,
-              onClick: () => handleEditQuote(record)
-            }
-          ].filter(Boolean)}
+          extraActions={[]}
         />
       )
     }
-  ], [converting, handleView, handleConvertToJob, handleConvertToSale, handleEditQuote, isShop]);
+  ], [handleView]);
 
   const handleClearFilters = () => {
     setFilters({
@@ -697,6 +869,18 @@ const Quotes = () => {
       label: 'Valid Until',
       value: viewingQuote.validUntil ? dayjs(viewingQuote.validUntil).format('MMM DD, YYYY') : '—'
     },
+    ...(parseFloat(viewingQuote.taxAmount || 0) > 0
+      ? [
+          {
+            label: 'Tax rate',
+            value: `${parseFloat(viewingQuote.taxRate || 0).toFixed(2)}%`
+          },
+          {
+            label: organization.tax?.displayLabel || 'Tax',
+            value: `₵ ${parseFloat(viewingQuote.taxAmount || 0).toFixed(2)}`
+          }
+        ]
+      : []),
     {
       label: 'Total Amount',
       value: (
@@ -713,7 +897,7 @@ const Quotes = () => {
     },
     viewingQuote.description && { label: 'Description', value: viewingQuote.description },
     viewingQuote.notes && { label: 'Notes', value: viewingQuote.notes }
-  ].filter(Boolean) : [], [viewingQuote]);
+  ].filter(Boolean) : [], [viewingQuote, organization]);
 
   return (
     <div className="space-y-4 md:space-y-6">
@@ -722,7 +906,7 @@ const Quotes = () => {
           welcomeMessage="Quotes"
           subText="Create and manage quotes for your customers."
         />
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -752,9 +936,9 @@ const Quotes = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button onClick={handleAddQuote} size={isMobile ? "icon" : "default"}>
+              <Button onClick={handleAddQuote} className="flex-1 min-w-0 md:flex-none min-h-[44px] touch-manipulation">
                 <Plus className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">New Quote</span>}
+                <span className="ml-2">New Quote</span>
               </Button>
             </TooltipTrigger>
             <TooltipContent>Create a new quote</TooltipContent>
@@ -832,7 +1016,11 @@ const Quotes = () => {
 
       {/* Filter Drawer */}
       <Sheet open={filterDrawerOpen} onOpenChange={setFilterDrawerOpen}>
-        <SheetContent side="right" className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto" style={{ top: 8, bottom: 8, right: 8, height: 'calc(100vh - 16px)', borderRadius: 8 }}>
+        <SheetContent
+          side="right"
+          className="w-full sm:w-[400px] md:w-[540px] overflow-y-auto"
+          style={{ top: 8, bottom: 8, right: 8, height: 'calc(100dvh - 16px)', borderRadius: 8 }}
+        >
           <SheetHeader className="pb-4 border-b">
             <SheetTitle>Filter Quotes</SheetTitle>
           </SheetHeader>
@@ -891,30 +1079,24 @@ const Quotes = () => {
         onClose={handleCloseDrawer}
         title="Quote Details"
         width={720}
-        onPrint={viewingQuote ? () => openPrintableQuote(viewingQuote) : null}
-        onEdit={viewingQuote ? () => handleEditQuote(viewingQuote) : null}
-        onDelete={viewingQuote ? () => handleDeleteQuote(viewingQuote) : null}
-        deleteConfirmTitle="Delete this quote?"
-        deleteConfirmText="This can't be undone."
-        deleteButtonLabel="Delete"
-        extraActions={viewingQuote && viewingQuote.status !== 'accepted' && viewingQuote.status !== 'declined' && viewingQuote.status !== 'expired' ? [
-          !isShop && {
-            key: 'convert-job',
-            label: 'Convert to Job',
-            variant: 'default',
-            icon: <FilePlus className="h-4 w-4" />,
-            onClick: () => handleConvertToJob(viewingQuote),
-            disabled: converting
-          },
-          isShop && {
-            key: 'convert-sale',
-            label: 'Convert to Sale',
-            variant: 'default',
-            icon: <FilePlus className="h-4 w-4" />,
-            onClick: () => handleConvertToSale(viewingQuote),
-            disabled: converting
-          }
-        ].filter(Boolean) : []}
+        primaryAction={viewingQuote ? {
+          label: isShop ? 'Convert to Sale' : 'Convert to Job',
+          icon: <FilePlus className="h-4 w-4" />,
+          onClick: () => (isShop ? handleConvertToSale(viewingQuote) : openConvertToJobModal(viewingQuote)),
+          disabled: converting || ['accepted', 'declined', 'expired'].includes(viewingQuote.status)
+        } : null}
+        moreMenuItems={viewingQuote ? [
+          { key: 'view-pdf', label: 'View PDF', icon: <FileText className="h-4 w-4" />, onClick: () => openPrintableQuote(viewingQuote) },
+          ...(nextStatusMap[viewingQuote.status] ? [{
+            key: 'mark-status',
+            label: `Mark as ${nextStatusLabel(nextStatusMap[viewingQuote.status])}`,
+            icon: viewingQuote.status === 'draft' ? <Send className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />,
+            onClick: () => handleMarkStatus(viewingQuote, nextStatusMap[viewingQuote.status]),
+            disabled: updatingStatus
+          }] : []),
+          { key: 'edit', label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => handleEditQuote(viewingQuote) },
+          { key: 'delete', label: 'Delete', icon: <Trash2 className="h-4 w-4" />, onClick: () => handleDeleteQuote(viewingQuote), destructive: true }
+        ] : []}
         tabs={viewingQuote ? [
           {
             key: 'details',
@@ -985,6 +1167,15 @@ const Quotes = () => {
                         <span>Total Discount</span>
                         <span className="text-foreground">-₵ {parseFloat(viewingQuote.discountTotal || 0).toFixed(2)}</span>
                       </div>
+                      {parseFloat(viewingQuote.taxAmount || 0) > 0 && (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>
+                            {organization.tax?.displayLabel || 'Tax'} (
+                            {parseFloat(viewingQuote.taxRate || 0).toFixed(2)}%)
+                          </span>
+                          <span className="text-foreground">₵ {parseFloat(viewingQuote.taxAmount || 0).toFixed(2)}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-base font-semibold text-foreground pt-2">
                         <span>Grand Total</span>
                         <span>₵ {parseFloat(viewingQuote.totalAmount || 0).toFixed(2)}</span>
@@ -1081,6 +1272,11 @@ const Quotes = () => {
                       {activity.metadata?.jobNumber && (
                         <TimelineDescription className="text-foreground">
                           Converted to job: {activity.metadata.jobNumber}
+                          {activity.metadata?.jobId && (
+                            <Link to={`/jobs?highlight=${activity.metadata.jobId}`} className="ml-2 text-brand hover:underline">
+                              View job
+                            </Link>
+                          )}
                         </TimelineDescription>
                       )}
                       {activity.metadata?.saleNumber && (
@@ -1115,6 +1311,7 @@ const Quotes = () => {
             <Button
               type="button"
               variant="outline"
+              className="min-h-[44px] touch-manipulation"
               onClick={() => {
                 setQuoteModalVisible(false);
                 setEditingQuote(null);
@@ -1122,12 +1319,12 @@ const Quotes = () => {
             >
               Cancel
             </Button>
-            <Button type="submit" form="quote-form" loading={form.formState.isSubmitting}>
+            <Button type="submit" form="quote-form" loading={form.formState.isSubmitting} className="min-h-[44px] touch-manipulation">
               {editingQuote ? 'Update Quote' : 'Create Quote'}
             </Button>
           </>
         }
-        className="sm:w-[var(--modal-w-2xl)]"
+        className="w-full max-w-[calc(100vw-1rem)] sm:w-[var(--modal-w-2xl)]"
       >
         <Form {...form}>
           <form id="quote-form" onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
@@ -1138,7 +1335,16 @@ const Quotes = () => {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Customer</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange}>
+                    <Select
+                      value={field.value}
+                      onValueChange={(value) => {
+                        if (value === '__create_customer__') {
+                          setCustomerAddModalOpen(true);
+                          return;
+                        }
+                        field.onChange(value);
+                      }}
+                    >
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select customer" />
@@ -1151,12 +1357,12 @@ const Quotes = () => {
                           </SelectItem>
                         ))}
                         <SelectSeparator className="my-2" />
-                        <div className="px-2 py-1.5" onPointerDown={(e) => e.preventDefault()}>
-                          <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setCustomerAddModalOpen(true)}>
+                        <SelectItem value="__create_customer__">
+                          <div className="flex items-center">
                             <Plus className="h-4 w-4 mr-2" />
                             Create customer
-                          </Button>
-                        </div>
+                          </div>
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -1235,6 +1441,54 @@ const Quotes = () => {
                 )}
               />
 
+            {organization.tax?.enabled && (
+              <FormField
+                control={form.control}
+                name="taxRate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Tax rate % (optional)</FormLabel>
+                    <FormControl>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        name={field.name}
+                        ref={field.ref}
+                        placeholder={`Default: ${parseFloat(organization.tax?.defaultRatePercent || 0).toFixed(2)}%`}
+                        value={
+                          field.value === '' || field.value === undefined || field.value === null
+                            ? ''
+                            : String(field.value)
+                        }
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          if (raw === '') {
+                            field.onChange('');
+                            return;
+                          }
+                          if (/^\d*\.?\d*$/.test(raw)) {
+                            field.onChange(raw);
+                          }
+                        }}
+                        onBlur={() => {
+                          field.onBlur();
+                          const v = field.value;
+                          if (v === '' || v === undefined || v === null) {
+                            field.onChange('');
+                            return;
+                          }
+                          const n = parseFloat(String(v));
+                          field.onChange(Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : '');
+                        }}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            )}
+
               <div className="pt-2 pb-1">
                 <Separator className="mb-3" />
                 <div className="text-sm font-medium text-muted-foreground">Quote Items</div>
@@ -1256,6 +1510,44 @@ const Quotes = () => {
                     )}
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {isShop && products.length > 0 && (
+                      <FormField
+                        control={form.control}
+                        name={`items.${index}.productId`}
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Product (optional)</FormLabel>
+                            <Select
+                              value={field.value || '__NONE__'}
+                              onValueChange={(val) => {
+                                const next = val === '__NONE__' ? '' : val;
+                                field.onChange(next);
+                                if (next) {
+                                  const p = products.find((x) => x.id === next);
+                                  if (p) {
+                                    form.setValue(`items.${index}.description`, p.name || '');
+                                    form.setValue(`items.${index}.unitPrice`, parseFloat(p.sellingPrice || 0));
+                                  }
+                                }
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select product" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="__NONE__">None</SelectItem>
+                                {products.map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>
+                                    {p.name} — ₵{parseFloat(p.sellingPrice || 0).toFixed(2)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    )}
                     <FormField
                       control={form.control}
                       name={`items.${index}.description`}
@@ -1280,11 +1572,8 @@ const Quotes = () => {
                               <Input
                                 type="number"
                                 min={1}
-                                value={field.value || ''}
-                                onChange={(e) => {
-                                  const value = parseInt(e.target.value) || 1;
-                                  field.onChange(value);
-                                }}
+                                value={numberInputValue(field.value)}
+                                onChange={(e) => handleIntegerChange(e, field.onChange)}
                               />
                             </FormControl>
                             <FormMessage />
@@ -1304,11 +1593,8 @@ const Quotes = () => {
                                   type="number"
                                   min={0}
                                   step={0.01}
-                                  value={field.value || ''}
-                                  onChange={(e) => {
-                                    const value = parseFloat(e.target.value) || 0;
-                                    field.onChange(value);
-                                  }}
+                                  value={numberInputValue(field.value)}
+                                  onChange={(e) => handleNumberChange(e, field.onChange)}
                                   className="pl-12"
                                 />
                               </div>
@@ -1330,11 +1616,8 @@ const Quotes = () => {
                                   type="number"
                                   min={0}
                                   step={0.01}
-                                  value={field.value || ''}
-                                  onChange={(e) => {
-                                    const value = parseFloat(e.target.value) || 0;
-                                    field.onChange(value);
-                                  }}
+                                  value={numberInputValue(field.value)}
+                                  onChange={(e) => handleNumberChange(e, field.onChange)}
                                   className="pl-12"
                                 />
                               </div>
@@ -1351,7 +1634,7 @@ const Quotes = () => {
               <Button
                 type="button"
                 variant="dashed"
-                onClick={() => append({ description: '', quantity: 1, unitPrice: 0, discountAmount: 0 })}
+                onClick={() => append({ productId: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 })}
                 className="w-full"
               >
                 <Plus className="h-4 w-4 mr-2" />
@@ -1372,17 +1655,213 @@ const Quotes = () => {
                 )}
               />
 
+              {!editingQuote && (
+                <>
+                  <Separator />
+                  <FormField
+                    control={form.control}
+                    name="autoSendToCustomer"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border border-border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Auto send to customer on creation</FormLabel>
+                          <p className="text-sm text-muted-foreground">
+                            Send quote via Email, WhatsApp, or SMS when created. At least one must be configured in Settings.
+                          </p>
+                        </div>
+                        <FormControl>
+                          <Switch checked={field.value === true} onCheckedChange={field.onChange} />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                  {form.watch('autoSendToCustomer') === true && (() => {
+                    const ch = notificationChannels?.data ?? notificationChannels ?? {};
+                    const hasChannel = ch.email || ch.whatsapp || ch.sms;
+                    if (notificationChannels != null && !hasChannel) {
+                      return (
+                        <Alert variant="destructive" className="mt-2">
+                          <AlertDescription>
+                            Configure at least one of Email, WhatsApp, or SMS in Settings to auto-send quotes.
+                          </AlertDescription>
+                        </Alert>
+                      );
+                    }
+                    const selectedCustomerId = form.watch('customerId');
+                    const selectedCustomer = selectedCustomerId ? customers.find((c) => c.id === selectedCustomerId) : null;
+                    const customerHasEmail = selectedCustomer?.email?.trim?.();
+                    const customerHasPhone = selectedCustomer?.phone?.trim?.();
+                    if (ch?.email && selectedCustomer && !customerHasEmail) {
+                      return (
+                        <Alert variant="destructive" className="mt-2">
+                          <AlertDescription>
+                            Selected customer has no email address. Quote will not be sent via email. Add email in Customers to enable email delivery.
+                          </AlertDescription>
+                        </Alert>
+                      );
+                    }
+                    if ((ch?.whatsapp || ch?.sms) && selectedCustomer && !customerHasPhone) {
+                      return (
+                        <Alert variant="destructive" className="mt-2">
+                          <AlertDescription>
+                            Selected customer has no phone number. Quote will not be sent via WhatsApp or SMS. Add phone in Customers to enable delivery.
+                          </AlertDescription>
+                        </Alert>
+                      );
+                    }
+                    return null;
+                  })()}
+                  <FormField
+                    control={form.control}
+                    name="sendMessage"
+                    render={({ field }) => (
+                      <FormItem className={form.watch('autoSendToCustomer') !== true ? 'hidden' : ''}>
+                        <FormLabel>Message to customer (optional)</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            {...field}
+                            rows={3}
+                            placeholder={DEFAULT_QUOTE_SEND_MESSAGE}
+                            className="resize-none"
+                          />
+                        </FormControl>
+                        <p className="text-xs text-muted-foreground">
+                          Suggested text for SMS. A link to view the quote will be appended. Leave blank to use the default.
+                        </p>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </>
+              )}
+
+          </form>
+        </Form>
+      </MobileFormDialog>
+
+      {/* Convert Quote to Job - collect start date, due date, and assignment (like Jobs) */}
+      <MobileFormDialog
+        open={convertJobModalOpen}
+        onOpenChange={setConvertJobModalOpen}
+        title="Convert Quote to Job"
+        description="Set job dates and assignment before creating the job."
+        footer={
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setConvertJobModalOpen(false);
+                setQuoteToConvert(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="convert-job-form"
+              loading={converting}
+            >
+              Create Job
+            </Button>
+          </>
+        }
+      >
+        <Form {...convertJobForm}>
+          <form
+            id="convert-job-form"
+            onSubmit={convertJobForm.handleSubmit(handleConvertToJob)}
+            className="space-y-4"
+          >
+            <FormField
+              control={convertJobForm.control}
+              name="assignedTo"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Assign To (optional)</FormLabel>
+                  <Select
+                    onValueChange={(value) =>
+                      field.onChange(value === '__NONE__' ? null : value)
+                    }
+                    value={field.value || '__NONE__'}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select team member (optional)" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="__NONE__">None</SelectItem>
+                      {teamMembers.map((member) => (
+                        <SelectItem key={member.id} value={member.id}>
+                          {member.name} {member.role ? `(${member.role})` : ''}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <FormField
+                control={convertJobForm.control}
+                name="startDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Start Date (optional)</FormLabel>
+                    <FormControl>
+                      <DatePicker
+                        date={field.value}
+                        onDateChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={convertJobForm.control}
+                name="dueDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Due Date (optional)</FormLabel>
+                    <FormControl>
+                      <DatePicker
+                        date={field.value}
+                        onDateChange={field.onChange}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
           </form>
         </Form>
       </MobileFormDialog>
 
       <Dialog open={printModalVisible} onOpenChange={setPrintModalVisible}>
-        <DialogContent className="!inset-0 !translate-x-0 !translate-y-0 !max-w-none w-screen h-screen flex flex-col p-0 !rounded-none">
-          <DialogHeader className="px-6 py-4 border-b flex-shrink-0 no-print">
+        <DialogContent
+          className="flex flex-col p-0 rounded-lg w-full"
+          style={{
+            position: 'fixed',
+            left: '50%',
+            top: '50%',
+            right: 'auto',
+            bottom: 'auto',
+            transform: 'translate(-50%, -50%)',
+            width: '100%',
+            maxWidth: 'min(90vw, 900px)',
+            maxHeight: '90vh',
+            margin: 0
+          }}
+        >
+          <DialogHeader className="px-6 py-4 border-b flex-shrink-0 no-print text-left">
             <div className="flex items-center justify-between">
-              <div>
-                <DialogTitle>Quote Preview</DialogTitle>
-                <DialogDescription>
+              <div className="text-left">
+                <DialogTitle className="text-left">Quote Preview</DialogTitle>
+                <DialogDescription className="text-left">
                   Review the quote before printing or downloading
                 </DialogDescription>
               </div>

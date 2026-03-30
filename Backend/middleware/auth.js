@@ -54,10 +54,18 @@ const protect = async (req, res, next) => {
  * it denotes admin/owner, otherwise User.role is used. Ensures tenant-level
  * "owner" and "admin" are respected on the API.
  */
+/**
+ * Effective workspace role for authorize().
+ * Prefer tenant membership role when present so API access matches workspace invites
+ * (owner/admin → admin; manager/staff use membership, not a stale users.role).
+ */
 const getEffectiveRole = (req) => {
   const tenantRole = req.tenantRole || null;
   if (tenantRole && ['owner', 'admin'].includes(tenantRole)) {
     return 'admin';
+  }
+  if (tenantRole && ['manager', 'staff'].includes(tenantRole)) {
+    return tenantRole;
   }
   return req.user?.role || null;
 };

@@ -160,9 +160,9 @@ Ensure `mobile/app.json` has:
 ```json
 {
   "expo": {
-    "name": "ShopWISE",
-    "slug": "shopwise",
-    "scheme": "shopwise",
+    "name": "ABS",
+    "slug": "abs",
+    "scheme": "abs",
     "extra": {
       "apiUrl": "http://localhost:5001"
     }
@@ -175,9 +175,9 @@ For dynamic env, use `app.config.js`:
 ```javascript
 export default {
   expo: {
-    name: 'ShopWISE',
-    slug: 'shopwise',
-    scheme: 'shopwise',
+    name: 'ABS',
+    slug: 'abs',
+    scheme: 'abs',
     extra: {
       apiUrl: process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5001',
     },
@@ -277,3 +277,25 @@ npm install babel-plugin-module-resolver --save-dev
 echo "EXPO_PUBLIC_API_URL=http://localhost:5001" > .env
 npx expo start
 ```
+
+---
+
+## Troubleshooting: "Connection refused" / "Network Error"
+
+If the app shows **Connection refused** or **Network Error** when calling the API:
+
+1. **Start the backend** on the same machine (use the port that matches `EXPO_PUBLIC_API_URL`):
+   ```bash
+   cd Backend
+   # Use port 5001 if your .env has EXPO_PUBLIC_API_URL=http://<IP>:5001
+   PORT=5001 npm run dev
+   ```
+   Or set `PORT=5001` in `Backend/.env` and run `npm run dev`.
+
+2. **Same WiFi**: For a physical device, `EXPO_PUBLIC_API_URL` must be your computer’s LAN IP (e.g. `http://192.168.0.110:5001`). Get it with:
+   ```bash
+   cd mobile && npm run show-api-url
+   ```
+   or `ipconfig getifaddr en0` (Mac).
+
+3. **Port match**: Backend default port is **5000** (from `Backend/config/config.js`). If you use `5001` in the app, run the backend with `PORT=5001`.

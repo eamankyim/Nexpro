@@ -2,7 +2,7 @@
 
 ## Overview
 
-This autonomous test script verifies that date filtering works correctly across all report endpoints in the ShopWISE system.
+This autonomous test script verifies that date filtering works correctly across all report endpoints in the African Business Suite system.
 
 ## Features
 

@@ -11,10 +11,10 @@
 const FEATURE_CATALOG = [
   {
     key: 'crm',
-    name: 'Customer & Vendor CRM',
-    description: 'Manage customers, vendors, and relationships',
+    name: 'Customers',
+    description: 'Manage customer records and profiles',
     category: 'core',
-    routes: ['/customers', '/vendors'],
+    routes: ['/customers'],
     requiredForModules: ['quotes', 'jobs', 'invoices'],
     marketingCopy: {
       highlight: 'Complete CRM for customers & vendors',
@@ -22,11 +22,35 @@ const FEATURE_CATALOG = [
     }
   },
   {
+    key: 'vendors',
+    name: 'Vendors',
+    description: 'Manage suppliers and vendor records',
+    category: 'core',
+    routes: ['/vendors'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Track supplier and vendor relationships',
+      perk: 'Vendor management'
+    }
+  },
+  {
+    key: 'marketing',
+    name: 'Marketing Broadcasts',
+    description: 'Send bulk email, SMS, and WhatsApp campaigns',
+    category: 'communication',
+    routes: ['/marketing'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Reach customers with bulk campaigns',
+      perk: 'Marketing broadcasts'
+    }
+  },
+  {
     key: 'quoteAutomation',
-    name: 'Quote Builder & Pricing Templates',
-    description: 'Create quotes with automated pricing',
+    name: 'Quote Builder',
+    description: 'Create and manage customer quotes',
     category: 'sales',
-    routes: ['/quotes', '/pricing'],
+    routes: ['/quotes'],
     requiredForModules: [],
     marketingCopy: {
       highlight: 'Automated quote generation with pricing templates',
@@ -34,9 +58,21 @@ const FEATURE_CATALOG = [
     }
   },
   {
+    key: 'pricingTemplates',
+    name: 'Pricing Templates',
+    description: 'Manage pricing templates and presets',
+    category: 'sales',
+    routes: ['/pricing'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Reusable pricing templates',
+      perk: 'Pricing templates'
+    }
+  },
+  {
     key: 'jobAutomation',
-    name: 'Job Workflow & Auto Invoice Generation',
-    description: 'Track jobs and automatically generate invoices',
+    name: 'Jobs',
+    description: 'Track jobs and production workflows',
     category: 'operations',
     routes: ['/jobs'],
     requiredForModules: [],
@@ -46,11 +82,23 @@ const FEATURE_CATALOG = [
     }
   },
   {
+    key: 'tasks',
+    name: 'Tasks',
+    description: 'Track team tasks and follow-ups',
+    category: 'operations',
+    routes: ['/tasks'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Task tracking and follow-ups',
+      perk: 'Task management'
+    }
+  },
+  {
     key: 'paymentsExpenses',
-    name: 'Payments & Expense Tracking',
-    description: 'Record payments and track expenses',
+    name: 'Sales',
+    description: 'Record sales transactions and POS flows',
     category: 'finance',
-    routes: ['/payments', '/expenses'],
+    routes: ['/sales'],
     requiredForModules: [],
     marketingCopy: {
       highlight: 'Comprehensive payment and expense tracking',
@@ -58,11 +106,95 @@ const FEATURE_CATALOG = [
     }
   },
   {
+    key: 'orders',
+    name: 'Orders',
+    description: 'Manage customer orders',
+    category: 'sales',
+    routes: ['/orders'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Order management',
+      perk: 'Customer orders'
+    }
+  },
+  {
+    key: 'deliveries',
+    name: 'Deliveries / dispatch',
+    description: 'Queue completed jobs and sales, update delivery status for customer tracking',
+    category: 'operations',
+    routes: ['/deliveries'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Delivery queue and dispatch status',
+      perk: 'Deliveries & dispatch workspace'
+    }
+  },
+  {
+    key: 'products',
+    name: 'Products',
+    description: 'Manage product catalog and stock items',
+    category: 'operations',
+    routes: ['/products'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Product catalog management',
+      perk: 'Products module'
+    }
+  },
+  {
+    key: 'invoices',
+    name: 'Invoices',
+    description: 'Create and manage invoices',
+    category: 'finance',
+    routes: ['/invoices'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Invoice management and billing',
+      perk: 'Invoices module'
+    }
+  },
+  {
+    key: 'expenses',
+    name: 'Expenses',
+    description: 'Track and approve business expenses',
+    category: 'finance',
+    routes: ['/expenses'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Expense tracking',
+      perk: 'Expenses module'
+    }
+  },
+  {
+    key: 'shopsModule',
+    name: 'Shops',
+    description: 'Manage multiple shops',
+    category: 'operations',
+    routes: ['/shops'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Multi-shop management',
+      perk: 'Shops module'
+    }
+  },
+  {
+    key: 'pharmacyOps',
+    name: 'Pharmacy Operations',
+    description: 'Pharmacy locations, drugs, and prescriptions',
+    category: 'operations',
+    routes: ['/pharmacies', '/drugs', '/prescriptions'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Full pharmacy workflow',
+      perk: 'Pharmacy operations'
+    }
+  },
+  {
     key: 'materials',
     name: 'Materials & Vendor Price Lists',
     description: 'Manage materials, stock levels, and vendor pricing',
     category: 'operations',
-    routes: ['/materials'],
+    routes: ['/materials', '/equipment', '/inventory', '/assets'],
     requiredForModules: [],
     marketingCopy: {
       highlight: 'Full materials management with vendor price lists',
@@ -146,7 +278,7 @@ const FEATURE_CATALOG = [
     name: 'Advanced Analytics & Custom Reports',
     description: 'Deep analytics, custom report builder, data exports',
     category: 'analytics',
-    routes: ['/reports'],
+    routes: ['/export-data'],
     requiredForModules: ['reports'],
     marketingCopy: {
       highlight: 'Advanced analytics with custom report builder',
@@ -199,6 +331,18 @@ const FEATURE_CATALOG = [
     marketingCopy: {
       highlight: 'Fully customizable workflows',
       perk: 'Custom workflow configuration'
+    }
+  },
+  {
+    key: 'automations',
+    name: 'Automations',
+    description: 'Configure workflow automations',
+    category: 'operations',
+    routes: ['/automations'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Automate repetitive operations',
+      perk: 'Automation rules'
     }
   },
   {
@@ -285,12 +429,12 @@ const getFeatureByKey = (key) => {
 
 const getFeaturesForPlan = (planId) => {
   const planFeatures = {
-    trial: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'reports', 'leadPipeline', 'roleManagement'],
-    starter: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],
-    professional: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting'],
+    trial: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'deliveries', 'invoices', 'expenses', 'reports', 'leadPipeline', 'roleManagement'],
+    starter: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],
+    professional: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting', 'automations', 'shopsModule', 'pharmacyOps'],
     enterprise: FEATURE_CATALOG.map(f => f.key),
-    launch: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],       // legacy → starter
-    scale: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting']  // legacy → professional
+    launch: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],
+    scale: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting', 'automations', 'shopsModule', 'pharmacyOps']
   };
   return planFeatures[planId] || [];
 };
@@ -315,6 +459,9 @@ const canAccessRoute = (tenantPlanFeatures, route) => {
   const relevantFeatures = FEATURE_CATALOG.filter(f => 
     f.routes.some(r => route.startsWith(r))
   );
+  if (relevantFeatures.length === 0) {
+    return true;
+  }
   
   // Check if tenant has at least one feature that grants access to this route
   return relevantFeatures.some(feature => 

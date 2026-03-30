@@ -3,8 +3,13 @@ export const CURRENCY = {
   DECIMAL_PLACES: 2,
 };
 
-/** Storage keys for tenant isolation (must match auth/api) */
+/** Default tenant names used as placeholders; treat as incomplete onboarding */
+export const DEFAULT_TENANT_NAMES = ['My Workspace', 'My Business'];
+
+/** Storage keys for tenant isolation and auth (must match auth/api) */
 export const STORAGE_KEYS = {
+  // SecureStore token key (must be non-empty and alphanumeric/._-)
+  token: 'token',
   ACTIVE_TENANT_ID: 'activeTenantId',
   CART_PREFIX: '@cart_items_',
 } as const;

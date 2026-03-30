@@ -155,20 +155,20 @@ const FileUpload = ({
         onDragLeave={handleDragLeave}
         className={cn(
           'flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer transition-colors',
-          isDragging ? 'border-[#166534] bg-[#166534]/5' : 'border-border bg-card',
+          isDragging ? 'border-brand bg-brand-5' : 'border-border bg-card',
           (disabled || uploading) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-muted'
         )}
       >
         {uploading ? (
           <div className="flex flex-col items-center gap-2">
-            <Loader2 className="h-8 w-8 animate-spin" style={{ color: '#166534' }} />
+            <Loader2 className="h-8 w-8 animate-spin" style={{ color: 'var(--color-primary)' }} />
             <span className="text-sm text-muted-foreground">Uploading...</span>
           </div>
         ) : (
           <>
-            <Upload className="h-8 w-8 mb-2" style={{ color: '#166534' }} />
+            <Upload className="h-8 w-8 mb-2" style={{ color: 'var(--color-primary)' }} />
             <div className="text-center">
-              <span className="font-semibold" style={{ color: '#166534' }}>
+              <span className="font-semibold" style={{ color: 'var(--color-primary)' }}>
                 Click to upload or drag and drop
               </span>
               <p className="text-xs text-muted-foreground mt-1">

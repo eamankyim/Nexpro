@@ -35,7 +35,9 @@ const PrintableInvoice = ({
   organization = {},
   /** When printing receipt from sale, pass saleNumber for Receipt # display */
   saleNumber,
-  printConfig = {}
+  printConfig = {},
+  /** When true, show XXX instead of monetary values (e.g. for sample/preview) */
+  maskAmounts = false
 }) => {
   if (!invoice) return null;
 
@@ -46,6 +48,8 @@ const PrintableInvoice = ({
   const docNumber = isReceipt && (saleNumber || invoice.sale?.saleNumber)
     ? (saleNumber || invoice.sale.saleNumber)
     : invoice.invoiceNumber;
+
+  const amountDisplay = (value) => (maskAmounts ? 'XXX' : `₵ ${parseFloat(value || 0).toFixed(2)}`);
 
   // Format logo URL - data URLs (base64) and absolute URLs use as-is; relative paths get API base URL
   // Only use tenant logo; no generic fallback when none is set
@@ -64,8 +68,10 @@ const PrintableInvoice = ({
     email: organization.email || '',
     location: formatAddress(organization.address),
     invoiceFooter: organization.invoiceFooter || '',
+    paymentDetails: organization.paymentDetails || '',
     vatNumber: organization.tax?.vatNumber || '',
-    tin: organization.tax?.tin || ''
+    tin: organization.tax?.tin || '',
+    taxDisplayLabel: organization.tax?.displayLabel || 'Tax'
   };
 
   return (
@@ -262,6 +268,20 @@ const PrintableInvoice = ({
           font-size: 12px;
           margin-bottom: 8px;
         }
+        .pay-to-block {
+          margin-top: 16px;
+          padding: 10px 12px;
+          border-radius: 6px;
+          background-color: #f5f5f5;
+          font-size: ${printStyles.bodySize};
+          line-height: 1.6;
+        }
+        .pay-to-title {
+          font-weight: 600;
+          margin-bottom: 4px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
         .notes-content {
           font-size: 11px;
           line-height: 1.6;
@@ -372,8 +392,8 @@ const PrintableInvoice = ({
               {invoice.items && invoice.items.length > 0 ? (
                 invoice.items.map((item, index) => {
                   const qty = item.quantity || 1;
-                  const total = parseFloat(item.total || item.unitPrice * qty || 0).toFixed(2);
-                  const unitPrice = parseFloat(item.unitPrice || 0).toFixed(2);
+                  const total = maskAmounts ? 'XXX' : parseFloat(item.total || item.unitPrice * qty || 0).toFixed(2);
+                  const unitPrice = maskAmounts ? 'XXX' : parseFloat(item.unitPrice || 0).toFixed(2);
                   return (
                     <div key={index} className="thermal-item-list">
                       <span className="thermal-item-name">{item.description || item.category || 'Item'}</span>
@@ -384,24 +404,30 @@ const PrintableInvoice = ({
               ) : (
                 <div className="thermal-item-list">
                   <span className="thermal-item-name">No items</span>
-                  <span className="thermal-item-amount">₵ 0.00</span>
+                  <span className="thermal-item-amount">{amountDisplay(0)}</span>
                 </div>
               )}
             </div>
             <hr className="thermal-separator" />
             <div className="thermal-total-row">
               <span>Sub-total</span>
-              <span>₵ {parseFloat(invoice.subtotal || 0).toFixed(2)}</span>
+              <span>{amountDisplay(invoice.subtotal)}</span>
             </div>
+            {invoice.discountAmount > 0 && (
+              <div className="thermal-total-row">
+                <span>Discount</span>
+                <span>{maskAmounts ? 'XXX' : `-₵ ${parseFloat(invoice.discountAmount || 0).toFixed(2)}`}</span>
+              </div>
+            )}
             {invoice.taxAmount > 0 && (
               <div className="thermal-total-row">
-                <span>Sales Tax</span>
-                <span>₵ {parseFloat(invoice.taxAmount || 0).toFixed(2)}</span>
+                <span>{companyInfo.taxDisplayLabel}</span>
+                <span>{amountDisplay(invoice.taxAmount)}</span>
               </div>
             )}
             <div className="thermal-total-row bold">
               <span>Total</span>
-              <span>₵ {parseFloat(invoice.totalAmount || 0).toFixed(2)}</span>
+              <span>{amountDisplay(invoice.totalAmount)}</span>
             </div>
             <hr className="thermal-separator" />
             {(companyInfo.invoiceFooter || companyInfo.name) && (
@@ -522,8 +548,8 @@ const PrintableInvoice = ({
             {invoice.items && invoice.items.length > 0 ? (
               invoice.items.map((item, index) => {
                 const qty = item.quantity || 1;
-                const total = parseFloat(item.total || item.unitPrice * qty || 0).toFixed(2);
-                const unitPrice = parseFloat(item.unitPrice || 0).toFixed(2);
+                const total = maskAmounts ? 'XXX' : parseFloat(item.total || item.unitPrice * qty || 0).toFixed(2);
+                const unitPrice = maskAmounts ? 'XXX' : parseFloat(item.unitPrice || 0).toFixed(2);
                 return (
                   <div key={index} className="receipt-item-row" style={{ display: 'block', padding: '6px 0', borderBottom: '1px solid #eee', fontSize: '12px' }}>
                     <div style={{ fontWeight: 500, marginBottom: 2 }}>{item.description || item.category || 'Item'}</div>
@@ -558,9 +584,9 @@ const PrintableInvoice = ({
                       )}
                     </td>
                     <td className="text-center">{item.quantity || 1}</td>
-                    <td className="text-right">₵ {parseFloat(item.unitPrice || 0).toFixed(2)}</td>
+                    <td className="text-right">{amountDisplay(item.unitPrice)}</td>
                     <td className="text-right">
-                      <strong>₵ {parseFloat(item.total || item.unitPrice * (item.quantity || 1) || 0).toFixed(2)}</strong>
+                      <strong>{amountDisplay(item.total || item.unitPrice * (item.quantity || 1))}</strong>
                     </td>
                   </tr>
                 ))
@@ -577,14 +603,8 @@ const PrintableInvoice = ({
         <div className="totals-section">
           <div className="total-row">
             <span>Subtotal:</span>
-            <span>₵ {parseFloat(invoice.subtotal || 0).toFixed(2)}</span>
+            <span>{amountDisplay(invoice.subtotal)}</span>
           </div>
-          {invoice.taxAmount > 0 && (
-            <div className="total-row">
-              <span>Tax ({invoice.taxRate || 0}%):</span>
-              <span>₵ {parseFloat(invoice.taxAmount || 0).toFixed(2)}</span>
-            </div>
-          )}
           {invoice.discountAmount > 0 && (
             <div className="total-row" style={{ color: '#52c41a', fontWeight: '500' }}>
               <span>
@@ -595,32 +615,52 @@ const PrintableInvoice = ({
                   </div>
                 )}
               </span>
-              <span>-₵ {parseFloat(invoice.discountAmount || 0).toFixed(2)}</span>
+              <span>{maskAmounts ? 'XXX' : `-₵ ${parseFloat(invoice.discountAmount || 0).toFixed(2)}`}</span>
+            </div>
+          )}
+          {invoice.taxAmount > 0 && (
+            <div className="total-row">
+              <span>
+                {companyInfo.taxDisplayLabel} ({invoice.taxRate || 0}%):
+              </span>
+              <span>{amountDisplay(invoice.taxAmount)}</span>
             </div>
           )}
           <div className="total-row bold">
             <span>Total Amount:</span>
-            <span>₵ {parseFloat(invoice.totalAmount || 0).toFixed(2)}</span>
+            <span>{amountDisplay(invoice.totalAmount)}</span>
           </div>
           {invoice.amountPaid > 0 && (
             <div className="total-row">
               <span>Amount Paid:</span>
-              <span style={{ color: '#52c41a' }}>₵ {parseFloat(invoice.amountPaid || 0).toFixed(2)}</span>
+              <span style={{ color: '#52c41a' }}>{amountDisplay(invoice.amountPaid)}</span>
             </div>
           )}
           <div className={`total-row ${isReceipt && invoice.balance <= 0 ? '' : 'balance'}`}>
             <span>{isReceipt && invoice.balance <= 0 ? 'Status:' : 'Balance Due:'}</span>
             <span style={isReceipt && invoice.balance <= 0 ? { color: '#52c41a' } : undefined}>
-              {isReceipt && invoice.balance <= 0 ? 'Paid' : `₵ ${parseFloat(invoice.balance || 0).toFixed(2)}`}
+              {isReceipt && invoice.balance <= 0 ? 'Paid' : amountDisplay(invoice.balance)}
             </span>
           </div>
         </div>
 
+        {/* Pay to (payment details) */}
+        {companyInfo.paymentDetails && (
+          <div className="notes-section">
+            <div className="pay-to-block">
+              <div className="pay-to-title">Pay to</div>
+              <div className="notes-content" style={{ whiteSpace: 'pre-line' }}>
+                {companyInfo.paymentDetails}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Terms & Conditions */}
         {invoice.termsAndConditions && (
           <div className="notes-section">
-                <div className="notes-title">Terms & Conditions:</div>
-                <div className="notes-content">{invoice.termsAndConditions}</div>
+            <div className="notes-title">Terms & Conditions:</div>
+            <div className="notes-content">{invoice.termsAndConditions}</div>
           </div>
         )}
 

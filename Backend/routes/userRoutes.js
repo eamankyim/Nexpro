@@ -14,19 +14,16 @@ const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
-router.use(authorize('admin', 'manager', 'staff'));
 
-router.route('/')
-  .get(getUsers)
-  .post(createUser);
+// List / read: managers and workspace admins. Mutations: workspace admins only.
+router.get('/', authorize('admin', 'manager'), getUsers);
+router.post('/', authorize('admin'), createUser);
 
-router.route('/:id')
-  .get(getUser)
-  .put(updateUser)
-  .delete(deleteUser);
+// Specific path before /:id to avoid param collisions
+router.put('/:id/toggle-status', authorize('admin'), toggleUserStatus);
 
-router.put('/:id/toggle-status', toggleUserStatus);
+router.get('/:id', authorize('admin', 'manager'), getUser);
+router.put('/:id', authorize('admin'), updateUser);
+router.delete('/:id', authorize('admin'), deleteUser);
 
 module.exports = router;
-
-

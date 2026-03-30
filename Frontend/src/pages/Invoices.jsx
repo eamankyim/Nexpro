@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2, Share2, Copy } from 'lucide-react';
+import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2, Share2, Copy, Archive } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import invoiceService from '../services/invoiceService';
+import offlineQueueService from '../services/offlineQueueService';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
@@ -22,7 +23,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -59,9 +59,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { STUDIO_LIKE_TYPES } from '../constants';
+import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 
 const paymentSchema = z.object({
-  amount: z.number().min(0.01, 'Payment amount must be greater than 0'),
+  amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Payment amount must be greater than 0'),
   paymentMethod: z.string().min(1, 'Payment method is required'),
   paymentDate: z.date(),
   referenceNumber: z.string().optional(),
@@ -88,6 +89,7 @@ const Invoices = () => {
   const [markingAsPaid, setMarkingAsPaid] = useState(false);
   const [sendingInvoice, setSendingInvoice] = useState(false);
   const [invoiceToDelete, setInvoiceToDelete] = useState(null);
+  const [invoiceToCancel, setInvoiceToCancel] = useState(null);
 
   // Organization branding for printable invoices
   const { data: organizationData } = useQuery({
@@ -296,9 +298,69 @@ const Invoices = () => {
     navigator.clipboard.writeText(paymentLink).then(() => showSuccess('Payment link copied to clipboard')).catch(() => showError('Could not copy link'));
   }, [paymentLink]);
 
+  const invoiceDrawerPrimaryAction = useMemo(() => {
+    if (!viewingInvoice) return null;
+    return {
+      label: 'View PDF',
+      icon: <FileText className="h-4 w-4" />,
+      onClick: () => handlePrint(viewingInvoice),
+      disabled: false,
+    };
+  }, [viewingInvoice]);
+
+  const invoiceDrawerMoreMenuItems = useMemo(() => {
+    if (!viewingInvoice || !isManager) return [];
+    const unpaid = viewingInvoice.status !== 'paid' && viewingInvoice.status !== 'cancelled';
+    const items = [];
+    if (unpaid) {
+      items.push({
+        key: 'share',
+        label: sendingInvoice ? 'Sending...' : 'Share invoice',
+        icon: <Share2 className="h-4 w-4" />,
+        onClick: () => handleSendInvoice(viewingInvoice.id),
+        disabled: sendingInvoice,
+      });
+    }
+    if (paymentLink) {
+      items.push({
+        key: 'copyLink',
+        label: 'Copy payment link',
+        icon: <Copy className="h-4 w-4" />,
+        onClick: handleCopyPaymentLink,
+      });
+    }
+    if (unpaid) {
+      items.push({
+        key: 'markPaid',
+        label: 'Mark as Paid',
+        icon: <CheckCircle className="h-4 w-4" />,
+        onClick: () => handleMarkAsPaid(viewingInvoice),
+        disabled: markingAsPaid,
+      });
+      items.push({
+        key: 'cancel',
+        label: 'Cancel Invoice',
+        icon: <Archive className="h-4 w-4" />,
+        onClick: () => setInvoiceToCancel(viewingInvoice),
+        destructive: true,
+      });
+    }
+    if (viewingInvoice.status === 'draft') {
+      items.push({
+        key: 'delete',
+        label: 'Delete draft',
+        icon: <Archive className="h-4 w-4" />,
+        onClick: () => setInvoiceToDelete(viewingInvoice),
+        destructive: true,
+      });
+    }
+    return items;
+  }, [viewingInvoice, isManager, paymentLink, sendingInvoice, markingAsPaid, handleSendInvoice, handleCopyPaymentLink, handleMarkAsPaid]);
+
   const handleCancelInvoice = async (id) => {
     try {
       await invoiceService.cancel(id);
+      setInvoiceToCancel(null);
       showSuccess('Invoice cancelled');
       setRefreshTrigger(prev => prev + 1);
       if (drawerVisible) handleCloseDrawer();
@@ -309,8 +371,17 @@ const Invoices = () => {
 
   const handleDeleteInvoice = async (id) => {
     try {
-      await invoiceService.delete(id);
-      showSuccess('Draft invoice deleted');
+      if (!navigator.onLine) {
+        await offlineQueueService.queueAction(
+          offlineQueueService.OFFLINE_ACTION_TYPES.INVOICE,
+          'delete',
+          { id }
+        );
+        showSuccess('Saved offline. Will sync when connected.');
+      } else {
+        await invoiceService.delete(id);
+        showSuccess('Draft invoice deleted');
+      }
       setInvoiceToDelete(null);
       setRefreshTrigger(prev => prev + 1);
       if (viewingInvoice?.id === id) handleCloseDrawer();
@@ -372,35 +443,17 @@ const Invoices = () => {
     {
       key: 'status',
       label: 'Status',
+      mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record.status} />,
     },
     {
       key: 'actions',
       label: 'Actions',
       render: (_, record) => (
-        <ActionColumn 
-          onView={handleView} 
-          record={record}
-          extraActions={[
-            record.status !== 'paid' && record.status !== 'cancelled' && isManager && {
-              label: 'Record Payment',
-              onClick: () => handleRecordPayment(record),
-              type: 'primary'
-            },
-            parseFloat(record.balance || 0) > 0 && record.status !== 'cancelled' && isManager && {
-              label: 'Mark as Paid',
-              onClick: () => handleMarkAsPaid(record)
-            },
-            (record.status === 'draft' || record.status === 'sent') && isManager && {
-              key: 'share',
-              label: record.status === 'draft' ? 'Send' : 'Share invoice',
-              onClick: () => handleSendInvoice(record.id)
-            }
-          ].filter(Boolean)}
-        />
+        <ActionColumn onView={handleView} record={record} extraActions={[]} />
       ),
     },
-  ], [isPrintingPress, isManager, handleView, handleRecordPayment, handleMarkAsPaid, handleSendInvoice]);
+  ], [isPrintingPress, handleView]);
 
   return (
     <div className="space-y-6">
@@ -413,32 +466,40 @@ const Invoices = () => {
             title="Total Revenue"
             value={parseFloat(stats.totalRevenue || 0).toFixed(2)}
             valuePrefix="₵ "
-            prefix={<CheckCircle className="h-4 w-4 text-green-500 inline mr-1" />}
+            icon={CheckCircle}
+            iconBgColor="rgba(34, 197, 94, 0.12)"
+            iconColor="#16a34a"
           />
           <DashboardStatsCard
             tooltip="Amount still owed by customers"
             title="Outstanding"
             value={parseFloat(stats.outstandingAmount || 0).toFixed(2)}
             valuePrefix="₵ "
-            prefix={<Clock className="h-4 w-4 text-orange-500 inline mr-1" />}
+            icon={Clock}
+            iconBgColor="rgba(249, 115, 22, 0.12)"
+            iconColor="#ea580c"
           />
           <DashboardStatsCard
             tooltip="Invoices that have been fully paid"
             title="Paid Invoices"
             value={stats.paidInvoices || 0}
-            prefix={<FileText className="h-4 w-4 text-green-500 inline mr-1" />}
+            icon={FileText}
+            iconBgColor="rgba(34, 197, 94, 0.12)"
+            iconColor="#16a34a"
           />
           <DashboardStatsCard
             tooltip="Invoices past due date"
             title="Overdue"
             value={stats.overdueInvoices || 0}
-            prefix={<FileText className="h-4 w-4 text-red-500 inline mr-1" />}
+            icon={FileText}
+            iconBgColor="rgba(239, 68, 68, 0.12)"
+            iconColor="#dc2626"
           />
         </div>
       )}
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Select
             value={filters.status}
@@ -489,41 +550,8 @@ const Invoices = () => {
         onClose={handleCloseDrawer}
         title="Invoice Details"
         width={900}
-        onPrint={viewingInvoice ? () => handlePrint(viewingInvoice) : null}
-        extraActions={[
-          isManager &&
-          viewingInvoice &&
-          viewingInvoice.status !== 'paid' &&
-          viewingInvoice.status !== 'cancelled' && {
-            key: 'share',
-            label: sendingInvoice ? 'Sending...' : 'Share invoice',
-            icon: <Share2 className="h-4 w-4" />,
-            onClick: () => handleSendInvoice(viewingInvoice.id),
-            disabled: sendingInvoice,
-            variant: 'outline'
-          },
-          paymentLink && {
-            key: 'copyLink',
-            label: 'Copy payment link',
-            icon: <Copy className="h-4 w-4" />,
-            onClick: handleCopyPaymentLink,
-            variant: 'outline'
-          }
-        ].filter(Boolean)}
-        onMarkPaid={
-          isManager &&
-          viewingInvoice &&
-          viewingInvoice.status !== 'paid' &&
-          viewingInvoice.status !== 'cancelled'
-            ? () => handleMarkAsPaid(viewingInvoice)
-            : null
-        }
-        onCancel={isManager && viewingInvoice && viewingInvoice.status !== 'paid' && viewingInvoice.status !== 'cancelled' ? () => {
-          handleCancelInvoice(viewingInvoice.id);
-        } : null}
-        cancelButtonText="Cancel Invoice"
-        deleteConfirmText={viewingInvoice?.status === 'draft' ? 'Are you sure you want to delete this draft invoice? This cannot be undone.' : 'Are you sure you want to cancel this invoice?'}
-        onDelete={isManager && viewingInvoice?.status === 'draft' ? () => handleDeleteInvoice(viewingInvoice.id) : null}
+        primaryAction={invoiceDrawerPrimaryAction}
+        moreMenuItems={invoiceDrawerMoreMenuItems}
         fields={viewingInvoice ? [
           { label: 'Invoice Number', value: viewingInvoice.invoiceNumber },
           { 
@@ -558,28 +586,30 @@ const Invoices = () => {
             render: (items) => {
               if (!items || items.length === 0) return '-';
               return (
-                <div className="mt-2 space-y-2">
-                  {items.map((item, idx) => (
-                    <Card key={idx}>
-                      <CardContent className="pt-6">
-                        <div className="grid grid-cols-12 gap-4">
-                          <div className="col-span-6">
-                            <div className="font-semibold">{item.description || item.category}</div>
+                <div className="mt-2 rounded-lg border border-border bg-muted/50 p-4 overflow-x-auto">
+                  <table className="w-full text-sm min-w-[320px]">
+                    <thead>
+                      <tr className="border-b border-border text-left text-muted-foreground">
+                        <th className="pb-2 pr-2 font-medium">Description</th>
+                        <th className="pb-2 pr-2 text-right font-medium w-16">Qty</th>
+                        <th className="pb-2 pr-2 text-right font-medium">Unit price</th>
+                        <th className="pb-2 text-right font-medium">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {items.map((item, idx) => (
+                        <tr key={idx} className="border-b border-border last:border-b-0">
+                          <td className="py-2 pr-2">
+                            <div className="font-medium">{item.description || item.category}</div>
                             {item.paperSize && <div className="text-muted-foreground text-xs">Size: {item.paperSize}</div>}
-                          </div>
-                          <div className="col-span-2 text-right">
-                            Qty: {item.quantity}
-                          </div>
-                          <div className="col-span-2 text-right">
-                            ₵ {parseFloat(item.unitPrice || 0).toFixed(2)}
-                          </div>
-                          <div className="col-span-2 text-right">
-                            <strong>₵ {parseFloat(item.total || 0).toFixed(2)}</strong>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+                          </td>
+                          <td className="py-2 pr-2 text-right">{item.quantity}</td>
+                          <td className="py-2 pr-2 text-right">₵ {parseFloat(item.unitPrice || 0).toFixed(2)}</td>
+                          <td className="py-2 text-right font-medium">₵ {parseFloat(item.total || 0).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               );
             }
@@ -634,19 +664,6 @@ const Invoices = () => {
             value: viewingInvoice.createdAt,
             render: (date) => dayjs(date).format('MMMM DD, YYYY HH:mm')
           },
-          ...(paymentLink ? [{
-            label: 'Payment link',
-            value: paymentLink,
-            render: () => (
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-sm font-mono text-muted-foreground break-all">{paymentLink}</span>
-                <Button type="button" variant="outline" size="sm" onClick={handleCopyPaymentLink}>
-                  <Copy className="h-4 w-4 mr-1" />
-                  Copy
-                </Button>
-              </div>
-            )
-          }] : []),
         ] : []}
       />
 
@@ -661,17 +678,19 @@ const Invoices = () => {
               <Button
                 type="button"
                 variant="outline"
+                className="min-h-[44px] touch-manipulation"
                 onClick={() => setPaymentModalVisible(false)}
               >
                 Cancel
               </Button>
-              <Button form="payment-form" type="submit" disabled={paymentForm.formState.isSubmitting}>
+              <Button form="payment-form" type="submit" disabled={paymentForm.formState.isSubmitting} className="min-h-[44px] touch-manipulation">
                 {paymentForm.formState.isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Record Payment
               </Button>
             </>
           ) : null
         }
+        className="w-full max-w-[calc(100vw-1rem)] sm:max-w-md"
       >
         {viewingInvoice && (
           <>
@@ -716,11 +735,8 @@ const Invoices = () => {
                               step={0.01}
                               placeholder="0.00"
                               className="pl-8"
-                              value={field.value === 0 ? '' : field.value}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                field.onChange(val === '' ? 0 : parseFloat(val) || 0);
-                              }}
+                              value={numberInputValue(field.value)}
+                              onChange={(e) => handleNumberChange(e, field.onChange)}
                             />
                           </div>
                         </FormControl>
@@ -742,11 +758,8 @@ const Invoices = () => {
                           </FormControl>
                           <SelectContent>
                             <SelectItem value="cash">Cash</SelectItem>
-                            <SelectItem value="check">Check</SelectItem>
-                            <SelectItem value="credit_card">Credit Card</SelectItem>
-                            <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
                             <SelectItem value="momo">Mobile Money</SelectItem>
-                            <SelectItem value="other">Other</SelectItem>
+                            <SelectItem value="credit_card">Card</SelectItem>
                           </SelectContent>
                         </Select>
                         <FormMessage />
@@ -846,6 +859,28 @@ const Invoices = () => {
               onClick={() => invoiceToDelete && handleDeleteInvoice(invoiceToDelete.id)}
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!invoiceToCancel} onOpenChange={(open) => !open && setInvoiceToCancel(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Cancel invoice?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {invoiceToCancel
+                ? `Are you sure you want to cancel invoice "${invoiceToCancel.invoiceNumber || invoiceToCancel.id}"?`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => invoiceToCancel && handleCancelInvoice(invoiceToCancel.id)}
+            >
+              Cancel Invoice
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

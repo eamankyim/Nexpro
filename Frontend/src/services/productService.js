@@ -7,6 +7,8 @@
  */
 
 import api from './api';
+import { getPendingActions } from '../utils/posDb';
+import offlineQueueService from './offlineQueueService';
 
 // Cache keys for offline storage
 const CACHE_KEYS = {
@@ -210,7 +212,30 @@ const productService = {
     const response = await api.get(`/products/export${query ? `?${query}` : ''}`, {
       responseType: 'blob',
     });
-    return response;
+    return response.data;
+  },
+
+  /**
+   * Download CSV template for bulk product import (no images).
+   * @returns {Promise<Blob>}
+   */
+  getProductImportTemplate: async () => {
+    const response = await api.get('/products/import/template', { responseType: 'blob' });
+    return response.data;
+  },
+
+  /**
+   * Bulk import products from CSV/Excel file (no images).
+   * @param {File} file - CSV or XLSX file
+   * @returns {Promise<{ successCount, errorCount, errors, created }>}
+   */
+  importProducts: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post('/products/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response?.data ?? response;
   },
 
   /**
@@ -280,6 +305,15 @@ const productService = {
    */
   createCategory: async (payload) => {
     return api.post('/products/categories', payload);
+  },
+
+  /**
+   * Delete a product category (fails if any products use it)
+   * @param {string} id - Category id
+   * @returns {Promise<void>}
+   */
+  deleteCategory: async (id) => {
+    return api.delete(`/products/categories/${id}`);
   },
 
   // =============================================
@@ -459,34 +493,33 @@ const productService = {
   // =============================================
 
   /**
-   * Queue a change for later sync (when offline)
+   * Queue a change for later sync (when offline). Uses unified offline queue.
    * @param {string} action - Action type ('create', 'update', 'delete')
    * @param {Object} data - Change data
-   * @returns {void}
+   * @returns {Promise<void>}
    */
-  queueOfflineChange: (action, data) => {
+  queueOfflineChange: async (action, data) => {
     try {
-      const pending = JSON.parse(localStorage.getItem(CACHE_KEYS.PENDING_CHANGES) || '[]');
-      pending.push({
-        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      await offlineQueueService.queueAction(
+        offlineQueueService.OFFLINE_ACTION_TYPES.PRODUCT,
         action,
-        data,
-        timestamp: Date.now(),
-      });
-      localStorage.setItem(CACHE_KEYS.PENDING_CHANGES, JSON.stringify(pending));
+        data
+      );
     } catch (error) {
       console.warn('[ProductService] Failed to queue offline change:', error);
     }
   },
 
   /**
-   * Get pending offline changes
-   * @returns {Array}
+   * Get pending offline changes (from unified queue)
+   * @returns {Promise<Array<{ action, data }>>}
    */
-  getPendingChanges: () => {
+  getPendingChanges: async () => {
     try {
-      const pending = localStorage.getItem(CACHE_KEYS.PENDING_CHANGES);
-      return pending ? JSON.parse(pending) : [];
+      const actions = await getPendingActions();
+      return actions
+        .filter((a) => a.type === offlineQueueService.OFFLINE_ACTION_TYPES.PRODUCT)
+        .map((a) => ({ action: a.action, data: a.payload }));
     } catch (error) {
       console.warn('[ProductService] Failed to get pending changes:', error);
       return [];
@@ -494,64 +527,21 @@ const productService = {
   },
 
   /**
-   * Sync pending offline changes
+   * Sync pending offline changes (delegates to unified queue sync)
    * @returns {Promise<Object>} - Sync results
    */
   syncPendingChanges: async () => {
-    const pending = productService.getPendingChanges();
-    if (pending.length === 0) {
-      return { synced: 0, failed: 0, errors: [] };
-    }
-    
-    const results = { synced: 0, failed: 0, errors: [] };
-    const remaining = [];
-    
-    for (const change of pending) {
-      try {
-        switch (change.action) {
-          case 'create':
-            await api.post('/products', change.data);
-            break;
-          case 'update':
-            await api.put(`/products/${change.data.id}`, change.data);
-            break;
-          case 'delete':
-            await api.delete(`/products/${change.data.id}`);
-            break;
-          default:
-            remaining.push(change);
-            continue;
-        }
-        results.synced++;
-      } catch (error) {
-        results.failed++;
-        results.errors.push({ change, error: error.message });
-        remaining.push(change); // Keep for retry
-      }
-    }
-    
-    // Update pending changes with remaining
-    localStorage.setItem(CACHE_KEYS.PENDING_CHANGES, JSON.stringify(remaining));
-    
-    // Clear cache to refresh data
-    if (results.synced > 0) {
+    const result = await offlineQueueService.syncPendingActions();
+    if (result.synced > 0) {
       productService.clearCache();
     }
-    
-    return results;
+    return { synced: result.synced, failed: result.failed, errors: result.errors };
   },
 
   /**
-   * Clear pending offline changes
-   * @returns {void}
+   * Clear pending offline changes (no-op; unified queue is drained by sync)
    */
-  clearPendingChanges: () => {
-    try {
-      localStorage.removeItem(CACHE_KEYS.PENDING_CHANGES);
-    } catch (error) {
-      console.warn('[ProductService] Failed to clear pending changes:', error);
-    }
-  },
+  clearPendingChanges: () => {},
 
   // =============================================
   // STOCK OPERATIONS

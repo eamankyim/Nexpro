@@ -29,6 +29,14 @@ const Invoice = sequelize.define('Invoice', {
       key: 'id'
     }
   },
+  quoteId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'quotes',
+      key: 'id'
+    }
+  },
   saleId: {
     type: DataTypes.UUID,
     allowNull: true,
@@ -46,7 +54,7 @@ const Invoice = sequelize.define('Invoice', {
     }
   },
   sourceType: {
-    type: DataTypes.ENUM('job', 'sale', 'prescription'),
+    type: DataTypes.ENUM('job', 'sale', 'prescription', 'quote'),
     allowNull: false,
     defaultValue: 'job'
   },
@@ -182,18 +190,18 @@ const Invoice = sequelize.define('Invoice', {
         invoice.paymentToken = crypto.randomBytes(32).toString('hex');
       }
       
-      // Calculate tax amount
-      invoice.taxAmount = (parseFloat(invoice.subtotal) * parseFloat(invoice.taxRate || 0)) / 100;
-      
-      // Calculate discount amount
+      // Discount before tax: taxable base = subtotal - discount, then tax, then total
       if (invoice.discountType === 'percentage') {
         invoice.discountAmount = (parseFloat(invoice.subtotal) * parseFloat(invoice.discountValue || 0)) / 100;
       } else {
         invoice.discountAmount = parseFloat(invoice.discountValue || 0);
       }
-      
-      // Calculate total amount
-      invoice.totalAmount = parseFloat(invoice.subtotal) + parseFloat(invoice.taxAmount) - parseFloat(invoice.discountAmount);
+      const taxableBase = Math.max(
+        0,
+        parseFloat(invoice.subtotal) - parseFloat(invoice.discountAmount || 0)
+      );
+      invoice.taxAmount = (taxableBase * parseFloat(invoice.taxRate || 0)) / 100;
+      invoice.totalAmount = taxableBase + parseFloat(invoice.taxAmount);
       
       // Calculate balance
       const total = parseFloat(invoice.totalAmount) || 0;

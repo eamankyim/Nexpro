@@ -692,7 +692,7 @@ const POSScanMode = ({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
-                    className={`w-full ${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} font-semibold bg-[#166534] hover:bg-[#14532d] ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                    className={`w-full ${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} font-semibold bg-brand hover:bg-brand-dark ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                     onClick={handleProceedToPayment}
                   >
                     Continue to Payment
@@ -726,7 +726,7 @@ const POSScanMode = ({
                         key={method.id}
                         variant={paymentMethod === method.id ? 'default' : 'outline'}
                         className={`${isMobile ? 'h-12' : 'h-14'} flex-col gap-1 border-border ${
-                          paymentMethod === method.id ? 'bg-[#166534] hover:bg-[#14532d]' : ''
+                          paymentMethod === method.id ? 'bg-brand hover:bg-brand-dark' : ''
                         } ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                         onClick={() => setPaymentMethod(method.id)}
                       >
@@ -799,7 +799,7 @@ const POSScanMode = ({
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
-                    className={`w-full ${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} font-semibold bg-[#166534] hover:bg-[#14532d] ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                    className={`w-full ${isMobile ? 'h-12 text-base' : 'h-14 text-lg'} font-semibold bg-brand hover:bg-brand-dark ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                     disabled={paymentMethod === 'cash' && !isPaymentValid}
                     loading={isProcessing}
                     onClick={handleConfirmPayment}
@@ -878,7 +878,7 @@ const POSScanMode = ({
                 Close
               </Button>
               <Button
-                className={`flex-1 ${isMobile ? 'h-11' : 'h-12'} bg-[#166534] hover:bg-[#14532d] ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
+                className={`flex-1 ${isMobile ? 'h-11' : 'h-12'} bg-brand hover:bg-brand-dark ${isMobile ? 'rounded-md' : 'rounded-lg'}`}
                 onClick={handleNewSale}
               >
                 New Sale

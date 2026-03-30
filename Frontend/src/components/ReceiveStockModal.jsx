@@ -14,6 +14,7 @@ import { Barcode, Camera, Loader2, Package, Search } from 'lucide-react';
 import productService from '../services/productService';
 import { parseProductQRPayload } from '../utils/productQR';
 import { showSuccess, showError } from '../utils/toast';
+import { numberInputValue } from '../utils/formUtils';
 
 const SCANNER_ID = 'receive-stock-scanner';
 
@@ -198,12 +199,13 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
   }, []);
 
   const handleAddToStock = useCallback(async () => {
-    if (!product?.id || qtyReceived < 1) return;
+    const qty = qtyReceived === '' ? 1 : Number(qtyReceived);
+    if (!product?.id || !Number.isFinite(qty) || qty < 1) return;
     setLoading(true);
     try {
-      await productService.adjustStock(product.id, Number(qtyReceived), 'delta', 'Receive stock');
-      const updated = parseFloat(product.quantityOnHand || 0) + Number(qtyReceived);
-      showSuccess(`Added ${qtyReceived} to ${product.name}. Stock now ${updated} ${product.unit || 'units'}.`);
+      await productService.adjustStock(product.id, qty, 'delta', 'Receive stock');
+      const updated = parseFloat(product.quantityOnHand || 0) + qty;
+      showSuccess(`Added ${qty} to ${product.name}. Stock now ${updated} ${product.unit || 'units'}.`);
       onSuccess?.();
       resetToScan();
       setStep('scan');
@@ -251,7 +253,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
                   {isStarting && (
                     <div className="absolute inset-0 flex items-center justify-center bg-background/90 z-10">
                       <div className="text-center">
-                        <Loader2 className="h-8 w-8 animate-spin text-[#166534] mx-auto" />
+                        <Loader2 className="h-8 w-8 animate-spin text-brand mx-auto" />
                         <p className="text-sm text-gray-600 mt-2">Starting camera...</p>
                       </div>
                     </div>
@@ -356,15 +358,15 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
                 id="receive-qty"
                 type="number"
                 min={1}
-                value={qtyReceived}
+                value={numberInputValue(qtyReceived)}
                 onChange={(e) => {
                   const v = e.target.value;
                   if (v === '' || v === null) {
-                    setQtyReceived(1);
+                    setQtyReceived('');
                     return;
                   }
                   const n = parseFloat(String(v).replace(/[^0-9.]/g, ''), 10);
-                  setQtyReceived(Number.isFinite(n) && n >= 1 ? n : 1);
+                  setQtyReceived(Number.isFinite(n) && n >= 1 ? n : '');
                 }}
               />
             </div>

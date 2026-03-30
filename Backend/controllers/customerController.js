@@ -124,6 +124,7 @@ exports.getCustomer = async (req, res, next) => {
 exports.createCustomer = async (req, res, next) => {
   try {
     const payload = sanitizePayload(req.body);
+    if (payload.email === '') payload.email = null;
     const customer = await Customer.create({
       ...payload,
       tenantId: req.tenantId
@@ -156,6 +157,7 @@ exports.updateCustomer = async (req, res, next) => {
     }
 
     const payload = sanitizePayload(req.body);
+    if (payload.email === '') payload.email = null;
     await customer.update(payload);
     invalidateCustomerListCache(req.tenantId);
 

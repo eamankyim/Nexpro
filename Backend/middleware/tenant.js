@@ -111,9 +111,40 @@ const tenantContext = async (req, res, next) => {
     req.tenantRole = membership.role;
     req.tenant = membership.tenant || (await membership.getTenant());
 
+    if (req.tenant?.status === 'suspended') {
+      return res.status(403).json({
+        success: false,
+        message: 'Workspace access is suspended. Contact support.'
+      });
+    }
+
+    const entitlements = req.tenant?.metadata?.entitlements || {};
+    const accessState = entitlements?.accessState || (req.tenant?.status === 'paused' ? 'restricted' : 'active');
+    const isReadMethod = ['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+
+    if (accessState === 'suspended') {
+      return res.status(403).json({
+        success: false,
+        message: 'Workspace access is suspended. Contact support.'
+      });
+    }
+    if (accessState === 'read_only' && !isReadMethod) {
+      return res.status(403).json({
+        success: false,
+        message: 'Workspace is in read-only mode. Writes are disabled by platform admin.'
+      });
+    }
+    if (accessState === 'restricted' && !isReadMethod) {
+      return res.status(403).json({
+        success: false,
+        message: 'Workspace is temporarily restricted. Writes are disabled by platform admin.'
+      });
+    }
+
     res.locals.tenantId = tenantId;
     res.locals.tenant = req.tenant;
     res.locals.tenantRole = req.tenantRole;
+    res.locals.tenantAccessState = accessState;
 
     next();
   } catch (error) {

@@ -66,14 +66,14 @@ class SMSService {
   }
 
   /**
-   * Get resolved SMS config: tenant if set and enabled, otherwise platform from env.
+   * Get resolved SMS config: tenant only (tenant pays for their notifications).
+   * Platform SMS fallback removed so tenants must configure their own provider in Settings.
    * @param {string} tenantId - Tenant ID
    * @returns {Promise<Object|null>} - SMS configuration or null
    */
   async getResolvedConfig(tenantId) {
     const tenantConfig = await this.getConfig(tenantId);
-    if (tenantConfig) return tenantConfig;
-    return getPlatformConfigFromEnv();
+    return tenantConfig || null;
   }
 
 
@@ -141,10 +141,12 @@ class SMSService {
         };
       }
 
-      // Use provider-specific implementation
-      const provider = config.provider || 'twilio';
-      
+      // Use provider-specific implementation (default: termii for new tenants)
+      const provider = (config.provider || 'termii').toLowerCase();
+
       switch (provider) {
+        case 'termii':
+          return await this.sendViaTermii(config, formattedPhone, message, fromNumber);
         case 'twilio':
           return await this.sendViaTwilio(config, formattedPhone, message, fromNumber);
         case 'africas_talking':
@@ -227,6 +229,65 @@ class SMSService {
   }
 
   /**
+   * Send SMS via Termii (Nigeria and global). Uses sender ID (alphanumeric 3-11 chars).
+   * @param {Object} config - SMS configuration (apiKey, senderId)
+   * @param {string} to - Recipient phone number (E.164 e.g. +234...)
+   * @param {string} message - Message text
+   * @param {string} from - Override sender ID (optional)
+   * @returns {Promise<Object>} - API response
+   */
+  async sendViaTermii(config, to, message, from) {
+    try {
+      const apiKey = config.apiKey;
+      const senderId = from || config.senderId || config.fromNumber || '';
+
+      if (!apiKey || !senderId) {
+        return {
+          success: false,
+          error: 'Termii API Key and Sender ID are required'
+        };
+      }
+
+      const baseUrl = process.env.TERMII_BASE_URL || 'https://api.termii.com';
+      const url = `${baseUrl}/api/sms/send`;
+      const toTermii = to.replace(/^\+/, '');
+
+      const payload = {
+        api_key: apiKey,
+        to: toTermii,
+        from: senderId.substring(0, 11),
+        sms: message,
+        type: 'plain',
+        channel: 'dnd'
+      };
+
+      const response = await axios.post(url, payload, {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 10000
+      });
+
+      const messageId = response.data?.message_id || response.data?.messageId;
+      console.log('[SMS] Message sent successfully via Termii:', {
+        phoneNumber: to.substring(0, 7) + '***',
+        messageId
+      });
+
+      return {
+        success: true,
+        messageId: messageId || response.data?.message_id,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('[SMS] Termii error:', error.response?.data || error.message);
+      const errMsg = error.response?.data?.message || error.response?.data?.Message || error.message;
+      return {
+        success: false,
+        error: errMsg
+      };
+    }
+  }
+
+  /**
    * Send SMS via Africa's Talking
    * @param {Object} config - SMS configuration
    * @param {string} to - Recipient phone number
@@ -289,9 +350,33 @@ class SMSService {
    */
   async testConnection(config) {
     try {
-      const provider = config.provider || 'twilio';
-      
+      const provider = (config.provider || 'termii').toLowerCase();
+
       switch (provider) {
+        case 'termii':
+          if (!config.apiKey) {
+            return {
+              success: false,
+              error: 'Termii API Key is required'
+            };
+          }
+          const termiiBaseUrl = process.env.TERMII_BASE_URL || 'https://api.termii.com';
+          const balanceUrl = `${termiiBaseUrl}/api/get-balance`;
+          const termiiResponse = await axios.get(balanceUrl, {
+            params: { api_key: config.apiKey },
+            timeout: 10000
+          });
+          const balance = termiiResponse.data?.balance;
+          const currency = termiiResponse.data?.currency;
+          return {
+            success: true,
+            data: {
+              balance,
+              currency: currency || 'NGN',
+              user: termiiResponse.data?.user
+            }
+          };
+
         case 'twilio':
           if (!config.accountSid || !config.authToken) {
             return {

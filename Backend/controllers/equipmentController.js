@@ -114,6 +114,36 @@ exports.getEquipmentItems = async (req, res, next) => {
   }
 };
 
+// @desc    Export equipment items to CSV
+// @route   GET /api/equipment/items/export
+// @access  Private (admin, manager)
+exports.exportEquipmentItems = async (req, res, next) => {
+  try {
+    const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
+    const where = applyTenantFilter(req.tenantId, {});
+
+    const items = await Equipment.findAll({
+      where,
+      order: [['name', 'ASC']],
+      include: buildItemInclude(),
+      raw: false,
+    });
+    const rows = items.map((item) => {
+      const plain = item.get({ plain: true });
+      return { ...plain, category: plain.category || {}, vendor: plain.vendor || {} };
+    });
+
+    if (rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'No equipment to export' });
+    }
+
+    const filename = `equipment_${new Date().toISOString().split('T')[0]}`;
+    sendCSV(res, rows, `${filename}.csv`, COLUMN_DEFINITIONS.equipment);
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.getEquipmentItem = async (req, res, next) => {
   try {
     const item = await Equipment.findOne({
@@ -265,6 +295,127 @@ exports.deleteEquipmentItem = async (req, res, next) => {
     }
     await item.destroy();
     res.status(200).json({ success: true, message: 'Equipment deleted' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Bulk create equipment
+// @route   POST /api/equipment/items/bulk
+// @access  Private (admin, manager)
+exports.bulkCreateEquipment = async (req, res, next) => {
+  try {
+    const { equipment } = req.body;
+    const { bulkCreate } = require('../utils/bulkOperations');
+
+    if (!Array.isArray(equipment) || equipment.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide an array of equipment'
+      });
+    }
+
+    const result = await bulkCreate(Equipment, equipment, {
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      continueOnError: true,
+      maxBatchSize: 100,
+    });
+
+    res.status(result.success ? 201 : 207).json({
+      success: result.success,
+      ...result
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get CSV template for equipment bulk import
+// @route   GET /api/equipment/items/import/template
+// @access  Private (admin, manager)
+exports.getEquipmentImportTemplate = (req, res) => {
+  const { getTemplateCSV } = require('../utils/importParse');
+  const csv = getTemplateCSV('equipment');
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="equipment_import_template.csv"');
+  res.send(csv);
+};
+
+// @desc    Bulk import equipment from CSV/Excel
+// @route   POST /api/equipment/items/import
+// @access  Private (admin, manager)
+exports.importEquipment = async (req, res, next) => {
+  try {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+    const { parseImportFile } = require('../utils/importParse');
+    const { bulkCreate } = require('../utils/bulkOperations');
+    const mime = req.file.mimetype || '';
+    const ext = (req.file.originalname || '').toLowerCase().slice(-5);
+    const { mapped, errors: parseErrors } = await parseImportFile(
+      req.file.buffer,
+      mime || ext,
+      'equipment'
+    );
+
+    if (parseErrors.length > 0 && mapped.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid file or rows',
+        errors: parseErrors,
+      });
+    }
+
+    const categoryNames = [...new Set(mapped.map((m) => m.categoryName).filter(Boolean))];
+    const categories =
+      categoryNames.length > 0
+        ? await EquipmentCategory.findAll({
+            where: applyTenantFilter(req.tenantId, { name: { [Op.in]: categoryNames } }),
+            attributes: ['id', 'name'],
+            raw: true,
+          })
+        : [];
+    const categoryByName = Object.fromEntries(categories.map((c) => [c.name, c.id]));
+
+    const equipmentList = mapped.map((m) => {
+      const status = m.status ? String(m.status).toLowerCase() : 'active';
+      const validStatus = ['active', 'disposed', 'sold'].includes(status) ? status : 'active';
+      const rec = {
+        name: m.name,
+        description: m.description || null,
+        categoryId: m.categoryName ? categoryByName[m.categoryName] || null : null,
+        purchaseDate: m.purchaseDate || null,
+        purchaseValue: Number(m.purchaseValue) ?? 0,
+        location: m.location || null,
+        serialNumber: m.serialNumber || null,
+        status: validStatus,
+        notes: m.notes || null,
+        isActive: m.isActive !== false,
+      };
+      return sanitizePayload(rec);
+    });
+
+    const result = await bulkCreate(Equipment, equipmentList, {
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      continueOnError: true,
+      maxBatchSize: 100,
+    });
+
+    const allErrors = [
+      ...parseErrors.map((e) => ({ row: e.row, message: e.message })),
+      ...result.errors.map((e) => ({ row: e.index + 2, message: e.error })),
+    ];
+    res.status(result.success ? 201 : 207).json({
+      success: result.success,
+      successCount: result.successCount,
+      errorCount: allErrors.length,
+      totalProcessed: mapped.length,
+      created: result.created,
+      errors: allErrors.length ? allErrors : result.errors,
+    });
   } catch (error) {
     next(error);
   }

@@ -1,24 +1,29 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { authService } from '@/services/auth';
 import { logger } from '@/utils/logger';
 
-type User = { id: string; email: string; name?: string; profilePicture?: string } | null;
+type User = { id: string; email: string; name?: string; profilePicture?: string; emailVerifiedAt?: string | null } | null;
 type Membership = {
   tenantId: string;
-  tenant?: { id: string; name?: string; businessType?: string; metadata?: { shopType?: string } };
+  tenant?: { id: string; name?: string; businessType?: string; metadata?: { shopType?: string; onboarding?: { completedAt?: string }; phone?: string } };
   isDefault?: boolean;
+  invitedBy?: string | null;
 };
 
 type AuthContextType = {
   user: User;
   memberships: Membership[];
   activeTenantId: string | null;
-  activeTenant: { businessType?: string; metadata?: { shopType?: string } } | null;
+  activeTenant: { businessType?: string; name?: string; metadata?: { shopType?: string; onboarding?: { completedAt?: string }; phone?: string } } | null;
   loading: boolean;
+  wasInvited: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   setActiveTenantId: (id: string | null) => Promise<void>;
+  tenantSignup: (payload: { companyName?: string; companyEmail: string; adminName: string; adminEmail: string; password: string; plan?: string }) => Promise<void>;
+  refreshAuth: () => Promise<void>;
+  googleAuth: (idToken: string, options?: { signUp?: boolean; companyName?: string }) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -31,6 +36,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const activeTenant = memberships.find((m) => m.tenantId === activeTenantId)?.tenant ?? null;
+
+  const wasInvited = useMemo(
+    () => Array.isArray(memberships) && memberships.some((m) => !!(m as Membership & { invitedBy?: string }).invitedBy),
+    [memberships]
+  );
 
   const setActiveTenantId = useCallback(
     async (tenantId: string | null) => {
@@ -80,6 +90,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setMemberships([]);
     setActiveTenantIdState(null);
   }, []);
+
+  const tenantSignup = useCallback(
+    async (payload: { companyName?: string; companyEmail: string; adminName: string; adminEmail: string; password: string; plan?: string }) => {
+      const res = await authService.tenantSignup(payload);
+      const data = res?.data ?? res;
+      const u = data?.user ?? null;
+      const m = data?.memberships ?? data?.tenantMemberships ?? [];
+      setUser(u);
+      setMemberships(m);
+      const tid = data?.defaultTenantId ?? m.find((x: Membership) => x.isDefault)?.tenantId ?? m[0]?.tenantId ?? null;
+      if (tid) await setActiveTenantId(tid);
+    },
+    [setActiveTenantId]
+  );
+
+  const refreshAuth = useCallback(async () => {
+    const res = await authService.getCurrentUser();
+    const userData = res?.data?.data ?? res?.data ?? res;
+    const m = userData?.tenantMemberships ?? [];
+    if (m.length > 0) {
+      const token = await authService.getToken();
+      await authService.persistAuthPayload({
+        user: userData,
+        token: token ?? undefined,
+        memberships: m,
+        defaultTenantId: m.find((x: Membership) => x.isDefault)?.tenantId ?? m[0]?.tenantId ?? null,
+      });
+      setUser(userData);
+      setMemberships(m);
+      const tid = m.find((x: Membership) => x.isDefault)?.tenantId ?? m[0]?.tenantId;
+      if (tid) await setActiveTenantId(tid);
+    }
+  }, [setActiveTenantId]);
+
+  const googleAuth = useCallback(
+    async (idToken: string, options?: { signUp?: boolean; companyName?: string }) => {
+      const res = await authService.googleAuth(idToken, options ?? {});
+      const data = res?.data ?? res;
+      const u = data?.user ?? null;
+      const m = data?.memberships ?? data?.tenantMemberships ?? [];
+      setUser(u);
+      setMemberships(m);
+      const tid = data?.defaultTenantId ?? m.find((x: Membership) => x.isDefault)?.tenantId ?? m[0]?.tenantId ?? null;
+      if (tid) await setActiveTenantId(tid);
+    },
+    [setActiveTenantId]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -163,9 +220,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     activeTenantId,
     activeTenant,
     loading,
+    wasInvited,
     login,
     logout,
     setActiveTenantId,
+    tenantSignup,
+    refreshAuth,
+    googleAuth,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

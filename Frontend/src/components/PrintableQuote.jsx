@@ -1,6 +1,5 @@
 import React from 'react';
 import dayjs from 'dayjs';
-import logoImage from '../assets/nexus logo for dark bg.png';
 import { API_BASE_URL } from '../services/api';
 
 const formatAddress = (address) => {
@@ -17,21 +16,24 @@ const formatAddress = (address) => {
 const PrintableQuote = ({ quote, organization = {} }) => {
   if (!quote) return null;
 
-  // Format logo URL - handle relative paths by prepending API base URL
+  const primaryColor = organization.primaryColor || '#166534';
+
   const logoSource = organization?.logoUrl
     ? (organization.logoUrl.startsWith('data:') || organization.logoUrl.startsWith('http')
         ? organization.logoUrl
         : (API_BASE_URL
             ? `${API_BASE_URL}${organization.logoUrl.startsWith('/') ? '' : '/'}${organization.logoUrl}`
             : organization.logoUrl))
-    : logoImage;
+    : null;
 
   const companyInfo = {
     name: organization.name || 'Company Name',
     phone: organization.phone || '',
     email: organization.email || '',
     website: organization.website || '',
-    location: formatAddress(organization.address)
+    location: formatAddress(organization.address),
+    paymentDetails: organization.paymentDetails || '',
+    taxDisplayLabel: organization.tax?.displayLabel || 'Tax'
   };
 
   return (
@@ -73,7 +75,7 @@ const PrintableQuote = ({ quote, organization = {} }) => {
           display: flex;
           justify-content: space-between;
           gap: 24px;
-          border-bottom: 2px solid #0b1a50;
+          border-bottom: 2px solid ${primaryColor};
           padding-bottom: 20px;
           margin-bottom: 24px;
         }
@@ -97,7 +99,7 @@ const PrintableQuote = ({ quote, organization = {} }) => {
           font-size: 32px;
           font-weight: 600;
           letter-spacing: 3px;
-          color: #0b1a50;
+          color: ${primaryColor};
           margin-bottom: 12px;
         }
 
@@ -114,30 +116,29 @@ const PrintableQuote = ({ quote, organization = {} }) => {
         .party-section {
           display: flex;
           justify-content: space-between;
-          gap: 32px;
-          margin-bottom: 28px;
+          gap: 24px;
+          margin-bottom: 24px;
+          font-size: 12px;
+          color: #555;
+          line-height: 1.6;
         }
 
-        .party-card {
+        .party-block {
           flex: 1;
-          background: #f8faff;
-          border: 1px solid #d3ddff;
-          border-radius: 8px;
-          padding: 16px;
         }
 
-        .party-title {
-          font-size: 13px;
+        .party-label {
+          font-size: 11px;
           font-weight: 600;
-          color: #0b1a50;
+          color: ${primaryColor};
           text-transform: uppercase;
-          letter-spacing: 1px;
-          margin-bottom: 10px;
+          letter-spacing: 0.5px;
+          margin-bottom: 4px;
         }
 
         .party-details {
           font-size: 12px;
-          line-height: 1.8;
+          line-height: 1.6;
           color: #333;
         }
 
@@ -148,7 +149,7 @@ const PrintableQuote = ({ quote, organization = {} }) => {
         }
 
         .items-table th {
-          background: #0b1a50;
+          background: ${primaryColor};
           color: #fff;
           padding: 10px;
           text-align: left;
@@ -159,11 +160,11 @@ const PrintableQuote = ({ quote, organization = {} }) => {
         .items-table td {
           padding: 10px;
           font-size: 12px;
-          border-bottom: 1px solid #e6eaf8;
+          border-bottom: 1px solid #e5e7eb;
         }
 
         .items-table tr:nth-child(even) td {
-          background: #f8faff;
+          background: #f9fafb;
         }
 
         .totals-wrapper {
@@ -182,23 +183,37 @@ const PrintableQuote = ({ quote, organization = {} }) => {
           font-size: 16px;
           font-weight: 700;
           margin-top: 10px;
-          color: #0b1a50;
+          color: ${primaryColor};
         }
 
         .notes-section {
           margin-top: 28px;
           padding: 16px;
           border-radius: 8px;
-          background: #fef9f3;
-          border: 1px solid #fde4bc;
+          background: #f9fafb;
+          border: 1px solid #e5e7eb;
         }
 
         .notes-title {
           font-size: 13px;
           font-weight: 600;
-          color: #b26a00;
+          color: ${primaryColor};
           text-transform: uppercase;
           margin-bottom: 8px;
+        }
+        .pay-to-block {
+          margin-top: 16px;
+          padding: 10px 12px;
+          border-radius: 6px;
+          background-color: #f5f5f5;
+          font-size: 12px;
+          line-height: 1.6;
+        }
+        .pay-to-title {
+          font-weight: 600;
+          margin-bottom: 4px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
         }
 
         .references {
@@ -208,12 +223,28 @@ const PrintableQuote = ({ quote, organization = {} }) => {
           text-align: center;
           line-height: 1.6;
         }
+
+        .printable-quote-footer {
+          margin-top: 24px;
+          padding-top: 12px;
+          border-top: 1px solid #e5e7eb;
+          font-size: 10px;
+          color: #999;
+          text-align: center;
+        }
+        .printable-quote-footer a:hover {
+          text-decoration: underline;
+        }
       `}</style>
 
       <div className="printable-quote">
         <div className="quote-header">
           <div className="quote-branding">
-            <img src={logoSource} alt={companyInfo.name} />
+            {logoSource ? (
+              <img src={logoSource} alt={companyInfo.name} />
+            ) : (
+              companyInfo.name && <div className="quote-company-name" style={{ fontSize: '24px', fontWeight: 600, color: primaryColor, marginBottom: 12 }}>{companyInfo.name}</div>
+            )}
             <div className="company-details">
               {companyInfo.name && <div>{companyInfo.name}</div>}
               {companyInfo.location && <div style={{ whiteSpace: 'pre-line' }}>{companyInfo.location}</div>}
@@ -245,21 +276,18 @@ const PrintableQuote = ({ quote, organization = {} }) => {
         </div>
 
         <div className="party-section">
-          <div className="party-card">
-            <div className="party-title">Prepared For</div>
+          <div className="party-block">
+            <div className="party-label">Prepared for</div>
             <div className="party-details">
-              <div>{quote.customer?.name || '—'}</div>
-              {quote.customer?.company && <div>{quote.customer.company}</div>}
-              {quote.customer?.email && <div>{quote.customer.email}</div>}
+              {[quote.customer?.name, quote.customer?.company, quote.customer?.email].filter(Boolean).join(' · ') || '—'}
             </div>
           </div>
-
-          <div className="party-card">
-            <div className="party-title">Prepared By</div>
+          <div className="party-block">
+            <div className="party-label">Prepared by</div>
             <div className="party-details">
-              <div>{quote.creator?.name || 'Nexus Team'}</div>
-              {quote.creator?.email && <div>{quote.creator.email}</div>}
-              <div>Issued on {dayjs(quote.createdAt).format('MMM DD, YYYY')}</div>
+              {quote.creator?.name || 'Nexus Team'}
+              {' · Issued '}
+              {quote.createdAt ? dayjs(quote.createdAt).format('MMM DD, YYYY') : '—'}
             </div>
           </div>
         </div>
@@ -328,11 +356,29 @@ const PrintableQuote = ({ quote, organization = {} }) => {
             <span>-₵ {parseFloat(quote.discountTotal || 0).toFixed(2)}</span>
           </div>
           )}
+          {parseFloat(quote.taxAmount || 0) > 0 && (
+            <div className="totals-row">
+              <span>
+                {companyInfo.taxDisplayLabel}{' '}
+                {parseFloat(quote.taxRate || 0) > 0 ? `(${parseFloat(quote.taxRate).toFixed(2)}%)` : ''}
+              </span>
+              <span>₵ {parseFloat(quote.taxAmount || 0).toFixed(2)}</span>
+            </div>
+          )}
           <div className="totals-row total">
             <span>Total</span>
             <span>₵ {parseFloat(quote.totalAmount || 0).toFixed(2)}</span>
           </div>
         </div>
+
+        {companyInfo.paymentDetails && (
+          <div className="notes-section">
+            <div className="pay-to-block">
+              <div className="pay-to-title">Pay to</div>
+              <div style={{ whiteSpace: 'pre-line' }}>{companyInfo.paymentDetails}</div>
+            </div>
+          </div>
+        )}
 
         {quote.notes && (
           <div className="notes-section">
@@ -344,6 +390,12 @@ const PrintableQuote = ({ quote, organization = {} }) => {
         <div className="references">
           <div>Thank you for considering {companyInfo.name || 'us'}. We look forward to working with you.</div>
           <div>This quotation is valid until {quote.validUntil ? dayjs(quote.validUntil).format('MMM DD, YYYY') : '—'}.</div>
+        </div>
+
+        <div className="printable-quote-footer">
+          <a href="https://africanbusinesssuite.com" target="_blank" rel="noopener noreferrer" style={{ color: '#999', textDecoration: 'none' }}>
+            Powered by ABS – African Business Suite
+          </a>
         </div>
       </div>
     </>

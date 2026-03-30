@@ -229,9 +229,9 @@
 #### Deep Linking
 - **Status**: Not implemented
 - **Needed**: Support for deep links:
-  - `shopwise://sales/:id`
-  - `shopwise://customers/:id`
-  - `shopwise://jobs/:id`
+  - `abs://sales/:id`
+  - `abs://customers/:id`
+  - `abs://jobs/:id`
   - For notifications, sharing, etc.
 
 ### 7. **Offline Functionality**

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Comprehensive performance audit and optimization of data fetching patterns across the ShopWISE application, focusing on reducing data transfer, improving pagination accuracy, and enhancing perceived performance with a remote database.
+Comprehensive performance audit and optimization of data fetching patterns across the African Business Suite application, focusing on reducing data transfer, improving pagination accuracy, and enhancing perceived performance with a remote database.
 
 ---
 

@@ -1,16 +1,17 @@
 /**
  * POS (Point of Sale) Page
- * 
- * Full-featured checkout interface optimized for African context:
- * - Offline-first with local caching
- * - Mobile money payment support (MTN, Airtel)
- * - Multi-channel receipt delivery (Print, SMS, WhatsApp, Email)
- * - Large touch targets for mobile use
+ *
+ * Digital POS that runs on phone, tablet, and laptop. Full-featured checkout:
+ * - Offline-first with product/customer cache and pending-sales queue
+ * - Mobile money (direct MTN/AirtelTigo APIs; Paystack fallback), cash, card, credit
+ * - Multi-channel receipts (Print, SMS, WhatsApp, Email)
+ * - Responsive layout for phone, tablet, and desktop
+ * - Scan Mode: full-screen barcode/QR scanning for quick checkout
  * - Works on low-end devices and slow networks
- * - Mobile Scanner Mode for quick barcode scanning
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { computeDocumentTax } from '../utils/taxCalculationClient';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { RefreshCw, Users, Loader2, Camera, CreditCard, UserPlus, Phone } from 'lucide-react';
@@ -19,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Switch } from '@/components/ui/switch';
 import {
   Dialog,
   DialogBody,
@@ -41,25 +43,19 @@ import POSScanMode from '../components/pos/POSScanMode';
 import { usePOSOffline } from '../hooks/usePOSOffline';
 import { usePOSConfig } from '../hooks/usePOSConfig';
 import { useAuth } from '../context/AuthContext';
+import { useWebSocket } from '../hooks/useWebSocket';
 import { useDebounce } from '../hooks/useDebounce';
+import { useResponsive } from '../hooks/useResponsive';
 import customerService from '../services/customerService';
 import settingsService from '../services/settingsService';
 import saleService from '../services/saleService';
+import mobileMoneyService from '../services/mobileMoneyService';
 import productService from '../services/productService';
 
 // Utils
 import { showSuccess, showError } from '../utils/toast';
 import { normalizePhone, validatePhone } from '../utils/phoneUtils';
 import { CURRENCY, DEBOUNCE_DELAYS, QUERY_CACHE } from '../constants';
-
-/**
- * Detect if device is mobile
- */
-const isMobileDevice = () => {
-  if (typeof window === 'undefined') return false;
-  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) 
-    || window.innerWidth < 768;
-};
 
 /**
  * Format currency value
@@ -179,7 +175,7 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
               onClick={handleQuickAdd}
               loading={quickAddLoading}
               disabled={!quickPhone.trim()}
-              className="h-10 bg-[#166534] hover:bg-[#14532d]"
+              className="h-10 bg-brand hover:bg-brand-dark"
             >
               Add & use
             </Button>
@@ -262,9 +258,12 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
  * Main POS Page Component
  */
 const POS = () => {
-  const { activeTenant, activeTenantId, user } = useAuth();
+  const { activeTenant, activeTenantId, user, isManager } = useAuth();
   const businessType = activeTenant?.businessType || null;
-  const shopType = activeTenant?.metadata?.shopType || null;
+  const shopType =
+    activeTenant?.metadata?.businessSubType ||
+    activeTenant?.metadata?.shopType ||
+    null;
   const isShop = businessType === 'shop';
   const isRestaurant = shopType === 'restaurant';
   const tenantIdForProducts = activeTenantId || (typeof localStorage !== 'undefined' ? localStorage.getItem('activeTenantId') : null);
@@ -312,10 +311,44 @@ const POS = () => {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [completedSale, setCompletedSale] = useState(null);
   const [customerForReceipt, setCustomerForReceipt] = useState(null);
-  
+  const [mobileMoneyState, setMobileMoneyState] = useState('idle'); // idle | initiating | waiting | success | failed
+  const [mobileMoneyError, setMobileMoneyError] = useState('');
+  const [mobileMoneyFallbackMode, setMobileMoneyFallbackMode] = useState(null); // null | 'manual'
+
+  /** When offline, always show manual MoMo in payment modal (record payment, no Paystack request) */
+  useEffect(() => {
+    if (!isOnline) {
+      setMobileMoneyFallbackMode('manual');
+    } else {
+      setMobileMoneyFallbackMode(null);
+    }
+  }, [isOnline]);
+
+  /** When waiting for MoMo, WebSocket can push sale completed so we stop polling and show success immediately */
+  const waitingMoMoSaleIdRef = useRef(null);
+  const wsCompletedSaleIdRef = useRef(null);
+
+  const handleSaleCreated = useCallback((data) => {
+    if (waitingMoMoSaleIdRef.current && data?.sale?.id === waitingMoMoSaleIdRef.current && data?.sale?.status === 'completed') {
+      wsCompletedSaleIdRef.current = data.sale.id;
+    }
+  }, []);
+  const handleSaleUpdated = useCallback((data) => {
+    if (waitingMoMoSaleIdRef.current && data?.sale?.id === waitingMoMoSaleIdRef.current && data?.sale?.status === 'completed') {
+      wsCompletedSaleIdRef.current = data.sale.id;
+    }
+  }, []);
+
+  useWebSocket({
+    enabled: !!activeTenantId,
+    onSaleCreated: handleSaleCreated,
+    onSaleUpdated: handleSaleUpdated,
+  });
+
   // Scan Mode state
   const [scanModeOpen, setScanModeOpen] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const { isMobile: isMobileWidth } = useResponsive();
+  const [isMobile, setIsMobile] = useState(isMobileWidth);
 
   const [fallbackProducts, setFallbackProducts] = useState([]);
 
@@ -341,17 +374,15 @@ const POS = () => {
     return map;
   }, [cart]);
   
-  // Detect mobile on mount
+  // Detect mobile based on viewport width with a light UA hint
   useEffect(() => {
-    setIsMobile(isMobileDevice());
-    
-    const handleResize = () => {
-      setIsMobile(isMobileDevice());
-    };
-    
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+    const uaIsMobile =
+      typeof navigator !== 'undefined' &&
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+        navigator.userAgent
+      );
+    setIsMobile(isMobileWidth || uaIsMobile);
+  }, [isMobileWidth]);
 
   // Fetch organization settings
   const { data: orgSettingsData } = useQuery({
@@ -360,8 +391,49 @@ const POS = () => {
     staleTime: QUERY_CACHE.STALE_TIME_STABLE
   });
 
+  // Payment collection must be configured (bank or MoMo) before using POS so funds go to tenant
+  const { data: paymentCollectionData, isLoading: paymentCollectionLoading } = useQuery({
+    queryKey: ['settings', 'payment-collection', activeTenantId],
+    queryFn: () => settingsService.getPaymentCollectionSettings(),
+    staleTime: QUERY_CACHE.STALE_TIME_STABLE,
+    enabled: !!activeTenantId && isShop
+  });
+  const paymentCollection = paymentCollectionData?.data ?? paymentCollectionData;
+  const paymentCollectionConfigured = Boolean(
+    paymentCollection?.configured === true ||
+    paymentCollection?.settlement_type === 'momo' ||
+    paymentCollection?.hasSubaccount === true
+  );
+
+  // Only require payment collection for POS when online-payment flows are enabled.
+  const { data: notificationChannelsData } = useQuery({
+    queryKey: ['settings', 'notification-channels'],
+    queryFn: settingsService.getNotificationChannels,
+    staleTime: QUERY_CACHE.STALE_TIME_STABLE,
+    enabled: !!activeTenantId && isShop,
+  });
+  const { data: quoteWorkflowData } = useQuery({
+    queryKey: ['settings', 'quote-workflow'],
+    queryFn: settingsService.getQuoteWorkflow,
+    staleTime: QUERY_CACHE.STALE_TIME_STABLE,
+    enabled: !!activeTenantId && isShop,
+  });
+  const onlinePaymentRequired = Boolean(
+    notificationChannelsData?.autoSendInvoiceToCustomer === true ||
+    (quoteWorkflowData?.onAccept || 'record_only') === 'create_job_invoice_and_send'
+  );
+
   // API returns { success, data: organization }; axios wraps as { data: { success, data: organization } }
   const organizationSettings = orgSettingsData?.data?.data || orgSettingsData?.data?.organization || orgSettingsData?.data || {};
+
+  const posTaxConfig = useMemo(() => {
+    const t = organizationSettings?.tax || {};
+    return {
+      enabled: t.enabled === true,
+      defaultRatePercent: parseFloat(t.defaultRatePercent) || 0,
+      pricesAreTaxInclusive: t.pricesAreTaxInclusive === true
+    };
+  }, [organizationSettings]);
 
   // Fetch customers list for cart dropdown (Select existing)
   const { data: customersData } = useQuery({
@@ -391,24 +463,31 @@ const POS = () => {
     if (list.length > 0) syncProductsToCache(list);
   }, [activeProductsFromQuery, syncProductsToCache]);
 
-  // Calculate cart totals
   const cartTotals = useMemo(() => {
-    const subtotal = cart.reduce((sum, item) => 
-      sum + (item.unitPrice * item.quantity), 0);
-    const itemDiscounts = cart.reduce((sum, item) => 
-      sum + (item.discount || 0), 0);
-    const totalDiscount = itemDiscounts + cartDiscount;
-    const total = subtotal - totalDiscount;
-    
+    const lines = cart.map((item) => ({
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      discount: item.discount || 0
+    }));
+    const computed = computeDocumentTax({
+      lines,
+      cartDiscount,
+      config: posTaxConfig
+    });
+    const itemDiscounts = cart.reduce((sum, item) => sum + (item.discount || 0), 0);
+    const taxLabel = organizationSettings?.tax?.displayLabel || 'Tax';
     return {
-      subtotal,
+      subtotal: computed.subtotal,
       itemDiscounts,
       cartDiscount,
-      totalDiscount,
-      total: Math.max(0, total),
+      totalDiscount: computed.discount,
+      netBeforeTax: computed.netTaxable,
+      taxAmount: computed.taxAmount,
+      taxLabel,
+      total: Math.max(0, computed.total),
       itemCount: cart.reduce((sum, item) => sum + item.quantity, 0)
     };
-  }, [cart, cartDiscount]);
+  }, [cart, cartDiscount, posTaxConfig, organizationSettings?.tax?.displayLabel]);
 
   // Add product to cart
   const addToCart = useCallback((product) => {
@@ -442,6 +521,45 @@ const POS = () => {
       }];
     });
   }, []);
+
+  const adjustProductQuantity = useCallback((productId, delta) => {
+    if (!delta) return;
+    setCart((prevCart) => {
+      const index = prevCart.findIndex(
+        (item) => item.productId === productId && !item.productVariantId
+      );
+      if (index === -1) {
+        // If item not in cart yet and delta is positive, add one unit
+        if (delta > 0) {
+          const product = allProducts.find((p) => p.id === productId);
+          if (!product) return prevCart;
+          return [
+            ...prevCart,
+            {
+              id: generateCartItemId(),
+              productId: product.id,
+              productVariantId: null,
+              name: product.name,
+              sku: product.sku,
+              unitPrice: product.sellingPrice,
+              quantity: 1,
+              discount: 0,
+              tax: 0,
+            },
+          ];
+        }
+        return prevCart;
+      }
+      const current = Number(prevCart[index].quantity) || 0;
+      const next = current + delta;
+      if (next <= 0) {
+        return prevCart.filter((_, i) => i !== index);
+      }
+      const updated = [...prevCart];
+      updated[index] = { ...updated[index], quantity: next };
+      return updated;
+    });
+  }, [allProducts]);
 
   // Pre-add product when navigating from staff dashboard with state.addProductId
   const navigateRef = useNavigate();
@@ -579,10 +697,12 @@ const POS = () => {
         notes: paymentDetails.mobileMoneyReference 
           ? `Mobile Money Ref: ${paymentDetails.mobileMoneyReference}` 
           : null,
+        cartDiscount,
         metadata: {
           mobileMoneyProvider: paymentDetails.mobileMoneyProvider,
           mobileMoneyPhone: paymentDetails.mobileMoneyPhone,
-          mobileMoneyReference: paymentDetails.mobileMoneyReference
+          mobileMoneyReference: paymentDetails.mobileMoneyReference,
+          posTaxConfigSnapshot: posTaxConfig
         }
       };
       if (isRestaurant) {
@@ -605,9 +725,8 @@ const POS = () => {
         };
 
         setCompletedSale(saleObj);
-        if (!paymentModalStayOpen) {
-          setPaymentModalOpen(false);
-        }
+        // Always return user to main POS view after a successful sale
+        setPaymentModalOpen(false);
         // Capture customer/phone for receipt before clearCart wipes them
         setCustomerForReceipt(
           selectedCustomer ||
@@ -640,7 +759,232 @@ const POS = () => {
     } finally {
       setIsProcessingPayment(false);
     }
-  }, [cart, selectedCustomer, cartTotals, processSale, clearCart, isRestaurant, posConfig, paymentModalStayOpen]);
+  }, [cart, selectedCustomer, cartTotals, processSale, clearCart, isRestaurant, posConfig, cartDiscount, posTaxConfig]);
+
+  // Handle Paystack Mobile Money payment request (POS)
+  const handleRequestMobileMoneyPayment = useCallback(
+    async ({ phone, provider }) => {
+      const phoneNumber = (phone || '').trim();
+      const logicalProvider = String(provider || 'MTN').toUpperCase();
+
+      if (!phoneNumber) {
+        showError('Customer MoMo number is required');
+        return;
+      }
+      if (logicalProvider === 'VODAFONE') {
+        showError(
+          'Vodafone Cash automated collection is not available yet. Choose MTN or AirtelTigo, or use card, cash, or manual MoMo.'
+        );
+        setMobileMoneyState('failed');
+        return;
+      }
+      if (!isOnline) {
+        showError('You are offline. Use manual MoMo or cash.');
+        setMobileMoneyFallbackMode('manual');
+        return;
+      }
+
+      setIsProcessingPayment(true);
+      setMobileMoneyError('');
+      setMobileMoneyState('initiating');
+      setMobileMoneyFallbackMode(null);
+
+      const formattedMoMoPhone = mobileMoneyService.formatPhoneNumber(phoneNumber).replace(/^\+/, '');
+
+      try {
+        // 1. Create pending sale
+        const saleData = {
+          items: cart.map((item) => ({
+            productId: item.productId,
+            productVariantId: item.productVariantId,
+            name: item.name,
+            sku: item.sku,
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            discount: item.discount || 0,
+            tax: item.tax || 0
+          })),
+          customerId: selectedCustomer?.id || null,
+          paymentMethod: 'mobile_money',
+          status: 'pending',
+          amountPaid: 0,
+          metadata: {
+            mobileMoneyProvider: logicalProvider,
+            mobileMoneyPhone: phoneNumber
+          }
+        };
+
+        const result = await processSale(saleData);
+        const createdSale = result?.sale;
+        if (!result.success || !createdSale?.id) {
+          showError('Failed to start mobile money payment. Please try again.');
+          setMobileMoneyState('failed');
+          return;
+        }
+
+        const saleId = createdSale.id;
+        const totalAmount = parseFloat(createdSale.total || 0);
+
+        setMobileMoneyState('initiating');
+
+        // 2. Prefer direct operator MoMo APIs; fall back to Paystack MoMo if unavailable
+        let directOk = false;
+        try {
+          const momoRes = await mobileMoneyService.initiatePayment({
+            saleId,
+            phoneNumber: formattedMoMoPhone,
+            amount: totalAmount,
+            currency: 'GHS',
+            provider: logicalProvider
+          });
+          directOk = !!momoRes?.success;
+          if (!directOk) {
+            const errMsg = String(momoRes?.error || momoRes?.message || '').toLowerCase();
+            const canTryPaystack =
+              errMsg.includes('not configured') ||
+              errMsg.includes('authenticate') ||
+              errMsg.includes('failed to initiate') ||
+              errMsg.includes('unavailable');
+            if (!canTryPaystack) {
+              const message = momoRes?.error || momoRes?.message || 'Failed to initiate mobile money payment';
+              showError(message);
+              setMobileMoneyError(message);
+              setMobileMoneyState('failed');
+              return;
+            }
+          }
+        } catch (directErr) {
+          directOk = false;
+        }
+
+        if (!directOk) {
+          const paystackRes = await saleService.paystackMobileMoneyPay(saleId, {
+            phoneNumber,
+            provider: logicalProvider
+          });
+
+          if (!paystackRes?.success) {
+            const message =
+              paystackRes?.message ||
+              paystackRes?.error ||
+              'Failed to initiate mobile money payment';
+            showError(message);
+            setMobileMoneyError(message);
+            setMobileMoneyState('failed');
+            if (
+              message.toLowerCase().includes('not configured') ||
+              message.toLowerCase().includes('paystack')
+            ) {
+              setMobileMoneyFallbackMode('manual');
+            }
+            return;
+          }
+        }
+
+        setMobileMoneyState('waiting');
+
+        const maxAttempts = 30;
+        const delayMs = 2000;
+        let finalSale = null;
+        waitingMoMoSaleIdRef.current = saleId;
+        wsCompletedSaleIdRef.current = null;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+          if (wsCompletedSaleIdRef.current === saleId) {
+            // eslint-disable-next-line no-await-in-loop
+            const res = await saleService.getSaleById(saleId);
+            const body = res?.data ?? res;
+            finalSale = body?.data ?? body ?? null;
+            break;
+          }
+
+          if (directOk) {
+            // eslint-disable-next-line no-await-in-loop
+            const pollRes = await mobileMoneyService.pollSalePayment(saleId);
+            const d = pollRes?.data ?? pollRes;
+            if (d?.saleStatus === 'completed' || d?.paymentStatus === 'SUCCESSFUL') {
+              // eslint-disable-next-line no-await-in-loop
+              const res = await saleService.getSaleById(saleId);
+              const body = res?.data ?? res;
+              finalSale = body?.data ?? body ?? null;
+              if (finalSale?.status === 'completed') break;
+            }
+          } else {
+            // eslint-disable-next-line no-await-in-loop
+            const res = await saleService.checkPaystackCharge(saleId);
+            const body = res?.data ?? res;
+            const sale = body?.data ?? body ?? null;
+            if (sale && sale.status === 'completed' && sale.paymentMethod === 'mobile_money') {
+              finalSale = sale;
+              break;
+            }
+          }
+
+          // eslint-disable-next-line no-await-in-loop
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+
+        waitingMoMoSaleIdRef.current = null;
+        wsCompletedSaleIdRef.current = null;
+
+        if (!finalSale || finalSale.status !== 'completed') {
+          const msg =
+            'Payment not completed yet. Please confirm on customer phone or try again.';
+          showError(msg);
+          setMobileMoneyError(msg);
+          setMobileMoneyState('failed');
+          return;
+        }
+
+        setCompletedSale(finalSale);
+        setPaymentModalOpen(false);
+        setCustomerForReceipt(
+          selectedCustomer ||
+            (quickCustomerPhone
+              ? { phone: quickCustomerPhone, name: quickCustomerName || '', email: '' }
+              : null)
+        );
+        const receiptChannelsAvailable = posConfig?.receiptChannelsAvailable || {};
+        const rawChannels = posConfig?.receipt?.channels || ['sms', 'print'];
+        const integratedSendChannels = rawChannels.filter(
+          (c) => c !== 'print' && receiptChannelsAvailable[c]
+        );
+        const receiptMode = posConfig?.receipt?.mode || 'ask';
+        const skipReceiptModal =
+          receiptMode === 'auto_send' && integratedSendChannels.length === 0;
+        setReceiptModalOpen(!skipReceiptModal);
+
+        showSuccess('Sale completed successfully!');
+        clearCart();
+        setMobileMoneyState('success');
+      } catch (error) {
+        console.error('[MoMo] Mobile money payment error:', {
+          error,
+          responseData: error?.response?.data,
+          status: error?.response?.status,
+          message: error?.message
+        });
+        const message = error?.response?.data?.message || error.message || 'Failed to process mobile money payment';
+        showError(message);
+        setMobileMoneyError(message);
+        setMobileMoneyState('failed');
+      } finally {
+        waitingMoMoSaleIdRef.current = null;
+        wsCompletedSaleIdRef.current = null;
+        setIsProcessingPayment(false);
+      }
+    },
+    [
+      cart,
+      selectedCustomer,
+      isOnline,
+      processSale,
+      posConfig,
+      quickCustomerName,
+      quickCustomerPhone,
+      clearCart
+    ]
+  );
 
   const handlePaymentModalStayOpenChange = useCallback((checked) => {
     setPaymentModalStayOpen(checked);
@@ -720,55 +1064,143 @@ const POS = () => {
     );
   }
 
+  if (!paymentCollectionLoading && onlinePaymentRequired && !paymentCollectionConfigured) {
+    return (
+      <div className="p-4 md:p-6 space-y-4 md:space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">Point of Sale</h1>
+            <p className="text-gray-600 mt-1">Quick checkout and sales processing</p>
+          </div>
+        </div>
+        <Card className="border border-gray-200">
+          <CardContent className="p-12">
+            <div className="flex flex-col items-center justify-center text-center space-y-4">
+              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
+                <CreditCard className="h-10 w-10 text-gray-400" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-semibold text-foreground mb-2">Set up payment collection</h2>
+                <p className="text-gray-600 max-w-md mb-4">
+                  {isManager
+                    ? 'Configure where to receive card and mobile money payments from customers before using POS. Your funds will go to your bank or MoMo account.'
+                    : 'Payment collection must be configured before POS can take online payments. Ask a workspace manager or administrator to set this up in Settings.'}
+                </p>
+                {isManager ? (
+                  <Button
+                    onClick={() => navigateRef('/settings?tab=payments')}
+                    className="bg-green-700 hover:bg-green-800"
+                  >
+                    Go to Settings
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
-    <div className="h-[calc(100vh-4rem)] flex flex-col p-4 md:p-6 bg-muted/50">
+    <div className="flex flex-col min-h-[calc(100dvh-4rem)] pt-3 pl-3 sm:pt-4 sm:pl-4 md:pt-6 md:pl-6 bg-muted/50">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Point of Sale</h1>
-          <p className="text-gray-600 text-sm">Quick checkout and sales processing</p>
+      <div
+        className={`mb-4 ${
+          isMobile ? 'flex flex-col gap-3' : 'flex items-center justify-between gap-2'
+        }`}
+      >
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-foreground truncate">
+            Point of Sale
+          </h1>
+          <p className="text-gray-600 text-xs sm:text-sm truncate">
+            Quick checkout and sales processing
+          </p>
         </div>
-        
-        <div className="flex items-center gap-2 md:gap-3 mr-12">
-          {/* Start Scanning Button - prominent on mobile */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                onClick={() => setScanModeOpen(true)}
-                className={`
-                  bg-green-700 hover:bg-green-800 
-                  ${isMobile ? 'h-12 px-4 text-base' : 'h-10'}
-                `}
-              >
-                <Camera className="h-5 w-5 mr-2" />
-                {isMobile ? 'Scan' : 'Start Scanning'}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Open barcode scanner for quick add</TooltipContent>
-          </Tooltip>
-          
-          <POSConnectionStatus
-            isOnline={isOnline}
-            pendingCount={pendingCount}
-            isSyncing={isSyncing}
-            lastSyncError={lastSyncError}
-          />
-          
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={handleRefreshProducts}
-                disabled={!isOnline || isSyncing}
-                className="hidden md:flex"
-              >
-                <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Refresh product list</TooltipContent>
-          </Tooltip>
-        </div>
+
+        {isMobile ? (
+          <div className="flex flex-col gap-2 w-full">
+            <div className="flex items-center justify-between gap-3 w-full">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    onClick={() => setScanModeOpen(true)}
+                    className="bg-green-700 hover:bg-green-800 h-12 px-4 text-base flex-1"
+                  >
+                    <Camera className="h-5 w-5 mr-2 flex-shrink-0" />
+                    <span className="truncate">Scan</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Open barcode scanner for quick add</TooltipContent>
+              </Tooltip>
+
+              <div className="flex-shrink-0">
+                <POSConnectionStatus
+                  isOnline={isOnline}
+                  pendingCount={pendingCount}
+                  isSyncing={isSyncing}
+                  lastSyncError={lastSyncError}
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <span className="text-xs text-muted-foreground">Stay open</span>
+              <Switch
+                id="stay-open-main-mobile"
+                checked={paymentModalStayOpen}
+                onCheckedChange={handlePaymentModalStayOpenChange}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 flex-1 min-w-0 justify-end">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mr-2">
+              <span>Stay open</span>
+              <Switch
+                id="stay-open-main-desktop"
+                checked={paymentModalStayOpen}
+                onCheckedChange={handlePaymentModalStayOpenChange}
+              />
+            </div>
+
+            {/* Start Scanning Button - desktop */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  onClick={() => setScanModeOpen(true)}
+                  className="bg-green-700 hover:bg-green-800 h-10"
+                >
+                  <Camera className="h-5 w-5 mr-2 flex-shrink-0" />
+                  <span className="truncate">Start Scanning</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Open barcode scanner for quick add</TooltipContent>
+            </Tooltip>
+
+            <POSConnectionStatus
+              isOnline={isOnline}
+              pendingCount={pendingCount}
+              isSyncing={isSyncing}
+              lastSyncError={lastSyncError}
+            />
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleRefreshProducts}
+                  disabled={!isOnline || isSyncing}
+                  className="hidden md:flex"
+                >
+                  <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Refresh product list</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
       </div>
 
       {/* Main content - Split layout */}
@@ -785,13 +1217,15 @@ const POS = () => {
             productsLoading={productsLoading}
             cartQuantityByProductId={cartQuantityByProductId}
             fillHeight
+            onAdjustProductQuantity={adjustProductQuantity}
           />
         </div>
 
-        {/* Right side - Cart (40%) - scrollable when content overflows */}
-        <div className="lg:col-span-2 min-h-0 overflow-y-auto">
+        {/* Right side - Cart */}
+        <div className="hidden lg:block lg:col-span-2 min-h-0 overflow-y-auto">
           <POSCart
             items={cart}
+            totalsOverride={cartTotals}
             onUpdateQuantity={updateCartItemQuantity}
             onRemoveItem={removeCartItem}
             onUpdateItemDiscount={updateCartItemDiscount}
@@ -837,15 +1271,68 @@ const POS = () => {
         isOpen={paymentModalOpen}
         onClose={() => setPaymentModalOpen(false)}
         total={cartTotals.total}
+        taxSummary={{
+          subtotal: cartTotals.subtotal,
+          discount: cartTotals.totalDiscount,
+          taxAmount: cartTotals.taxAmount,
+          taxLabel: cartTotals.taxLabel
+        }}
         items={cart}
         customer={selectedCustomer}
+        customers={customersList}
         onRequestChangeCustomer={() => setCustomerDialogOpen(true)}
+        onClearCustomer={() => {
+          setSelectedCustomer(null);
+          setQuickCustomerName('');
+          setQuickCustomerPhone('');
+        }}
+        onSelectExistingCustomer={(customer) => {
+          setSelectedCustomer(customer);
+          setQuickCustomerName('');
+          setQuickCustomerPhone('');
+        }}
         onConfirmPayment={handleConfirmPayment}
+        onRequestMobileMoney={handleRequestMobileMoneyPayment}
+        mobileMoneyState={mobileMoneyState}
+        mobileMoneyError={mobileMoneyError}
+        mobileMoneyFallbackMode={mobileMoneyFallbackMode}
         isProcessing={isProcessingPayment}
         isRestaurant={isRestaurant}
         stayOpenAfterSale={paymentModalStayOpen}
         onStayOpenAfterSaleChange={handlePaymentModalStayOpenChange}
       />
+
+      {/* Mobile cart bar */}
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background px-4 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+16px)] lg:hidden">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-col">
+            <span className="text-xs text-muted-foreground">
+              {cartTotals.itemCount} item{cartTotals.itemCount !== 1 ? 's' : ''}
+            </span>
+            <span className="text-lg font-semibold text-green-700">
+              {formatCurrency(cartTotals.total)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-10"
+              disabled={cart.length === 0}
+              onClick={clearCart}
+            >
+              Clear
+            </Button>
+            <Button
+              className="h-10 bg-green-700 hover:bg-green-800"
+              disabled={cart.length === 0}
+              onClick={handleCheckout}
+            >
+              Checkout
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {/* Receipt modal */}
       <POSReceiptModal

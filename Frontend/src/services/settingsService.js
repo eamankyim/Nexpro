@@ -58,6 +58,43 @@ const getSubscription = async () => api.get('/settings/subscription');
 
 const updateSubscription = async (payload) => api.put('/settings/subscription', payload);
 
+const initializeSubscriptionPayment = async (payload) =>
+  api.post('/subscription/initialize', payload);
+
+const verifySubscriptionPayment = async (reference) =>
+  api.get(`/subscription/verify/${encodeURIComponent(reference)}`);
+
+const getNotificationChannels = async () => {
+  const res = await api.get('/settings/notification-channels');
+  const raw = res?.data?.data ?? res?.data ?? res;
+  return raw;
+};
+
+const updateCustomerNotificationPreferences = async (payload) => {
+  const res = await api.put('/settings/customer-notification-preferences', payload);
+  return res?.data?.data ?? res?.data ?? res;
+};
+
+const getQuoteWorkflow = async () => {
+  const res = await api.get('/settings/quote-workflow');
+  return res?.data?.data ?? res?.data ?? { onAccept: 'record_only' };
+};
+
+const updateQuoteWorkflow = async (payload) => {
+  const res = await api.put('/settings/quote-workflow', payload);
+  return res?.data?.data ?? res?.data ?? res;
+};
+
+const getJobInvoice = async () => {
+  const res = await api.get('/settings/job-invoice');
+  return res?.data?.data ?? res?.data ?? { autoSendInvoiceOnJobCreation: false };
+};
+
+const updateJobInvoice = async (payload) => {
+  const res = await api.put('/settings/job-invoice', payload);
+  return res?.data?.data ?? res?.data ?? res;
+};
+
 const getPOSConfig = async () => api.get('/settings/pos-config');
 
 const updatePOSConfig = async (payload) => api.put('/settings/pos-config', payload);
@@ -73,8 +110,26 @@ const getLeadSources = async () => {
 };
 
 const getPaymentCollectionBanks = async () => {
-  const res = await api.get('/settings/payment-collection/banks');
-  return res?.data ?? res;
+  console.log('[Settings] getPaymentCollectionBanks: requesting banks (country=ghana)');
+  try {
+    const res = await api.get('/settings/payment-collection/banks', { params: { country: 'ghana' } });
+    const raw = res?.data ?? res;
+    const list = Array.isArray(raw) ? raw : (raw?.data ?? []);
+    console.log('[Settings] getPaymentCollectionBanks: response', {
+      success: raw?.success,
+      count: list?.length ?? 0,
+      firstCode: list?.[0]?.code,
+      firstName: list?.[0]?.name
+    });
+    return list;
+  } catch (err) {
+    console.error('[Settings] getPaymentCollectionBanks: failed', {
+      message: err?.message,
+      status: err?.response?.status,
+      data: err?.response?.data
+    });
+    throw err;
+  }
 };
 
 const getPaymentCollectionSettings = async () => {
@@ -82,8 +137,46 @@ const getPaymentCollectionSettings = async () => {
   return res?.data ?? res;
 };
 
+/** @param {{ from?: string, to?: string, page?: number, perPage?: number }} params */
+const getPaystackWorkspaceTransactions = async (params = {}) => {
+  const res = await api.get('/settings/payment-collection/paystack-transactions', { params });
+  return res?.data?.data ?? res?.data;
+};
+
+const verifyPaymentCollectionPassword = async (password) => {
+  const payload = password ? { password } : {};
+  const res = await api.post('/settings/payment-collection/verify-password', payload);
+  return res?.data ?? res;
+};
+
+const sendPaymentCollectionOtp = async (password) => {
+  const payload = password ? { password } : {};
+  const res = await api.post('/settings/payment-collection/send-otp', payload);
+  return res?.data ?? res;
+};
+
+const verifyPaymentCollectionOtp = async (payload) => {
+  const res = await api.post('/settings/payment-collection/verify-otp', payload);
+  return res?.data ?? res;
+};
+
 const updatePaymentCollectionSettings = async (payload) => {
   const res = await api.put('/settings/payment-collection', payload);
+  return res?.data ?? res;
+};
+
+const updateMtnCollectionCredentials = async (payload) => {
+  const res = await api.put('/settings/mtn-collection-credentials', payload);
+  return res?.data ?? res;
+};
+
+const testMtnCollectionCredentials = async (payload) => {
+  const res = await api.post('/settings/mtn-collection-credentials/test', payload);
+  return res?.data ?? res;
+};
+
+const disconnectMtnCollectionCredentials = async (payload) => {
+  const res = await api.post('/settings/mtn-collection-credentials/disconnect', payload);
   return res?.data ?? res;
 };
 
@@ -97,12 +190,27 @@ export default {
   uploadOrganizationLogo,
   getSubscription,
   updateSubscription,
+  initializeSubscriptionPayment,
+  verifySubscriptionPayment,
   getPOSConfig,
   updatePOSConfig,
   getCustomerSources,
   getLeadSources,
+  getNotificationChannels,
+  updateCustomerNotificationPreferences,
+  getQuoteWorkflow,
+  updateQuoteWorkflow,
+  getJobInvoice,
+  updateJobInvoice,
   getPaymentCollectionBanks,
   getPaymentCollectionSettings,
-  updatePaymentCollectionSettings
+  getPaystackWorkspaceTransactions,
+  verifyPaymentCollectionPassword,
+  sendPaymentCollectionOtp,
+  verifyPaymentCollectionOtp,
+  updatePaymentCollectionSettings,
+  updateMtnCollectionCredentials,
+  testMtnCollectionCredentials,
+  disconnectMtnCollectionCredentials
 };
 
