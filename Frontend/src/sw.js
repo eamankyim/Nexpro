@@ -2,12 +2,16 @@
  * ABS Service Worker (injectManifest)
  * Workbox precache + API cache + offline fallback + push/sync/message
  */
-import { precacheAndRoute } from 'workbox-precaching';
+import { cleanupOutdatedCaches, precacheAndRoute } from 'workbox-precaching';
 import { registerRoute, setCatchHandler } from 'workbox-routing';
 import { NetworkFirst } from 'workbox-strategies';
 
 const OFFLINE_URL = '/offline.html';
 const API_CACHE_NAME = 'shopwise-api-v1';
+
+// Drop precache entries from older deploys so we never mix old + new hashed chunks
+// (avoids "Cannot read properties of undefined (reading '__SECRET_INTERNALS_...')" in react-vendor).
+cleanupOutdatedCaches();
 
 // Precache app shell (manifest injected at build by vite-plugin-pwa)
 precacheAndRoute(self.__WB_MANIFEST);

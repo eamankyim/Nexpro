@@ -142,6 +142,12 @@ const Job = sequelize.define('Job', {
   deliveryStatus: {
     type: DataTypes.STRING(32),
     allowNull: true
+  },
+  /** When true, job is treated as needing physical delivery; stages are managed on Deliveries. */
+  deliveryRequired: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
   }
 }, {
   timestamps: true,

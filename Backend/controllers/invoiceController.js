@@ -3,7 +3,7 @@ const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
 const { createInvoicePaymentJournal, createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
-const { invalidateInvoiceListCache } = require('../middleware/cache');
+const { invalidateInvoiceListCache, invalidateAfterMutation } = require('../middleware/cache');
 const activityLogger = require('../services/activityLogger');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
 const sabitoWebhookService = require('../services/sabitoWebhookService');
@@ -586,6 +586,7 @@ exports.updateInvoice = async (req, res, next) => {
       }
     }
 
+    invalidateAfterMutation(req.tenantId);
     invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
@@ -835,6 +836,7 @@ exports.recordPayment = async (req, res, next) => {
       console.error('Failed to update customer balance:', error);
     }
 
+    invalidateAfterMutation(req.tenantId);
     invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
@@ -965,6 +967,7 @@ exports.markInvoicePaid = async (req, res, next) => {
       console.error('Failed to update customer balance:', error);
     }
 
+    invalidateAfterMutation(req.tenantId);
     invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
@@ -1803,6 +1806,7 @@ async function recordPublicInvoicePaymentCore(invoice, {
     console.error('Failed to update customer balance:', error);
   }
 
+  invalidateAfterMutation(invoice.tenantId);
   invalidateInvoiceListCache(invoice.tenantId);
 
   return { updatedInvoice, payment };
@@ -2471,6 +2475,7 @@ exports.cancelInvoice = async (req, res, next) => {
       ]
     });
 
+    invalidateAfterMutation(req.tenantId);
     invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,

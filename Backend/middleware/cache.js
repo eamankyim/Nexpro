@@ -343,6 +343,15 @@ const invalidateAfterMutation = (tenantId) => {
   if (!tenantId) return;
   invalidateDashboardCache(tenantId);
   invalidateReportCache(tenantId);
+  // Dashboard overview also uses an in-memory Map inside dashboardController (separate from node-cache)
+  try {
+    const { invalidateTenantCache } = require('../controllers/dashboardController');
+    invalidateTenantCache(tenantId);
+  } catch (err) {
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[Cache] invalidateTenantCache:', err?.message);
+    }
+  }
 };
 
 module.exports = {

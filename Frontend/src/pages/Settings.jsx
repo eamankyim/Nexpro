@@ -15,6 +15,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { useHintMode } from '../context/HintModeContext';
 import { showSuccess, showError, showLoading } from '../utils/toast';
+import { maskEmail } from '../utils/maskEmail';
 import { numberInputValue, handleIntegerChange, integerOrEmptySchema } from '../utils/formUtils';
 import inviteService from '../services/inviteService';
 import authService from '../services/authService';
@@ -312,6 +313,7 @@ const Settings = () => {
   const [paymentPasswordVerified, setPaymentPasswordVerified] = useState(false);
   const [paymentPasswordVerifying, setPaymentPasswordVerifying] = useState(false);
   const [paymentVerifyOtpVerifying, setPaymentVerifyOtpVerifying] = useState(false);
+  const [showPaymentOtpEmailHint, setShowPaymentOtpEmailHint] = useState(false);
   const [bankSelectOpen, setBankSelectOpen] = useState(false);
   const [bankSearchQuery, setBankSearchQuery] = useState('');
   const [mtnCredForm, setMtnCredForm] = useState({
@@ -5183,6 +5185,7 @@ const Settings = () => {
               onOpenChange={(open) => {
                 setPaymentVerifyModalOpen(open);
                 if (!open) {
+                  setShowPaymentOtpEmailHint(false);
                   if (skipResetPaymentVerifyOnCloseRef.current) {
                     skipResetPaymentVerifyOnCloseRef.current = false;
                   } else {
@@ -5240,8 +5243,27 @@ const Settings = () => {
                         Verification code sent to your email. Enter the code below.
                       </p>
                       <div className="space-y-2">
-                        <Label>Verification code</Label>
-                        <div className="flex gap-2 w-full" role="group" aria-label="Verification code digits">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <Label id="payment-otp-label">Verification code</Label>
+                          <Button
+                            type="button"
+                            variant="link"
+                            className="h-auto p-0 text-xs text-muted-foreground shrink-0"
+                            onClick={() => setShowPaymentOtpEmailHint((v) => !v)}
+                          >
+                            {showPaymentOtpEmailHint ? 'Hide email' : 'Which email?'}
+                          </Button>
+                        </div>
+                        {showPaymentOtpEmailHint && user?.email ? (
+                          <p className="text-xs text-muted-foreground" aria-live="polite">
+                            Code sent to {maskEmail(user.email)}
+                          </p>
+                        ) : null}
+                        <div
+                          className="flex gap-2 w-full"
+                          role="group"
+                          aria-labelledby="payment-otp-label"
+                        >
                           {(() => {
                             const raw = (paymentVerifyOtp || '').replace(/\D/g, '').slice(0, 6);
                             const digits = Array(6).fill('').map((_, j) => raw[j] || '');

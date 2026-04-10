@@ -45,6 +45,7 @@ const createTenantAccessAudits = require('./create-tenant-access-audits');
 const createAutomationsTables = require('./create-automations-tables');
 const normalizeTenantPlansToTrial = require('./normalize-tenant-plans-to-trial');
 const addDeliveryStatusToJobsAndSales = require('./add-delivery-status-to-jobs-and-sales');
+const addDeliveryRequiredToJobs = require('./add-delivery-required-to-jobs');
 const addSalesTenantSoldByCreatedIndex = require('./add-sales-tenant-soldby-created-index');
 const addQueryPathIndexesV2 = require('./add-query-path-indexes-v2');
 
@@ -182,6 +183,9 @@ const migrate = async () => {
 
     // First-party delivery tracking (jobs + sales)
     await addDeliveryStatusToJobsAndSales();
+
+    // Job flag: customer delivery required (vs optional); stages still set on Deliveries
+    await addDeliveryRequiredToJobs();
 
     // Sales list for staff (tenant + soldBy + recency)
     await addSalesTenantSoldByCreatedIndex();

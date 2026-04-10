@@ -979,7 +979,7 @@ exports.getExpenseStats = async (req, res, next) => {
       };
     }
 
-    const combinedFilters = { ...baseFilters, ...dateFilters };
+    const combinedFilters = { ...baseFilters, ...dateFilters, isArchived: false };
 
     const stats = await Expense.findAll({
       where: combinedFilters,
@@ -1007,6 +1007,7 @@ exports.getExpenseStats = async (req, res, next) => {
 
     const monthlyWhereClause = {
       ...baseFilters,
+      isArchived: false,
       expenseDate: {
         [Op.between]: [startOfMonth, endOfMonth]
       }
@@ -1017,7 +1018,7 @@ exports.getExpenseStats = async (req, res, next) => {
 
     const categoryCount = stats?.length ?? 0;
     const pendingRequests = await Expense.count({
-      where: { ...baseFilters, approvalStatus: 'pending_approval' }
+      where: { ...baseFilters, approvalStatus: 'pending_approval', isArchived: false }
     });
     const approvedCount = await Expense.count({
       where: { ...baseFilters, approvalStatus: 'approved', isArchived: false }
@@ -1027,7 +1028,7 @@ exports.getExpenseStats = async (req, res, next) => {
     let jobExpenses = null;
     if (jobId) {
       jobExpenses = await Expense.findAll({
-        where: applyTenantFilter(req.tenantId, { jobId }),
+        where: applyTenantFilter(req.tenantId, { jobId, isArchived: false }),
         include: [
           { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] }
         ],

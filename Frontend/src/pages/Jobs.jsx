@@ -6,7 +6,7 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Plus, XCircle, Loader2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, Currency, Eye, ChevronLeft, ChevronRight, Filter, RefreshCw, Briefcase, AlertCircle, Archive } from 'lucide-react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import jobService from '../services/jobService';
 import { useSmartSearch } from '../context/SmartSearchContext';
@@ -16,7 +16,6 @@ import {
   PRIORITY_CHIP_CLASSES,
   STATUS_CHIP_CLASSES,
   STATUS_CHIP_DEFAULT_CLASS,
-  DELIVERY_STATUS_ORDER,
   DELIVERY_STATUS_LABELS,
 } from '../constants';
 import customerService from '../services/customerService';
@@ -77,6 +76,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { Switch } from '@/components/ui/switch';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -105,6 +105,7 @@ function getJobFormErrorMessages(errors) {
     assignedTo: 'Assign to',
     status: 'Status',
     priority: 'Priority',
+    deliveryRequired: 'Delivery required',
     category: 'Category',
     quantity: 'Quantity',
     unitPrice: 'Unit price',
@@ -148,17 +149,12 @@ const jobItemSchema = z.object({
   discountReason: z.string().optional(),
 });
 
-const deliveryStatusSchema = z
-  .enum(['ready_for_delivery', 'out_for_delivery', 'delivered', 'returned'])
-  .optional()
-  .nullable();
-
 const jobSchema = z.object({
   customerId: z.string().min(1, 'Customer is required'),
   title: z.string().optional(),
   status: z.enum(['new', 'in_progress', 'completed', 'on_hold', 'cancelled']).default('new'),
   priority: z.enum(['low', 'medium', 'high', 'urgent']).default('medium'),
-  deliveryStatus: deliveryStatusSchema,
+  deliveryRequired: z.boolean().default(false),
   startDate: z.union([z.date(), z.null(), z.undefined()]).optional(),
   dueDate: z.union([z.date(), z.null(), z.undefined()]).optional(),
   assignedTo: z.string().optional().nullable(),
@@ -222,7 +218,7 @@ const Jobs = () => {
       title: '',
       status: 'new',
       priority: 'medium',
-      deliveryStatus: null,
+      deliveryRequired: false,
       startDate: null,
       dueDate: null,
       assignedTo: null,
@@ -785,18 +781,20 @@ useEffect(() => {
     }
   }, [queryClient, jobBeingUpdated, drawerVisible, viewingJob, closeStatusModal, invalidateJobs]);
 
-  const handleJobDeliveryChange = useCallback(
-    async (value) => {
+  const handleJobDeliveryRequiredChange = useCallback(
+    async (checked) => {
       if (!viewingJob) return;
-      const val = value === '__none__' ? null : value;
       try {
         setUpdatingJobDelivery(true);
-        await jobService.update(viewingJob.id, { deliveryStatus: val });
+        await jobService.update(viewingJob.id, {
+          deliveryRequired: checked,
+          ...(!checked ? { deliveryStatus: null } : {}),
+        });
         await refreshJobDetails(viewingJob.id);
-        showSuccess('Delivery status updated');
+        showSuccess(checked ? 'Delivery marked as required' : 'Delivery not required for this job');
         invalidateJobs();
       } catch (error) {
-        showError(error?.response?.data?.message || error?.message || 'Failed to update delivery status');
+        showError(error?.response?.data?.message || error?.message || 'Failed to update delivery setting');
       } finally {
         setUpdatingJobDelivery(false);
       }
@@ -811,6 +809,7 @@ useEffect(() => {
       title: '',
       status: 'new',
       priority: 'medium',
+      deliveryRequired: false,
       startDate: null,
       dueDate: null,
       assignedTo: null,
@@ -917,6 +916,10 @@ useEffect(() => {
       const formData = {
         ...jobData,
         customerId: jobData.customerId,
+        deliveryRequired:
+          jobData.deliveryRequired === false
+            ? false
+            : jobData.deliveryRequired === true || !!jobData.deliveryStatus,
         startDate: jobData.startDate ? (dayjs(jobData.startDate).isValid() ? dayjs(jobData.startDate).toDate() : null) : null,
         dueDate: jobData.dueDate ? (dayjs(jobData.dueDate).isValid() ? dayjs(jobData.dueDate).toDate() : null) : null,
         assignedTo: jobData.assignedTo || null,
@@ -1030,10 +1033,12 @@ useEffect(() => {
         // Invalidate and refetch custom categories
         queryClient.invalidateQueries({ queryKey: ['customCategories'] });
         
-        // Set the category value in the form
-        const items = form.getValues('items') || [];
-        items[itemIndex] = { ...items[itemIndex], category: saved.value };
-        form.setValue('items', items);
+        // Immutable update so react-hook-form / useFieldArray pick up the new category
+        const currentItems = form.getValues('items') || [];
+        const nextItems = currentItems.map((row, i) =>
+          i === itemIndex ? { ...row, category: saved.value } : row
+        );
+        form.setValue('items', nextItems, { shouldDirty: true, shouldValidate: true });
         
         // Clear the "Other" input
         setCategoryOtherInputs(prev => {
@@ -1403,6 +1408,23 @@ useEffect(() => {
   const handleSubmit = async (values) => {
     try {
       setSubmittingJob(true);
+
+      // "Other (specify)" keeps category as __OTHER__ until Save; merge typed text on submit so the job still saves
+      if (values.items && values.items.length > 0) {
+        values.items = values.items.map((item, idx) => {
+          if (item.category !== '__OTHER__') return item;
+          const custom = (categoryOtherInputs[idx] ?? '').trim();
+          if (custom) return { ...item, category: custom };
+          return item;
+        });
+        const unresolvedOther = values.items.some((item) => item.category === '__OTHER__');
+        if (unresolvedOther) {
+          showWarning('Enter a category name for each "Other (specify)" line item, or pick a category from the list.');
+          setSubmittingJob(false);
+          return;
+        }
+      }
+
       // Calculate total from items (with discounts)
       let calculatedTotal = 0;
       if (values.items && values.items.length > 0) {
@@ -1500,7 +1522,8 @@ useEffect(() => {
         description: values.description || null,
         status: values.status || 'new',
         priority: values.priority || 'medium',
-        deliveryStatus: values.deliveryStatus || null,
+        deliveryRequired: values.deliveryRequired === true,
+        ...(!values.deliveryRequired ? { deliveryStatus: null } : {}),
         jobType: values.jobType || null,
         assignedTo: cleanAssignedTo,
         startDate: formatDate(values.startDate),
@@ -1983,31 +2006,39 @@ useEffect(() => {
                         {viewingJob.description || '-'}
                       </DescriptionItem>
                       <DescriptionItem label="Status">
-                  <div className="flex items-center gap-2">
-                          <StatusChip status={viewingJob.status} />
-                          <Button variant="ghost" size="sm" onClick={() => openStatusModal(viewingJob)} className="text-brand hover:opacity-80">
-                      Update
-                    </Button>
-                  </div>
+                        <StatusChip status={viewingJob.status} />
                       </DescriptionItem>
-                      <DescriptionItem label="Delivery (optional)">
-                        <Select
-                          value={viewingJob.deliveryStatus || '__none__'}
-                          onValueChange={handleJobDeliveryChange}
-                          disabled={updatingJobDelivery}
-                        >
-                          <SelectTrigger className="w-full max-w-xs">
-                            <SelectValue placeholder="Not set" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="__none__">Not set</SelectItem>
-                            {DELIVERY_STATUS_ORDER.map((key) => (
-                              <SelectItem key={key} value={key}>
-                                {DELIVERY_STATUS_LABELS[key]}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                      <DescriptionItem label="Delivery required">
+                        <div className="flex flex-col gap-2 max-w-md">
+                          <Switch
+                            checked={viewingJob.deliveryRequired === true}
+                            onCheckedChange={handleJobDeliveryRequiredChange}
+                            disabled={updatingJobDelivery}
+                            id="job-drawer-delivery-required"
+                            aria-label="Delivery required"
+                          />
+                          {viewingJob.deliveryRequired === true && viewingJob.deliveryStatus ? (
+                            <p className="text-xs text-muted-foreground">
+                              Current stage:{' '}
+                              <span className="text-foreground font-medium">
+                                {DELIVERY_STATUS_LABELS[viewingJob.deliveryStatus] || viewingJob.deliveryStatus}
+                              </span>
+                              . Update stages on the{' '}
+                              <Link to="/deliveries" className="text-brand hover:underline">
+                                Deliveries
+                              </Link>{' '}
+                              page (completed jobs).
+                            </p>
+                          ) : viewingJob.deliveryRequired === true ? (
+                            <p className="text-xs text-muted-foreground">
+                              Set delivery stages on the{' '}
+                              <Link to="/deliveries" className="text-brand hover:underline">
+                                Deliveries
+                              </Link>{' '}
+                              page after the job is completed.
+                            </p>
+                          ) : null}
+                        </div>
                       </DescriptionItem>
                       <DescriptionItem label="Priority">
                         <Badge
@@ -2473,29 +2504,19 @@ useEffect(() => {
 
               <FormField
                 control={form.control}
-                name="deliveryStatus"
+                name="deliveryRequired"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Delivery status (optional)</FormLabel>
-                    <Select
-                      onValueChange={(v) => field.onChange(v === '__none__' ? null : v)}
-                      value={field.value || '__none__'}
-                    >
-                      <FormControl>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Not set" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="__none__">Not set</SelectItem>
-                        {DELIVERY_STATUS_ORDER.map((key) => (
-                          <SelectItem key={key} value={key}>
-                            {DELIVERY_STATUS_LABELS[key]}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <FormMessage />
+                  <FormItem className="flex flex-row items-center justify-between rounded-lg border border-border px-4 py-3">
+                    <div className="space-y-0.5">
+                      <FormLabel className="text-base">Delivery required</FormLabel>
+                      <p className="text-xs text-muted-foreground">
+                        Turn on if the customer should receive this work as a delivery. Stages (ready, out, delivered) are
+                        managed on the Deliveries page after the job is completed.
+                      </p>
+                    </div>
+                    <FormControl>
+                      <Switch checked={field.value === true} onCheckedChange={field.onChange} />
+                    </FormControl>
                   </FormItem>
                 )}
               />

@@ -8,8 +8,9 @@ const JOB_INVOICE_TRACK_DEFAULTS = {
   customerJobTrackingEnabled: false
 };
 
-/** @param {{ deliveryStatus?: string|null }} job */
+/** @param {{ deliveryStatus?: string|null, deliveryRequired?: boolean }} job */
 function publicTimelineKindForJob(job) {
+  if (job?.deliveryRequired === true) return 'delivery';
   return job?.deliveryStatus ? 'delivery' : 'job';
 }
 
@@ -201,6 +202,7 @@ exports.getJobTrackByToken = async (req, res, next) => {
       jobNumber: job.jobNumber,
       title: job.title,
       status: job.status,
+      deliveryRequired: job.deliveryRequired === true,
       deliveryStatus: job.deliveryStatus || null,
       timelineKind: publicTimelineKindForJob(job),
       priority: job.priority,
@@ -366,6 +368,7 @@ exports.lookupPublicTracking = async (req, res, next) => {
             idLabel: 'Job ID',
             idValue: job.jobNumber,
             status: job.status,
+            deliveryRequired: job.deliveryRequired === true,
             deliveryStatus: job.deliveryStatus || null,
             orderStatus: null,
             titleOrSummary: job.title || 'Job',

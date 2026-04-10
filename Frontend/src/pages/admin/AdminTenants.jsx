@@ -537,15 +537,15 @@ const AdminTenants = () => {
       </div>
 
       <Dialog open={inviteModalOpen} onOpenChange={(open) => { setInviteModalOpen(open); if (!open) { setInviteEmail(''); setInviteName(''); setInviteEmailError(''); } }}>
-        <DialogContent className="sm:max-w-[425px] p-0 gap-0 overflow-hidden !pt-3 !pb-3 !pr-0 !pl-0">
-          <DialogHeader className="px-0 pt-0 pb-0 space-y-1">
+        <DialogContent className="sm:max-w-[425px] p-0 gap-0 overflow-hidden">
+          <DialogHeader className="px-6 pt-6 pb-0 space-y-1">
             <DialogTitle>Invite tenant</DialogTitle>
             <p className="text-sm text-muted-foreground">
               Send an invite link so they can create their workspace.
             </p>
           </DialogHeader>
-          <form onSubmit={handleInviteTenant} noValidate className="pl-4 pr-0 pt-3 pb-0">
-            <div className="space-y-3">
+          <form onSubmit={handleInviteTenant} noValidate className="px-6 pt-4 pb-0">
+            <div className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="invite-email">Email</Label>
                 <Input
@@ -577,7 +577,7 @@ const AdminTenants = () => {
                 />
               </div>
             </div>
-            <DialogFooter className="pl-4 !pr-0 !pt-2 !pb-0 mt-3 border-t">
+            <DialogFooter className="mt-4 -mx-6 px-6 py-4 border-t">
               <Button type="button" variant="outline" onClick={() => setInviteModalOpen(false)} disabled={inviteSubmitting}>
                 Cancel
               </Button>

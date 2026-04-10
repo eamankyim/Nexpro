@@ -1162,12 +1162,6 @@ const Customers = () => {
                     <DescriptionItem label="Address">
                       <span className="text-foreground">{viewingCustomer.address || '—'}</span>
                     </DescriptionItem>
-                    <DescriptionItem label="City">
-                      <span className="text-foreground">{viewingCustomer.city || '—'}</span>
-                    </DescriptionItem>
-                    <DescriptionItem label="State">
-                      <span className="text-foreground">{viewingCustomer.state || '—'}</span>
-                    </DescriptionItem>
                     <DescriptionItem label="Source">
                       {viewingCustomer.howDidYouHear ? (
                         <Badge variant="outline">{viewingCustomer.howDidYouHear}</Badge>

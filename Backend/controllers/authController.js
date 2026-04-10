@@ -165,63 +165,11 @@ exports.register = async (req, res, next) => {
       });
     }
 
-    const isPlatformAdminInvite = !invite.tenantId || invite.inviteType === 'platform_admin';
+    const normalizedInviteType = String(invite.inviteType || '').trim().toLowerCase();
 
-    if (isPlatformAdminInvite) {
-      // Platform admin invite: create user with isPlatformAdmin, assign invited platform role, no tenant
-      const user = await User.create({
-        name,
-        email: (email || '').trim().toLowerCase(),
-        password,
-        role: 'admin',
-        isPlatformAdmin: true,
-        // Invite was sent to this email — no separate verification step
-        emailVerifiedAt: new Date()
-      });
-
-      const roleToAssign = invite.platformAdminRoleName
-        ? await PlatformAdminRole.findOne({ where: { name: invite.platformAdminRoleName } })
-        : null;
-      const fallbackRole = roleToAssign || await PlatformAdminRole.findOne({
-        where: { isDefault: true },
-        order: [['createdAt', 'ASC']]
-      }) || await PlatformAdminRole.findOne({ order: [['createdAt', 'ASC']] });
-      if (fallbackRole) {
-        await PlatformAdminUserRole.create({ userId: user.id, roleId: fallbackRole.id });
-      }
-
-      await invite.update({
-        used: true,
-        usedAt: new Date(),
-        usedBy: user.id
-      });
-
-      const token = generateToken(user.id);
-      const platformCompany = { name: 'African Business Suite', primaryColor: '#166534' };
-      const loginUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '') + '/login';
-      setImmediate(() => {
-        try {
-          const { subject, html, text } = welcomeEmailTemplate(user, platformCompany, loginUrl);
-          emailService.sendPlatformMessage(user.email, subject, html, text).catch(err => {
-            console.error('[Auth] Welcome email failed (platform admin):', err?.message);
-          });
-        } catch (err) {
-          console.error('[Auth] Welcome email error (platform admin):', err?.message);
-        }
-      });
-      return res.status(201).json({
-        success: true,
-        data: {
-          user: user.toJSON(),
-          token,
-          memberships: [],
-          defaultTenantId: null,
-          isPlatformAdmin: true
-        }
-      });
-    }
-
-    if (invite.inviteType === 'new_tenant') {
+    // new_tenant invites use tenantId null — must run before the legacy rule that treats
+    // any null tenantId as platform-admin signup.
+    if (normalizedInviteType === 'new_tenant') {
       // Admin-invited tenant: create new tenant + user as owner, then mark invite used
       const trimmedCompanyName = 'My Business';
       const transaction = await sequelize.transaction();
@@ -361,7 +309,70 @@ exports.register = async (req, res, next) => {
       }
     }
 
+    const isPlatformAdminInvite =
+      normalizedInviteType === 'platform_admin' || !invite.tenantId;
+
+    if (isPlatformAdminInvite) {
+      // Platform admin invite: create user with isPlatformAdmin, assign invited platform role, no tenant
+      const user = await User.create({
+        name,
+        email: (email || '').trim().toLowerCase(),
+        password,
+        role: 'admin',
+        isPlatformAdmin: true,
+        // Invite was sent to this email — no separate verification step
+        emailVerifiedAt: new Date()
+      });
+
+      const roleToAssign = invite.platformAdminRoleName
+        ? await PlatformAdminRole.findOne({ where: { name: invite.platformAdminRoleName } })
+        : null;
+      const fallbackRole = roleToAssign || await PlatformAdminRole.findOne({
+        where: { isDefault: true },
+        order: [['createdAt', 'ASC']]
+      }) || await PlatformAdminRole.findOne({ order: [['createdAt', 'ASC']] });
+      if (fallbackRole) {
+        await PlatformAdminUserRole.create({ userId: user.id, roleId: fallbackRole.id });
+      }
+
+      await invite.update({
+        used: true,
+        usedAt: new Date(),
+        usedBy: user.id
+      });
+
+      const token = generateToken(user.id);
+      const platformCompany = { name: 'African Business Suite', primaryColor: '#166534' };
+      const loginUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '') + '/login';
+      setImmediate(() => {
+        try {
+          const { subject, html, text } = welcomeEmailTemplate(user, platformCompany, loginUrl);
+          emailService.sendPlatformMessage(user.email, subject, html, text).catch(err => {
+            console.error('[Auth] Welcome email failed (platform admin):', err?.message);
+          });
+        } catch (err) {
+          console.error('[Auth] Welcome email error (platform admin):', err?.message);
+        }
+      });
+      return res.status(201).json({
+        success: true,
+        data: {
+          user: user.toJSON(),
+          token,
+          memberships: [],
+          defaultTenantId: null,
+          isPlatformAdmin: true
+        }
+      });
+    }
+
     // Tenant invite: create user and UserTenant membership (existing tenant)
+    if (!invite.tenantId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid invite configuration. Please request a new invite link.'
+      });
+    }
     const user = await User.create({
       name,
       email: (email || '').trim().toLowerCase(),

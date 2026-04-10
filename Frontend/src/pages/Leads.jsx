@@ -110,6 +110,9 @@ import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, PRIORITY_CHIP_CLASSES, STATUS_CHI
 import settingsService from '../services/settingsService';
 import { useQuery } from '@tanstack/react-query';
 
+/** Radix Select cannot use ""; use this value and map to null on change/submit. */
+const LEAD_UNASSIGNED_SELECT_VALUE = 'unassigned';
+
 const leadSchema = z.object({
   name: z.string().min(1, 'Enter lead name'),
   email: z.string().email('Enter a valid email').optional().or(z.literal('')),
@@ -118,7 +121,7 @@ const leadSchema = z.object({
   source: z.string().optional(),
   status: z.enum(['new', 'contacted', 'qualified', 'converted', 'lost']).default('new'),
   priority: z.enum(['low', 'medium', 'high']).default('medium'),
-  assignedTo: z.string().optional(),
+  assignedTo: z.string().uuid().optional().nullable(),
   nextFollowUp: z.date().optional().nullable(),
   notes: z.string().optional(),
   tags: z.array(z.string()).default([]),
@@ -198,7 +201,7 @@ const Leads = () => {
       source: '',
       status: 'new',
       priority: 'medium',
-      assignedTo: '',
+      assignedTo: null,
       nextFollowUp: null,
       notes: '',
       tags: [],
@@ -350,10 +353,10 @@ const Leads = () => {
         source: lead.source || '',
         status: lead.status || 'new',
         priority: lead.priority || 'medium',
-        assignedTo: lead.assignee?.id || lead.assignedTo || '',
+        assignedTo: lead.assignee?.id || lead.assignedTo || null,
         nextFollowUp: lead.nextFollowUp ? new Date(lead.nextFollowUp) : null,
         notes: lead.notes || '',
-        tags: lead.tags || [],
+        tags: Array.isArray(lead.tags) ? lead.tags.filter((t) => typeof t === 'string') : [],
       });
     } else {
       leadForm.reset({
@@ -364,7 +367,7 @@ const Leads = () => {
         source: 'website',
         status: 'new',
         priority: 'medium',
-        assignedTo: '',
+        assignedTo: null,
         nextFollowUp: null,
         notes: '',
         tags: [],
@@ -424,6 +427,7 @@ const Leads = () => {
   const onLeadSubmit = async (values) => {
     const payload = {
       ...values,
+      assignedTo: values.assignedTo || null,
       nextFollowUp: values.nextFollowUp ? values.nextFollowUp.toISOString() : null
     };
     try {
@@ -1489,13 +1493,19 @@ const Leads = () => {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Assigned To (optional)</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
+                      <Select
+                        value={field.value || LEAD_UNASSIGNED_SELECT_VALUE}
+                        onValueChange={(value) =>
+                          field.onChange(value === LEAD_UNASSIGNED_SELECT_VALUE ? null : value)
+                        }
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Select team member" />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent>
+                          <SelectItem value={LEAD_UNASSIGNED_SELECT_VALUE}>Unassigned</SelectItem>
                           {users.map((user) => (
                             <SelectItem key={user.id} value={user.id}>
                               {user.name} ({user.email})

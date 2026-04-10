@@ -72,6 +72,10 @@ const Signup = () => {
   const { isMobile } = useResponsive();
   const [checkingEmail, setCheckingEmail] = useState(false);
   const [registeredAsInvitedMember, setRegisteredAsInvitedMember] = useState(false);
+  const inviteType = String(inviteData?.inviteType || '').trim().toLowerCase();
+  const isPlatformAdminInvite = inviteType === 'platform_admin';
+  const isNewTenantInvite =
+    inviteType === 'new_tenant' || (!inviteType && !inviteData?.tenantId);
 
   // We no longer choose business type here – signup is generic, onboarding sets shop/studio/pharmacy.
 
@@ -259,7 +263,7 @@ const Signup = () => {
       console.log('[Signup] Invite register API responded in', apiMs, 'ms');
       const data = response?.data ?? response;
       setRegisteredAsPlatformAdmin(Boolean(data?.isPlatformAdmin));
-      setRegisteredAsInvitedMember(Boolean(inviteData?.inviteType !== 'new_tenant' && inviteData?.inviteType !== 'platform_admin'));
+      setRegisteredAsInvitedMember(Boolean(!isNewTenantInvite && !isPlatformAdminInvite));
       setWelcomeStatus('success');
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || 'Something went wrong. Please try again.';
@@ -487,9 +491,9 @@ const Signup = () => {
                 <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-gray-600`}>
                   {isAuthenticated && !showWelcomeScreen
                     ? 'Sign out above to continue—then set your name and password to join with this invite.'
-                    : inviteData.inviteType === 'platform_admin'
+                    : isPlatformAdminInvite
                       ? 'You have been invited to join as a platform administrator. Set your name and password below.'
-                      : inviteData.inviteType === 'new_tenant'
+                      : isNewTenantInvite
                         ? "You've been invited to create your workspace. Set your name and password below."
                         : `You have been invited to join ${inviteData.tenant?.name || 'this business'} as ${inviteData.role ? String(inviteData.role).charAt(0).toUpperCase() + String(inviteData.role).slice(1) : 'a member'}.`
                   }

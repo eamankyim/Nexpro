@@ -713,7 +713,16 @@ exports.createJob = async (req, res, next) => {
         }
         jobData.deliveryStatus = parsed;
       }
-      
+
+      if (jobData.deliveryRequired !== undefined) {
+        jobData.deliveryRequired = Boolean(jobData.deliveryRequired);
+      } else {
+        jobData.deliveryRequired = !!jobData.deliveryStatus;
+      }
+      if (!jobData.deliveryRequired) {
+        jobData.deliveryStatus = null;
+      }
+
       // Generate job number INSIDE the transaction with advisory lock
       // This ensures no race conditions - the lock serializes job number generation
       const jobNumber = await generateJobNumber(req.tenantId, transaction);
@@ -928,6 +937,15 @@ exports.updateJob = async (req, res, next) => {
         });
       }
       updatePayload.deliveryStatus = parsed;
+    }
+
+    if (updatePayload.deliveryRequired !== undefined) {
+      updatePayload.deliveryRequired = Boolean(updatePayload.deliveryRequired);
+      if (!updatePayload.deliveryRequired) {
+        updatePayload.deliveryStatus = null;
+      }
+    } else if (updatePayload.deliveryStatus !== undefined && updatePayload.deliveryStatus) {
+      updatePayload.deliveryRequired = true;
     }
 
     const oldStatus = job.status;

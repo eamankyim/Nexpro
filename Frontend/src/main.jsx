@@ -5,13 +5,13 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 import { ToastContainer } from 'react-toastify';
 import App from './App';
 import { QUERY_CACHE, APP_NAME } from './constants';
+import { queryPersister, shouldDehydrateQuery } from './utils/queryPersist';
+import 'react-toastify/dist/ReactToastify.css';
+import './index.css';
 
 if (typeof window !== 'undefined') {
   window.APP_NAME = APP_NAME;
 }
-import { queryPersister, shouldDehydrateQuery } from './utils/queryPersist';
-import 'react-toastify/dist/ReactToastify.css';
-import './index.css';
 
 // PWA service worker is registered via registerSW in PWAUpdatePrompt (prompt mode for "New version" UX)
 

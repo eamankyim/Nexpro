@@ -164,7 +164,10 @@ async function updateJobDeliveryStatus({ tenantId, jobId, deliveryStatus }) {
     return { ok: false, message: 'Only completed jobs can use delivery status here' };
   }
 
-  await job.update({ deliveryStatus: parsed });
+  await job.update({
+    deliveryStatus: parsed,
+    ...(parsed ? { deliveryRequired: true } : {})
+  });
   return { ok: true };
 }
 

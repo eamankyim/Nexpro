@@ -1202,8 +1202,15 @@ const Quotes = () => {
                 createdAt: viewingQuote.createdAt,
                 createdByUser: viewingQuote.creator || null
               } : null;
-              
-              const allActivities = creationActivity ? [creationActivity, ...activities] : activities;
+
+              // API returns activities newest-first; synthetic creation was prepended unconditionally,
+              // which broke order (e.g. 9:52 row before 9:58). Merge then sort by time descending.
+              const merged = creationActivity ? [creationActivity, ...activities] : [...activities];
+              const allActivities = merged.slice().sort((a, b) => {
+                const diff = dayjs(b.createdAt).valueOf() - dayjs(a.createdAt).valueOf();
+                if (diff !== 0) return diff;
+                return String(b.id ?? '').localeCompare(String(a.id ?? ''));
+              });
               
               if (loadingActivities) {
                 return (

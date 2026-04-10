@@ -13,6 +13,12 @@ const activityLogger = require('../services/activityLogger');
 const taskAutomationService = require('../services/taskAutomationService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 
+/** Empty string is not a valid UUID for PostgreSQL; treat as unassigned. */
+const normalizeAssignedTo = (value) => {
+  if (value === '' || value === undefined) return null;
+  return value;
+};
+
 const logLeadDebug = (...args) => {
   if (config.nodeEnv === 'development') {
     console.log('[LeadController]', ...args);
@@ -163,6 +169,9 @@ exports.getLead = async (req, res, next) => {
 exports.createLead = async (req, res, next) => {
   try {
     const payload = sanitizePayload(req.body);
+    if (Object.prototype.hasOwnProperty.call(payload, 'assignedTo')) {
+      payload.assignedTo = normalizeAssignedTo(payload.assignedTo);
+    }
 
     if (payload.convertedCustomerId) {
       const customer = await Customer.findOne({
@@ -240,6 +249,9 @@ exports.updateLead = async (req, res, next) => {
     });
 
     const sanitized = sanitizePayload(updates);
+    if (Object.prototype.hasOwnProperty.call(sanitized, 'assignedTo')) {
+      sanitized.assignedTo = normalizeAssignedTo(sanitized.assignedTo);
+    }
 
     // Validate incremental status progression
     if (sanitized.status && sanitized.status !== previousStatus) {

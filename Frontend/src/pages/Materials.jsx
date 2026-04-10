@@ -212,6 +212,7 @@ const Materials = () => {
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
   const [vendorAddModalOpen, setVendorAddModalOpen] = useState(false);
   const [addingVendor, setAddingVendor] = useState(false);
+  const [materialVendorSelectOpen, setMaterialVendorSelectOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importFile, setImportFile] = useState(null);
   const [importResult, setImportResult] = useState(null);
@@ -231,6 +232,10 @@ const Materials = () => {
   useEffect(() => {
     setPagination((prev) => ({ ...prev, current: 1 }));
   }, [searchValue]);
+
+  useEffect(() => {
+    if (!itemModalVisible) setMaterialVendorSelectOpen(false);
+  }, [itemModalVisible]);
 
   const itemForm = useForm({
     resolver: zodResolver(itemSchema),
@@ -1301,7 +1306,12 @@ const Materials = () => {
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>Preferred Vendor (optional)</FormLabel>
-                      <Select value={field.value} onValueChange={field.onChange}>
+                      <Select
+                        open={materialVendorSelectOpen}
+                        onOpenChange={setMaterialVendorSelectOpen}
+                        value={field.value}
+                        onValueChange={field.onChange}
+                      >
                         <FormControl>
                           <SelectTrigger>
                             <SelectValue placeholder="Select vendor" />
@@ -1315,7 +1325,15 @@ const Materials = () => {
                   ))}
                   <SelectSeparator className="my-2" />
                   <div className="px-2 py-1.5" onPointerDown={(e) => e.preventDefault()}>
-                    <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setVendorAddModalOpen(true)}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full justify-start"
+                      onClick={() => {
+                        setMaterialVendorSelectOpen(false);
+                        setVendorAddModalOpen(true);
+                      }}
+                    >
                       <Plus className="h-4 w-4 mr-2" />
                       Create vendor
                     </Button>

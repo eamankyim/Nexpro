@@ -48,44 +48,10 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
+  // Vite 8 uses Rolldown: custom manualChunks (vendor buckets) produced invalid module graphs —
+  // shared chunks importing React via recharts/query bundles → __SECRET_INTERNALS on undefined in
+  // production while `vite` dev worked. Use default code-splitting.
   build: {
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          // React core
-          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          // UI libraries (Radix UI only - antd removed)
-          'ui-vendor': [
-            '@radix-ui/react-dialog',
-            '@radix-ui/react-dropdown-menu',
-            '@radix-ui/react-select',
-            '@radix-ui/react-accordion',
-            '@radix-ui/react-alert-dialog',
-            '@radix-ui/react-avatar',
-            '@radix-ui/react-checkbox',
-            '@radix-ui/react-label',
-            '@radix-ui/react-popover',
-            '@radix-ui/react-radio-group',
-            '@radix-ui/react-separator',
-            '@radix-ui/react-slot',
-            '@radix-ui/react-switch',
-            '@radix-ui/react-tabs',
-            '@radix-ui/react-toast',
-            '@radix-ui/react-tooltip',
-          ],
-          // Charts
-          'charts-vendor': ['recharts'],
-          // Forms
-          'forms-vendor': ['react-hook-form', '@hookform/resolvers', 'zod'],
-          // Data fetching
-          'query-vendor': ['@tanstack/react-query', '@tanstack/react-table', '@tanstack/react-virtual'],
-          // Utilities
-          'utils-vendor': ['dayjs', 'axios', 'html2pdf.js', 'date-fns'],
-          // Icons (lucide-react only - @ant-design/icons removed)
-          'icons-vendor': ['lucide-react'],
-        },
-      },
-    },
     chunkSizeWarningLimit: 1000, // Increase limit to 1MB per chunk
     minify: mode === 'production' ? 'terser' : 'esbuild',
     terserOptions:

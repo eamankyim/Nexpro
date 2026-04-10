@@ -223,11 +223,24 @@ const Expenses = () => {
     defaultValues: { name: '', company: '', phone: '' },
   });
 
+  /** Controlled so SelectContent closes when opening the nested Create Vendor dialog (Radix keeps it open otherwise). */
+  const [vendorSelectBatchOpen, setVendorSelectBatchOpen] = useState(false);
+  const [vendorSelectSingleOpen, setVendorSelectSingleOpen] = useState(false);
+  const [vendorSelectRowOpen, setVendorSelectRowOpen] = useState(null);
+
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingExpense, setViewingExpense] = useState(null);
   const [expenseActivities, setExpenseActivities] = useState([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!modalVisible) {
+      setVendorSelectBatchOpen(false);
+      setVendorSelectSingleOpen(false);
+      setVendorSelectRowOpen(null);
+    }
+  }, [modalVisible]);
 
   // Fetch expense categories (business-type, shop-type, and custom)
   const { data: expenseCategoriesResponse } = useQuery({
@@ -1338,7 +1351,12 @@ const Expenses = () => {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Vendor (Optional)</FormLabel>
-                        <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
+                        <Select
+                          open={vendorSelectBatchOpen}
+                          onOpenChange={setVendorSelectBatchOpen}
+                          value={field.value ?? SELECT_NONE_VALUE}
+                          onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}
+                        >
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder="Select vendor" />
@@ -1353,7 +1371,15 @@ const Expenses = () => {
                             ))}
                             <SelectSeparator className="my-2" />
                             <div className="px-2 py-1.5" onPointerDown={(e) => e.preventDefault()}>
-                              <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setVendorAddModalOpen(true)}>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="w-full justify-start"
+                                onClick={() => {
+                                  setVendorSelectBatchOpen(false);
+                                  setVendorAddModalOpen(true);
+                                }}
+                              >
                                 <Plus className="h-4 w-4 mr-2" />
                                 Create vendor
                               </Button>
@@ -1511,7 +1537,15 @@ const Expenses = () => {
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Vendor (Optional)</FormLabel>
-                            <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
+                            <Select
+                              open={vendorSelectRowOpen === index}
+                              onOpenChange={(open) => {
+                                if (open) setVendorSelectRowOpen(index);
+                                else if (vendorSelectRowOpen === index) setVendorSelectRowOpen(null);
+                              }}
+                              value={field.value ?? SELECT_NONE_VALUE}
+                              onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}
+                            >
                               <FormControl>
                                 <SelectTrigger>
                                   <SelectValue placeholder="Select vendor (optional)" />
@@ -1526,7 +1560,15 @@ const Expenses = () => {
                                 ))}
                                 <SelectSeparator className="my-2" />
                                 <div className="px-2 py-1.5" onPointerDown={(e) => e.preventDefault()}>
-                                  <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setVendorAddModalOpen(true)}>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    className="w-full justify-start"
+                                    onClick={() => {
+                                      setVendorSelectRowOpen(null);
+                                      setVendorAddModalOpen(true);
+                                    }}
+                                  >
                                     <Plus className="h-4 w-4 mr-2" />
                                     Create vendor
                                   </Button>
@@ -1541,7 +1583,10 @@ const Expenses = () => {
                     <Button
                       type="button"
                       variant="destructive"
-                      onClick={() => removeExpense(index)}
+                      onClick={() => {
+                        setVendorSelectRowOpen(null);
+                        removeExpense(index);
+                      }}
                       className="w-full mt-4"
                     >
                       <MinusCircle className="h-4 w-4 mr-2" />
@@ -1736,7 +1781,12 @@ const Expenses = () => {
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>Vendor (Optional)</FormLabel>
-                        <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
+                        <Select
+                          open={vendorSelectSingleOpen}
+                          onOpenChange={setVendorSelectSingleOpen}
+                          value={field.value ?? SELECT_NONE_VALUE}
+                          onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}
+                        >
                           <FormControl>
                             <SelectTrigger>
                               <SelectValue placeholder="Select vendor" />
@@ -1751,7 +1801,15 @@ const Expenses = () => {
                             ))}
                             <SelectSeparator className="my-2" />
                             <div className="px-2 py-1.5" onPointerDown={(e) => e.preventDefault()}>
-                              <Button type="button" variant="ghost" className="w-full justify-start" onClick={() => setVendorAddModalOpen(true)}>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="w-full justify-start"
+                                onClick={() => {
+                                  setVendorSelectSingleOpen(false);
+                                  setVendorAddModalOpen(true);
+                                }}
+                              >
                                 <Plus className="h-4 w-4 mr-2" />
                                 Create vendor
                               </Button>
@@ -2071,7 +2129,7 @@ const Expenses = () => {
                     {viewingExpense.expenseDate ? dayjs(viewingExpense.expenseDate).format('MMMM DD, YYYY') : '-'}
                   </DescriptionItem>
                   <DescriptionItem label="Category">
-                    <Badge className="bg-blue-600">{viewingExpense.category}</Badge>
+                    <Badge className="bg-green-700">{viewingExpense.category}</Badge>
                   </DescriptionItem>
                   <DescriptionItem label="Description">
                     {viewingExpense.description || '-'}
