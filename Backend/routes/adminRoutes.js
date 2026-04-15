@@ -5,6 +5,8 @@ const {
   getPlatformSummary,
   getTenants,
   inviteTenant,
+  getTenantInvites,
+  revokeTenantInvite,
   bootstrapPlatformAdmin,
   getTenantMetrics,
   getPlatformAlerts,
@@ -143,6 +145,8 @@ router.get('/summary', requirePlatformAdminPermission('overview.view'), getPlatf
  */
 router.get('/tenants', getTenants);
 router.post('/tenants/invite', requirePlatformAdminPermission('tenants.create'), inviteTenant);
+router.get('/tenants/invites', requirePlatformAdminPermission('tenants.create'), getTenantInvites);
+router.delete('/tenants/invites/:id', requirePlatformAdminPermission('tenants.create'), revokeTenantInvite);
 
 /**
  * @swagger

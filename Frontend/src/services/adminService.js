@@ -6,6 +6,8 @@ const getTenants = async (params = {}) => api.get('/admin/tenants', { params });
 
 /** Invite a new tenant (platform admin). Sends email with signup link; invitee creates account and becomes owner. */
 const inviteTenant = async (payload) => api.post('/admin/tenants/invite', payload);
+const getTenantInvites = async () => api.get('/admin/tenants/invites');
+const revokeTenantInvite = async (id) => api.delete(`/admin/tenants/invites/${id}`);
 
 const getTenantMetrics = async () => api.get('/admin/metrics/tenants');
 
@@ -162,6 +164,8 @@ export default {
   getSummary,
   getTenants,
   inviteTenant,
+  getTenantInvites,
+  revokeTenantInvite,
   getTenantMetrics,
   getAlerts,
   getTenantDetail,

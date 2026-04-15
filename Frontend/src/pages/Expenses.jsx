@@ -566,7 +566,7 @@ const Expenses = () => {
           expenseDate: values.expenseDate ? dayjs(values.expenseDate).format('YYYY-MM-DD') : null,
           description: values.description ?? '',
           vendorId: values.vendorId && values.vendorId !== '' ? values.vendorId : null,
-          jobId: values.jobId && values.jobId !== '' ? values.jobId : null,
+          jobId: values.jobId && values.jobId !== '' && values.jobId !== SELECT_NONE_VALUE ? values.jobId : null,
           paymentMethod: values.paymentMethod && values.paymentMethod !== '' ? values.paymentMethod : null,
           receiptUrl: values.receiptUrl || undefined,
           notes: values.notes || undefined,
@@ -1750,31 +1750,33 @@ const Expenses = () => {
               </div>
 
                 <FormFieldGrid columns={2}>
-                  <FormField
-                    control={form.control}
-                    name="jobId"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Associated Job (Optional)</FormLabel>
-                        <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
-                          <FormControl>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select job (leave empty for general expense)" />
-                            </SelectTrigger>
-                          </FormControl>
-                          <SelectContent>
-                            <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
-                            {jobs.map(job => (
-                              <SelectItem key={job.id} value={job.id}>
-                                {job.jobNumber} - {job.title}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {isStudioLike && (
+                    <FormField
+                      control={form.control}
+                      name="jobId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Associated Job (Optional)</FormLabel>
+                          <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select job (leave empty for general expense)" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
+                              {jobs.map(job => (
+                                <SelectItem key={job.id} value={job.id}>
+                                  {job.jobNumber} - {job.title}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
                   <FormField
                     control={form.control}
                     name="vendorId"

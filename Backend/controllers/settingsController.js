@@ -22,12 +22,49 @@ const { getLeadSourceOptions } = require('../config/leadSourceOptions');
 const { sequelize } = require('../config/database');
 const { Op } = require('sequelize');
 
-/** In-memory store for payment integration OTP: userId -> { otp, expiresAt } */
+/** In-memory cache for payment integration OTP (best-effort); source of truth is DB for serverless safety. */
 const paymentOtpStore = new Map();
+const paymentOtpSettingKey = (userId) => `payment_collection_otp_user_${userId}`;
+
+const setStoredPaymentOtp = async ({ tenantId, userId, otp, expiresAt }) => {
+  const payload = {
+    otp: String(otp || ''),
+    expiresAt: Number(expiresAt) || Date.now(),
+    updatedAt: new Date().toISOString(),
+  };
+  paymentOtpStore.set(userId, payload);
+  await upsertSettingValue(tenantId, paymentOtpSettingKey(userId), payload, 'Payment collection OTP gate');
+};
+
+const getStoredPaymentOtp = async ({ tenantId, userId }) => {
+  const cached = paymentOtpStore.get(userId);
+  if (cached && typeof cached.otp === 'string') {
+    return cached;
+  }
+  const stored = await getSettingValue(tenantId, paymentOtpSettingKey(userId), null);
+  if (stored && typeof stored === 'object' && typeof stored.otp === 'string') {
+    paymentOtpStore.set(userId, stored);
+    return stored;
+  }
+  return null;
+};
+
+const clearStoredPaymentOtp = async ({ tenantId, userId }) => {
+  paymentOtpStore.delete(userId);
+  const setting = await Setting.findOne({
+    where: {
+      tenantId,
+      key: paymentOtpSettingKey(userId),
+    },
+  });
+  if (setting) {
+    await setting.destroy();
+  }
+};
 
 /**
  * Shared OTP + password check for payment-related settings (MoMo API, Paystack settlement).
- * Does not consume OTP unless caller deletes from paymentOtpStore after success.
+ * Does not consume OTP unless caller clears it after success.
  * @returns {Promise<{ ok: true, user: import('../models').User } | { ok: false, status: number, message: string }>}
  */
 async function verifyStoredPaymentOtp(req) {
@@ -49,12 +86,12 @@ async function verifyStoredPaymentOtp(req) {
       return { ok: false, status: 401, message: 'Invalid password' };
     }
   }
-  const stored = paymentOtpStore.get(req.user.id);
+  const stored = await getStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
   if (!stored || typeof stored.otp !== 'string') {
     return { ok: false, status: 400, message: 'Verification code expired or not requested. Please request a new code.' };
   }
   if (Date.now() > stored.expiresAt) {
-    paymentOtpStore.delete(req.user.id);
+    await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
     return { ok: false, status: 400, message: 'Verification code expired. Request a new code.' };
   }
   const expectedOtp = String(stored.otp).replace(/\D/g, '').slice(0, 6);
@@ -1297,6 +1334,7 @@ exports.getJobInvoiceSettings = async (req, res, next) => {
         autoSendInvoiceOnJobCreation: value.autoSendInvoiceOnJobCreation === true,
         customerJobTrackingEnabled: value.customerJobTrackingEnabled === true,
         emailCustomerJobTrackingOnJobCreation: value.emailCustomerJobTrackingOnJobCreation === true,
+        autoCreateExpenseFromProductCost: value.autoCreateExpenseFromProductCost === true,
         tenantSlug: tenant?.slug || null
       }
     });
@@ -1313,14 +1351,16 @@ exports.updateJobInvoiceSettings = async (req, res, next) => {
     const {
       autoSendInvoiceOnJobCreation,
       customerJobTrackingEnabled,
-      emailCustomerJobTrackingOnJobCreation
+      emailCustomerJobTrackingOnJobCreation,
+      autoCreateExpenseFromProductCost
     } = sanitizePayload(req.body);
     const existing = await getSettingValue(req.tenantId, 'job-invoice', JOB_INVOICE_DEFAULTS);
     let value = {
       ...existing,
       ...(typeof autoSendInvoiceOnJobCreation === 'boolean' && { autoSendInvoiceOnJobCreation }),
       ...(typeof customerJobTrackingEnabled === 'boolean' && { customerJobTrackingEnabled }),
-      ...(typeof emailCustomerJobTrackingOnJobCreation === 'boolean' && { emailCustomerJobTrackingOnJobCreation })
+      ...(typeof emailCustomerJobTrackingOnJobCreation === 'boolean' && { emailCustomerJobTrackingOnJobCreation }),
+      ...(typeof autoCreateExpenseFromProductCost === 'boolean' && { autoCreateExpenseFromProductCost })
     };
     if (value.customerJobTrackingEnabled !== true) {
       value.emailCustomerJobTrackingOnJobCreation = false;
@@ -1338,6 +1378,7 @@ exports.updateJobInvoiceSettings = async (req, res, next) => {
         autoSendInvoiceOnJobCreation: value.autoSendInvoiceOnJobCreation === true,
         customerJobTrackingEnabled: value.customerJobTrackingEnabled === true,
         emailCustomerJobTrackingOnJobCreation: value.emailCustomerJobTrackingOnJobCreation === true,
+        autoCreateExpenseFromProductCost: value.autoCreateExpenseFromProductCost === true,
         tenantSlug: tenant?.slug || null
       }
     });
@@ -1875,7 +1916,7 @@ exports.sendPaymentCollectionOtp = async (req, res, next) => {
     }
     const otp = String(Math.floor(100000 + Math.random() * 900000));
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
-    paymentOtpStore.set(req.user.id, { otp, expiresAt });
+    await setStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id, otp, expiresAt });
     console.log('[Payment OTP] send-otp: stored OTP for userId=', req.user?.id, 'expiresAt=', new Date(expiresAt).toISOString());
     console.log('\n[Payment OTP] ========== Code:', otp, '========== (copy for testing, expires in 10 min)\n');
 
@@ -1926,13 +1967,13 @@ exports.verifyPaymentCollectionOtp = async (req, res, next) => {
     } else {
       console.log('[Payment OTP] verify-otp: password skipped for Google user userId=', req.user?.id);
     }
-    const stored = paymentOtpStore.get(req.user.id);
+    const stored = await getStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
     if (!stored || typeof stored.otp !== 'string') {
       console.log('[Payment OTP] verify-otp: rejected (no stored OTP)');
       return res.status(400).json({ success: false, message: 'Verification code expired or not requested. Request a new code.' });
     }
     if (Date.now() > stored.expiresAt) {
-      paymentOtpStore.delete(req.user.id);
+      await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
       console.log('[Payment OTP] verify-otp: rejected (expired)');
       return res.status(400).json({ success: false, message: 'Verification code expired. Request a new code.' });
     }
@@ -1981,13 +2022,13 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
     const rawOtpFromBody = req.body?.otp;
     console.log('[Payment OTP] Verify attempt: raw body.otp type=', typeof rawOtpFromBody, 'value=', rawOtpFromBody, 'userId=', req.user?.id);
 
-    const stored = paymentOtpStore.get(req.user.id);
+    const stored = await getStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
     if (!stored || typeof stored.otp !== 'string') {
       console.log('[Payment OTP] Rejected: no stored OTP or invalid stored.otp for user', req.user?.id);
       return res.status(400).json({ success: false, message: 'Verification code expired or not requested. Please request a new code.' });
     }
     if (Date.now() > stored.expiresAt) {
-      paymentOtpStore.delete(req.user.id);
+      await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
       console.log('[Payment OTP] Rejected: stored OTP expired for user', req.user?.id);
       return res.status(400).json({ success: false, message: 'Verification code expired. Please request a new code.' });
     }
@@ -1998,7 +2039,7 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
     console.log('[Payment OTP] Compare: receivedOtp=', receivedOtp, 'expectedOtp=', expectedOtp, 'receivedLen=', receivedOtp.length, 'expectedLen=', expectedOtp.length, 'match=', match);
 
     if (expectedOtp.length !== 6) {
-      paymentOtpStore.delete(req.user.id);
+      await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
       console.log('[Payment OTP] Rejected: expectedOtp not 6 digits (stored.otp invalid)');
       return res.status(400).json({ success: false, message: 'Invalid verification code' });
     }
@@ -2104,7 +2145,7 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
       tenant.paystackSubaccountCode = subaccountCode.trim();
       tenant.metadata = { ...(tenant.metadata || {}), paymentCollection };
       await tenant.save({ fields: ['metadata', 'paystackSubaccountCode'] });
-      paymentOtpStore.delete(req.user.id);
+      await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
       console.log('[Payment Collection] PUT: success MoMo subaccount linked tenantId=', req.tenantId, 'provider=', momoProvider);
 
       const emailService = require('../services/emailService');
@@ -2210,7 +2251,7 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
     };
     tenant.metadata = { ...(tenant.metadata || {}), paymentCollection: paymentCollectionBank };
     await tenant.save({ fields: ['metadata', 'paystackSubaccountCode'] });
-    paymentOtpStore.delete(req.user.id);
+    await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
     console.log('[Payment OTP] PUT: success bank linked tenantId=', req.tenantId, 'subaccountCode=', subaccountCode ? `${subaccountCode.slice(0, 8)}...` : '?');
 
     const emailService = require('../services/emailService');
@@ -2322,7 +2363,7 @@ exports.updateMtnCollectionCredentials = async (req, res, next) => {
       collectionApiUrl,
       callbackUrl
     });
-    paymentOtpStore.delete(req.user.id);
+    await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
     res.status(200).json({
       success: true,
       message: 'MTN MoMo Collection credentials saved for this workspace.',
@@ -2400,7 +2441,7 @@ exports.disconnectMtnCollectionCredentials = async (req, res, next) => {
 
     const { clearTenantMtnCollectionCredentials, getMtnCollectionPublicSummary } = require('../services/tenantMomoCollectionService');
     await clearTenantMtnCollectionCredentials(req.tenantId);
-    paymentOtpStore.delete(req.user.id);
+    await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
 
     const tenant = await Tenant.findByPk(req.tenantId);
     const summary = tenant ? getMtnCollectionPublicSummary(tenant) : {};

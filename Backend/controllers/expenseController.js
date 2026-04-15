@@ -410,7 +410,7 @@ exports.getExpense = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         { model: Vendor, as: 'vendor' },
-        { model: Job, as: 'job' },
+        { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'approver', attributes: ['id', 'name', 'email'] },
         { 
@@ -495,7 +495,7 @@ exports.createExpense = async (req, res, next) => {
         where: applyTenantFilter(req.tenantId, { id: expense.id }),
         include: [
           { model: Vendor, as: 'vendor' },
-          { model: Job, as: 'job' },
+          { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
           { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
           { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
         ],
@@ -694,7 +694,7 @@ exports.createBulkExpenses = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: { [Op.in]: expenseIds } }),
       include: [
         { model: Vendor, as: 'vendor' },
-        { model: Job, as: 'job' },
+        { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
       ],
@@ -800,7 +800,7 @@ exports.updateExpense = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
-        { model: Job, as: 'job' },
+        { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
       ]
@@ -938,7 +938,7 @@ exports.archiveExpense = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
-        { model: Job, as: 'job' },
+        { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
       ]
@@ -1142,7 +1142,7 @@ exports.submitExpense = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
-        { model: Job, as: 'job' },
+        { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
       ]
@@ -1212,7 +1212,7 @@ exports.approveExpense = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
-        { model: Job, as: 'job' },
+        { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
       ]
@@ -1293,7 +1293,7 @@ exports.rejectExpense = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
-        { model: Job, as: 'job' },
+        { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
       ]

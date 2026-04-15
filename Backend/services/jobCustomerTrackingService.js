@@ -6,7 +6,8 @@ const { getTenantLogoUrl } = require('../utils/tenantLogo');
 const JOB_INVOICE_DEFAULTS = {
   autoSendInvoiceOnJobCreation: false,
   customerJobTrackingEnabled: false,
-  emailCustomerJobTrackingOnJobCreation: false
+  emailCustomerJobTrackingOnJobCreation: false,
+  autoCreateExpenseFromProductCost: false
 };
 
 /**

@@ -328,6 +328,76 @@ exports.inviteTenant = async (req, res, next) => {
   }
 };
 
+/**
+ * List pending tenant invites created by platform admins.
+ * @route   GET /api/admin/tenants/invites
+ */
+exports.getTenantInvites = async (req, res, next) => {
+  try {
+    const invites = await InviteToken.findAll({
+      where: {
+        inviteType: 'new_tenant',
+        tenantId: null,
+        used: false,
+      },
+      include: [
+        {
+          model: User,
+          as: 'creator',
+          attributes: ['id', 'name', 'email'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: invites,
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
+/**
+ * Revoke a pending tenant invite.
+ * @route   DELETE /api/admin/tenants/invites/:id
+ */
+exports.revokeTenantInvite = async (req, res, next) => {
+  try {
+    const invite = await InviteToken.findOne({
+      where: {
+        id: req.params.id,
+        inviteType: 'new_tenant',
+        tenantId: null,
+      },
+    });
+
+    if (!invite) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invite not found',
+      });
+    }
+
+    if (invite.used) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot revoke an already used invite',
+      });
+    }
+
+    await invite.destroy();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Invite revoked successfully',
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 exports.bootstrapPlatformAdmin = async (req, res, next) => {
   const { name, email, password } = req.body || {};
 

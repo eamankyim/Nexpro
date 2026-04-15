@@ -667,7 +667,7 @@ const Settings = () => {
   const { data: jobInvoiceData } = useQuery({
     queryKey: ['settings', 'job-invoice'],
     queryFn: settingsService.getJobInvoice,
-    enabled: canManageOrganization && isStudioLike
+    enabled: canManageOrganization
   });
 
   const updateJobInvoiceMutation = useMutation({
@@ -4493,6 +4493,29 @@ const Settings = () => {
                 />
               </div>
             ) : null}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border p-4 mb-6 md:mb-8">
+          <h3 className="text-sm font-semibold mb-1">Inventory &amp; cost automation</h3>
+          <p className="text-xs text-muted-foreground mb-4">
+            Automatically log product cost as an expense when new products are added.
+          </p>
+          <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+            <div className="space-y-0.5">
+              <Label className="text-base">Auto-create expense from product cost</Label>
+              <p className="text-xs text-muted-foreground">
+                When enabled, creating a product with cost price creates a paid and approved expense entry automatically.
+              </p>
+            </div>
+            <Switch
+              checked={jobInvoiceData?.autoCreateExpenseFromProductCost === true}
+              disabled={updateJobInvoiceMutation.isPending}
+              onCheckedChange={(checked) => {
+                savingToastDismissRef.current = showLoading('Saving...');
+                updateJobInvoiceMutation.mutate({ autoCreateExpenseFromProductCost: checked });
+              }}
+            />
           </div>
         </div>
 

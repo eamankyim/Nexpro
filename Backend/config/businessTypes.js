@@ -9,7 +9,9 @@ const BUSINESS_TYPE_FEATURES = {
   shop: [
     'crm',
     'automations',
+    'vendors',
     'marketing',
+    'products',
     'materials',
     'deliveries',
     'paymentsExpenses',

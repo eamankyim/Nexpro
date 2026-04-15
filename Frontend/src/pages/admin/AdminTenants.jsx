@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import { Loader2, Building2, CreditCard, Zap, Crown, Eye, UserPlus } from 'lucide-react';
+import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2 } from 'lucide-react';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useResponsive } from '../../hooks/useResponsive';
 import adminService from '../../services/adminService';
@@ -100,6 +100,10 @@ const AdminTenants = () => {
   const [inviteName, setInviteName] = useState('');
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
   const [inviteEmailError, setInviteEmailError] = useState('');
+  const [tenantInvites, setTenantInvites] = useState([]);
+  const [inviteListVisible, setInviteListVisible] = useState(false);
+  const [inviteListLoading, setInviteListLoading] = useState(false);
+  const [revokingInviteId, setRevokingInviteId] = useState(null);
   const [planCatalog, setPlanCatalog] = useState([]);
   const [featureCatalog, setFeatureCatalog] = useState([]);
   const [accessSaving, setAccessSaving] = useState(false);
@@ -338,10 +342,50 @@ const AdminTenants = () => {
       setInviteName('');
       setInviteEmailError('');
       fetchTenants(pagination.current, pagination.pageSize);
+      fetchTenantInvites();
     } catch (err) {
       handleApiError(err, { context: 'invite tenant' });
     } finally {
       setInviteSubmitting(false);
+    }
+  };
+
+  const fetchTenantInvites = useCallback(async () => {
+    if (!hasPermission('tenants.create')) return;
+    setInviteListLoading(true);
+    try {
+      const response = await adminService.getTenantInvites();
+      if (response?.success) {
+        setTenantInvites(Array.isArray(response.data) ? response.data : []);
+      } else {
+        setTenantInvites([]);
+      }
+    } catch (error) {
+      setTenantInvites([]);
+      handleApiError(error, { context: 'load tenant invites' });
+    } finally {
+      setInviteListLoading(false);
+    }
+  }, [hasPermission]);
+
+  const handleToggleInvites = async () => {
+    const nextVisible = !inviteListVisible;
+    setInviteListVisible(nextVisible);
+    if (nextVisible && tenantInvites.length === 0) {
+      await fetchTenantInvites();
+    }
+  };
+
+  const handleRevokeInvite = async (inviteId) => {
+    setRevokingInviteId(inviteId);
+    try {
+      await adminService.revokeTenantInvite(inviteId);
+      showSuccess('Invite revoked');
+      setTenantInvites((prev) => prev.filter((invite) => invite.id !== inviteId));
+    } catch (error) {
+      handleApiError(error, { context: 'revoke tenant invite' });
+    } finally {
+      setRevokingInviteId(null);
     }
   };
 
@@ -459,10 +503,16 @@ const AdminTenants = () => {
           </div>
         <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
             {hasPermission('tenants.create') && (
-              <Button onClick={() => setInviteModalOpen(true)}>
-                <UserPlus className="h-4 w-4 mr-2" />
-                Invite tenant
-              </Button>
+              <>
+                <Button variant="outline" onClick={handleToggleInvites}>
+                  {inviteListVisible ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
+                  {inviteListVisible ? 'Hide invites' : 'Show invites'}
+                </Button>
+                <Button onClick={() => setInviteModalOpen(true)}>
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  Invite tenant
+                </Button>
+              </>
             )}
             <Select
               value={filters.plan ?? 'all'}
@@ -517,6 +567,54 @@ const AdminTenants = () => {
               ))}
             </div>
           </div>
+        )}
+
+        {inviteListVisible && hasPermission('tenants.create') && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">
+                Pending invites ({tenantInvites.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {inviteListLoading ? (
+                <div className="flex items-center justify-center py-6">
+                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                </div>
+              ) : tenantInvites.length > 0 ? (
+                <div className="space-y-3">
+                  {tenantInvites.map((invite) => (
+                    <div key={invite.id} className="flex items-start justify-between gap-3 border border-border rounded-md p-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-foreground break-all">{invite.email}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Name: {invite.name || '—'}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Sent {invite.createdAt ? dayjs(invite.createdAt).fromNow() : '—'} by {invite.creator?.name || invite.creator?.email || 'System'}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Expires {invite.expiresAt ? dayjs(invite.expiresAt).format('MMM D, YYYY h:mm A') : '—'}
+                        </p>
+                      </div>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => handleRevokeInvite(invite.id)}
+                        loading={revokingInviteId === invite.id}
+                        disabled={revokingInviteId === invite.id}
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Revoke
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Empty description="No pending tenant invites" />
+              )}
+            </CardContent>
+          </Card>
         )}
 
         <DashboardTable
