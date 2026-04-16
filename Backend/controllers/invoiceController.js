@@ -40,6 +40,49 @@ const generateInvoiceNumber = async (tenantId) => {
 };
 
 /**
+ * Visibility rules for invoice list and summary stats (must stay in sync).
+ * Applies tenant scope, business-type sourceType rules, and staff "own jobs/sales only".
+ *
+ * @param {import('express').Request} req
+ * @returns {Promise<Object>} Sequelize where clause
+ */
+const buildInvoiceVisibilityWhere = async (req) => {
+  const where = applyTenantFilter(req.tenantId, {});
+
+  const businessType = req.tenant?.businessType;
+  if (businessType) {
+    if (businessType === 'printing_press') {
+      where[Op.or] = [{ sourceType: 'job' }, { sourceType: null }];
+    } else if (businessType === 'shop') {
+      where.sourceType = 'sale';
+    } else if (businessType === 'pharmacy') {
+      where.sourceType = 'prescription';
+    }
+  }
+
+  const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
+  if (effectiveRole === 'staff') {
+    const [mySales, myJobs] = await Promise.all([
+      Sale.findAll({ where: applyTenantFilter(req.tenantId, { soldBy: req.user.id }), attributes: ['id'] }),
+      Job.findAll({ where: applyTenantFilter(req.tenantId, { createdBy: req.user.id }), attributes: ['id'] })
+    ]);
+    const saleIds = mySales.map((s) => s.id);
+    const jobIds = myJobs.map((j) => j.id);
+    const ownOr = [];
+    if (saleIds.length) ownOr.push({ saleId: { [Op.in]: saleIds } });
+    if (jobIds.length) ownOr.push({ jobId: { [Op.in]: jobIds } });
+    if (ownOr.length) {
+      where[Op.and] = where[Op.and] || [];
+      where[Op.and].push({ [Op.or]: ownOr });
+    } else {
+      where.id = { [Op.in]: [] };
+    }
+  }
+
+  return where;
+};
+
+/**
  * Send invoice paid confirmation to customer (email + optional SMS). Fire-and-forget; errors are logged only.
  * @param {string} tenantId - Tenant ID
  * @param {Object} invoice - Invoice with customer included (totalAmount, invoiceNumber, amountPaid, paidDate)
@@ -113,45 +156,7 @@ exports.getInvoices = async (req, res, next) => {
     const prescriptionId = req.query.prescriptionId;
     const sourceType = req.query.sourceType;
 
-    const where = applyTenantFilter(req.tenantId, {});
-    
-    // Filter by business type - only show invoices relevant to the tenant's business type
-    const businessType = req.tenant?.businessType;
-    if (businessType) {
-      if (businessType === 'printing_press') {
-        // Printing press only sees job-based invoices (or legacy invoices without sourceType)
-        where[Op.or] = [
-          { sourceType: 'job' },
-          { sourceType: null }
-        ];
-      } else if (businessType === 'shop') {
-        // Shop only sees sale-based invoices
-        where.sourceType = 'sale';
-      } else if (businessType === 'pharmacy') {
-        // Pharmacy only sees prescription-based invoices
-        where.sourceType = 'prescription';
-      }
-    }
-
-    // Staff see only invoices from their sales or their jobs; admin/manager see all
-    const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
-    if (effectiveRole === 'staff') {
-      const [mySales, myJobs] = await Promise.all([
-        Sale.findAll({ where: applyTenantFilter(req.tenantId, { soldBy: req.user.id }), attributes: ['id'] }),
-        Job.findAll({ where: applyTenantFilter(req.tenantId, { createdBy: req.user.id }), attributes: ['id'] })
-      ]);
-      const saleIds = mySales.map((s) => s.id);
-      const jobIds = myJobs.map((j) => j.id);
-      const ownOr = [];
-      if (saleIds.length) ownOr.push({ saleId: { [Op.in]: saleIds } });
-      if (jobIds.length) ownOr.push({ jobId: { [Op.in]: jobIds } });
-      if (ownOr.length) {
-        where[Op.and] = where[Op.and] || [];
-        where[Op.and].push({ [Op.or]: ownOr });
-      } else {
-        where.id = { [Op.in]: [] };
-      }
-    }
+    const where = await buildInvoiceVisibilityWhere(req);
 
     if (search) {
       // Build search condition; preserve existing where[Op.and] (e.g. staff "own" filter)
@@ -1194,23 +1199,46 @@ async function createInvoiceFromJobInternal(tenantId, jobId, userId = null) {
       { model: Customer, as: 'customer' }
     ]
   });
-  if (!job) return null;
+  if (!job) {
+    console.warn('[Invoice][createInvoiceFromJobInternal] job not found', { tenantId, jobId });
+    return null;
+  }
   const existingInvoice = await Invoice.findOne({ where: applyTenantFilter(tenantId, { jobId }) });
-  if (existingInvoice) return null;
+  if (existingInvoice) {
+    console.log('[Invoice][createInvoiceFromJobInternal] skip: invoice already exists', {
+      tenantId,
+      jobId,
+      invoiceId: existingInvoice.id,
+      invoiceNumber: existingInvoice.invoiceNumber
+    });
+    return null;
+  }
 
   const invoiceNumber = await generateInvoiceNumber(tenantId);
   let subtotal = 0;
   let items = [];
   if (job.items && job.items.length > 0) {
-    items = job.items.map(item => ({
-      description: item.description || item.category,
-      category: item.category,
-      paperSize: item.paperSize,
-      quantity: item.quantity,
-      unitPrice: parseFloat(item.unitPrice),
-      total: parseFloat(item.quantity) * parseFloat(item.unitPrice)
-    }));
-    subtotal = items.reduce((sum, item) => sum + item.total, 0);
+    items = job.items.map((item) => {
+      const qty = parseFloat(item.quantity || 0);
+      const unitPrice = parseFloat(item.unitPrice || 0);
+      const lineGross = qty * unitPrice;
+      const storedTotal = parseFloat(item.totalPrice != null ? item.totalPrice : lineGross);
+      const explicitDiscount = parseFloat(item.discountAmount || 0);
+      const derivedDiscount = Math.max(0, lineGross - storedTotal);
+      const lineDiscount = explicitDiscount > 0 ? explicitDiscount : derivedDiscount;
+      return {
+        description: item.description || item.category,
+        category: item.category,
+        paperSize: item.paperSize,
+        quantity: item.quantity,
+        unitPrice,
+        discountAmount: lineDiscount,
+        discountPercent: parseFloat(item.discountPercent || 0),
+        discountReason: item.discountReason || (lineDiscount > 0 ? 'Discount from job/quote line' : null),
+        total: lineGross - lineDiscount
+      };
+    });
+    subtotal = items.reduce((sum, item) => sum + parseFloat(item.quantity) * parseFloat(item.unitPrice), 0);
   } else {
     subtotal = parseFloat(job.finalPrice || 0);
     items = [{ description: job.title, quantity: 1, unitPrice: subtotal, total: subtotal }];
@@ -1225,7 +1253,11 @@ async function createInvoiceFromJobInternal(tenantId, jobId, userId = null) {
     subtotal = conv.subtotal;
   }
 
-  const invoice = await Invoice.create({
+  const totalItemDiscount = (job.items && job.items.length > 0)
+    ? items.reduce((sum, item) => sum + parseFloat(item.discountAmount || 0), 0)
+    : 0;
+
+  const invoicePayload = {
     invoiceNumber,
     jobId,
     customerId: job.customerId,
@@ -1236,11 +1268,30 @@ async function createInvoiceFromJobInternal(tenantId, jobId, userId = null) {
     subtotal,
     taxRate: jobTaxRate,
     discountType: 'fixed',
-    discountValue: 0,
+    discountValue: totalItemDiscount > 0 ? totalItemDiscount : 0,
+    discountAmount: totalItemDiscount > 0 ? totalItemDiscount : 0,
+    discountReason: totalItemDiscount > 0
+      ? (items.find((i) => i.discountReason)?.discountReason || 'Line discounts from job')
+      : undefined,
     paymentTerms: 'Net 30',
     items,
     notes: null,
     termsAndConditions: 'Payment is due within the specified payment terms. Late payments may incur additional charges.'
+  };
+
+  if (totalItemDiscount <= 0) {
+    invoicePayload.totalAmount = subtotal;
+  }
+
+  const invoice = await Invoice.create(invoicePayload);
+
+  console.log('[Invoice][createInvoiceFromJobInternal] created', {
+    tenantId,
+    jobId,
+    invoiceNumber: invoice.invoiceNumber,
+    lineCount: items.length,
+    subtotal,
+    lineDiscountTotal: totalItemDiscount
   });
 
   try {
@@ -2491,7 +2542,7 @@ exports.cancelInvoice = async (req, res, next) => {
 // @access  Private
 exports.getInvoiceStats = async (req, res, next) => {
   try {
-    const baseWhere = applyTenantFilter(req.tenantId, {});
+    const baseWhere = await buildInvoiceVisibilityWhere(req);
 
     const totalInvoices = await Invoice.count({ where: baseWhere });
     const paidInvoices = await Invoice.count({ where: { ...baseWhere, status: 'paid' } });
