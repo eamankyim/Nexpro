@@ -899,6 +899,15 @@ const Quotes = () => {
     viewingQuote.notes && { label: 'Notes', value: viewingQuote.notes }
   ].filter(Boolean) : [], [viewingQuote, organization]);
 
+  const isQuoteAlreadyConvertedToJob = useMemo(() => {
+    if (!viewingQuote) return false;
+    if (viewingQuote.convertedJobId) return true;
+    const conversionFromActivity = (quoteActivities || []).find(
+      (activity) => activity?.type === 'conversion' && activity?.metadata?.jobId
+    );
+    return Boolean(conversionFromActivity);
+  }, [viewingQuote, quoteActivities]);
+
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
@@ -1083,7 +1092,7 @@ const Quotes = () => {
           label: isShop ? 'Convert to Sale' : 'Convert to Job',
           icon: <FilePlus className="h-4 w-4" />,
           onClick: () => (isShop ? handleConvertToSale(viewingQuote) : openConvertToJobModal(viewingQuote)),
-          disabled: converting || ['accepted', 'declined', 'expired'].includes(viewingQuote.status)
+          disabled: converting || (!isShop && isQuoteAlreadyConvertedToJob)
         } : null}
         moreMenuItems={viewingQuote ? [
           { key: 'view-pdf', label: 'View PDF', icon: <FileText className="h-4 w-4" />, onClick: () => openPrintableQuote(viewingQuote) },

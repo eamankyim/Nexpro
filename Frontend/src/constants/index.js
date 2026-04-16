@@ -550,6 +550,7 @@ export const PRODUCT_UNITS = [
   { value: 'pair', label: 'Pair' },
   { value: 'set', label: 'Set' },
   { value: 'meter', label: 'Meter' },
+  { value: 'm2', label: 'Square meter (m2)' },
   { value: 'yard', label: 'Yard' },
 ];
 

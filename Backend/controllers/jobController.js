@@ -293,7 +293,12 @@ const autoCreateInvoice = async (jobId, tenantId) => {
     if (job.items && job.items.length > 0) {
       items = job.items.map(item => {
         const itemSubtotal = parseFloat(item.quantity) * parseFloat(item.unitPrice);
-        const itemDiscount = parseFloat(item.discountAmount || 0);
+        const storedTotal = parseFloat(item.totalPrice || itemSubtotal || 0);
+        const explicitDiscount = parseFloat(item.discountAmount || 0);
+        // Some flows persist only discounted line total (totalPrice) without explicit discount fields.
+        // Derive discount from gross-vs-stored totals so quote discounts survive invoice generation.
+        const derivedDiscount = Math.max(0, itemSubtotal - storedTotal);
+        const itemDiscount = explicitDiscount > 0 ? explicitDiscount : derivedDiscount;
         return {
           description: item.description || item.category,
           category: item.category,
@@ -302,7 +307,7 @@ const autoCreateInvoice = async (jobId, tenantId) => {
           unitPrice: parseFloat(item.unitPrice),
           discountAmount: itemDiscount,
           discountPercent: parseFloat(item.discountPercent || 0),
-          discountReason: item.discountReason || null,
+          discountReason: item.discountReason || (itemDiscount > 0 ? 'Discount from quote' : null),
           total: itemSubtotal - itemDiscount
         };
       });

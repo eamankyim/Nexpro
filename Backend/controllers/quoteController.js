@@ -51,7 +51,9 @@ const formatQuoteResponse = (quote) => ({
   updatedAt: quote.updatedAt,
   customer: quote.customer,
   creator: quote.creator,
-  items: quote.items
+  items: quote.items,
+  convertedJobId: quote.convertedJobId || null,
+  convertedJobNumber: quote.convertedJobNumber || null
 });
 
 const calculateTotals = (items = []) => {
@@ -190,6 +192,16 @@ exports.getQuote = async (req, res, next) => {
         success: false,
         message: 'Not authorized to view this quote'
       });
+    }
+
+    const existingJob = await Job.findOne({
+      where: applyTenantFilter(req.tenantId, { quoteId: quote.id }),
+      attributes: ['id', 'jobNumber']
+    });
+
+    if (existingJob) {
+      quote.setDataValue('convertedJobId', existingJob.id);
+      quote.setDataValue('convertedJobNumber', existingJob.jobNumber);
     }
 
     res.status(200).json({
@@ -700,6 +712,9 @@ async function convertQuoteToJobInternal(tenantId, quoteId, createdBy) {
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
+        discountAmount: item.discountAmount || 0,
+        discountPercent: item.discountPercent || 0,
+        discountReason: item.discountReason || null,
         totalPrice: item.total,
         specifications: item.metadata || {}
       }));
@@ -726,6 +741,20 @@ async function convertQuoteToJobInternal(tenantId, quoteId, createdBy) {
 
     await transaction.commit();
 
+    let createdInvoice = null;
+    try {
+      const { createInvoiceFromJobInternal, sendInvoiceToCustomer } = require('./invoiceController');
+      createdInvoice = await createInvoiceFromJobInternal(req.tenantId, job.id, req.user?.id || null);
+
+      const workflowSetting = await Setting.findOne({ where: { tenantId: req.tenantId, key: 'quote-workflow' } });
+      const onAccept = workflowSetting?.value?.onAccept || 'record_only';
+      if (createdInvoice && onAccept === 'create_job_invoice_and_send') {
+        await sendInvoiceToCustomer(req.tenantId, createdInvoice);
+      }
+    } catch (invoiceErr) {
+      console.error('[convertQuoteToJob] Invoice creation/send failed:', invoiceErr?.message);
+    }
+
     try {
       await activityLogger.logJobCreated(job, createdBy);
       if (job.assignedTo) {
@@ -751,6 +780,50 @@ async function convertQuoteToJobInternal(tenantId, quoteId, createdBy) {
     if (transaction && !transaction.finished) await transaction.rollback();
     throw err;
   }
+}
+
+/**
+ * Run quote accept workflow (record only OR create job/invoice/send) for authenticated in-app actions.
+ * Returns created entity IDs when workflow is enabled and succeeds.
+ */
+async function runQuoteAcceptWorkflow(tenantId, quote, actorUserId) {
+  let jobId = null;
+  let invoiceId = null;
+
+  const tenant = await Tenant.findByPk(tenantId, { attributes: ['businessType'] });
+  const businessType = tenant?.businessType || 'printing_press';
+  const isShop = businessType === 'shop';
+  const workflowSetting = await Setting.findOne({ where: { tenantId, key: 'quote-workflow' } });
+  const onAccept = workflowSetting?.value?.onAccept || 'record_only';
+
+  if (onAccept !== 'create_job_invoice_and_send') {
+    return { jobId, invoiceId, isShop };
+  }
+
+  try {
+    const { createInvoiceFromQuoteInternal, createInvoiceFromJobInternal, sendInvoiceToCustomer } = require('./invoiceController');
+    if (isShop) {
+      const invoice = await createInvoiceFromQuoteInternal(tenantId, quote.id, actorUserId || quote.createdBy || null);
+      if (invoice) {
+        invoiceId = invoice.id;
+        await sendInvoiceToCustomer(tenantId, invoice);
+      }
+    } else {
+      const jobResult = await convertQuoteToJobInternal(tenantId, quote.id, actorUserId || null);
+      if (jobResult?.job) {
+        jobId = jobResult.job.id;
+        const invoice = await createInvoiceFromJobInternal(tenantId, jobResult.job.id, actorUserId || quote.createdBy || null);
+        if (invoice) {
+          invoiceId = invoice.id;
+          await sendInvoiceToCustomer(tenantId, invoice);
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Quote] runQuoteAcceptWorkflow failed:', err?.message);
+  }
+
+  return { jobId, invoiceId, isShop };
 }
 
 exports.getQuoteByViewToken = async (req, res, next) => {
@@ -859,6 +932,8 @@ exports.updateQuote = async (req, res, next) => {
       totalAmount: taxSummary.total.toFixed(2)
     });
 
+    let workflowResult = { jobId: null, invoiceId: null, isShop: false };
+
     if (quoteData.status && quoteData.status !== previousStatus && quoteData.status) {
       const statusLabels = {
         draft: 'Draft',
@@ -881,6 +956,10 @@ exports.updateQuote = async (req, res, next) => {
           newStatus: quoteData.status
         }
       });
+
+      if (quoteData.status === 'accepted' && previousStatus !== 'accepted') {
+        workflowResult = await runQuoteAcceptWorkflow(req.tenantId, quote, req.user?.id || null);
+      }
     } else {
       await QuoteActivity.create({
         quoteId: quote.id,
@@ -923,7 +1002,11 @@ exports.updateQuote = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: formatQuoteResponse(fullQuote)
+      data: {
+        ...formatQuoteResponse(fullQuote),
+        ...(workflowResult.jobId && { jobId: workflowResult.jobId }),
+        ...(workflowResult.invoiceId && { invoiceId: workflowResult.invoiceId })
+      }
     });
   } catch (error) {
     console.error(`Error updating quote ${req.params.id}:`, error);
@@ -959,6 +1042,11 @@ exports.updateQuoteStatus = async (req, res, next) => {
       ...(status === 'accepted' ? { acceptedAt: new Date() } : {})
     });
 
+    let workflowResult = { jobId: null, invoiceId: null, isShop: false };
+    if (status === 'accepted' && previousStatus !== 'accepted') {
+      workflowResult = await runQuoteAcceptWorkflow(req.tenantId, quote, req.user?.id || null);
+    }
+
     await QuoteActivity.create({
       quoteId: quote.id,
       tenantId: req.tenantId,
@@ -978,7 +1066,14 @@ exports.updateQuoteStatus = async (req, res, next) => {
       ]
     });
 
-    res.status(200).json({ success: true, data: formatQuoteResponse(updated) });
+    res.status(200).json({
+      success: true,
+      data: {
+        ...formatQuoteResponse(updated),
+        ...(workflowResult.jobId && { jobId: workflowResult.jobId }),
+        ...(workflowResult.invoiceId && { invoiceId: workflowResult.invoiceId })
+      }
+    });
   } catch (error) {
     console.error(`Error updating quote status ${req.params.id}:`, error);
     next(error);
@@ -1033,14 +1128,6 @@ exports.convertQuoteToJob = async (req, res, next) => {
       return res.status(404).json({
         success: false,
         message: 'Quote not found'
-      });
-    }
-
-    if (quote.status === 'accepted') {
-      await transaction.rollback();
-      return res.status(400).json({
-        success: false,
-        message: 'Quote has already been converted'
       });
     }
 
@@ -1133,6 +1220,9 @@ exports.convertQuoteToJob = async (req, res, next) => {
         description: item.description,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
+        discountAmount: item.discountAmount || 0,
+        discountPercent: item.discountPercent || 0,
+        discountReason: item.discountReason || null,
         totalPrice: item.total,
         specifications: item.metadata || {}
       }));
@@ -1235,7 +1325,8 @@ exports.convertQuoteToJob = async (req, res, next) => {
       success: true,
       data: {
         quote: formatQuoteResponse(updatedQuote),
-        job: jobWithDetails
+        job: jobWithDetails,
+        ...(createdInvoice && { invoice: createdInvoice })
       }
     });
   } catch (error) {

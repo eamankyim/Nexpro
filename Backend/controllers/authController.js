@@ -11,6 +11,7 @@ const dayjs = require('dayjs');
 const emailService = require('../services/emailService');
 const { passwordReset: passwordResetEmailTemplate, emailVerification: emailVerificationTemplate, welcomeEmail: welcomeEmailTemplate } = require('../services/emailTemplates');
 const { notifyAccountCreated } = require('../services/platformAdminNotificationService');
+const { getFrontendBaseUrl } = require('../utils/frontendUrl');
 const { seedDefaultCategories, seedDefaultEquipmentCategories } = require('../utils/categorySeeder');
 const { seedDefaultChartOfAccounts } = require('../utils/seedAccountingAccounts');
 const { resolveBusinessType } = require('../config/businessTypes');
@@ -283,7 +284,7 @@ exports.register = async (req, res, next) => {
         });
 
         const platformCompany = { name: 'African Business Suite', primaryColor: '#166534' };
-        const loginUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '') + '/login';
+        const loginUrl = getFrontendBaseUrl(req);
         setImmediate(() => {
           try {
             const { subject, html, text } = welcomeEmailTemplate(user, platformCompany, loginUrl);
@@ -353,7 +354,7 @@ exports.register = async (req, res, next) => {
 
       const token = generateToken(user.id);
       const platformCompany = { name: 'African Business Suite', primaryColor: '#166534' };
-      const loginUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '') + '/login';
+      const loginUrl = getFrontendBaseUrl(req);
       setImmediate(() => {
         try {
           const { subject, html, text } = welcomeEmailTemplate(user, platformCompany, loginUrl);
@@ -439,7 +440,7 @@ exports.register = async (req, res, next) => {
     });
 
     const platformCompany = { name: 'African Business Suite', primaryColor: '#166534' };
-    const loginUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '') + '/login';
+    const loginUrl = getFrontendBaseUrl(req);
     setImmediate(() => {
       try {
         const { subject, html, text } = welcomeEmailTemplate(user, platformCompany, loginUrl);
