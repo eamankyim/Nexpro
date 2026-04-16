@@ -7,20 +7,11 @@ const emailService = require('../services/emailService');
 const { inviteEmail: inviteEmailTemplate } = require('../services/emailTemplates');
 const { validateSeatLimit, getSeatUsageSummary } = require('../utils/seatLimitHelper');
 const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
+const { getFrontendBaseUrl } = require('../utils/frontendUrl');
 
 // Generate a random 32-character token
 const generateToken = () => {
   return crypto.randomBytes(16).toString('hex');
-};
-
-const getFrontendBaseUrl = () => {
-  const raw = process.env.FRONTEND_URL || 'http://localhost:3000';
-  try {
-    const parsed = new URL(raw);
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch (_err) {
-    return raw.replace(/\/+$/, '').replace(/\/onboarding$/i, '');
-  }
 };
 
 // @desc    Generate invite token
@@ -94,7 +85,7 @@ exports.generateInvite = async (req, res, next) => {
 
     if (existingInvite) {
       console.log('[Invite] Active invite already exists:', email);
-      const frontendUrl = getFrontendBaseUrl();
+      const frontendUrl = getFrontendBaseUrl(req);
       const existingInviteUrl = `${frontendUrl}/signup?token=${existingInvite.token}`;
       return res.status(400).json({
         success: false,
@@ -153,7 +144,7 @@ exports.generateInvite = async (req, res, next) => {
     }
 
     // Generate invite URL
-    const frontendUrl = getFrontendBaseUrl();
+    const frontendUrl = getFrontendBaseUrl(req);
     const inviteUrl = `${frontendUrl}/signup?token=${token}`;
 
     setImmediate(async () => {

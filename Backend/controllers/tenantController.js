@@ -9,6 +9,7 @@ const { seedDefaultCategories, seedDefaultEquipmentCategories } = require('../ut
 const { seedDefaultChartOfAccounts } = require('../utils/seedAccountingAccounts');
 const emailService = require('../services/emailService');
 const { emailVerification: emailVerificationTemplate } = require('../services/emailTemplates');
+const { notifyAccountCreated, notifyTenantOnboarded } = require('../services/platformAdminNotificationService');
 
 const generateToken = (userId) =>
   jwt.sign({ id: userId }, config.jwt.secret, {
@@ -274,6 +275,18 @@ exports.signupTenant = async (req, res, next) => {
         console.error('[signup] Failed to send verification email (non-blocking):', err?.message || err);
       });
 
+      setImmediate(() => {
+        notifyAccountCreated({
+          userName: user?.name,
+          userEmail: user?.email,
+          source: 'self_service_signup',
+          tenantName: tenant?.name,
+          tenantId: tenant?.id,
+        }).catch((err) => {
+          console.error('[signup] Platform admin notify failed (account created):', err?.message);
+        });
+      });
+
       const token = generateToken(user.id);
 
       // Build memberships from in-memory data – saves 1 remote DB round-trip (~100–300ms)
@@ -525,6 +538,20 @@ exports.completeOnboarding = async (req, res, next) => {
     seedDefaultEquipmentCategories(tenantId, true)
       .then((created) => { if (created) console.log(`✅ Seeded ${created} default equipment categories for tenant ${tenantId}`); })
       .catch((err) => console.error('Failed to seed equipment categories during onboarding (non-blocking):', err.message));
+
+    setImmediate(() => {
+      notifyTenantOnboarded({
+        tenantName: tenant?.name,
+        tenantId: tenant?.id,
+        businessType: tenant?.businessType || businessType,
+        companyEmail: companyEmail || tenant?.metadata?.email,
+        companyPhone: normalizedCompanyPhone || tenant?.metadata?.phone,
+        actorName: req.user?.name,
+        actorEmail: req.user?.email,
+      }).catch((err) => {
+        console.error('[tenant] Platform admin notify failed (onboarding):', err?.message);
+      });
+    });
 
     return res.status(200).json({
       success: true,

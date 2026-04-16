@@ -19,6 +19,7 @@ const {
 } = require('../models');
 const emailService = require('../services/emailService');
 const { inviteTenantEmail } = require('../services/emailTemplates');
+const { getFrontendBaseUrl } = require('../utils/frontendUrl');
 const {
   ACCESS_STATES,
   normalizeFeatureOverrides,
@@ -46,16 +47,6 @@ const generateToken = (id) =>
   jwt.sign({ id }, config.jwt.secret, {
     expiresIn: config.jwt.expire,
   });
-
-const getFrontendBaseUrl = () => {
-  const raw = process.env.FRONTEND_URL || 'http://localhost:3000';
-  try {
-    const parsed = new URL(raw);
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch (_err) {
-    return raw.replace(/\/+$/, '').replace(/\/onboarding$/i, '');
-  }
-};
 
 const serverStartedAt = new Date();
 
@@ -240,7 +231,7 @@ exports.inviteTenant = async (req, res, next) => {
       },
     });
     if (existingInvite) {
-      const frontendUrl = getFrontendBaseUrl();
+      const frontendUrl = getFrontendBaseUrl(req);
       const inviteUrl = `${frontendUrl}/signup?token=${existingInvite.token}`;
       return res.status(400).json({
         success: false,
@@ -273,7 +264,7 @@ exports.inviteTenant = async (req, res, next) => {
       expiresAt: invite.expiresAt,
     });
 
-    const frontendUrl = getFrontendBaseUrl();
+    const frontendUrl = getFrontendBaseUrl(req);
     const inviteUrl = `${frontendUrl}/signup?token=${token}`;
     const inviterName = req.user?.name || req.user?.email || 'African Business Suite';
 

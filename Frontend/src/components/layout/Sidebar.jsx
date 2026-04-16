@@ -136,7 +136,7 @@ const filterNavItems = (items, { isAdmin, isManager }) =>
     })
     .filter((item) => !item.children || item.children.length > 0);
 
-const getMenuItems = (businessType, isAdmin, isManager, shopType, hasFeature = () => true) => {
+const getMenuItems = (businessType, isAdmin, isManager, shopType, hasFeature = () => true, isPlatformAdmin = false) => {
   // Standalone (most important): Dashboard, Sales, Products, Jobs (printing_press), Customers, Invoices, Expenses
   const baseItems = [
     { key: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', tooltip: MENU_HINTS['/dashboard'] },
@@ -151,10 +151,10 @@ const getMenuItems = (businessType, isAdmin, isManager, shopType, hasFeature = (
       baseItems.push({ key: '/products', icon: Package, label: 'Products', tooltip: MENU_HINTS['/products'] });
     }
   }
-  if (STUDIO_LIKE_TYPES.includes(businessType) && hasFeature('jobAutomation')) {
+  if (!isPlatformAdmin && STUDIO_LIKE_TYPES.includes(businessType) && hasFeature('jobAutomation')) {
     baseItems.push({ key: '/jobs', icon: FileText, label: 'Jobs', tooltip: MENU_HINTS['/jobs'] });
   }
-  if (hasFeature('crm')) {
+  if (!isPlatformAdmin && hasFeature('crm')) {
     baseItems.push({ key: '/customers', icon: Users, label: 'Customers', tooltip: MENU_HINTS['/customers'] });
   }
   if (hasFeature('invoices') || hasFeature('expenses')) {
@@ -179,9 +179,9 @@ const getMenuItems = (businessType, isAdmin, isManager, shopType, hasFeature = (
   // Advanced group: everything else (Leads, Vendors, Shops/Pharmacies, Payroll, Accounting, Quotes, Employees, Workspace, etc.)
   const advancedChildren = [
     ...(hasFeature('deliveries') ? [{ key: '/deliveries', label: 'Deliveries', tooltip: MENU_HINTS['/deliveries'] }] : []),
-    ...(hasFeature('jobAutomation') ? [{ key: '/tasks', label: 'Tasks', tooltip: MENU_HINTS['/tasks'] }] : []),
+    ...(!isPlatformAdmin && hasFeature('jobAutomation') ? [{ key: '/tasks', label: 'Tasks', tooltip: MENU_HINTS['/tasks'] }] : []),
     ...(hasFeature('automations') ? [{ key: '/automations', label: 'Automations', tooltip: MENU_HINTS['/automations'], managerOnly: true }] : []),
-    ...(hasFeature('leadPipeline') ? [{ key: '/leads', label: 'Leads', tooltip: MENU_HINTS['/leads'] }] : []),
+    ...(!isPlatformAdmin && hasFeature('leadPipeline') ? [{ key: '/leads', label: 'Leads', tooltip: MENU_HINTS['/leads'] }] : []),
     ...(hasFeature('marketing') ? [{ key: '/marketing', label: 'Marketing', tooltip: MENU_HINTS['/marketing'], managerOnly: true }] : []),
     ...(hasFeature('vendors') ? [{ key: '/vendors', label: 'Vendors', tooltip: MENU_HINTS['/vendors'] }] : []),
     ...(hasFeature('payroll') ? [{ key: '/payroll', label: 'Payroll', tooltip: MENU_HINTS['/payroll'], managerOnly: true }] : []),
@@ -279,7 +279,7 @@ const getQuickActions = (businessType, shopType) => {
 export function Sidebar({ collapsed, onCollapse }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, isManager, activeTenant, user, hasFeature } = useAuth();
+  const { isAdmin, isManager, activeTenant, user, hasFeature, isPlatformAdmin } = useAuth();
   const { appName, primaryColor } = useBranding();
   const { canInstall, promptInstall } = usePWAInstall();
   const [openKeys, setOpenKeys] = useState([]);
@@ -303,8 +303,8 @@ export function Sidebar({ collapsed, onCollapse }) {
     null;
 
   const menuItems = useMemo(
-    () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature),
-    [businessType, isAdmin, isManager, shopType, hasFeature]
+    () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature, isPlatformAdmin),
+    [businessType, isAdmin, isManager, shopType, hasFeature, isPlatformAdmin]
   );
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -664,7 +664,7 @@ export function MobileSidebar() {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, isManager, activeTenant, hasFeature } = useAuth();
+  const { isAdmin, isManager, activeTenant, hasFeature, isPlatformAdmin } = useAuth();
   const { appName, primaryColor } = useBranding();
   const { canInstall, promptInstall } = usePWAInstall();
   const [openKeys, setOpenKeys] = useState([]);
@@ -683,7 +683,10 @@ export function MobileSidebar() {
 
   const businessType = activeTenant?.businessType || null;
   const shopType = activeTenant?.metadata?.shopType || null;
-  const menuItems = useMemo(() => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature), [businessType, isAdmin, isManager, shopType, hasFeature]);
+  const menuItems = useMemo(
+    () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature, isPlatformAdmin),
+    [businessType, isAdmin, isManager, shopType, hasFeature, isPlatformAdmin]
+  );
   const quickActions = useMemo(() => getQuickActions(businessType, shopType), [businessType, shopType]);
 
   // Open the group that contains the current route when sheet opens or location changes

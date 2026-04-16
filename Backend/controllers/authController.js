@@ -10,6 +10,7 @@ const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 const emailService = require('../services/emailService');
 const { passwordReset: passwordResetEmailTemplate, emailVerification: emailVerificationTemplate, welcomeEmail: welcomeEmailTemplate } = require('../services/emailTemplates');
+const { notifyAccountCreated } = require('../services/platformAdminNotificationService');
 const { seedDefaultCategories, seedDefaultEquipmentCategories } = require('../utils/categorySeeder');
 const { seedDefaultChartOfAccounts } = require('../utils/seedAccountingAccounts');
 const { resolveBusinessType } = require('../config/businessTypes');
@@ -289,6 +290,15 @@ exports.register = async (req, res, next) => {
             emailService.sendPlatformMessage(user.email, subject, html, text).catch(err => {
               console.error('[Auth] Welcome email failed (new_tenant):', err?.message);
             });
+            notifyAccountCreated({
+              userName: user?.name,
+              userEmail: user?.email,
+              source: 'invite:new_tenant',
+              tenantName: tenant?.name,
+              tenantId: tenant?.id,
+            }).catch((err) => {
+              console.error('[Auth] Platform admin notify failed (new_tenant):', err?.message);
+            });
           } catch (err) {
             console.error('[Auth] Welcome email error (new_tenant):', err?.message);
           }
@@ -349,6 +359,15 @@ exports.register = async (req, res, next) => {
           const { subject, html, text } = welcomeEmailTemplate(user, platformCompany, loginUrl);
           emailService.sendPlatformMessage(user.email, subject, html, text).catch(err => {
             console.error('[Auth] Welcome email failed (platform admin):', err?.message);
+          });
+          notifyAccountCreated({
+            userName: user?.name,
+            userEmail: user?.email,
+            source: 'invite:platform_admin',
+            tenantName: null,
+            tenantId: null,
+          }).catch((err) => {
+            console.error('[Auth] Platform admin notify failed (platform admin):', err?.message);
           });
         } catch (err) {
           console.error('[Auth] Welcome email error (platform admin):', err?.message);
@@ -426,6 +445,15 @@ exports.register = async (req, res, next) => {
         const { subject, html, text } = welcomeEmailTemplate(user, platformCompany, loginUrl);
         emailService.sendPlatformMessage(user.email, subject, html, text).catch(err => {
           console.error('[Auth] Welcome email failed (tenant user):', err?.message);
+        });
+        notifyAccountCreated({
+          userName: user?.name,
+          userEmail: user?.email,
+          source: 'invite:tenant_user',
+          tenantName: invite?.tenant?.name,
+          tenantId: invite?.tenantId,
+        }).catch((err) => {
+          console.error('[Auth] Platform admin notify failed (tenant user):', err?.message);
         });
       } catch (err) {
         console.error('[Auth] Welcome email error (tenant user):', err?.message);
@@ -818,6 +846,18 @@ exports.googleAuth = async (req, res, next) => {
         ['isDefault', 'DESC'],
         ['createdAt', 'ASC'],
       ],
+    });
+
+    setImmediate(() => {
+      notifyAccountCreated({
+        userName: user?.name,
+        userEmail: user?.email,
+        source: 'google_oauth_signup',
+        tenantName: tenant?.name,
+        tenantId: tenant?.id,
+      }).catch((err) => {
+        console.error('[Auth] Platform admin notify failed (google signup):', err?.message);
+      });
     });
 
     res.status(201).json({
