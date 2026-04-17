@@ -350,13 +350,15 @@ exports.getInvoice = async (req, res, next) => {
   }
 };
 
-// @desc    Create invoice from job
+// @desc    Create invoice (from job or direct/manual)
 // @route   POST /api/invoices
 // @access  Private
 exports.createInvoice = async (req, res, next) => {
   try {
     const {
       jobId,
+      customerId,
+      items: bodyItems = [],
       dueDate,
       paymentTerms,
       taxRate: bodyTaxRate,
@@ -372,56 +374,107 @@ exports.createInvoice = async (req, res, next) => {
         ? parseFloat(bodyTaxRate) || taxConfig.defaultRatePercent || 0
         : 0;
 
-    // Fetch job with items
-    const job = await Job.findOne({
-      where: applyTenantFilter(req.tenantId, { id: jobId }),
-      include: [
-        {
-          model: JobItem,
-          as: 'items'
-        },
-        {
-          model: Customer,
-          as: 'customer'
-        }
-      ]
-    });
+    const isJobLinked = !!jobId;
+    let resolvedCustomerId = customerId || null;
+    let sourceType = 'job';
+    let job = null;
 
-    if (!job) {
-      return res.status(404).json({
-        success: false,
-        message: 'Job not found'
+    if (isJobLinked) {
+      // Fetch job with items
+      job = await Job.findOne({
+        where: applyTenantFilter(req.tenantId, { id: jobId }),
+        include: [
+          {
+            model: JobItem,
+            as: 'items'
+          },
+          {
+            model: Customer,
+            as: 'customer'
+          }
+        ]
       });
-    }
 
-    // Check if invoice already exists for this job
-    const existingInvoice = await Invoice.findOne({ where: applyTenantFilter(req.tenantId, { jobId }) });
-    if (existingInvoice) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invoice already exists for this job'
+      if (!job) {
+        return res.status(404).json({
+          success: false,
+          message: 'Job not found'
+        });
+      }
+
+      // Check if invoice already exists for this job
+      const existingInvoice = await Invoice.findOne({ where: applyTenantFilter(req.tenantId, { jobId }) });
+      if (existingInvoice) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invoice already exists for this job'
+        });
+      }
+      resolvedCustomerId = job.customerId;
+      sourceType = 'job';
+    } else {
+      if (!resolvedCustomerId) {
+        return res.status(400).json({
+          success: false,
+          message: 'Customer is required when creating an invoice directly'
+        });
+      }
+      if (!Array.isArray(bodyItems) || bodyItems.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message: 'At least one invoice item is required'
+        });
+      }
+
+      const customer = await Customer.findOne({
+        where: applyTenantFilter(req.tenantId, { id: resolvedCustomerId }),
+        attributes: ['id']
       });
+      if (!customer) {
+        return res.status(404).json({
+          success: false,
+          message: 'Customer not found'
+        });
+      }
+
+      // Keep sourceType within DB enum while ensuring records remain visible per business type.
+      const businessType = req.tenant?.businessType;
+      if (businessType === 'shop') sourceType = 'sale';
+      else if (businessType === 'pharmacy') sourceType = 'prescription';
+      else sourceType = 'job';
     }
 
     // Generate invoice number
     const invoiceNumber = await generateInvoiceNumber(req.tenantId);
 
-    // Calculate subtotal from job items or finalPrice
+    // Calculate subtotal from linked job items OR manual payload items
     let subtotal = 0;
     let items = [];
 
-    if (job.items && job.items.length > 0) {
-      items = job.items.map(item => ({
-        description: item.description || item.category,
-        category: item.category,
-        paperSize: item.paperSize,
-        quantity: item.quantity,
-        unitPrice: parseFloat(item.unitPrice),
-        total: parseFloat(item.quantity) * parseFloat(item.unitPrice)
-      }));
-      subtotal = items.reduce((sum, item) => sum + item.total, 0);
-    } else {
-      // If no items, use finalPrice from job
+    if (isJobLinked && job?.items?.length > 0) {
+      items = job.items.map((item) => {
+        const qty = parseFloat(item.quantity || 0);
+        const unitPrice = parseFloat(item.unitPrice || 0);
+        const lineGross = qty * unitPrice;
+        const storedTotal = parseFloat(item.totalPrice != null ? item.totalPrice : lineGross);
+        const explicitDiscount = parseFloat(item.discountAmount || 0);
+        const derivedDiscount = Math.max(0, lineGross - storedTotal);
+        const lineDiscount = explicitDiscount > 0 ? explicitDiscount : derivedDiscount;
+        return {
+          description: item.description || item.category,
+          category: item.category,
+          paperSize: item.paperSize,
+          quantity: item.quantity,
+          unitPrice,
+          discountAmount: lineDiscount,
+          discountPercent: parseFloat(item.discountPercent || 0),
+          discountReason: item.discountReason || (lineDiscount > 0 ? 'Discount from job line' : null),
+          total: lineGross - lineDiscount
+        };
+      });
+      subtotal = items.reduce((sum, item) => sum + (parseFloat(item.quantity) * parseFloat(item.unitPrice)), 0);
+    } else if (isJobLinked) {
+      // If linked job has no items, use finalPrice from job
       subtotal = parseFloat(job.finalPrice || 0);
       items = [{
         description: job.title,
@@ -429,6 +482,24 @@ exports.createInvoice = async (req, res, next) => {
         unitPrice: subtotal,
         total: subtotal
       }];
+    } else {
+      items = bodyItems.map((item) => {
+        const qty = parseFloat(item.quantity || 0);
+        const unitPrice = parseFloat(item.unitPrice || 0);
+        const discountAmount = parseFloat(item.discountAmount || 0);
+        const lineGross = qty * unitPrice;
+        const total = parseFloat(item.total != null ? item.total : (lineGross - discountAmount));
+        return {
+          description: item.description || '',
+          quantity: qty,
+          unitPrice,
+          discountAmount,
+          discountPercent: parseFloat(item.discountPercent || 0),
+          discountReason: item.discountReason || null,
+          total
+        };
+      });
+      subtotal = items.reduce((sum, item) => sum + (parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)), 0);
     }
 
     if (taxConfig.enabled && taxConfig.pricesAreTaxInclusive && (taxRate || 0) > 0) {
@@ -440,10 +511,10 @@ exports.createInvoice = async (req, res, next) => {
     // Create invoice
     const invoice = await Invoice.create({
       invoiceNumber,
-      jobId,
-      customerId: job.customerId,
+      jobId: isJobLinked ? jobId : null,
+      customerId: resolvedCustomerId,
       tenantId: req.tenantId,
-      sourceType: 'job', // Set source type for business type filtering
+      sourceType,
       invoiceDate: new Date(),
       dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days
       subtotal,
