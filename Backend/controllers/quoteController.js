@@ -559,40 +559,8 @@ exports.respondToQuoteByToken = async (req, res, next) => {
       metadata: { source: 'customer_response', action: 'accept', comment: comment || '' }
     });
 
-    let jobId = null;
-    let invoiceId = null;
-    const tenant = await Tenant.findByPk(tenantId, { attributes: ['businessType'] });
-    const businessType = tenant?.businessType || 'printing_press';
-    const isShop = businessType === 'shop';
-    const workflowSetting = await Setting.findOne({ where: { tenantId, key: 'quote-workflow' } });
-    const onAccept = workflowSetting?.value?.onAccept || 'record_only';
-
-    if (onAccept === 'create_job_invoice_and_send') {
-      try {
-        const { createInvoiceFromQuoteInternal, createInvoiceFromJobInternal, sendInvoiceToCustomer } = require('./invoiceController');
-        if (isShop) {
-          // Shop flow: accept quote → create invoice from quote (no job); when customer pays, sale is created in invoiceController
-          const invoice = await createInvoiceFromQuoteInternal(tenantId, quote.id, quote.createdBy);
-          if (invoice) {
-            invoiceId = invoice.id;
-            await sendInvoiceToCustomer(tenantId, invoice);
-          }
-        } else {
-          // Studio flow: accept quote → create job + invoice from job
-          const jobResult = await convertQuoteToJobInternal(tenantId, quote.id, null);
-          if (jobResult && jobResult.job) {
-            jobId = jobResult.job.id;
-            const invoice = await createInvoiceFromJobInternal(tenantId, jobResult.job.id, quote.createdBy);
-            if (invoice) {
-              invoiceId = invoice.id;
-              await sendInvoiceToCustomer(tenantId, invoice);
-            }
-          }
-        }
-      } catch (err) {
-        console.error('[Quote] respondToQuoteByToken auto job/invoice/send failed:', err?.message);
-      }
-    }
+    const workflowResult = await runQuoteAcceptWorkflow(tenantId, quote, null);
+    const { jobId, invoiceId, isShop } = workflowResult;
 
     const updatedQuote = await Quote.findOne({
       where: { id: quote.id },
@@ -741,19 +709,8 @@ async function convertQuoteToJobInternal(tenantId, quoteId, createdBy) {
 
     await transaction.commit();
 
-    let createdInvoice = null;
-    try {
-      const { createInvoiceFromJobInternal, sendInvoiceToCustomer } = require('./invoiceController');
-      createdInvoice = await createInvoiceFromJobInternal(req.tenantId, job.id, req.user?.id || null);
-
-      const workflowSetting = await Setting.findOne({ where: { tenantId: req.tenantId, key: 'quote-workflow' } });
-      const onAccept = workflowSetting?.value?.onAccept || 'record_only';
-      if (createdInvoice && onAccept === 'create_job_invoice_and_send') {
-        await sendInvoiceToCustomer(req.tenantId, createdInvoice);
-      }
-    } catch (invoiceErr) {
-      console.error('[convertQuoteToJob] Invoice creation/send failed:', invoiceErr?.message);
-    }
+    // Invoice creation is handled by callers (public accept, in-app accept workflow, convertQuoteToJob)
+    // so this helper stays free of request context and does not duplicate invoices.
 
     try {
       await activityLogger.logJobCreated(job, createdBy);
@@ -913,6 +870,26 @@ exports.updateQuote = async (req, res, next) => {
     }
 
     const previousStatus = quote.status;
+
+    // Replace line items first so accept → job/invoice uses the same lines the user saved.
+    await QuoteItem.destroy({ where: applyTenantFilter(req.tenantId, { quoteId: quote.id }) });
+    if (items.length) {
+      const quoteItems = items.map((item) => ({
+        quoteId: quote.id,
+        tenantId: req.tenantId,
+        productId: item.productId || null,
+        description: item.description,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        discountAmount: item.discountAmount || 0,
+        discountPercent: item.discountPercent || 0,
+        discountReason: item.discountReason || null,
+        total: item.total || ((parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)) - parseFloat(item.discountAmount || 0)),
+        metadata: item.metadata || {}
+      }));
+      await QuoteItem.bulkCreate(quoteItems);
+    }
+
     const totals = calculateTotals(items);
     const taxConfig = await getTaxConfigForTenant(req.tenantId);
     const rateOverride = bodyTaxRate !== undefined ? bodyTaxRate : quote.taxRate;
@@ -925,6 +902,7 @@ exports.updateQuote = async (req, res, next) => {
 
     await quote.update({
       ...quoteData,
+      ...(quoteData.status === 'accepted' && previousStatus !== 'accepted' ? { acceptedAt: new Date() } : {}),
       subtotal: totals.subtotal,
       discountTotal: totals.discountTotal,
       taxRate: taxSummary.appliedTaxRate.toFixed(2),
@@ -970,25 +948,6 @@ exports.updateQuote = async (req, res, next) => {
         createdBy: req.user?.id || null,
         metadata: {}
       });
-    }
-
-    // Replace items
-    await QuoteItem.destroy({ where: applyTenantFilter(req.tenantId, { quoteId: quote.id }) });
-    if (items.length) {
-      const quoteItems = items.map((item) => ({
-        quoteId: quote.id,
-        tenantId: req.tenantId,
-        productId: item.productId || null,
-        description: item.description,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        discountAmount: item.discountAmount || 0,
-        discountPercent: item.discountPercent || 0,
-        discountReason: item.discountReason || null,
-        total: item.total || ((parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)) - parseFloat(item.discountAmount || 0)),
-        metadata: item.metadata || {}
-      }));
-      await QuoteItem.bulkCreate(quoteItems);
     }
 
     const fullQuote = await Quote.findOne({
@@ -1319,6 +1278,21 @@ exports.convertQuoteToJob = async (req, res, next) => {
       await activityLogger.logQuoteAccepted(updatedQuote, req.user?.id || null);
     } catch (logErr) {
       console.error('Failed to log quote accepted activity:', logErr?.message);
+    }
+
+    let createdInvoice = null;
+    try {
+      const workflowSetting = await Setting.findOne({ where: { tenantId: req.tenantId, key: 'quote-workflow' } });
+      const onAccept = workflowSetting?.value?.onAccept || 'record_only';
+      if (onAccept === 'create_job_invoice_and_send') {
+        const { createInvoiceFromJobInternal, sendInvoiceToCustomer } = require('./invoiceController');
+        createdInvoice = await createInvoiceFromJobInternal(req.tenantId, jobWithDetails.id, req.user?.id || null);
+        if (createdInvoice) {
+          await sendInvoiceToCustomer(req.tenantId, createdInvoice);
+        }
+      }
+    } catch (invoiceErr) {
+      console.error('[convertQuoteToJob] Invoice creation/send failed:', invoiceErr?.message);
     }
 
     res.status(200).json({

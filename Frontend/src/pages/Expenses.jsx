@@ -1460,7 +1460,6 @@ const Expenses = () => {
                                 type="number"
                                 step="0.01"
                                 min="0"
-                                placeholder="0.00"
                                 value={numberInputValue(field.value)}
                                 onChange={(e) => handleNumberChange(e, field.onChange)}
                               />
@@ -1672,7 +1671,6 @@ const Expenses = () => {
                           type="number"
                           step="0.01"
                           min="0"
-                          placeholder="0.00"
                           value={field.value === '' ? '' : field.value}
                           onChange={(e) => {
                             const raw = e.target.value;

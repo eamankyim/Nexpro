@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2, Share2, Copy, Archive } from 'lucide-react';
+import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2, Share2, Copy, Archive, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import invoiceService from '../services/invoiceService';
 import offlineQueueService from '../services/offlineQueueService';
 import settingsService from '../services/settingsService';
+import customerService from '../services/customerService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DashboardTable from '../components/DashboardTable';
@@ -48,6 +49,8 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -90,6 +93,16 @@ const Invoices = () => {
   const [sendingInvoice, setSendingInvoice] = useState(false);
   const [invoiceToDelete, setInvoiceToDelete] = useState(null);
   const [invoiceToCancel, setInvoiceToCancel] = useState(null);
+  const [createModalVisible, setCreateModalVisible] = useState(false);
+  const [creatingInvoice, setCreatingInvoice] = useState(false);
+  const [customers, setCustomers] = useState([]);
+  const [newInvoice, setNewInvoice] = useState({
+    customerId: '',
+    items: [{ description: '', quantity: 1, unitPrice: '', discountAmount: 0 }],
+    dueDate: null,
+    paymentTerms: 'Net 30',
+    notes: '',
+  });
 
   // Organization branding for printable invoices
   const { data: organizationData } = useQuery({
@@ -167,6 +180,134 @@ const Invoices = () => {
       }
     }
   }, [location.state, invoices]);
+
+  const loadCustomers = useCallback(async () => {
+    try {
+      const response = await customerService.getAll({ limit: 200 });
+      setCustomers(Array.isArray(response?.data) ? response.data : []);
+    } catch (error) {
+      showError(error, 'Failed to load customers');
+    }
+  }, []);
+
+  const resetCreateInvoiceForm = useCallback(() => {
+    setNewInvoice({
+      customerId: '',
+      items: [{ description: '', quantity: 1, unitPrice: '', discountAmount: '' }],
+      dueDate: null,
+      paymentTerms: 'Net 30',
+      notes: '',
+    });
+  }, []);
+
+  const handleOpenCreateModal = useCallback(async () => {
+    if (customers.length === 0) {
+      await loadCustomers();
+    }
+    resetCreateInvoiceForm();
+    setCreateModalVisible(true);
+  }, [customers.length, loadCustomers, resetCreateInvoiceForm]);
+
+  const handleInvoiceItemChange = useCallback((index, field, value) => {
+    setNewInvoice((prev) => {
+      const nextItems = [...prev.items];
+      nextItems[index] = { ...nextItems[index], [field]: value };
+      return { ...prev, items: nextItems };
+    });
+  }, []);
+
+  const handleAddInvoiceItem = useCallback(() => {
+    setNewInvoice((prev) => ({
+      ...prev,
+      items: [...prev.items, { description: '', quantity: 1, unitPrice: '', discountAmount: '' }],
+    }));
+  }, []);
+
+  const handleRemoveInvoiceItem = useCallback((index) => {
+    setNewInvoice((prev) => {
+      if (prev.items.length <= 1) return prev;
+      return {
+        ...prev,
+        items: prev.items.filter((_, i) => i !== index),
+      };
+    });
+  }, []);
+
+  const createInvoiceSubtotal = useMemo(
+    () => (newInvoice.items || []).reduce((sum, item) => {
+      const qty = parseFloat(item.quantity || 0);
+      const unit = parseFloat(item.unitPrice || 0);
+      return sum + (qty * unit);
+    }, 0),
+    [newInvoice.items]
+  );
+
+  const createInvoiceDiscountTotal = useMemo(
+    () => (newInvoice.items || []).reduce((sum, item) => {
+      const qty = parseFloat(item.quantity || 0);
+      const unitDiscount = parseFloat(item.discountAmount || 0);
+      return sum + (qty * unitDiscount);
+    }, 0),
+    [newInvoice.items]
+  );
+
+  const createInvoiceGrandTotal = useMemo(
+    () => Math.max(0, createInvoiceSubtotal - createInvoiceDiscountTotal),
+    [createInvoiceSubtotal, createInvoiceDiscountTotal]
+  );
+
+  const handleCreateInvoice = useCallback(async () => {
+    if (!newInvoice.customerId) {
+      showError(null, 'Select a customer');
+      return;
+    }
+
+    const normalizedItems = (newInvoice.items || []).map((item) => {
+      const quantity = parseFloat(item.quantity || 0);
+      const unitPrice = parseFloat(item.unitPrice || 0);
+      const unitDiscountAmount = parseFloat(item.discountAmount || 0);
+      const lineDiscountAmount = quantity * unitDiscountAmount;
+      const total = Math.max(0, (quantity * unitPrice) - lineDiscountAmount);
+      return {
+        description: String(item.description || '').trim(),
+        quantity,
+        unitPrice,
+        discountAmount: unitDiscountAmount,
+        discountScope: 'unit',
+        total,
+      };
+    });
+
+    if (normalizedItems.length === 0) {
+      showError(null, 'Add at least one item');
+      return;
+    }
+
+    const invalidItem = normalizedItems.find((item) => !item.description || item.quantity <= 0 || item.unitPrice < 0 || item.discountAmount < 0);
+    if (invalidItem) {
+      showError(null, 'Each item must have description, quantity > 0, and valid prices');
+      return;
+    }
+
+    setCreatingInvoice(true);
+    try {
+      await invoiceService.create({
+        customerId: newInvoice.customerId,
+        items: normalizedItems,
+        dueDate: newInvoice.dueDate || undefined,
+        paymentTerms: newInvoice.paymentTerms || 'Net 30',
+        notes: newInvoice.notes?.trim() || undefined,
+      });
+      showSuccess('Invoice created');
+      setCreateModalVisible(false);
+      setRefreshTrigger((prev) => prev + 1);
+      resetCreateInvoiceForm();
+    } catch (error) {
+      showError(error, 'Failed to create invoice');
+    } finally {
+      setCreatingInvoice(false);
+    }
+  }, [newInvoice, resetCreateInvoiceForm]);
 
   const handleView = (invoice) => {
     setViewingInvoice(invoice);
@@ -517,6 +658,10 @@ const Invoices = () => {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
+          <Button onClick={handleOpenCreateModal}>
+            <Plus className="h-4 w-4 mr-2" />
+            New Invoice
+          </Button>
         </div>
       </div>
 
@@ -668,6 +813,181 @@ const Invoices = () => {
       />
 
       <MobileFormDialog
+        open={createModalVisible}
+        onOpenChange={setCreateModalVisible}
+        title="New Invoice"
+        description="Create an invoice directly without linking a job."
+        footer={(
+          <>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-[44px] touch-manipulation"
+              onClick={() => setCreateModalVisible(false)}
+              disabled={creatingInvoice}
+            >
+              Cancel
+            </Button>
+            <Button type="button" onClick={handleCreateInvoice} disabled={creatingInvoice}>
+              {creatingInvoice && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Create Invoice
+            </Button>
+          </>
+        )}
+        className="w-full max-w-[calc(100vw-1rem)] sm:max-w-4xl"
+      >
+        <div className="space-y-4">
+          <div>
+            <Label>Customer</Label>
+            <Select
+              value={newInvoice.customerId}
+              onValueChange={(value) => setNewInvoice((prev) => ({ ...prev, customerId: value }))}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select customer" />
+              </SelectTrigger>
+              <SelectContent>
+                {customers.map((customer) => (
+                  <SelectItem key={customer.id} value={customer.id}>
+                    {customer.name}{customer.company ? ` - ${customer.company}` : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2 space-y-3">
+              <div className="pt-1 pb-1">
+                <Separator className="mb-3" />
+                <div className="text-sm font-medium text-muted-foreground">Invoice Items</div>
+              </div>
+              <div className="flex items-center justify-between">
+                <Label>Line Items</Label>
+                <Button type="button" variant="outline" onClick={handleAddInvoiceItem}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Item
+                </Button>
+              </div>
+              {(newInvoice.items || []).map((item, index) => (
+                <Card key={`new-invoice-item-${index}`}>
+                  <CardHeader className="flex flex-row items-center justify-between pb-3">
+                    <CardTitle className="text-base">Item {index + 1}</CardTitle>
+                    {newInvoice.items.length > 1 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleRemoveInvoiceItem(index)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div>
+                      <Label>Description</Label>
+                      <Input
+                        value={item.description}
+                        onChange={(e) => handleInvoiceItemChange(index, 'description', e.target.value)}
+                        placeholder="Item description"
+                      />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 md:gap-4">
+                      <div>
+                        <Label>Quantity</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          step={1}
+                          value={numberInputValue(item.quantity)}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            handleInvoiceItemChange(index, 'quantity', raw === '' ? '' : Math.max(0, Number(raw)));
+                          }}
+                        />
+                      </div>
+                      <div>
+                        <Label>Unit Price</Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            className="pl-12"
+                            value={numberInputValue(item.unitPrice)}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => handleInvoiceItemChange(index, 'unitPrice', e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <Label>Unit Discount (optional)</Label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            className="pl-12"
+                            value={numberInputValue(item.discountAmount)}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              handleInvoiceItemChange(index, 'discountAmount', raw === '' ? '' : Math.max(0, Number(raw)));
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-end justify-end">
+                      <div className="text-sm text-muted-foreground">
+                        Line Total: ₵ {Math.max(0, (parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)) - (parseFloat(item.quantity || 0) * parseFloat(item.discountAmount || 0))).toFixed(2)}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+              <Button type="button" variant="dashed" onClick={handleAddInvoiceItem} className="w-full">
+                <Plus className="h-4 w-4 mr-2" />
+                Add Item
+              </Button>
+            </div>
+            <div>
+              <Label>Due Date (optional)</Label>
+              <DatePicker
+                date={newInvoice.dueDate}
+                onSelect={(date) => setNewInvoice((prev) => ({ ...prev, dueDate: date || null }))}
+              />
+            </div>
+            <div>
+              <Label>Payment Terms</Label>
+              <Input
+                value={newInvoice.paymentTerms}
+                onChange={(e) => setNewInvoice((prev) => ({ ...prev, paymentTerms: e.target.value }))}
+                placeholder="Net 30"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Notes (optional)</Label>
+              <Input
+                value={newInvoice.notes}
+                onChange={(e) => setNewInvoice((prev) => ({ ...prev, notes: e.target.value }))}
+                placeholder="Any extra notes"
+              />
+            </div>
+            <div className="sm:col-span-2 p-3 rounded-md border bg-muted/30 space-y-1">
+              <div className="flex justify-between text-sm"><span>Subtotal</span><span>₵ {createInvoiceSubtotal.toFixed(2)}</span></div>
+              <div className="flex justify-between text-sm"><span>Total Discount</span><span>-₵ {createInvoiceDiscountTotal.toFixed(2)}</span></div>
+              <div className="flex justify-between font-semibold"><span>Grand Total</span><span>₵ {createInvoiceGrandTotal.toFixed(2)}</span></div>
+            </div>
+          </div>
+        </div>
+      </MobileFormDialog>
+
+      <MobileFormDialog
         open={paymentModalVisible}
         onOpenChange={setPaymentModalVisible}
         title="Record Payment"
@@ -733,9 +1053,9 @@ const Invoices = () => {
                               min={0}
                               max={parseFloat(viewingInvoice.balance)}
                               step={0.01}
-                              placeholder="0.00"
                               className="pl-8"
                               value={numberInputValue(field.value)}
+                              onFocus={(e) => e.target.select()}
                               onChange={(e) => handleNumberChange(e, field.onChange)}
                             />
                           </div>

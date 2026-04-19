@@ -951,7 +951,6 @@ const Sales = () => {
                                     min={0.01}
                                     max={balanceDue}
                                     step={0.01}
-                                    placeholder="0.00"
                                     className="pl-8"
                                     value={numberInputValue(field.value)}
                                     onChange={(e) => handleNumberChange(e, field.onChange)}

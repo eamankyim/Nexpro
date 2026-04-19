@@ -841,7 +841,6 @@ const Pricing = () => {
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
                             <Input
                               type="number"
-                              placeholder="0.00"
                               min={0}
                               step={0.01}
                               value={numberInputValue(field.value)}
@@ -905,7 +904,6 @@ const Pricing = () => {
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
                             <Input
                               type="number"
-                              placeholder="0.00"
                               min={0}
                               step={0.01}
                               value={numberInputValue(field.value)}
@@ -993,7 +991,6 @@ const Pricing = () => {
                             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">GHS</span>
                             <Input
                               type="number"
-                              placeholder="0.00"
                               min={0}
                               step={0.01}
                               value={numberInputValue(field.value)}
@@ -1221,7 +1218,6 @@ const Pricing = () => {
                                   type="number"
                                   min={0}
                                   step={0.01}
-                                  placeholder="0.00"
                                   className="w-full border-0 rounded-l-none"
                                   value={field.value ?? ''}
                                   onChange={(e) => {

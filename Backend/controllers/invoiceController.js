@@ -450,6 +450,7 @@ exports.createInvoice = async (req, res, next) => {
     // Calculate subtotal from linked job items OR manual payload items
     let subtotal = 0;
     let items = [];
+    let totalItemDiscount = 0;
 
     if (isJobLinked && job?.items?.length > 0) {
       items = job.items.map((item) => {
@@ -473,6 +474,7 @@ exports.createInvoice = async (req, res, next) => {
         };
       });
       subtotal = items.reduce((sum, item) => sum + (parseFloat(item.quantity) * parseFloat(item.unitPrice)), 0);
+      totalItemDiscount = items.reduce((sum, item) => sum + parseFloat(item.discountAmount || 0), 0);
     } else if (isJobLinked) {
       // If linked job has no items, use finalPrice from job
       subtotal = parseFloat(job.finalPrice || 0);
@@ -482,24 +484,31 @@ exports.createInvoice = async (req, res, next) => {
         unitPrice: subtotal,
         total: subtotal
       }];
+      totalItemDiscount = 0;
     } else {
       items = bodyItems.map((item) => {
         const qty = parseFloat(item.quantity || 0);
         const unitPrice = parseFloat(item.unitPrice || 0);
-        const discountAmount = parseFloat(item.discountAmount || 0);
+        const rawDiscount = parseFloat(item.discountAmount || 0);
+        const discountScope = String(item.discountScope || 'line').toLowerCase();
         const lineGross = qty * unitPrice;
-        const total = parseFloat(item.total != null ? item.total : (lineGross - discountAmount));
+        const providedTotal = parseFloat(item.total != null ? item.total : lineGross);
+        const derivedDiscount = Math.max(0, lineGross - providedTotal);
+        const explicitLineDiscount = discountScope === 'unit' ? rawDiscount * qty : rawDiscount;
+        const lineDiscount = explicitLineDiscount > 0 ? explicitLineDiscount : derivedDiscount;
+        const total = Math.max(0, lineGross - lineDiscount);
         return {
           description: item.description || '',
           quantity: qty,
           unitPrice,
-          discountAmount,
+          discountAmount: lineDiscount,
           discountPercent: parseFloat(item.discountPercent || 0),
           discountReason: item.discountReason || null,
           total
         };
       });
       subtotal = items.reduce((sum, item) => sum + (parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)), 0);
+      totalItemDiscount = items.reduce((sum, item) => sum + parseFloat(item.discountAmount || 0), 0);
     }
 
     if (taxConfig.enabled && taxConfig.pricesAreTaxInclusive && (taxRate || 0) > 0) {
@@ -507,6 +516,14 @@ exports.createInvoice = async (req, res, next) => {
       items = conv.items;
       subtotal = conv.subtotal;
     }
+
+    // Preserve direct-invoice line-item discounts in invoice header totals.
+    // Invoice model computes total using subtotal - discountValue (+ tax).
+    const hasHeaderDiscount = discountValue !== undefined && discountValue !== null && discountValue !== '';
+    const resolvedDiscountType = discountType || 'fixed';
+    const resolvedDiscountValue = hasHeaderDiscount
+      ? parseFloat(discountValue || 0)
+      : (totalItemDiscount > 0 ? totalItemDiscount : 0);
 
     // Create invoice
     const invoice = await Invoice.create({
@@ -519,8 +536,8 @@ exports.createInvoice = async (req, res, next) => {
       dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days
       subtotal,
       taxRate: taxRate || 0,
-      discountType: discountType || 'fixed',
-      discountValue: discountValue || 0,
+      discountType: resolvedDiscountType,
+      discountValue: resolvedDiscountValue,
       paymentTerms: paymentTerms || 'Net 30',
       items,
       notes,

@@ -699,7 +699,6 @@ const EmployeeForm = ({ currentStep, form, savingDepartment, setSavingDepartment
                       className="w-full pl-16"
                       min={0}
                       step="0.01"
-                      placeholder="0.00"
                       value={numberInputValue(field.value)}
                       onChange={(e) => handleNumberChange(e, field.onChange)}
                     />

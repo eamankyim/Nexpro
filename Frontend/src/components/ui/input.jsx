@@ -2,7 +2,7 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
-const Input = React.forwardRef(({ className, type, ...props }, ref) => {
+const Input = React.forwardRef(({ className, type, onFocus, ...props }, ref) => {
   return (
     <input
       type={type}
@@ -13,6 +13,12 @@ const Input = React.forwardRef(({ className, type, ...props }, ref) => {
         className
       )}
       ref={ref}
+      onFocus={(e) => {
+        if (type === "number") {
+          e.target.select();
+        }
+        onFocus?.(e);
+      }}
       {...props}
     />
   )

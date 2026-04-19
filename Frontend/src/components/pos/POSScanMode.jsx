@@ -745,7 +745,6 @@ const POSScanMode = ({
                       type="number"
                       step="0.01"
                       min="0"
-                      placeholder="0"
                       className={`text-center font-bold ${isMobile ? 'h-10 text-lg' : 'h-12 text-2xl'} mb-2`}
                       value={amountTendered}
                       onChange={(e) => setAmountTendered(e.target.value)}

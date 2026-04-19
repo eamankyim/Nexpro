@@ -213,7 +213,6 @@ const CashPayment = ({ total, items, onConfirm, isProcessing, onEditItems }) => 
             type="number"
             step="0.01"
             min="0"
-            placeholder="0"
             className="text-center text-2xl font-bold h-12 mt-2"
             value={amountTendered}
             onChange={(e) => setAmountTendered(e.target.value)}

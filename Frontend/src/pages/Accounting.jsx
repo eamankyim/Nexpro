@@ -1148,7 +1148,6 @@ const Accounting = () => {
                                   type="number"
                                   min={0}
                                   step="0.01"
-                                  placeholder="0.00"
                                   {...field}
                                   value={numberInputValue(field.value)}
                                   onChange={(e) => handleNumberChange(e, field.onChange)}
@@ -1171,7 +1170,6 @@ const Accounting = () => {
                                   type="number"
                                   min={0}
                                   step="0.01"
-                                  placeholder="0.00"
                                   {...field}
                                   value={numberInputValue(field.value)}
                                   onChange={(e) => handleNumberChange(e, field.onChange)}
