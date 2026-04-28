@@ -110,6 +110,18 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 
+/**
+ * GET /customers returns `{ success, data: Customer[] }` after the API interceptor unwraps axios.
+ * Normalize so the list is always an array even if shape varies.
+ */
+function normalizeCustomersList(res) {
+  if (!res) return [];
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res.data)) return res.data;
+  if (res.data && Array.isArray(res.data.data)) return res.data.data;
+  return [];
+}
+
 const DEFAULT_QUOTE_SEND_MESSAGE = 'Please find your quote below. Click the button to view the full details and accept when you are ready.';
 
 const statusOptions = [
@@ -165,6 +177,7 @@ const convertToJobSchema = z.object({
 const Quotes = () => {
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+  const { activeTenantId } = useAuth();
   const { isMobile } = useResponsive();
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -258,13 +271,19 @@ const Quotes = () => {
 
   const fetchCustomers = useCallback(async () => {
     try {
-      const customersResponse = await customerService.getAll({ limit: 100 });
-      setCustomers(customersResponse.data || []);
+      const raw = await customerService.getAll({ limit: 200, page: 1 });
+      setCustomers(normalizeCustomersList(raw));
     } catch (error) {
       console.error('Failed to load customers', error);
       showError(error, 'Failed to load customers');
     }
   }, []);
+
+  useEffect(() => {
+    if (activeTenantId) {
+      fetchCustomers();
+    }
+  }, [activeTenantId, fetchCustomers]);
 
   const handleAddCustomerSubmit = useCallback(async (values) => {
     setAddingCustomer(true);
@@ -281,7 +300,7 @@ const Quotes = () => {
       setCustomerAddModalOpen(false);
       customerForm.reset({ name: '', company: '', email: '', phone: '' });
       showSuccess('Customer created successfully');
-      form.setValue('customerId', newCustomer.id);
+      form.setValue('customerId', String(newCustomer.id));
     } catch (error) {
       showError(error, error?.response?.data?.message || 'Failed to create customer');
     } finally {
@@ -337,6 +356,7 @@ const Quotes = () => {
         items: [{ productId: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
         taxRate: '',
       });
+      void fetchCustomers();
       setQuoteModalVisible(true);
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
@@ -344,7 +364,7 @@ const Quotes = () => {
         return next;
       }, { replace: true });
     }
-  }, [searchParams, setSearchParams, form]);
+  }, [searchParams, setSearchParams, form, fetchCustomers]);
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, current: 1 }));
@@ -489,8 +509,8 @@ const Quotes = () => {
     setEditingQuote(null);
     setQuoteModalVisible(true);
     try {
-      const customersResponse = await customerService.getAll({ limit: 100 });
-      setCustomers(customersResponse.data || []);
+      const raw = await customerService.getAll({ limit: 200, page: 1 });
+      setCustomers(normalizeCustomersList(raw));
     } catch (error) {
       console.error('Failed to load customers for new quote:', error);
       showError(error, 'Failed to load customers');
@@ -504,8 +524,8 @@ const Quotes = () => {
       return;
     }
     try {
-      const customersResponse = await customerService.getAll({ limit: 100 });
-      setCustomers(customersResponse.data || []);
+      const raw = await customerService.getAll({ limit: 200, page: 1 });
+      setCustomers(normalizeCustomersList(raw));
     } catch (error) {
       console.error('Failed to load customers for quote editing:', error);
       showError(error, 'Failed to load customers');
@@ -513,7 +533,7 @@ const Quotes = () => {
 
     form.reset({
       // Prefer explicit customerId from API; fall back to nested customer.id
-      customerId: details.customerId || details.customer?.id || '',
+      customerId: String(details.customerId || details.customer?.id || ''),
       title: details.title,
       description: details.description || '',
       status: details.status,
@@ -1065,8 +1085,8 @@ const Quotes = () => {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Customers</SelectItem>
-                  {customers.map(customer => (
-                    <SelectItem key={customer.id} value={customer.id}>
+                  {customers.map((customer) => (
+                    <SelectItem key={customer.id} value={String(customer.id)}>
                       {customer.name}
                     </SelectItem>
                   ))}
@@ -1368,7 +1388,7 @@ const Quotes = () => {
                       </FormControl>
                       <SelectContent>
                         {customers.map((customer) => (
-                          <SelectItem key={customer.id} value={customer.id}>
+                          <SelectItem key={customer.id} value={String(customer.id)}>
                             {customer.name} {customer.company ? `(${customer.company})` : ''}
                           </SelectItem>
                         ))}

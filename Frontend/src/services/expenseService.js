@@ -1,4 +1,4 @@
-import api from './api';
+import api, { postFormDataWithProgress } from './api';
 
 const expenseService = {
   /**
@@ -101,13 +101,23 @@ const expenseService = {
   },
 
   // Upload expense receipt (image or PDF)
-  uploadReceipt: async (file) => {
+  uploadReceipt: async (file, options = {}) => {
+    const { onUploadProgress } = options;
     const formData = new FormData();
     formData.append('file', file);
-    const res = await api.post('/expenses/upload-receipt', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' }
+    const res = await postFormDataWithProgress('/expenses/upload-receipt', formData, {
+      onUploadProgress,
+      timeout: 120000,
     });
-    return res?.data;
+
+    // Normalize known response shapes:
+    // - { receiptUrl: "..." }
+    // - { data: { receiptUrl: "..." } }
+    // - { url: "..." } / { data: { url: "..." } }
+    const payload = res?.data ?? res;
+    const receiptUrl = payload?.receiptUrl || payload?.url || payload?.data?.receiptUrl || payload?.data?.url;
+
+    return receiptUrl ? { ...payload, receiptUrl } : payload;
   }
 };
 

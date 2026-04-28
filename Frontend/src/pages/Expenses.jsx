@@ -772,7 +772,7 @@ const Expenses = () => {
     {
       key: 'category',
       label: 'Category',
-      render: (_, record) => <Badge className="bg-green-700">{record?.category || '—'}</Badge>
+      render: (_, record) => <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{record?.category || '—'}</Badge>
     },
     {
       key: 'description',
@@ -789,7 +789,7 @@ const Expenses = () => {
       label: 'Job',
       render: (_, record) => (
         record?.job?.jobNumber ? (
-          <Badge className="bg-green-600">{record.job.jobNumber}</Badge>
+          <Badge variant="default">{record.job.jobNumber}</Badge>
         ) : (
           <Badge variant="outline">General</Badge>
         )
@@ -839,7 +839,7 @@ const Expenses = () => {
     {
       key: 'category',
       label: 'Category',
-      render: (_, record) => <Badge className="bg-green-700">{record?.category || '—'}</Badge>
+      render: (_, record) => <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{record?.category || '—'}</Badge>
     },
     {
       key: 'description',
@@ -1003,8 +1003,8 @@ const Expenses = () => {
           title="Categories"
           value={summaryStats?.totals?.categoryCount || 0}
           icon={FileText}
-          iconBgColor="rgba(22, 101, 52, 0.1)"
-          iconColor="#166534"
+          iconBgColor="var(--color-primary-light)"
+          iconColor="var(--color-primary)"
         />
         <DashboardStatsCard
           tooltip="Expense requests awaiting approval"
@@ -1019,8 +1019,8 @@ const Expenses = () => {
           title="Approved"
           value={summaryStats?.totals?.approvedCount || 0}
           icon={CheckCircle}
-          iconBgColor="rgba(34, 197, 94, 0.1)"
-          iconColor="#22c55e"
+          iconBgColor="var(--color-primary-light)"
+          iconColor="var(--color-primary)"
         />
       </div>
 
@@ -1820,34 +1820,34 @@ const Expenses = () => {
                       </FormItem>
                     )}
                   />
+                  <FormField
+                    control={form.control}
+                    name="status"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Status (Optional)</FormLabel>
+                        <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select status (optional)" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
+                            {statusOptions.map(status => (
+                              <SelectItem key={status} value={status}>
+                                {status.toUpperCase()}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
                 </FormFieldGrid>
 
-                <FormFieldGrid columns={2}>
-                <FormField
-                  control={form.control}
-                  name="status"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Status (Optional)</FormLabel>
-                      <Select value={field.value ?? SELECT_NONE_VALUE} onValueChange={(value) => field.onChange(value === SELECT_NONE_VALUE ? null : value)}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select status (optional)" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value={SELECT_NONE_VALUE}>None</SelectItem>
-                          {statusOptions.map(status => (
-                            <SelectItem key={status} value={status}>
-                              {status.toUpperCase()}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <FormFieldGrid columns={1}>
                 <FormField
                   control={form.control}
                   name="receiptUrl"
@@ -1867,6 +1867,8 @@ const Expenses = () => {
                               if (receiptUrl) {
                                 field.onChange(receiptUrl);
                                 showSuccess('Receipt uploaded');
+                              } else {
+                                showError('Upload succeeded but receipt URL was not returned');
                               }
                             } catch (err) {
                               showError(err, 'Failed to upload receipt');
@@ -2129,7 +2131,7 @@ const Expenses = () => {
                     {viewingExpense.expenseDate ? dayjs(viewingExpense.expenseDate).format('MMMM DD, YYYY') : '-'}
                   </DescriptionItem>
                   <DescriptionItem label="Category">
-                    <Badge className="bg-green-700">{viewingExpense.category}</Badge>
+                    <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{viewingExpense.category}</Badge>
                   </DescriptionItem>
                   <DescriptionItem label="Description">
                     {viewingExpense.description || '-'}

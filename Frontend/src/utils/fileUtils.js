@@ -29,6 +29,7 @@ export function resolveImageUrl(url) {
   if (!url || typeof url !== 'string') return '';
   const decoded = decodeUrlEntities(url);
   if (decoded.startsWith('data:')) return decoded;
+  if (decoded.startsWith('blob:')) return decoded;
   if (decoded.startsWith('http://') || decoded.startsWith('https://')) return decoded;
   if (API_BASE_URL) {
     const path = decoded.startsWith('/') ? decoded : `/${decoded}`;

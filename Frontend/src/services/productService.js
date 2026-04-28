@@ -6,7 +6,7 @@
  * and variant management for African market businesses.
  */
 
-import api from './api';
+import api, { postFormDataWithProgress } from './api';
 import { getPendingActions } from '../utils/posDb';
 import offlineQueueService from './offlineQueueService';
 
@@ -275,15 +275,18 @@ const productService = {
   /**
    * Upload product image
    * @param {File} file - Image file
+   * @param {{ onUploadProgress?: (percent: number) => void }} [options] - 0–100 while uploading
    * @returns {Promise<{ imageUrl: string }>}
    */
-  uploadProductImage: async (file) => {
+  uploadProductImage: async (file, options = {}) => {
+    const { onUploadProgress } = options;
     const formData = new FormData();
     formData.append('file', file);
-    const res = await api.post('/products/upload-image', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+    // XHR upload: reliable progress + correct multipart boundary (axios default JSON Content-Type breaks both).
+    return postFormDataWithProgress('/products/upload-image', formData, {
+      onUploadProgress,
+      timeout: 120000,
     });
-    return res;
   },
 
   /**

@@ -90,7 +90,7 @@ exports.getProducts = async (req, res, next) => {
       where,
       limit,
       offset,
-      attributes: { exclude: ['imageUrl'] },
+      // Include imageUrl so Products table / grid / cards can show thumbnails (details already had it via getProduct).
       include: [
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
         { model: ProductCategory, as: 'category', attributes: ['id', 'name'] }

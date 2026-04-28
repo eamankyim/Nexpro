@@ -326,52 +326,23 @@ const MobileCardView = memo(({
             <CardContent className={cn(isMobile ? "px-4 py-3" : "p-4", cardImageUrl && "pt-3")}>
               {useDashboardCardStyle ? (
                 <>
-                  {/* Dashboard-style: stacked identity rows on left + status on right */}
-                  <div className="flex justify-between items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      {primaryColumns[0] && (
-                        <div className="text-foreground">
-                          {primaryColumns[0].render
-                            ? primaryColumns[0].render(item[primaryColumns[0].key], item, index)
-                            : (item[primaryColumns[0].key] ?? '—')}
-                        </div>
-                      )}
-                      {primaryColumns[1] && (
-                        <div className="text-foreground mt-0.5 break-words">
-                          {primaryColumns[1].render
-                            ? primaryColumns[1].render(item[primaryColumns[1].key], item, index)
-                            : (item[primaryColumns[1].key] ?? '—')}
-                        </div>
-                      )}
-                      {primaryColumns[2] && (
-                        <div className="text-muted-foreground text-sm truncate mt-0.5">
-                          {primaryColumns[2].render
-                            ? primaryColumns[2].render(item[primaryColumns[2].key], item, index)
-                            : (item[primaryColumns[2].key] ?? '—')}
-                        </div>
-                      )}
-                    </div>
-                    {headerEndColumns.length > 0 && (
-                      <div className="shrink-0 flex flex-col items-end gap-1 text-right">
-                        {headerEndColumns.map((col) => (
-                          <div key={col.key}>
-                            {col.render
-                              ? col.render(item[col.key], item, index)
-                              : (item[col.key] ?? '—')}
+                  {/* Mobile list: label on left, value on right for scanability */}
+                  <div className="space-y-2">
+                    {[...primaryColumns, ...headerEndColumns, ...secondaryColumns.slice(0, 2)].map((column) => {
+                      const value = column.render
+                        ? column.render(item[column.key], item, index)
+                        : (item[column.key] ?? '—');
+                      return (
+                        <div key={column.key} className="flex items-start justify-between gap-3">
+                          <span className="text-sm text-muted-foreground shrink-0">
+                            {columnLabel(column)}
+                          </span>
+                          <div className="text-sm text-foreground text-right min-w-0">
+                            {value}
                           </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                  {/* Dashboard-style: bottom row with border-t (stock + price) */}
-                  <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t">
-                    {secondaryColumns.slice(0, 2).map((column) => (
-                      <div key={column.key} className="text-sm text-muted-foreground min-w-0">
-                        {column.render
-                          ? column.render(item[column.key], item, index)
-                          : (item[column.key] ?? '—')}
-                      </div>
-                    ))}
+                        </div>
+                      );
+                    })}
                   </div>
                   {/* Actions - full width View Details */}
                   {actionsColumn && (

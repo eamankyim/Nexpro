@@ -204,22 +204,27 @@ export const NOTIFICATION_PRIORITIES = {
   URGENT: 'urgent',
 };
 
-// Chart Colors (for consistent theming)
+/**
+ * Recharts / dashboard chart palette — anchored to tenant brand (--color-primary from BrandingContext).
+ * Extra entries are neutrals for additional series without clashing with status reds.
+ */
 export const CHART_COLORS = [
-  '#0088FE',
-  '#00C49F',
-  '#FFBB28',
-  '#FF8042',
-  '#8884d8',
-  '#82ca9d',
-  '#ffc658',
-  '#ff7300',
+  'var(--color-primary)',
+  'var(--color-primary-dark)',
+  'hsl(var(--primary) / 0.5)',
+  'hsl(var(--primary) / 0.32)',
+  '#64748b',
+  '#94a3b8',
+  '#cbd5e1',
+  '#475569',
 ];
 
 // Status chip Tailwind class strings (single source of truth for StatusChip and status badges)
+/** Success / positive status color — fixed semantic green, not tenant brand. */
 export const CHIP_GREEN = 'bg-green-100 text-green-800 border-green-300';
 export const CHIP_RED = 'bg-red-100 text-red-800 border-red-300';
 export const CHIP_ORANGE = 'bg-orange-100 text-orange-800 border-orange-300';
+/** In-progress / info status color — fixed semantic blue, not tenant brand. */
 export const CHIP_BLUE = 'bg-blue-100 text-blue-800 border-blue-300';
 export const CHIP_YELLOW = 'bg-yellow-100 text-yellow-800 border-yellow-300';
 export const CHIP_PURPLE = 'bg-purple-100 text-purple-800 border-purple-300';
@@ -595,11 +600,18 @@ export const MARGIN_THRESHOLDS = {
   // Above 30% - green/success
 };
 
-// Get margin color based on percentage
+// Profit margin badge classes (semantic, fixed colors - never tenant brand-driven)
+export const MARGIN_BADGE_CLASSES = {
+  LOW: 'border-red-300 bg-red-100 text-red-800',
+  MEDIUM: 'border-yellow-300 bg-yellow-100 text-yellow-800',
+  HIGH: 'border-green-300 bg-green-100 text-green-800',
+};
+
+// Get margin badge class based on percentage
 export const getMarginColor = (marginPercent) => {
-  if (marginPercent < MARGIN_THRESHOLDS.LOW) return 'destructive';
-  if (marginPercent < MARGIN_THRESHOLDS.MEDIUM) return 'secondary';
-  return 'default';
+  if (marginPercent < MARGIN_THRESHOLDS.LOW) return MARGIN_BADGE_CLASSES.LOW;
+  if (marginPercent < MARGIN_THRESHOLDS.MEDIUM) return MARGIN_BADGE_CLASSES.MEDIUM;
+  return MARGIN_BADGE_CLASSES.HIGH;
 };
 
 // Calculate profit margin

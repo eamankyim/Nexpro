@@ -14,6 +14,17 @@ import MobileCardView from './MobileCardView';
 const ROW_VIRTUALIZE_MIN = 25;
 const ROW_ESTIMATE_PX = 56;
 
+/** Column header text — pages may use `label` or `title` (e.g. Products). */
+function columnHeaderText(column) {
+  if (!column) return '';
+  return column.label ?? column.title ?? column.key ?? '';
+}
+
+/** Columns visible in this viewport (matches MobileCardView hidden-column behavior). */
+function getVisibleColumns(columns) {
+  return (columns || []).filter((col) => !col.hidden);
+}
+
 /**
  * Grid-based virtualized list (same columns as classic table; avoids broken table+absolute tr layout).
  */
@@ -57,7 +68,7 @@ function DashboardVirtualizedGrid({ scrollRef, paginatedData, columns, scrollRes
             role="columnheader"
             className={cn('h-12 px-4 flex items-center border-b border-border', column.headerClassName)}
           >
-            {column.label}
+            {columnHeaderText(column)}
           </div>
         ))}
       </div>
@@ -121,8 +132,8 @@ function DashboardVirtualizedGrid({ scrollRef, paginatedData, columns, scrollRes
  * @param {Function} onPageChange - Callback when page changes (optional, for external pagination)
  * @param {Object} externalPagination - External pagination state { current, total } (optional)
  * @param {Function} onCardClick - Optional callback when card is clicked (mobile only)
- * @param {string} viewMode - 'table' | 'grid' (when provided with onViewModeChange, toggle is rendered by parent)
- * @param {Function} onViewModeChange - Callback when view mode changes (parent controls toggle placement)
+ * @param {string} viewMode - 'table' (list) | 'grid' (cards). With onViewModeChange: list shows column headers; grid uses MobileCardView (no header row).
+ * @param {Function} onViewModeChange - When provided, mobile respects viewMode (list = table + headers; grid = cards). When omitted, mobile always uses cards (legacy).
  * @param {Function} getCardImage - Optional function(record) => imageUrl for card thumbnail in grid/card view
  */
 const DashboardTable = memo(({
@@ -184,8 +195,11 @@ const DashboardTable = memo(({
   const tableScrollRef = useRef(null);
   const useVirtualRows = paginatedData.length >= ROW_VIRTUALIZE_MIN;
 
-  // Use card view when: grid mode selected OR mobile
-  const useCardView = viewMode === 'grid' || isMobile;
+  const visibleColumns = useMemo(() => getVisibleColumns(columns), [columns]);
+
+  // Mobile always uses cards for responsiveness.
+  // Desktop/tablet can still switch between list/table and grid/card via view mode.
+  const useCardView = isMobile || viewMode === 'grid';
 
   if (useCardView) {
     return (
@@ -195,7 +209,7 @@ const DashboardTable = memo(({
         )}
         <MobileCardView
           data={data}
-          columns={columns}
+          columns={visibleColumns}
           loading={loading}
           emptyState={emptyState}
           emptyIcon={emptyIcon}
@@ -224,7 +238,7 @@ const DashboardTable = memo(({
       <CardContent className={title ? undefined : "pt-6"}>
         {loading ? (
           <div className="p-4">
-            <TableSkeleton rows={pageSize} cols={columns.length || 6} />
+            <TableSkeleton rows={pageSize} cols={visibleColumns.length || columns.length || 6} />
           </div>
         ) : paginatedData.length === 0 ? (
           <div className="flex items-center justify-center p-8">
@@ -258,7 +272,7 @@ const DashboardTable = memo(({
                   <DashboardVirtualizedGrid
                     scrollRef={tableScrollRef}
                     paginatedData={paginatedData}
-                    columns={columns}
+                    columns={visibleColumns}
                     scrollResetKey={`${pagination.current}-${effectivePageSize}`}
                   />
                 </div>
@@ -266,15 +280,15 @@ const DashboardTable = memo(({
             ) : (
               <div className="-mx-6 w-[calc(100%+3rem)] overflow-x-auto border-b">
                 <table className="min-w-[720px] w-full min-w-full caption-bottom text-sm border-collapse [&_tr]:border-b">
-                  <thead className="[&_tr]:border-b">
-                    <tr className="border-b transition-colors hover:bg-muted/50">
-                      {columns.map((column) => (
+                  <thead className="[&_tr]:border-b bg-muted/30">
+                    <tr className="border-b transition-colors">
+                      {visibleColumns.map((column) => (
                         <th
                           key={column.key}
                           className={cn('h-12 px-4 text-left align-middle font-medium text-muted-foreground', column.headerClassName)}
                           style={column.width ? { width: column.width, minWidth: column.width } : undefined}
                         >
-                          {column.label}
+                          {columnHeaderText(column)}
                         </th>
                       ))}
                     </tr>
@@ -282,7 +296,7 @@ const DashboardTable = memo(({
                   <tbody className="[&_tr:last-child]:border-0">
                     {paginatedData.map((item, index) => (
                       <tr key={item.id || item.key || index} className="border-b transition-colors hover:bg-muted/50 last:border-b-0">
-                        {columns.map((column) => (
+                        {visibleColumns.map((column) => (
                           <td
                             key={column.key}
                             className={cn('p-4 align-middle', column.cellClassName)}

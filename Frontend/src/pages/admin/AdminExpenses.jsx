@@ -276,7 +276,7 @@ const AdminExpenses = () => {
     {
       key: 'category',
       label: 'Category',
-      render: (_, record) => <Badge className="bg-green-700">{record?.category || '—'}</Badge>
+      render: (_, record) => <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{record?.category || '—'}</Badge>
     },
     {
       key: 'description',
@@ -407,8 +407,8 @@ const AdminExpenses = () => {
           title="Total Count"
           value={stats?.totals?.totalCount || 0}
           icon={Currency}
-          iconBgColor="rgba(22, 101, 52, 0.1)"
-          iconColor="#166534"
+          iconBgColor="var(--color-primary-light)"
+          iconColor="var(--color-primary)"
         />
       </div>
 
@@ -708,7 +708,7 @@ const AdminExpenses = () => {
                     {viewingExpense.expenseDate ? dayjs(viewingExpense.expenseDate).format('MMMM DD, YYYY') : '-'}
                   </DescriptionItem>
                   <DescriptionItem label="Category">
-                    <Badge className="bg-blue-600">{viewingExpense.category}</Badge>
+                    <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{viewingExpense.category}</Badge>
                   </DescriptionItem>
                   <DescriptionItem label="Description">
                     {viewingExpense.description || '-'}

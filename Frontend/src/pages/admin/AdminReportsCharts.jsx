@@ -44,8 +44,8 @@ export default function AdminReportsCharts({
               <AreaChart data={revenueSeries}>
                 <defs>
                   <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2f80ed" stopOpacity={0.8} />
-                    <stop offset="95%" stopColor="#2f80ed" stopOpacity={0.1} />
+                    <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.8} />
+                    <stop offset="95%" stopColor="var(--color-primary)" stopOpacity={0.1} />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -58,7 +58,7 @@ export default function AdminReportsCharts({
                 <Area
                   type="monotone"
                   dataKey="revenue"
-                  stroke="#2f80ed"
+                  stroke="var(--color-primary)"
                   fill="url(#colorRevenue)"
                   strokeWidth={2}
                 />
@@ -89,7 +89,7 @@ export default function AdminReportsCharts({
                 <Line
                   type="monotone"
                   dataKey="expenses"
-                  stroke="#eb5757"
+                  stroke="hsl(var(--destructive))"
                   strokeWidth={2}
                   dot={false}
                 />
@@ -123,7 +123,7 @@ export default function AdminReportsCharts({
               <XAxis dataKey="name" />
               <YAxis allowDecimals={false} />
               <Tooltip />
-              <Bar dataKey="value" fill="#9b51e0" radius={[6, 6, 0, 0]} />
+              <Bar dataKey="value" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
             </BarChart>
           ) : (
             <p className="text-sm text-muted-foreground">No pipeline data available.</p>

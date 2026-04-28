@@ -955,9 +955,9 @@ function ReportsInner() {
             prevExpenses,
             prevProfit,
             metrics: [
-              { label: 'Total Revenue', value: revenue, prevValue: prevRevenue, change: Math.abs(revenueChange), trend: revenueChange >= 0 ? 'up' : 'down', color: '#006d32' },
-              { label: 'Total Expenses', value: expenses, prevValue: prevExpenses, change: Math.abs(expenseChange), trend: expenseChange <= 0 ? 'down' : 'up', color: expenseChange <= 0 ? '#006d32' : '#cf1322' },
-              { label: 'Net Profit', value: profit, prevValue: prevProfit, change: Math.abs(profitChange), trend: profitChange >= 0 ? 'up' : 'down', color: '#006d32' }
+              { label: 'Total Revenue', value: revenue, prevValue: prevRevenue, change: Math.abs(revenueChange), trend: revenueChange >= 0 ? 'up' : 'down', color: 'var(--color-primary)' },
+              { label: 'Total Expenses', value: expenses, prevValue: prevExpenses, change: Math.abs(expenseChange), trend: expenseChange <= 0 ? 'down' : 'up', color: expenseChange <= 0 ? 'var(--color-primary)' : 'hsl(var(--destructive))' },
+              { label: 'Net Profit', value: profit, prevValue: prevProfit, change: Math.abs(profitChange), trend: profitChange >= 0 ? 'up' : 'down', color: 'var(--color-primary)' }
             ],
             note: (revenueChange > 0)
               ? `Your revenue is up ${revenueChange.toFixed(1)}% (₵ ${(revenue - prevRevenue).toLocaleString()}) from the previous period.`
@@ -1546,7 +1546,7 @@ function ReportsInner() {
           <Card>
             <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
               <p className="text-sm text-muted-foreground">Total Revenue</p>
-              <p className="text-2xl font-semibold text-green-700">₵ {parseFloat(totalRevenue || 0).toFixed(2)}</p>
+              <p className="text-2xl font-semibold text-primary">₵ {parseFloat(totalRevenue || 0).toFixed(2)}</p>
             </CardContent>
           </Card>
         </div>
@@ -1573,7 +1573,7 @@ function ReportsInner() {
                   <YAxis />
                   <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Legend />
-                  <Line type="monotone" dataKey="revenue" stroke="#8884d8" strokeWidth={2} name="Revenue" />
+                  <Line type="monotone" dataKey="revenue" stroke="var(--color-primary)" strokeWidth={2} name="Revenue" />
                 </LineChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1592,7 +1592,7 @@ function ReportsInner() {
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
                   <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
-                  <Bar dataKey="revenue" fill="#8884d8" />
+                  <Bar dataKey="revenue" fill="var(--color-primary)" />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1611,7 +1611,7 @@ function ReportsInner() {
                     labelLine={false}
                     label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                     outerRadius={80}
-                    fill="#8884d8"
+                    fill="var(--color-primary)"
                     dataKey="value"
                   >
                     {methodChartData.map((entry, index) => (
@@ -1694,7 +1694,7 @@ function ReportsInner() {
                     labelLine={false}
                     label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                     outerRadius={80}
-                    fill="#8884d8"
+                    fill="var(--color-primary)"
                     dataKey="value"
                   >
                     {categoryChartData.map((entry, index) => (
@@ -1717,7 +1717,7 @@ function ReportsInner() {
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
                   <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
-                  <Bar dataKey="amount" fill="#ff4d4f" />
+                  <Bar dataKey="amount" fill="hsl(var(--destructive))" />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1737,7 +1737,7 @@ function ReportsInner() {
                   <YAxis />
                   <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Legend />
-                  <Line type="monotone" dataKey="amount" stroke="#ff4d4f" strokeWidth={2} name="Expenses" />
+                  <Line type="monotone" dataKey="amount" stroke="hsl(var(--destructive))" strokeWidth={2} name="Expenses" />
                 </LineChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1753,7 +1753,7 @@ function ReportsInner() {
               <ReportsTableWithCards
                 title="Expenses by category"
                 columns={[
-                  { key: 'category', label: 'Category' },
+                  { key: 'category', label: 'Category', render: (v) => <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{v || '—'}</Badge> },
                   { key: 'totalAmount', label: 'Amount', render: (v) => `₵ ${parseFloat(v || 0).toFixed(2)}` },
                   { key: 'count', label: 'Count' },
                 ]}
@@ -1824,7 +1824,7 @@ function ReportsInner() {
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
                   <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
-                  <Bar dataKey="amount" fill="#ff4d4f" />
+                  <Bar dataKey="amount" fill="hsl(var(--destructive))" />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1843,7 +1843,7 @@ function ReportsInner() {
                     labelLine={false}
                     label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                     outerRadius={80}
-                    fill="#8884d8"
+                    fill="var(--color-primary)"
                     dataKey="value"
                   >
                     {agingChartData.map((entry, index) => (
@@ -1906,7 +1906,7 @@ function ReportsInner() {
           <Card>
             <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
               <p className="text-sm text-muted-foreground">{terminology.salesLabel}</p>
-              <p className="text-2xl font-semibold text-green-700">₵ {parseFloat(totalSales || 0).toFixed(2)}</p>
+              <p className="text-2xl font-semibold text-primary">₵ {parseFloat(totalSales || 0).toFixed(2)}</p>
             </CardContent>
           </Card>
         </div>
@@ -1927,7 +1927,7 @@ function ReportsInner() {
                       labelLine={false}
                       label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
                       outerRadius={80}
-                      fill="#8884d8"
+                      fill="var(--color-primary)"
                       dataKey="value"
                     >
                       {jobTypeChartData.map((entry, index) => (
@@ -1951,7 +1951,7 @@ function ReportsInner() {
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
                   <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
-                  <Bar dataKey="sales" fill="#8884d8" />
+                  <Bar dataKey="sales" fill="var(--color-primary)" />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1971,7 +1971,7 @@ function ReportsInner() {
                   <YAxis />
                   <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
                   <Legend />
-                  <Line type="monotone" dataKey="sales" stroke="#8884d8" strokeWidth={2} name={terminology.revenue} />
+                  <Line type="monotone" dataKey="sales" stroke="var(--color-primary)" strokeWidth={2} name={terminology.revenue} />
                 </LineChart>
               </ResponsiveContainer>
             </CardContent>
@@ -2048,9 +2048,9 @@ function ReportsInner() {
     
     const { revenue, expenses, grossProfit } = reportData;
     return [
-      { name: 'Revenue', value: revenue, color: '#3f8600' },
-      { name: 'Expenses', value: expenses, color: '#cf1322' },
-      { name: 'Profit', value: grossProfit, color: grossProfit >= 0 ? '#3f8600' : '#cf1322' },
+      { name: 'Revenue', value: revenue, color: 'var(--color-primary)' },
+      { name: 'Expenses', value: expenses, color: 'hsl(var(--destructive))' },
+      { name: 'Profit', value: grossProfit, color: grossProfit >= 0 ? '#16a34a' : 'hsl(var(--destructive))' },
     ];
   }, [reportData, reportType]);
 
@@ -2066,7 +2066,7 @@ function ReportsInner() {
           <Card>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">Revenue</p>
-              <p className="text-2xl font-semibold text-green-700">₵ {parseFloat(revenue || 0).toFixed(2)}</p>
+              <p className="text-2xl font-semibold text-primary">₵ {parseFloat(revenue || 0).toFixed(2)}</p>
             </CardContent>
           </Card>
           <Card>
@@ -2104,7 +2104,7 @@ function ReportsInner() {
                   <XAxis dataKey="name" />
                   <YAxis />
                   <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
-                  <Bar dataKey="value" fill="#8884d8">
+                  <Bar dataKey="value" fill="var(--color-primary)">
                     {profitData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
@@ -2252,7 +2252,9 @@ function ReportsInner() {
                       <TableBody>
                         {(complianceData.expenditure?.byCategory || []).map((row, i) => (
                           <TableRow key={i}>
-                            <TableCell>{row.category}</TableCell>
+                            <TableCell>
+                              <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{row.category}</Badge>
+                            </TableCell>
                             <TableCell className="text-right">{formatComplianceCurrency(row.amount)}</TableCell>
                           </TableRow>
                         ))}
@@ -2300,7 +2302,9 @@ function ReportsInner() {
                       <TableBody>
                         {(complianceData.expensesByCategory || []).map((row, i) => (
                           <TableRow key={i}>
-                            <TableCell>{row.category}</TableCell>
+                            <TableCell>
+                              <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{row.category}</Badge>
+                            </TableCell>
                             <TableCell className="text-right">{formatComplianceCurrency(row.amount)}</TableCell>
                           </TableRow>
                         ))}
@@ -2414,7 +2418,7 @@ function ReportsInner() {
                     <Card>
                       <CardContent className="pt-4">
                         <p className="text-sm text-muted-foreground">Total VAT Collected</p>
-                        <p className="text-2xl font-bold text-green-700">
+                        <p className="text-2xl font-bold text-primary">
                           {formatComplianceCurrency(vatData.summary?.totalVatCollected ?? 0)}
                         </p>
                         <p className="text-xs text-muted-foreground mt-1">
@@ -2876,7 +2880,7 @@ function ReportsInner() {
             <CardContent className="pt-4 md:pt-6 space-y-3 md:space-y-4">
               <div>
                 <p className="text-sm text-muted-foreground">Revenue growth {overviewStats?.periodTypeLabel || 'M/M'}</p>
-                <h2 className={cn("text-3xl font-bold mt-2", revenueGrowth >= 0 ? "text-green-700" : "text-red-700")}>
+                <h2 className={cn("text-3xl font-bold mt-2", revenueGrowth >= 0 ? "text-primary" : "text-red-700")}>
                   {revenueGrowth >= 0 ? '+' : ''}{revenueGrowth.toFixed(1)}%
                 </h2>
               </div>
@@ -3041,7 +3045,7 @@ function ReportsInner() {
                   {topCustomers.slice(0, 5).map((item, idx) => (
                     <div key={idx} className="flex justify-between items-center py-1.5 border-b border-border last:border-0">
                       <span className="text-sm text-foreground flex-1 truncate">{item.customer?.name || item.customer?.company || 'Unknown'}</span>
-                      <span className="text-sm font-semibold text-green-700 ml-2">₵ {parseFloat(item.totalRevenue || 0).toLocaleString()}</span>
+                      <span className="text-sm font-semibold text-primary ml-2">₵ {parseFloat(item.totalRevenue || 0).toLocaleString()}</span>
                     </div>
                   ))}
                 </div>
@@ -3085,15 +3089,15 @@ function ReportsInner() {
               <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
                 <div className="mb-4 md:mb-5">
                   <p className="text-sm text-muted-foreground mb-2">Total revenue generated</p>
-                  <h2 className="text-2xl font-bold text-green-700">₵ {totalRevenue.toFixed(3)}</h2>
+                  <h2 className="text-2xl font-bold text-primary">₵ {totalRevenue.toFixed(3)}</h2>
                 </div>
                 {dailyRevenueTrend.length > 0 ? (
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={dailyRevenueTrend} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
                       <defs>
                         <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#006d32" stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor="#006d32" stopOpacity={0.05}/>
+                          <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.2}/>
+                          <stop offset="95%" stopColor="var(--color-primary)" stopOpacity={0.05}/>
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
@@ -3116,10 +3120,10 @@ function ReportsInner() {
                       <Line 
                         type="monotone" 
                         dataKey="revenue" 
-                        stroke="#006d32" 
+                        stroke="var(--color-primary)" 
                         fill="url(#colorRevenue)"
                         strokeWidth={3}
-                        dot={{ fill: '#006d32', r: 4 }}
+                        dot={{ fill: 'var(--color-primary)', r: 4 }}
                         activeDot={{ r: 6 }}
                       />
                     </LineChart>
@@ -3154,7 +3158,7 @@ function ReportsInner() {
                       count: parseInt(item.count || 0)
                     }));
                     
-                    const PAYMENT_COLORS = ['#006d32', '#91d5ff', '#ffc658', '#ff8042', '#8884d8', '#82ca9d'];
+                    const PAYMENT_COLORS = COLORS;
                     
                     return (
                       <ResponsiveContainer width="100%" height={220}>
@@ -3216,8 +3220,8 @@ function ReportsInner() {
                         wrapperStyle={{ fontSize: 12, paddingTop: 10 }}
                         iconType="circle"
                       />
-                      <Bar dataKey="incoming" fill="#006d32" name={terminology.incomingLabel} radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="completed" fill="#91d5ff" name={terminology.completedLabel} radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="incoming" fill="var(--color-primary)" name={terminology.incomingLabel} radius={[4, 4, 0, 0]} />
+                      <Bar dataKey="completed" fill="hsl(var(--primary) / 0.42)" name={terminology.completedLabel} radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
@@ -3264,7 +3268,7 @@ function ReportsInner() {
                       />
                       <Bar 
                         dataKey="value" 
-                        fill="#006d32" 
+                        fill="var(--color-primary)" 
                         radius={[0, 4, 4, 0]}
                       />
                     </BarChart>
@@ -3278,7 +3282,7 @@ function ReportsInner() {
                             {totalRevenue > 0 ? ((item.value / totalRevenue) * 100).toFixed(1) : 0}% of total revenue
                           </p>
                         </div>
-                        <span className="text-green-700 font-bold ml-4">₵ {(item.value / 1000).toFixed(2)}K</span>
+                        <span className="text-primary font-bold ml-4">₵ {(item.value / 1000).toFixed(2)}K</span>
                       </div>
                     ))}
                   </div>
@@ -3600,7 +3604,7 @@ function ReportsInner() {
                             <Badge
                               className={
                                 status === 'ready'
-                                  ? 'bg-green-100 text-green-700 border-0 px-2 py-1 hover:bg-green-100 cursor-default'
+                                  ? 'bg-primary/15 text-primary border-0 px-2 py-1 hover:bg-primary/15 cursor-default'
                                   : status === 'processing'
                                   ? 'bg-orange-100 text-orange-700 border-0 px-2 py-1 hover:bg-orange-100 cursor-default'
                                   : 'bg-red-100 text-red-700 border-0 px-2 py-1 hover:bg-red-100 cursor-default'
@@ -3669,7 +3673,7 @@ function ReportsInner() {
                             <Badge
                               className={
                                 status === 'ready'
-                                  ? 'bg-green-100 text-green-700 border-0 px-2 py-1 hover:bg-green-100 cursor-default'
+                                  ? 'bg-primary/15 text-primary border-0 px-2 py-1 hover:bg-primary/15 cursor-default'
                                   : status === 'processing'
                                   ? 'bg-orange-100 text-orange-700 border-0 px-2 py-1 hover:bg-orange-100 cursor-default'
                                   : 'bg-red-100 text-red-700 border-0 px-2 py-1 hover:bg-red-100 cursor-default'
@@ -4071,7 +4075,7 @@ function ReportsInner() {
                                         <p className="my-1"><strong>Current Stock:</strong> {data.currentStock} {data.unit}</p>
                                         <p className="my-1"><strong>Safety Level:</strong> {data.safetyStock} {data.unit}</p>
                                         <p className="my-1"><strong>Stock %:</strong> {data.stockPercentage}%</p>
-                                        <p className={`my-1 flex items-center gap-1.5 ${data.isLowStock ? 'text-destructive' : data.isHighRisk ? 'text-amber-600 dark:text-amber-400' : 'text-[#52c41a]'}`}>
+                                        <p className={`my-1 flex items-center gap-1.5 ${data.isLowStock ? 'text-destructive' : data.isHighRisk ? 'text-amber-600 dark:text-amber-400' : 'text-primary'}`}>
                                           <strong>Status:</strong>
                                           {data.isLowStock ? <><AlertTriangle className="h-4 w-4 shrink-0" /> Low Stock</> : data.isHighRisk ? <><AlertTriangle className="h-4 w-4 shrink-0" /> Overstocked</> : <><Check className="h-4 w-4 shrink-0" /> Normal</>}
                                         </p>
@@ -4082,8 +4086,8 @@ function ReportsInner() {
                                 }}
                               />
                               <Legend />
-                              <Bar dataKey="currentStock" fill="#52c41a" name="Current Stock" />
-                              <Bar dataKey="safetyStock" fill="#faad14" name="Safety Quantity" />
+                              <Bar dataKey="currentStock" fill="var(--color-primary)" name="Current Stock" />
+                              <Bar dataKey="safetyStock" fill="hsl(var(--primary) / 0.45)" name="Safety Quantity" />
                             </BarChart>
                           </ResponsiveContainer>
                         </div>
@@ -4144,7 +4148,9 @@ function ReportsInner() {
                             <TableBody>
                               {costData.map((record, idx) => (
                                 <TableRow key={idx} className={record.isTotal ? 'bg-muted/50 font-semibold' : ''}>
-                                  <TableCell title={!record.isTotal ? `Category: ${record.category}\nAmount: ₵ ${record.amount?.toLocaleString()}\nPercentage: ${record.percentage?.toFixed(1)}%` : undefined} className={!record.isTotal ? "cursor-help" : ""}>{record.category}</TableCell>
+                                  <TableCell title={!record.isTotal ? `Category: ${record.category}\nAmount: ₵ ${record.amount?.toLocaleString()}\nPercentage: ${record.percentage?.toFixed(1)}%` : undefined} className={!record.isTotal ? "cursor-help" : ""}>
+                                    {record.isTotal ? record.category : <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{record.category}</Badge>}
+                                  </TableCell>
                                   <TableCell className={cn("text-right", !record.isTotal && "cursor-help")} title={!record.isTotal ? `Full amount: ₵ ${record.amount?.toLocaleString()}` : undefined}>₵ {record.amount?.toLocaleString()}</TableCell>
                                   <TableCell className={cn("text-right", !record.isTotal && "cursor-help")} title={!record.isTotal ? `Represents ${record.percentage?.toFixed(1)}% of total` : undefined}>{record.percentage?.toFixed(1)}%</TableCell>
                                 </TableRow>

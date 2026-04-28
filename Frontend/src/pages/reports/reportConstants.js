@@ -3,8 +3,10 @@
  * Extracted from Reports.jsx for maintainability.
  */
 import { z } from 'zod';
+import { CHART_COLORS } from '../../constants';
 
-export const REPORT_CHART_COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d'];
+/** Same palette as global CHART_COLORS (tenant brand + neutrals) */
+export const REPORT_CHART_COLORS = CHART_COLORS;
 
 export const createReportSchema = z.object({
   reportTitle: z.string().min(1, 'Please enter report title'),

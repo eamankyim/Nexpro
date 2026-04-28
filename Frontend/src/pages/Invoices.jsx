@@ -71,6 +71,21 @@ const paymentSchema = z.object({
   referenceNumber: z.string().optional(),
 });
 
+const markAsPaidSchema = z.object({
+  paymentType: z.enum(['full', 'partial']),
+  partialAmount: numberOrEmptySchema(z).optional(),
+}).superRefine((values, ctx) => {
+  if (values.paymentType === 'partial') {
+    if (values.partialAmount == null || values.partialAmount < 0.01) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['partialAmount'],
+        message: 'Part payment amount must be greater than 0',
+      });
+    }
+  }
+});
+
 const Invoices = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -81,6 +96,7 @@ const Invoices = () => {
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingInvoice, setViewingInvoice] = useState(null);
   const [paymentModalVisible, setPaymentModalVisible] = useState(false);
+  const [markAsPaidModalVisible, setMarkAsPaidModalVisible] = useState(false);
   const [printModalVisible, setPrintModalVisible] = useState(false);
   const [stats, setStats] = useState(null);
   const { isManager, activeTenant } = useAuth();
@@ -120,6 +136,14 @@ const Invoices = () => {
       paymentMethod: 'cash',
       paymentDate: new Date(),
       referenceNumber: '',
+    },
+  });
+
+  const markAsPaidForm = useForm({
+    resolver: zodResolver(markAsPaidSchema),
+    defaultValues: {
+      paymentType: 'full',
+      partialAmount: 0,
     },
   });
 
@@ -372,17 +396,48 @@ const Invoices = () => {
     setPaymentModalVisible(true);
   };
 
-  const handleMarkAsPaid = async (invoice) => {
+  const handleOpenMarkAsPaid = (invoice) => {
+    setViewingInvoice(invoice);
+    const balance = parseFloat(invoice?.balance || 0);
+    markAsPaidForm.reset({
+      paymentType: 'full',
+      partialAmount: balance > 0 ? balance : 0,
+    });
+    setMarkAsPaidModalVisible(true);
+  };
+
+  const handleMarkAsPaid = async (values) => {
+    if (!viewingInvoice) return;
     try {
       setMarkingAsPaid(true);
-      const response = await invoiceService.markAsPaid(invoice.id);
+      let response;
+      if (values.paymentType === 'partial') {
+        const partialAmount = parseFloat(values.partialAmount || 0);
+        const currentBalance = parseFloat(viewingInvoice.balance || 0);
+        if (partialAmount > currentBalance) {
+          showError(null, 'Part payment cannot be greater than the current balance');
+          return;
+        }
+        response = await invoiceService.recordPayment(viewingInvoice.id, {
+          amount: partialAmount,
+          paymentMethod: 'cash',
+          paymentDate: dayjs().format('YYYY-MM-DD'),
+        });
+      } else {
+        response = await invoiceService.markAsPaid(viewingInvoice.id);
+      }
       const updatedInvoice = response?.data;
 
       if (updatedInvoice && viewingInvoice?.id === updatedInvoice.id) {
         setViewingInvoice(updatedInvoice);
       }
 
-      showSuccess(response?.message || 'Invoice marked as paid');
+      showSuccess(
+        values.paymentType === 'partial'
+          ? 'Part payment recorded successfully'
+          : (response?.message || 'Invoice marked as paid')
+      );
+      setMarkAsPaidModalVisible(false);
       setRefreshTrigger(prev => prev + 1);
     } catch (error) {
       const errorMessage =
@@ -475,7 +530,7 @@ const Invoices = () => {
         key: 'markPaid',
         label: 'Mark as Paid',
         icon: <CheckCircle className="h-4 w-4" />,
-        onClick: () => handleMarkAsPaid(viewingInvoice),
+        onClick: () => handleOpenMarkAsPaid(viewingInvoice),
         disabled: markingAsPaid,
       });
       items.push({
@@ -496,7 +551,7 @@ const Invoices = () => {
       });
     }
     return items;
-  }, [viewingInvoice, isManager, paymentLink, sendingInvoice, markingAsPaid, handleSendInvoice, handleCopyPaymentLink, handleMarkAsPaid]);
+  }, [viewingInvoice, isManager, paymentLink, sendingInvoice, markingAsPaid, handleSendInvoice, handleCopyPaymentLink]);
 
   const handleCancelInvoice = async (id) => {
     try {
@@ -834,7 +889,7 @@ const Invoices = () => {
             </Button>
           </>
         )}
-        className="w-full max-w-[calc(100vw-1rem)] sm:max-w-4xl"
+        className="w-full max-w-[calc(100vw-1rem)] sm:w-[var(--modal-w-2xl)]"
       >
         <div className="space-y-4">
           <div>
@@ -985,6 +1040,92 @@ const Invoices = () => {
             </div>
           </div>
         </div>
+      </MobileFormDialog>
+
+      <MobileFormDialog
+        open={markAsPaidModalVisible}
+        onOpenChange={setMarkAsPaidModalVisible}
+        title="Mark Invoice Payment"
+        description="Choose full payment or record a part payment."
+        footer={
+          viewingInvoice ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-[44px] touch-manipulation"
+                onClick={() => setMarkAsPaidModalVisible(false)}
+              >
+                Cancel
+              </Button>
+              <Button form="mark-as-paid-form" type="submit" disabled={markingAsPaid} className="min-h-[44px] touch-manipulation">
+                {markingAsPaid && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Save
+              </Button>
+            </>
+          ) : null
+        }
+        className="w-full max-w-[calc(100vw-1rem)] sm:max-w-md"
+      >
+        {viewingInvoice && (
+          <Form {...markAsPaidForm}>
+            <form id="mark-as-paid-form" onSubmit={markAsPaidForm.handleSubmit(handleMarkAsPaid)} className="space-y-4">
+              <div className="rounded-md border bg-muted/40 p-3 text-sm">
+                Balance Due: <strong>₵ {parseFloat(viewingInvoice.balance || 0).toFixed(2)}</strong>
+              </div>
+
+              <FormField
+                control={markAsPaidForm.control}
+                name="paymentType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Payment Type</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="full">Fully Paid</SelectItem>
+                        <SelectItem value="partial">Partially Paid</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              {markAsPaidForm.watch('paymentType') === 'partial' && (
+                <FormField
+                  control={markAsPaidForm.control}
+                  name="partialAmount"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Part Payment Amount</FormLabel>
+                      <FormControl>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">₵ </span>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={parseFloat(viewingInvoice.balance || 0)}
+                            step={0.01}
+                            className="pl-8"
+                            value={numberInputValue(field.value)}
+                            onFocus={(e) => e.target.select()}
+                            onChange={(e) => handleNumberChange(e, field.onChange)}
+                          />
+                        </div>
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              )}
+            </form>
+          </Form>
+        )}
       </MobileFormDialog>
 
       <MobileFormDialog

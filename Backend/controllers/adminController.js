@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const { Op, QueryTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
+const { plans: PLANS_CONFIG } = require('../config/plans');
 const { getPagination } = require('../utils/paginationUtils');
 const {
   Tenant,
@@ -42,6 +43,44 @@ const PLAN_ALIASES = {
 };
 
 const normalizePlanId = (plan = '') => PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
+
+/**
+ * Ensures a SubscriptionPlan row exists for canonical plan IDs from config/plans.js
+ * (e.g. enterprise missing when DB was partially seeded).
+ * @param {string} planId - Normalized plan id (lowercase)
+ * @returns {Promise<object|null>}
+ */
+async function ensureCanonicalSubscriptionPlan(planId) {
+  const existing = await SubscriptionPlan.findOne({
+    where: { planId },
+    attributes: ['id', 'planId', 'isActive']
+  });
+  if (existing) return existing;
+  const def = PLANS_CONFIG.find((p) => p.id === planId);
+  if (!def) return null;
+  try {
+    return await SubscriptionPlan.create({
+      planId: def.id,
+      order: def.order ?? 0,
+      name: def.name,
+      description: def.description || '',
+      price: def.price || {},
+      highlights: def.highlights || [],
+      marketing: def.marketing || {},
+      onboarding: def.onboarding || {},
+      isActive: true,
+      metadata: {}
+    });
+  } catch (e) {
+    if (e.name === 'SequelizeUniqueConstraintError') {
+      return SubscriptionPlan.findOne({
+        where: { planId },
+        attributes: ['id', 'planId', 'isActive']
+      });
+    }
+    throw e;
+  }
+}
 
 const generateToken = (id) =>
   jwt.sign({ id }, config.jwt.secret, {
@@ -733,21 +772,24 @@ exports.updateTenantAccess = async (req, res, next) => {
     };
 
     if (plan != null) {
-      const nextPlan = String(plan).trim();
+      const nextPlan = normalizePlanId(plan);
       if (!nextPlan) {
         return res.status(400).json({
           success: false,
           message: 'Plan cannot be empty'
         });
       }
-      const planExists = await SubscriptionPlan.findOne({
+      let planRow = await SubscriptionPlan.findOne({
         where: { planId: nextPlan },
         attributes: ['id']
       });
-      if (!planExists) {
+      if (!planRow) {
+        planRow = await ensureCanonicalSubscriptionPlan(nextPlan);
+      }
+      if (!planRow) {
         return res.status(400).json({
           success: false,
-          message: `Plan "${nextPlan}" is not active or does not exist`
+          message: `Plan "${nextPlan}" does not exist`
         });
       }
       tenant.plan = nextPlan;

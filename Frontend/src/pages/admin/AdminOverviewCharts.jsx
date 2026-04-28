@@ -16,10 +16,9 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Empty } from '@/components/ui/empty';
+import { CHART_COLORS } from '@/constants';
 
 dayjs.extend(relativeTime);
-
-const PLAN_COLORS = ['#2f80ed', '#27ae60', '#9b51e0', '#e2b93b'];
 
 /**
  * Chart blocks for platform overview (recharts in a separate async chunk).
@@ -40,8 +39,8 @@ export default function AdminOverviewCharts({ metrics, alertsSlot }) {
                   <AreaChart data={metrics.signupTrend}>
                     <defs>
                       <linearGradient id="colorSignups" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#2f80ed" stopOpacity={0.8} />
-                        <stop offset="95%" stopColor="#2f80ed" stopOpacity={0.1} />
+                        <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.8} />
+                        <stop offset="95%" stopColor="var(--color-primary)" stopOpacity={0.1} />
                       </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" />
@@ -56,7 +55,7 @@ export default function AdminOverviewCharts({ metrics, alertsSlot }) {
                     <Area
                       type="monotone"
                       dataKey="count"
-                      stroke="#2f80ed"
+                      stroke="var(--color-primary)"
                       fill="url(#colorSignups)"
                       strokeWidth={2}
                     />
@@ -88,7 +87,7 @@ export default function AdminOverviewCharts({ metrics, alertsSlot }) {
                       {metrics.planDistribution.map((entry, index) => (
                         <Cell
                           key={entry.plan}
-                          fill={PLAN_COLORS[index % PLAN_COLORS.length]}
+                          fill={CHART_COLORS[index % CHART_COLORS.length]}
                         />
                       ))}
                     </Pie>
@@ -116,7 +115,7 @@ export default function AdminOverviewCharts({ metrics, alertsSlot }) {
                   <XAxis dataKey="status" />
                   <YAxis allowDecimals={false} />
                   <Tooltip />
-                  <Bar dataKey="count" fill="#9b51e0" radius={[6, 6, 0, 0]} />
+                  <Bar dataKey="count" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (

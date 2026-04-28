@@ -252,6 +252,99 @@ export const createCancelToken = () => {
   };
 };
 
+/**
+ * Build auth + tenant headers for direct XHR multipart uploads.
+ * @returns {Record<string, string>}
+ */
+function getPrivateApiHeadersForUpload() {
+  const headers = { 'X-Requested-With': 'XMLHttpRequest' };
+
+  const token = localStorage.getItem('token');
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  let tenantId = localStorage.getItem('activeTenantId');
+  if (!tenantId) {
+    try {
+      const membershipsStr = localStorage.getItem('tenantMemberships') || '[]';
+      const memberships = JSON.parse(membershipsStr);
+      if (Array.isArray(memberships) && memberships.length > 0) {
+        tenantId = memberships.find((m) => m.isDefault)?.tenantId || memberships[0]?.tenantId || '';
+      }
+    } catch (_) {}
+  }
+
+  if (tenantId) {
+    headers['x-tenant-id'] = tenantId;
+  }
+
+  return headers;
+}
+
+/**
+ * POST FormData with reliable upload progress events (XHR).
+ * Do not set Content-Type manually; browser adds multipart boundary.
+ * @param {string} path
+ * @param {FormData} formData
+ * @param {{ onUploadProgress?: (percent: number) => void, timeout?: number, signal?: AbortSignal }} [opts]
+ * @returns {Promise<any>}
+ */
+export function postFormDataWithProgress(path, formData, opts = {}) {
+  const { onUploadProgress, timeout = 120000, signal } = opts;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  const base = API_BASE_URL ? `${API_BASE_URL}/api` : '/api';
+  const url = `${base}${normalizedPath}`;
+
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', url);
+    xhr.timeout = timeout;
+
+    const headers = getPrivateApiHeadersForUpload();
+    Object.entries(headers).forEach(([key, value]) => {
+      if (value != null && value !== '') xhr.setRequestHeader(key, String(value));
+    });
+
+    if (signal) {
+      if (signal.aborted) {
+        reject(new DOMException('The user aborted a request.', 'AbortError'));
+        return;
+      }
+      signal.addEventListener('abort', () => xhr.abort(), { once: true });
+    }
+
+    if (xhr.upload && typeof onUploadProgress === 'function') {
+      xhr.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        const percent = Math.min(100, Math.max(0, Math.round((event.loaded / event.total) * 100)));
+        onUploadProgress(percent);
+      };
+    }
+
+    xhr.onload = () => {
+      const contentType = xhr.getResponseHeader('content-type') || '';
+      const isJson = contentType.includes('application/json');
+      const responseBody = isJson && xhr.responseText ? JSON.parse(xhr.responseText) : xhr.responseText;
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(responseBody);
+        return;
+      }
+
+      const err = new Error(responseBody?.message || `Request failed with status ${xhr.status}`);
+      err.response = { status: xhr.status, data: responseBody };
+      reject(err);
+    };
+
+    xhr.onerror = () => reject(new Error('Network error'));
+    xhr.ontimeout = () => reject(new Error(`Request timed out after ${timeout}ms`));
+    xhr.onabort = () => reject(new DOMException('The user aborted a request.', 'AbortError'));
+
+    xhr.send(formData);
+  });
+}
+
 export default api;
 
 

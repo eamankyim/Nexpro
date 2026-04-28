@@ -12,8 +12,7 @@ import {
 } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Empty } from '@/components/ui/empty';
-
-const PLAN_COLORS = ['#27ae60', '#2f80ed', '#9b51e0'];
+import { CHART_COLORS } from '@/constants';
 
 /**
  * Billing charts (async chunk — recharts not on admin shell critical path).
@@ -33,7 +32,7 @@ export default function AdminBillingCharts({ summary, getPlanLabel }) {
                 <XAxis dataKey="plan" tickFormatter={getPlanLabel} />
                 <YAxis allowDecimals={false} />
                 <Tooltip formatter={(value) => `₵ ${value}`} />
-                <Bar dataKey="mrr" fill="#2f80ed" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="mrr" fill="var(--color-primary)" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           ) : (
@@ -60,7 +59,7 @@ export default function AdminBillingCharts({ summary, getPlanLabel }) {
                   {summary.planBreakdown.map((entry, index) => (
                     <Cell
                       key={entry.plan}
-                      fill={PLAN_COLORS[index % PLAN_COLORS.length]}
+                      fill={CHART_COLORS[index % CHART_COLORS.length]}
                     />
                   ))}
                 </Pie>

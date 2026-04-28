@@ -35,8 +35,6 @@ import {
   Tag,
   ImagePlus,
   UploadCloud,
-  ScanLine,
-  PackagePlus,
   QrCode,
   Info,
   Receipt,
@@ -60,16 +58,21 @@ import vendorService from '../services/vendorService';
 import PhoneNumberInput from '../components/PhoneNumberInput';
 import { cn } from '@/lib/utils';
 import { resolveImageUrl } from '../utils/fileUtils';
+import {
+  compressProductImageFile,
+  PRODUCT_IMAGE_MAX_INPUT_BYTES,
+  PRODUCT_IMAGE_SKIP_COMPRESS_MAX_BYTES,
+} from '../utils/compressProductImage';
 import { useAuth } from '../context/AuthContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
-import { showSuccess, showError } from '../utils/toast';
-import ProductQRScanner from '../components/ProductQRScanner';
+import { getErrorMessage, showSuccess, showError } from '../utils/toast';
 import ReceiveStockModal from '../components/ReceiveStockModal';
 import ProductQRGenerateModal from '../components/ProductQRGenerateModal';
 import ViewToggle from '../components/ViewToggle';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -180,6 +183,14 @@ const FormLabelWithInfo = ({ label, hint }) => (
 const resolveProductImageUrl = (url) => {
   if (!url || typeof url !== 'string') return '';
   return resolveImageUrl(url) || '';
+};
+
+/** Shown in product form image uploader — `stageProgress` is 0–100 within the current phase. */
+const formatProductImageProgressLabel = (phase, stageProgress) => {
+  const p = Math.round(Number(stageProgress) || 0);
+  if (phase === 'uploading') return `Uploading — ${p}%`;
+  if (phase === 'compressing') return `Compressing large image — ${p}%`;
+  return 'Preparing…';
 };
 
 /** Movement tab: shows sales history for a product */
@@ -451,6 +462,12 @@ const Products = () => {
   const [variantFormOpen, setVariantFormOpen] = useState(false);
   const [editingVariant, setEditingVariant] = useState(null);
   const [productImageUploading, setProductImageUploading] = useState(false);
+  /** 'compressing' | 'uploading' — for progress label; null when idle */
+  const [productImagePhase, setProductImagePhase] = useState(null);
+  /** 0–100 for the progress bar (compression weighted ~35%, upload ~65% when compression runs). */
+  const [productImageProgress, setProductImageProgress] = useState(0);
+  /** 0–100 within the current phase (shown in the label). */
+  const [productImageStageProgress, setProductImageStageProgress] = useState(0);
   const [productImageDragging, setProductImageDragging] = useState(false);
   const productImageInputRef = useRef(null);
   const [vendors, setVendors] = useState([]);
@@ -464,7 +481,6 @@ const Products = () => {
   const [deletingCategory, setDeletingCategory] = useState(false);
   const [categorySearchTerm, setCategorySearchTerm] = useState('');
   const [categoryFilterSearchTerm, setCategoryFilterSearchTerm] = useState('');
-  const [qrScannerOpen, setQrScannerOpen] = useState(false);
   const [receiveStockOpen, setReceiveStockOpen] = useState(false);
   const [qrGenerateOpen, setQrGenerateOpen] = useState(false);
   const [productForQR, setProductForQR] = useState(null);
@@ -626,9 +642,11 @@ const Products = () => {
     {
       key: 'name',
       title: 'Product',
+      width: '22rem',
+      cellClassName: 'min-w-0',
       render: (_, record) => (
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded border border-border bg-muted overflow-hidden flex-shrink-0 flex items-center justify-center">
+        <div className="flex min-w-0 max-w-full items-center gap-3">
+          <div className="w-10 h-10 shrink-0 rounded border border-border bg-muted overflow-hidden flex items-center justify-center">
             {record.imageUrl ? (
               <button
                 type="button"
@@ -645,11 +663,17 @@ const Products = () => {
               <Package className="h-5 w-5 text-gray-400" />
             )}
           </div>
-          <div className="flex flex-col min-w-0">
-            <span className="font-medium truncate">{record.name}</span>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              {record.sku && <span>SKU: {record.sku}</span>}
-              {record.barcode && <Barcode className="h-3 w-3" />}
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <span className="block font-medium truncate" title={record.name || ''}>
+              {record.name}
+            </span>
+            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              {record.sku && (
+                <span className="truncate" title={record.sku ? `SKU: ${record.sku}` : ''}>
+                  SKU: {record.sku}
+                </span>
+              )}
+              {record.barcode && <Barcode className="h-3 w-3 shrink-0" />}
             </div>
           </div>
         </div>
@@ -659,7 +683,7 @@ const Products = () => {
       key: 'category',
       title: 'Category',
       render: (_, record) => (
-        <Badge variant="outline">
+        <Badge variant="default">
           {record.category?.name || 'Uncategorized'}
         </Badge>
       ),
@@ -698,7 +722,7 @@ const Products = () => {
         const margin = calculateMargin(record.costPrice, record.sellingPrice);
         const color = getMarginColor(margin);
         return (
-          <Badge variant={color}>
+          <Badge variant="outline" className={color}>
             {margin.toFixed(1)}%
           </Badge>
         );
@@ -1205,63 +1229,6 @@ const Products = () => {
     }
   }, [importFile, fetchProducts, fetchStats]);
 
-  const handleProductDataFromQR = useCallback(
-    (data) => {
-      const categoryId =
-        data.categoryName && categories.length
-          ? (categories.find((c) => c.name && c.name.toLowerCase() === data.categoryName.toLowerCase())?.id || '')
-          : '';
-      setEditingProduct(null);
-      form.reset({
-        name: data.name || '',
-        sku: data.sku || '',
-        barcode: data.barcode || '',
-        description: data.description || '',
-        categoryId: categoryId || '',
-        costPrice: data.costPrice ?? 0,
-        sellingPrice: data.sellingPrice ?? 0,
-        quantityOnHand: data.quantityOnHand ?? 0,
-        reorderLevel: data.reorderLevel ?? 0,
-        reorderQuantity: data.reorderQuantity ?? 0,
-        unit: data.unit || 'pcs',
-        brand: data.brand || '',
-        supplier: data.supplier || '',
-        hasVariants: data.hasVariants ?? false,
-        isActive: data.isActive !== false,
-        trackStock: data.trackStock ?? true,
-        imageUrl: data.imageUrl || '',
-        expiryDate: data.expiryDate || '',
-        batchNumber: data.batchNumber || '',
-        isPerishable: data.isPerishable ?? false,
-        serialNumber: data.serialNumber || '',
-        warrantyPeriod: data.warrantyPeriod ?? 0,
-        specifications: data.specifications || '',
-        dimensions: data.dimensions || '',
-        weight: data.weight || '',
-        material: data.material || '',
-        partNumber: data.partNumber || '',
-        compatibility: data.compatibility || '',
-        vehicleModels: data.vehicleModels || '',
-        isbn: data.isbn || '',
-        author: data.author || '',
-        publisher: data.publisher || '',
-        assemblyRequired: data.assemblyRequired ?? false,
-        allergens: data.allergens || '',
-        optionalFoods: data.optionalFoods || '',
-        sizes: data.sizes || '',
-        colors: data.colors || '',
-        models: data.models || '',
-        size: data.size || '',
-        ageRange: data.ageRange || '',
-        batteryRequired: data.batteryRequired ?? false,
-      });
-      setFormOpen(true);
-      setQrScannerOpen(false);
-      showSuccess('Product details filled from QR code');
-    },
-    [categories, form]
-  );
-
   const handleDeleteClick = (product) => {
     setProductToDelete(product);
     setDeleteDialogOpen(true);
@@ -1459,20 +1426,52 @@ const Products = () => {
   const handleProductImageSelect = useCallback(async (eOrFile) => {
     const file = eOrFile?.target?.files?.[0] ?? (eOrFile instanceof File ? eOrFile : null);
     if (!file || !file.type.startsWith('image/')) return;
-    const maxSizeMB = 5;
-    if (file.size > maxSizeMB * 1024 * 1024) {
-      showError(`File size must be under ${maxSizeMB}MB`);
+    if (file.size > PRODUCT_IMAGE_MAX_INPUT_BYTES) {
+      showError(
+        `Image is too large (max ${PRODUCT_IMAGE_MAX_INPUT_BYTES / 1024 / 1024}MB). Try a smaller photo.`
+      );
       return;
     }
     const objectUrl = URL.createObjectURL(file);
     form.setValue('imageUrl', objectUrl);
     setProductImageUploading(true);
+    setProductImageProgress(0);
+    setProductImageStageProgress(0);
+    const needsCompress = file.size > PRODUCT_IMAGE_SKIP_COMPRESS_MAX_BYTES;
+    setProductImagePhase(needsCompress ? 'compressing' : 'uploading');
+    // Let React paint the overlay before compression blocks the main thread (esp. without web worker).
+    await new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(resolve));
+    });
     try {
-      const res = await productService.uploadProductImage(file);
+      let prepared = file;
+      if (needsCompress) {
+        prepared = await compressProductImageFile(file, {
+          onProgress: (p) => {
+            setProductImageStageProgress(p);
+            setProductImageProgress(Math.min(35, Math.round((p / 100) * 35)));
+          },
+        });
+      }
+
+      setProductImagePhase('uploading');
+      setProductImageStageProgress(0);
+      const uploadBase = needsCompress ? 35 : 0;
+      const uploadSpan = needsCompress ? 65 : 100;
+      setProductImageProgress(uploadBase);
+
+      const res = await productService.uploadProductImage(prepared, {
+        onUploadProgress: (p) => {
+          setProductImageStageProgress(p);
+          setProductImageProgress(uploadBase + Math.round((p / 100) * uploadSpan));
+        },
+      });
       const imageUrl = res?.data?.imageUrl ?? res?.imageUrl;
       if (imageUrl) {
         URL.revokeObjectURL(objectUrl);
         form.setValue('imageUrl', imageUrl);
+        setProductImageProgress(100);
+        setProductImageStageProgress(100);
         showSuccess('Image uploaded');
       } else {
         form.setValue('imageUrl', objectUrl);
@@ -1481,12 +1480,16 @@ const Products = () => {
     } catch (err) {
       URL.revokeObjectURL(objectUrl);
       form.setValue('imageUrl', '');
-      showError(err, 'Failed to upload image');
+      const message = err?.message || (typeof err === 'string' ? err : 'Failed to process image');
+      showError(getErrorMessage(err, message));
     } finally {
       setProductImageUploading(false);
+      setProductImagePhase(null);
+      setProductImageProgress(0);
+      setProductImageStageProgress(0);
       if (productImageInputRef.current) productImageInputRef.current.value = '';
     }
-  }, [form]);
+  }, [form, getErrorMessage, showError, showSuccess]);
 
   const handleRemoveProductImage = useCallback(() => {
     form.setValue('imageUrl', '');
@@ -2282,29 +2285,17 @@ const Products = () => {
             <TooltipTrigger asChild>
               <Button
                 variant="outline"
-                onClick={() => {
-                  setEditingProduct(null);
-                  setQrScannerOpen(true);
-                }}
-              >
-                <ScanLine className="h-4 w-4" />
-                <span className="ml-2">Scan to edit or restock</span>
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Scan product QR to edit or restock</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
+                size={isMobile ? 'icon' : 'default'}
                 onClick={() => setReceiveStockOpen(true)}
+                aria-label="Receive stock"
               >
-                <PackagePlus className="h-4 w-4" />
-                <span className="ml-2">Receive stock</span>
+                <Download className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Receive stock</span>}
               </Button>
             </TooltipTrigger>
             <TooltipContent>Record new stock received (scan QR or search product)</TooltipContent>
           </Tooltip>
+          {!isMobile && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -2317,6 +2308,7 @@ const Products = () => {
             </TooltipTrigger>
             <TooltipContent>Bulk import products from CSV (download template, fill, then upload)</TooltipContent>
           </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button onClick={handleCreateProduct} className="flex-1 min-w-0 md:flex-none">
@@ -2504,19 +2496,6 @@ const Products = () => {
           <TooltipProvider delayDuration={200}>
           <Form {...form}>
             <form id="product-form" onSubmit={form.handleSubmit(handleFormSubmit)} className="space-y-6">
-              {!editingProduct && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full justify-center gap-2"
-                  onClick={() => setQrScannerOpen(true)}
-                  title="Scan to edit or restock"
-                >
-                  <ScanLine className="h-4 w-4" />
-                  Scan to edit or restock
-                </Button>
-              )}
-
               {/* Basic Info */}
               <div className="space-y-4">
                 <h4 className="font-medium text-sm text-muted-foreground">Basic Information</h4>
@@ -2562,6 +2541,19 @@ const Products = () => {
                                   alt="Product"
                                   className="w-full h-full object-cover rounded-lg"
                                 />
+                                {productImageUploading && (
+                                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 rounded-lg bg-background/95 border border-border p-3">
+                                    <Loader2 className="h-8 w-8 animate-spin text-brand shrink-0" />
+                                    <div
+                                      className="text-xs text-center font-medium text-foreground"
+                                      role="status"
+                                      aria-live="polite"
+                                    >
+                                      {formatProductImageProgressLabel(productImagePhase, productImageStageProgress)}
+                                    </div>
+                                    <Progress value={productImageProgress} className="h-2.5 w-full max-w-[200px] bg-muted" />
+                                  </div>
+                                )}
                                 {!productImageUploading && (
                                   <div className="absolute inset-0 flex items-center justify-center gap-2 rounded-lg bg-black/40 opacity-0 hover:opacity-100 transition-opacity">
                                     <Button
@@ -2584,9 +2576,12 @@ const Products = () => {
                                 )}
                               </div>
                             ) : productImageUploading ? (
-                              <div className="flex flex-col items-center gap-2">
-                                <Loader2 className="h-10 w-10 animate-spin text-brand" />
-                                <span className="text-sm text-muted-foreground">Uploading...</span>
+                              <div className="flex w-full max-w-xs mx-auto flex-col items-center gap-3 py-2">
+                                <Loader2 className="h-10 w-10 animate-spin text-brand shrink-0" />
+                                <p className="text-sm font-medium text-foreground text-center">
+                                  {formatProductImageProgressLabel(productImagePhase, productImageStageProgress)}
+                                </p>
+                                <Progress value={productImageProgress} className="h-2.5 w-full bg-muted" />
                               </div>
                             ) : (
                               <>
@@ -2596,9 +2591,7 @@ const Products = () => {
                                     <span className="font-medium text-brand">Click to upload</span>
                                     <span className="text-muted-foreground"> or drag and drop</span>
                                   </p>
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    PNG, JPG, WEBP, JPEG (Max. 5MB)
-                                  </p>
+                                  <p className="text-xs text-muted-foreground mt-1">PNG, JPG, WEBP, JPEG</p>
                                 </div>
                               </>
                             )}
@@ -2748,7 +2741,7 @@ const Products = () => {
                   <div>
                     <Label className="mb-2 block">Profit Margin</Label>
                     <div className="h-10 flex items-center">
-                      <Badge variant={getMarginColor(calculatedMargin)}>
+                      <Badge variant="outline" className={getMarginColor(calculatedMargin)}>
                         {calculatedMargin.toFixed(1)}%
                       </Badge>
                     </div>
@@ -3132,12 +3125,6 @@ const Products = () => {
         </AlertDialogContent>
       </AlertDialog>
 
-      <ProductQRScanner
-        open={qrScannerOpen}
-        onClose={() => setQrScannerOpen(false)}
-        onProductData={handleProductDataFromQR}
-      />
-
       <ReceiveStockModal
         open={receiveStockOpen}
         onClose={() => setReceiveStockOpen(false)}
@@ -3358,7 +3345,9 @@ const Products = () => {
             <DrawerSectionCard title="Product info">
               <Descriptions column={1} className="space-y-0">
                 <DescriptionItem label="Category">
-                  {selectedProduct.category?.name || 'Uncategorized'}
+                  <Badge variant="default">
+                    {selectedProduct.category?.name || 'Uncategorized'}
+                  </Badge>
                 </DescriptionItem>
                 <DescriptionItem label="Brand">
                   {selectedProduct.brand || '-'}
@@ -3381,7 +3370,10 @@ const Products = () => {
                   {valueFormatter(selectedProduct.sellingPrice)}
                 </DescriptionItem>
                 <DescriptionItem label="Profit Margin">
-                  <Badge variant={getMarginColor(calculateMargin(selectedProduct.costPrice, selectedProduct.sellingPrice))}>
+                  <Badge
+                    variant="outline"
+                    className={getMarginColor(calculateMargin(selectedProduct.costPrice, selectedProduct.sellingPrice))}
+                  >
                     {marginFormatter(selectedProduct.costPrice, selectedProduct.sellingPrice)}
                   </Badge>
                 </DescriptionItem>
