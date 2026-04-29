@@ -51,8 +51,6 @@ import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import dashboardService from '../services/dashboardService';
 import productService from '../services/productService';
-import notificationService from '../services/notificationService';
-import { NOTIFICATION_LIST_QUERY_KEY } from '../components/NotificationBell';
 import settingsService from '../services/settingsService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
@@ -99,21 +97,6 @@ const Dashboard = () => {
     refetchIntervalInBackground: true,
   });
 
-  // Deferred until after overview has been fetched so initial dashboard load is faster.
-  const { data: notificationsData, isLoading: loadingNotifications } = useQuery({
-    queryKey: [...NOTIFICATION_LIST_QUERY_KEY, activeTenantId, 1],
-    queryFn: () => notificationService.getNotifications({ page: 1, limit: 5 }),
-    enabled: !!activeTenantId && overviewFetched,
-    staleTime: 60 * 1000,
-    refetchOnWindowFocus: false,
-  });
-  const notifications = useMemo(() => {
-    const raw =
-      notificationsData?.success && Array.isArray(notificationsData?.data)
-        ? notificationsData.data
-        : [];
-    return raw.filter((n) => n && typeof n === 'object').slice(0, 5);
-  }, [notificationsData]);
   const [comparisonData, setComparisonData] = useState(null);
   const [comparisonLoading, setComparisonLoading] = useState(false);
   const queryClient = useQueryClient();
@@ -587,7 +570,7 @@ const Dashboard = () => {
         </div>
       )}
 
-      {/* Main dashboard content: greeting, filters, stats cards, recent activity, notice board */}
+      {/* Main dashboard content: greeting, filters, stats cards, recent activity */}
       <div className="space-y-4 md:space-y-6" data-tour="dashboard-main">
       {/* Greeting Section */}
       <WelcomeSection
@@ -727,8 +710,8 @@ const Dashboard = () => {
           )}
         </div>
       ) : (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
-        <div className="lg:col-span-2 min-w-0" data-tour="recent-activity">
+      <div className="mt-8">
+        <div className="min-w-0" data-tour="recent-activity">
           <DashboardJobsTable
             jobs={recentJobs}
             loading={loading}
@@ -740,90 +723,6 @@ const Dashboard = () => {
             onAddProduct={(isShop || isPharmacy) ? () => navigate('/products?add=1') : undefined}
           />
         </div>
-        {!isMobile && (
-        <div className="lg:col-span-1 min-w-0" data-tour="notice-board">
-          <Card className="h-full min-h-0">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base sm:text-lg truncate">Notice board</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 min-w-0 overflow-hidden">
-              {loadingNotifications ? (
-                <div className="flex justify-center py-5 sm:py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              ) : notifications.length === 0 ? (
-                <div className="py-5 sm:py-8 text-center text-muted-foreground">
-                  No notifications
-                </div>
-              ) : (
-                <div className="flex flex-col gap-3 sm:gap-4 min-w-0">
-                  {notifications.map((notification, nIdx) => {
-                    if (!notification || typeof notification !== 'object') return null;
-                    // Parse notification text to bold numbers, percentages, status terms, and key phrases
-                    let text = notification.message || notification.title || '';
-                    
-                    // Helper function to escape HTML
-                    const escapeHtml = (str) => {
-                      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                    };
-                    
-                    // First, escape the entire text to prevent XSS
-                    text = escapeHtml(text);
-                    
-                    // Mark already wrapped content to prevent double-wrapping
-                    const WRAP_MARKER = '___WRAP_MARKER___';
-                    
-                    // Bold currency patterns: GH¢12,500 or ¢7,200
-                    text = text.replace(/(GH¢|¢)(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/g, (match, currency, number) => {
-                      return `${currency}${WRAP_MARKER}<strong>${number}</strong>${WRAP_MARKER}`;
-                    });
-                    
-                    // Bold percentages: 4.3%, 34% (but not if already wrapped)
-                    text = text.replace(new RegExp(`(?!${WRAP_MARKER})(\\d+(?:\\.\\d+)?%)`, 'g'), `${WRAP_MARKER}<strong>$1</strong>${WRAP_MARKER}`);
-                    
-                    // Bold standalone numbers with units: "3 new leads", "2,400 views", "1 profile click"
-                    text = text.replace(new RegExp(`(?!${WRAP_MARKER})(\\d{1,3}(?:,\\d{3})*)\\s+(new leads|views|profile click|profile clicks)`, 'gi'), `${WRAP_MARKER}<strong>$1 $2</strong>${WRAP_MARKER}`);
-                    
-                    // Bold status and action terms: "due today", "paid", "submitted", "reached", "recorded"
-                    text = text.replace(/\b(due today|paid|submitted|reached|recorded|follow up|retarget|well below|strong engagement|improve conversion|tailored offers)\b/gi, `${WRAP_MARKER}<strong>$1</strong>${WRAP_MARKER}`);
-                    
-                    // Bold time phrases: "in 4 hours", "after 5 hours"
-                    text = text.replace(/\b(in|after)\s+(\d+)\s+(hours?|days?)\b/gi, `$1 ${WRAP_MARKER}<strong>$2 $3</strong>${WRAP_MARKER}`);
-                    
-                    // Bold company/business names (capitalized words ending with Ltd, Inc, etc.)
-                    text = text.replace(/\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\s+(?:Ltd|Inc|LLC|Corp|Co))\.?\b/g, `${WRAP_MARKER}<strong>$1</strong>${WRAP_MARKER}`);
-                    
-                    // Bold important descriptive phrases
-                    text = text.replace(/\b(including|via|from|so far|promptly|well below usual)\b/gi, `${WRAP_MARKER}<strong>$1</strong>${WRAP_MARKER}`);
-                    
-                    // Bold phrases like "returning visitor rate is 34%"
-                    text = text.replace(/(returning visitor rate is)\s+(\d+(?:\.\d+)?%)/gi, `$1 ${WRAP_MARKER}<strong>$2</strong>${WRAP_MARKER}`);
-                    
-                    // Bold phrases like "has a 4.3% open rate"
-                    text = text.replace(/(has a)\s+(\d+(?:\.\d+)?%)\s+(open rate)/gi, `$1 ${WRAP_MARKER}<strong>$2</strong>${WRAP_MARKER} $3`);
-                    
-                    // Remove markers
-                    text = text.replace(new RegExp(WRAP_MARKER, 'g'), '');
-                    
-                    return (
-                      <div
-                        key={notification.id != null ? String(notification.id) : `notice-${nIdx}`}
-                        className="flex items-start gap-2 sm:gap-3 min-h-[44px] py-1 min-w-0"
-                      >
-                        <ChevronRight className="h-4 w-4 text-brand mt-0.5 shrink-0" aria-hidden />
-                        <div 
-                          className="flex-1 min-w-0 text-sm text-muted-foreground leading-relaxed font-normal break-words overflow-hidden"
-                          dangerouslySetInnerHTML={{ __html: text }}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-        )}
       </div>
       )}
       </div>

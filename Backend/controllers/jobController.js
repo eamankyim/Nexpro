@@ -313,13 +313,21 @@ const autoCreateInvoice = async (jobId, tenantId) => {
       });
       subtotal = items.reduce((sum, item) => sum + (parseFloat(item.quantity) * parseFloat(item.unitPrice)), 0);
       
-      // Calculate total discount from all items
+      // Calculate total discount from all items; fallback to job-level finalPrice delta
+      // when item-level discount fields are unavailable.
       const totalItemDiscount = items.reduce((sum, item) => sum + parseFloat(item.discountAmount || 0), 0);
-      console.log(`[AutoInvoice] Items processed: ${items.length}, subtotal: ${subtotal}, totalItemDiscount: ${totalItemDiscount}`);
+      const jobLevelDiscountFallback = Math.max(
+        0,
+        (parseFloat(subtotal || 0) - parseFloat(job.finalPrice || 0))
+      );
+      const totalDiscount = totalItemDiscount > 0 ? totalItemDiscount : jobLevelDiscountFallback;
+      console.log(
+        `[AutoInvoice] Items processed: ${items.length}, subtotal: ${subtotal}, totalItemDiscount: ${totalItemDiscount}, jobLevelDiscountFallback: ${jobLevelDiscountFallback}`
+      );
       
-      // If there are item-level discounts, set invoice-level discount
-      if (totalItemDiscount > 0) {
-        console.log(`[AutoInvoice] Creating invoice with discounts: ${totalItemDiscount}`);
+      // If there are discounts, set invoice-level discount
+      if (totalDiscount > 0) {
+        console.log(`[AutoInvoice] Creating invoice with discounts: ${totalDiscount}`);
         const invoice = await Invoice.create({
           invoiceNumber,
           jobId,
@@ -331,8 +339,8 @@ const autoCreateInvoice = async (jobId, tenantId) => {
           subtotal,
           taxRate: 0,
           discountType: 'fixed',
-          discountValue: totalItemDiscount,
-          discountAmount: totalItemDiscount,
+          discountValue: totalDiscount,
+          discountAmount: totalDiscount,
           discountReason: items.find(i => i.discountReason)?.discountReason || 'Item discounts applied',
           paymentTerms: 'Net 30',
           items,

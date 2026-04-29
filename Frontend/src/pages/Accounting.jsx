@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
 // Removed Ant Design imports - using shadcn/ui only
-import { Plus, RefreshCw, Eye, Loader2, MinusCircle, BookOpen, FileText, Calculator, TrendingUp, Trash2, PlusCircle } from 'lucide-react';
+import { Plus, RefreshCw, Eye, Loader2, MinusCircle, BookOpen, FileText, Calculator, TrendingUp, Trash2, PlusCircle, Repeat, Play, Pause, CalendarClock } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import dayjs from 'dayjs';
 import accountingService from '../services/accountingService';
@@ -64,6 +64,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Switch } from '@/components/ui/switch';
 
 const accountSchema = z.object({
   code: z.string().min(1, 'Account code is required'),
@@ -95,6 +96,23 @@ const journalEntrySchema = z.object({
 }, {
   message: 'Total debits must equal total credits',
   path: ['lines'],
+});
+
+const recurringJournalSchema = z.object({
+  name: z.string().min(1, 'Name is required'),
+  description: z.string().optional(),
+  templateType: z.enum(['recurring_journal', 'prepaid_expense']),
+  frequency: z.enum(['weekly', 'monthly', 'quarterly', 'yearly']),
+  interval: z.coerce.number().min(1, 'Interval must be at least 1'),
+  amount: z.coerce.number().positive('Amount must be greater than zero'),
+  debitAccountId: z.string().min(1, 'Debit account is required'),
+  creditAccountId: z.string().min(1, 'Credit account is required'),
+  startDate: z.date({ required_error: 'Start date is required' }),
+  endDate: z.date().optional().nullable(),
+  autoPost: z.boolean().default(true),
+}).refine((data) => data.debitAccountId !== data.creditAccountId, {
+  message: 'Debit and credit accounts must be different',
+  path: ['creditAccountId'],
 });
 
 const accountTypeLabels = {
@@ -150,6 +168,8 @@ const Accounting = () => {
   const [selectedJournalEntry, setSelectedJournalEntry] = useState(null);
   const [journalDrawerVisible, setJournalDrawerVisible] = useState(false);
   const [journalEntryToDelete, setJournalEntryToDelete] = useState(null);
+  const [recurringModalVisible, setRecurringModalVisible] = useState(false);
+  const [recurringToDelete, setRecurringToDelete] = useState(null);
   /** When add-account was opened from journal line dropdown, store line index to set new account on success */
   const addAccountForJournalLineIndexRef = useRef(null);
 
@@ -174,6 +194,23 @@ const Accounting = () => {
     },
   });
 
+  const recurringForm = useForm({
+    resolver: zodResolver(recurringJournalSchema),
+    defaultValues: {
+      name: '',
+      description: '',
+      templateType: 'recurring_journal',
+      frequency: 'monthly',
+      interval: 1,
+      amount: 0,
+      debitAccountId: '',
+      creditAccountId: '',
+      startDate: new Date(),
+      endDate: null,
+      autoPost: true,
+    },
+  });
+
   const { fields: journalFields, append: appendJournalLine, remove: removeJournalLine } = useFieldArray({
     control: journalForm.control,
     name: 'lines',
@@ -194,6 +231,18 @@ const Accounting = () => {
   const trialBalanceQuery = useQuery({
     queryKey: ['trialBalance'],
     queryFn: () => accountingService.getTrialBalance(),
+    enabled: !!activeTenantId,
+  });
+
+  const recurringJournalsQuery = useQuery({
+    queryKey: ['recurringJournals'],
+    queryFn: () => accountingService.getRecurringJournals(),
+    enabled: !!activeTenantId,
+  });
+
+  const recurringRunsQuery = useQuery({
+    queryKey: ['recurringJournalRuns'],
+    queryFn: () => accountingService.getRecurringJournalRuns(),
     enabled: !!activeTenantId,
   });
 
@@ -260,6 +309,71 @@ const Accounting = () => {
     }
   });
 
+  const createRecurringMutation = useMutation({
+    mutationFn: accountingService.createRecurringJournal,
+    onSuccess: () => {
+      showSuccess('Recurring journal created');
+      queryClient.invalidateQueries({ queryKey: ['recurringJournals'] });
+      queryClient.invalidateQueries({ queryKey: ['recurringJournalRuns'] });
+      setRecurringModalVisible(false);
+    },
+    onError: (error) => {
+      showError(error, error?.response?.data?.message || 'Failed to create recurring journal');
+    }
+  });
+
+  const updateRecurringMutation = useMutation({
+    mutationFn: ({ id, payload }) => accountingService.updateRecurringJournal(id, payload),
+    onSuccess: () => {
+      showSuccess('Recurring journal updated');
+      queryClient.invalidateQueries({ queryKey: ['recurringJournals'] });
+    },
+    onError: (error) => {
+      showError(error, error?.response?.data?.message || 'Failed to update recurring journal');
+    }
+  });
+
+  const deleteRecurringMutation = useMutation({
+    mutationFn: accountingService.deleteRecurringJournal,
+    onSuccess: () => {
+      showSuccess('Recurring journal deleted');
+      queryClient.invalidateQueries({ queryKey: ['recurringJournals'] });
+      queryClient.invalidateQueries({ queryKey: ['recurringJournalRuns'] });
+      setRecurringToDelete(null);
+    },
+    onError: (error) => {
+      showError(error, error?.response?.data?.message || 'Failed to delete recurring journal');
+    }
+  });
+
+  const runRecurringNowMutation = useMutation({
+    mutationFn: accountingService.runRecurringJournalNow,
+    onSuccess: () => {
+      showSuccess('Recurring journal run completed');
+      queryClient.invalidateQueries({ queryKey: ['recurringJournals'] });
+      queryClient.invalidateQueries({ queryKey: ['recurringJournalRuns'] });
+      queryClient.invalidateQueries({ queryKey: ['journalEntries'] });
+      queryClient.invalidateQueries({ queryKey: ['trialBalance'] });
+    },
+    onError: (error) => {
+      showError(error, error?.response?.data?.message || 'Failed to run recurring journal');
+    }
+  });
+
+  const runDueMutation = useMutation({
+    mutationFn: accountingService.runDueRecurringJournals,
+    onSuccess: () => {
+      showSuccess('Due recurring journals processed');
+      queryClient.invalidateQueries({ queryKey: ['recurringJournals'] });
+      queryClient.invalidateQueries({ queryKey: ['recurringJournalRuns'] });
+      queryClient.invalidateQueries({ queryKey: ['journalEntries'] });
+      queryClient.invalidateQueries({ queryKey: ['trialBalance'] });
+    },
+    onError: (error) => {
+      showError(error, error?.response?.data?.message || 'Failed to run due recurring journals');
+    }
+  });
+
   const handleViewAccount = (account) => {
     setSelectedAccount(account);
     setAccountDrawerVisible(true);
@@ -274,6 +388,10 @@ const Accounting = () => {
     journalForm.reset();
     setJournalModalVisible(true);
   };
+  const handleOpenRecurringModal = () => {
+    recurringForm.reset();
+    setRecurringModalVisible(true);
+  };
 
   const onSubmitAccount = (data) => {
     createAccountMutation.mutate(data);
@@ -281,6 +399,13 @@ const Accounting = () => {
 
   const onSubmitJournal = (data) => {
     createJournalMutation.mutate(data);
+  };
+  const onSubmitRecurring = (data) => {
+    createRecurringMutation.mutate({
+      ...data,
+      startDate: dayjs(data.startDate).format('YYYY-MM-DD'),
+      endDate: data.endDate ? dayjs(data.endDate).format('YYYY-MM-DD') : null,
+    });
   };
 
   // Table columns for DashboardTable
@@ -518,26 +643,96 @@ const Accounting = () => {
     }
   ], []);
 
+  const recurringTableColumns = useMemo(() => [
+    {
+      key: 'name',
+      label: 'Name',
+      render: (_, record) => (
+        <div>
+          <div className="font-medium text-foreground">{record?.name || '—'}</div>
+          <div className="text-xs text-muted-foreground">{record?.templateType === 'prepaid_expense' ? 'Prepaid expense' : 'Recurring journal'}</div>
+        </div>
+      )
+    },
+    {
+      key: 'schedule',
+      label: 'Schedule',
+      render: (_, record) => <span className="text-foreground capitalize">{record?.frequency} every {record?.interval || 1}</span>
+    },
+    {
+      key: 'amount',
+      label: 'Amount',
+      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.amount || 0).toFixed(2)}</span>
+    },
+    {
+      key: 'nextRunDate',
+      label: 'Next Run',
+      render: (_, record) => <span className="text-foreground">{record?.nextRunDate ? dayjs(record.nextRunDate).format('MMM DD, YYYY') : '—'}</span>
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      render: (_, record) => <StatusChip status={record?.status || 'active'} />
+    },
+    {
+      key: 'actions',
+      label: 'Actions',
+      render: (_, record) => (
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => runRecurringNowMutation.mutate(record.id)}
+            disabled={record?.status !== 'active' || runRecurringNowMutation.isLoading}
+          >
+            <Play className="h-4 w-4 mr-2" />
+            Run now
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => updateRecurringMutation.mutate({ id: record.id, payload: { status: record.status === 'active' ? 'paused' : 'active' } })}
+            disabled={updateRecurringMutation.isLoading || record?.status === 'completed'}
+          >
+            {record?.status === 'active' ? <Pause className="h-4 w-4 mr-2" /> : <Play className="h-4 w-4 mr-2" />}
+            {record?.status === 'active' ? 'Pause' : 'Resume'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive hover:text-destructive"
+            onClick={() => setRecurringToDelete(record)}
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete
+          </Button>
+        </div>
+      )
+    }
+  ], [runRecurringNowMutation, updateRecurringMutation]);
+
   const accounts = accountsQuery.data?.data || [];
   const journalEntries = journalQuery.data?.data || [];
   const trialBalance = trialBalanceQuery.data?.data || [];
+  const recurringJournals = recurringJournalsQuery.data?.data || [];
+  const recurringRuns = recurringRunsQuery.data?.data || [];
 
   // Calculate summary stats
   const summaryStats = useMemo(() => {
     const totalAccounts = accounts.length;
     const journalEntriesCount = journalEntries.length;
     const activeAccounts = accounts.filter(a => a.isActive).length;
-    const postedEntries = journalEntries.filter(e => e.status === 'posted').length;
+    const activeRecurring = recurringJournals.filter((r) => r.status === 'active').length;
     
     return {
       totals: {
         totalAccounts,
         journalEntries: journalEntriesCount,
         activeAccounts,
-        postedEntries
+        activeRecurring
       }
     };
-  }, [accounts, journalEntries]);
+  }, [accounts, journalEntries, recurringJournals]);
 
   const accountOptions = accounts.map((account) => ({
     label: `${account.code} — ${account.name}`,
@@ -565,6 +760,8 @@ const Accounting = () => {
                 queryClient.invalidateQueries({ queryKey: ['accounts'] });
                 queryClient.invalidateQueries({ queryKey: ['journalEntries'] });
                 queryClient.invalidateQueries({ queryKey: ['trialBalance'] });
+                queryClient.invalidateQueries({ queryKey: ['recurringJournals'] });
+                queryClient.invalidateQueries({ queryKey: ['recurringJournalRuns'] });
               }} size={isMobile ? "icon" : "default"}>
                 <RefreshCw className="h-4 w-4" />
               </Button>
@@ -582,12 +779,34 @@ const Accounting = () => {
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
+              <Button variant="secondary" onClick={handleOpenRecurringModal}>
+                <Repeat className="h-4 w-4 mr-2" />
+                New Recurring
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Create recurring/prepaid schedule</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
               <Button onClick={handleOpenJournalModal}>
                 <Plus className="h-4 w-4 mr-2" />
                 New Journal Entry
               </Button>
             </TooltipTrigger>
             <TooltipContent>Create a new journal entry</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                onClick={() => runDueMutation.mutate({})}
+                disabled={runDueMutation.isLoading}
+              >
+                {runDueMutation.isLoading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CalendarClock className="h-4 w-4 mr-2" />}
+                Run Due
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Run all due recurring journals now</TooltipContent>
           </Tooltip>
         </div>
       </div>
@@ -618,10 +837,10 @@ const Accounting = () => {
           iconColor="#84cc16"
         />
         <DashboardStatsCard
-          tooltip="Journal entries posted to ledger"
-          title="Posted Entries"
-          value={summaryStats?.totals?.postedEntries || 0}
-          icon={Calculator}
+          tooltip="Active recurring and prepaid schedules"
+          title="Active Recurring"
+          value={summaryStats?.totals?.activeRecurring || 0}
+          icon={Repeat}
           iconBgColor="rgba(249, 115, 22, 0.1)"
           iconColor="#f97316"
         />
@@ -632,6 +851,7 @@ const Accounting = () => {
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           <TabsTrigger value="journal">Journal</TabsTrigger>
           <TabsTrigger value="trial">Trial Balance</TabsTrigger>
+          <TabsTrigger value="recurring">Recurring & Prepaid</TabsTrigger>
         </TabsList>
         <TabsContent value="accounts">
           <DashboardTable
@@ -694,6 +914,36 @@ const Accounting = () => {
                     <strong className="text-foreground">₵ {parseFloat(totals.credit || 0).toFixed(2)}</strong>
                     <span className="text-foreground">—</span>
                   </div>
+                </div>
+              </div>
+            )}
+          </Card>
+        </TabsContent>
+        <TabsContent value="recurring">
+          <Card>
+            <DashboardTable
+              data={recurringJournals}
+              columns={recurringTableColumns}
+              loading={recurringJournalsQuery.isLoading}
+              title={null}
+              emptyIcon={<Repeat className="h-12 w-12 text-muted-foreground" />}
+              emptyDescription="No recurring schedules yet. Add recurring journals or prepaid amortization schedules."
+              pageSize={10}
+              onPageChange={() => {}}
+              externalPagination={{
+                current: 1,
+                total: recurringJournals.length
+              }}
+            />
+            {recurringRuns.length > 0 && (
+              <div className="border-t p-4 space-y-2">
+                <h4 className="font-medium text-foreground">Recent Runs</h4>
+                <div className="space-y-1">
+                  {recurringRuns.slice(0, 6).map((run) => (
+                    <div key={run.id} className="text-sm text-muted-foreground">
+                      {dayjs(run.runDate).format('MMM DD, YYYY')} — {run.status} {run.journalEntryId ? '(journal created)' : ''}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -1222,6 +1472,212 @@ const Accounting = () => {
           </Form>
       </MobileFormDialog>
 
+      <MobileFormDialog
+        open={recurringModalVisible}
+        onOpenChange={(open) => {
+          if (!open) setRecurringModalVisible(false);
+        }}
+        title="New Recurring / Prepaid Journal"
+        description="Automate fixed journals or prepaid amortization"
+        footer={
+          <>
+            <Button type="button" variant="outline" onClick={() => setRecurringModalVisible(false)}>
+              Cancel
+            </Button>
+            <Button form="recurring-form" type="submit" disabled={createRecurringMutation.isLoading}>
+              {createRecurringMutation.isLoading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Create Schedule
+            </Button>
+          </>
+        }
+      >
+        <Form {...recurringForm}>
+          <form id="recurring-form" onSubmit={recurringForm.handleSubmit(onSubmitRecurring)} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField
+                control={recurringForm.control}
+                name="name"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Name</FormLabel>
+                    <FormControl>
+                      <Input placeholder="Monthly Hosting Amortization" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={recurringForm.control}
+                name="templateType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Type</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger><SelectValue placeholder="Select type" /></SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="recurring_journal">Recurring Journal</SelectItem>
+                        <SelectItem value="prepaid_expense">Prepaid Expense</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            <FormField
+              control={recurringForm.control}
+              name="description"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Description (optional)</FormLabel>
+                  <FormControl>
+                    <Textarea rows={2} placeholder="What this automated entry is for" {...field} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <FormField
+                control={recurringForm.control}
+                name="frequency"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Frequency</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger><SelectValue placeholder="Select frequency" /></SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                        <SelectItem value="quarterly">Quarterly</SelectItem>
+                        <SelectItem value="yearly">Yearly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={recurringForm.control}
+                name="interval"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Every N periods</FormLabel>
+                    <FormControl>
+                      <Input type="number" min={1} step="1" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={recurringForm.control}
+                name="amount"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Amount</FormLabel>
+                    <FormControl>
+                      <Input type="number" min={0} step="0.01" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField
+                control={recurringForm.control}
+                name="debitAccountId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Debit Account</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger><SelectValue placeholder="Select debit account" /></SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {accountOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={recurringForm.control}
+                name="creditAccountId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Credit Account</FormLabel>
+                    <Select value={field.value} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger><SelectValue placeholder="Select credit account" /></SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {accountOptions.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField
+                control={recurringForm.control}
+                name="startDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Start Date</FormLabel>
+                    <FormControl>
+                      <DatePicker date={field.value} onSelect={(date) => field.onChange(date)} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={recurringForm.control}
+                name="endDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>End Date (optional)</FormLabel>
+                    <FormControl>
+                      <DatePicker date={field.value || undefined} onSelect={(date) => field.onChange(date || null)} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            </div>
+            <FormField
+              control={recurringForm.control}
+              name="autoPost"
+              render={({ field }) => (
+                <FormItem className="flex items-center justify-between border rounded-md p-3">
+                  <div>
+                    <FormLabel>Auto-post journals</FormLabel>
+                    <p className="text-xs text-muted-foreground">Turn off to create draft journals instead.</p>
+                  </div>
+                  <FormControl>
+                    <Switch checked={field.value} onCheckedChange={field.onChange} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+          </form>
+        </Form>
+      </MobileFormDialog>
+
       <AlertDialog open={!!journalEntryToDelete} onOpenChange={(open) => !open && setJournalEntryToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -1235,6 +1691,26 @@ const Accounting = () => {
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => journalEntryToDelete && deleteJournalEntryMutation.mutate(journalEntryToDelete.id)}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!recurringToDelete} onOpenChange={(open) => !open && setRecurringToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete recurring journal?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove the schedule. Existing journal entries already created will remain.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => recurringToDelete && deleteRecurringMutation.mutate(recurringToDelete.id)}
             >
               Delete
             </AlertDialogAction>

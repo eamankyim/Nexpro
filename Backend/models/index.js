@@ -38,6 +38,8 @@ const Account = require('./Account');
 const JournalEntry = require('./JournalEntry');
 const JournalEntryLine = require('./JournalEntryLine');
 const AccountBalance = require('./AccountBalance');
+const RecurringJournal = require('./RecurringJournal');
+const RecurringJournalRun = require('./RecurringJournalRun');
 const SubscriptionPlan = require('./SubscriptionPlan');
 const CustomDropdownOption = require('./CustomDropdownOption');
 const SabitoTenantMapping = require('./SabitoTenantMapping');
@@ -149,6 +151,17 @@ JournalEntryLine.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
 Tenant.hasMany(AccountBalance, { foreignKey: 'tenantId', as: 'accountBalances' });
 AccountBalance.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+Tenant.hasMany(RecurringJournal, { foreignKey: 'tenantId', as: 'recurringJournals' });
+RecurringJournal.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Tenant.hasMany(RecurringJournalRun, { foreignKey: 'tenantId', as: 'recurringJournalRuns' });
+RecurringJournalRun.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+RecurringJournal.belongsTo(Account, { foreignKey: 'debitAccountId', as: 'debitAccount' });
+RecurringJournal.belongsTo(Account, { foreignKey: 'creditAccountId', as: 'creditAccount' });
+RecurringJournal.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+RecurringJournal.hasMany(RecurringJournalRun, { foreignKey: 'recurringJournalId', as: 'runs' });
+RecurringJournalRun.belongsTo(RecurringJournal, { foreignKey: 'recurringJournalId', as: 'recurringJournal' });
+RecurringJournalRun.belongsTo(JournalEntry, { foreignKey: 'journalEntryId', as: 'journalEntry' });
 
 Tenant.hasMany(PricingTemplate, { foreignKey: 'tenantId', as: 'pricingTemplates' });
 PricingTemplate.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -578,6 +591,8 @@ module.exports = {
   JournalEntry,
   JournalEntryLine,
   AccountBalance,
+  RecurringJournal,
+  RecurringJournalRun,
   Tenant,
   UserTenant,
   SubscriptionPlan,

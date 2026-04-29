@@ -48,6 +48,7 @@ const addDeliveryStatusToJobsAndSales = require('./add-delivery-status-to-jobs-a
 const addDeliveryRequiredToJobs = require('./add-delivery-required-to-jobs');
 const addSalesTenantSoldByCreatedIndex = require('./add-sales-tenant-soldby-created-index');
 const addQueryPathIndexesV2 = require('./add-query-path-indexes-v2');
+const createRecurringJournals = require('./create-recurring-journals');
 
 const migrate = async () => {
   try {
@@ -192,6 +193,9 @@ const migrate = async () => {
 
     // Additional endpoint-driven indexes (sales/invoices/jobs)
     await addQueryPathIndexesV2();
+
+    // Recurring journals and prepaid expense schedules
+    await createRecurringJournals({ closeConnection: false });
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

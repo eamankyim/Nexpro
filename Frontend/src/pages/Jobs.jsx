@@ -1466,14 +1466,13 @@ useEffect(() => {
         }, 0);
       }
 
-      // Auto-generate job title from items if not provided
+      // Auto-generate job title from the first item only if not provided
       if (!values.title && values.items && values.items.length > 0) {
         const customer = customersData.find(c => c.id === values.customerId);
         const customerName = customer?.name || customer?.company || 'Customer';
-        const categories = values.items.map(item => item.category).filter(Boolean);
-        const uniqueCategories = [...new Set(categories)];
-        values.title = uniqueCategories.length > 0 
-          ? `${uniqueCategories.join(', ')} for ${customerName}`
+        const firstItemCategory = values.items[0]?.category?.trim();
+        values.title = firstItemCategory
+          ? `${firstItemCategory} for ${customerName}`
           : `Job for ${customerName}`;
       }
 

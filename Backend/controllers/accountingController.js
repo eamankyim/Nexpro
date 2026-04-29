@@ -7,6 +7,7 @@ const {
   User
 } = require('../models');
 const accountingService = require('../services/accountingService');
+const recurringJournalService = require('../services/recurringJournalService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'income', 'expense', 'cogs', 'other'];
@@ -370,6 +371,98 @@ exports.getAccountSummary = async (req, res, next) => {
     });
 
     res.status(200).json({ success: true, data: totals });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getRecurringJournals = async (req, res, next) => {
+  try {
+    const data = await recurringJournalService.listRecurringJournals(req.tenantId);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.createRecurringJournal = async (req, res, next) => {
+  try {
+    const payload = sanitizePayload(req.body || {});
+    const data = await recurringJournalService.createRecurringJournal({
+      tenantId: req.tenantId,
+      userId: req.user?.id || null,
+      ...payload
+    });
+    res.status(201).json({ success: true, data });
+  } catch (error) {
+    if (error.message?.includes('required') || error.message?.includes('Invalid') || error.message?.includes('greater than')) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    next(error);
+  }
+};
+
+exports.updateRecurringJournal = async (req, res, next) => {
+  try {
+    const payload = sanitizePayload(req.body || {});
+    const data = await recurringJournalService.updateRecurringJournal(req.tenantId, req.params.id, payload);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    if (error.message?.includes('not found')) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    if (error.message?.includes('Invalid') || error.message?.includes('greater than') || error.message?.includes('before')) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    next(error);
+  }
+};
+
+exports.deleteRecurringJournal = async (req, res, next) => {
+  try {
+    await recurringJournalService.deleteRecurringJournal(req.tenantId, req.params.id);
+    res.status(200).json({ success: true, message: 'Recurring journal deleted' });
+  } catch (error) {
+    if (error.message?.includes('not found')) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    next(error);
+  }
+};
+
+exports.runRecurringJournalNow = async (req, res, next) => {
+  try {
+    const data = await recurringJournalService.runSingleScheduleNow(req.tenantId, req.params.id, req.user?.id || null);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    if (error.message?.includes('not found')) {
+      return res.status(404).json({ success: false, message: error.message });
+    }
+    if (error.message?.includes('active')) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    next(error);
+  }
+};
+
+exports.runDueRecurringJournals = async (req, res, next) => {
+  try {
+    const runDate = req.body?.runDate || null;
+    const data = await recurringJournalService.runDueSchedules({
+      tenantId: req.tenantId,
+      userId: req.user?.id || null,
+      runDate
+    });
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.getRecurringJournalRuns = async (req, res, next) => {
+  try {
+    const data = await recurringJournalService.getRecurringRuns(req.tenantId, req.query.recurringJournalId || null);
+    res.status(200).json({ success: true, data });
   } catch (error) {
     next(error);
   }

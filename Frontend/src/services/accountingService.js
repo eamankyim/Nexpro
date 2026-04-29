@@ -44,6 +44,18 @@ const getTrialBalance = async (params = {}) => {
 
 const getAccountSummary = async () => api.get('/accounting/accounts/summary');
 
+const getRecurringJournals = async () => api.get('/accounting/recurring-journals');
+const createRecurringJournal = async (payload) => api.post('/accounting/recurring-journals', payload);
+const updateRecurringJournal = async (id, payload) => api.put(`/accounting/recurring-journals/${id}`, payload);
+const deleteRecurringJournal = async (id) => api.delete(`/accounting/recurring-journals/${id}`);
+const runRecurringJournalNow = async (id) => api.post(`/accounting/recurring-journals/${id}/run-now`);
+const runDueRecurringJournals = async (payload = {}) => api.post('/accounting/recurring-journals/run-due', payload);
+const getRecurringJournalRuns = async (params = {}) => {
+  const query = new URLSearchParams(params);
+  const queryString = query.toString();
+  return api.get(queryString ? `/accounting/recurring-journals-runs?${queryString}` : '/accounting/recurring-journals-runs');
+};
+
 export default {
   getAccounts,
   createAccount,
@@ -55,7 +67,14 @@ export default {
   postJournalEntry,
   deleteJournalEntry,
   getTrialBalance,
-  getAccountSummary
+  getAccountSummary,
+  getRecurringJournals,
+  createRecurringJournal,
+  updateRecurringJournal,
+  deleteRecurringJournal,
+  runRecurringJournalNow,
+  runDueRecurringJournals,
+  getRecurringJournalRuns
 };
 
 
