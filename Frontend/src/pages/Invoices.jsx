@@ -9,6 +9,7 @@ import invoiceService from '../services/invoiceService';
 import offlineQueueService from '../services/offlineQueueService';
 import settingsService from '../services/settingsService';
 import customerService from '../services/customerService';
+import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
 import ActionColumn from '../components/ActionColumn';
 import DashboardTable from '../components/DashboardTable';
@@ -103,6 +104,7 @@ const Invoices = () => {
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
   const isStudioLike = STUDIO_LIKE_TYPES.includes(businessType);
+  const canCreateManualInvoice = businessType !== 'shop';
   const [tableViewMode, setTableViewMode] = useState('table');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [markingAsPaid, setMarkingAsPaid] = useState(false);
@@ -119,6 +121,7 @@ const Invoices = () => {
     paymentTerms: 'Net 30',
     notes: '',
   });
+  const [lineItemDescriptionOptions, setLineItemDescriptionOptions] = useState([]);
 
   // Organization branding for printable invoices
   const { data: organizationData } = useQuery({
@@ -213,6 +216,38 @@ const Invoices = () => {
       showError(error, 'Failed to load customers');
     }
   }, []);
+
+  const loadLineItemDescriptionOptions = useCallback(async () => {
+    if (!activeTenant?.id) return;
+    try {
+      const options = await customDropdownService.getCustomOptions('line_item_description');
+      setLineItemDescriptionOptions(Array.isArray(options) ? options : []);
+    } catch (error) {
+      console.error('Failed to load line item description options:', error);
+      setLineItemDescriptionOptions([]);
+    }
+  }, [activeTenant?.id]);
+
+  useEffect(() => {
+    loadLineItemDescriptionOptions();
+  }, [loadLineItemDescriptionOptions]);
+
+  const persistLineItemDescriptions = useCallback(async (items = []) => {
+    const uniqueDescriptions = [...new Set(
+      (items || [])
+        .map((item) => String(item?.description || '').trim())
+        .filter(Boolean)
+    )];
+
+    if (uniqueDescriptions.length === 0) return;
+
+    await Promise.allSettled(
+      uniqueDescriptions.map((description) =>
+        customDropdownService.saveCustomOption('line_item_description', description, description)
+      )
+    );
+    await loadLineItemDescriptionOptions();
+  }, [loadLineItemDescriptionOptions]);
 
   const resetCreateInvoiceForm = useCallback(() => {
     setNewInvoice({
@@ -322,6 +357,7 @@ const Invoices = () => {
         paymentTerms: newInvoice.paymentTerms || 'Net 30',
         notes: newInvoice.notes?.trim() || undefined,
       });
+      await persistLineItemDescriptions(normalizedItems);
       showSuccess('Invoice created');
       setCreateModalVisible(false);
       setRefreshTrigger((prev) => prev + 1);
@@ -331,7 +367,7 @@ const Invoices = () => {
     } finally {
       setCreatingInvoice(false);
     }
-  }, [newInvoice, resetCreateInvoiceForm]);
+  }, [newInvoice, resetCreateInvoiceForm, persistLineItemDescriptions]);
 
   const handleView = (invoice) => {
     setViewingInvoice(invoice);
@@ -713,10 +749,12 @@ const Invoices = () => {
               <SelectItem value="cancelled">Cancelled</SelectItem>
             </SelectContent>
           </Select>
-          <Button onClick={handleOpenCreateModal}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Invoice
-          </Button>
+          {canCreateManualInvoice && (
+            <Button onClick={handleOpenCreateModal}>
+              <Plus className="h-4 w-4 mr-2" />
+              New Invoice
+            </Button>
+          )}
         </div>
       </div>
 
@@ -946,6 +984,7 @@ const Invoices = () => {
                         value={item.description}
                         onChange={(e) => handleInvoiceItemChange(index, 'description', e.target.value)}
                         placeholder="Item description"
+                        list="line-item-description-options"
                       />
                     </div>
                     <div className="grid grid-cols-3 gap-2 md:gap-4">
@@ -1038,6 +1077,13 @@ const Invoices = () => {
               <div className="flex justify-between text-sm"><span>Total Discount</span><span>-₵ {createInvoiceDiscountTotal.toFixed(2)}</span></div>
               <div className="flex justify-between font-semibold"><span>Grand Total</span><span>₵ {createInvoiceGrandTotal.toFixed(2)}</span></div>
             </div>
+            <datalist id="line-item-description-options">
+              {lineItemDescriptionOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label || option.value}
+                </option>
+              ))}
+            </datalist>
           </div>
         </div>
       </MobileFormDialog>

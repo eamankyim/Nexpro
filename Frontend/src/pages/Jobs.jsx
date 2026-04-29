@@ -485,6 +485,16 @@ const Jobs = () => {
     cacheTime: 30 * 60 * 1000, // 30 minutes
   });
 
+  const { data: lineItemDescriptionOptions = [] } = useQuery({
+    queryKey: ['customLineItemDescriptions', activeTenantId],
+    queryFn: async () => {
+      return await customDropdownService.getCustomOptions('line_item_description') || [];
+    },
+    enabled: !!activeTenantId,
+    staleTime: 10 * 60 * 1000,
+    cacheTime: 30 * 60 * 1000,
+  });
+
   const { data: jobItemCategoriesApi = [] } = useQuery({
     queryKey: ['jobs', 'categories', activeTenantId],
     queryFn: () => jobService.getCategories(),
@@ -1515,6 +1525,20 @@ useEffect(() => {
         return;
       }
 
+      const persistLineItemDescriptions = async () => {
+        const uniqueDescriptions = [...new Set(
+          cleanedItems
+            .map((item) => String(item?.description || '').trim())
+            .filter(Boolean)
+        )];
+        if (uniqueDescriptions.length === 0) return;
+        await Promise.allSettled(
+          uniqueDescriptions.map((description) =>
+            customDropdownService.saveCustomOption('line_item_description', description, description)
+          )
+        );
+      };
+
       // Build job data, only including valid fields
       const jobData = {
         customerId: values.customerId,
@@ -1539,10 +1563,12 @@ useEffect(() => {
       if (editingJobId) {
         // Update existing job
         response = await jobService.update(editingJobId, jobData);
+        await persistLineItemDescriptions();
         showSuccess('Job updated successfully');
       } else {
         // Create new job
         response = await jobService.create(jobData);
+        await persistLineItemDescriptions();
         
         // Check if invoice was auto-generated
         if (response.invoice) {
@@ -2720,6 +2746,7 @@ useEffect(() => {
                               placeholder={getItemDescriptionPlaceholder(
                                 (form.getValues('items') || [])[index]?.category
                               )}
+                              list="line-item-description-options"
                               {...field}
                             />
                           </FormControl>
@@ -2885,6 +2912,13 @@ useEffect(() => {
                   <Plus className="h-4 w-4 mr-2" />
                     Add Job Item
                   </Button>
+                  <datalist id="line-item-description-options">
+                    {lineItemDescriptionOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label || option.value}
+                      </option>
+                    ))}
+                  </datalist>
               </div>
 
               {(() => {

@@ -32,6 +32,7 @@ import customerService from '../services/customerService';
 import productService from '../services/productService';
 import settingsService from '../services/settingsService';
 import userService from '../services/userService';
+import customDropdownService from '../services/customDropdownService';
 import { useQuery } from '@tanstack/react-query';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -206,6 +207,7 @@ const Quotes = () => {
   const [convertJobModalOpen, setConvertJobModalOpen] = useState(false);
   const [quoteToConvert, setQuoteToConvert] = useState(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [lineItemDescriptionOptions, setLineItemDescriptionOptions] = useState([]);
 
   // Organization branding for printable quotes
   const { data: organizationData } = useQuery({
@@ -284,6 +286,38 @@ const Quotes = () => {
       fetchCustomers();
     }
   }, [activeTenantId, fetchCustomers]);
+
+  const loadLineItemDescriptionOptions = useCallback(async () => {
+    if (!activeTenantId) return;
+    try {
+      const options = await customDropdownService.getCustomOptions('line_item_description');
+      setLineItemDescriptionOptions(Array.isArray(options) ? options : []);
+    } catch (error) {
+      console.error('Failed to load line item description options:', error);
+      setLineItemDescriptionOptions([]);
+    }
+  }, [activeTenantId]);
+
+  useEffect(() => {
+    loadLineItemDescriptionOptions();
+  }, [loadLineItemDescriptionOptions]);
+
+  const persistLineItemDescriptions = useCallback(async (items = []) => {
+    const uniqueDescriptions = [...new Set(
+      (items || [])
+        .map((item) => String(item?.description || '').trim())
+        .filter(Boolean)
+    )];
+
+    if (uniqueDescriptions.length === 0) return;
+
+    await Promise.allSettled(
+      uniqueDescriptions.map((description) =>
+        customDropdownService.saveCustomOption('line_item_description', description, description)
+      )
+    );
+    await loadLineItemDescriptionOptions();
+  }, [loadLineItemDescriptionOptions]);
 
   const handleAddCustomerSubmit = useCallback(async (values) => {
     setAddingCustomer(true);
@@ -647,9 +681,11 @@ const Quotes = () => {
         showSuccess('Saved offline. Will sync when connected.');
       } else if (editingQuote) {
         await quoteService.update(editingQuote.id, payload);
+        await persistLineItemDescriptions(payload.items);
         showSuccess('Quote updated successfully');
       } else {
         const createRes = await quoteService.create(payload);
+        await persistLineItemDescriptions(payload.items);
         showSuccess('Quote created successfully');
         const delivery = createRes?.data?.delivery;
         if (delivery) {
@@ -1591,7 +1627,7 @@ const Quotes = () => {
                         <FormItem>
                           <FormLabel>Description</FormLabel>
                           <FormControl>
-                            <Input {...field} placeholder="Item description" />
+                            <Input {...field} placeholder="Item description" list="line-item-description-options" />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -1770,6 +1806,14 @@ const Quotes = () => {
                   />
                 </>
               )}
+
+              <datalist id="line-item-description-options">
+                {lineItemDescriptionOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label || option.value}
+                  </option>
+                ))}
+              </datalist>
 
           </form>
         </Form>
