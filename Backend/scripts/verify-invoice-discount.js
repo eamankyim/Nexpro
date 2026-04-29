@@ -1,4 +1,5 @@
 require('dotenv').config();
+const { Op } = require('sequelize');
 
 const { sequelize } = require('../config/database');
 const { Invoice, User, UserTenant, JournalEntry, JournalEntryLine, Account, Job } = require('../models');
@@ -146,7 +147,7 @@ async function run() {
     const revenueJournals = await JournalEntry.findAll({
       where: {
         tenantId,
-        source: 'invoice_revenue',
+        source: { [Op.in]: ['invoice_revenue', 'invoice_revenue_reconcile'] },
         sourceId: invoice.id
       },
       include: [
@@ -160,7 +161,7 @@ async function run() {
       order: [['createdAt', 'ASC']]
     });
 
-    const postedRevenueJournal = revenueJournals.find((entry) => entry.status === 'posted');
+    const postedRevenueJournals = revenueJournals.filter((entry) => entry.status === 'posted');
     let accountingStatus = 'not_found';
     let expectedRevenue = taxableBase;
     let expectedArDebit = expectedTotal;
@@ -172,14 +173,16 @@ async function run() {
     let revenueAccount = null;
     let vatAccount = null;
 
-    if (postedRevenueJournal) {
-      for (const line of postedRevenueJournal.lines || []) {
-        const code = line.account?.code;
-        const debit = toNumber(line.debit);
-        const credit = toNumber(line.credit);
-        if (code === codes.accountsReceivable) actualArDebit += debit;
-        if (code === codes.revenue) actualRevenueCredit += credit;
-        if (code === codes.vatPayable) actualVatCredit += credit;
+    if (postedRevenueJournals.length > 0) {
+      for (const journal of postedRevenueJournals) {
+        for (const line of journal.lines || []) {
+          const code = line.account?.code;
+          const debit = toNumber(line.debit);
+          const credit = toNumber(line.credit);
+          if (code === codes.accountsReceivable) actualArDebit += debit - credit;
+          if (code === codes.revenue) actualRevenueCredit += credit - debit;
+          if (code === codes.vatPayable) actualVatCredit += credit - debit;
+        }
       }
 
       const isArOk = Math.abs(actualArDebit - expectedArDebit) < 0.01;
@@ -247,8 +250,9 @@ async function run() {
       console.log(`Expected job.finalPrice: ${expectedJobFinalPrice.toFixed(2)}`);
       console.log(`Delta: ${jobFinalPriceDelta.toFixed(2)} | Status: ${jobStatus}`);
     }
-    console.log('\n=== Accounting Verification (invoice_revenue journal) ===');
+    console.log('\n=== Accounting Verification (posted net across invoice_revenue + invoice_revenue_reconcile) ===');
     console.log(`Revenue journal status: ${accountingStatus}`);
+    console.log(`Posted revenue journals found: ${postedRevenueJournals.length}`);
     console.log(`Expected AR debit: ${expectedArDebit.toFixed(2)} | Actual AR debit: ${actualArDebit.toFixed(2)} | Delta: ${arDelta.toFixed(2)}`);
     console.log(`Expected Revenue credit: ${expectedRevenue.toFixed(2)} | Actual Revenue credit: ${actualRevenueCredit.toFixed(2)} | Delta: ${revenueDelta.toFixed(2)}`);
     console.log(`Expected VAT credit: ${expectedVatCredit.toFixed(2)} | Actual VAT credit: ${actualVatCredit.toFixed(2)} | Delta: ${vatDelta.toFixed(2)}`);
