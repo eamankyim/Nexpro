@@ -2698,8 +2698,15 @@ exports.getInvoiceStats = async (req, res, next) => {
       where: { ...baseWhere, status: 'overdue' }
     });
     
+    // Revenue card should reflect cash actually collected, including partial payments.
     const totalRevenue =
-      (await Invoice.sum('totalAmount', { where: { ...baseWhere, status: 'paid' } })) || 0;
+      (await Invoice.sum('amountPaid', {
+        where: {
+          ...baseWhere,
+          status: { [Op.ne]: 'cancelled' },
+          amountPaid: { [Op.gt]: 0 }
+        }
+      })) || 0;
     const outstandingAmount =
       (await Invoice.sum('balance', {
         where: {
