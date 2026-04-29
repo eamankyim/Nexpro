@@ -233,11 +233,11 @@ exports.getDashboardOverview = async (req, res, next) => {
     // 2. Consolidated invoice sums (single query)
     const invoiceStatsQuery = safeQuery(sequelize.query(`
       SELECT 
-        COALESCE(SUM(CASE WHEN status = 'paid' THEN "amountPaid" ELSE 0 END), 0) as "totalRevenue",
-        COALESCE(SUM(CASE WHEN status = 'paid' AND "paidDate" BETWEEN :monthStart AND :monthEnd THEN "amountPaid" ELSE 0 END), 0) as "thisMonthRevenue",
+        COALESCE(SUM(CASE WHEN status != 'cancelled' AND "amountPaid" > 0 THEN "amountPaid" ELSE 0 END), 0) as "totalRevenue",
+        COALESCE(SUM(CASE WHEN status != 'cancelled' AND "amountPaid" > 0 AND COALESCE("paidDate","updatedAt") BETWEEN :monthStart AND :monthEnd THEN "amountPaid" ELSE 0 END), 0) as "thisMonthRevenue",
         COALESCE(SUM(CASE WHEN status NOT IN ('paid', 'cancelled') AND balance > 0 THEN balance ELSE 0 END), 0) as "outstandingBalance"
-        ${hasDateFilter ? `,COALESCE(SUM(CASE WHEN status = 'paid' AND "paidDate" BETWEEN :filterStart AND :filterEnd THEN "amountPaid" ELSE 0 END), 0) as "filteredRevenue"` : ''}
-        ${prevPeriod ? `,COALESCE(SUM(CASE WHEN status = 'paid' AND "paidDate" BETWEEN :prevStart AND :prevEnd THEN "amountPaid" ELSE 0 END), 0) as "prevRevenue"` : ''}
+        ${hasDateFilter ? `,COALESCE(SUM(CASE WHEN status != 'cancelled' AND "amountPaid" > 0 AND COALESCE("paidDate","updatedAt") BETWEEN :filterStart AND :filterEnd THEN "amountPaid" ELSE 0 END), 0) as "filteredRevenue"` : ''}
+        ${prevPeriod ? `,COALESCE(SUM(CASE WHEN status != 'cancelled' AND "amountPaid" > 0 AND COALESCE("paidDate","updatedAt") BETWEEN :prevStart AND :prevEnd THEN "amountPaid" ELSE 0 END), 0) as "prevRevenue"` : ''}
       FROM invoices WHERE "tenantId" = :tenantId
     `, {
       replacements: { 
@@ -679,21 +679,27 @@ exports.getRevenueByMonth = async (req, res, next) => {
 
     const revenueByMonth = await Invoice.findAll({
       attributes: [
-        [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"')), 'month'],
+        [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")')), 'month'],
         [sequelize.fn('SUM', sequelize.col('amountPaid')), 'totalRevenue']
       ],
       where: {
         tenantId,
-        status: 'paid',
-        paidDate: {
-          [Op.between]: [
-            new Date(`${year}-01-01`),
-            new Date(`${year}-12-31`)
-          ]
-        }
+        status: { [Op.ne]: 'cancelled' },
+        amountPaid: { [Op.gt]: 0 },
+        [Op.and]: [
+          sequelize.where(
+            sequelize.fn('COALESCE', sequelize.col('paidDate'), sequelize.col('updatedAt')),
+            {
+              [Op.between]: [
+                new Date(`${year}-01-01`),
+                new Date(`${year}-12-31`)
+              ]
+            }
+          )
+        ]
       },
-      group: [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"'))],
-      order: [[sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"')), 'ASC']]
+      group: [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")'))],
+      order: [[sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")')), 'ASC']]
     });
 
     res.status(200).json({
@@ -764,7 +770,8 @@ exports.getTopCustomers = async (req, res, next) => {
       ],
       where: {
         tenantId,
-        status: 'paid'
+        status: { [Op.ne]: 'cancelled' },
+        amountPaid: { [Op.gt]: 0 }
       },
       include: [{
         model: Customer,
@@ -772,7 +779,7 @@ exports.getTopCustomers = async (req, res, next) => {
         attributes: ['id', 'name', 'company', 'email']
       }],
       group: ['customerId', 'customer.id'],
-      order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']],
+      order: [[sequelize.fn('SUM', sequelize.col('amountPaid')), 'DESC']],
       limit
     });
 

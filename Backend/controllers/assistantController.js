@@ -72,8 +72,14 @@ async function getAssistantContext(tenantId) {
       : Invoice.sum('amountPaid', {
           where: {
             tenantId,
-            status: 'paid',
-            paidDate: { [Op.between]: [firstDayOfMonth, lastDayOfMonth] }
+            status: { [Op.ne]: 'cancelled' },
+            amountPaid: { [Op.gt]: 0 },
+            [Op.and]: [
+              sequelize.where(
+                sequelize.fn('COALESCE', sequelize.col('paidDate'), sequelize.col('updatedAt')),
+                { [Op.between]: [firstDayOfMonth, lastDayOfMonth] }
+              )
+            ]
           }
         }) || 0,
     Expense.sum('amount', {
@@ -93,8 +99,14 @@ async function getAssistantContext(tenantId) {
       : Invoice.sum('amountPaid', {
           where: {
             tenantId,
-            status: 'paid',
-            paidDate: { [Op.between]: [firstDayThreeMonthsAgo, lastDayOfMonth] }
+            status: { [Op.ne]: 'cancelled' },
+            amountPaid: { [Op.gt]: 0 },
+            [Op.and]: [
+              sequelize.where(
+                sequelize.fn('COALESCE', sequelize.col('paidDate'), sequelize.col('updatedAt')),
+                { [Op.between]: [firstDayThreeMonthsAgo, lastDayOfMonth] }
+              )
+            ]
           }
         }) || 0,
     Expense.sum('amount', {

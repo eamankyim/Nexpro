@@ -22,6 +22,25 @@ const hasDateFilter = (dateFilter) => {
   return dateFilter && (Object.keys(dateFilter).length > 0 || dateFilter[Op.between] !== undefined);
 };
 
+const buildCollectedRevenueWhere = (tenantId, dateFilter = null) => {
+  const where = applyTenantFilter(tenantId, {
+    status: { [Op.ne]: 'cancelled' },
+    amountPaid: { [Op.gt]: 0 }
+  });
+
+  if (hasDateFilter(dateFilter)) {
+    const periodFilter = dateFilter[Op.between];
+    where[Op.and] = [
+      sequelize.where(
+        sequelize.fn('COALESCE', sequelize.col('paidDate'), sequelize.col('updatedAt')),
+        { [Op.between]: periodFilter }
+      )
+    ];
+  }
+
+  return where;
+};
+
 // @desc    Get revenue report
 // @route   GET /api/reports/revenue
 // @access  Private
@@ -46,32 +65,29 @@ exports.getRevenueReport = async (req, res, next) => {
     }
 
     const hasDateFilterValue = hasDateFilter(dateFilter);
-    const revWhere = applyTenantFilter(req.tenantId, {
-      status: 'paid',
-      ...(hasDateFilterValue && { paidDate: dateFilter })
-    });
+    const revWhere = buildCollectedRevenueWhere(req.tenantId, dateFilter);
 
     const getRevenueByPeriod = () => {
       if (groupBy === 'hour') {
         return sequelize.query(
-          `SELECT FLOOR(EXTRACT(HOUR FROM "paidDate")/2)*2 as "hour", SUM("amountPaid") as "totalRevenue", COUNT("id") as "count" FROM "invoices" WHERE "tenantId"=:tenantId AND status='paid' ${hasDateFilterValue ? 'AND "paidDate" BETWEEN :startDate AND :endDate' : ''} GROUP BY 1 ORDER BY 1`,
+          `SELECT FLOOR(EXTRACT(HOUR FROM COALESCE("paidDate", "updatedAt"))/2)*2 as "hour", SUM("amountPaid") as "totalRevenue", COUNT("id") as "count" FROM "invoices" WHERE "tenantId"=:tenantId AND status!='cancelled' AND "amountPaid" > 0 ${hasDateFilterValue ? 'AND COALESCE("paidDate", "updatedAt") BETWEEN :startDate AND :endDate' : ''} GROUP BY 1 ORDER BY 1`,
           { replacements: { tenantId: req.tenantId, ...(hasDateFilterValue && { startDate: dateFilter[Op.between][0], endDate: dateFilter[Op.between][1] }) }, type: sequelize.QueryTypes.SELECT }
         );
       }
       if (groupBy === 'week') {
         // Week of month: 1 = days 1-7, 2 = 8-14, 3 = 15-21, 4 = 22-28, 5 = 29-31 (calendar-aligned, not ISO week)
         return sequelize.query(
-          `SELECT FLOOR((EXTRACT(DAY FROM "paidDate") - 1) / 7) + 1 as "week", DATE_TRUNC('month', "paidDate") as "month", SUM("amountPaid") as "totalRevenue", COUNT("id") as "count" FROM "invoices" WHERE "tenantId"=:tenantId AND status='paid' ${hasDateFilterValue ? 'AND "paidDate" BETWEEN :startDate AND :endDate' : ''} GROUP BY 1, 2 ORDER BY 2, 1`,
+          `SELECT FLOOR((EXTRACT(DAY FROM COALESCE("paidDate", "updatedAt")) - 1) / 7) + 1 as "week", DATE_TRUNC('month', COALESCE("paidDate", "updatedAt")) as "month", SUM("amountPaid") as "totalRevenue", COUNT("id") as "count" FROM "invoices" WHERE "tenantId"=:tenantId AND status!='cancelled' AND "amountPaid" > 0 ${hasDateFilterValue ? 'AND COALESCE("paidDate", "updatedAt") BETWEEN :startDate AND :endDate' : ''} GROUP BY 1, 2 ORDER BY 2, 1`,
           { replacements: { tenantId: req.tenantId, ...(hasDateFilterValue && { startDate: dateFilter[Op.between][0], endDate: dateFilter[Op.between][1] }) }, type: sequelize.QueryTypes.SELECT }
         );
       }
       return Invoice.findAll({
         attributes: groupBy === 'month'
-          ? [[sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"')), 'month'], [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paidDate"')), 'year'], [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']]
-          : [[sequelize.literal(`CAST("paidDate" AS DATE)`), 'date'], [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']],
+          ? [[sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")')), 'month'], [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM COALESCE("paidDate","updatedAt")')), 'year'], [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']]
+          : [[sequelize.literal(`CAST(COALESCE("paidDate","updatedAt") AS DATE)`), 'date'], [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']],
         where: revWhere,
-        group: groupBy === 'month' ? [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paidDate"')), sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"'))] : [sequelize.literal(`CAST("paidDate" AS DATE)`)],
-        order: groupBy === 'month' ? [[sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM "paidDate"')), 'ASC'], [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM "paidDate"')), 'ASC']] : [[sequelize.literal(`CAST("paidDate" AS DATE)`), 'ASC']],
+        group: groupBy === 'month' ? [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM COALESCE("paidDate","updatedAt")')), sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")'))] : [sequelize.literal(`CAST(COALESCE("paidDate","updatedAt") AS DATE)`)],
+        order: groupBy === 'month' ? [[sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM COALESCE("paidDate","updatedAt")')), 'ASC'], [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")')), 'ASC']] : [[sequelize.literal(`CAST(COALESCE("paidDate","updatedAt") AS DATE)`), 'ASC']],
         raw: true
       });
     };
@@ -724,10 +740,7 @@ exports.getProfitLossReport = async (req, res, next) => {
 
     // Revenue
     const revenue = await Invoice.sum('amountPaid', {
-      where: applyTenantFilter(req.tenantId, {
-        status: 'paid',
-        ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
-      })
+      where: buildCollectedRevenueWhere(req.tenantId, dateFilter)
     }) || 0;
 
     // Expenses
@@ -786,10 +799,7 @@ exports.getIncomeExpenditureReport = async (req, res, next) => {
       dateFilter = { [Op.between]: [start, end] };
     }
 
-    const revWhere = applyTenantFilter(req.tenantId, {
-      status: 'paid',
-      ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
-    });
+    const revWhere = buildCollectedRevenueWhere(req.tenantId, dateFilter);
     const expenseWhere = applyTenantFilter(req.tenantId, {
       approvalStatus: 'approved',
       isArchived: false,
@@ -866,10 +876,7 @@ exports.getProfitLossComplianceReport = async (req, res, next) => {
       dateFilter = { [Op.between]: [start, end] };
     }
 
-    const revWhere = applyTenantFilter(req.tenantId, {
-      status: 'paid',
-      ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
-    });
+    const revWhere = buildCollectedRevenueWhere(req.tenantId, dateFilter);
     const expenseWhere = applyTenantFilter(req.tenantId, {
       approvalStatus: 'approved',
       isArchived: false,
@@ -965,10 +972,18 @@ exports.getFinancialPositionReport = async (req, res, next) => {
 
     // Retained earnings: cumulative profit (revenue - expenses) up to end date
     const revToDate = await Invoice.sum('amountPaid', {
-      where: applyTenantFilter(req.tenantId, {
-        status: 'paid',
-        paidDate: { [Op.lte]: asAtEnd }
-      })
+      where: {
+        ...applyTenantFilter(req.tenantId, {
+          status: { [Op.ne]: 'cancelled' },
+          amountPaid: { [Op.gt]: 0 }
+        }),
+        [Op.and]: [
+          sequelize.where(
+            sequelize.fn('COALESCE', sequelize.col('paidDate'), sequelize.col('updatedAt')),
+            { [Op.lte]: asAtEnd }
+          )
+        ]
+      }
     }) || 0;
     const expToDate = await Expense.sum('amount', {
       where: applyTenantFilter(req.tenantId, {
@@ -1030,10 +1045,7 @@ exports.getCashFlowReport = async (req, res, next) => {
       dateFilter = { [Op.between]: [start, end] };
     }
 
-    const revWhere = applyTenantFilter(req.tenantId, {
-      status: 'paid',
-      ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
-    });
+    const revWhere = buildCollectedRevenueWhere(req.tenantId, dateFilter);
     const expenseWhere = applyTenantFilter(req.tenantId, {
       approvalStatus: 'approved',
       isArchived: false,
@@ -1087,10 +1099,7 @@ exports.getKpiSummary = async (req, res, next) => {
     }
 
     const totalRevenue = await Invoice.sum('amountPaid', {
-      where: applyTenantFilter(req.tenantId, {
-        status: 'paid',
-        ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
-      })
+      where: buildCollectedRevenueWhere(req.tenantId, dateFilter)
     }) || 0;
 
     const totalExpenses = await Expense.sum('amount', {
@@ -1149,10 +1158,7 @@ exports.getTopCustomers = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'],
         [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'paymentCount']
       ],
-      where: applyTenantFilter(req.tenantId, {
-        status: 'paid',
-        ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
-      }),
+      where: buildCollectedRevenueWhere(req.tenantId, dateFilter),
       include: [
         {
           model: Customer,
@@ -1743,11 +1749,10 @@ exports.getPrescriptionReport = async (req, res, next) => {
 
     // Revenue from prescription invoices (paid invoices with sourceType prescription)
     const prescriptionRevenue = await Invoice.sum('amountPaid', {
-      where: applyTenantFilter(req.tenantId, {
-        sourceType: 'prescription',
-        status: 'paid',
-        ...(hasDateFilter(dateFilter) && { paidDate: dateFilter })
-      })
+      where: {
+        ...buildCollectedRevenueWhere(req.tenantId, dateFilter),
+        sourceType: 'prescription'
+      }
     }) || 0;
 
     // Fulfillment rate: filled / (filled + partially_filled + pending)

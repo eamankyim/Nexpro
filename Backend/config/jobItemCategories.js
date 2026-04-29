@@ -27,11 +27,13 @@ const JOB_ITEM_CATEGORIES = {
   software_it_services: [
     { value: 'Discovery & Planning', label: 'Discovery & Planning', group: 'Project Phases' },
     { value: 'UI/UX Design', label: 'UI/UX Design', group: 'Project Phases' },
+    { value: 'Website Design and Development', label: 'Website Design and Development', group: 'Development' },
     { value: 'Frontend Development', label: 'Frontend Development', group: 'Development' },
     { value: 'Backend & API Development', label: 'Backend & API Development', group: 'Development' },
     { value: 'Mobile App Development', label: 'Mobile App Development', group: 'Development' },
     { value: 'Testing & QA', label: 'Testing & QA', group: 'Quality Assurance' },
     { value: 'DevOps & Infrastructure', label: 'DevOps & Infrastructure', group: 'Technical Services' },
+    { value: 'Website Hosting', label: 'Website Hosting', group: 'Ongoing Services' },
     { value: 'Maintenance & Support', label: 'Maintenance & Support', group: 'Ongoing Services' }
   ],
   mechanic: [
