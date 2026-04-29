@@ -5,6 +5,7 @@ const {
   createInvoice,
   updateInvoice,
   deleteInvoice,
+  deleteCancelledInvoice,
   recordPayment,
   sendInvoice,
   cancelInvoice,
@@ -34,6 +35,8 @@ router.route('/:id')
   .get(getInvoice)
   .put(authorize('admin', 'manager', 'staff'), updateInvoice)
   .delete(authorize('admin', 'manager', 'staff'), deleteInvoice);
+
+router.delete('/:id/cancelled', authorize('admin'), deleteCancelledInvoice);
 
 router.post('/:id/payment', authorize('admin', 'manager', 'staff'), recordPayment);
 router.post('/:id/send', authorize('admin', 'manager', 'staff'), sendInvoice);

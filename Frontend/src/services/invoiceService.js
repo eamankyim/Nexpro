@@ -27,6 +27,11 @@ const invoiceService = {
     return await api.delete(`/invoices/${id}`);
   },
 
+  // Delete cancelled invoice (admin only)
+  deleteCancelled: async (id) => {
+    return await api.delete(`/invoices/${id}/cancelled`);
+  },
+
   // Record payment on invoice
   recordPayment: async (id, paymentData) => {
     return await api.post(`/invoices/${id}/payment`, paymentData);

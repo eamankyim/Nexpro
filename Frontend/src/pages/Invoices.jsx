@@ -100,7 +100,7 @@ const Invoices = () => {
   const [markAsPaidModalVisible, setMarkAsPaidModalVisible] = useState(false);
   const [printModalVisible, setPrintModalVisible] = useState(false);
   const [stats, setStats] = useState(null);
-  const { isManager, activeTenant } = useAuth();
+  const { isAdmin, isManager, activeTenant } = useAuth();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
   const isStudioLike = STUDIO_LIKE_TYPES.includes(businessType);
@@ -586,8 +586,17 @@ const Invoices = () => {
         destructive: true,
       });
     }
+    if (viewingInvoice.status === 'cancelled' && isAdmin) {
+      items.push({
+        key: 'delete-cancelled',
+        label: 'Delete cancelled invoice',
+        icon: <Archive className="h-4 w-4" />,
+        onClick: () => setInvoiceToDelete(viewingInvoice),
+        destructive: true,
+      });
+    }
     return items;
-  }, [viewingInvoice, isManager, paymentLink, sendingInvoice, markingAsPaid, handleSendInvoice, handleCopyPaymentLink]);
+  }, [viewingInvoice, isAdmin, isManager, paymentLink, sendingInvoice, markingAsPaid, handleSendInvoice, handleCopyPaymentLink]);
 
   const handleCancelInvoice = async (id) => {
     try {
@@ -611,8 +620,13 @@ const Invoices = () => {
         );
         showSuccess('Saved offline. Will sync when connected.');
       } else {
-        await invoiceService.delete(id);
-        showSuccess('Draft invoice deleted');
+        if (invoiceToDelete?.status === 'cancelled') {
+          await invoiceService.deleteCancelled(id);
+          showSuccess('Cancelled invoice deleted');
+        } else {
+          await invoiceService.delete(id);
+          showSuccess('Draft invoice deleted');
+        }
       }
       setInvoiceToDelete(null);
       setRefreshTrigger(prev => prev + 1);
@@ -1352,10 +1366,12 @@ const Invoices = () => {
       <AlertDialog open={!!invoiceToDelete} onOpenChange={(open) => !open && setInvoiceToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete draft invoice?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {invoiceToDelete?.status === 'cancelled' ? 'Delete cancelled invoice?' : 'Delete draft invoice?'}
+            </AlertDialogTitle>
             <AlertDialogDescription>
               {invoiceToDelete
-                ? `Are you sure you want to delete draft invoice "${invoiceToDelete.invoiceNumber || invoiceToDelete.id}"? This cannot be undone.`
+                ? `Are you sure you want to delete ${invoiceToDelete.status === 'cancelled' ? 'cancelled' : 'draft'} invoice "${invoiceToDelete.invoiceNumber || invoiceToDelete.id}"? This cannot be undone.`
                 : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>

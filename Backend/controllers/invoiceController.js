@@ -518,12 +518,20 @@ exports.createInvoice = async (req, res, next) => {
     }
 
     // Preserve direct-invoice line-item discounts in invoice header totals.
+    // For job-linked invoices, also reconcile against job.finalPrice so discounts
+    // applied at job-level (but not persisted on each item) are still honored.
     // Invoice model computes total using subtotal - discountValue (+ tax).
+    const jobLevelDiscountFallback = isJobLinked
+      ? Math.max(
+          0,
+          (parseFloat(subtotal || 0) - parseFloat(job?.finalPrice || 0))
+        )
+      : 0;
     const hasHeaderDiscount = discountValue !== undefined && discountValue !== null && discountValue !== '';
     const resolvedDiscountType = discountType || 'fixed';
     const resolvedDiscountValue = hasHeaderDiscount
       ? parseFloat(discountValue || 0)
-      : (totalItemDiscount > 0 ? totalItemDiscount : 0);
+      : (totalItemDiscount > 0 ? totalItemDiscount : jobLevelDiscountFallback);
 
     // Create invoice
     const invoice = await Invoice.create({
@@ -727,6 +735,49 @@ exports.deleteInvoice = async (req, res, next) => {
     // Invalidate cache after deleting invoice
     invalidateAfterMutation(req.tenantId);
 
+    invalidateInvoiceListCache(req.tenantId);
+    res.status(200).json({
+      success: true,
+      data: {}
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Delete cancelled invoice
+// @route   DELETE /api/invoices/:id/cancelled
+// @access  Private (Admin only)
+exports.deleteCancelledInvoice = async (req, res, next) => {
+  try {
+    const invoice = await Invoice.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+    });
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: 'Invoice not found'
+      });
+    }
+
+    if (invoice.status !== 'cancelled') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only cancelled invoices can be deleted with this action'
+      });
+    }
+
+    const customerId = invoice.customerId;
+    await invoice.destroy();
+
+    try {
+      await updateCustomerBalance(customerId);
+    } catch (error) {
+      console.error('Failed to update customer balance:', error);
+    }
+
+    invalidateAfterMutation(req.tenantId);
     invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
@@ -1344,6 +1395,11 @@ async function createInvoiceFromJobInternal(tenantId, jobId, userId = null) {
   const totalItemDiscount = (job.items && job.items.length > 0)
     ? items.reduce((sum, item) => sum + parseFloat(item.discountAmount || 0), 0)
     : 0;
+  const jobLevelDiscountFallback = Math.max(
+    0,
+    (parseFloat(subtotal || 0) - parseFloat(job?.finalPrice || 0))
+  );
+  const effectiveDiscount = totalItemDiscount > 0 ? totalItemDiscount : jobLevelDiscountFallback;
 
   const invoicePayload = {
     invoiceNumber,
@@ -1356,9 +1412,9 @@ async function createInvoiceFromJobInternal(tenantId, jobId, userId = null) {
     subtotal,
     taxRate: jobTaxRate,
     discountType: 'fixed',
-    discountValue: totalItemDiscount > 0 ? totalItemDiscount : 0,
-    discountAmount: totalItemDiscount > 0 ? totalItemDiscount : 0,
-    discountReason: totalItemDiscount > 0
+    discountValue: effectiveDiscount,
+    discountAmount: effectiveDiscount,
+    discountReason: effectiveDiscount > 0
       ? (items.find((i) => i.discountReason)?.discountReason || 'Line discounts from job')
       : undefined,
     paymentTerms: 'Net 30',
@@ -1379,7 +1435,8 @@ async function createInvoiceFromJobInternal(tenantId, jobId, userId = null) {
     invoiceNumber: invoice.invoiceNumber,
     lineCount: items.length,
     subtotal,
-    lineDiscountTotal: totalItemDiscount
+    lineDiscountTotal: totalItemDiscount,
+    effectiveDiscount
   });
 
   try {
