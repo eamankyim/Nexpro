@@ -19,6 +19,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { customerService } from '@/services/customerService';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAuth } from '@/context/AuthContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useTheme } from '@/context/ThemeContext';
 import Colors from '@/constants/Colors';
 
@@ -32,7 +33,7 @@ type Customer = {
 
 export default function CustomersScreen() {
   const params = useLocalSearchParams<{ search?: string; add?: string }>();
-  const { activeTenantId } = useAuth();
+  const { activeTenantId, hasFeature } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
   const queryClient = useQueryClient();
@@ -57,7 +58,7 @@ export default function CustomersScreen() {
         limit: 20,
         search: debouncedSearch || undefined,
       }),
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && hasFeature('crm'),
     staleTime: 3 * 60 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
   });
@@ -101,6 +102,10 @@ export default function CustomersScreen() {
   const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
   const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
   const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
+
+  if (!hasFeature('crm')) {
+    return <FeatureAccessDenied message="Customers is not enabled for this workspace." />;
+  }
 
   const renderCustomerItem = ({ item }: { item: Customer }) => (
     <Pressable

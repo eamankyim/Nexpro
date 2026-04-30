@@ -24,12 +24,15 @@ import { notificationService } from '@/services/notificationService';
  * Mobile header with search bar, notification bell, and user avatar.
  * Avatar links to account page (menu with Profile, Settings, etc.).
  */
-const BACK_SCREENS = ['sales', 'expenses', 'invoices', 'quotes'];
+const BACK_SCREENS = ['sales', 'expenses', 'invoices', 'quotes', 'leads', 'tasks', 'deliveries'];
 const SCREEN_TITLES: Record<string, string> = {
   sales: 'Sales',
   expenses: 'Expenses',
   invoices: 'Invoices',
   quotes: 'Quotes',
+  leads: 'Leads',
+  tasks: 'Tasks',
+  deliveries: 'Deliveries',
 };
 
 export function Header() {

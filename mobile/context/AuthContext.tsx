@@ -3,10 +3,23 @@ import { useQueryClient } from '@tanstack/react-query';
 import { authService } from '@/services/auth';
 import { logger } from '@/utils/logger';
 
-type User = { id: string; email: string; name?: string; profilePicture?: string; emailVerifiedAt?: string | null } | null;
+type User = {
+  id: string;
+  email: string;
+  name?: string;
+  profilePicture?: string;
+  emailVerifiedAt?: string | null;
+  isPlatformAdmin?: boolean;
+} | null;
 type Membership = {
   tenantId: string;
-  tenant?: { id: string; name?: string; businessType?: string; metadata?: { shopType?: string; onboarding?: { completedAt?: string }; phone?: string } };
+  tenant?: {
+    id: string;
+    name?: string;
+    businessType?: string;
+    effectiveFeatureFlags?: Record<string, boolean>;
+    metadata?: { shopType?: string; onboarding?: { completedAt?: string }; phone?: string };
+  };
   isDefault?: boolean;
   invitedBy?: string | null;
 };
@@ -15,9 +28,16 @@ type AuthContextType = {
   user: User;
   memberships: Membership[];
   activeTenantId: string | null;
-  activeTenant: { businessType?: string; name?: string; metadata?: { shopType?: string; onboarding?: { completedAt?: string }; phone?: string } } | null;
+  activeTenant: {
+    businessType?: string;
+    name?: string;
+    effectiveFeatureFlags?: Record<string, boolean>;
+    metadata?: { shopType?: string; onboarding?: { completedAt?: string }; phone?: string };
+  } | null;
   loading: boolean;
   wasInvited: boolean;
+  /** Plan/feature gating — same semantics as web: flag must be exactly true */
+  hasFeature: (featureKey: string) => boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   setActiveTenantId: (id: string | null) => Promise<void>;
@@ -36,6 +56,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const activeTenant = memberships.find((m) => m.tenantId === activeTenantId)?.tenant ?? null;
+
+  const activeFeatureFlags = useMemo(() => {
+    const eff = activeTenant?.effectiveFeatureFlags;
+    if (eff && typeof eff === 'object' && !Array.isArray(eff)) return eff;
+    return {} as Record<string, boolean>;
+  }, [activeTenant]);
+
+  const hasFeature = useCallback(
+    (featureKey: string) => activeFeatureFlags[featureKey] === true,
+    [activeFeatureFlags]
+  );
 
   const wasInvited = useMemo(
     () => Array.isArray(memberships) && memberships.some((m) => !!(m as Membership & { invitedBy?: string }).invitedBy),
@@ -178,7 +209,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           logger.warn('AuthContext', 'No tenant ID resolved from stored data');
         }
 
-        if (storedUser && (!storedMemberships?.length || !storedMemberships[0]?.tenant?.metadata)) {
+        const activeMembershipForFlags =
+          storedMemberships?.find((m: Membership) => m.tenantId === resolvedTenantId) ?? storedMemberships?.[0];
+        const eff0 = activeMembershipForFlags?.tenant?.effectiveFeatureFlags;
+        const flagsHydrated =
+          eff0 != null &&
+          typeof eff0 === 'object' &&
+          !Array.isArray(eff0) &&
+          Object.keys(eff0).length > 0;
+        const meta = activeMembershipForFlags?.tenant?.metadata;
+        if (storedUser && (!storedMemberships?.length || !meta || !flagsHydrated)) {
           logger.info('AuthContext', 'Refetching /auth/me (stale or missing memberships)');
           try {
             const res = await authService.getCurrentUser();
@@ -221,6 +261,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     activeTenant,
     loading,
     wasInvited,
+    hasFeature,
     login,
     logout,
     setActiveTenantId,

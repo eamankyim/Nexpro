@@ -16,8 +16,10 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/context/AuthContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useTheme } from '@/context/ThemeContext';
 import Colors from '@/constants/Colors';
+import { isQuotesEnabledForTenant } from '@/constants';
 import { customerService } from '@/services/customerService';
 import { quoteService } from '@/services/quoteService';
 
@@ -32,13 +34,15 @@ type QuoteItemForm = {
 
 export default function NewQuoteScreen() {
   const router = useRouter();
-  const { activeTenant, activeTenantId } = useAuth();
+  const { activeTenant, activeTenantId, hasFeature } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
   const queryClient = useQueryClient();
 
   const businessType = activeTenant?.businessType ?? 'printing_press';
-  const isPrintingPress = businessType === 'printing_press';
+  const shopType = activeTenant?.metadata?.shopType;
+  const quotesFeatureOk =
+    hasFeature('quoteAutomation') && isQuotesEnabledForTenant(businessType, shopType);
 
   const [customerId, setCustomerId] = useState('');
   const [title, setTitle] = useState('');
@@ -56,7 +60,7 @@ export default function NewQuoteScreen() {
   } = useQuery({
     queryKey: ['customers', 'quotes-new', activeTenantId],
     queryFn: () => customerService.getCustomers({ limit: 100 }),
-    enabled: !!activeTenantId && isPrintingPress,
+    enabled: !!activeTenantId && quotesFeatureOk && hasFeature('crm'),
     staleTime: 5 * 60 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
   });
@@ -108,8 +112,8 @@ export default function NewQuoteScreen() {
   );
 
   const handleSubmit = useCallback(() => {
-    if (!isPrintingPress) {
-      Alert.alert('Not supported', 'Quotes are only available for printing press businesses.');
+    if (!quotesFeatureOk) {
+      Alert.alert('Not supported', 'Quotes are not available for this workspace.');
       return;
     }
     if (!customerId) {
@@ -152,16 +156,11 @@ export default function NewQuoteScreen() {
     createQuoteMutation.mutate(payload, {
       onSettled: () => setSubmitting(false),
     });
-  }, [customerId, title, description, notes, validUntil, items, isPrintingPress, createQuoteMutation]);
+  }, [customerId, title, description, notes, validUntil, items, quotesFeatureOk, createQuoteMutation]);
 
-  if (!isPrintingPress) {
+  if (!quotesFeatureOk) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.centerTitle}>Quotes not available</Text>
-        <Text style={styles.centerSubtitle}>
-          Quotes are only available for printing press and similar service businesses.
-        </Text>
-      </View>
+      <FeatureAccessDenied message="Quotes are not enabled for this workspace or business type." />
     );
   }
 

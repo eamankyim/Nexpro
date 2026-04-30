@@ -12,7 +12,7 @@ When working in `mobile/` (Expo/React Native app):
 - **Design:** Follow `.cursor/rules/mobile-app-design.mdc` — navigation, UX, touch targets
 - **Build guide:** `docs/MOBILE_APP_BUILD_GUIDE.md` — install steps, env, CORS, common errors
 - **Plan:** `.cursor/plans/mobile_app_implementation_strategy.plan.md` — phases and order
-- **Out of scope (web only):** Leads, Vendors, Employees, Payroll, Users/Team, Prescriptions, Drugs, Foot Traffic, Accounting — do not implement these in mobile
+- **Out of scope (web only — do not implement in mobile):** Platform admin (`/admin`), Automations, Marketing, Reports (overview / smart report / compliance), Export data, Pricing templates, Vendors, Employees, Payroll, Users/Team, Prescriptions, Drugs, Foot Traffic, Accounting
 
 ---
 

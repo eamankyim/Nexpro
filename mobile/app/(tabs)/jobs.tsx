@@ -13,6 +13,7 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '@/context/AuthContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useTheme } from '@/context/ThemeContext';
 import { jobService } from '@/services/jobService';
 import { CURRENCY } from '@/constants';
@@ -65,7 +66,7 @@ type Job = {
 export default function JobsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ openJobId?: string }>();
-  const { activeTenant, activeTenantId } = useAuth();
+  const { activeTenant, activeTenantId, hasFeature } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
 
@@ -81,7 +82,7 @@ export default function JobsScreen() {
       };
       return jobService.getJobs(params);
     },
-    enabled: !!activeTenantId && isStudio,
+    enabled: !!activeTenantId && isStudio && hasFeature('jobAutomation'),
     staleTime: 2 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     retry: 2,
@@ -124,6 +125,13 @@ export default function JobsScreen() {
   const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
   const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
   const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
+
+  if (!isStudio) {
+    return <FeatureAccessDenied message="Jobs are only available for studio-type workspaces." />;
+  }
+  if (!hasFeature('jobAutomation')) {
+    return <FeatureAccessDenied message="Jobs are not enabled for this workspace." />;
+  }
 
   const renderJobItem = ({ item }: { item: Job }) => {
     const statusColor = getStatusColor(item.status);

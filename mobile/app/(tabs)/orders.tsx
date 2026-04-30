@@ -16,6 +16,7 @@ import { Image } from 'expo-image';
 
 import { saleService } from '@/services/saleService';
 import { useAuth } from '@/context/AuthContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useTheme } from '@/context/ThemeContext';
 import Colors from '@/constants/Colors';
 import { ORDER_STATUSES, ORDER_STATUS_LABELS, SHOP_TYPES } from '@/constants';
@@ -161,7 +162,7 @@ function OrderCard({ order, onStatusChange, loadingId, colors, cardBg, borderCol
 }
 
 export default function OrdersScreen() {
-  const { activeTenant, activeTenantId } = useAuth();
+  const { activeTenant, activeTenantId, hasFeature } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
   const queryClient = useQueryClient();
@@ -190,7 +191,7 @@ export default function OrdersScreen() {
   const { data: response, isLoading, refetch, isRefetching } = useQuery({
     queryKey: ['orders', activeTenantId, statusFilter, today],
     queryFn: fetchOrders,
-    enabled: !!activeTenantId && isRestaurant,
+    enabled: !!activeTenantId && isRestaurant && hasFeature('orders'),
     staleTime: 5000, // 5 sec - keep relatively fresh
     refetchInterval: POLL_INTERVAL_MS,
   });
@@ -237,6 +238,10 @@ export default function OrdersScreen() {
         </Text>
       </View>
     );
+  }
+
+  if (!hasFeature('orders')) {
+    return <FeatureAccessDenied message="Kitchen orders are not enabled for this workspace." />;
   }
 
   return (

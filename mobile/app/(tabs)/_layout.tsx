@@ -38,7 +38,7 @@ function CenterTabButton() {
 export default function TabLayout() {
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
-  const { activeTenant, user } = useAuth();
+  const { activeTenant, user, hasFeature } = useAuth();
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isShop = resolvedType === 'shop';
   const isPharmacy = resolvedType === 'pharmacy';
@@ -62,7 +62,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
         }}
       />
-      {isRestaurant ? (
+      {isRestaurant && hasFeature('orders') ? (
         <Tabs.Screen
           name="orders"
           options={{
@@ -82,7 +82,7 @@ export default function TabLayout() {
           href: null, // Products accessible from More menu only
         }}
       />
-      {isStudio ? (
+      {isStudio && hasFeature('jobAutomation') ? (
         <Tabs.Screen
           name="jobs"
           options={{
@@ -122,10 +122,14 @@ export default function TabLayout() {
       />
       <Tabs.Screen
         name="customers"
-        options={{
-          title: 'Customers',
-          tabBarIcon: ({ color }) => <TabBarIcon name="users" color={color} />,
-        }}
+        options={
+          hasFeature('crm')
+            ? {
+                title: 'Customers',
+                tabBarIcon: ({ color }: { color: string }) => <TabBarIcon name="users" color={color} />,
+              }
+            : { href: null, title: 'Customers' }
+        }
       />
       <Tabs.Screen
         name="more"
@@ -175,6 +179,24 @@ export default function TabLayout() {
         name="sales"
         options={{
           href: null, // Hide from tab bar
+        }}
+      />
+      <Tabs.Screen
+        name="leads"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="tasks"
+        options={{
+          href: null,
+        }}
+      />
+      <Tabs.Screen
+        name="deliveries"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

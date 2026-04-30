@@ -16,6 +16,25 @@ export const STORAGE_KEYS = {
 
 export const STUDIO_TYPES = ['printing_press', 'mechanic', 'barber', 'salon'];
 
+/** Shop types where Quotes are hidden (aligned with web) */
+export const QUOTES_HIDDEN_SHOP_TYPES = ['restaurant'] as const;
+
+/**
+ * Whether Quotes UI should be offered (aligned with web `isQuotesEnabledForTenant`).
+ */
+export function isQuotesEnabledForTenant(
+  businessType: string | undefined,
+  shopType: string | undefined
+): boolean {
+  if (!businessType) return false;
+  const isStudioLike = STUDIO_TYPES.includes(businessType) || businessType === 'studio';
+  if (isStudioLike || businessType === 'pharmacy') return true;
+  if (businessType === 'shop') {
+    return !QUOTES_HIDDEN_SHOP_TYPES.includes((shopType || '') as (typeof QUOTES_HIDDEN_SHOP_TYPES)[number]);
+  }
+  return false;
+}
+
 /** Shop types (from tenant metadata.shopType) */
 export const SHOP_TYPES = {
   RESTAURANT: 'restaurant',
@@ -59,6 +78,28 @@ export const INVOICE_STATUSES = {
   OVERDUE: 'overdue',
   CANCELLED: 'cancelled',
 } as const;
+
+/** First-party delivery statuses (jobs + sales); aligned with web */
+export const DELIVERY_STATUSES = {
+  READY_FOR_DELIVERY: 'ready_for_delivery',
+  OUT_FOR_DELIVERY: 'out_for_delivery',
+  DELIVERED: 'delivered',
+  RETURNED: 'returned',
+} as const;
+
+export const DELIVERY_STATUS_LABELS: Record<string, string> = {
+  [DELIVERY_STATUSES.READY_FOR_DELIVERY]: 'Ready for delivery',
+  [DELIVERY_STATUSES.OUT_FOR_DELIVERY]: 'Out for delivery',
+  [DELIVERY_STATUSES.DELIVERED]: 'Delivered',
+  [DELIVERY_STATUSES.RETURNED]: 'Returned',
+};
+
+export const DELIVERY_STATUS_ORDER = [
+  DELIVERY_STATUSES.READY_FOR_DELIVERY,
+  DELIVERY_STATUSES.OUT_FOR_DELIVERY,
+  DELIVERY_STATUSES.DELIVERED,
+  DELIVERY_STATUSES.RETURNED,
+] as const;
 
 /** Expense statuses */
 export const EXPENSE_STATUSES = {

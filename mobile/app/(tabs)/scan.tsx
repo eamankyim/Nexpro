@@ -16,6 +16,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/context/AuthContext';
 import { useCart } from '@/context/CartContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { productService } from '@/services/productService';
 import { jobService } from '@/services/jobService';
 import { customerService } from '@/services/customerService';
@@ -31,14 +32,18 @@ import { Image } from 'expo-image';
 export default function ScanScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const { activeTenant, activeTenantId } = useAuth();
-  const { getItemCount } = useCart();
+  const { activeTenant, activeTenantId, hasFeature } = useAuth();
+  const { getItemCount, addItem } = useCart();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
   const cartItemCount = getItemCount();
 
   const businessType = activeTenant?.businessType ?? 'printing_press';
   const isStudio = STUDIO_TYPES.includes(businessType);
+  const productQueriesEnabled =
+    !!activeTenantId && !isStudio && hasFeature('products');
+  const studioCustomerQueryEnabled =
+    !!activeTenantId && isStudio && hasFeature('crm');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [scannerVisible, setScannerVisible] = useState(false);
@@ -64,7 +69,7 @@ export default function ScanScreen() {
         limit: 30,
         isActive: true,
       }),
-    enabled: !!activeTenantId && !debouncedSearch && !isStudio && !scannedProduct,
+    enabled: productQueriesEnabled && !debouncedSearch && !scannedProduct,
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 60 * 60 * 1000, // 1 hour
   });
@@ -77,7 +82,11 @@ export default function ScanScreen() {
         limit: 20,
         isActive: true,
       }),
-    enabled: !!activeTenantId && !!debouncedSearch && debouncedSearch.length >= 2 && !isStudio && !scannedProduct,
+    enabled:
+      productQueriesEnabled &&
+      !!debouncedSearch &&
+      debouncedSearch.length >= 2 &&
+      !scannedProduct,
     staleTime: 2 * 60 * 1000, // 2 minutes
     gcTime: 60 * 60 * 1000, // 1 hour
   });
@@ -99,7 +108,7 @@ export default function ScanScreen() {
   const { data: customersResponse } = useQuery({
     queryKey: ['customers', 'list', activeTenantId],
     queryFn: () => customerService.getCustomers({ limit: 50 }),
-    enabled: !!activeTenantId && isStudio,
+    enabled: studioCustomerQueryEnabled,
     // Customer list for dropdowns can be stale for 5 minutes
     staleTime: 5 * 60 * 1000,
     // Keep in cache for 2 hours
@@ -167,6 +176,24 @@ export default function ScanScreen() {
     });
   }, [jobForm, createJobMutation]);
 
+  const handleProductSelect = useCallback(
+    (selectedProduct: any) => {
+      addItem({
+        id: selectedProduct.id,
+        name: selectedProduct.name,
+        sellingPrice: selectedProduct.sellingPrice,
+        price: selectedProduct.price,
+        costPrice: selectedProduct.costPrice,
+        imageUrl: selectedProduct.imageUrl,
+        sku: selectedProduct.sku,
+        barcode: selectedProduct.barcode,
+      });
+      setSearchQuery('');
+      setScannedProduct(null);
+    },
+    [addItem]
+  );
+
   const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
   const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
@@ -224,6 +251,18 @@ export default function ScanScreen() {
   // Determine which products to show
   const productsToShow = debouncedSearch ? products : defaultProducts;
   const isLoadingProductsList = debouncedSearch ? loadingProducts : loadingDefaultProducts;
+
+  if (isStudio && !hasFeature('jobAutomation')) {
+    return (
+      <FeatureAccessDenied message="Jobs are not enabled for this workspace." />
+    );
+  }
+
+  if (!isStudio && !hasFeature('products')) {
+    return (
+      <FeatureAccessDenied message="Products are not enabled for this workspace." />
+    );
+  }
 
   if (isStudio) {
     return (
@@ -300,27 +339,6 @@ export default function ScanScreen() {
       </ScrollView>
     );
   }
-
-  const { addItem } = useCart();
-
-  const handleProductSelect = useCallback(
-    (selectedProduct: any) => {
-      addItem({
-        id: selectedProduct.id,
-        name: selectedProduct.name,
-        sellingPrice: selectedProduct.sellingPrice,
-        price: selectedProduct.price,
-        costPrice: selectedProduct.costPrice,
-        imageUrl: selectedProduct.imageUrl,
-        sku: selectedProduct.sku,
-        barcode: selectedProduct.barcode,
-      });
-      // Clear search after selection
-      setSearchQuery('');
-      setScannedProduct(null);
-    },
-    [addItem]
-  );
 
   return (
     <>

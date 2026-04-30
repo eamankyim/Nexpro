@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Text, Pressable, StyleSheet, ActivityIndicator, Platform, View } from 'react-native';
+import { Text, Pressable, StyleSheet, ActivityIndicator, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Google from 'expo-auth-session/providers/google';
 
@@ -38,10 +38,7 @@ export function GoogleSignInButton({
     androidClientId: androidClientId || webClientId,
   };
 
-  const [request, result, promptAsync] = Google.useIdTokenAuthRequest(
-    config,
-    { useProxy: Platform.OS === 'web' }
-  );
+  const [request, result, promptAsync] = Google.useIdTokenAuthRequest(config);
 
   const handledRef = React.useRef(false);
   React.useEffect(() => {

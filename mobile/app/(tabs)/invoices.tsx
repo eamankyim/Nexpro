@@ -15,6 +15,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { invoiceService } from '@/services/invoiceService';
 import { useAuth } from '@/context/AuthContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useTheme } from '@/context/ThemeContext';
 import { CURRENCY } from '@/constants';
 import Colors from '@/constants/Colors';
@@ -54,7 +55,7 @@ type Invoice = {
 };
 
 export default function InvoicesScreen() {
-  const { activeTenantId } = useAuth();
+  const { activeTenantId, hasFeature } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
 
@@ -72,7 +73,7 @@ export default function InvoicesScreen() {
       if (statusFilter !== 'all') params.status = statusFilter;
       return invoiceService.getInvoices(params);
     },
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && hasFeature('invoices'),
     staleTime: 2 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     retry: 2,
@@ -92,6 +93,10 @@ export default function InvoicesScreen() {
       setDetailInvoice(invoice);
     }
   }, []);
+
+  if (!hasFeature('invoices')) {
+    return <FeatureAccessDenied message="Invoices are not enabled for this workspace." />;
+  }
 
   const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';

@@ -12,7 +12,7 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import Colors from '@/constants/Colors';
-import { resolveBusinessType, SHOP_TYPES } from '@/constants';
+import { resolveBusinessType, SHOP_TYPES, isQuotesEnabledForTenant } from '@/constants';
 
 type MenuItem = {
   id: string;
@@ -23,7 +23,7 @@ type MenuItem = {
 
 export default function MoreScreen() {
   const router = useRouter();
-  const { activeTenant } = useAuth();
+  const { activeTenant, hasFeature, user } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
@@ -35,25 +35,44 @@ export default function MoreScreen() {
 
   const menuItems = useMemo(() => {
     const items: MenuItem[] = [];
+    const bt = activeTenant?.businessType;
+    const quotesOk =
+      hasFeature('quoteAutomation') && isQuotesEnabledForTenant(bt, shopType);
 
-    // Financial / Operations - show based on business type
-  if (isShop || isPharmacy) {
-    items.push({ id: 'products', label: 'Products', icon: 'archive', route: '/(tabs)/products' });
-    items.push({ id: 'sales', label: 'Sales', icon: 'shopping-cart', route: '/(tabs)/sales' });
-    items.push({ id: 'materials', label: 'Materials', icon: 'archive', route: '/(tabs)/materials' });
-  }
-    items.push({ id: 'expenses', label: 'Expenses', icon: 'minus-circle', route: '/(tabs)/expenses' });
-    if (isShop || isPharmacy || isStudio) {
+    if ((isShop || isPharmacy) && hasFeature('products')) {
+      items.push({ id: 'products', label: 'Products', icon: 'archive', route: '/(tabs)/products' });
+    }
+    if ((isShop || isPharmacy) && hasFeature('paymentsExpenses')) {
+      items.push({ id: 'sales', label: 'Sales', icon: 'shopping-cart', route: '/(tabs)/sales' });
+    }
+    if ((isShop || isPharmacy) && hasFeature('materials')) {
+      items.push({ id: 'materials', label: 'Materials', icon: 'archive', route: '/(tabs)/materials' });
+    }
+    if (hasFeature('expenses')) {
+      items.push({ id: 'expenses', label: 'Expenses', icon: 'minus-circle', route: '/(tabs)/expenses' });
+    }
+    if ((isShop || isPharmacy || isStudio) && hasFeature('invoices')) {
       items.push({ id: 'invoices', label: 'Invoices', icon: 'file-text', route: '/(tabs)/invoices' });
+    }
+    if ((isShop || isPharmacy || isStudio) && quotesOk) {
       items.push({ id: 'quotes', label: 'Quotes', icon: 'file-text-o', route: '/(tabs)/quotes' });
     }
 
-    // Account
+    if (hasFeature('leadPipeline')) {
+      items.push({ id: 'leads', label: 'Leads', icon: 'user-plus', route: '/(tabs)/leads' });
+    }
+    if (hasFeature('jobAutomation') && user?.isPlatformAdmin !== true) {
+      items.push({ id: 'tasks', label: 'Tasks', icon: 'list', route: '/(tabs)/tasks' });
+    }
+    if (hasFeature('deliveries')) {
+      items.push({ id: 'deliveries', label: 'Deliveries', icon: 'truck', route: '/(tabs)/deliveries' });
+    }
+
     items.push({ id: 'profile', label: 'Profile', icon: 'user', route: '/profile' });
     items.push({ id: 'settings', label: 'Settings', icon: 'cog', route: '/settings' });
 
     return items;
-  }, [isShop, isPharmacy, isStudio, isRestaurant]);
+  }, [isShop, isPharmacy, isStudio, isRestaurant, hasFeature, activeTenant?.businessType, shopType, user?.isPlatformAdmin]);
 
   const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';

@@ -17,6 +17,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { expenseService } from '@/services/expenseService';
 import { useAuth } from '@/context/AuthContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useTheme } from '@/context/ThemeContext';
 import { CURRENCY } from '@/constants';
 import Colors from '@/constants/Colors';
@@ -44,7 +45,7 @@ type Expense = {
 };
 
 export default function ExpensesScreen() {
-  const { activeTenantId } = useAuth();
+  const { activeTenantId, hasFeature } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
   const queryClient = useQueryClient();
@@ -63,7 +64,7 @@ export default function ExpensesScreen() {
   const { data: categories = [] } = useQuery({
     queryKey: ['expenses', 'categories', activeTenantId],
     queryFn: () => expenseService.getCategories(),
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && hasFeature('expenses'),
     staleTime: 10 * 60 * 1000,
   });
 
@@ -84,7 +85,7 @@ export default function ExpensesScreen() {
         page: 1,
         limit: 20,
       }),
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && hasFeature('expenses'),
     staleTime: 2 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
   });
@@ -143,6 +144,10 @@ export default function ExpensesScreen() {
       notes: formData.notes.trim() || undefined,
     });
   }, [formData, createExpenseMutation, defaultCategory]);
+
+  if (!hasFeature('expenses')) {
+    return <FeatureAccessDenied message="Expenses are not enabled for this workspace." />;
+  }
 
   const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';

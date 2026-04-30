@@ -16,8 +16,9 @@ import { useRouter } from 'expo-router';
 
 import { quoteService } from '@/services/quoteService';
 import { useAuth } from '@/context/AuthContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useTheme } from '@/context/ThemeContext';
-import { CURRENCY } from '@/constants';
+import { CURRENCY, isQuotesEnabledForTenant } from '@/constants';
 import Colors from '@/constants/Colors';
 
 function formatCurrency(value: number | string | null | undefined): string {
@@ -54,7 +55,7 @@ type Quote = {
 
 export default function QuotesScreen() {
   const router = useRouter();
-  const { activeTenant, activeTenantId } = useAuth();
+  const { activeTenant, activeTenantId, hasFeature } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
 
@@ -63,8 +64,11 @@ export default function QuotesScreen() {
   const [detailQuote, setDetailQuote] = useState<Quote | null>(null);
   const [converting, setConverting] = useState(false);
 
+  const shopType = activeTenant?.metadata?.shopType;
   const businessType = activeTenant?.businessType ?? 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
+  const quotesFeatureOk =
+    hasFeature('quoteAutomation') && isQuotesEnabledForTenant(businessType, shopType);
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
     queryKey: ['quotes', activeTenantId, statusFilter],
@@ -80,7 +84,7 @@ export default function QuotesScreen() {
     gcTime: 60 * 60 * 1000,
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
-    enabled: !!activeTenantId && isPrintingPress,
+    enabled: !!activeTenantId && quotesFeatureOk,
   });
 
   const quotes = (response?.data || []) as Quote[];
@@ -127,15 +131,8 @@ export default function QuotesScreen() {
   const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
   const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
 
-  if (!isPrintingPress) {
-    return (
-      <View style={[styles.center, { backgroundColor: bg }]}>
-        <Text style={[styles.emptyTitle, { color: textColor }]}>Quotes</Text>
-        <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-          Quotes are available for printing press businesses.
-        </Text>
-      </View>
-    );
+  if (!quotesFeatureOk) {
+    return <FeatureAccessDenied message="Quotes are not enabled for this workspace." />;
   }
 
   const renderQuoteItem = ({ item }: { item: Quote }) => {
@@ -192,10 +189,10 @@ export default function QuotesScreen() {
         <View style={{ flex: 1 }}>
           <Text style={[styles.pageTitle, { color: textColor }]}>Quotes</Text>
           <Text style={[styles.pageSubtitle, { color: mutedColor }]}>
-            Create quotes and convert them into jobs.
+            Create quotes and track status.
           </Text>
         </View>
-        {isPrintingPress && (
+        {quotesFeatureOk && (
           <Pressable
             onPress={() => router.push('/quotes-new')}
             style={[styles.newQuoteButton, { borderColor }]}

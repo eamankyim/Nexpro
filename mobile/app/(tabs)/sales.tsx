@@ -15,6 +15,7 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery } from '@tanstack/react-query';
 
 import { useAuth } from '@/context/AuthContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useTheme } from '@/context/ThemeContext';
 import { saleService } from '@/services/saleService';
 import { CURRENCY } from '@/constants';
@@ -43,7 +44,7 @@ type Sale = {
 
 export default function SalesScreen() {
   const router = useRouter();
-  const { activeTenant, activeTenantId } = useAuth();
+  const { activeTenant, activeTenantId, hasFeature } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
 
@@ -65,7 +66,7 @@ export default function SalesScreen() {
       if (statusFilter !== 'all') params.status = statusFilter;
       return saleService.getSales(params);
     },
-    enabled: !!activeTenantId && (isShop || isPharmacy),
+    enabled: !!activeTenantId && (isShop || isPharmacy) && hasFeature('paymentsExpenses'),
     // Sales data can be stale for 2 minutes (moderate update frequency)
     staleTime: 2 * 60 * 1000,
     // Keep in cache for 1 hour
@@ -93,6 +94,10 @@ export default function SalesScreen() {
   const handleOpenPOS = useCallback(() => {
     router.push('/(tabs)/scan');
   }, [router]);
+
+  if (!hasFeature('paymentsExpenses')) {
+    return <FeatureAccessDenied message="Sales are not enabled for this workspace." />;
+  }
 
   const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';

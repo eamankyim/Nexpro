@@ -21,6 +21,7 @@ import { Image } from 'expo-image';
 import { productService } from '@/services/productService';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAuth } from '@/context/AuthContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useTheme } from '@/context/ThemeContext';
 import { useCart } from '@/context/CartContext';
 import Colors from '@/constants/Colors';
@@ -53,7 +54,7 @@ export default function ProductsScreen() {
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme];
   const queryClient = useQueryClient();
-  const { activeTenant, activeTenantId } = useAuth();
+  const { activeTenant, activeTenantId, hasFeature } = useAuth();
   const { addItem } = useCart();
 
   const [searchText, setSearchText] = useState(params.search ?? '');
@@ -94,7 +95,7 @@ export default function ProductsScreen() {
         search: debouncedSearch || undefined,
         isActive: true,
       }),
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && hasFeature('products'),
     staleTime: 3 * 60 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
   });
@@ -258,6 +259,10 @@ export default function ProductsScreen() {
       quantityOnHand: formData.quantityOnHand ? parseFloat(formData.quantityOnHand) : undefined,
     });
   }, [formData, createProductMutation]);
+
+  if (!hasFeature('products')) {
+    return <FeatureAccessDenied message="Products are not enabled for this workspace." />;
+  }
 
   const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';

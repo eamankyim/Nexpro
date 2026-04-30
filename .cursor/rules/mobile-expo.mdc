@@ -45,11 +45,25 @@ alwaysApply: false
 - **DO NOT** use shadcn/ui or web components — they are for Frontend only
 - Use `@expo/vector-icons` or `lucide-react-native` for icons
 
+## Mobile — In scope (build here when product needs it)
+
+- **Tenant features:** Use `hasFeature('key')` from `useAuth()` with the same keys as web `FeatureRoute` in `Frontend/src/App.jsx` (e.g. `crm`, `products`, `paymentsExpenses`, `jobAutomation`, `orders`, `quoteAutomation`, `invoices`, `expenses`, `materials`, `leadPipeline`, `deliveries`). Hide menu entries and tab bar items when false; use `FeatureAccessDenied` on screens to block deep links.
+
+
+- **Leads** — pipeline / CRM leads (API `/leads`)
+- **Tasks** — workspace tasks (API `/user-workspace/tasks`)
+- **Deliveries** — delivery queue for completed jobs/sales (API `/deliveries`)
+
 ## Mobile App — Out of Scope (Web Only)
 
 **DO NOT implement these screens in the mobile app.** They are web-only; use the web app for these features.
 
-- Leads
+- Platform admin (ABS Control Center / `/admin`)
+- Automations
+- Marketing
+- Reports / analytics hubs
+- Export data
+- Pricing templates
 - Vendors
 - Employees
 - Payroll

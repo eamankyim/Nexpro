@@ -33,6 +33,7 @@ const PrintableQuote = ({ quote, organization = {} }) => {
     website: organization.website || '',
     location: formatAddress(organization.address),
     paymentDetails: organization.paymentDetails || '',
+    paymentDetailsEnabled: organization.paymentDetailsEnabled === true,
     taxDisplayLabel: organization.tax?.displayLabel || 'Tax'
   };
 
@@ -371,7 +372,7 @@ const PrintableQuote = ({ quote, organization = {} }) => {
           </div>
         </div>
 
-        {companyInfo.paymentDetails && (
+        {companyInfo.paymentDetailsEnabled && companyInfo.paymentDetails && (
           <div className="notes-section">
             <div className="pay-to-block">
               <div className="pay-to-title">Pay to</div>

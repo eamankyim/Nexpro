@@ -97,6 +97,7 @@ const organizationSchema = z.object({
   primaryColor: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional().or(z.literal('')),
   invoiceFooter: z.string().optional(),
   paymentDetails: z.string().optional(),
+  paymentDetailsEnabled: z.boolean().optional(),
   defaultPaymentTerms: z.string().optional(),
   defaultTermsAndConditions: z.string().optional(),
   supportEmail: z.string().email().optional().or(z.literal('')),
@@ -375,6 +376,7 @@ const Settings = () => {
       logoUrl: '',
       invoiceFooter: '',
       paymentDetails: '',
+      paymentDetailsEnabled: false,
       defaultPaymentTerms: '',
       defaultTermsAndConditions: '',
       supportEmail: '',
@@ -841,6 +843,7 @@ const Settings = () => {
         primaryColor: organization.primaryColor || '',
         invoiceFooter: organization.invoiceFooter || '',
         paymentDetails: organization.paymentDetails || '',
+        paymentDetailsEnabled: organization.paymentDetailsEnabled === true,
         defaultPaymentTerms: organization.defaultPaymentTerms || '',
         defaultTermsAndConditions: organization.defaultTermsAndConditions || '',
         supportEmail: organization.supportEmail || '',
@@ -1208,6 +1211,8 @@ const Settings = () => {
       // Only include logoUrl if it's a URL (not base64) to avoid "request too large" errors
       ...(values.logoUrl && !values.logoUrl.startsWith('data:') ? { logoUrl: values.logoUrl } : {}),
       invoiceFooter: values.invoiceFooter || '',
+      paymentDetails: values.paymentDetails || '',
+      paymentDetailsEnabled: values.paymentDetailsEnabled === true,
       defaultPaymentTerms: values.defaultPaymentTerms || '',
       defaultTermsAndConditions: values.defaultTermsAndConditions || '',
       supportEmail: values.supportEmail || '',
@@ -2719,6 +2724,23 @@ const Settings = () => {
                   />
                 </FormControl>
                 <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={organizationForm.control}
+            name="paymentDetailsEnabled"
+            render={({ field }) => (
+              <FormItem className="mt-4 flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                <div className="space-y-0.5">
+                  <FormLabel className="text-base">Show Pay To on invoices and quotes</FormLabel>
+                  <FormDescription>
+                    Turn this on to display your saved payment details on customer documents.
+                  </FormDescription>
+                </div>
+                <FormControl>
+                  <Switch checked={Boolean(field.value)} onCheckedChange={field.onChange} />
+                </FormControl>
               </FormItem>
             )}
           />

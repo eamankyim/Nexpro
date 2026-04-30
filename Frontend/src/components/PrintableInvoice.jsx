@@ -69,6 +69,7 @@ const PrintableInvoice = ({
     location: formatAddress(organization.address),
     invoiceFooter: organization.invoiceFooter || '',
     paymentDetails: organization.paymentDetails || '',
+    paymentDetailsEnabled: organization.paymentDetailsEnabled === true,
     vatNumber: organization.tax?.vatNumber || '',
     tin: organization.tax?.tin || '',
     taxDisplayLabel: organization.tax?.displayLabel || 'Tax'
@@ -645,7 +646,7 @@ const PrintableInvoice = ({
         </div>
 
         {/* Pay to (payment details) */}
-        {companyInfo.paymentDetails && (
+        {companyInfo.paymentDetailsEnabled && companyInfo.paymentDetails && (
           <div className="notes-section">
             <div className="pay-to-block">
               <div className="pay-to-title">Pay to</div>

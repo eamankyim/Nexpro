@@ -17,6 +17,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { materialsService } from '@/services/materialsService';
 import { useAuth } from '@/context/AuthContext';
+import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useTheme } from '@/context/ThemeContext';
 import Colors from '@/constants/Colors';
 import { CURRENCY, resolveBusinessType } from '@/constants';
@@ -48,7 +49,7 @@ export default function MaterialsScreen() {
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
   const queryClient = useQueryClient();
-  const { activeTenant, activeTenantId } = useAuth();
+  const { activeTenant, activeTenantId, hasFeature } = useAuth();
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedItem, setSelectedItem] = useState<MaterialItem | null>(null);
@@ -70,7 +71,7 @@ export default function MaterialsScreen() {
       if (statusFilter === 'out') params.outOfStock = true;
       return materialsService.getItems(params);
     },
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && hasFeature('materials'),
     staleTime: 3 * 60 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
   });
@@ -122,6 +123,10 @@ export default function MaterialsScreen() {
       },
     });
   }, [selectedItem, restockData, restockMutation]);
+
+  if (!hasFeature('materials')) {
+    return <FeatureAccessDenied message="Materials are not enabled for this workspace." />;
+  }
 
   const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
