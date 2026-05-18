@@ -17,6 +17,10 @@ const { seedDefaultChartOfAccounts } = require('../utils/seedAccountingAccounts'
 const { resolveBusinessType } = require('../config/businessTypes');
 const { getTenantEffectiveEntitlements } = require('../utils/tenantEntitlements');
 
+/** User defaultScope omits emailVerifiedAt; auth responses must include it for verify-email UI. */
+const findUserForAuthResponse = (userId, options = {}) =>
+  User.scope('withEmailVerification').findByPk(userId, options);
+
 // Slug utility functions (copied from tenantController)
 const slugify = (value = '') => {
   return value
@@ -603,10 +607,12 @@ exports.login = async (req, res, next) => {
       membershipsInvitedBy: invitedByList,
     });
 
+    const userForResponse = await findUserForAuthResponse(user.id);
+
     res.status(200).json({
       success: true,
       data: {
-        user,
+        user: userForResponse,
         token,
         memberships,
         defaultTenantId: memberships[0]?.tenantId || null
@@ -700,7 +706,7 @@ exports.googleAuth = async (req, res, next) => {
         ],
       });
 
-      const updatedUser = await User.findByPk(user.id);
+      const updatedUser = await findUserForAuthResponse(user.id);
       return res.status(200).json({
         success: true,
         data: {
@@ -839,7 +845,7 @@ exports.googleAuth = async (req, res, next) => {
       throw txErr;
     }
 
-    user = await User.findByPk(newUser.id);
+    user = await findUserForAuthResponse(newUser.id);
     const shopType = metadata?.shopType || null;
     const studioType = metadata?.studioType || null;
     seedDefaultCategories(tenant.id, finalBusinessType, shopType, studioType, true)
@@ -928,7 +934,7 @@ exports.getPublicConfig = async (req, res, next) => {
 // @access  Private
 exports.getMe = async (req, res, next) => {
   try {
-    const user = await User.findByPk(req.user.id, {
+    const user = await findUserForAuthResponse(req.user.id, {
       include: [
         {
           model: UserTenant,
@@ -1148,9 +1154,10 @@ exports.setInitialPassword = async (req, res, next) => {
     await user.save();
 
     const token = generateToken(user.id);
+    const userForResponse = await findUserForAuthResponse(user.id);
     res.status(200).json({
       success: true,
-      data: { user, token }
+      data: { user: userForResponse, token }
     });
   } catch (error) {
     next(error);
@@ -1332,7 +1339,7 @@ exports.verifyEmail = async (req, res, next) => {
 // @access  Private
 exports.resendVerification = async (req, res, next) => {
   try {
-    const user = await User.findByPk(req.user.id);
+    const user = await findUserForAuthResponse(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
