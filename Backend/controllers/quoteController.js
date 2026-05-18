@@ -4,6 +4,10 @@ const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { getPagination } = require('../utils/paginationUtils');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const {
+  applyStudioLocationFilter,
+  attachStudioLocationToPayload,
+} = require('../utils/studioLocationUtils');
 const activityLogger = require('../services/activityLogger');
 const { getTaxConfigForTenant } = require('../utils/taxConfig');
 const { computeQuoteTaxSummary, computeDocumentTax } = require('../utils/taxCalculation');
@@ -86,7 +90,8 @@ exports.getQuotes = async (req, res, next) => {
     const customerId = req.query.customerId;
     const search = req.query.search || '';
 
-    const where = applyTenantFilter(req.tenantId, {});
+    let where = applyTenantFilter(req.tenantId, {});
+    where = applyStudioLocationFilter(req, where);
     // Staff see only quotes they created; admin/manager see all
     const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
     if (effectiveRole === 'staff') {
@@ -231,17 +236,19 @@ exports.createQuote = async (req, res, next) => {
       bodyTaxRate
     );
 
-    const quote = await Quote.create({
-      ...quoteData,
-      tenantId: req.tenantId,
-      quoteNumber,
-      subtotal: totals.subtotal,
-      discountTotal: totals.discountTotal,
-      taxRate: taxSummary.appliedTaxRate.toFixed(2),
-      taxAmount: taxSummary.taxAmount.toFixed(2),
-      totalAmount: taxSummary.total.toFixed(2),
-      createdBy: req.user?.id || null
-    });
+    const quote = await Quote.create(
+      attachStudioLocationToPayload(req, {
+        ...quoteData,
+        tenantId: req.tenantId,
+        quoteNumber,
+        subtotal: totals.subtotal,
+        discountTotal: totals.discountTotal,
+        taxRate: taxSummary.appliedTaxRate.toFixed(2),
+        taxAmount: taxSummary.taxAmount.toFixed(2),
+        totalAmount: taxSummary.total.toFixed(2),
+        createdBy: req.user?.id || null,
+      })
+    );
 
     if (items.length) {
       const quoteItems = items.map((item) => ({

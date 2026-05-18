@@ -9,6 +9,10 @@ const { baseUploadDir } = require('../middleware/upload');
 const activityLogger = require('../services/activityLogger');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const {
+  applyStudioLocationFilter,
+  attachStudioLocationToPayload,
+} = require('../utils/studioLocationUtils');
 const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { getJobItemCategories } = require('../config/jobItemCategories');
 const { getMaterialTypesForStudioType } = require('../config/studioTypes');
@@ -542,7 +546,8 @@ exports.getJobs = async (req, res, next) => {
     const dueDateFilter = req.query.dueDate;
 
     // Start with tenant filter - CRITICAL for data isolation
-    const where = applyTenantFilter(req.tenantId, {});
+    let where = applyTenantFilter(req.tenantId, {});
+    where = applyStudioLocationFilter(req, where);
     
     if (search) {
       where[Op.or] = [
@@ -662,7 +667,7 @@ exports.exportJobs = async (req, res, next) => {
 exports.getJob = async (req, res, next) => {
   try {
     const job = await Job.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'assignedUser', attributes: ['id', 'name', 'email'] },
@@ -752,11 +757,14 @@ exports.createJob = async (req, res, next) => {
         jobData.startDate = new Date();
       }
 
-      const job = await Job.create({
-        ...jobData,
-        tenantId: req.tenantId,
-        jobNumber
-      }, { transaction });
+      const job = await Job.create(
+        attachStudioLocationToPayload(req, {
+          ...jobData,
+          tenantId: req.tenantId,
+          jobNumber,
+        }),
+        { transaction }
+      );
 
       // Create job items if provided
       if (items && Array.isArray(items) && items.length > 0) {

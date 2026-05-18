@@ -2,6 +2,10 @@ const { sequelize } = require('../config/database');
 const { Customer, Job, CustomerActivity, User } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const {
+  applyStudioLocationFilter,
+  attachStudioLocationToPayload,
+} = require('../utils/studioLocationUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateCustomerListCache } = require('../middleware/cache');
 
@@ -11,14 +15,23 @@ const { invalidateCustomerListCache } = require('../middleware/cache');
 exports.getCustomerStats = async (req, res, next) => {
   try {
     const tenantId = req.tenantId;
+    let locationSql = '';
+    const replacements = { tenantId };
+    if (req.studioLocationScoped && req.studioLocationFilterId) {
+      locationSql = ' AND "studioLocationId" = :studioLocationId';
+      replacements.studioLocationId = req.studioLocationFilterId;
+    } else if (req.studioLocationScoped && req.allowedStudioLocationIds?.length) {
+      locationSql = ' AND "studioLocationId" IN (:studioLocationIds)';
+      replacements.studioLocationIds = req.allowedStudioLocationIds;
+    }
     const [result] = await sequelize.query(
       `SELECT
         COUNT(*)::int AS "totalCustomers",
         COUNT(*) FILTER (WHERE "isActive" = true)::int AS "activeCustomers",
         COUNT(*) FILTER (WHERE "isActive" = false)::int AS "inactiveCustomers",
         COUNT(*) FILTER (WHERE "isActive" = true AND COALESCE(balance, 0) > 0)::int AS "returningCustomers"
-      FROM customers WHERE "tenantId" = :tenantId`,
-      { replacements: { tenantId }, type: sequelize.QueryTypes.SELECT }
+      FROM customers WHERE "tenantId" = :tenantId${locationSql}`,
+      { replacements, type: sequelize.QueryTypes.SELECT }
     );
 
     res.status(200).json({
@@ -43,7 +56,8 @@ exports.getCustomers = async (req, res, next) => {
     const { page, limit, offset } = getPagination(req);
     const search = req.query.search || '';
 
-    const where = applyTenantFilter(req.tenantId, {});
+    let where = applyTenantFilter(req.tenantId, {});
+    where = applyStudioLocationFilter(req, where);
     if (search) {
       const term = `%${search}%`;
       where[Op.or] = [
@@ -82,7 +96,7 @@ exports.getCustomers = async (req, res, next) => {
 exports.getCustomer = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
       include: [
         {
           model: Job,
@@ -125,10 +139,12 @@ exports.createCustomer = async (req, res, next) => {
   try {
     const payload = sanitizePayload(req.body);
     if (payload.email === '') payload.email = null;
-    const customer = await Customer.create({
-      ...payload,
-      tenantId: req.tenantId
-    });
+    const customer = await Customer.create(
+      attachStudioLocationToPayload(req, {
+        ...payload,
+        tenantId: req.tenantId,
+      })
+    );
     invalidateCustomerListCache(req.tenantId);
 
     res.status(201).json({
@@ -146,7 +162,7 @@ exports.createCustomer = async (req, res, next) => {
 exports.updateCustomer = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
     });
 
     if (!customer) {
@@ -158,6 +174,7 @@ exports.updateCustomer = async (req, res, next) => {
 
     const payload = sanitizePayload(req.body);
     if (payload.email === '') payload.email = null;
+    delete payload.studioLocationId;
     await customer.update(payload);
     invalidateCustomerListCache(req.tenantId);
 

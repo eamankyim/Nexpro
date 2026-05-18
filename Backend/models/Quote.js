@@ -16,6 +16,14 @@ const Quote = sequelize.define('Quote', {
       key: 'id'
     }
   },
+  studioLocationId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'studio_locations',
+      key: 'id'
+    }
+  },
   quoteNumber: {
     type: DataTypes.STRING,
     allowNull: false

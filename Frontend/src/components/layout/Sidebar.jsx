@@ -111,6 +111,7 @@ const MENU_HINTS = {
   assets: 'Materials and equipment your business uses (not for sale)',
   '/employees': 'Your staff',
   '/shops': 'Your shops',
+  '/studio-locations': 'Studio branches in your workspace',
   '/foot-traffic': 'Customers visiting',
   '/pharmacies': 'Your pharmacies',
   '/prescriptions': 'Doctor prescriptions',
@@ -209,6 +210,14 @@ const getMenuItems = (businessType, isAdmin, isManager, shopType, hasFeature = (
   // Pricing templates available for all studio-like types (printing press, mechanic, barber, salon, studio)
   if (hasFeature('pricingTemplates') && STUDIO_LIKE_TYPES.includes(businessType)) {
     advancedChildren.push({ key: '/pricing', label: 'Pricing', tooltip: MENU_HINTS['/pricing'] });
+  }
+  if (STUDIO_LIKE_TYPES.includes(businessType) && hasFeature('studioLocationsModule')) {
+    advancedChildren.splice(2, 0, {
+      key: '/studio-locations',
+      label: 'Studios',
+      tooltip: MENU_HINTS['/studio-locations'],
+      managerOnly: true,
+    });
   }
 
   if (advancedChildren.length > 0) baseItems.push({
@@ -367,6 +376,7 @@ export function Sidebar({ collapsed, onCollapse }) {
     '/payroll': () => import('../../pages/Payroll'),
     '/accounting': () => import('../../pages/Accounting'),
     '/shops': () => import('../../pages/Shops'),
+    '/studio-locations': () => import('../../pages/StudioLocations'),
     '/pharmacies': () => import('../../pages/Pharmacies'),
     '/products': () => import('../../pages/Products'),
     '/drugs': () => import('../../pages/Drugs'),
@@ -734,6 +744,7 @@ export function MobileSidebar() {
     '/payroll': () => import('../../pages/Payroll'),
     '/accounting': () => import('../../pages/Accounting'),
     '/shops': () => import('../../pages/Shops'),
+    '/studio-locations': () => import('../../pages/StudioLocations'),
     '/pharmacies': () => import('../../pages/Pharmacies'),
     '/products': () => import('../../pages/Products'),
     '/drugs': () => import('../../pages/Drugs'),

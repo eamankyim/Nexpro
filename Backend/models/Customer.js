@@ -15,6 +15,14 @@ const Customer = sequelize.define('Customer', {
       key: 'id'
     }
   },
+  studioLocationId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'studio_locations',
+      key: 'id'
+    }
+  },
   name: {
     type: DataTypes.STRING,
     allowNull: false

@@ -90,7 +90,12 @@ const InviteToken = sequelize.define('InviteToken', {
     type: DataTypes.TEXT,
     allowNull: true,
     comment: 'Last email delivery error (if any)'
-  }
+  },
+  metadata: {
+    type: DataTypes.JSONB,
+    allowNull: false,
+    defaultValue: {},
+  },
 }, {
   timestamps: true,
   tableName: 'invite_tokens',

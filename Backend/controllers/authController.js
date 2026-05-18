@@ -420,6 +420,16 @@ exports.register = async (req, res, next) => {
       joinedAt: new Date()
     });
 
+    const inviteLocationIds = invite.metadata?.studioLocationIds;
+    if (Array.isArray(inviteLocationIds) && inviteLocationIds.length > 0) {
+      const { setUserStudioLocations } = require('../utils/studioLocationUtils');
+      try {
+        await setUserStudioLocations(user.id, invite.tenantId, inviteLocationIds);
+      } catch (assignErr) {
+        console.warn('[Auth] Studio location assignment from invite failed:', assignErr?.message);
+      }
+    }
+
     await invite.update({
       used: true,
       usedAt: new Date(),

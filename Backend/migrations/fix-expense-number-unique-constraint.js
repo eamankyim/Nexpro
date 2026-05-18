@@ -42,23 +42,42 @@ const fixExpenseNumberUniqueConstraint = async () => {
       console.log('   ℹ️  No global unique constraint on expenseNumber found (may be already removed)');
     }
 
-    // Add composite unique on (tenantId, expenseNumber) if not exists
+    // Add composite unique on (tenantId, expenseNumber) if not exists (pg_constraint is reliable; information_schema can miss it)
     const [compositeCheck] = await sequelize.query(`
-      SELECT constraint_name
-      FROM information_schema.table_constraints
-      WHERE table_name = 'expenses'
-        AND constraint_type = 'UNIQUE'
-        AND constraint_name = 'expenses_tenantId_expenseNumber_key';
+      SELECT c.conname AS constraint_name
+      FROM pg_constraint c
+      JOIN pg_class t ON c.conrelid = t.oid
+      JOIN pg_namespace n ON t.relnamespace = n.oid
+      WHERE t.relname = 'expenses'
+        AND n.nspname = 'public'
+        AND c.contype = 'u'
+        AND c.conname = 'expenses_tenantId_expenseNumber_key';
     `);
 
-    if (compositeCheck.length === 0) {
+    const hasComposite =
+      compositeCheck.length > 0 ||
+      (await sequelize.query(`
+        SELECT 1 FROM pg_indexes
+        WHERE schemaname = 'public' AND tablename = 'expenses'
+          AND indexname = 'expenses_tenantId_expenseNumber_key';
+      `))[0].length > 0;
+
+    if (!hasComposite) {
       console.log('📋 Adding composite unique constraint on (tenantId, expenseNumber)...');
-      await sequelize.query(`
-        ALTER TABLE expenses
-        ADD CONSTRAINT "expenses_tenantId_expenseNumber_key"
-        UNIQUE ("tenantId", "expenseNumber");
-      `);
-      console.log('   ✅ Added composite unique constraint');
+      try {
+        await sequelize.query(`
+          ALTER TABLE expenses
+          ADD CONSTRAINT "expenses_tenantId_expenseNumber_key"
+          UNIQUE ("tenantId", "expenseNumber");
+        `);
+        console.log('   ✅ Added composite unique constraint');
+      } catch (addErr) {
+        if (addErr?.parent?.code === '42P07' || /already exists/i.test(addErr?.message || '')) {
+          console.log('   ℹ️  Composite unique constraint already exists (skipped)');
+        } else {
+          throw addErr;
+        }
+      }
     } else {
       console.log('   ℹ️  Composite unique constraint already exists');
     }

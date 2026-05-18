@@ -13,6 +13,7 @@ const {
 } = require('../controllers/jobController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { exportLimiter } = require('../middleware/rateLimiter');
 const multer = require('multer');
 
@@ -20,6 +21,7 @@ const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(studioLocationContext);
 
 router.get('/categories', getJobCategories);
 router.get('/stats/overview', getJobStats);

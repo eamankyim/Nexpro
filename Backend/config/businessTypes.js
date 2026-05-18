@@ -60,7 +60,8 @@ const BUSINESS_TYPE_FEATURES = {
     'basicReports',
     'salesReports',
     'arReports',
-    'profitLossReports'
+    'profitLossReports',
+    'studioLocationsModule'
   ],
   pharmacy: [
     'crm',

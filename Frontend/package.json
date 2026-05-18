@@ -83,6 +83,7 @@
     "show-ip": "node scripts/show-lan-ip.js",
     "build": "vite build",
     "preview": "vite preview",
+    "deploy:production": "vercel link --yes --project shopwise_frontend --scope unext-globals-projects && vercel --prod --yes --scope unext-globals-projects",
     "deploy:abs-demo": "vercel link --yes --project \"prj_QS0xGtwK60AKwLT8AjeZbzxmj1mt\" --scope \"unext-globals-projects\" && vercel --prod --yes --scope \"unext-globals-projects\"",
     "deploy:shopwise": "vercel link --yes --project \"prj_Ib60NkYoXm04Sheesrbv0wkKM6qh\" --scope \"unext-globals-projects\" && vercel --prod --yes --scope \"unext-globals-projects\"",
     "test": "vitest",

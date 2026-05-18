@@ -178,6 +178,12 @@ api.interceptors.request.use(
     
     if (tenantId) {
       config.headers['x-tenant-id'] = tenantId;
+      const studioLocationId = localStorage.getItem('activeStudioLocationId'); // StudioLocationContext
+      if (studioLocationId) {
+        config.headers['x-studio-location-id'] = studioLocationId;
+      } else {
+        delete config.headers['x-studio-location-id'];
+      }
     } else {
       delete config.headers['x-tenant-id'];
       if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {

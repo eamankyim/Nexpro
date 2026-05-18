@@ -86,6 +86,7 @@ const sabitoMappingRoutes = require('./routes/sabitoMappingRoutes');
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
 // Shop Management Routes
 const shopRoutes = require('./routes/shopRoutes');
+const studioLocationRoutes = require('./routes/studioLocationRoutes');
 const productRoutes = require('./routes/productRoutes');
 const saleRoutes = require('./routes/saleRoutes');
 const scanLogRoutes = require('./routes/scanLogRoutes');
@@ -259,6 +260,7 @@ app.use('/api/sabito', sabitoMappingRoutes);
 app.use('/api/subscription', subscriptionRoutes);
 // Shop Management Routes
 app.use('/api/shops', shopRoutes);
+app.use('/api/studio-locations', studioLocationRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/scan-logs', scanLogRoutes);

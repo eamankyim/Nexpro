@@ -30,6 +30,7 @@ import { useResponsive, useSafeAreaInsets } from '@/hooks/useResponsive';
 import { RESPONSIVE } from '@/constants';
 import { resolveImageUrl } from '@/utils/fileUtils';
 import NotificationBell from '@/components/NotificationBell';
+import StudioLocationSwitcher from '@/components/StudioLocationSwitcher';
 import TourButton from '@/components/tour/TourButton';
 import { MobileSidebar } from './Sidebar';
 import { cn } from '@/lib/utils';
@@ -264,6 +265,8 @@ export function Header() {
                 <TooltipContent side="bottom">Open AI assistant page</TooltipContent>
               </Tooltip>
             )}
+
+            <StudioLocationSwitcher />
 
             {/* Notification Bell */}
             <Tooltip>

@@ -50,6 +50,7 @@ const addSalesTenantSoldByCreatedIndex = require('./add-sales-tenant-soldby-crea
 const addQueryPathIndexesV2 = require('./add-query-path-indexes-v2');
 const createRecurringJournals = require('./create-recurring-journals');
 const { createCustomerFeedbackTable } = require('./create-customer-feedback-table');
+const createStudioLocations = require('./create-studio-locations');
 
 const migrate = async () => {
   try {
@@ -200,6 +201,9 @@ const migrate = async () => {
 
     // End-customer feedback (public form submissions per tenant)
     await createCustomerFeedbackTable();
+
+    // Studio locations (multi-branch for studio workspaces)
+    await createStudioLocations();
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

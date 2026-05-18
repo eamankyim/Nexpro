@@ -16,6 +16,14 @@ const Job = sequelize.define('Job', {
       key: 'id'
     }
   },
+  studioLocationId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'studio_locations',
+      key: 'id'
+    }
+  },
   jobNumber: {
     type: DataTypes.STRING,
     allowNull: false

@@ -52,6 +52,7 @@ const profileSchema = z.object({
 const inviteSchema = z.object({
   email: z.string().email('Enter a valid email'),
   role: z.enum(['admin', 'manager', 'staff']),
+  studioLocationIds: z.array(z.string()).optional(),
 });
 import {
   Trash2,
@@ -75,6 +76,8 @@ import dayjs from 'dayjs';
 import userService from '../services/userService';
 import inviteService from '../services/inviteService';
 import { useAuth } from '../context/AuthContext';
+import { useStudioLocationOptional } from '../context/StudioLocationContext';
+import { STUDIO_LIKE_TYPES } from '../constants';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DashboardTable from '../components/DashboardTable';
@@ -142,7 +145,13 @@ const Users = () => {
   const [togglingStatus, setTogglingStatus] = useState(null);
   const [refreshingUsers, setRefreshingUsers] = useState(false);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
-  const { user, isAdmin, isManager, activeTenantId } = useAuth();
+  const { user, isAdmin, isManager, activeTenantId, activeTenant, hasFeature } = useAuth();
+  const studioLocationCtx = useStudioLocationOptional();
+  const isStudioWorkspace = STUDIO_LIKE_TYPES.includes(activeTenant?.businessType);
+  const showStudioLocationInvite =
+    isStudioWorkspace &&
+    hasFeature('studioLocationsModule') &&
+    (studioLocationCtx?.locations?.length ?? 0) > 0;
 
   const profileForm = useForm({
     resolver: zodResolver(profileSchema),
@@ -158,8 +167,11 @@ const Users = () => {
     defaultValues: {
       email: '',
       role: 'staff',
+      studioLocationIds: [],
     },
   });
+
+  const inviteRole = inviteForm.watch('role');
 
   const fetchPendingInvites = useCallback(async () => {
     try {
@@ -399,7 +411,7 @@ const Users = () => {
       await inviteService.generateInvite(values);
       showSuccess('Invite created. The user should receive an email shortly; delivery status updates below in a few seconds.');
       setInviteModalVisible(false);
-      inviteForm.reset({ email: '', role: 'staff' });
+      inviteForm.reset({ email: '', role: 'staff', studioLocationIds: [] });
       await fetchPendingInvites();
       void pollInviteEmailStatusUntilSettled(invitedEmail);
     } catch (error) {
@@ -1044,6 +1056,42 @@ const Users = () => {
                     </FormItem>
                   )}
                 />
+                {showStudioLocationInvite && inviteRole !== 'admin' && (
+                  <FormField
+                    control={inviteForm.control}
+                    name="studioLocationIds"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Studio locations</FormLabel>
+                        <p className="text-sm text-muted-foreground mb-2">
+                          Staff and managers only see data for the studios you select.
+                        </p>
+                        <div className="space-y-2 border rounded-lg p-3 max-h-40 overflow-y-auto">
+                          {(studioLocationCtx?.locations || []).map((loc) => {
+                            const checked = (field.value || []).includes(loc.id);
+                            return (
+                              <label key={loc.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    const next = new Set(field.value || []);
+                                    if (e.target.checked) next.add(loc.id);
+                                    else next.delete(loc.id);
+                                    field.onChange([...next]);
+                                  }}
+                                  className="rounded border-border"
+                                />
+                                {loc.name}
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
                 <Alert>
                   <AlertTitle>How It Works</AlertTitle>
                   <AlertDescription>

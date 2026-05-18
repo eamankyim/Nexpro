@@ -62,6 +62,7 @@ const Checkout = lazy(() => import('./pages/Checkout'));
 const Sales = lazy(() => import('./pages/Sales'));
 const Orders = lazy(() => import('./pages/Orders'));
 const Shops = lazy(() => import('./pages/Shops'));
+const StudioLocations = lazy(() => import('./pages/StudioLocations'));
 const Pharmacies = lazy(() => import('./pages/Pharmacies'));
 const Drugs = lazy(() => import('./pages/Drugs'));
 const Prescriptions = lazy(() => import('./pages/Prescriptions'));
@@ -254,6 +255,7 @@ function AppContent() {
             <Route path="payroll" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Payroll /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="accounting" element={<FeatureRoute featureKey="accounting"><RequireWorkspaceManager><Accounting /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="shops" element={SHOW_SHOPS ? <FeatureRoute featureKey="shopsModule"><Shops /></FeatureRoute> : <Navigate to="/dashboard" replace />} />
+            <Route path="studio-locations" element={<FeatureRoute featureKey="studioLocationsModule"><RequireWorkspaceManager><StudioLocations /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="pharmacies" element={<FeatureRoute featureKey="pharmacyOps"><Pharmacies /></FeatureRoute>} />
             <Route path="products" element={<FeatureRoute featureKey="products"><Products /></FeatureRoute>} />
             <Route path="drugs" element={<FeatureRoute featureKey="pharmacyOps"><Drugs /></FeatureRoute>} />

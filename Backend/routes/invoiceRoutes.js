@@ -15,6 +15,7 @@ const {
 } = require('../controllers/invoiceController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { cacheMiddleware, generateInvoiceListKey } = require('../middleware/cache');
 const { exportLimiter } = require('../middleware/rateLimiter');
 
@@ -22,6 +23,7 @@ const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(studioLocationContext);
 
 router.get('/stats/summary', getInvoiceStats);
 

@@ -19,7 +19,7 @@ const generateToken = () => {
 // @access  Private/Admin
 exports.generateInvite = async (req, res, next) => {
   try {
-    const { email, role, name, expiresInDays } = req.body;
+    const { email, role, name, expiresInDays, studioLocationIds } = req.body;
     const inviteRequestId = `inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     console.log('[Invite] Generating invite for:', {
       inviteRequestId,
@@ -129,7 +129,12 @@ exports.generateInvite = async (req, res, next) => {
       role,
       name,
       createdBy: req.user.id,
-      expiresAt
+      expiresAt,
+      metadata: {
+        studioLocationIds: Array.isArray(studioLocationIds)
+          ? studioLocationIds.filter(Boolean)
+          : [],
+      },
     });
 
     const invite = await InviteToken.create({

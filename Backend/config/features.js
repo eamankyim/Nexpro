@@ -166,6 +166,18 @@ const FEATURE_CATALOG = [
     }
   },
   {
+    key: 'studioLocationsModule',
+    name: 'Studio locations',
+    description: 'Manage multiple studio branches in one workspace',
+    category: 'operations',
+    routes: ['/studio-locations'],
+    requiredForModules: [],
+    marketingCopy: {
+      highlight: 'Run Accra, Kumasi, and more from one account',
+      perk: 'Multi-studio locations',
+    },
+  },
+  {
     key: 'shopsModule',
     name: 'Shops',
     description: 'Manage multiple shops',
@@ -431,10 +443,10 @@ const getFeaturesForPlan = (planId) => {
   const planFeatures = {
     trial: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'deliveries', 'invoices', 'expenses', 'reports', 'leadPipeline', 'roleManagement'],
     starter: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],
-    professional: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting', 'automations', 'shopsModule', 'pharmacyOps'],
+    professional: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting', 'automations', 'shopsModule', 'pharmacyOps', 'studioLocationsModule'],
     enterprise: FEATURE_CATALOG.map(f => f.key),
     launch: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],
-    scale: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting', 'automations', 'shopsModule', 'pharmacyOps']
+    scale: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting', 'automations', 'shopsModule', 'pharmacyOps', 'studioLocationsModule']
   };
   return planFeatures[planId] || [];
 };

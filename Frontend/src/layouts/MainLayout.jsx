@@ -4,6 +4,7 @@ import { Mail, Loader2, WifiOff } from 'lucide-react';
 import { Sidebar } from '../components/layout/Sidebar';
 import { Header } from '../components/layout/Header';
 import { SmartSearchProvider } from '../context/SmartSearchContext';
+import { StudioLocationProvider } from '../context/StudioLocationContext';
 import NotificationWebSocketListener from '../components/NotificationWebSocketListener';
 import PaymentCollectionRequiredBanner from '../components/PaymentCollectionRequiredBanner';
 import { useResponsive, useSafeAreaInsets, BREAKPOINTS } from '../hooks/useResponsive';
@@ -78,6 +79,7 @@ const MainLayout = () => {
 
   return (
     <SmartSearchProvider>
+      <StudioLocationProvider>
       <NotificationWebSocketListener />
       <div className="min-h-screen bg-background">
         {/* Desktop Sidebar */}
@@ -141,6 +143,7 @@ const MainLayout = () => {
         </div>
 
       </div>
+      </StudioLocationProvider>
     </SmartSearchProvider>
   );
 };

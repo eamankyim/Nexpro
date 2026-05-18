@@ -76,6 +76,8 @@ const UserChecklistItem = require('./UserChecklistItem');
 const TenantAccessAudit = require('./TenantAccessAudit');
 const AutomationRule = require('./AutomationRule');
 const AutomationRun = require('./AutomationRun');
+const StudioLocation = require('./StudioLocation');
+const UserStudioLocation = require('./UserStudioLocation');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -452,6 +454,35 @@ Tenant.hasMany(SabitoTenantMapping, {
   as: 'sabitoMappings' 
 });
 
+// Studio locations (multi-branch for studio workspaces)
+Tenant.hasMany(StudioLocation, { foreignKey: 'tenantId', as: 'studioLocations' });
+StudioLocation.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+User.belongsToMany(StudioLocation, {
+  through: UserStudioLocation,
+  foreignKey: 'userId',
+  otherKey: 'studioLocationId',
+  as: 'studioLocations',
+});
+StudioLocation.belongsToMany(User, {
+  through: UserStudioLocation,
+  foreignKey: 'studioLocationId',
+  otherKey: 'userId',
+  as: 'users',
+});
+UserStudioLocation.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+UserStudioLocation.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+StudioLocation.hasMany(UserStudioLocation, { foreignKey: 'studioLocationId', as: 'userAssignments' });
+
+StudioLocation.hasMany(Customer, { foreignKey: 'studioLocationId', as: 'customers' });
+Customer.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+StudioLocation.hasMany(Job, { foreignKey: 'studioLocationId', as: 'jobs' });
+Job.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+StudioLocation.hasMany(Quote, { foreignKey: 'studioLocationId', as: 'quotes' });
+Quote.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+StudioLocation.hasMany(Invoice, { foreignKey: 'studioLocationId', as: 'invoices' });
+Invoice.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+
 // Shop Management Relationships
 Tenant.hasMany(Shop, { foreignKey: 'tenantId', as: 'shops' });
 Shop.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -634,7 +665,9 @@ module.exports = {
   UserChecklistItem,
   TenantAccessAudit,
   AutomationRule,
-  AutomationRun
+  AutomationRun,
+  StudioLocation,
+  UserStudioLocation,
 };
 
 

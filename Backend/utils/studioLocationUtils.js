@@ -1,0 +1,147 @@
+const { Op } = require('sequelize');
+const { resolveBusinessType } = require('../config/businessTypes');
+const { StudioLocation, UserStudioLocation } = require('../models');
+
+const WORKSPACE_WIDE_ROLES = ['owner', 'admin'];
+
+const isStudioTenant = (tenant) => resolveBusinessType(tenant?.businessType) === 'studio';
+
+const hasWorkspaceWideStudioAccess = (tenantRole) =>
+  WORKSPACE_WIDE_ROLES.includes(tenantRole);
+
+/**
+ * @param {string} tenantId
+ * @param {string} [defaultName]
+ * @returns {Promise<import('../models/StudioLocation').default>}
+ */
+const ensureDefaultStudioLocation = async (tenantId, defaultName = 'Main studio') => {
+  const existingDefault = await StudioLocation.findOne({
+    where: { tenantId, isDefault: true },
+  });
+  if (existingDefault) return existingDefault;
+
+  const any = await StudioLocation.findOne({ where: { tenantId } });
+  if (any) return any;
+
+  return StudioLocation.create({
+    tenantId,
+    name: defaultName,
+    isDefault: true,
+    isActive: true,
+  });
+};
+
+/**
+ * @param {string} userId
+ * @param {string} tenantId
+ * @param {string} tenantRole
+ * @returns {Promise<string[]>}
+ */
+const getUserStudioLocationIds = async (userId, tenantId, tenantRole) => {
+  if (hasWorkspaceWideStudioAccess(tenantRole)) {
+    const rows = await StudioLocation.findAll({
+      where: { tenantId, isActive: true },
+      attributes: ['id'],
+    });
+    return rows.map((r) => r.id);
+  }
+
+  const assignments = await UserStudioLocation.findAll({
+    where: { userId, tenantId },
+    include: [
+      {
+        model: StudioLocation,
+        as: 'studioLocation',
+        where: { isActive: true },
+        required: true,
+        attributes: ['id'],
+      },
+    ],
+  });
+  return assignments.map((a) => a.studioLocationId);
+};
+
+/**
+ * Merge studio location filter into a Sequelize where clause.
+ * @param {object} req
+ * @param {object} [where]
+ */
+const applyStudioLocationFilter = (req, where = {}) => {
+  if (!req.studioLocationScoped) return where;
+
+  if (req.studioLocationFilterId) {
+    return { ...where, studioLocationId: req.studioLocationFilterId };
+  }
+
+  if (req.allowedStudioLocationIds?.length) {
+    return { ...where, studioLocationId: { [Op.in]: req.allowedStudioLocationIds } };
+  }
+
+  return where;
+};
+
+/**
+ * Studio location id to set on create/update.
+ * @param {object} req
+ * @returns {string|null}
+ */
+const getStudioLocationIdForWrite = (req) => {
+  if (!req.studioLocationScoped) return null;
+  const id = req.studioLocationFilterId || req.defaultStudioLocationId || null;
+  if (!id) {
+    const err = new Error('Studio location context is required');
+    err.statusCode = 400;
+    throw err;
+  }
+  return id;
+};
+
+/**
+ * @param {object} req
+ * @param {object} payload
+ */
+const attachStudioLocationToPayload = (req, payload = {}) => {
+  const locationId = getStudioLocationIdForWrite(req);
+  if (locationId) {
+    return { ...payload, studioLocationId: locationId };
+  }
+  return payload;
+};
+
+/**
+ * @param {string} userId
+ * @param {string} tenantId
+ * @param {string[]} studioLocationIds
+ */
+const setUserStudioLocations = async (userId, tenantId, studioLocationIds) => {
+  const uniqueIds = [...new Set((studioLocationIds || []).filter(Boolean))];
+  if (uniqueIds.length) {
+    const valid = await StudioLocation.count({
+      where: { tenantId, id: { [Op.in]: uniqueIds }, isActive: true },
+    });
+    if (valid !== uniqueIds.length) {
+      const err = new Error('One or more studio locations are invalid');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
+  await UserStudioLocation.destroy({ where: { userId, tenantId } });
+  if (!uniqueIds.length) return;
+
+  await UserStudioLocation.bulkCreate(
+    uniqueIds.map((studioLocationId) => ({ userId, tenantId, studioLocationId }))
+  );
+};
+
+module.exports = {
+  WORKSPACE_WIDE_ROLES,
+  isStudioTenant,
+  hasWorkspaceWideStudioAccess,
+  ensureDefaultStudioLocation,
+  getUserStudioLocationIds,
+  applyStudioLocationFilter,
+  getStudioLocationIdForWrite,
+  attachStudioLocationToPayload,
+  setUserStudioLocations,
+};

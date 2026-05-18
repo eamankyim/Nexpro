@@ -185,6 +185,27 @@ exports.signupTenant = async (req, res, next) => {
         { transaction }
       );
 
+      if (finalBusinessType === 'studio') {
+        const { StudioLocation, UserStudioLocation } = require('../models');
+        const defaultStudio = await StudioLocation.create(
+          {
+            tenantId: tenant.id,
+            name: trimmedCompanyName,
+            isDefault: true,
+            isActive: true,
+          },
+          { transaction }
+        );
+        await UserStudioLocation.create(
+          {
+            userId: user.id,
+            tenantId: tenant.id,
+            studioLocationId: defaultStudio.id,
+          },
+          { transaction }
+        );
+      }
+
       await Setting.bulkCreate(
         [
           {

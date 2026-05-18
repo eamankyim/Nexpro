@@ -3,6 +3,10 @@ const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
 const { createInvoicePaymentJournal, createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const {
+  applyStudioLocationFilter,
+  attachStudioLocationToPayload,
+} = require('../utils/studioLocationUtils');
 const { invalidateInvoiceListCache, invalidateAfterMutation } = require('../middleware/cache');
 const activityLogger = require('../services/activityLogger');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
@@ -79,7 +83,7 @@ const buildInvoiceVisibilityWhere = async (req) => {
     }
   }
 
-  return where;
+  return applyStudioLocationFilter(req, where);
 };
 
 /**
@@ -533,12 +537,18 @@ exports.createInvoice = async (req, res, next) => {
       ? parseFloat(discountValue || 0)
       : (totalItemDiscount > 0 ? totalItemDiscount : jobLevelDiscountFallback);
 
+    const studioLocationId =
+      (isJobLinked && job?.studioLocationId) ||
+      attachStudioLocationToPayload(req, {}).studioLocationId ||
+      null;
+
     // Create invoice
     const invoice = await Invoice.create({
       invoiceNumber,
       jobId: isJobLinked ? jobId : null,
       customerId: resolvedCustomerId,
       tenantId: req.tenantId,
+      studioLocationId,
       sourceType,
       invoiceDate: new Date(),
       dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days
