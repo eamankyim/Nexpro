@@ -10,7 +10,15 @@ const {
 } = require('../controllers/invoiceController');
 const { getQuoteByViewToken, respondToQuoteByToken } = require('../controllers/quoteController');
 const { submitDemoBooking, getJobTrackByToken, lookupPublicTracking, getPublicTrackBranding } = require('../controllers/publicController');
-const { publicTrackingLookupLimiter, publicTrackBrandingLimiter } = require('../middleware/rateLimiter');
+const {
+  getPublicFeedbackBranding,
+  submitPublicFeedback
+} = require('../controllers/publicFeedbackController');
+const {
+  publicTrackingLookupLimiter,
+  publicTrackBrandingLimiter,
+  publicFeedbackSubmitLimiter
+} = require('../middleware/rateLimiter');
 
 const router = express.Router();
 
@@ -35,6 +43,10 @@ router.post('/quotes/view/:token/respond', respondToQuoteByToken);
 router.get('/jobs/track/:token', getJobTrackByToken);
 router.get('/track/:tenantSlug/branding', publicTrackBrandingLimiter, getPublicTrackBranding);
 router.post('/track/:tenantSlug/lookup', publicTrackingLookupLimiter, lookupPublicTracking);
+
+// End-customer feedback (no login)
+router.get('/feedback/branding/:tenantSlug', publicTrackBrandingLimiter, getPublicFeedbackBranding);
+router.post('/feedback', publicFeedbackSubmitLimiter, submitPublicFeedback);
 
 module.exports = router;
 

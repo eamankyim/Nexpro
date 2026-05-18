@@ -60,6 +60,7 @@ const expenseRoutes = require('./routes/expenseRoutes');
 const quoteRoutes = require('./routes/quoteRoutes');
 const pricingRoutes = require('./routes/pricingRoutes');
 const publicRoutes = require('./routes/publicRoutes');
+const feedbackRoutes = require('./routes/feedbackRoutes');
 const invoiceRoutes = require('./routes/invoiceRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const inviteRoutes = require('./routes/inviteRoutes');
@@ -229,6 +230,9 @@ app.use('/api/expenses', expenseRoutes);
 app.use('/api/quotes', quoteRoutes);
 app.use('/api/pricing', pricingRoutes);
 app.use('/api/public', publicRoutes);
+app.use('/api/feedback', feedbackRoutes);
+// Alias: some clients / docs referred to customer feedback as "reviews"
+app.use('/api/reviews', feedbackRoutes);
 app.use('/api/invoices', invoiceRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/invites', inviteRoutes);
@@ -317,9 +321,42 @@ app.use(errorHandler);
 
 // 404 handler
 app.use((req, res) => {
+  const fullPath = req.originalUrl || req.url || '';
+  const pathOnly = req.path || '';
+  const lower = fullPath.toLowerCase();
+  const looksLikePublicFeedbackPage =
+    /^\/feedback\//i.test(fullPath) || lower.startsWith('/feedback?');
+  const looksLikeFeedbackApi =
+    lower.startsWith('/api/feedback') ||
+    lower.startsWith('/api/reviews') ||
+    lower.startsWith('/api/public/feedback');
+  const doubleApi = /\/api\/api\//i.test(fullPath);
+  const hint = looksLikePublicFeedbackPage
+    ? ' Customer feedback pages must be opened on your web app URL (not the API server), e.g. https://your-app…/feedback/your-workspace-slug.'
+    : '';
+
+  const logPayload = {
+    tag: '[404]',
+    reason: 'no_matching_route',
+    method: req.method,
+    originalUrl: fullPath,
+    path: pathOnly,
+    baseUrl: req.baseUrl || '',
+    referer: req.get('Referer') || null,
+    userAgent: (req.get('User-Agent') || '').slice(0, 160) || null,
+    looksLikePublicFeedbackPage,
+    looksLikeFeedbackApi,
+    doubleApi
+  };
+  if (looksLikePublicFeedbackPage || looksLikeFeedbackApi || doubleApi || lower.includes('review')) {
+    console.warn('[404] Route not found (reviews/feedback-related or double /api):', JSON.stringify(logPayload));
+  }
+
   res.status(404).json({
     success: false,
-    message: 'Route not found'
+    message: hint ? `Route not found.${hint}` : 'Route not found',
+    path: fullPath,
+    ...(config.nodeEnv === 'development' ? { debug: logPayload } : {})
   });
 });
 

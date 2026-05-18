@@ -14,7 +14,7 @@ const FEATURE_CATALOG = [
     name: 'Customers',
     description: 'Manage customer records and profiles',
     category: 'core',
-    routes: ['/customers'],
+    routes: ['/customers', '/feedback', '/reviews'],
     requiredForModules: ['quotes', 'jobs', 'invoices'],
     marketingCopy: {
       highlight: 'Complete CRM for customers & vendors',

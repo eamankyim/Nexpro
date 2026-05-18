@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useQueryClient } from '@tanstack/react-query';
 import { authService } from '@/services/auth';
 import { logger } from '@/utils/logger';
+import { shouldSuppressAppGuidance } from '@/utils/appGuidanceEligibility';
 
 type User = {
   id: string;
@@ -10,6 +11,9 @@ type User = {
   profilePicture?: string;
   emailVerifiedAt?: string | null;
   isPlatformAdmin?: boolean;
+  createdAt?: string;
+  lastLogin?: string;
+  isFirstLogin?: boolean;
 } | null;
 type Membership = {
   tenantId: string;
@@ -17,11 +21,14 @@ type Membership = {
     id: string;
     name?: string;
     businessType?: string;
+    createdAt?: string;
     effectiveFeatureFlags?: Record<string, boolean>;
     metadata?: { shopType?: string; onboarding?: { completedAt?: string }; phone?: string };
   };
   isDefault?: boolean;
   invitedBy?: string | null;
+  createdAt?: string;
+  joinedAt?: string;
 };
 
 type AuthContextType = {
@@ -36,6 +43,8 @@ type AuthContextType = {
   } | null;
   loading: boolean;
   wasInvited: boolean;
+  /** Skip forced onboarding for tenured or very active users */
+  suppressAppGuidance: boolean;
   /** Plan/feature gating — same semantics as web: flag must be exactly true */
   hasFeature: (featureKey: string) => boolean;
   login: (email: string, password: string) => Promise<void>;
@@ -55,7 +64,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [activeTenantId, setActiveTenantIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const activeTenant = memberships.find((m) => m.tenantId === activeTenantId)?.tenant ?? null;
+  const activeMembership = memberships.find((m) => m.tenantId === activeTenantId) ?? null;
+  const activeTenant = activeMembership?.tenant ?? null;
 
   const activeFeatureFlags = useMemo(() => {
     const eff = activeTenant?.effectiveFeatureFlags;
@@ -71,6 +81,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const wasInvited = useMemo(
     () => Array.isArray(memberships) && memberships.some((m) => !!(m as Membership & { invitedBy?: string }).invitedBy),
     [memberships]
+  );
+
+  const suppressAppGuidance = useMemo(
+    () => shouldSuppressAppGuidance({ user, activeMembership, activeTenant }),
+    [user, activeMembership, activeTenant]
   );
 
   const setActiveTenantId = useCallback(
@@ -261,6 +276,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     activeTenant,
     loading,
     wasInvited,
+    suppressAppGuidance,
     hasFeature,
     login,
     logout,

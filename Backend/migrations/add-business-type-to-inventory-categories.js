@@ -1,17 +1,40 @@
 /**
- * Migration: Add businessType, studioType, shopType to inventory_categories
+ * Migration: Add businessType, studioType, shopType to category tables used for materials.
  *
- * Enables inventory categories to be scoped by business type and shop/studio type.
- * Null values mean "applies to all" for backward compatibility.
+ * Historically this targeted inventory_categories; after rename-inventory-tables-to-materials
+ * the table is materials_categories. Null values mean "applies to all" for backward compatibility.
  */
 
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 const { sequelize } = require('../config/database');
+const { QueryTypes } = require('sequelize');
 
 const addBusinessTypeToInventoryCategories = async (options = {}) => {
   const { closeConnection = true } = options;
-  console.log('Adding businessType, studioType, shopType to inventory_categories...');
+
+  const [catTableRows] = await sequelize.query(
+    `SELECT table_name FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_name IN ('materials_categories', 'inventory_categories')`,
+    { type: QueryTypes.SELECT }
+  );
+  const present = new Set((catTableRows || []).map((r) => r.table_name));
+  const targetTable = present.has('materials_categories')
+    ? 'materials_categories'
+    : present.has('inventory_categories')
+      ? 'inventory_categories'
+      : null;
+
+  if (!targetTable) {
+    console.log(
+      '⚠️  No materials_categories or inventory_categories; skipping businessType / studioType / shopType migration.'
+    );
+    if (closeConnection) await sequelize.close();
+    return;
+  }
+
+  console.log(`Adding businessType, studioType, shopType to ${targetTable}...`);
 
   try {
     await sequelize.query(`
@@ -21,7 +44,6 @@ const addBusinessTypeToInventoryCategories = async (options = {}) => {
         WHEN duplicate_object THEN null;
       END $$;
     `);
-
     await sequelize.query(`
       DO $$ BEGIN
         CREATE TYPE "enum_inventory_categories_studioType" AS ENUM ('printing_press', 'mechanic', 'barber', 'salon');
@@ -29,29 +51,52 @@ const addBusinessTypeToInventoryCategories = async (options = {}) => {
         WHEN duplicate_object THEN null;
       END $$;
     `);
+    await sequelize.query(`
+      DO $$ BEGIN
+        CREATE TYPE "enum_materials_categories_businessType" AS ENUM ('shop', 'studio', 'pharmacy');
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
+    `);
+    await sequelize.query(`
+      DO $$ BEGIN
+        CREATE TYPE "enum_materials_categories_studioType" AS ENUM ('printing_press', 'mechanic', 'barber', 'salon');
+      EXCEPTION
+        WHEN duplicate_object THEN null;
+      END $$;
+    `);
+
+    const businessEnum =
+      targetTable === 'materials_categories'
+        ? 'enum_materials_categories_businessType'
+        : 'enum_inventory_categories_businessType';
+    const studioEnum =
+      targetTable === 'materials_categories'
+        ? 'enum_materials_categories_studioType'
+        : 'enum_inventory_categories_studioType';
 
     await sequelize.query(`
-      ALTER TABLE inventory_categories
-      ADD COLUMN IF NOT EXISTS "businessType" "enum_inventory_categories_businessType";
+      ALTER TABLE "${targetTable}"
+      ADD COLUMN IF NOT EXISTS "businessType" "${businessEnum}";
     `);
 
     await sequelize.query(`
-      ALTER TABLE inventory_categories
-      ADD COLUMN IF NOT EXISTS "studioType" "enum_inventory_categories_studioType";
+      ALTER TABLE "${targetTable}"
+      ADD COLUMN IF NOT EXISTS "studioType" "${studioEnum}";
     `);
 
     await sequelize.query(`
-      ALTER TABLE inventory_categories
+      ALTER TABLE "${targetTable}"
       ADD COLUMN IF NOT EXISTS "shopType" VARCHAR(50);
     `);
 
-    console.log('Added businessType, studioType, shopType to inventory_categories');
+    console.log(`Added businessType, studioType, shopType to ${targetTable}`);
 
     if (closeConnection) {
       await sequelize.close();
     }
   } catch (error) {
-    console.error('Error adding business type columns to inventory_categories:', error);
+    console.error(`Error adding business type columns to ${targetTable}:`, error);
     throw error;
   }
 };

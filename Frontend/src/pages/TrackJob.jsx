@@ -114,8 +114,14 @@ export default function TrackJob() {
 
   if (loading) {
     return (
-      <PublicTrackingBrandShell variant="neutral" organizationName="Loading" subtitle="Fetching your job status…">
-        <div className="p-10 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+      <PublicTrackingBrandShell
+        variant="neutral"
+        organizationName="Loading"
+        heroTitle="Loading"
+        heroTagline="Fetching your job status…"
+        logoSize="md"
+      >
+        <div className="flex flex-col items-center justify-center gap-3 py-14 text-muted-foreground">
           <Loader2 className="h-10 w-10 animate-spin" />
         </div>
       </PublicTrackingBrandShell>
@@ -127,9 +133,11 @@ export default function TrackJob() {
       <PublicTrackingBrandShell
         variant="neutral"
         organizationName="Unable to show this job"
-        subtitle="The link may be invalid or tracking is turned off."
+        heroTitle="Unable to show this job"
+        heroTagline="The link may be invalid or tracking is turned off."
+        logoSize="md"
       >
-        <div className="p-6 text-center">
+        <div className="rounded-xl border border-border bg-card p-6 text-center">
           <p className="text-sm text-muted-foreground">{error || 'Job not found'}</p>
         </div>
       </PublicTrackingBrandShell>
@@ -139,25 +147,28 @@ export default function TrackJob() {
   return (
     <PublicTrackingBrandShell
       primaryColor={primaryColor}
-      organizationName={org.name || 'Job update'}
+      organizationName={org.name || 'Business'}
       logoUrl={org.logoUrl}
-      subtitle="Track your job"
+      heroTitle="Track your job"
+      heroTagline={job.title || 'See the latest status for your job.'}
       headerMeta={updatedLine}
     >
-      <PublicJobTrackingPanel
-        primaryColor={primaryColor}
-        jobNumber={job.jobNumber}
-        title={job.title}
-        timelineKind={job.timelineKind === 'delivery' ? 'delivery' : 'job'}
-        status={job.status}
-        deliveryStatus={job.deliveryStatus}
-        orderDate={job.orderDate}
-        startDate={job.startDate}
-        inProgressAt={job.inProgressAt}
-        completionDate={job.completionDate}
-        createdAt={job.createdAt}
-        updatedAt={job.updatedAt}
-      />
+      <div className="p-5 sm:p-6">
+        <PublicJobTrackingPanel
+          primaryColor={primaryColor}
+          jobNumber={job.jobNumber}
+          title={job.title}
+          timelineKind={job.timelineKind === 'delivery' ? 'delivery' : 'job'}
+          status={job.status}
+          deliveryStatus={job.deliveryStatus}
+          orderDate={job.orderDate}
+          startDate={job.startDate}
+          inProgressAt={job.inProgressAt}
+          completionDate={job.completionDate}
+          createdAt={job.createdAt}
+          updatedAt={job.updatedAt}
+        />
+      </div>
     </PublicTrackingBrandShell>
   );
 }

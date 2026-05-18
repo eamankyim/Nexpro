@@ -65,9 +65,6 @@ const fixExpenseNumberUniqueConstraint = async () => {
 
     console.log('\n✅ Expense number constraint migration completed successfully!');
     console.log('📊 Expense numbers are now unique per tenant, not globally.\n');
-
-    await sequelize.close();
-    process.exit(0);
   } catch (error) {
     console.error('\n❌ Migration failed:', error);
     console.error('Error details:', {
@@ -75,13 +72,24 @@ const fixExpenseNumberUniqueConstraint = async () => {
       message: error.message,
       stack: error.stack,
     });
-    await sequelize.close();
-    process.exit(1);
+    throw error;
   }
 };
 
 if (require.main === module) {
-  fixExpenseNumberUniqueConstraint();
+  fixExpenseNumberUniqueConstraint()
+    .then(async () => {
+      await sequelize.close();
+      process.exit(0);
+    })
+    .catch(async () => {
+      try {
+        await sequelize.close();
+      } catch (_) {
+        /* ignore */
+      }
+      process.exit(1);
+    });
 }
 
 module.exports = fixExpenseNumberUniqueConstraint;

@@ -52,6 +52,7 @@ import { cn } from '@/lib/utils';
  * @param {Function} onClose - Callback function when drawer is closed
  * @param {Function} onOpenChange - Callback with (open: boolean) when drawer open state changes (e.g. setDrawerVisible)
  * @param {String} title - Drawer title
+ * @param {String} description - Drawer subtitle (default: 'View and manage details')
  * @param {Array} fields - Array of field objects with { label, value, span, render }
  * @param {Array} tabs - Array of tab objects with { key, label, content } (optional)
  * @param {React.ReactNode} children - Optional custom content; when provided, rendered instead of fields/tabs
@@ -72,7 +73,8 @@ const DetailsDrawer = ({
   open, 
   onClose,
   onOpenChange,
-  title, 
+  title,
+  description = 'View and manage details',
   fields = [], 
   tabs = null,
   children = null,
@@ -127,34 +129,43 @@ const DetailsDrawer = ({
           onOpenChange?.(false);
         }
       }}>
-        <SheetContent 
-          side="right" 
+        <SheetContent
+          side={isMobile ? 'bottom' : 'right'}
           className={cn(
-            "shadow-none p-0 rounded-lg flex flex-col overflow-x-hidden",
-            isMobile && "w-full max-w-[calc(100vw-16px)]"
+            'shadow-none flex flex-col overflow-x-hidden p-0',
+            isMobile
+              ? 'inset-x-0 bottom-0 top-auto h-[94dvh] max-h-[94dvh] w-full max-w-full rounded-t-2xl rounded-b-none border-t'
+              : 'rounded-lg w-full max-w-[calc(100vw-16px)]'
           )}
-          style={{
-            width: isMobile ? '100%' : (typeof width === 'string' ? width : `${width}px`),
-            minWidth: isMobile ? undefined : '30vw',
-            maxWidth: isMobile ? 'calc(100vw - 16px)' : 'calc(90vw - 16px)',
-            marginLeft: '8px',
-            marginRight: '8px',
-            marginTop: '8px',
-            marginBottom: '8px',
-            borderRadius: '8px',
-            height: 'calc(100dvh - 16px)',
-            maxHeight: 'calc(100dvh - 16px)',
-          }}
+          style={
+            isMobile
+              ? undefined
+              : {
+                  width: typeof width === 'string' ? width : `${width}px`,
+                  minWidth: '30vw',
+                  maxWidth: 'calc(90vw - 16px)',
+                  marginLeft: '8px',
+                  marginRight: '8px',
+                  marginTop: '8px',
+                  marginBottom: '8px',
+                  borderRadius: '8px',
+                  height: 'calc(100dvh - 16px)',
+                  maxHeight: 'calc(100dvh - 16px)',
+                }
+          }
         >
+          {isMobile && (
+            <div className="flex shrink-0 justify-center pt-3 pb-1" aria-hidden>
+              <div className="h-1 w-10 rounded-full bg-gray-300" />
+            </div>
+          )}
           <div className="flex-shrink-0">
-            <div className="p-6">
+            <div className={cn('px-4 pb-4 pt-2 sm:px-6 sm:pb-6 sm:pt-6', isMobile && 'pr-14')}>
               <SheetHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <SheetTitle>{title}</SheetTitle>
-                    <SheetDescription className="mt-1">
-                      View and manage details
-                    </SheetDescription>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 text-left">
+                    <SheetTitle className={cn(isMobile && 'text-xl')}>{title}</SheetTitle>
+                    <SheetDescription className="mt-1 text-left">{description}</SheetDescription>
                   </div>
                   {extra && <div className="flex flex-wrap gap-2">{extra}</div>}
                 </div>
@@ -165,7 +176,10 @@ const DetailsDrawer = ({
 
           <div className="overflow-y-auto overflow-x-hidden flex-1" style={{ minHeight: 0 }}>
             {children != null && children !== false ? (
-              <div className="px-6 py-6 [&_[role=separator]]:-mx-6 [&_[role=separator]]:w-[calc(100%+3rem)] [&_[role=separator]]:min-w-[calc(100%+3rem)] [&_hr]:-mx-6 [&_hr]:w-[calc(100%+3rem)] [&_hr]:min-w-[calc(100%+3rem)]">{children}</div>
+              <div className={cn(
+                isMobile ? 'p-0' : 'px-6 py-6',
+                '[&_[role=separator]]:-mx-6 [&_[role=separator]]:w-[calc(100%+3rem)] [&_[role=separator]]:min-w-[calc(100%+3rem)] [&_hr]:-mx-6 [&_hr]:w-[calc(100%+3rem)] [&_hr]:min-w-[calc(100%+3rem)]'
+              )}>{children}</div>
             ) : tabs && tabs.length > 0 ? (
               <Tabs value={activeTab || tabs[0]?.key} onValueChange={setActiveTab} className="w-full" key={tabs.map(t => t.key).join('-')}>
                 <div className="px-6">
@@ -214,14 +228,21 @@ const DetailsDrawer = ({
           </div>
 
           {showActions && (primaryAction || moreMenuItems.length > 0) ? (
-            <div className="flex-shrink-0 bg-background border-t border-border">
-              <div className="p-6 flex flex-wrap gap-2 justify-end">
+            <div className="flex-shrink-0 border-t border-border bg-background">
+              <div
+                className={cn(
+                  'flex gap-3',
+                  isMobile ? 'flex-row p-4' : 'flex-wrap justify-end gap-2 p-6'
+                )}
+              >
                 {moreMenuItems.length > 0 && (
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <SecondaryButton>
-                        <MoreVertical className="h-4 w-4 mr-2" />
-                        More
+                      <SecondaryButton
+                        className={cn(isMobile && 'min-h-[44px] flex-1 touch-manipulation')}
+                      >
+                        <MoreVertical className="h-4 w-4 mr-2 shrink-0" />
+                        {isMobile ? 'More Actions' : 'More'}
                       </SecondaryButton>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
@@ -247,8 +268,11 @@ const DetailsDrawer = ({
                   <Button
                     onClick={primaryAction.onClick}
                     disabled={primaryAction.disabled}
+                    className={cn(
+                      isMobile && 'min-h-[44px] flex-1 touch-manipulation bg-brand hover:bg-brand-dark'
+                    )}
                   >
-                    {primaryAction.icon && <span className="mr-2">{primaryAction.icon}</span>}
+                    {primaryAction.icon && <span className="mr-2 shrink-0">{primaryAction.icon}</span>}
                     {primaryAction.label}
                   </Button>
                 )}

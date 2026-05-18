@@ -33,9 +33,11 @@ const PayInvoice = lazy(() => import('./pages/PayInvoice'));
 const ViewQuote = lazy(() => import('./pages/ViewQuote'));
 const TrackJob = lazy(() => import('./pages/TrackJob'));
 const TenantTrackLookup = lazy(() => import('./pages/TenantTrackLookup'));
+const PublicFeedback = lazy(() => import('./pages/PublicFeedback'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Customers = lazy(() => import('./pages/Customers'));
+const CustomerFeedback = lazy(() => import('./pages/CustomerFeedback'));
 const Marketing = lazy(() => import('./pages/Marketing'));
 const AskAI = lazy(() => import('./pages/AskAI'));
 const Automations = lazy(() => import('./pages/Automations'));
@@ -198,6 +200,8 @@ function AppContent() {
             <Route path="/view-quote/:token" element={<ViewQuote />} />
             <Route path="/track-job/:token" element={<TrackJob />} />
             <Route path="/track/:tenantSlug" element={<TenantTrackLookup />} />
+            <Route path="/feedback/:tenantSlug" element={<PublicFeedback />} />
+            <Route path="/review/:tenantSlug" element={<PublicFeedback />} />
           <Route
             path="/onboarding"
             element={
@@ -220,6 +224,8 @@ function AppContent() {
             <Route path="workspace" element={<Navigate to="/dashboard" replace />} />
             <Route path="tasks" element={<Tasks />} />
             <Route path="customers" element={<FeatureRoute featureKey="crm"><Customers /></FeatureRoute>} />
+            <Route path="reviews" element={<FeatureRoute featureKey="crm"><CustomerFeedback /></FeatureRoute>} />
+            <Route path="customer-feedback" element={<Navigate to="/reviews" replace />} />
             <Route path="marketing" element={<FeatureRoute featureKey="marketing"><RequireWorkspaceManager><Marketing /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="automations" element={<FeatureRoute featureKey="automations"><RequireWorkspaceManager><Automations /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="ask-ai" element={<RequireWorkspaceManager><AskAI /></RequireWorkspaceManager>} />

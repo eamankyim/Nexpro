@@ -76,6 +76,59 @@ import { cn } from '@/lib/utils';
 import dayjs from 'dayjs';
 import { RechartsModuleProvider, useRechartsModule } from '@/components/charts/RechartsModuleContext';
 
+const REPORT_MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+];
+
+/** Reports stuck in processing longer than this are marked failed on load. */
+const SMART_REPORT_PROCESSING_STALE_MS = 15 * 60 * 1000;
+
+/**
+ * Resolve date range for smart report generation from create-report form config.
+ * @param {Object} config - Report form values (month, year, durationType)
+ * @param {Array} fallbackRange - Page date filter range [dayjs, dayjs]
+ * @returns {[import('dayjs').Dayjs, import('dayjs').Dayjs]}
+ */
+function resolveSmartReportDateRange(config, fallbackRange) {
+  const year = Number(config?.year) || dayjs().year();
+  const durationType = config?.durationType || 'monthly';
+
+  if (durationType === 'yearly') {
+    const start = dayjs().year(year).startOf('year');
+    return [start, start.endOf('year')];
+  }
+
+  const monthIndex = REPORT_MONTH_NAMES.indexOf(config?.month);
+  if (monthIndex >= 0) {
+    const start = dayjs().year(year).month(monthIndex).startOf('month');
+    return [start, start.endOf('month')];
+  }
+
+  if (fallbackRange?.[0] && fallbackRange?.[1]) {
+    return [dayjs(fallbackRange[0]), dayjs(fallbackRange[1])];
+  }
+
+  const now = dayjs();
+  return [now.startOf('month'), now.endOf('month')];
+}
+
+/**
+ * Normalize saved reports: mark long-running processing entries as failed.
+ * @param {Array} reports
+ * @returns {Array}
+ */
+function normalizeSavedReports(reports) {
+  if (!Array.isArray(reports)) return [];
+  const now = Date.now();
+  return reports.map((report) => {
+    if (report.status !== 'processing') return report;
+    const createdAt = report.generatedAt ? new Date(report.generatedAt).getTime() : 0;
+    if (!createdAt || now - createdAt <= SMART_REPORT_PROCESSING_STALE_MS) return report;
+    return { ...report, status: 'failed' };
+  });
+}
+
 function ReportsInner() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -122,6 +175,8 @@ function ReportsInner() {
     dayjs().startOf('month'),
     dayjs().endOf('month')
   ]);
+  const [specificMonth, setSpecificMonth] = useState(dayjs().format('YYYY-MM'));
+  const [specificYear, setSpecificYear] = useState(String(dayjs().year()));
   const [reportData, setReportData] = useState(null);
   const [groupBy, setGroupBy] = useState('day');
 
@@ -161,7 +216,7 @@ function ReportsInner() {
   }, [setPageSearchConfig]);
 
   // Calculate date range based on filter type
-  const calculateDateRange = (filterType, customDate = null) => {
+  const calculateDateRange = (filterType, customDate = null, options = {}) => {
     const date = customDate || dayjs();
     let startDate, endDate;
 
@@ -202,6 +257,20 @@ function ReportsInner() {
         startDate = date.startOf('year');
         endDate = date.endOf('year');
         break;
+      case 'specificMonth': {
+        const parsedMonth = dayjs(options.specificMonth, 'YYYY-MM', true);
+        const monthDate = parsedMonth.isValid() ? parsedMonth : date;
+        startDate = monthDate.startOf('month');
+        endDate = monthDate.endOf('month');
+        break;
+      }
+      case 'specificYear': {
+        const parsedYear = Number.parseInt(options.specificYear, 10);
+        const yearDate = Number.isFinite(parsedYear) ? dayjs().year(parsedYear) : date;
+        startDate = yearDate.startOf('year');
+        endDate = yearDate.endOf('year');
+        break;
+      }
       case 'lastYear':
         startDate = date.subtract(1, 'year').startOf('year');
         endDate = date.subtract(1, 'year').endOf('year');
@@ -219,15 +288,16 @@ function ReportsInner() {
     return [startDate, endDate];
   };
 
-  // Update date range when filter changes (except for custom which is handled by RangePicker)
+  // Update date range when filter changes.
   useEffect(() => {
-    if (dateFilter !== 'custom') {
-      const newRange = calculateDateRange(dateFilter, dayjs());
-      setDateRange(newRange);
-    }
-  }, [dateFilter]);
+    if (dateFilter === 'custom') return;
+    const newRange = calculateDateRange(dateFilter, dayjs(), { specificMonth, specificYear });
+    setDateRange(newRange);
+  }, [dateFilter, specificMonth, specificYear]);
 
   const [savedReports, setSavedReports] = useState([]);
+  const reportsHydratedKeyRef = useRef(null);
+  const generatingReportIdsRef = useRef(new Set());
 
   // Storage key for saved reports (scoped by tenant)
   const reportsStorageKey = useMemo(
@@ -235,12 +305,51 @@ function ReportsInner() {
     [activeTenant?.id]
   );
 
-  // Load saved reports from localStorage for current tenant (migrate from legacy key if needed)
+  const persistSavedReports = useCallback((updater) => {
+    setSavedReports((prev) => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      if (reportsStorageKey) {
+        try {
+          localStorage.setItem(reportsStorageKey, JSON.stringify(next));
+        } catch (e) {
+          console.warn('Failed to persist saved reports:', e);
+        }
+      }
+      return next;
+    });
+  }, [reportsStorageKey]);
+
+  const updateSavedReportById = useCallback((reportId, updater) => {
+    persistSavedReports((prevReports) => {
+      const inState = prevReports.some((r) => r.id === reportId);
+      if (inState) {
+        return prevReports.map((r) => (r.id === reportId ? updater(r) : r));
+      }
+      if (!reportsStorageKey) return prevReports;
+      try {
+        const raw = localStorage.getItem(reportsStorageKey);
+        const fromStorage = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(fromStorage) || !fromStorage.some((r) => r.id === reportId)) {
+          return prevReports;
+        }
+        return fromStorage.map((r) => (r.id === reportId ? updater(r) : r));
+      } catch (e) {
+        console.warn('Failed to update saved report from storage:', e);
+        return prevReports;
+      }
+    });
+  }, [persistSavedReports, reportsStorageKey]);
+
+  // Load saved reports from localStorage once per tenant (avoid clobbering in-flight generation)
   useEffect(() => {
     if (!reportsStorageKey || !activeTenant?.id) {
+      reportsHydratedKeyRef.current = null;
       setSavedReports([]);
       return;
     }
+    if (reportsHydratedKeyRef.current === reportsStorageKey) return;
+    reportsHydratedKeyRef.current = reportsStorageKey;
+
     try {
       let saved = localStorage.getItem(reportsStorageKey);
       if (saved) {
@@ -248,7 +357,11 @@ function ReportsInner() {
         const forTenant = Array.isArray(parsed)
           ? parsed.filter((r) => r.tenantId === activeTenant?.id || !r.tenantId)
           : [];
-        setSavedReports(forTenant);
+        const normalized = normalizeSavedReports(forTenant);
+        setSavedReports(normalized);
+        if (normalized.some((r, i) => r.status !== forTenant[i]?.status)) {
+          localStorage.setItem(reportsStorageKey, JSON.stringify(normalized));
+        }
         return;
       }
       // One-time migration from legacy key so existing reports show up
@@ -258,11 +371,13 @@ function ReportsInner() {
         const parsed = JSON.parse(legacySaved);
         const list = Array.isArray(parsed) ? parsed : [];
         if (list.length > 0) {
-          const migrated = list.map((r) => ({
-            ...r,
-            tenantId: activeTenant.id,
-            businessType: r.businessType || activeTenant?.businessType || 'printing_press'
-          }));
+          const migrated = normalizeSavedReports(
+            list.map((r) => ({
+              ...r,
+              tenantId: activeTenant.id,
+              businessType: r.businessType || activeTenant?.businessType || 'printing_press',
+            }))
+          );
           setSavedReports(migrated);
           localStorage.setItem(reportsStorageKey, JSON.stringify(migrated));
           try {
@@ -276,7 +391,7 @@ function ReportsInner() {
       console.warn('Failed to load saved reports from localStorage:', e);
       setSavedReports([]);
     }
-  }, [reportsStorageKey, activeTenant?.id, activeTenant?.businessType]);
+  }, [reportsStorageKey, activeTenant?.id]);
 
   // Filter reports based on header search (when on Smart Report list view)
   const filteredReports = useMemo(() => {
@@ -359,12 +474,6 @@ function ReportsInner() {
 
   const handleFilterChange = (filterType) => {
     setDateFilter(filterType);
-    if (filterType !== 'custom') {
-      // Calculate new date range for the selected filter
-      const newRange = calculateDateRange(filterType, dayjs());
-      setDateRange(newRange);
-    }
-    // For 'custom', the RangePicker will handle updating dateRange
   };
 
   // Determine groupBy based on date filter
@@ -378,12 +487,14 @@ function ReportsInner() {
         return 'day'; // Daily
       case 'thisMonth':
       case 'lastMonth':
+      case 'specificMonth':
         return 'week'; // Weekly
       case 'thisQuarter':
       case 'lastQuarter':
         return 'month'; // Monthly (3 months)
       case 'thisYear':
       case 'lastYear':
+      case 'specificYear':
         return 'month'; // Monthly (12 months)
       case 'custom':
         // For custom date, determine based on date range span
@@ -744,8 +855,7 @@ function ReportsInner() {
   const handleCreateReport = async (values) => {
     // End-of-month reports: only allow on the last day of that month or after
     if (values.durationType === 'monthly') {
-      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-      const monthIndex = monthNames.indexOf(values.month);
+      const monthIndex = REPORT_MONTH_NAMES.indexOf(values.month);
       if (monthIndex === -1 || values.year == null) {
         showError(null, 'Please select a valid month and year.');
         return;
@@ -781,11 +891,8 @@ function ReportsInner() {
       };
 
       // Add to saved reports immediately with processing status
-      const updatedReports = [tempReport, ...savedReports];
-      setSavedReports(updatedReports);
-      if (reportsStorageKey) {
-        localStorage.setItem(reportsStorageKey, JSON.stringify(updatedReports));
-      }
+      generatingReportIdsRef.current.add(tempReport.id);
+      persistSavedReports((prev) => [tempReport, ...prev]);
 
       // Navigate to Smart Report list view
       navigate('/reports/smart-report');
@@ -802,42 +909,33 @@ function ReportsInner() {
   };
 
   const generateSmartReportInBackground = async (config, reportId, tenantId) => {
-    const storageKey = tenantId ? `shopwise_saved_reports_${tenantId}` : null;
     try {
-      // Generate the report (this will take time)
       const report = await generateSmartReport(config);
 
-      // Update the report status to 'ready' and add the full report data
-      setSavedReports((prevReports) => {
-        const updatedReports = prevReports.map((r) =>
-          r.id === reportId ? { ...r, ...report, status: 'ready', tenantId, businessType } : r
-        );
-        if (storageKey) {
-          localStorage.setItem(storageKey, JSON.stringify(updatedReports));
-        }
-        return updatedReports;
-      });
+      updateSavedReportById(reportId, (r) => ({
+        ...r,
+        ...report,
+        status: 'ready',
+        tenantId,
+        businessType,
+      }));
 
       showSuccess('Report generated successfully!');
     } catch (error) {
       console.error('Error generating report:', error);
-      setSavedReports((prevReports) => {
-        const updatedReports = prevReports.map((r) =>
-          r.id === reportId ? { ...r, status: 'failed' } : r
-        );
-        if (storageKey) {
-          localStorage.setItem(storageKey, JSON.stringify(updatedReports));
-        }
-        return updatedReports;
-      });
+      updateSavedReportById(reportId, (r) => ({ ...r, status: 'failed' }));
       showError(null, 'Report generation failed');
+    } finally {
+      generatingReportIdsRef.current.delete(reportId);
     }
   };
 
   const generateSmartReport = async (config) => {
     try {
-      const startDate = dateRange[0].format('YYYY-MM-DD');
-      const endDate = dateRange[1].format('YYYY-MM-DD');
+      const reportTypes = config.reportTypes || selectedReportTypes;
+      const [rangeStart, rangeEnd] = resolveSmartReportDateRange(config, dateRange);
+      const startDate = rangeStart.format('YYYY-MM-DD');
+      const endDate = rangeEnd.format('YYYY-MM-DD');
 
       // Fetch real data for the report - conditionally fetch product/inventory data for shop/pharmacy
       const fetchPromises = [
@@ -879,9 +977,15 @@ function ReportsInner() {
       const profitMargin = revenue > 0 ? ((profit / revenue) * 100) : 0;
 
       // Calculate previous period for comparison using utility
-      const previousPeriodForComparison = getPreviousPeriod(dateFilter || 'custom', [
-        dayjs(startDate),
-        dayjs(endDate)
+      const comparisonFilterType =
+        config.durationType === 'yearly'
+          ? 'specificYear'
+          : config.month
+            ? 'specificMonth'
+            : dateFilter || 'custom';
+      const previousPeriodForComparison = getPreviousPeriod(comparisonFilterType, [
+        rangeStart,
+        rangeEnd,
       ]);
       
       const [prevRevenueData, prevExpenseData] = await Promise.all([
@@ -941,7 +1045,7 @@ function ReportsInner() {
           startDate,
           endDate
         });
-        aiAnalysis = aiResponse.data?.data || null;
+        aiAnalysis = aiResponse?.data || null;
       } catch (aiError) {
         console.warn('AI analysis failed, using fallback insights:', aiError);
       }
@@ -964,7 +1068,7 @@ function ReportsInner() {
               : `Your revenue is down ${Math.abs(revenueChange).toFixed(1)}% (₵ ${(prevRevenue - revenue).toLocaleString()}) from the previous period.`
           }
       ];
-      const conditionalSections = selectedReportTypes.length > 0 ? [
+      const conditionalSections = reportTypes.length > 0 ? [
             ...(isShop || isPharmacy ? [{
               type: 'product-analytics',
               title: 'Product Sales',
@@ -1138,7 +1242,7 @@ function ReportsInner() {
               return recommendations;
             })()
           }] : []),
-          ...(selectedReportTypes.includes('cost-analysis') ? [{
+          ...(reportTypes.includes('cost-analysis') ? [{
             type: 'cost-analysis',
             title: 'Cost Analysis Summary',
             description: 'Breakdown of costs and areas where a reduction could be most beneficial.',
@@ -1185,7 +1289,7 @@ function ReportsInner() {
               return recommendations;
             })()
           }] : []),
-          ...(selectedReportTypes.includes('invoice-summary') ? [{
+          ...(reportTypes.includes('invoice-summary') ? [{
             type: 'invoice-summary',
             title: 'Invoice Summary',
             description: 'Breakdown of invoices and their status.',
@@ -1227,7 +1331,7 @@ function ReportsInner() {
               return recommendations;
             })()
           }] : []),
-          ...(selectedReportTypes.includes('outstanding-payments') ? [{
+          ...(reportTypes.includes('outstanding-payments') ? [{
             type: 'outstanding-payments',
             title: 'Outstanding Payments',
             description: 'Accounts receivable and overdue amounts.',
@@ -1244,7 +1348,7 @@ function ReportsInner() {
               return [{ finding: `Total outstanding is ₵ ${total.toLocaleString()}.`, recommendation: 'Send payment reminders and follow up on overdue invoices.' }];
             })()
           }] : []),
-          ...(selectedReportTypes.includes('customer-summary') ? [{
+          ...(reportTypes.includes('customer-summary') ? [{
             type: 'customer-summary',
             title: 'Customer Summary',
             description: 'Top customers by revenue in the period.',
@@ -1255,7 +1359,7 @@ function ReportsInner() {
             })),
             recommendations: []
           }] : []),
-          ...(selectedReportTypes.includes('sales-summary') ? [{
+          ...(reportTypes.includes('sales-summary') ? [{
             type: 'sales-summary',
             title: isStudio ? 'Jobs Summary' : 'Sales Summary',
             description: isStudio ? 'Job volume and status in the period.' : 'Sales volume and status in the period.',
@@ -1271,7 +1375,7 @@ function ReportsInner() {
             })(),
             recommendations: []
           }] : []),
-          ...(isStudio && selectedReportTypes.includes('materials-summary') ? [{
+          ...(isStudio && reportTypes.includes('materials-summary') ? [{
             type: 'materials-summary',
             title: 'Materials Summary',
             description: 'Stock levels and recent movements.',
@@ -1281,14 +1385,14 @@ function ReportsInner() {
             },
             recommendations: []
           }] : []),
-          ...(selectedReportTypes.includes('pipeline') ? [{
+          ...(reportTypes.includes('pipeline') ? [{
             type: 'pipeline',
             title: 'Pipeline',
             description: 'Active jobs, open leads, and pending invoices.',
             data: phase2.pipelineSummary || { activeJobs: 0, openLeads: 0, pendingInvoices: 0 },
             recommendations: []
           }] : []),
-          ...(isPharmacy && selectedReportTypes.includes('prescription-summary') && prescriptionData?.data ? [{
+          ...(isPharmacy && reportTypes.includes('prescription-summary') && prescriptionData?.data ? [{
             type: 'prescription-summary',
             title: 'Prescription Summary',
             description: 'Prescription volume, status, and revenue.',
@@ -1416,7 +1520,7 @@ function ReportsInner() {
         month: config.month,
         generatedAt: new Date().toISOString(),
         generatedBy: config.generatedBy,
-        reportTypes: config.reportTypes || selectedReportTypes,
+        reportTypes,
         period: `${dayjs(startDate).format('MMM DD, YYYY')} to ${dayjs(endDate).format('MMM DD, YYYY')}`,
         greeting: `Hello${user?.first_name ? ` ${user.first_name}` : ''}, here is a summary of the performance of your business operations for ${config.month} ${config.year}.`,
         sections: [],
@@ -2588,6 +2692,7 @@ function ReportsInner() {
           return dayjs(date).format('ddd');
         case 'thisMonth':
         case 'lastMonth':
+        case 'specificMonth':
           // Format as "Week 1", "Week 2", etc.
           if (item.week !== undefined) {
             return `Week ${item.week}`;
@@ -2604,6 +2709,7 @@ function ReportsInner() {
           return dayjs(date).format('MMM');
         case 'thisYear':
         case 'lastYear':
+        case 'specificYear':
           // Format as month names: "Jan", "Feb", etc.
           if (item.month !== undefined) {
             return dayjs().month(item.month - 1).format('MMM');
@@ -2638,8 +2744,8 @@ function ReportsInner() {
         return intervals;
       }
 
-      // For monthly filters (thisMonth/lastMonth), ensure all 4 weeks are present
-      if (dateFilter === 'thisMonth' || dateFilter === 'lastMonth') {
+      // For monthly filters, ensure all 4 weeks are present
+      if (dateFilter === 'thisMonth' || dateFilter === 'lastMonth' || dateFilter === 'specificMonth') {
         const dataMap = new Map();
         revenue.byPeriod.forEach(item => {
           const week = parseInt(item.week || 1);
@@ -2681,7 +2787,7 @@ function ReportsInner() {
       }
 
       // For yearly filters, ensure all 12 months are present
-      if (dateFilter === 'thisYear' || dateFilter === 'lastYear') {
+      if (dateFilter === 'thisYear' || dateFilter === 'lastYear' || dateFilter === 'specificYear') {
         const dataMap = new Map();
         revenue.byPeriod.forEach(item => {
           const month = parseInt(item.month || 1);
@@ -2756,7 +2862,7 @@ function ReportsInner() {
           if (filteredByDate.length === 0) return [];
           
           const maxDays = (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') ? 7 : 
-                         (dateFilter === 'thisMonth' || dateFilter === 'lastMonth') ? 7 : 
+                         (dateFilter === 'thisMonth' || dateFilter === 'lastMonth' || dateFilter === 'specificMonth') ? 7 : 
                          filteredByDate.length;
           
           return filteredByDate
@@ -2789,7 +2895,7 @@ function ReportsInner() {
       
       // For weekly filters, show all days. For monthly, show last 7 days. For others, show all available.
       const maxDays = (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') ? 7 : 
-                     (dateFilter === 'thisMonth' || dateFilter === 'lastMonth') ? 7 : 
+                     (dateFilter === 'thisMonth' || dateFilter === 'lastMonth' || dateFilter === 'specificMonth') ? 7 : 
                      filteredTrend.length;
       
       return filteredTrend
@@ -2863,6 +2969,61 @@ function ReportsInner() {
     
     return (
       <div>
+        <div className="mb-4 rounded-lg border border-border bg-card p-3 md:p-4">
+          <div className="mb-2">
+            <p className="text-sm font-medium text-foreground">Date filter</p>
+            <p className="text-xs text-muted-foreground">Choose a reporting period for overview metrics.</p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2 md:gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Period</Label>
+            <ShadcnSelect value={dateFilter} onValueChange={handleFilterChange}>
+              <SelectTrigger className="w-[220px] h-9">
+                <SelectValue placeholder="Select date filter" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="today">Today</SelectItem>
+                <SelectItem value="thisWeek">This week</SelectItem>
+                <SelectItem value="lastWeek">Last week</SelectItem>
+                <SelectItem value="thisMonth">This month</SelectItem>
+                <SelectItem value="lastMonth">Last month</SelectItem>
+                <SelectItem value="specificMonth">Specific month</SelectItem>
+                <SelectItem value="thisQuarter">This quarter</SelectItem>
+                <SelectItem value="lastQuarter">Last quarter</SelectItem>
+                <SelectItem value="thisYear">This year</SelectItem>
+                <SelectItem value="specificYear">Specific year</SelectItem>
+              </SelectContent>
+            </ShadcnSelect>
+          </div>
+
+            {dateFilter === 'specificMonth' && (
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Month</Label>
+              <ShadcnInput
+                type="month"
+                value={specificMonth}
+                onChange={(e) => setSpecificMonth(e.target.value)}
+                className="w-[180px] h-9"
+              />
+            </div>
+          )}
+
+          {dateFilter === 'specificYear' && (
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Year</Label>
+              <ShadcnInput
+                type="number"
+                min="2000"
+                max="2100"
+                value={specificYear}
+                onChange={(e) => setSpecificYear(e.target.value)}
+                className="w-[140px] h-9"
+              />
+            </div>
+          )}
+          </div>
+        </div>
+
         {/* Date Range Indicator */}
         <div className="mb-4 py-2 px-4 bg-muted rounded-md inline-block">
           <span className="text-xs text-muted-foreground">

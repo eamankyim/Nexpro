@@ -7,6 +7,8 @@ const deriveApiBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
   if (envUrl) {
     let url = envUrl.trim().replace(/\/$/, '');
+    // Avoid https://api.example.com/api + axios /api → /api/api/... (404)
+    url = url.replace(/\/api\/?$/i, '');
     // Ensure URL has a protocol (http:// or https://)
     if (url && !url.match(/^https?:\/\//i)) {
       // Default to https for production URLs
@@ -239,6 +241,43 @@ api.interceptors.response.use(
         window.location.href = '/login';
       }
     }
+
+    if (error.response?.status === 404) {
+      const rel = String(error.config?.url || '').toLowerCase();
+      if (rel.includes('feedback') || rel.includes('review')) {
+        const resolvedUrl = `${error.config?.baseURL || ''}${error.config?.url || ''}`;
+        const body = error.response?.data;
+        const msg = (body?.message != null ? String(body.message) : '').trim();
+        const doubleApi = resolvedUrl.includes('/api/api/');
+        const generic404 =
+          msg === 'Route not found' ||
+          (msg.startsWith('Route not found') && !msg.includes('web app URL'));
+        const hitsFeedbackList =
+          /\/api\/feedback(\?|$)/i.test(resolvedUrl) || /\/api\/reviews(\?|$)/i.test(resolvedUrl);
+
+        let likelyCause;
+        if (doubleApi) {
+          likelyCause =
+            'Double /api in URL — set VITE_API_URL to the API origin only (no trailing /api).';
+        } else if (hitsFeedbackList && generic404) {
+          likelyCause =
+            'The API returned Express’s fallback 404 (no route registered for GET /api/feedback). Redeploy this repo’s Backend to that host so server.js includes app.use("/api/feedback", feedbackRoutes).';
+        } else if (msg.includes('web app URL')) {
+          likelyCause =
+            'You may be calling a public feedback path on the API host; use the SPA origin for /feedback/:slug.';
+        }
+
+        console.warn('[API 404] reviews/feedback request missed the server route', {
+          resolvedUrl,
+          method: error.config?.method,
+          serverMessage: body?.message,
+          serverPath: body?.path,
+          serverDebug: body?.debug,
+          likelyCause
+        });
+      }
+    }
+
     return Promise.reject(error);
   }
 );

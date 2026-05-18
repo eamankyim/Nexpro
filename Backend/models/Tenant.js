@@ -1,6 +1,41 @@
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 
+const OPTIONAL_TENANT_COLUMNS = {
+  trialEndsAt: 'trialEndsAt',
+  billingCustomerId: 'billingCustomerId',
+  paystackSubaccountCode: 'paystackSubaccountCode',
+  categoriesSeeded: 'categoriesSeeded',
+  accountsSeeded: 'accountsSeeded',
+  equipmentCategoriesSeeded: 'equipmentCategoriesSeeded',
+};
+
+let existingTenantColumnsPromise;
+const getExistingTenantColumns = async () => {
+  if (!existingTenantColumnsPromise) {
+    existingTenantColumnsPromise = sequelize
+      .getQueryInterface()
+      .describeTable('tenants')
+      .then((columns) => new Set(Object.keys(columns || {})))
+      .catch((error) => {
+        console.warn('[Tenant] Unable to describe tenants table; assuming all columns exist:', error?.message || error);
+        return null;
+      });
+  }
+  return existingTenantColumnsPromise;
+};
+
+const stripMissingOptionalTenantColumns = async (tenant) => {
+  const existingColumns = await getExistingTenantColumns();
+  if (!existingColumns) return;
+
+  for (const [attribute, columnName] of Object.entries(OPTIONAL_TENANT_COLUMNS)) {
+    if (!existingColumns.has(columnName) && Object.prototype.hasOwnProperty.call(tenant.dataValues, attribute)) {
+      delete tenant.dataValues[attribute];
+    }
+  }
+};
+
 const Tenant = sequelize.define('Tenant', {
   id: {
     type: DataTypes.UUID,
@@ -73,7 +108,25 @@ const Tenant = sequelize.define('Tenant', {
   }
 }, {
   tableName: 'tenants',
-  timestamps: true
+  timestamps: true,
+  defaultScope: {
+    attributes: {
+      exclude: Object.keys(OPTIONAL_TENANT_COLUMNS),
+    },
+  },
+  scopes: {
+    withOptionalColumns: {
+      attributes: { include: Object.keys(OPTIONAL_TENANT_COLUMNS) },
+    },
+  },
+  hooks: {
+    beforeCreate: async (tenant) => {
+      await stripMissingOptionalTenantColumns(tenant);
+    },
+    beforeUpdate: async (tenant) => {
+      await stripMissingOptionalTenantColumns(tenant);
+    },
+  },
 });
 
 module.exports = Tenant;

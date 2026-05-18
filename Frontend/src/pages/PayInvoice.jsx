@@ -21,7 +21,22 @@ import {
   DialogHeader,
   DialogTitle
 } from '@/components/ui/dialog';
-import { Loader2, CheckCircle, CreditCard, Printer, Download, Smartphone } from 'lucide-react';
+import {
+  Loader2,
+  CheckCircle,
+  CreditCard,
+  Printer,
+  Download,
+  Smartphone,
+  ArrowLeft,
+  MoreVertical
+} from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from '@/components/ui/dropdown-menu';
 import PrintableInvoice from '../components/PrintableInvoice';
 import { generatePDF } from '../utils/pdfUtils';
 
@@ -457,8 +472,21 @@ export default function PayInvoice() {
 
   const organization = invoice?.organization || { name: invoice?.tenant?.name };
 
+  const handleMobilePay = async () => {
+    setError(null);
+    if (directMoMo) {
+      setMomoPayModalOpen(true);
+      return;
+    }
+    if (canTopBarInstantPaystack) {
+      await runPaystackCheckout();
+      return;
+    }
+    scrollToPaySection();
+  };
+
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4">
+    <div className="min-h-screen bg-gray-50">
       <style>{`
         @media print {
           .no-print { display: none !important; }
@@ -467,7 +495,66 @@ export default function PayInvoice() {
           .pay-invoice-document { position: absolute; left: 0; top: 0; width: 100%; }
         }
       `}</style>
-      <div className="max-w-[210mm] mx-auto">
+
+      <div className="no-print sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-gray-200 bg-gray-50 px-3 py-2.5 sm:hidden">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9 shrink-0 text-gray-800"
+          onClick={() => window.history.back()}
+          aria-label="Go back"
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-9 w-9 shrink-0 rounded-md border-gray-200 bg-white text-gray-700"
+            onClick={handleDownload}
+            disabled={downloading}
+            title="Download PDF"
+            aria-label="Download PDF"
+          >
+            {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            className="h-9 w-9 shrink-0 rounded-md border-gray-200 bg-white text-gray-700"
+            onClick={handlePrint}
+            title="Print"
+            aria-label="Print"
+          >
+            <Printer className="h-4 w-4" />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 shrink-0 rounded-md border-gray-200 bg-white text-gray-700"
+                aria-label="More actions"
+              >
+                <MoreVertical className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              {!(paid || isFullyPaid) && !fromPaystack && balance > 0 && (
+                <DropdownMenuItem onClick={() => void handleMobilePay()}>
+                  Pay ₵ {balance.toFixed(2)}
+                </DropdownMenuItem>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-[210mm] px-3 py-3 sm:px-4 sm:py-8">
         <Dialog
           open={momoPayModalOpen}
           onOpenChange={(open) => {
@@ -547,8 +634,8 @@ export default function PayInvoice() {
           </DialogContent>
         </Dialog>
 
-        {/* Action bar: Print, Download, Pay */}
-        <div className="no-print flex flex-wrap items-center justify-end gap-2 mb-4">
+        {/* Action bar: Print, Download, Pay (tablet/desktop) */}
+        <div className="no-print mb-4 hidden flex-wrap items-center justify-end gap-2 sm:flex">
           <Button type="button" variant="outline" size="icon" onClick={handlePrint} title="Print" aria-label="Print">
             <Printer className="h-4 w-4" />
           </Button>
@@ -586,7 +673,10 @@ export default function PayInvoice() {
         </div>
 
         {/* Full invoice document (matches printable invoice layout) */}
-        <div ref={printRef} className="pay-invoice-document rounded-lg border border-gray-200 overflow-hidden">
+        <div
+          ref={printRef}
+          className="pay-invoice-document overflow-hidden max-sm:rounded-none max-sm:border-0 sm:rounded-lg sm:border sm:border-gray-200"
+        >
           <PrintableInvoice invoice={invoice} organization={organization} printConfig={{ format: 'a4' }} />
         </div>
 

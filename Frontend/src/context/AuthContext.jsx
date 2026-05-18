@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import authService from '../services/authService';
+import { shouldSuppressAppGuidance } from '../utils/appGuidanceEligibility';
 
 const AuthContext = createContext(null);
 
@@ -547,6 +548,12 @@ export const AuthProvider = ({ children }) => {
     [isFirstLogin, isPlatformAdmin, isWorkspaceAdmin, wasInvited]
   );
 
+  /** Skip product tour prompts and forced workspace onboarding for tenured or very active users. */
+  const suppressAppGuidance = useMemo(
+    () => shouldSuppressAppGuidance({ user, activeMembership, activeTenant }),
+    [user, activeMembership, activeTenant]
+  );
+
   // Log core auth state whenever it changes (for redirect debugging)
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -611,6 +618,7 @@ export const AuthProvider = ({ children }) => {
     joinedOnlyViaWorkspaceInvite,
     needsEmailVerification,
     shouldCompleteProfile,
+    suppressAppGuidance,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

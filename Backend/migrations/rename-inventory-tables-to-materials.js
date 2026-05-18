@@ -57,12 +57,15 @@ async function up() {
     `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'materials_items'`
   );
   if (hasItems.length > 0) {
+    await sequelize.query(
+      `ALTER TABLE "materials_items" DROP CONSTRAINT IF EXISTS "materials_items_category_id_fkey";`
+    );
     await sequelize.query(`
       ALTER TABLE "materials_items"
       ADD CONSTRAINT "materials_items_category_id_fkey"
       FOREIGN KEY ("categoryId") REFERENCES "materials_categories"("id") ON UPDATE CASCADE ON DELETE SET NULL;
     `);
-    console.log('  Added FK materials_items.categoryId -> materials_categories.id');
+    console.log('  Ensured FK materials_items.categoryId -> materials_categories.id');
   }
 
   // materials_movements.itemId -> materials_items.id
@@ -70,12 +73,15 @@ async function up() {
     `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'materials_movements'`
   );
   if (hasMovements.length > 0) {
+    await sequelize.query(
+      `ALTER TABLE "materials_movements" DROP CONSTRAINT IF EXISTS "materials_movements_item_id_fkey";`
+    );
     await sequelize.query(`
       ALTER TABLE "materials_movements"
       ADD CONSTRAINT "materials_movements_item_id_fkey"
       FOREIGN KEY ("itemId") REFERENCES "materials_items"("id") ON UPDATE CASCADE ON DELETE CASCADE;
     `);
-    console.log('  Added FK materials_movements.itemId -> materials_items.id');
+    console.log('  Ensured FK materials_movements.itemId -> materials_items.id');
   }
 
   // drugs.categoryId -> materials_categories.id (if drugs table exists)
@@ -83,12 +89,15 @@ async function up() {
     `SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'drugs'`
   );
   if (hasDrugs.length > 0) {
+    await sequelize.query(
+      `ALTER TABLE "drugs" DROP CONSTRAINT IF EXISTS "drugs_category_id_fkey";`
+    );
     await sequelize.query(`
       ALTER TABLE "drugs"
       ADD CONSTRAINT "drugs_category_id_fkey"
       FOREIGN KEY ("categoryId") REFERENCES "materials_categories"("id") ON UPDATE CASCADE ON DELETE SET NULL;
-    `).catch(() => {});
-    console.log('  Added FK drugs.categoryId -> materials_categories.id (if not exists)');
+    `);
+    console.log('  Ensured FK drugs.categoryId -> materials_categories.id');
   }
 
   console.log('✅ Rename inventory -> materials tables done.');

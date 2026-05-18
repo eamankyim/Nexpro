@@ -23,6 +23,7 @@ import PhoneNumberInput from '../components/PhoneNumberInput';
 import StatusChip from '../components/StatusChip';
 import FileUpload from '../components/FileUpload';
 import FilePreview from '../components/FilePreview';
+import { OrganizationReviewShareSection } from '../components/OrganizationReviewShareSection';
 import PrintableInvoice from '../components/PrintableInvoice';
 import { API_BASE_URL } from '../services/api';
 import { Button } from '@/components/ui/button';
@@ -344,7 +345,7 @@ const Settings = () => {
   const [loadingUsage, setLoadingUsage] = useState(true);
   const [whatsappTemplateLearnMoreOpen, setWhatsappTemplateLearnMoreOpen] = useState(false);
   const [notificationPrefsDraft, setNotificationPrefsDraft] = useState(null);
-  const { user, updateUser, activeTenant, refreshAuthState, needsEmailVerification, isManager, wasInvited } = useAuth();
+  const { user, updateUser, activeTenant, refreshAuthState, needsEmailVerification, isManager, wasInvited, hasFeature, suppressAppGuidance } = useAuth();
   const { isMobile } = useResponsive();
   /** Must match API authorize() which uses workspace membership role (req.tenantRole), not only users.role */
   const canManageOrganization = Boolean(isManager);
@@ -538,9 +539,10 @@ const Settings = () => {
 
   const showOnboardingBanner = useMemo(() => {
     if (wasInvited) return false;
+    if (suppressAppGuidance) return false;
     if (organizationSettingsPending) return false;
     return !onboardingCompleted;
-  }, [wasInvited, organizationSettingsPending, onboardingCompleted]);
+  }, [wasInvited, suppressAppGuidance, organizationSettingsPending, onboardingCompleted]);
 
   const {
     data: subscriptionData,
@@ -6061,6 +6063,12 @@ const Settings = () => {
               </Alert>
             ) : null}
             {organizationTab}
+            {canManageOrganization && typeof hasFeature === 'function' && hasFeature('crm') ? (
+              <OrganizationReviewShareSection
+                tenantSlug={activeTenant?.slug}
+                organizationName={organizationRecord?.name || activeTenant?.name}
+              />
+            ) : null}
             {appearanceTab}
           </div>
         </TabsContent>

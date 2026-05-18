@@ -69,6 +69,11 @@ export const colors = {
 /** App default primary hex — use when tenant brand color is missing (e.g. public tracking). Same as `colors.primary`. */
 export const DEFAULT_APP_PRIMARY_HEX = colors.primary;
 
+/** Public review & customer tracking pages (marketing-style mockups). */
+export const PUBLIC_PAGE_HERO_GREEN = '#006437';
+export const PUBLIC_PAGE_MINT = '#E6F4EA';
+export const PUBLIC_PAGE_SURFACE_BG = '#f0f1f3';
+
 /**
  * Get HSL values for CSS variables
  */

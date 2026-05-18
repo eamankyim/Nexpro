@@ -3,6 +3,10 @@ import dayjs from 'dayjs';
 import { MapPin, Phone, Globe, Mail } from 'lucide-react';
 import { API_BASE_URL } from '../services/api';
 
+const DEFAULT_TERMS_TEXT =
+  'Payment is due within the specified payment terms. Late payments may incur additional charges.';
+const DEFAULT_THANK_YOU = 'Thank you for doing business with us.';
+
 const formatAddress = (address) => {
   if (!address) return '';
   const parts = [
@@ -37,12 +41,16 @@ const PrintableInvoice = ({
   saleNumber,
   printConfig = {},
   /** When true, show XXX instead of monetary values (e.g. for sample/preview) */
-  maskAmounts = false
+  maskAmounts = false,
+  /** 'mobile' enables phone-style card layout on screen (print/PDF stays document layout). */
+  screenLayout = 'auto'
 }) => {
   if (!invoice) return null;
 
   const titleText = documentTitle || 'INVOICE';
   const printStyles = getPrintStyles(printConfig);
+  const useMobileScreenLayout =
+    screenLayout === 'mobile' || printConfig?.screenLayout === 'mobile';
   const isReceipt = titleText.toUpperCase() === 'RECEIPT';
   const docNumberLabel = isReceipt ? 'Receipt #' : 'Invoice #';
   const docNumber = isReceipt && (saleNumber || invoice.sale?.saleNumber)
@@ -124,7 +132,7 @@ const PrintableInvoice = ({
           padding: ${printStyles.isThermal ? '4mm' : '15mm'};
           margin: 0 auto;
           background: white;
-          font-family: Arial, sans-serif;
+          font-family: Helvetica, Arial, sans-serif;
           color: #000;
           box-sizing: border-box;
           ${printStyles.grayscale}
@@ -132,6 +140,7 @@ const PrintableInvoice = ({
         
         /* Ensure content stays together */
         .invoice-header,
+        .invoice-parties,
         .billing-section,
         .items-table,
         .totals-section,
@@ -144,88 +153,131 @@ const PrintableInvoice = ({
         .invoice-header {
           display: flex;
           justify-content: space-between;
-          margin-bottom: 20px;
-          padding-bottom: 15px;
-          border-bottom: 2px solid #000;
+          align-items: flex-start;
+          gap: 24px;
+          margin-bottom: 18px;
+          padding-bottom: 14px;
+          border-bottom: 1px solid #d1d5db;
         }
         .company-info {
           flex: 1;
+          min-width: 0;
         }
         .company-logo {
-          max-width: 400px;
-          max-height: 160px;
-          margin-bottom: 0px;
+          max-width: 140px;
+          max-height: 72px;
+          margin-bottom: 10px;
           object-fit: contain;
+          object-position: left center;
           ${!printStyles.showLogo ? 'display: none !important;' : ''}
+        }
+        .company-name-placeholder {
+          font-size: 20px;
+          font-weight: 700;
+          margin-bottom: 8px;
+          color: #111827;
         }
         .company-details {
           font-size: ${printStyles.bodySize};
-          line-height: 1.6;
-          color: #333;
+          line-height: 1.55;
+          color: #374151;
+        }
+        .company-details-line {
+          margin-bottom: 2px;
+        }
+        .company-tax-line {
+          margin-top: 6px;
+          padding-top: 6px;
+          border-top: 1px solid #e5e7eb;
+          font-size: 11px;
+          color: #6b7280;
         }
         .invoice-info {
           text-align: right;
-          flex: 1;
+          flex-shrink: 0;
+          min-width: 200px;
         }
         .invoice-title {
           font-size: ${printStyles.titleSize};
-          font-weight: bold;
-          margin-bottom: 6px;
-          color: #000;
-          letter-spacing: 2px;
+          font-weight: 700;
+          margin-bottom: 12px;
+          color: #111827;
+          letter-spacing: 0.08em;
+          line-height: 1.1;
         }
         .invoice-subtitle {
-          font-size: ${printStyles.fontSize === 'small' ? '10px' : '14px'};
-          color: #555;
-          margin-bottom: 12px;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-        }
-        .invoice-number {
-          font-size: ${printStyles.bodySize};
-          margin-bottom: 5px;
-        }
-        .invoice-details {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 20px;
-          margin: 20px 0;
-        }
-        .billing-section {
-          margin-bottom: 30px;
-        }
-        .section-title {
-          font-size: 14px;
-          font-weight: bold;
+          font-size: ${printStyles.fontSize === 'small' ? '10px' : '12px'};
+          color: #6b7280;
           margin-bottom: 10px;
           text-transform: uppercase;
-          color: #000;
+          letter-spacing: 0.06em;
+        }
+        .invoice-meta-row {
+          font-size: ${printStyles.bodySize};
+          margin-bottom: 4px;
+          color: #111827;
+        }
+        .invoice-meta-row strong {
+          font-weight: 700;
+        }
+        .invoice-parties {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 0;
+          margin: 0 0 22px;
+          border-top: 1px solid #e5e7eb;
+          border-bottom: 1px solid #e5e7eb;
+        }
+        .billing-section {
+          padding: 14px 18px 14px 0;
+        }
+        .billing-section + .billing-section {
+          padding-left: 18px;
+          border-left: 1px solid #e5e7eb;
+        }
+        .section-title {
+          font-size: 11px;
+          font-weight: 700;
+          margin-bottom: 8px;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #111827;
         }
         .billing-info {
           font-size: 12px;
-          line-height: 1.8;
+          line-height: 1.65;
+          color: #374151;
+        }
+        .billing-info strong {
+          font-weight: 700;
+          color: #111827;
         }
         .items-table {
           width: 100%;
           border-collapse: collapse;
-          margin: ${printStyles.isThermal ? '8px 0' : '30px 0'};
+          margin: 0 0 18px;
           font-size: ${printStyles.tableSize};
         }
         .items-table th {
-          background-color: #f5f5f5;
-          padding: ${printStyles.isThermal ? '4px' : '8px'};
+          background-color: #f3f4f6;
+          padding: 9px 10px;
           text-align: left;
-          font-weight: bold;
-          font-size: ${printStyles.tableSize};
-          border: 1px solid #ddd;
+          font-weight: 700;
+          font-size: 10px;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #111827;
+          border: 1px solid #e5e7eb;
         }
         .items-table td {
-          padding: ${printStyles.isThermal ? '3px 4px' : '6px 8px'};
-          border: 1px solid #ddd;
+          padding: 9px 10px;
+          border: 1px solid #e5e7eb;
           font-size: ${printStyles.tableSize};
+          color: #111827;
+          vertical-align: top;
         }
-        .items-table tr:nth-child(even) {
-          background-color: #fafafa;
+        .items-table tbody tr {
+          background-color: #fff;
         }
         .text-right {
           text-align: right;
@@ -234,67 +286,79 @@ const PrintableInvoice = ({
           text-align: center;
         }
         .totals-section {
-          margin-top: 20px;
+          margin-top: 4px;
           margin-left: auto;
-          width: 300px;
+          width: min(100%, 280px);
         }
         .total-row {
           display: flex;
           justify-content: space-between;
-          padding: ${printStyles.isThermal ? '4px 0' : '8px 0'};
+          gap: 16px;
+          padding: 5px 0;
           font-size: ${printStyles.bodySize};
+          color: #111827;
         }
         .total-row.bold {
-          font-weight: bold;
-          font-size: ${printStyles.fontSize === 'small' ? '11px' : '14px'};
-          border-top: 2px solid #000;
-          padding-top: 10px;
-          margin-top: 10px;
+          font-weight: 700;
+          font-size: ${printStyles.fontSize === 'small' ? '12px' : '13px'};
+          border-top: 1px solid #d1d5db;
+          padding-top: 8px;
+          margin-top: 4px;
+        }
+        .total-row.paid span:last-child {
+          color: #16a34a;
+          font-weight: 600;
         }
         .total-row.balance {
-          font-weight: bold;
-          font-size: 16px;
-          border-top: 2px solid #000;
-          padding-top: 10px;
-          margin-top: 10px;
-          color: #ff4d4f;
+          font-weight: 700;
+          font-size: ${printStyles.fontSize === 'small' ? '13px' : '14px'};
+          padding-top: 6px;
+          margin-top: 2px;
+          color: #dc2626;
+        }
+        .total-row.balance span {
+          color: #dc2626;
         }
         .notes-section {
-          margin-top: 20px;
-          padding-top: 15px;
-          border-top: 1px solid #ddd;
+          margin-top: 22px;
+          padding-top: 14px;
+          border-top: 1px solid #e5e7eb;
         }
         .notes-title {
-          font-weight: bold;
-          font-size: 12px;
-          margin-bottom: 8px;
+          font-weight: 700;
+          font-size: 11px;
+          margin-bottom: 6px;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          color: #111827;
         }
         .pay-to-block {
-          margin-top: 16px;
+          margin-top: 14px;
           padding: 10px 12px;
-          border-radius: 6px;
-          background-color: #f5f5f5;
+          border: 1px solid #e5e7eb;
+          background-color: #f9fafb;
           font-size: ${printStyles.bodySize};
           line-height: 1.6;
         }
         .pay-to-title {
-          font-weight: 600;
+          font-weight: 700;
           margin-bottom: 4px;
           text-transform: uppercase;
-          letter-spacing: 0.5px;
+          letter-spacing: 0.04em;
+          font-size: 11px;
         }
         .notes-content {
           font-size: 11px;
-          line-height: 1.6;
-          color: #666;
+          line-height: 1.65;
+          color: #4b5563;
         }
         .footer {
-          margin-top: ${printStyles.isThermal ? '8px' : '20px'};
-          padding-top: ${printStyles.isThermal ? '8px' : '15px'};
-          border-top: 1px solid #ddd;
+          margin-top: 28px;
+          padding-top: 0;
+          border-top: none;
           text-align: center;
-          font-size: ${printStyles.fontSize === 'small' ? '9px' : '10px'};
-          color: #666;
+          font-size: 11px;
+          color: #9ca3af;
         }
         
         /* Thermal receipt layout */
@@ -303,7 +367,7 @@ const PrintableInvoice = ({
           max-width: ${printStyles.contentWidth};
           margin: 0 auto;
           padding: ${printStyles.isThermal ? '2mm' : '0'};
-          font-family: Arial, sans-serif;
+          font-family: Helvetica, Arial, sans-serif;
           font-size: 10px;
           color: #000;
         }
@@ -369,9 +433,188 @@ const PrintableInvoice = ({
           margin-top: 10px;
           letter-spacing: 2px;
         }
+
+        .company-details-line--mobile {
+          display: none;
+        }
+
+        @media screen and (max-width: 639px) {
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode),
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding: 0;
+            background: transparent;
+            max-width: 100%;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-header,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-header {
+            flex-direction: column;
+            gap: 14px;
+            margin-bottom: 10px;
+            padding: 14px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-info,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-info {
+            text-align: left;
+            min-width: 0;
+            width: 100%;
+            padding-top: 12px;
+            border-top: 1px solid #e5e7eb;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-title,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-title {
+            font-size: 1.75rem;
+            margin-bottom: 10px;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .company-logo,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-logo {
+            max-width: 120px;
+            max-height: 56px;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .company-details-line--desktop,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-details-line--desktop {
+            display: none;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .company-details-line--mobile,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-details-line--mobile {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .company-detail-icon,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-detail-icon {
+            flex-shrink: 0;
+            width: 14px;
+            height: 14px;
+            margin-top: 2px;
+            color: #6b7280;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-parties,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-parties {
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+            border: none;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .billing-section,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .billing-section {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px !important;
+            min-height: 100%;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .billing-section + .billing-section,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .billing-section + .billing-section {
+            border-left: none;
+            padding-left: 12px !important;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-table-card,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-table-card {
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 10px;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .items-table,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .items-table {
+            margin: 0;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .items-table th,
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .items-table td,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .items-table th,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .items-table td {
+            padding: 8px 6px;
+            font-size: 10px;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .totals-section,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .totals-section {
+            width: 100%;
+            margin-left: 0;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 12px 14px;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .total-row,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .total-row {
+            padding: 8px 0;
+            border-bottom: 1px solid #f3f4f6;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .total-row:last-child,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .total-row:last-child {
+            border-bottom: none;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .total-row.bold,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .total-row.bold {
+            border-top: 1px solid #e5e7eb;
+            margin-top: 4px;
+            padding-top: 10px;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .notes-section,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .notes-section {
+            margin-top: 10px;
+            padding: 12px 14px;
+            background: #fff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+          }
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .footer,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .footer {
+            margin-top: 16px;
+            padding-bottom: 8px;
+          }
+        }
+
+        @media print {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-header,
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-header {
+            flex-direction: row !important;
+            border: none !important;
+            border-radius: 0 !important;
+            padding: 0 0 14px !important;
+            background: #fff !important;
+          }
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-info,
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-info {
+            text-align: right !important;
+            border-top: none !important;
+            padding-top: 0 !important;
+          }
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .billing-section,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-table-card,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .totals-section,
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .notes-section,
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .billing-section,
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-table-card,
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .totals-section,
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .notes-section {
+            border: none !important;
+            border-radius: 0 !important;
+            background: #fff !important;
+          }
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-details-line--desktop,
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .company-details-line--desktop {
+            display: block !important;
+          }
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-details-line--mobile,
+          .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .company-details-line--mobile {
+            display: none !important;
+          }
+        }
       `}</style>
 
-      <div className={`printable-invoice ${printStyles.isThermal ? 'thermal-mode' : ''}`}>
+      <div
+        className={`printable-invoice ${printStyles.isThermal ? 'thermal-mode' : ''} ${
+          useMobileScreenLayout ? 'invoice-layout-mobile' : ''
+        }`}
+      >
         {printStyles.isThermal ? (
           /* Thermal receipt layout - simplified CASH RECEIPT style */
           <div className="thermal-receipt">
@@ -449,35 +692,49 @@ const PrintableInvoice = ({
             {logoSource ? (
               <img src={logoSource} alt={companyInfo.name} className="company-logo" />
             ) : companyInfo.name ? (
-              <div className="company-name-placeholder" style={{ fontSize: printStyles.titleSize, fontWeight: 'bold', marginBottom: 10 }}>{companyInfo.name}</div>
+              <div className="company-name-placeholder">{companyInfo.name}</div>
             ) : null}
             <div className="company-details">
               {companyInfo.location && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                  <MapPin className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
-                  <span style={{ whiteSpace: 'pre-line' }}>{companyInfo.location}</span>
-                </div>
+                <>
+                  <div className="company-details-line company-details-line--desktop" style={{ whiteSpace: 'pre-line' }}>
+                    {companyInfo.location}
+                  </div>
+                  <div className="company-details-line company-details-line--mobile">
+                    <MapPin className="company-detail-icon" aria-hidden />
+                    <span style={{ whiteSpace: 'pre-line' }}>{companyInfo.location}</span>
+                  </div>
+                </>
               )}
               {companyInfo.phone && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                  <Phone className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
-                  <span>{companyInfo.phone}</span>
-                </div>
+                <>
+                  <div className="company-details-line company-details-line--desktop">Phone: {companyInfo.phone}</div>
+                  <div className="company-details-line company-details-line--mobile">
+                    <Phone className="company-detail-icon" aria-hidden />
+                    <span>{companyInfo.phone}</span>
+                  </div>
+                </>
               )}
               {companyInfo.website && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                  <Globe className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
-                  <span>{companyInfo.website}</span>
-                </div>
+                <>
+                  <div className="company-details-line company-details-line--desktop">Website: {companyInfo.website}</div>
+                  <div className="company-details-line company-details-line--mobile">
+                    <Globe className="company-detail-icon" aria-hidden />
+                    <span>{companyInfo.website}</span>
+                  </div>
+                </>
               )}
               {companyInfo.email && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                  <Mail className="h-3.5 w-3.5" style={{ fontSize: '14px' }} />
-                  <span>{companyInfo.email}</span>
-                </div>
+                <>
+                  <div className="company-details-line company-details-line--desktop">Email: {companyInfo.email}</div>
+                  <div className="company-details-line company-details-line--mobile">
+                    <Mail className="company-detail-icon" aria-hidden />
+                    <span>{companyInfo.email}</span>
+                  </div>
+                </>
               )}
               {(companyInfo.vatNumber || companyInfo.tin) && (
-                <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #e5e7eb', fontSize: '11px', color: '#6b7280' }}>
+                <div className="company-tax-line">
                   {companyInfo.vatNumber && <div>VAT: {companyInfo.vatNumber}</div>}
                   {companyInfo.tin && <div>TIN: {companyInfo.tin}</div>}
                 </div>
@@ -489,25 +746,27 @@ const PrintableInvoice = ({
             {documentSubtitle && (
               <div className="invoice-subtitle">{documentSubtitle}</div>
             )}
-            <div className="invoice-number">
-              <strong>Invoice #:</strong> {invoice.invoiceNumber}
+            <div className="invoice-meta-row">
+              <strong>{docNumberLabel}</strong> {docNumber}
             </div>
-            <div className="invoice-number">
-              <strong>Date:</strong> {dayjs(invoice.invoiceDate).format('MMMM DD, YYYY')}
+            <div className="invoice-meta-row">
+              <strong>Date:</strong> {dayjs(invoice.invoiceDate).format('MMMM D, YYYY')}
             </div>
-            <div className="invoice-number">
-              <strong>Due Date:</strong> {dayjs(invoice.dueDate).format('MMMM DD, YYYY')}
-            </div>
+            {invoice.dueDate && (
+              <div className="invoice-meta-row">
+                <strong>Due Date:</strong> {dayjs(invoice.dueDate).format('MMMM D, YYYY')}
+              </div>
+            )}
             {invoice.paymentTerms && (
-              <div className="invoice-number">
+              <div className="invoice-meta-row">
                 <strong>Terms:</strong> {invoice.paymentTerms}
               </div>
             )}
           </div>
         </div>
 
-        {/* Billing Details */}
-        <div className="invoice-details">
+        {/* Bill To / Job Details */}
+        <div className="invoice-parties">
           <div className="billing-section">
             <div className="section-title">Bill To:</div>
             <div className="billing-info">
@@ -525,22 +784,28 @@ const PrintableInvoice = ({
                     .join(', ')}
                 </div>
               )}
-              {invoice.customer?.email && (
-                <div>Email: {invoice.customer.email}</div>
-              )}
-              {invoice.customer?.phone && (
-                <div>Phone: {invoice.customer.phone}</div>
-              )}
+              {invoice.customer?.email && <div>{invoice.customer.email}</div>}
+              {invoice.customer?.phone && <div>{invoice.customer.phone}</div>}
             </div>
           </div>
-          {invoice.job && (
-            <div className="billing-section">
-              <div className="section-title">Job Details:</div>
-              <div className="billing-info">
-                <div><strong>Job #:</strong> {invoice.job.jobNumber}</div>
-              </div>
+          <div className="billing-section">
+            <div className="section-title">Job Details:</div>
+            <div className="billing-info">
+              {invoice.job?.jobNumber && (
+                <div>
+                  <strong>Job #:</strong> {invoice.job.jobNumber}
+                </div>
+              )}
+              {invoice.job?.title && <div>{invoice.job.title}</div>}
+              {invoice.paymentTerms && (
+                <div>
+                  {invoice.paymentTerms}
+                  {String(invoice.paymentTerms).toLowerCase().includes('term') ? '' : ' Terms'}
+                </div>
+              )}
+              {!invoice.job?.jobNumber && !invoice.paymentTerms && <div>—</div>}
             </div>
-          )}
+          </div>
         </div>
 
         {/* Items: list for receipts, table for invoices */}
@@ -563,13 +828,14 @@ const PrintableInvoice = ({
             )}
           </div>
         ) : (
+          <div className="invoice-table-card">
           <table className="items-table">
             <thead>
               <tr>
-                <th style={{ width: '40%' }}>Description</th>
-                <th className="text-center" style={{ width: '15%' }}>Quantity</th>
-                <th className="text-right" style={{ width: '15%' }}>Unit Price</th>
-                <th className="text-right" style={{ width: '15%' }}>Amount</th>
+                <th style={{ width: '48%' }}>Description</th>
+                <th className="text-center" style={{ width: '14%' }}>QTY</th>
+                <th className="text-right" style={{ width: '19%' }}>Unit Price</th>
+                <th className="text-right" style={{ width: '19%' }}>Amount</th>
               </tr>
             </thead>
             <tbody>
@@ -598,6 +864,7 @@ const PrintableInvoice = ({
               )}
             </tbody>
           </table>
+          </div>
         )}
 
         {/* Totals */}
@@ -631,10 +898,10 @@ const PrintableInvoice = ({
             <span>Total Amount:</span>
             <span>{amountDisplay(invoice.totalAmount)}</span>
           </div>
-          {invoice.amountPaid > 0 && (
-            <div className="total-row">
+          {(invoice.amountPaid > 0 || Number(invoice.balance) < Number(invoice.totalAmount)) && (
+            <div className="total-row paid">
               <span>Amount Paid:</span>
-              <span style={{ color: '#52c41a' }}>{amountDisplay(invoice.amountPaid)}</span>
+              <span>{amountDisplay(invoice.amountPaid)}</span>
             </div>
           )}
           <div className={`total-row ${isReceipt && invoice.balance <= 0 ? '' : 'balance'}`}>
@@ -658,25 +925,21 @@ const PrintableInvoice = ({
         )}
 
         {/* Terms & Conditions */}
-        {invoice.termsAndConditions && (
+        {!isReceipt && (
           <div className="notes-section">
-            <div className="notes-title">Terms & Conditions:</div>
-            <div className="notes-content">{invoice.termsAndConditions}</div>
+            <div className="notes-title">Terms &amp; Conditions:</div>
+            <div className="notes-content">
+              {invoice.termsAndConditions || DEFAULT_TERMS_TEXT}
+            </div>
           </div>
         )}
 
-        {/* Footer - uses tenant invoiceFooter only; no generic fallback */}
-        <div className="footer">
-          {companyInfo.invoiceFooter ? (
-            <div>{companyInfo.invoiceFooter}</div>
-          ) : (companyInfo.name || companyInfo.phone || companyInfo.email) ? (
-            <div>
-              {companyInfo.name}
-              {companyInfo.phone && ` | ${companyInfo.phone}`}
-              {companyInfo.email && ` | ${companyInfo.email}`}
-            </div>
-          ) : null}
-        </div>
+        {/* Footer */}
+        {!isReceipt && (
+          <div className="footer">
+            {companyInfo.invoiceFooter || DEFAULT_THANK_YOU}
+          </div>
+        )}
           </>
         )}
       </div>

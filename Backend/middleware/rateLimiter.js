@@ -172,6 +172,24 @@ const publicTrackBrandingLimiter = rateLimit({
   validate: false,
 });
 
+/**
+ * Public end-customer feedback submit (POST) — per IP + tenant slug
+ */
+const publicFeedbackSubmitLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+    const slug =
+      typeof req.body?.tenantSlug === 'string' ? req.body.tenantSlug.trim().slice(0, 150) : '';
+    return `${ip}:${slug || 'no-slug'}`;
+  },
+  handler: createErrorHandler('Too many submissions. Please wait and try again.'),
+  validate: false,
+});
+
 module.exports = {
   generalLimiter,
   authLimiter,
@@ -183,4 +201,5 @@ module.exports = {
   bulkOperationLimiter,
   publicTrackingLookupLimiter,
   publicTrackBrandingLimiter,
+  publicFeedbackSubmitLimiter,
 };

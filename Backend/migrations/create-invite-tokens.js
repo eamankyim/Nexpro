@@ -1,5 +1,10 @@
 module.exports = {
   async up(queryInterface, Sequelize) {
+    const tables = await queryInterface.showAllTables();
+    if (tables.some((t) => String(t).toLowerCase() === 'invite_tokens')) {
+      return;
+    }
+
     await queryInterface.createTable('invite_tokens', {
       id: {
         type: Sequelize.UUID,
@@ -71,8 +76,7 @@ module.exports = {
       }
     });
 
-    // Add indexes
-    await queryInterface.addIndex('invite_tokens', ['token'], { unique: true });
+    // Other indexes only; `token` already has unique: true on the column (creates invite_tokens_token).
     await queryInterface.addIndex('invite_tokens', ['email']);
     await queryInterface.addIndex('invite_tokens', ['createdBy']);
     await queryInterface.addIndex('invite_tokens', ['used']);

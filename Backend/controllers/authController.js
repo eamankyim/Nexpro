@@ -133,7 +133,10 @@ exports.register = async (req, res, next) => {
       include: [
         {
           model: Tenant,
-          as: 'tenant'
+          as: 'tenant',
+          // Keep invite validation resilient on older demo schemas
+          // that may not yet have newer optional tenant columns.
+          attributes: ['id', 'name', 'slug', 'status', 'plan', 'businessType']
         }
       ]
     });
@@ -1018,7 +1021,15 @@ exports.updateNotificationPreferences = async (req, res, next) => {
     }
 
     user.notificationPreferences = merged;
-    await user.save();
+    try {
+      await user.save();
+    } catch (error) {
+      if (error?.original?.code === '42703' || /notificationPreferences/i.test(error?.message || '')) {
+        console.warn('[Auth] notificationPreferences column missing; returning merged preferences without persistence.');
+        return res.status(200).json({ success: true, data: merged, persisted: false });
+      }
+      throw error;
+    }
     invalidateUserCache(user.id);
 
     res.status(200).json({ success: true, data: merged });

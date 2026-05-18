@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from 'react';
+import { useMemo, useState, useRef, useCallback } from 'react';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -124,6 +124,9 @@ const accountTypeLabels = {
   cogs: 'Cost of Goods Sold',
   other: 'Other'
 };
+
+const PREPAID_DEBIT_TYPES = ['expense', 'cogs'];
+const PREPAID_CREDIT_TYPES = ['asset'];
 
 /** Categories shown in the Category dropdown, keyed by account type */
 const accountCategoriesByType = {
@@ -736,8 +739,64 @@ const Accounting = () => {
 
   const accountOptions = accounts.map((account) => ({
     label: `${account.code} — ${account.name}`,
-    value: account.id
+    value: account.id,
+    type: account.type,
   }));
+
+  const recurringTemplateType = recurringForm.watch('templateType');
+  const selectedDebitAccountId = recurringForm.watch('debitAccountId');
+  const selectedCreditAccountId = recurringForm.watch('creditAccountId');
+
+  const debitAccountOptions = useMemo(() => {
+    const filtered = recurringTemplateType === 'prepaid_expense'
+      ? accountOptions.filter((option) => PREPAID_DEBIT_TYPES.includes(option.type))
+      : accountOptions;
+    return filtered.filter((option) => option.value !== selectedCreditAccountId);
+  }, [recurringTemplateType, accountOptions, selectedCreditAccountId]);
+
+  const creditAccountOptions = useMemo(() => {
+    const filtered = recurringTemplateType === 'prepaid_expense'
+      ? accountOptions.filter((option) => PREPAID_CREDIT_TYPES.includes(option.type))
+      : accountOptions;
+    return filtered.filter((option) => option.value !== selectedDebitAccountId);
+  }, [recurringTemplateType, accountOptions, selectedDebitAccountId]);
+
+  const groupAccountOptionsByType = useCallback((options) => {
+    return options.reduce((acc, option) => {
+      const type = option.type || 'other';
+      if (!acc[type]) acc[type] = [];
+      acc[type].push(option);
+      return acc;
+    }, {});
+  }, []);
+
+  const groupedDebitOptions = useMemo(
+    () => groupAccountOptionsByType(debitAccountOptions),
+    [debitAccountOptions, groupAccountOptionsByType]
+  );
+
+  const groupedCreditOptions = useMemo(
+    () => groupAccountOptionsByType(creditAccountOptions),
+    [creditAccountOptions, groupAccountOptionsByType]
+  );
+
+  const accountTypeOrder = ['asset', 'liability', 'equity', 'income', 'expense', 'cogs', 'other'];
+
+  const renderGroupedAccountSelectOptions = useCallback((groupedOptions) => (
+    accountTypeOrder
+      .filter((type) => Array.isArray(groupedOptions[type]) && groupedOptions[type].length > 0)
+      .map((type, groupIndex) => (
+        <div key={`group-${type}`}>
+          {groupIndex > 0 && <SelectSeparator />}
+          <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+            {accountTypeLabels[type] || type}
+          </div>
+          {groupedOptions[type].map((option) => (
+            <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+          ))}
+        </div>
+      ))
+  ), []);
 
 
   const totals = useMemo(() => {
@@ -1601,11 +1660,12 @@ const Accounting = () => {
                         <SelectTrigger><SelectValue placeholder="Select debit account" /></SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {accountOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                        ))}
+                        {renderGroupedAccountSelectOptions(groupedDebitOptions)}
                       </SelectContent>
                     </Select>
+                    {recurringTemplateType === 'prepaid_expense' && (
+                      <p className="text-xs text-muted-foreground">Prepaid expense debit should be an expense/COGS account.</p>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}
@@ -1621,11 +1681,12 @@ const Accounting = () => {
                         <SelectTrigger><SelectValue placeholder="Select credit account" /></SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {accountOptions.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                        ))}
+                        {renderGroupedAccountSelectOptions(groupedCreditOptions)}
                       </SelectContent>
                     </Select>
+                    {recurringTemplateType === 'prepaid_expense' && (
+                      <p className="text-xs text-muted-foreground">Prepaid expense credit should be a prepaid asset account.</p>
+                    )}
                     <FormMessage />
                   </FormItem>
                 )}

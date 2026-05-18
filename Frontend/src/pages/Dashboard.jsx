@@ -67,7 +67,7 @@ dayjs.extend(relativeTime);
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, activeTenant, activeTenantId, tenantRole, wasInvited } = useAuth();
+  const { user, activeTenant, activeTenantId, tenantRole, wasInvited, suppressAppGuidance } = useAuth();
   const [loading, setLoading] = useState(true);
   const [isRefetching, setIsRefetching] = useState(false);
   const { isMobile } = useResponsive();
@@ -437,9 +437,10 @@ const Dashboard = () => {
   
   const showSetupBanner = useMemo(() => {
     if (wasInvited) return false;
+    if (suppressAppGuidance) return false;
     if (organizationSettingsPending) return false;
     return !onboardingCompleted;
-  }, [wasInvited, organizationSettingsPending, onboardingCompleted]);
+  }, [wasInvited, suppressAppGuidance, organizationSettingsPending, onboardingCompleted]);
 
   // Welcome messages based on mode
   const welcomeMessages = useMemo(() => ({

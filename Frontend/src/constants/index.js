@@ -29,6 +29,15 @@ export const DEBOUNCE_DELAYS = {
   RESIZE: 250,
 };
 
+/** When to skip auto app guidance (product tour, forced workspace onboarding). */
+export const APP_GUIDANCE = {
+  /** Account/membership/tenant age at or above this → treat as established user. */
+  TENURE_DAYS: 30,
+  /** Recent login within this window + minimum account age → very active user. */
+  ACTIVE_RECENT_LOGIN_DAYS: 14,
+  MIN_ACCOUNT_AGE_DAYS_FOR_ACTIVE: 7,
+};
+
 // React Query Cache Configuration (in milliseconds)
 export const QUERY_CACHE = {
   STALE_TIME_STABLE: 5 * 60 * 1000, // 5 minutes for stable data (users, settings, categories)
@@ -79,6 +88,39 @@ export const BUSINESS_TYPES = {
 
 /** Business types that use Jobs (studio-like: printing press, mechanic, barber, salon) */
 export const STUDIO_LIKE_TYPES = ['printing_press', 'mechanic', 'barber', 'salon', 'studio'];
+
+/**
+ * Default review / service tags for the public review form when the tenant has no
+ * `metadata.reviewCategories` override (backend passes that list when set).
+ * Keys match tenant `businessType` (see Backend Tenant model enum).
+ */
+export const REVIEW_CATEGORY_OPTIONS_BY_BUSINESS_TYPE = {
+  printing_press: ['Digital Printing', 'Branding', 'Graphic Design', 'Large format', 'Other'],
+  mechanic: ['Service', 'Repairs', 'Diagnostics', 'Parts', 'Other'],
+  barber: ['Haircut', 'Styling', 'Shave', 'Other'],
+  salon: ['Hair', 'Nails', 'Treatment', 'Other'],
+  studio: ['Project', 'Consultation', 'Other'],
+  shop: ['Purchase', 'Support', 'Other'],
+  pharmacy: ['Prescription', 'OTC', 'Consultation', 'Other'],
+  default: ['General', 'Other'],
+};
+
+/**
+ * Options shown on the public review page (custom tenant list wins when provided).
+ * @param {string|null|undefined} businessType
+ * @param {string[]|null|undefined} customFromApi - from GET public feedback branding
+ * @returns {string[]}
+ */
+export function getReviewCategoryOptions(businessType, customFromApi) {
+  if (Array.isArray(customFromApi) && customFromApi.length > 0) {
+    return [...new Set(customFromApi.map((s) => String(s).trim()).filter(Boolean))];
+  }
+  const map = REVIEW_CATEGORY_OPTIONS_BY_BUSINESS_TYPE;
+  if (businessType && map[businessType]) {
+    return map[businessType];
+  }
+  return map.default;
+}
 
 /** Phase 2: set to true to show Shops menu and page for shop business type */
 export const SHOW_SHOPS = false;
@@ -444,6 +486,9 @@ export const SUCCESS_MESSAGES = {
 export const SEARCH_PLACEHOLDERS = {
   GLOBAL: 'Type to search...',
   CUSTOMERS: 'Name, email, or phone...',
+  /** Reviews inbox — same data as public customer feedback */
+  REVIEWS: 'Comment, email, phone, or rating...',
+  CUSTOMER_FEEDBACK: 'Comment, email, phone, or rating...',
   INVOICES: 'Invoice #, customer, or amount...',
   LEADS: 'Name, company, or email...',
   JOBS: 'Job #, title, or customer...',

@@ -80,7 +80,7 @@ const businessTypes = [
 
 const Onboarding = () => {
   const navigate = useNavigate();
-  const { user, activeTenant, refreshAuthState, wasInvited } = useAuth();
+  const { activeTenant, refreshAuthState, wasInvited, suppressAppGuidance } = useAuth();
   const queryClient = useQueryClient();
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -90,11 +90,10 @@ const Onboarding = () => {
   // Check if onboarding is already completed
   useEffect(() => {
     const onboardingCompleted = activeTenant?.metadata?.onboarding?.completedAt;
-    if (onboardingCompleted || wasInvited) {
-      // Invited users join an existing workspace and should not go through onboarding.
+    if (onboardingCompleted || wasInvited || suppressAppGuidance) {
       navigate('/dashboard', { replace: true });
     }
-  }, [activeTenant, wasInvited, navigate]);
+  }, [activeTenant, wasInvited, suppressAppGuidance, navigate]);
 
   const form = useForm({
     resolver: zodResolver(onboardingSchema),

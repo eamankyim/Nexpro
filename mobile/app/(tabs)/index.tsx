@@ -100,7 +100,7 @@ function getDueDateBadge(
 
 export default function DashboardScreen() {
   const router = useRouter();
-  const { user, activeTenant, activeTenantId, wasInvited, refreshAuth } = useAuth();
+  const { user, activeTenant, activeTenantId, wasInvited, suppressAppGuidance, refreshAuth } = useAuth();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
 
@@ -122,7 +122,10 @@ export default function DashboardScreen() {
     return hasBusinessName && hasCompanyPhone;
   }, [activeTenant?.metadata?.onboarding?.completedAt, hasBusinessName, hasCompanyPhone]);
 
-  const showSetupBanner = useMemo(() => !onboardingCompleted && !wasInvited, [onboardingCompleted, wasInvited]);
+  const showSetupBanner = useMemo(
+    () => !onboardingCompleted && !wasInvited && !suppressAppGuidance,
+    [onboardingCompleted, wasInvited, suppressAppGuidance]
+  );
   const showVerifyEmailBanner = useMemo(() => Boolean(user && !user.emailVerifiedAt), [user, user?.emailVerifiedAt]);
 
   const handleResendVerification = useCallback(async () => {

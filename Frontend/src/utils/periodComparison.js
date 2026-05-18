@@ -54,6 +54,13 @@ export const getPreviousPeriod = (filterType, currentDateRange = null) => {
       label = 'vs last month';
       break;
 
+    case 'specificMonth':
+      // Compare selected month with previous month
+      previousStart = start.subtract(1, 'month').startOf('month');
+      previousEnd = previousStart.endOf('month');
+      label = 'vs previous month';
+      break;
+
     case 'lastMonth':
       // Compare with month before last
       previousStart = start.subtract(1, 'month').startOf('month');
@@ -84,6 +91,13 @@ export const getPreviousPeriod = (filterType, currentDateRange = null) => {
       previousStart = start.subtract(1, 'year').startOf('year');
       previousEnd = previousStart.endOf('year');
       label = 'vs last year';
+      break;
+
+    case 'specificYear':
+      // Compare selected year with previous year
+      previousStart = start.subtract(1, 'year').startOf('year');
+      previousEnd = previousStart.endOf('year');
+      label = 'vs previous year';
       break;
 
     case 'lastYear':

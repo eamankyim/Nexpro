@@ -54,9 +54,6 @@ const updateVendorPriceListImageUrl = async () => {
     
     console.log('\n✅ Migration completed successfully!');
     console.log('📸 vendor_price_lists.imageUrl is now TEXT and can store base64 images.\n');
-    
-    await sequelize.close();
-    process.exit(0);
   } catch (error) {
     console.error('\n❌ Migration failed:', error);
     console.error('Error details:', {
@@ -64,14 +61,25 @@ const updateVendorPriceListImageUrl = async () => {
       message: error.message,
       stack: error.stack
     });
-    await sequelize.close();
-    process.exit(1);
+    throw error;
   }
 };
 
 // Run the migration if called directly
 if (require.main === module) {
-  updateVendorPriceListImageUrl();
+  updateVendorPriceListImageUrl()
+    .then(async () => {
+      await sequelize.close();
+      process.exit(0);
+    })
+    .catch(async () => {
+      try {
+        await sequelize.close();
+      } catch (_) {
+        /* ignore */
+      }
+      process.exit(1);
+    });
 }
 
 module.exports = updateVendorPriceListImageUrl;

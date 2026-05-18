@@ -28,13 +28,36 @@ const createProductCategoriesAndSwitchProducts = async () => {
   `);
   console.log('✅ product_categories table created.');
 
-  const rows = await sequelize.query(
-    `SELECT DISTINCT p."categoryId", p."tenantId", ic.name
-     FROM products p
-     JOIN inventory_categories ic ON ic.id = p."categoryId"
-     WHERE p."categoryId" IS NOT NULL`,
+  // Legacy: inventory_categories. After rename-inventory-tables-to-materials: materials_categories (see MaterialCategory model).
+  const [catTableRows] = await sequelize.query(
+    `SELECT table_name FROM information_schema.tables
+     WHERE table_schema = 'public'
+       AND table_name IN ('materials_categories', 'inventory_categories', 'material_categories')`,
     { type: QueryTypes.SELECT }
   );
+  const present = new Set((catTableRows || []).map((r) => r.table_name));
+  const sourceTable = present.has('materials_categories')
+    ? 'materials_categories'
+    : present.has('inventory_categories')
+      ? 'inventory_categories'
+      : present.has('material_categories')
+        ? 'material_categories'
+        : null;
+
+  let rows = [];
+  if (sourceTable) {
+    rows = await sequelize.query(
+      `SELECT DISTINCT p."categoryId", p."tenantId", ic.name
+       FROM products p
+       JOIN "${sourceTable}" ic ON ic.id = p."categoryId"
+       WHERE p."categoryId" IS NOT NULL`,
+      { type: QueryTypes.SELECT }
+    );
+  } else {
+    console.log(
+      '⚠️  No materials_categories / inventory_categories; skipping legacy category row copy.'
+    );
+  }
 
   const idMap = new Map();
   const seen = new Set();

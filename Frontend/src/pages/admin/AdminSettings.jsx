@@ -402,6 +402,24 @@ const AdminSettings = () => {
     }
   };
 
+  const getPendingInviteLink = useCallback((invite) => {
+    if (!invite) return '';
+    if (invite.inviteUrl) return invite.inviteUrl;
+    if (!invite.token) return '';
+    if (typeof window === 'undefined') return '';
+    return `${window.location.origin}/signup?token=${invite.token}`;
+  }, []);
+
+  const handleCopyPendingInviteLink = useCallback((invite) => {
+    const link = getPendingInviteLink(invite);
+    if (!link) {
+      showError(null, 'Invite link is unavailable for this record');
+      return;
+    }
+    navigator.clipboard.writeText(link);
+    showSuccess('Pending invite link copied to clipboard');
+  }, [getPendingInviteLink]);
+
   const handleRevokePlatformInvite = useCallback(async (id) => {
     try {
       setRevokingInviteId(id);
@@ -1372,18 +1390,38 @@ const AdminSettings = () => {
                   <Label>Pending invites</Label>
                   <ul className="space-y-1">
                     {pendingPlatformInvites.map((inv) => (
-                      <li key={inv.id} className="flex items-center justify-between text-sm py-1">
-                        <span>{inv.email}{inv.name ? ` (${inv.name})` : ''}{inv.platformAdminRoleName ? ` · ${inv.platformAdminRoleName}` : ''}</span>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => handleRevokePlatformInvite(inv.id)}
-                          disabled={revokingInviteId === inv.id}
-                        >
-                          {revokingInviteId === inv.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
-                        </Button>
+                      <li key={inv.id} className="text-sm py-2 border-b border-border last:border-b-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span>{inv.email}{inv.name ? ` (${inv.name})` : ''}{inv.platformAdminRoleName ? ` · ${inv.platformAdminRoleName}` : ''}</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => handleRevokePlatformInvite(inv.id)}
+                            disabled={revokingInviteId === inv.id}
+                          >
+                            {revokingInviteId === inv.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
+                          </Button>
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                          <Input
+                            readOnly
+                            value={getPendingInviteLink(inv)}
+                            className="font-mono text-xs"
+                            placeholder="Invite link unavailable"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={() => handleCopyPendingInviteLink(inv)}
+                            title="Copy invite link"
+                            disabled={!getPendingInviteLink(inv)}
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </li>
                     ))}
                   </ul>

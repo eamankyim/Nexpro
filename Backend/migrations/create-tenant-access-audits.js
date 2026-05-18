@@ -25,13 +25,12 @@ async function up() {
     await sequelize.query(`SET statement_timeout TO 0;`);
   } catch (error) {
     console.error('❌ create-tenant-access-audits failed:', error);
-    throw error;
-  } finally {
     try {
-      await sequelize.close();
+      await sequelize.query(`SET statement_timeout TO 0;`);
     } catch (_) {
-      // ignore close errors on script exit
+      /* ignore */
     }
+    throw error;
   }
 }
 
@@ -46,8 +45,14 @@ async function down() {
 
 if (require.main === module) {
   up()
-    .then(() => process.exit(0))
-    .catch(() => process.exit(1));
+    .then(async () => {
+      await sequelize.close().catch(() => {});
+      process.exit(0);
+    })
+    .catch(async () => {
+      await sequelize.close().catch(() => {});
+      process.exit(1);
+    });
 }
 
 module.exports = { up, down };

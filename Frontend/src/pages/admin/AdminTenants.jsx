@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2 } from 'lucide-react';
+import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2, Copy } from 'lucide-react';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useResponsive } from '../../hooks/useResponsive';
 import adminService from '../../services/adminService';
@@ -389,6 +389,24 @@ const AdminTenants = () => {
     }
   };
 
+  const getTenantInviteLink = useCallback((invite) => {
+    if (!invite) return '';
+    if (invite.inviteUrl) return invite.inviteUrl;
+    if (!invite.token) return '';
+    if (typeof window === 'undefined') return '';
+    return `${window.location.origin}/signup?token=${invite.token}`;
+  }, []);
+
+  const handleCopyTenantInviteLink = useCallback((invite) => {
+    const link = getTenantInviteLink(invite);
+    if (!link) {
+      showError(null, 'Invite link is unavailable for this invite');
+      return;
+    }
+    navigator.clipboard.writeText(link);
+    showSuccess('Invite link copied');
+  }, [getTenantInviteLink]);
+
   const handleSaveAccess = async () => {
     if (!selectedTenant?.id) return;
     setAccessSaving(true);
@@ -596,6 +614,25 @@ const AdminTenants = () => {
                         <p className="text-xs text-muted-foreground">
                           Expires {invite.expiresAt ? dayjs(invite.expiresAt).format('MMM D, YYYY h:mm A') : '—'}
                         </p>
+                        <div className="mt-2 flex items-center gap-2">
+                          <Input
+                            readOnly
+                            value={getTenantInviteLink(invite)}
+                            className="h-8 font-mono text-xs"
+                            placeholder="Invite link unavailable"
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => handleCopyTenantInviteLink(invite)}
+                            title="Copy invite link"
+                            disabled={!getTenantInviteLink(invite)}
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                       <Button
                         variant="destructive"

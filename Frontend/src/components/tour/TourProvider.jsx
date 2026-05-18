@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Joyride, { STATUS } from 'react-joyride';
 import { ImageIcon, ChevronRight } from 'lucide-react';
@@ -37,7 +37,7 @@ function TourStepContent({ content }) {
 export default function TourProvider({ children }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { activeTenant } = useAuth();
+  const { activeTenant, suppressAppGuidance } = useAuth();
   const { primaryColor: brandPrimaryHex } = useBranding();
   const tourValue = useTourInternal();
   const {
@@ -47,10 +47,22 @@ export default function TourProvider({ children }) {
     startTour,
     stopTour,
     completeTour,
-    isTourCompleted
+    isTourStatusReady,
+    tourStatus,
   } = tourValue;
 
   const [showTourPrompt, setShowTourPrompt] = useState(false);
+  const suppressAutoCompleteRef = useRef(false);
+
+  const silentCompleteStorageKey = activeTenant?.id
+    ? `tourSilentComplete:${activeTenant.id}`
+    : null;
+
+  const mainTourCompleted =
+    isTourStatusReady &&
+    (tourStatus[TOUR_IDS.MAIN_TOUR]?.completed === true ||
+      (silentCompleteStorageKey &&
+        sessionStorage.getItem(silentCompleteStorageKey) === '1'));
 
   const businessType = activeTenant?.businessType || 'shop';
   const isRunning = runningTour === TOUR_IDS.MAIN_TOUR;
@@ -105,9 +117,45 @@ export default function TourProvider({ children }) {
     }
   }, [runningTour, location.pathname, navigate]);
 
+  // Reset auto-complete guard when workspace changes
+  useEffect(() => {
+    suppressAutoCompleteRef.current = false;
+  }, [activeTenant?.id]);
+
+  // Tenured/active users: mark tour complete so we do not prompt again (once per tenant)
+  useEffect(() => {
+    if (!isTourStatusReady || !suppressAppGuidance || mainTourCompleted) return;
+    if (suppressAutoCompleteRef.current) return;
+    if (silentCompleteStorageKey && sessionStorage.getItem(silentCompleteStorageKey) === '1') {
+      return;
+    }
+
+    suppressAutoCompleteRef.current = true;
+    if (silentCompleteStorageKey) {
+      sessionStorage.setItem(silentCompleteStorageKey, '1');
+    }
+
+    completeTour(TOUR_IDS.MAIN_TOUR, '1.0.0', { persistOnError: true }).catch(() => {
+      /* Guard stays set; sessionStorage prevents re-prompting if the API is rate-limited */
+    });
+  }, [
+    isTourStatusReady,
+    suppressAppGuidance,
+    mainTourCompleted,
+    completeTour,
+    silentCompleteStorageKey,
+  ]);
+
   // Show tour prompt on first dashboard visit when user hasn't completed the tour
   useEffect(() => {
-    if (location.pathname !== '/dashboard' || isTourCompleted(TOUR_IDS.MAIN_TOUR)) return;
+    if (
+      !isTourStatusReady ||
+      suppressAppGuidance ||
+      location.pathname !== '/dashboard' ||
+      mainTourCompleted
+    ) {
+      return;
+    }
 
     const timer = setTimeout(() => {
       const alreadyPrompted = sessionStorage.getItem('mainTourPromptedThisSession');
@@ -118,7 +166,7 @@ export default function TourProvider({ children }) {
     }, 1000);
 
     return () => clearTimeout(timer);
-  }, [location.pathname, isTourCompleted]);
+  }, [location.pathname, isTourStatusReady, suppressAppGuidance, mainTourCompleted]);
 
   // Handle user's response to tour prompt
   const handleStartTour = useCallback(() => {

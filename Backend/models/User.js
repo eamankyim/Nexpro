@@ -2,6 +2,44 @@ const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 const bcrypt = require('bcryptjs');
 
+const OPTIONAL_USER_COLUMNS = {
+  profilePicture: 'profilePicture',
+  isFirstLogin: 'isFirstLogin',
+  lastLogin: 'lastLogin',
+  sabitoUserId: 'sabito_user_id',
+  googleId: 'google_id',
+  failedLoginAttempts: 'failed_login_attempts',
+  lockoutUntil: 'lockout_until',
+  emailVerifiedAt: 'email_verified_at',
+  notificationPreferences: 'notificationPreferences',
+};
+
+let existingUserColumnsPromise;
+const getExistingUserColumns = async () => {
+  if (!existingUserColumnsPromise) {
+    existingUserColumnsPromise = sequelize
+      .getQueryInterface()
+      .describeTable('users')
+      .then((columns) => new Set(Object.keys(columns || {})))
+      .catch((error) => {
+        console.warn('[User] Unable to describe users table; assuming all columns exist:', error?.message || error);
+        return null;
+      });
+  }
+  return existingUserColumnsPromise;
+};
+
+const stripMissingOptionalColumns = async (user) => {
+  const existingColumns = await getExistingUserColumns();
+  if (!existingColumns) return;
+
+  for (const [attribute, columnName] of Object.entries(OPTIONAL_USER_COLUMNS)) {
+    if (!existingColumns.has(columnName) && Object.prototype.hasOwnProperty.call(user.dataValues, attribute)) {
+      delete user.dataValues[attribute];
+    }
+  }
+};
+
 const User = sequelize.define('User', {
   id: {
     type: DataTypes.UUID,
@@ -85,8 +123,25 @@ const User = sequelize.define('User', {
 }, {
   timestamps: true,
   tableName: 'users',
+  defaultScope: {
+    attributes: {
+      exclude: Object.keys(OPTIONAL_USER_COLUMNS),
+    },
+  },
+  scopes: {
+    withGoogleId: {
+      attributes: { include: ['googleId'] },
+    },
+    withSecurityFields: {
+      attributes: { include: ['failedLoginAttempts', 'lockoutUntil'] },
+    },
+    withEmailVerification: {
+      attributes: { include: ['emailVerifiedAt'] },
+    },
+  },
   hooks: {
     beforeCreate: async (user) => {
+      await stripMissingOptionalColumns(user);
       if (user.email && typeof user.email === 'string') {
         user.email = user.email.trim().toLowerCase();
       }
@@ -97,6 +152,7 @@ const User = sequelize.define('User', {
       }
     },
     beforeUpdate: async (user) => {
+      await stripMissingOptionalColumns(user);
       if (user.changed('email') && user.email && typeof user.email === 'string') {
         user.email = user.email.trim().toLowerCase();
       }
@@ -149,19 +205,41 @@ User.prototype.incrementFailedAttempts = async function(maxAttempts = 5, lockout
     updates.lockoutUntil = new Date(Date.now() + lockoutMinutes * 60 * 1000);
   }
   
-  await this.update(updates);
-  return attempts;
+  try {
+    await this.update(updates);
+    return attempts;
+  } catch (error) {
+    // Backward compatibility: some demo databases may not have lockout columns yet.
+    if (error?.original?.code === '42703' || /failed_login_attempts|lockout_until/i.test(error?.message || '')) {
+      console.warn('[User] Lockout columns missing; skipping failed-attempt persistence');
+      return 0;
+    }
+    throw error;
+  }
 };
 
 /**
  * Reset failed login attempts after successful login
  */
 User.prototype.resetFailedAttempts = async function() {
-  await this.update({
-    failedLoginAttempts: 0,
-    lockoutUntil: null,
-    lastLogin: new Date(),
-  });
+  try {
+    await this.update({
+      failedLoginAttempts: 0,
+      lockoutUntil: null,
+      lastLogin: new Date(),
+    });
+  } catch (error) {
+    if (error?.original?.code === '42703' || /failed_login_attempts|lockout_until/i.test(error?.message || '')) {
+      console.warn('[User] Lockout columns missing; updating lastLogin only');
+      try {
+        await this.update({ lastLogin: new Date() });
+      } catch (innerError) {
+        console.warn('[User] lastLogin update skipped:', innerError?.message || innerError);
+      }
+      return;
+    }
+    throw error;
+  }
 };
 
 User.prototype.toJSON = function() {

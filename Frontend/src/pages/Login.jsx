@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { GoogleLogin } from '@react-oauth/google';
 import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { shouldSuppressAppGuidance } from '../utils/appGuidanceEligibility';
 import { usePublicConfig } from '../context/PublicConfigContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
@@ -80,6 +81,11 @@ const Login = () => {
       const onboardingCompleted =
         defaultMembership?.tenant?.metadata?.onboarding?.completedAt;
       const isInvitedTenantUser = Boolean(defaultMembership?.invitedBy);
+      const skipGuidance = shouldSuppressAppGuidance({
+        user,
+        activeMembership: defaultMembership,
+        activeTenant: defaultMembership?.tenant,
+      });
 
       if (user?.isPlatformAdmin) {
         navigate('/admin');
@@ -87,7 +93,7 @@ const Login = () => {
         navigate('/checkout', {
           state: { plan: planParam, billingPeriod: billingPeriodParam },
         });
-      } else if (!onboardingCompleted && !isInvitedTenantUser) {
+      } else if (!onboardingCompleted && !isInvitedTenantUser && !skipGuidance) {
         navigate('/onboarding');
       } else {
         navigate('/dashboard');
@@ -122,6 +128,11 @@ const Login = () => {
         const onboardingCompleted =
           defaultMembership?.tenant?.metadata?.onboarding?.completedAt;
         const isInvitedTenantUser = Boolean(defaultMembership?.invitedBy);
+        const skipGuidance = shouldSuppressAppGuidance({
+          user,
+          activeMembership: defaultMembership,
+          activeTenant: defaultMembership?.tenant,
+        });
 
         if (user?.isPlatformAdmin) {
           navigate('/admin');
@@ -129,7 +140,7 @@ const Login = () => {
           navigate('/checkout', {
             state: { plan: planParam, billingPeriod: billingPeriodParam },
           });
-        } else if (!onboardingCompleted && !isInvitedTenantUser) {
+        } else if (!onboardingCompleted && !isInvitedTenantUser && !skipGuidance) {
           navigate('/onboarding');
         } else {
           navigate('/dashboard');

@@ -15,6 +15,7 @@ import ActionColumn from '../components/ActionColumn';
 import DashboardTable from '../components/DashboardTable';
 import ViewToggle from '../components/ViewToggle';
 import DetailsDrawer from '../components/DetailsDrawer';
+import InvoiceDetailsDrawerContent from '../components/InvoiceDetailsDrawerContent';
 import MobileFormDialog from '../components/MobileFormDialog';
 import PrintableInvoice from '../components/PrintableInvoice';
 import StatusChip from '../components/StatusChip';
@@ -801,123 +802,19 @@ const Invoices = () => {
         open={drawerVisible}
         onClose={handleCloseDrawer}
         title="Invoice Details"
+        description="View and manage invoice information"
         width={900}
         primaryAction={invoiceDrawerPrimaryAction}
         moreMenuItems={invoiceDrawerMoreMenuItems}
-        fields={viewingInvoice ? [
-          { label: 'Invoice Number', value: viewingInvoice.invoiceNumber },
-          { 
-            label: 'Status', 
-            value: viewingInvoice.status,
-            render: (status) => (
-              <StatusChip status={status} />
-            )
-          },
-          { label: 'Customer', value: viewingInvoice.customer?.name },
-          { label: 'Company', value: viewingInvoice.customer?.company || '-' },
-          { label: 'Email', value: viewingInvoice.customer?.email || '-' },
-          { label: 'Phone', value: viewingInvoice.customer?.phone || '-' },
-          ...(isPrintingPress ? [
-            { label: 'Job Number', value: viewingInvoice.job?.jobNumber },
-            { label: 'Job Title', value: viewingInvoice.job?.title },
-          ] : []),
-          { 
-            label: 'Invoice Date', 
-            value: viewingInvoice.invoiceDate,
-            render: (date) => dayjs(date).format('MMMM DD, YYYY')
-          },
-          { 
-            label: 'Due Date', 
-            value: viewingInvoice.dueDate,
-            render: (date) => dayjs(date).format('MMMM DD, YYYY')
-          },
-          { label: 'Payment Terms', value: viewingInvoice.paymentTerms },
-          {
-            label: 'Invoice Items',
-            value: viewingInvoice.items,
-            render: (items) => {
-              if (!items || items.length === 0) return '-';
-              return (
-                <div className="mt-2 rounded-lg border border-border bg-muted/50 p-4 overflow-x-auto">
-                  <table className="w-full text-sm min-w-[320px]">
-                    <thead>
-                      <tr className="border-b border-border text-left text-muted-foreground">
-                        <th className="pb-2 pr-2 font-medium">Description</th>
-                        <th className="pb-2 pr-2 text-right font-medium w-16">Qty</th>
-                        <th className="pb-2 pr-2 text-right font-medium">Unit price</th>
-                        <th className="pb-2 text-right font-medium">Total</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((item, idx) => (
-                        <tr key={idx} className="border-b border-border last:border-b-0">
-                          <td className="py-2 pr-2">
-                            <div className="font-medium">{item.description || item.category}</div>
-                            {item.paperSize && <div className="text-muted-foreground text-xs">Size: {item.paperSize}</div>}
-                          </td>
-                          <td className="py-2 pr-2 text-right">{item.quantity}</td>
-                          <td className="py-2 pr-2 text-right">₵ {parseFloat(item.unitPrice || 0).toFixed(2)}</td>
-                          <td className="py-2 text-right font-medium">₵ {parseFloat(item.total || 0).toFixed(2)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              );
-            }
-          },
-          { 
-            label: 'Subtotal', 
-            value: viewingInvoice.subtotal,
-            render: (val) => `₵ ${parseFloat(val || 0).toFixed(2)}`
-          },
-          { 
-            label: 'Tax', 
-            value: viewingInvoice.taxAmount,
-            render: (val) => `₵ ${parseFloat(val || 0).toFixed(2)} (${viewingInvoice.taxRate || 0}%)`
-          },
-          { 
-            label: 'Discount', 
-            value: viewingInvoice.discountAmount,
-            render: (val) => {
-              if (!val || val == 0) return '-';
-              return `₵ ${parseFloat(val || 0).toFixed(2)} ${viewingInvoice.discountType === 'percentage' ? `(${viewingInvoice.discountValue}%)` : ''}`;
-            }
-          },
-          { 
-            label: 'Total Amount', 
-            value: viewingInvoice.totalAmount,
-            render: (val) => <strong className="text-lg text-primary">₵ {parseFloat(val || 0).toFixed(2)}</strong>
-          },
-          { 
-            label: 'Amount Paid', 
-            value: viewingInvoice.amountPaid,
-            render: (val) => <span className="text-green-500">₵ {parseFloat(val || 0).toFixed(2)}</span>
-          },
-          { 
-            label: 'Balance Due', 
-            value: viewingInvoice.balance,
-            render: (val) => <strong className={`text-lg ${val > 0 ? 'text-orange-500' : 'text-green-500'}`}>₵ {parseFloat(val || 0).toFixed(2)}</strong>
-          },
-          { label: 'Notes', value: viewingInvoice.notes || '-' },
-          { label: 'Terms & Conditions', value: viewingInvoice.termsAndConditions || '-' },
-          { 
-            label: 'Sent Date', 
-            value: viewingInvoice.sentDate,
-            render: (date) => date ? dayjs(date).format('MMMM DD, YYYY') : '-'
-          },
-          { 
-            label: 'Paid Date', 
-            value: viewingInvoice.paidDate,
-            render: (date) => date ? dayjs(date).format('MMMM DD, YYYY') : '-'
-          },
-          { 
-            label: 'Created At', 
-            value: viewingInvoice.createdAt,
-            render: (date) => dayjs(date).format('MMMM DD, YYYY HH:mm')
-          },
-        ] : []}
-      />
+      >
+        {viewingInvoice ? (
+          <InvoiceDetailsDrawerContent
+            invoice={viewingInvoice}
+            showJobDetails={isStudioLike}
+          />
+        ) : null}
+      </DetailsDrawer>
+
 
       <MobileFormDialog
         open={createModalVisible}

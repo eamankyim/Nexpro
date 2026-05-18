@@ -21,6 +21,7 @@ const MainLayout = () => {
   const { user, refreshAuthState, needsEmailVerification } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
+  const wasBelowTabletRef = useRef(isBelowTablet);
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
@@ -65,11 +66,14 @@ const MainLayout = () => {
     }
   };
 
-  // Auto-expand sidebar when moving to desktop layout
+  // Auto-expand only when transitioning from mobile/tablet to desktop.
+  // Keep user's manual collapse state while already on desktop.
   useEffect(() => {
-    if (!isBelowTablet && collapsed) {
+    const wasBelowTablet = wasBelowTabletRef.current;
+    if (wasBelowTablet && !isBelowTablet && collapsed) {
       setCollapsed(false);
     }
+    wasBelowTabletRef.current = isBelowTablet;
   }, [isBelowTablet, collapsed]);
 
   return (

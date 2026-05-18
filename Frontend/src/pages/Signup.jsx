@@ -60,7 +60,7 @@ const Signup = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const token = searchParams.get('token');
   const navigate = useNavigate();
-  const { tenantSignup, register: registerWithAuth, googleAuth, logout, isAuthenticated, user, activeTenant, wasInvited } = useAuth();
+  const { tenantSignup, register: registerWithAuth, googleAuth, logout, isAuthenticated, user, activeTenant, wasInvited, suppressAppGuidance } = useAuth();
   const { googleClientId } = usePublicConfig();
   const [registeredAsPlatformAdmin, setRegisteredAsPlatformAdmin] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -101,13 +101,13 @@ const Signup = () => {
     if (token) return;
     if (isAuthenticated && !isSubmitting && !showWelcomeScreen) {
       const onboardingCompleted = activeTenant?.metadata?.onboarding?.completedAt;
-      if (onboardingCompleted || wasInvited) {
+      if (onboardingCompleted || wasInvited || suppressAppGuidance) {
         navigate('/dashboard', { replace: true });
       } else {
         navigate('/onboarding', { replace: true });
       }
     }
-  }, [token, isAuthenticated, activeTenant, navigate, isSubmitting, showWelcomeScreen, wasInvited]);
+  }, [token, isAuthenticated, activeTenant, navigate, isSubmitting, showWelcomeScreen, wasInvited, suppressAppGuidance]);
 
   const form = useForm({
     resolver: zodResolver(signupSchema),

@@ -16,34 +16,62 @@ import { cn } from '@/lib/utils';
  * @param {Array<{ label: string, onClick: function }>} actions - Optional menu items for section actions (ellipsis)
  * @param {React.ReactNode} extra - Optional element to show next to title (e.g. Add button)
  * @param {string} className - Optional class for the wrapper
+ * @param {React.ReactNode} icon - Optional icon before section title
+ * @param {'default'|'uppercase'} titleStyle - Section title typography
+ * @param {'muted'|'white'} cardVariant - Card surface style
  */
-function DrawerSectionCard({ title, children, actions = [], extra, className }) {
+function DrawerSectionCard({
+  title,
+  children,
+  actions = [],
+  extra,
+  className,
+  icon,
+  titleStyle = 'default',
+  cardVariant = 'muted',
+}) {
   return (
     <section className={cn('space-y-2', className)}>
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <div className="flex min-w-0 items-center gap-2">
+          {icon}
+          <h3
+            className={cn(
+              titleStyle === 'uppercase'
+                ? 'text-xs font-semibold uppercase tracking-wide text-muted-foreground'
+                : 'text-sm font-semibold text-foreground'
+            )}
+          >
+            {title}
+          </h3>
+        </div>
         <div className="flex items-center gap-1">
           {extra}
           {Array.isArray(actions) && actions.length > 0 && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-gray-500 hover:text-gray-700">
-                <MoreHorizontal className="h-4 w-4" />
-                <span className="sr-only">Section actions</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {actions.map((item, i) => (
-                <DropdownMenuItem key={item.key ?? i} onClick={item.onClick}>
-                  {item.label}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-gray-500 hover:text-gray-700">
+                  <MoreHorizontal className="h-4 w-4" />
+                  <span className="sr-only">Section actions</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {actions.map((item, i) => (
+                  <DropdownMenuItem key={item.key ?? i} onClick={item.onClick}>
+                    {item.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
-      <div className="rounded-lg border border-border bg-muted/50 p-4 [&_dl>div]:-mx-4 [&_dl>div]:w-[calc(100%+2rem)] [&_dl>div]:px-4">
+      <div
+        className={cn(
+          'rounded-lg border p-4 [&_dl>div]:-mx-4 [&_dl>div]:w-[calc(100%+2rem)] [&_dl>div]:px-4',
+          cardVariant === 'white' ? 'border-gray-200 bg-white' : 'border-border bg-muted/50'
+        )}
+      >
         {children}
       </div>
     </section>

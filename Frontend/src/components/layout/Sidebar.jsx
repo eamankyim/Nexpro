@@ -24,7 +24,8 @@ import {
   Pill,
   ChefHat,
   Download,
-  Workflow
+  Workflow,
+  Star
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -90,6 +91,7 @@ const MENU_HINTS = {
   '/jobs': 'Orders from customers',
   '/deliveries': 'Send finished jobs and sales out to customers',
   '/customers': 'People who buy from you',
+  '/reviews': 'Ratings and comments from your customers',
   '/marketing': 'Email or text many customers at once',
   '/invoices': 'Bills you send to customers',
   '/expenses': 'Money you spent on business',
@@ -106,7 +108,7 @@ const MENU_HINTS = {
   '/accounting': 'Money in and out',
   '/materials': 'Materials you use',
   '/equipment': 'Laptops, furniture, vehicles',
-  companyAssets: 'Materials and equipment your business uses (not for sale)',
+  assets: 'Materials and equipment your business uses (not for sale)',
   '/employees': 'Your staff',
   '/shops': 'Your shops',
   '/foot-traffic': 'Customers visiting',
@@ -164,12 +166,12 @@ const getMenuItems = (businessType, isAdmin, isManager, shopType, hasFeature = (
     );
   }
 
-  // Company assets: materials and equipment the business uses (not for sale)
+  // Assets: materials and equipment the business uses (not for sale)
   if (hasFeature('materials')) baseItems.push({
     key: 'company-assets',
     icon: PackageCheck,
-    label: 'Company assets',
-    tooltip: MENU_HINTS.companyAssets,
+    label: 'Assets',
+    tooltip: MENU_HINTS.assets,
     children: [
       { key: '/materials', label: 'Materials', tooltip: MENU_HINTS['/materials'] },
       { key: '/equipment', label: 'Equipment', tooltip: MENU_HINTS['/equipment'] },
@@ -178,6 +180,7 @@ const getMenuItems = (businessType, isAdmin, isManager, shopType, hasFeature = (
 
   // Advanced group: everything else (Leads, Vendors, Shops/Pharmacies, Payroll, Accounting, Quotes, Employees, Workspace, etc.)
   const advancedChildren = [
+    ...(!isPlatformAdmin && hasFeature('crm') ? [{ key: '/reviews', label: 'Reviews', tooltip: MENU_HINTS['/reviews'] }] : []),
     ...(hasFeature('deliveries') ? [{ key: '/deliveries', label: 'Deliveries', tooltip: MENU_HINTS['/deliveries'] }] : []),
     ...(!isPlatformAdmin && hasFeature('jobAutomation') ? [{ key: '/tasks', label: 'Tasks', tooltip: MENU_HINTS['/tasks'] }] : []),
     ...(hasFeature('automations') ? [{ key: '/automations', label: 'Automations', tooltip: MENU_HINTS['/automations'], managerOnly: true }] : []),
@@ -342,6 +345,7 @@ export function Sidebar({ collapsed, onCollapse }) {
     '/dashboard': () => import('../../pages/Dashboard'),
     '/ask-ai': () => import('../../pages/AskAI'),
     '/customers': () => import('../../pages/Customers'),
+    '/reviews': () => import('../../pages/CustomerFeedback'),
     '/marketing': () => import('../../pages/Marketing'),
     '/vendors': () => import('../../pages/Vendors'),
     '/jobs': () => import('../../pages/Jobs'),
@@ -708,6 +712,7 @@ export function MobileSidebar() {
     '/dashboard': () => import('../../pages/Dashboard'),
     '/ask-ai': () => import('../../pages/AskAI'),
     '/customers': () => import('../../pages/Customers'),
+    '/reviews': () => import('../../pages/CustomerFeedback'),
     '/marketing': () => import('../../pages/Marketing'),
     '/vendors': () => import('../../pages/Vendors'),
     '/jobs': () => import('../../pages/Jobs'),

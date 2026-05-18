@@ -25,6 +25,7 @@ const Equipment = require('./Equipment');
 const Lead = require('./Lead');
 const LeadActivity = require('./LeadActivity');
 const CustomerActivity = require('./CustomerActivity');
+const CustomerFeedback = require('./CustomerFeedback');
 const QuoteActivity = require('./QuoteActivity');
 const SaleActivity = require('./SaleActivity');
 const ExpenseActivity = require('./ExpenseActivity');
@@ -115,6 +116,9 @@ LeadActivity.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
 Tenant.hasMany(CustomerActivity, { foreignKey: 'tenantId', as: 'customerActivities' });
 CustomerActivity.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+Tenant.hasMany(CustomerFeedback, { foreignKey: 'tenantId', as: 'customerFeedback' });
+CustomerFeedback.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
 Tenant.hasMany(QuoteActivity, { foreignKey: 'tenantId', as: 'quoteActivities' });
 QuoteActivity.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -578,6 +582,7 @@ module.exports = {
   Lead,
   LeadActivity,
   CustomerActivity,
+  CustomerFeedback,
   QuoteActivity,
   SaleActivity,
   ExpenseActivity,

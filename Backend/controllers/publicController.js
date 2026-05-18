@@ -62,10 +62,14 @@ function normalizeLookupPhone(phone) {
 }
 
 function buildOrganizationPublicPayload(organization, tenant) {
+  const phone = typeof organization?.phone === 'string' ? organization.phone.trim().slice(0, 50) : '';
+  const email = typeof organization?.email === 'string' ? organization.email.trim().slice(0, 255) : '';
   return {
     name: organization?.name || tenant?.name || '',
     logoUrl: organization?.logoUrl || getTenantLogoUrl(tenant),
-    primaryColor: organization?.primaryColor || tenant?.metadata?.primaryColor || '#166534'
+    primaryColor: organization?.primaryColor || tenant?.metadata?.primaryColor || '#166534',
+    phone: phone || null,
+    email: email || null,
   };
 }
 
@@ -247,7 +251,7 @@ exports.getPublicTrackBranding = async (req, res, next) => {
 
     const tenant = await Tenant.findOne({
       where: { slug: tenantSlug },
-      attributes: ['id', 'name', 'metadata']
+      attributes: ['id', 'name', 'metadata', 'businessType']
     });
 
     if (!tenant) {
@@ -270,7 +274,8 @@ exports.getPublicTrackBranding = async (req, res, next) => {
       success: true,
       data: {
         trackingEnabled: true,
-        organization
+        organization,
+        businessType: tenant.businessType || null,
       }
     });
   } catch (error) {

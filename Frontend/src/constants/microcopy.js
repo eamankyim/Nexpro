@@ -104,6 +104,8 @@ export const SUCCESS_MESSAGES = {
 export const SEARCH_PLACEHOLDERS = {
   GLOBAL: 'Type to search...',
   CUSTOMERS: 'Name, email, or phone...',
+  REVIEWS: 'Comment, email, phone, or rating...',
+  CUSTOMER_FEEDBACK: 'Comment, email, phone, or rating...',
   INVOICES: 'Invoice #, customer, or amount...',
   LEADS: 'Name, company, or email...',
   JOBS: 'Job #, title, or customer...',
