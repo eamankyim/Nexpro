@@ -113,7 +113,7 @@ const Customers = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
-  const { isManager, user, activeTenant, activeTenantId } = useAuth();
+  const { isManager, isAdmin, user, activeTenant, activeTenantId } = useAuth();
   const queryClient = useQueryClient();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
@@ -301,6 +301,7 @@ const Customers = () => {
     onSuccess: (data) => {
       showSuccess(data?._offline ? 'Saved offline. Will sync when connected.' : 'Customer deleted successfully');
       queryClient.invalidateQueries({ queryKey: ['customers'] });
+      if (drawerVisible) handleCloseDrawer();
     },
     onError: (error) => handleApiError(error, { context: 'delete customer' }),
   });
@@ -1116,6 +1117,10 @@ const Customers = () => {
         onClose={handleCloseDrawer}
         title="Customer Details"
         width={720}
+        onDelete={isAdmin && viewingCustomer ? () => handleDelete(viewingCustomer.id) : null}
+        deleteConfirmTitle="Delete customer?"
+        deleteConfirmText="This permanently removes the customer and cannot be undone. Customers with linked jobs or invoices may fail to delete."
+        deleteButtonLabel="Delete"
         extraActions={viewingCustomer ? [
           ...(isManager ? [{
             key: 'edit',

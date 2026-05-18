@@ -56,7 +56,7 @@ router.route('/find-or-create')
 router.route('/:id')
   .get(getCustomer)
   .put(authorize('admin', 'manager', 'staff'), updateCustomer)
-  .delete(authorize('admin', 'manager', 'staff'), deleteCustomer);
+  .delete(authorize('admin'), deleteCustomer);
 
 router
   .route('/:id/activities')

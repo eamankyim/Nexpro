@@ -36,7 +36,7 @@ router.get('/export', exportLimiter, authorize('admin', 'manager'), exportInvoic
 router.route('/:id')
   .get(getInvoice)
   .put(authorize('admin', 'manager', 'staff'), updateInvoice)
-  .delete(authorize('admin', 'manager', 'staff'), deleteInvoice);
+  .delete(authorize('admin'), deleteInvoice);
 
 router.delete('/:id/cancelled', authorize('admin'), deleteCancelledInvoice);
 

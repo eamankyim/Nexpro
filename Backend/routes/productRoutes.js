@@ -85,6 +85,6 @@ router.route('/:id/sales')
 router.route('/:id')
   .get(getProduct)
   .put(authorize('admin', 'manager', 'staff'), updateProduct)
-  .delete(authorize('admin', 'manager', 'staff'), deleteProduct);
+  .delete(authorize('admin'), deleteProduct);
 
 module.exports = router;

@@ -763,11 +763,24 @@ const Products = () => {
               icon: <QrCode className="h-4 w-4" />,
               onClick: () => handleOpenQRGenerate(record),
             },
+            ...(isAdmin
+              ? [
+                  {
+                    key: 'delete',
+                    label: 'Delete',
+                    icon: <Trash2 className="h-4 w-4" />,
+                    onClick: () => {
+                      setProductToDelete(record);
+                      setDeleteDialogOpen(true);
+                    },
+                  },
+                ]
+              : []),
           ]}
         />
       ),
     },
-  ], [isMobile, handleOpenQRGenerate]);
+  ], [isMobile, isAdmin, handleOpenQRGenerate, handleDuplicateProduct, handleWhatsAppShare]);
 
   // =============================================
   // DATA FETCHING
@@ -3340,6 +3353,17 @@ const Products = () => {
                 <Plus className="h-4 w-4 mr-2" />
                 Add Variance
               </Button>
+              {isAdmin && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive border-destructive/30 hover:bg-destructive/10"
+                  onClick={() => handleDeleteClick(selectedProduct)}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </Button>
+              )}
             </div>
 
             <DrawerSectionCard title="Product info">

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2, Share2, Copy, Archive, X } from 'lucide-react';
+import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2, Share2, Copy, Archive, Trash2, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import invoiceService from '../services/invoiceService';
@@ -578,20 +578,20 @@ const Invoices = () => {
         destructive: true,
       });
     }
-    if (viewingInvoice.status === 'draft') {
+    if (isAdmin && viewingInvoice.status === 'draft') {
       items.push({
         key: 'delete',
         label: 'Delete draft',
-        icon: <Archive className="h-4 w-4" />,
+        icon: <Trash2 className="h-4 w-4" />,
         onClick: () => setInvoiceToDelete(viewingInvoice),
         destructive: true,
       });
     }
-    if (viewingInvoice.status === 'cancelled' && isAdmin) {
+    if (isAdmin && viewingInvoice.status === 'cancelled') {
       items.push({
         key: 'delete-cancelled',
         label: 'Delete cancelled invoice',
-        icon: <Archive className="h-4 w-4" />,
+        icon: <Trash2 className="h-4 w-4" />,
         onClick: () => setInvoiceToDelete(viewingInvoice),
         destructive: true,
       });
