@@ -64,6 +64,11 @@ module.exports = {
         type: Sequelize.STRING,
         allowNull: true
       },
+      metadata: {
+        type: Sequelize.JSONB,
+        allowNull: false,
+        defaultValue: {}
+      },
       createdAt: {
         type: Sequelize.DATE,
         allowNull: false,

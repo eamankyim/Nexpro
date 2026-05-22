@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -19,11 +19,48 @@ import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, For
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { AlertCircle } from 'lucide-react';
 import { calculatePasswordStrength } from '../utils/passwordStrength';
-import africanWomanImage from '../assets/African focused woman.png';
+import africanWomanImage from '../assets/African focused woman.webp';
+import { AuthBrandMark } from '@/components/AppLogo';
 import confetti from 'canvas-confetti';
 
 /** Minimum time (ms) the loading animation runs before transitioning to success. Both lines: 0–2.6s first, 2.6–5.2s second. */
 const MIN_LOADING_DISPLAY_MS = 5200;
+
+/**
+ * Name shown in invite copy: shop(s) or studio(s) when assigned, else workspace name.
+ * @param {object|null} invite
+ * @returns {string}
+ */
+const resolveInviteTargetName = (invite) => {
+  if (!invite) return 'this business';
+  if (invite.targetDisplayName) return invite.targetDisplayName;
+
+  const shopNames = (invite.assignedShops || [])
+    .map((s) => s?.name)
+    .filter(Boolean);
+  if (shopNames.length === 1) return shopNames[0];
+  if (shopNames.length === 2) return `${shopNames[0]} and ${shopNames[1]}`;
+  if (shopNames.length > 2) {
+    return `${shopNames.slice(0, -1).join(', ')}, and ${shopNames[shopNames.length - 1]}`;
+  }
+
+  const studioNames = (invite.assignedStudioLocations || [])
+    .map((s) => s?.name)
+    .filter(Boolean);
+  if (studioNames.length === 1) return studioNames[0];
+  if (studioNames.length === 2) return `${studioNames[0]} and ${studioNames[1]}`;
+  if (studioNames.length > 2) {
+    return `${studioNames.slice(0, -1).join(', ')}, and ${studioNames[studioNames.length - 1]}`;
+  }
+
+  return invite.tenant?.name || 'this business';
+};
+
+const formatInviteRole = (role) => {
+  if (!role) return 'a member';
+  const label = String(role).charAt(0).toUpperCase() + String(role).slice(1);
+  return label;
+};
 
 const signupSchema = z.object({
   name: z.string().min(2, 'Enter your full name'),
@@ -76,6 +113,11 @@ const Signup = () => {
   const isPlatformAdminInvite = inviteType === 'platform_admin';
   const isNewTenantInvite =
     inviteType === 'new_tenant' || (!inviteType && !inviteData?.tenantId);
+  const inviteTargetName = useMemo(() => resolveInviteTargetName(inviteData), [inviteData]);
+  const inviteRoleLabel = useMemo(
+    () => formatInviteRole(inviteData?.role),
+    [inviteData?.role]
+  );
 
   // We no longer choose business type here – signup is generic, onboarding sets shop/studio/pharmacy.
 
@@ -459,7 +501,12 @@ const Signup = () => {
           <div className={`flex-1 ${isMobile ? 'px-6 py-4' : 'p-12'} flex flex-col justify-center ${isMobile ? 'min-h-screen overflow-y-auto' : ''}`}>
             <div className={`${isMobile ? 'w-full' : 'max-w-md'} mx-auto w-full`}>
               {/* Logo */}
-              <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-brand`}>ABS</h1>
+              <AuthBrandMark
+                showName
+                appName="ABS"
+                className={isMobile ? 'mb-4' : 'mb-8'}
+                logoClassName={isMobile ? 'h-9 w-9' : 'h-11 w-11'}
+              />
               
               {/* Heading */}
               <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-foreground`}>
@@ -495,7 +542,7 @@ const Signup = () => {
                       ? 'You have been invited to join as a platform administrator. Set your name and password below.'
                       : isNewTenantInvite
                         ? "You've been invited to create your workspace. Set your name and password below."
-                        : `You have been invited to join ${inviteData.tenant?.name || 'this business'} as ${inviteData.role ? String(inviteData.role).charAt(0).toUpperCase() + String(inviteData.role).slice(1) : 'a member'}.`
+                        : `You have been invited to join ${inviteTargetName} as ${inviteRoleLabel}.`
                   }
                 </p>
               )}

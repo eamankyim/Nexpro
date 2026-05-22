@@ -21,9 +21,22 @@ const sendToPlatformAdmins = async ({ subject, html, text }) => {
     raw: true,
   });
 
-  const recipients = admins
-    .map((admin) => String(admin?.email || '').trim().toLowerCase())
-    .filter(Boolean);
+  const configuredRecipients = [
+    process.env.ADMIN_EMAIL,
+    process.env.PLATFORM_ADMIN_EMAIL,
+    process.env.SUPPORT_EMAIL,
+  ];
+
+  const recipients = Array.from(
+    new Set(
+      [
+        ...admins.map((admin) => admin?.email),
+        ...configuredRecipients,
+      ]
+        .map((email) => String(email || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
 
   if (recipients.length === 0) {
     return;
@@ -106,8 +119,50 @@ const notifyTenantOnboarded = async ({
   await sendToPlatformAdmins({ subject, html, text });
 };
 
+const notifyDataDeletionRequested = async ({
+  userName,
+  userEmail,
+  userId,
+  tenantName,
+  tenantId,
+  reason,
+  requestedAt,
+}) => {
+  const subject = `Data deletion requested: ${toDisplay(userEmail)}`;
+  const html = `
+    <h2>Data deletion request</h2>
+    <p>A user requested account and workspace data deletion from the mobile app.</p>
+    <ul>
+      <li><strong>User:</strong> ${escapeHtml(toDisplay(userName))}</li>
+      <li><strong>User email:</strong> ${escapeHtml(toDisplay(userEmail))}</li>
+      <li><strong>User ID:</strong> ${escapeHtml(toDisplay(userId))}</li>
+      <li><strong>Tenant:</strong> ${escapeHtml(toDisplay(tenantName))}</li>
+      <li><strong>Tenant ID:</strong> ${escapeHtml(toDisplay(tenantId))}</li>
+      <li><strong>Requested at:</strong> ${escapeHtml(toDisplay(requestedAt))}</li>
+      <li><strong>Reason:</strong> ${escapeHtml(toDisplay(reason, 'No reason provided'))}</li>
+    </ul>
+    <p>Review the stored request in the tenant settings table before deleting data.</p>
+  `.trim();
+
+  const text = [
+    'Data deletion request',
+    `User: ${toDisplay(userName)}`,
+    `User email: ${toDisplay(userEmail)}`,
+    `User ID: ${toDisplay(userId)}`,
+    `Tenant: ${toDisplay(tenantName)}`,
+    `Tenant ID: ${toDisplay(tenantId)}`,
+    `Requested at: ${toDisplay(requestedAt)}`,
+    `Reason: ${toDisplay(reason, 'No reason provided')}`,
+    '',
+    'Review the stored request in the tenant settings table before deleting data.',
+  ].join('\n');
+
+  await sendToPlatformAdmins({ subject, html, text });
+};
+
 module.exports = {
   notifyAccountCreated,
   notifyTenantOnboarded,
+  notifyDataDeletionRequested,
 };
 

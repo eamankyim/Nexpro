@@ -15,6 +15,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { formatAmount } from '../../utils/formatNumber';
 
 const defaultRange = [
   dayjs().subtract(29, 'day').startOf('day'),
@@ -181,7 +182,7 @@ const AdminReports = () => {
           <CardContent className="pt-6">
             <p className="text-sm text-muted-foreground">Subscription revenue (MRR)</p>
             <p className="text-2xl font-bold text-foreground mt-1">
-              ₵ {(kpis?.totalRevenue ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              {formatAmount(kpis?.totalRevenue ?? 0)}
             </p>
           </CardContent>
         </Card>
@@ -244,7 +245,7 @@ const AdminReports = () => {
                           <p className="font-semibold text-foreground">{record.tenant?.name || '—'}</p>
                           <p className="text-xs text-muted-foreground">{record.tenant?.company || record.tenant?.plan || '—'}</p>
                           <div className="mt-3 pt-3 border-t border-border flex items-center gap-2">
-                            <span className="font-medium text-foreground">₵ {Number(record.totalRevenue || 0).toLocaleString()}/mo</span>
+                            <span className="font-medium text-foreground">{formatAmount(record.totalRevenue || 0)}/mo</span>
                             <span className="text-xs text-muted-foreground">{record.tenant?.plan || '—'}</span>
                           </div>
                         </div>
@@ -269,7 +270,7 @@ const AdminReports = () => {
                               <p className="text-xs text-muted-foreground">{record.tenant?.company || record.tenant?.plan || '—'}</p>
                             </div>
                           </TableCell>
-                          <TableCell>₵ {Number(record.totalRevenue || 0).toLocaleString()}</TableCell>
+                          <TableCell>{formatAmount(record.totalRevenue || 0)}</TableCell>
                           <TableCell>{record.tenant?.plan || '—'}</TableCell>
                         </TableRow>
                       ))}
@@ -342,7 +343,7 @@ const AdminReports = () => {
                     expenseSeries.map((item) => (
                       <div key={item.date} className="rounded-lg border border-border p-3 flex justify-between items-center">
                         <span className="text-sm text-foreground">{dayjs(item.date).format('MMM D, YYYY')}</span>
-                        <span className="font-semibold text-foreground">₵ {Number(item.expenses || 0).toLocaleString()}</span>
+                        <span className="font-semibold text-foreground">{formatAmount(item.expenses || 0)}</span>
                       </div>
                     ))
                   )}
@@ -366,7 +367,7 @@ const AdminReports = () => {
                       expenseSeries.map((item) => (
                         <TableRow key={item.date}>
                           <TableCell>{dayjs(item.date).format('MMM D, YYYY')}</TableCell>
-                          <TableCell>₵ {Number(item.expenses || 0).toLocaleString()}</TableCell>
+                          <TableCell>{formatAmount(item.expenses || 0)}</TableCell>
                         </TableRow>
                       ))
                     )}

@@ -1,30 +1,33 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import Joyride, { STATUS } from 'react-joyride';
-import { ImageIcon, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useBranding } from '@/context/BrandingContext';
 import { TourContext, useTourInternal } from '../../hooks/useTour';
 import { getJoyrideConfig, TOUR_IDS } from '../../config/tours';
+import { loadTourImageByIndex, loadTourWelcomeImage } from '../../config/tourImages';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 
+const Joyride = lazy(() => import('react-joyride').then((m) => ({ default: m.default })));
+const STATUS = { FINISHED: 'finished', SKIPPED: 'skipped' };
+
 /**
- * Renders a tour step with a large image placeholder and text.
- * @param {string} content - Step body text
- * @returns {JSX.Element}
+ * Renders a tour step with an optional screenshot and body text.
  */
-function TourStepContent({ content }) {
+function TourStepContent({ content, imageSrc }) {
   return (
     <div className="tour-step-content flex flex-col gap-4 w-full">
-      <div
-        className="tour-step-image-placeholder w-full rounded-md border border-gray-200 bg-gray-100 flex flex-col items-center justify-center text-gray-500"
-        style={{ minHeight: '260px' }}
-        aria-hidden
-      >
-        <ImageIcon className="w-14 h-14 mb-2 opacity-50" strokeWidth={1.5} />
-        <span className="text-sm">Image placeholder</span>
-      </div>
+      {imageSrc ? (
+        <img
+          src={imageSrc}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          className="tour-step-image w-full rounded-md border border-gray-200 object-contain bg-gray-50"
+          style={{ minHeight: '200px', maxHeight: '280px' }}
+        />
+      ) : null}
       <p className="text-left text-gray-700 text-[15px] leading-relaxed">{content}</p>
     </div>
   );
@@ -32,7 +35,6 @@ function TourStepContent({ content }) {
 
 /**
  * TourProvider - Manages app tours and provides tour context
- * Wraps the application to handle tour state and triggers
  */
 export default function TourProvider({ children }) {
   const location = useLocation();
@@ -52,6 +54,8 @@ export default function TourProvider({ children }) {
   } = tourValue;
 
   const [showTourPrompt, setShowTourPrompt] = useState(false);
+  const [welcomeImage, setWelcomeImage] = useState(null);
+  const [stepImages, setStepImages] = useState({});
   const suppressAutoCompleteRef = useRef(false);
 
   const silentCompleteStorageKey = activeTenant?.id
@@ -68,12 +72,41 @@ export default function TourProvider({ children }) {
   const isRunning = runningTour === TOUR_IDS.MAIN_TOUR;
   const tourConfig = getJoyrideConfig(businessType, isRunning, brandPrimaryHex);
 
-  const stepsWithImages = tourConfig.steps.map((step) => ({
+  useEffect(() => {
+    if (!showTourPrompt) return;
+    loadTourWelcomeImage().then((url) => {
+      if (url) setWelcomeImage(url);
+    });
+  }, [showTourPrompt]);
+
+  useEffect(() => {
+    if (!isRunning) return;
+    let cancelled = false;
+    (async () => {
+      const entries = await Promise.all(
+        tourConfig.steps.map((_, index) =>
+          loadTourImageByIndex(index).then((url) => [index, url])
+        )
+      );
+      if (!cancelled) {
+        setStepImages(Object.fromEntries(entries.filter(([, url]) => url)));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isRunning, businessType, tourConfig.steps.length]);
+
+  const stepsWithImages = tourConfig.steps.map((step, index) => ({
     ...step,
-    content: <TourStepContent content={step.content} />
+    content: (
+      <TourStepContent
+        content={step.content}
+        imageSrc={stepImages[index] ?? null}
+      />
+    ),
   }));
 
-  // Debug log for tour state
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     console.log('[TourProvider] state:', {
@@ -110,19 +143,16 @@ export default function TourProvider({ children }) {
     [runningTour, completeTour, stopTour, setTourStepIndex]
   );
 
-  // When the main tour starts, ensure we are on the dashboard so all targets exist
   useEffect(() => {
     if (runningTour === TOUR_IDS.MAIN_TOUR && location.pathname !== '/dashboard') {
       navigate('/dashboard');
     }
   }, [runningTour, location.pathname, navigate]);
 
-  // Reset auto-complete guard when workspace changes
   useEffect(() => {
     suppressAutoCompleteRef.current = false;
   }, [activeTenant?.id]);
 
-  // Tenured/active users: mark tour complete so we do not prompt again (once per tenant)
   useEffect(() => {
     if (!isTourStatusReady || !suppressAppGuidance || mainTourCompleted) return;
     if (suppressAutoCompleteRef.current) return;
@@ -135,9 +165,7 @@ export default function TourProvider({ children }) {
       sessionStorage.setItem(silentCompleteStorageKey, '1');
     }
 
-    completeTour(TOUR_IDS.MAIN_TOUR, '1.0.0', { persistOnError: true }).catch(() => {
-      /* Guard stays set; sessionStorage prevents re-prompting if the API is rate-limited */
-    });
+    completeTour(TOUR_IDS.MAIN_TOUR, '1.0.0', { persistOnError: true }).catch(() => {});
   }, [
     isTourStatusReady,
     suppressAppGuidance,
@@ -146,7 +174,6 @@ export default function TourProvider({ children }) {
     silentCompleteStorageKey,
   ]);
 
-  // Show tour prompt on first dashboard visit when user hasn't completed the tour
   useEffect(() => {
     if (
       !isTourStatusReady ||
@@ -168,7 +195,6 @@ export default function TourProvider({ children }) {
     return () => clearTimeout(timer);
   }, [location.pathname, isTourStatusReady, suppressAppGuidance, mainTourCompleted]);
 
-  // Handle user's response to tour prompt
   const handleStartTour = useCallback(() => {
     setShowTourPrompt(false);
     startTour(TOUR_IDS.MAIN_TOUR);
@@ -176,27 +202,26 @@ export default function TourProvider({ children }) {
 
   const handleSkipTour = useCallback(() => {
     setShowTourPrompt(false);
-    // Mark as "dismissed" so we don't prompt again this session
     sessionStorage.setItem('tourDismissedThisSession', 'true');
   }, []);
 
   return (
     <TourContext.Provider value={tourValue}>
       {children}
-      
-      {/* Tour Prompt Dialog – minimal, app-colored */}
+
       <Dialog open={showTourPrompt} onOpenChange={setShowTourPrompt}>
         <DialogContent className="sm:max-w-[380px] p-0 gap-0 overflow-hidden border border-border">
           <div className="px-6 pt-6 pb-4">
-            {/* Placeholder image area */}
-            <div
-              className="w-full rounded-lg border border-border bg-muted flex flex-col items-center justify-center text-muted-foreground mb-5"
-              style={{ height: 140, backgroundColor: `${brandPrimaryHex}14` }}
-              aria-hidden
-            >
-              <ImageIcon className="w-10 h-10 mb-1 opacity-60" strokeWidth={1.5} style={{ color: brandPrimaryHex }} />
-              <span className="text-xs">Image placeholder</span>
-            </div>
+            {welcomeImage ? (
+              <img
+                src={welcomeImage}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                className="w-full rounded-lg border border-border object-contain mb-5 bg-muted"
+                style={{ height: 160 }}
+              />
+            ) : null}
 
             <h2 className="text-lg font-semibold text-foreground text-center mb-2">
               Welcome to African Business Suite!
@@ -205,7 +230,6 @@ export default function TourProvider({ children }) {
               You can continue the tour to learn how to use the platform. If you wish, you can exit from the tour by clicking the button.
             </p>
 
-            {/* Progress dot (single step for this prompt) */}
             <div className="flex justify-center gap-1.5 mt-5">
               <span className="w-2 h-2 rounded-full bg-foreground/20" aria-hidden />
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: brandPrimaryHex }} aria-hidden />
@@ -226,15 +250,17 @@ export default function TourProvider({ children }) {
       </Dialog>
 
       {isRunning && (
-        <Joyride
-          {...tourConfig}
-          steps={stepsWithImages}
-          callback={handleTourCallback}
-          stepIndex={tourStepIndex}
-          floaterProps={{
-            disableAnimation: true,
-          }}
-        />
+        <Suspense fallback={null}>
+          <Joyride
+            {...tourConfig}
+            steps={stepsWithImages}
+            callback={handleTourCallback}
+            stepIndex={tourStepIndex}
+            floaterProps={{
+              disableAnimation: true,
+            }}
+          />
+        </Suspense>
       )}
     </TourContext.Provider>
   );

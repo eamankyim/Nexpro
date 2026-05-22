@@ -184,6 +184,13 @@ api.interceptors.request.use(
       } else {
         delete config.headers['x-studio-location-id'];
       }
+      const activeShopId = localStorage.getItem('activeShopId'); // ShopContext
+      const isShopAccessRequest = String(config.url || '').includes('/shops/access');
+      if (activeShopId && !isShopAccessRequest) {
+        config.headers['x-shop-id'] = activeShopId;
+      } else {
+        delete config.headers['x-shop-id'];
+      }
     } else {
       delete config.headers['x-tenant-id'];
       if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {

@@ -73,6 +73,21 @@ const isOriginAllowed = (origin) => {
   return getAllowedOrigins().includes(o);
 };
 
+/** Headers the web/mobile clients may send (must match Frontend/mobile api interceptors). */
+const ALLOWED_CORS_HEADERS = [
+  'Content-Type',
+  'Authorization',
+  'X-Requested-With',
+  'x-tenant-id',
+  'x-studio-location-id',
+  'x-shop-id',
+  'Accept',
+  'Accept-Language',
+  'Accept-Encoding',
+  'Cache-Control',
+  'Pragma',
+];
+
 /**
  * CORS headers for preflight (OPTIONS) and normal responses.
  * Only sets Allow-Origin when origin is allowed; always sets Methods/Headers/Credentials/Max-Age.
@@ -86,10 +101,7 @@ const setCorsHeaders = (res, origin) => {
     res.setHeader('Access-Control-Allow-Origin', normalize(origin));
   }
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, X-Requested-With, x-tenant-id, Accept, Accept-Language, Accept-Encoding, Cache-Control, Pragma'
-  );
+  res.setHeader('Access-Control-Allow-Headers', ALLOWED_CORS_HEADERS.join(', '));
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
   return allowed;
@@ -100,4 +112,5 @@ module.exports = {
   isOriginAllowed,
   setCorsHeaders,
   normalize,
+  ALLOWED_CORS_HEADERS,
 };

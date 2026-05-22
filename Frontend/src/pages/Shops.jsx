@@ -1,16 +1,19 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Store, Plus, MoreHorizontal, Edit, Trash2, MapPin, Phone, Mail, User, RefreshCw } from 'lucide-react';
+import { Store, Plus, MoreHorizontal, Edit, Trash2, MapPin, RefreshCw } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
 import {
@@ -45,7 +48,17 @@ import StatusChip from '../components/StatusChip';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import { showSuccess, showError } from '../utils/toast';
 import api from '../services/api';
-import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
+import shopService from '../services/shopService';
+import userService from '../services/userService';
+import { resolveImageUrl } from '../utils/fileUtils';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, SHOP_TYPES, SHOP_TYPE_LABELS } from '../constants';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 // Validation schema
 const shopSchema = z.object({
@@ -58,12 +71,16 @@ const shopSchema = z.object({
   postalCode: z.string().optional(),
   phone: z.string().optional(),
   email: z.string().email('Invalid email').optional().or(z.literal('')),
-  managerName: z.string().optional(),
+  managerUserId: z.string().optional(),
+  shopType: z.string().optional(),
   isActive: z.boolean().default(true),
+  isDefault: z.boolean().optional(),
 });
 
 const Shops = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { activeTenant } = useAuth();
+  const shopContext = useShopOptional();
   const { isMobile } = useResponsive();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
@@ -80,6 +97,10 @@ const Shops = () => {
   const [editingShop, setEditingShop] = useState(null);
   const [deleteShop, setDeleteShop] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState('');
+  const logoInputRef = useRef(null);
 
   // Form
   const form = useForm({
@@ -92,12 +113,28 @@ const Shops = () => {
       state: '',
       country: 'Ghana',
       postalCode: '',
+      shopType: '',
       phone: '',
       email: '',
-      managerName: '',
+      managerUserId: '',
       isActive: true,
+      isDefault: false,
     },
   });
+
+  const loadTeamMembers = useCallback(async () => {
+    try {
+      const response = await userService.getAll({ limit: 200, isActive: 'true' });
+      const list = Array.isArray(response?.data) ? response.data : response?.data?.data || [];
+      setTeamMembers(list.filter((u) => u.isActive !== false));
+    } catch {
+      setTeamMembers([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isModalOpen) loadTeamMembers();
+  }, [isModalOpen, loadTeamMembers]);
   
   // Fetch shops
   const fetchShops = useCallback(async () => {
@@ -160,11 +197,15 @@ const Shops = () => {
       state: shop.state || '',
       country: shop.country || 'Ghana',
       postalCode: shop.postalCode || '',
+      shopType: shop.shopType || shop.metadata?.shopType || '',
       phone: shop.phone || '',
       email: shop.email || '',
-      managerName: shop.managerName || '',
+      managerUserId: shop.managerUserId || shop.manager?.id || '',
       isActive: shop.isActive ?? true,
+      isDefault: shop.isDefault ?? false,
     });
+    setLogoPreview(shop.logoUrl ? resolveImageUrl(shop.logoUrl) : '');
+    setLogoFile(null);
     setIsModalOpen(true);
   }, [form]);
   
@@ -179,12 +220,28 @@ const Shops = () => {
             <Store className="h-4 w-4 text-green-700" />
           </div>
           <div>
-            <div className="font-medium">{record?.name || '—'}</div>
+            <div className="font-medium flex items-center gap-2 flex-wrap">
+              <span>{record?.name || '—'}</span>
+              {record?.isDefault && (
+                <Badge variant="outline" className="text-xs font-normal border-[#166534] text-[#166534]">
+                  Main shop
+                </Badge>
+              )}
+            </div>
             {record?.code && (
               <div className="text-xs text-gray-500">{record.code}</div>
             )}
           </div>
         </div>
+      ),
+    },
+    {
+      key: 'shopType',
+      label: 'Business type',
+      render: (_, record) => (
+        <span className="text-sm text-muted-foreground">
+          {SHOP_TYPE_LABELS[record?.shopType] || record?.shopType || '—'}
+        </span>
       ),
     },
     {
@@ -198,34 +255,12 @@ const Shops = () => {
       ),
     },
     {
-      key: 'managerName',
+      key: 'manager',
       label: 'Manager',
       render: (_, record) => (
-        <div className="flex items-center gap-1 text-gray-600">
-          <User className="h-3 w-3" />
-          <span>{record?.managerName || '—'}</span>
-        </div>
-      ),
-    },
-    {
-      key: 'phone',
-      label: 'Contact',
-      render: (_, record) => (
-        <div className="text-sm">
-          {record?.phone && (
-            <div className="flex items-center gap-1">
-              <Phone className="h-3 w-3 text-gray-400" />
-              {record.phone}
-            </div>
-          )}
-          {record?.email && (
-            <div className="flex items-center gap-1 text-gray-500">
-              <Mail className="h-3 w-3 text-gray-400" />
-              {record.email}
-            </div>
-          )}
-          {!record?.phone && !record?.email && '—'}
-        </div>
+        <span className="text-sm text-muted-foreground">
+          {record?.manager?.name || record?.manager?.email || '—'}
+        </span>
       ),
     },
     {
@@ -264,7 +299,7 @@ const Shops = () => {
     },
   ], [handleEdit]);
   
-  const handleCreate = () => {
+  const handleCreate = useCallback(() => {
     setEditingShop(null);
     form.reset({
       name: '',
@@ -274,34 +309,74 @@ const Shops = () => {
       state: '',
       country: 'Ghana',
       postalCode: '',
+      shopType: activeTenant?.metadata?.shopType || SHOP_TYPES.OTHER,
       phone: '',
       email: '',
-      managerName: '',
+      managerUserId: '',
       isActive: true,
+      isDefault: false,
     });
+    setLogoPreview('');
+    setLogoFile(null);
     setIsModalOpen(true);
-  };
+  }, [form, activeTenant?.metadata?.shopType]);
+
+  useEffect(() => {
+    if (searchParams.get('add') !== '1') return;
+    handleCreate();
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('add');
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams, handleCreate]);
   
   const onSubmit = async (data) => {
     try {
       setIsSubmitting(true);
-      
+      const payload = {
+        ...data,
+        managerUserId: data.managerUserId || null,
+        email: data.email || null,
+        phone: data.phone || null,
+      };
+
+      let savedId = editingShop?.id;
       if (editingShop) {
-        await api.put(`/shops/${editingShop.id}`, data);
+        const res = await api.put(`/shops/${editingShop.id}`, payload);
+        savedId = res?.data?.data?.id || res?.data?.id || editingShop.id;
         showSuccess('Shop updated successfully');
       } else {
-        await api.post('/shops', data);
+        const res = await api.post('/shops', payload);
+        savedId = res?.data?.data?.id || res?.data?.id;
         showSuccess('Shop created successfully');
       }
-      
+
+      if (logoFile && savedId) {
+        await shopService.uploadLogo(savedId, logoFile);
+      }
+
       setIsModalOpen(false);
+      setLogoFile(null);
       fetchShops();
+      shopContext?.refreshShops?.();
     } catch (error) {
       console.error('Error saving shop:', error);
       showError(error.response?.data?.message || 'Failed to save shop');
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleLogoSelect = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showError('Please choose an image file');
+      return;
+    }
+    setLogoFile(file);
+    setLogoPreview(URL.createObjectURL(file));
   };
   
   const handleDelete = async () => {
@@ -419,9 +494,9 @@ const Shops = () => {
           <DialogHeader>
             <DialogTitle>{editingShop ? 'Edit Shop' : 'Add New Shop'}</DialogTitle>
             <DialogDescription>
-              {editingShop 
-                ? 'Update the shop details below' 
-                : 'Fill in the details to create a new shop location'}
+              {editingShop
+                ? 'Update this shop’s location details.'
+                : 'Add the shop’s name and address. Invite managers and staff from Team and choose which shops they can access.'}
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
@@ -441,6 +516,70 @@ const Shops = () => {
                 )}
               />
               
+              <FormField
+                control={form.control}
+                name="shopType"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Business type (optional)</FormLabel>
+                    <Select value={field.value || ''} onValueChange={field.onChange}>
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="e.g. Supermarket, Hardware" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        {Object.entries(SHOP_TYPE_LABELS).map(([value, label]) => (
+                          <SelectItem key={value} value={value}>
+                            {label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="rounded-lg border border-border p-4 space-y-3">
+                <FormLabel>Shop logo (optional)</FormLabel>
+                <p className="text-sm text-muted-foreground">
+                  Shown on invoices and receipts for this shop. Leave empty to use workspace branding.
+                </p>
+                {logoPreview ? (
+                  <img
+                    src={logoPreview}
+                    alt="Shop logo preview"
+                    className="max-h-20 max-w-[180px] object-contain border border-border rounded-md p-2"
+                  />
+                ) : null}
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleLogoSelect}
+                  />
+                  <Button type="button" variant="outline" size="sm" onClick={() => logoInputRef.current?.click()}>
+                    {logoPreview ? 'Change logo' : 'Upload logo'}
+                  </Button>
+                  {logoPreview ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setLogoFile(null);
+                        setLogoPreview('');
+                      }}
+                    >
+                      Remove
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+
               <FormField
                 control={form.control}
                 name="code"
@@ -502,6 +641,65 @@ const Shops = () => {
               <div className="grid grid-cols-2 gap-4">
                 <FormField
                   control={form.control}
+                  name="phone"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Phone (optional)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="+233..." {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="email"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Business email (optional)</FormLabel>
+                      <FormControl>
+                        <Input type="email" placeholder="shop@example.com" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <FormField
+                control={form.control}
+                name="managerUserId"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Manager (optional)</FormLabel>
+                    <Select
+                      value={field.value || '__none__'}
+                      onValueChange={(v) => field.onChange(v === '__none__' ? '' : v)}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a team member" />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent>
+                        <SelectItem value="__none__">No manager assigned</SelectItem>
+                        {teamMembers.map((member) => (
+                          <SelectItem key={member.id} value={member.id}>
+                            {member.name || member.email}
+                            {member.role ? ` (${member.role})` : ''}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <div className="grid grid-cols-2 gap-4">
+                <FormField
+                  control={form.control}
                   name="country"
                   render={({ field }) => (
                     <FormItem>
@@ -529,50 +727,22 @@ const Shops = () => {
                 />
               </div>
               
-              <FormField
-                control={form.control}
-                name="managerName"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Manager Name (optional)</FormLabel>
-                    <FormControl>
-                      <Input placeholder="John Doe" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              
-              <div className="grid grid-cols-2 gap-4">
+              {editingShop && !editingShop.isDefault ? (
                 <FormField
                   control={form.control}
-                  name="phone"
+                  name="isDefault"
                   render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Phone (optional)</FormLabel>
-                      <FormControl>
-                        <Input placeholder="+233 24 123 4567" {...field} />
-                      </FormControl>
-                      <FormMessage />
+                    <FormItem className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-lg border p-4">
+                      <div className="space-y-0.5">
+                        <FormLabel className="text-base">Main shop</FormLabel>
+                        <p className="text-sm text-gray-500">Use as the default shop for this workspace</p>
+                      </div>
+                      <Switch checked={field.value} onCheckedChange={field.onChange} />
                     </FormItem>
                   )}
                 />
-                
-                <FormField
-                  control={form.control}
-                  name="email"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Email (optional)</FormLabel>
-                      <FormControl>
-                        <Input placeholder="shop@example.com" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-              
+              ) : null}
+
               <FormField
                 control={form.control}
                 name="isActive"

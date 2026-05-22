@@ -15,6 +15,7 @@ import productService from '../services/productService';
 import { parseProductQRPayload } from '../utils/productQR';
 import { showSuccess, showError } from '../utils/toast';
 import { numberInputValue } from '../utils/formUtils';
+import { formatInteger } from '../utils/formatNumber';
 
 const SCANNER_ID = 'receive-stock-scanner';
 
@@ -347,7 +348,7 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
                 </p>
               ) : (
                 <p className="text-sm mt-1">
-                  Current stock: {displayQty.toLocaleString()} {product.unit || 'units'}
+                  Current stock: {formatInteger(displayQty)} {product.unit || 'units'}
                 </p>
               )}
             </div>

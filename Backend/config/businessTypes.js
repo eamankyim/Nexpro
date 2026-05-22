@@ -11,6 +11,8 @@ const BUSINESS_TYPE_FEATURES = {
     'automations',
     'vendors',
     'marketing',
+    'quoteAutomation',
+    'leadPipeline',
     'products',
     'materials',
     'deliveries',
@@ -68,6 +70,8 @@ const BUSINESS_TYPE_FEATURES = {
     'automations',
     'vendors',
     'marketing',
+    'quoteAutomation',
+    'leadPipeline',
     'materials',
     'deliveries',
     'paymentsExpenses',
@@ -91,6 +95,65 @@ const BUSINESS_TYPE_FEATURES = {
 
 // Legacy: map old businessType values to new (for tenants not yet migrated)
 const LEGACY_TO_STUDIO = ['printing_press', 'mechanic', 'barber', 'salon'];
+
+/** Shop types that hide Quotes (aligned with web/mobile QUOTES_HIDDEN_SHOP_TYPES). */
+const QUOTES_HIDDEN_SHOP_TYPES = ['restaurant'];
+
+const getTenantShopType = (tenant) => {
+  const metadata = tenant?.metadata && typeof tenant.metadata === 'object' ? tenant.metadata : {};
+  return metadata.shopType || metadata.businessSubType || null;
+};
+
+/**
+ * Whether Quotes should be available for this tenant (web/mobile parity).
+ * @param {string|null} businessType
+ * @param {string|null} shopType
+ */
+const isQuotesEnabledForTenant = (businessType, shopType) => {
+  const resolved = resolveBusinessType(businessType);
+  if (resolved === 'studio' || resolved === 'pharmacy') return true;
+  if (resolved === 'shop') {
+    return !QUOTES_HIDDEN_SHOP_TYPES.includes(shopType || '');
+  }
+  return false;
+};
+
+/**
+ * Plan-enabled features after business-type and tenant-config gates (e.g. restaurant shops).
+ * @param {string[]} enabledFeatures
+ * @param {object} tenant
+ */
+const filterFeaturesForTenant = (enabledFeatures, tenant) => {
+  if (!Array.isArray(enabledFeatures)) return [];
+  let filtered = enabledFeatures;
+  if (tenant?.businessType) {
+    const allowed = getFeaturesForBusinessType(tenant.businessType);
+    filtered = filtered.filter((f) => allowed.includes(f));
+  }
+  const shopType = getTenantShopType(tenant);
+  if (!isQuotesEnabledForTenant(tenant?.businessType, shopType)) {
+    filtered = filtered.filter((f) => f !== 'quoteAutomation');
+  }
+  return filtered;
+};
+
+/**
+ * Apply tenant feature gates to a feature-flag object (for /auth/me and API enforcement).
+ */
+const applyFeatureGatesToFlags = (effectiveFeatureFlags, tenant) => {
+  const enabled = filterFeaturesForTenant(
+    Object.keys(effectiveFeatureFlags || {}).filter((k) => effectiveFeatureFlags[k] === true),
+    tenant
+  );
+  const enabledSet = new Set(enabled);
+  const result = { ...(effectiveFeatureFlags || {}) };
+  for (const key of Object.keys(result)) {
+    if (result[key] === true && !enabledSet.has(key)) {
+      result[key] = false;
+    }
+  }
+  return result;
+};
 
 /**
  * Resolve effective business type (handles legacy values)
@@ -137,8 +200,13 @@ const getBusinessTypeDisplayName = (businessType) => {
 
 module.exports = {
   BUSINESS_TYPE_FEATURES,
+  QUOTES_HIDDEN_SHOP_TYPES,
   resolveBusinessType,
   getFeaturesForBusinessType,
   isFeatureAvailableForBusinessType,
-  getBusinessTypeDisplayName
+  getBusinessTypeDisplayName,
+  getTenantShopType,
+  isQuotesEnabledForTenant,
+  filterFeaturesForTenant,
+  applyFeatureGatesToFlags,
 };

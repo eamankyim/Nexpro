@@ -7,38 +7,97 @@ const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateSaleListCache } = require('../middleware/cache');
 const { sequelize } = require('../config/database');
+const config = require('../config/config');
 const crypto = require('crypto');
 const { emitNewSale, emitSaleStatusChange, emitInventoryAlert } = require('../services/websocketService');
 const { notifyOrderStatusChanged, notifyNewOrder } = require('../services/notificationService');
-const { getTaxConfigForTenant } = require('../utils/taxConfig');
+const { getTaxConfigForTenant, hasTaxConfigCache } = require('../utils/taxConfig');
 const { computeDocumentTax } = require('../utils/taxCalculation');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
+const {
+  applyShopFilter,
+  attachShopToPayload,
+  assertShopRecordAccess,
+  userCanAccessShopId,
+} = require('../utils/shopUtils');
 
 /** Throttle check-Paystack calls per sale (avoid hitting Paystack every poll) */
 const paystackCheckLastBySaleId = new Map();
 const PAYSTACK_CHECK_THROTTLE_MS = 4000;
 
-// Generate unique sale number
+const createSaleTimer = (tenantId) => {
+  const requestId = `sale_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const startedAt = Date.now();
+  let lastAt = startedAt;
+
+  return {
+    id: requestId,
+    mark(label, extra = {}) {
+      if (config.nodeEnv !== 'development') return;
+      const now = Date.now();
+      console.log('[SaleCreatePerf]', {
+        requestId,
+        tenantId,
+        phase: label,
+        stepMs: now - lastAt,
+        totalMs: now - startedAt,
+        ...extra
+      });
+      lastAt = now;
+    }
+  };
+};
+
+const saleNumberCounters = new Map();
+const saleNumberSeedPromises = new Map();
+
+// Generate unique sale number; seed once per tenant/day, then increment in memory.
 const generateSaleNumber = async (tenantId) => {
   const prefix = 'SALE';
-  const today = new Date();
-  const dateStr = today.toISOString().slice(0, 10).replace(/-/g, '');
-  
-  // Get count of sales today
-  const startOfDay = new Date(today.setHours(0, 0, 0, 0));
-  const endOfDay = new Date(today.setHours(23, 59, 59, 999));
-  
-  const count = await Sale.count({
-    where: {
-      tenantId,
-      createdAt: {
-        [Op.between]: [startOfDay, endOfDay]
-      }
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const numberPrefix = `${prefix}-${dateStr}-`;
+  const counterKey = `${tenantId}:${dateStr}`;
+
+  let state = saleNumberCounters.get(counterKey);
+  let sequenceCacheHit = true;
+
+  if (!state) {
+    sequenceCacheHit = false;
+    let seedPromise = saleNumberSeedPromises.get(counterKey);
+    if (!seedPromise) {
+      seedPromise = Sale.findOne({
+        where: {
+          tenantId,
+          saleNumber: { [Op.like]: `${numberPrefix}%` }
+        },
+        order: [['saleNumber', 'DESC']],
+        attributes: ['saleNumber']
+      }).then((lastSale) => {
+        if (!lastSale?.saleNumber) return 1;
+        const lastSeq = parseInt(String(lastSale.saleNumber).split('-').pop(), 10);
+        return Number.isFinite(lastSeq) && lastSeq >= 0 ? lastSeq + 1 : 1;
+      });
+      saleNumberSeedPromises.set(counterKey, seedPromise);
     }
-  });
-  
-  const sequence = String(count + 1).padStart(4, '0');
-  return `${prefix}-${dateStr}-${sequence}`;
+
+    const nextSequence = await seedPromise;
+    state = saleNumberCounters.get(counterKey);
+    if (!state) {
+      state = { nextSequence };
+      saleNumberCounters.set(counterKey, state);
+      saleNumberSeedPromises.delete(counterKey);
+    } else {
+      sequenceCacheHit = true;
+    }
+  }
+
+  const sequence = state.nextSequence;
+  state.nextSequence += 1;
+
+  return {
+    saleNumber: `${numberPrefix}${String(sequence).padStart(4, '0')}`,
+    sequenceCacheHit
+  };
 };
 
 // Generate invoice number
@@ -178,7 +237,8 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
       items,
       notes: `Invoice generated from sale ${sale.saleNumber}`,
       termsAndConditions:
-        'Payment is due within the specified payment terms. Late payments may incur additional charges.'
+        'Payment is due within the specified payment terms. Late payments may incur additional charges.',
+      shopId: sale.shopId || null,
     };
     if (balance <= 0) {
       invoicePayload.paidDate = new Date();
@@ -201,6 +261,233 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
   }
 };
 
+const fetchSaleWithReceiptRelations = (saleId) => Sale.findByPk(saleId, {
+  include: [
+    { model: Shop, as: 'shop' },
+    { model: Customer, as: 'customer' },
+    { model: User, as: 'seller' },
+    {
+      model: Invoice,
+      as: 'invoice',
+      include: [{ model: Customer, as: 'customer' }]
+    },
+    {
+      model: SaleItem,
+      as: 'items',
+      include: [
+        { model: Product, as: 'product' },
+        { model: ProductVariant, as: 'variant' }
+      ]
+    }
+  ]
+});
+
+/** Fields needed for idempotent replay and lightweight POS responses. */
+const SALE_RESPONSE_ATTRIBUTES = [
+  'id',
+  'tenantId',
+  'shopId',
+  'customerId',
+  'saleNumber',
+  'status',
+  'orderStatus',
+  'paymentMethod',
+  'subtotal',
+  'discount',
+  'tax',
+  'total',
+  'amountPaid',
+  'change',
+  'soldBy',
+  'createdAt',
+  'updatedAt'
+];
+
+const findExistingSaleByClientId = (tenantId, clientId) =>
+  Sale.findOne({
+    where: { tenantId, clientId },
+    attributes: SALE_RESPONSE_ATTRIBUTES
+  });
+
+const buildLightweightSaleResponse = (sale, items = []) => {
+  const plainSale = typeof sale?.get === 'function' ? sale.get({ plain: true }) : sale;
+  return {
+    id: plainSale.id,
+    tenantId: plainSale.tenantId,
+    shopId: plainSale.shopId || null,
+    customerId: plainSale.customerId || null,
+    saleNumber: plainSale.saleNumber,
+    status: plainSale.status,
+    orderStatus: plainSale.orderStatus || null,
+    paymentMethod: plainSale.paymentMethod,
+    subtotal: plainSale.subtotal,
+    discount: plainSale.discount,
+    tax: plainSale.tax,
+    total: plainSale.total,
+    amountPaid: plainSale.amountPaid,
+    change: plainSale.change,
+    balance: plainSale.balance,
+    soldBy: plainSale.soldBy,
+    createdAt: plainSale.createdAt,
+    updatedAt: plainSale.updatedAt,
+    items: items.map((item) => {
+      const plainItem = typeof item?.get === 'function' ? item.get({ plain: true }) : item;
+      return {
+        id: plainItem.id,
+        productId: plainItem.productId,
+        productVariantId: plainItem.productVariantId || null,
+        name: plainItem.name,
+        sku: plainItem.sku,
+        quantity: plainItem.quantity,
+        unitPrice: plainItem.unitPrice,
+        discount: plainItem.discount,
+        tax: plainItem.tax,
+        subtotal: plainItem.subtotal,
+        total: plainItem.total
+      };
+    })
+  };
+};
+
+const bulkDecrementStock = async ({ tableName, quantityById, transaction }) => {
+  const ids = [...quantityById.keys()].filter(Boolean);
+  if (ids.length === 0) return 0;
+
+  const replacements = {};
+  const whenClauses = ids.map((id, index) => {
+    replacements[`id${index}`] = id;
+    replacements[`qty${index}`] = quantityById.get(id) || 0;
+    return `WHEN target.id = :id${index} THEN :qty${index}`;
+  });
+  const idListSql = ids.map((_, index) => `:id${index}`).join(', ');
+
+  if (tableName === 'product_variants') {
+    await sequelize.query(
+      `
+      UPDATE product_variants AS target
+      SET "quantityOnHand" = GREATEST(0, target."quantityOnHand" - CASE ${whenClauses.join(' ')} ELSE 0 END),
+          "updatedAt" = NOW()
+      FROM products AS parent
+      WHERE target.id IN (${idListSql})
+        AND target."productId" = parent.id
+        AND COALESCE(parent."trackStock", true) = true
+        AND COALESCE(target."trackStock", true) = true
+      `,
+      { replacements, transaction }
+    );
+
+    return ids.length;
+  }
+
+  await sequelize.query(
+    `
+    UPDATE products AS target
+    SET "quantityOnHand" = GREATEST(0, target."quantityOnHand" - CASE ${whenClauses.join(' ')} ELSE 0 END),
+        "updatedAt" = NOW()
+    WHERE target.id IN (${idListSql})
+      AND COALESCE("trackStock", true) = true
+    `,
+    { replacements, transaction }
+  );
+
+  return ids.length;
+};
+
+const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaurant, timer = null }) => {
+  const mark = (phase, extra = {}) => timer?.mark(`background:${phase}`, extra);
+
+  try {
+    mark('activity:start');
+    try {
+      await createSaleCreatedActivity({ sale, tenantId, userId });
+    } catch (activityError) {
+      console.error('[CreateSale] Failed to create sale activity:', activityError?.message);
+    }
+    mark('activity:end');
+
+    if (sale.status === 'completed') {
+      mark('journals:start');
+      await Promise.all([
+        createSaleRevenueJournal(tenantId, sale.id, userId).catch((revError) => {
+          console.error('[CreateSale] Failed to create sale revenue journal entry:', revError?.message);
+        }),
+        createSaleCogsJournal(tenantId, sale.id, userId).catch((cogsError) => {
+          console.error('[CreateSale] Failed to create COGS journal entry:', cogsError?.message);
+        })
+      ]);
+      mark('journals:end');
+    }
+
+    const needsFullSale = !!sale.customerId || isRestaurant;
+    let createdSale = sale;
+    if (needsFullSale) {
+      mark('fetch-relations:start');
+      createdSale = await fetchSaleWithReceiptRelations(sale.id);
+      mark('fetch-relations:end', { found: !!createdSale });
+      if (!createdSale) {
+        console.error('[CreateSale] Post-sale automation skipped: sale not found', sale.id);
+        return;
+      }
+    }
+
+    if (sale.status === 'completed' && sale.customerId) {
+      mark('invoice:start');
+      try {
+        console.log(`[CreateSale] Attempting to auto-create invoice for sale ${sale.id}`);
+        const autoGeneratedInvoice = await autoCreateInvoiceFromSale(sale.id, tenantId);
+        if (autoGeneratedInvoice) {
+          console.log(`[CreateSale] ✅ Invoice auto-created: ${autoGeneratedInvoice.invoiceNumber}`);
+        }
+      } catch (invoiceError) {
+        console.error('[CreateSale] ❌ Failed to auto-create invoice, but sale was created:', invoiceError);
+      }
+      mark('invoice:end');
+    } else if (sale.status === 'completed') {
+      console.log(`[CreateSale] Skipping auto-invoice for walk-in sale ${sale.id}`);
+    }
+
+    if (isRestaurant && createdSale.orderStatus) {
+      notifyNewOrder({ sale: createdSale, triggeredBy: userId }).catch((err) =>
+        console.error('[createSale] New order notification failed:', err?.message)
+      );
+    }
+
+    mark('emit:start');
+    try {
+      emitNewSale(tenantId, createdSale);
+
+      const productIds = [...new Set(items.map((item) => item.productId).filter(Boolean))];
+      if (productIds.length > 0) {
+        const products = await Product.findAll({
+          where: { id: { [Op.in]: productIds }, tenantId },
+          attributes: ['id', 'trackStock', 'quantityOnHand', 'reorderLevel', 'name', 'sku']
+        });
+        for (const product of products) {
+          if (product.trackStock === false) continue;
+          if (product.quantityOnHand <= 0) {
+            emitInventoryAlert(tenantId, product, 'out_of_stock');
+          } else if (product.quantityOnHand <= (product.reorderLevel || 10)) {
+            emitInventoryAlert(tenantId, product, 'low_stock');
+          }
+        }
+      }
+    } catch (wsError) {
+      console.error('[WebSocket] Failed to emit sale event:', wsError);
+    }
+    mark('emit:end');
+
+    if (createdSale.status === 'completed' && sale.customerId) {
+      mark('auto-receipt:start');
+      await autoSendReceiptIfEnabled(tenantId, createdSale.id).catch((err) =>
+        console.error('[CreateSale] Auto-send receipt failed:', err?.message || err)
+      );
+      mark('auto-receipt:end');
+    }
+  } catch (error) {
+    console.error('[CreateSale] Post-sale automation failed:', error?.message || error);
+  }
+};
+
 // @desc    Get all sales
 // @route   GET /api/sales
 // @access  Private
@@ -208,20 +495,26 @@ exports.getSales = async (req, res, next) => {
   try {
     const { page, limit, offset } = getPagination(req);
     const shopId = req.query.shopId;
+    const customerId = req.query.customerId;
     const status = req.query.status;
     const orderStatus = req.query.orderStatus;
     const activeOrders = req.query.activeOrders === 'true';
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
 
-    const where = applyTenantFilter(req.tenantId, {});
+    let where = applyTenantFilter(req.tenantId, {});
     // Staff see only sales they created (soldBy); admin/manager see all
     const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
     if (effectiveRole === 'staff') {
       where.soldBy = req.user.id;
     }
-    if (shopId) {
+    if (req.shopScoped) {
+      where = applyShopFilter(req, where);
+    } else if (shopId) {
       where.shopId = shopId;
+    }
+    if (customerId) {
+      where.customerId = customerId;
     }
     if (status) {
       where.status = status;
@@ -267,9 +560,26 @@ exports.getSales = async (req, res, next) => {
       order: [['createdAt', 'DESC']]
     });
 
+    const summary = await Sale.findOne({
+      where,
+      attributes: [
+        [sequelize.fn('COUNT', sequelize.col('id')), 'totalSales'],
+        [sequelize.literal(`COUNT(CASE WHEN "Sale"."status" = 'completed' THEN 1 END)`), 'completedCount'],
+        [sequelize.literal(`COUNT(CASE WHEN "Sale"."status" = 'pending' THEN 1 END)`), 'pendingCount'],
+        [sequelize.literal(`COALESCE(SUM(CASE WHEN "Sale"."status" = 'completed' THEN "Sale"."total" ELSE 0 END), 0)`), 'completedRevenue']
+      ],
+      raw: true
+    });
+
     res.status(200).json({
       success: true,
       count,
+      summary: {
+        totalSales: Number(summary?.totalSales || count || 0),
+        completedCount: Number(summary?.completedCount || 0),
+        pendingCount: Number(summary?.pendingCount || 0),
+        completedRevenue: Number(summary?.completedRevenue || 0)
+      },
       pagination: {
         page,
         limit,
@@ -364,6 +674,15 @@ exports.getSale = async (req, res, next) => {
       });
     }
 
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
     res.status(200).json({
       success: true,
       data: sale
@@ -373,21 +692,26 @@ exports.getSale = async (req, res, next) => {
   }
 };
 
-// Idempotent create: if clientId provided and sale exists for tenant, return existing; otherwise create.
-const createSaleCore = async (transaction, tenantId, userId, body, clientId = null, tenant = null) => {
+const createSaleCore = async (transaction, tenantId, userId, body, clientId = null, tenant = null, timer = null) => {
   const { items, cartDiscount: bodyCartDiscount, ...saleData } = sanitizePayload(body);
   if (!items || !Array.isArray(items) || items.length === 0) {
     throw new Error('Sale must have at least one item');
   }
-  if (clientId) {
-    const existing = await Sale.findOne({
-      where: { tenantId, clientId },
-      transaction
-    });
-    if (existing) return existing;
-  }
 
-  const taxConfig = await getTaxConfigForTenant(tenantId);
+  const taxCacheHit = hasTaxConfigCache(tenantId);
+  timer?.mark('tax-config-and-sale-number:start', { itemCount: items.length, taxCacheHit });
+  const taxConfigPromise = getTaxConfigForTenant(tenantId).then((config) => {
+    timer?.mark('tax-config:end', { taxEnabled: !!config.enabled, taxCacheHit });
+    return config;
+  });
+  const saleNumberPromise = generateSaleNumber(tenantId).then((result) => {
+    timer?.mark('sale-number:end', {
+      saleNumber: result.saleNumber,
+      sequenceCacheHit: result.sequenceCacheHit
+    });
+    return result.saleNumber;
+  });
+  const [taxConfig, saleNumber] = await Promise.all([taxConfigPromise, saleNumberPromise]);
   const cartDiscount = Math.max(0, parseFloat(bodyCartDiscount) || 0);
   const lines = items.map((item) => ({
     quantity: item.quantity,
@@ -399,8 +723,7 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
     cartDiscount,
     config: taxConfig
   });
-
-  const saleNumber = await generateSaleNumber(tenantId);
+  timer?.mark('tax-compute:end', { itemCount: items.length });
   const subtotal = computed.subtotal;
   const totalDiscount = computed.discount;
   const totalTax = computed.taxAmount;
@@ -414,6 +737,7 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
   const orderStatus = isRestaurant && sendToKitchen ? 'received' : null;
 
   const priorMeta = saleData.metadata && typeof saleData.metadata === 'object' ? saleData.metadata : {};
+  timer?.mark('sale-insert:start');
   const sale = await Sale.create({
     ...saleData,
     tenantId,
@@ -438,13 +762,29 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
       }
     }
   }, { transaction });
+  timer?.mark('sale-insert:end', { saleId: sale.id });
 
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    const lr = computed.lineResults[i] || { exclusive: 0, tax: 0, gross: 0 };
+  timer?.mark('items-and-stock:start', { itemCount: items.length });
+  const productQuantityById = new Map();
+  const variantQuantityById = new Map();
+  const saleItemRows = items.map((item, index) => {
+    const lr = computed.lineResults[index] || { exclusive: 0, tax: 0, gross: 0 };
     const lineSub = (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0);
     const lineItemTotal = Math.round((lr.exclusive + lr.tax) * 100) / 100;
-    await SaleItem.create({
+    const quantity = parseFloat(item.quantity || 0);
+    if (item.productId) {
+      productQuantityById.set(
+        item.productId,
+        (productQuantityById.get(item.productId) || 0) + quantity
+      );
+    }
+    if (item.productVariantId) {
+      variantQuantityById.set(
+        item.productVariantId,
+        (variantQuantityById.get(item.productVariantId) || 0) + quantity
+      );
+    }
+    return {
       saleId: sale.id,
       productId: item.productId,
       productVariantId: item.productVariantId || null,
@@ -456,143 +796,127 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
       tax: lr.tax,
       subtotal: lineSub,
       total: lineItemTotal
-    }, { transaction });
+    };
+  });
 
-    const product = await Product.findByPk(item.productId, { transaction });
-    if (product && product.trackStock !== false) {
-      const newQuantity = parseFloat(product.quantityOnHand || 0) - parseFloat(item.quantity || 0);
-      await product.update({ quantityOnHand: Math.max(0, newQuantity) }, { transaction });
-    }
-    if (item.productVariantId) {
-      const variant = await ProductVariant.findByPk(item.productVariantId, { transaction });
-      const parent = product || await Product.findByPk(item.productId, { transaction });
-      if (variant && parent?.trackStock !== false && variant.trackStock !== false) {
-        const newVariantQuantity = parseFloat(variant.quantityOnHand || 0) - parseFloat(item.quantity || 0);
-        await variant.update({ quantityOnHand: Math.max(0, newVariantQuantity) }, { transaction });
-      }
-    }
-  }
+  timer?.mark('sale-items-bulk:start', { itemCount: saleItemRows.length });
+  const createdItems = await SaleItem.bulkCreate(saleItemRows, { transaction, returning: true });
+  timer?.mark('sale-items-bulk:end', { itemCount: createdItems.length });
 
+  timer?.mark('stock-products-update:start', { productCount: productQuantityById.size });
+  const updatedProductCount = await bulkDecrementStock({
+    tableName: 'products',
+    quantityById: productQuantityById,
+    transaction
+  });
+  timer?.mark('stock-products-update:end', { productCount: updatedProductCount });
+
+  timer?.mark('stock-variants-update:start', { variantCount: variantQuantityById.size });
+  const updatedVariantCount = await bulkDecrementStock({
+    tableName: 'product_variants',
+    quantityById: variantQuantityById,
+    transaction
+  });
+  timer?.mark('stock-variants-update:end', { variantCount: updatedVariantCount });
+  timer?.mark('items-and-stock:end', { itemCount: items.length });
+
+  return { sale, items: createdItems };
+};
+
+const createSaleCreatedActivity = async ({ sale, tenantId, userId }) => {
   await SaleActivity.create({
     saleId: sale.id,
     tenantId,
     type: 'note',
     subject: 'Sale Created',
-    notes: `Sale ${saleNumber} created`,
+    notes: `Sale ${sale.saleNumber} created`,
     createdBy: userId || null,
     metadata: {
       action: 'created',
-      paymentMethod: saleData.paymentMethod || 'cash',
-      total
+      paymentMethod: sale.paymentMethod || 'cash',
+      total: sale.total
     }
-  }, { transaction });
-
-  return { sale, items };
+  });
 };
 
 // @desc    Create new sale (POS transaction)
 // @route   POST /api/sales
 // @access  Private
 exports.createSale = async (req, res, next) => {
-  const transaction = await sequelize.transaction();
+  const timer = createSaleTimer(req.tenantId);
+  const clientId = req.body.clientId || null;
+  let transaction = null;
+  let transactionCommitted = false;
+
   try {
-    const clientId = req.body.clientId || null;
-    const { sale, items } = await createSaleCore(transaction, req.tenantId, req.user.id, req.body, clientId, req.tenant);
+    timer.mark('request:start', {
+      itemCount: Array.isArray(req.body?.items) ? req.body.items.length : 0,
+      paymentMethod: req.body?.paymentMethod,
+      status: req.body?.status
+    });
+
+    transaction = await sequelize.transaction();
+    const saleBody = attachShopToPayload(req, req.body);
+    timer.mark('core:start');
+    const { sale, items } = await createSaleCore(transaction, req.tenantId, req.user.id, saleBody, clientId, req.tenant, timer);
+    timer.mark('core:end', { saleId: sale.id, saleNumber: sale.saleNumber });
     const shopType = req.tenant?.metadata?.shopType;
     const isRestaurant = shopType === 'restaurant';
 
+    timer.mark('commit:start');
     await transaction.commit();
+    transactionCommitted = true;
+    timer.mark('commit:end');
 
-    // Auto-create invoice for ALL completed sales (cash→paid, credit→sent)
-    if (sale.status === 'completed') {
-      try {
-        console.log(`[CreateSale] Attempting to auto-create invoice for sale ${sale.id}`);
-        const autoGeneratedInvoice = await autoCreateInvoiceFromSale(sale.id, req.tenantId);
-        if (autoGeneratedInvoice) {
-          console.log(`[CreateSale] ✅ Invoice auto-created: ${autoGeneratedInvoice.invoiceNumber}`);
-        }
-      } catch (invoiceError) {
-        console.error('[CreateSale] ❌ Failed to auto-create invoice, but sale was created:', invoiceError);
-      }
-      try {
-        await createSaleRevenueJournal(req.tenantId, sale.id, req.user?.id);
-      } catch (revError) {
-        console.error('[CreateSale] Failed to create sale revenue journal entry:', revError?.message);
-      }
-      try {
-        await createSaleCogsJournal(req.tenantId, sale.id, req.user?.id);
-      } catch (cogsError) {
-        console.error('[CreateSale] Failed to create COGS journal entry:', cogsError?.message);
-      }
-    }
+    timer.mark('response-build:start');
+    const saleResponse = buildLightweightSaleResponse(sale, items);
+    timer.mark('response-build:end', { payloadBytesApprox: JSON.stringify(saleResponse).length });
 
-    // Fetch sale with relations (include invoice for receipt printing)
-    const createdSale = await Sale.findByPk(sale.id, {
-      include: [
-        { model: Shop, as: 'shop' },
-        { model: Customer, as: 'customer' },
-        { model: User, as: 'seller' },
-        {
-          model: Invoice,
-          as: 'invoice',
-          include: [{ model: Customer, as: 'customer' }]
-        },
-        {
-          model: SaleItem,
-          as: 'items',
-          include: [
-            { model: Product, as: 'product' },
-            { model: ProductVariant, as: 'variant' }
-          ]
-        }
-      ]
-    });
-
-    // Notify staff of new order (restaurant only, fire-and-forget)
-    if (isRestaurant && createdSale.orderStatus) {
-      notifyNewOrder({ sale: createdSale, triggeredBy: req.user?.id }).catch((err) =>
-        console.error('[createSale] New order notification failed:', err?.message)
-      );
-    }
-
-    // Emit real-time WebSocket event for new sale
-    try {
-      emitNewSale(req.tenantId, createdSale);
-      
-      // Check for low stock alerts after sale (skip for made-to-order products)
-      for (const item of items) {
-        const product = await Product.findByPk(item.productId);
-        if (product && product.trackStock !== false) {
-          if (product.quantityOnHand <= 0) {
-            emitInventoryAlert(req.tenantId, product, 'out_of_stock');
-          } else if (product.quantityOnHand <= (product.reorderLevel || 10)) {
-            emitInventoryAlert(req.tenantId, product, 'low_stock');
-          }
-        }
-      }
-    } catch (wsError) {
-      console.error('[WebSocket] Failed to emit sale event:', wsError);
-    }
-
+    timer.mark('cache-invalidate:start');
     invalidateSaleListCache(req.tenantId);
-
-    // Auto-send receipt to customer if setting is on (fire-and-forget)
-    if (createdSale.status === 'completed') {
-      const saleId = createdSale.id;
-      const tenantId = req.tenantId;
-      setImmediate(() => {
-        autoSendReceiptIfEnabled(tenantId, saleId).catch((err) =>
-          console.error('[CreateSale] Auto-send receipt failed:', err?.message || err)
-        );
-      });
-    }
+    timer.mark('cache-invalidate:end');
 
     res.status(201).json({
       success: true,
-      data: createdSale
+      data: saleResponse
+    });
+    timer.mark('response-sent');
+
+    setImmediate(() => {
+      timer.mark('background:start');
+      runPostSaleAutomation({
+        sale,
+        items,
+        tenantId: req.tenantId,
+        userId: req.user?.id,
+        isRestaurant,
+        timer
+      }).finally(() => timer.mark('background:end'));
     });
   } catch (error) {
-    await transaction.rollback();
+    timer.mark('error', { message: error?.message });
+
+    if (clientId && error?.name === 'SequelizeUniqueConstraintError') {
+      if (transaction && !transactionCommitted) {
+        await transaction.rollback().catch(() => {});
+        transactionCommitted = true;
+      }
+
+      const existing = await findExistingSaleByClientId(req.tenantId, clientId);
+      if (existing) {
+        timer.mark('response-sent');
+        return res.status(201).json({
+          success: true,
+          data: buildLightweightSaleResponse(existing, [])
+        });
+      }
+    }
+
+    if (transaction && !transactionCommitted) {
+      timer.mark('rollback:start');
+      await transaction.rollback();
+      timer.mark('rollback:end');
+    }
     next(error);
   }
 };
@@ -615,6 +939,15 @@ exports.batchSyncSales = async (req, res, next) => {
       results.push({ clientId: clientId || null, error: 'Invalid payload' });
       continue;
     }
+
+    if (clientId) {
+      const existing = await findExistingSaleByClientId(req.tenantId, clientId);
+      if (existing) {
+        results.push({ clientId, id: existing.id, duplicate: true });
+        continue;
+      }
+    }
+
     const transaction = await sequelize.transaction();
     try {
       const { sale } = await createSaleCore(
@@ -628,7 +961,11 @@ exports.batchSyncSales = async (req, res, next) => {
       await transaction.commit();
       try {
         if (sale.status === 'completed') {
-          await autoCreateInvoiceFromSale(sale.id, req.tenantId);
+          if (sale.customerId) {
+            await autoCreateInvoiceFromSale(sale.id, req.tenantId);
+          } else {
+            console.log(`[batchSyncSales] Skipping auto-invoice for walk-in sale ${sale.id}`);
+          }
           await createSaleRevenueJournal(req.tenantId, sale.id, req.user?.id);
           await createSaleCogsJournal(req.tenantId, sale.id, req.user?.id);
         }
@@ -638,6 +975,13 @@ exports.batchSyncSales = async (req, res, next) => {
       results.push({ clientId: clientId || null, id: sale.id });
     } catch (err) {
       await transaction.rollback();
+      if (clientId && err?.name === 'SequelizeUniqueConstraintError') {
+        const existing = await findExistingSaleByClientId(req.tenantId, clientId);
+        if (existing) {
+          results.push({ clientId, id: existing.id, duplicate: true });
+          continue;
+        }
+      }
       results.push({
         clientId: clientId || null,
         error: err?.message || 'Sync failed'
@@ -666,6 +1010,16 @@ exports.updateSale = async (req, res, next) => {
         success: false,
         message: 'Sale not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      await transaction.rollback();
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     // Only allow updating certain fields (status, notes, etc.)
@@ -1160,6 +1514,7 @@ exports.generateInvoice = async (req, res, next) => {
       tenantId: req.tenantId,
       customerId: sale.customerId,
       saleId: sale.id,
+      shopId: sale.shopId || req.shopFilterId || null,
       sourceType: 'sale',
       invoiceDate: new Date(),
       dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 days default
@@ -1208,7 +1563,11 @@ exports.printReceipt = async (req, res, next) => {
           ]
         },
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'phone', 'email'] },
-        { model: Shop, as: 'shop', attributes: ['id', 'name', 'address', 'phone', 'email'] },
+        {
+          model: Shop,
+          as: 'shop',
+          attributes: ['id', 'name', 'address', 'city', 'state', 'country', 'postalCode', 'phone', 'email', 'logoUrl']
+        },
         { model: User, as: 'seller', attributes: ['id', 'name'] }
       ]
     });
@@ -1401,6 +1760,7 @@ exports.sendReceipt = async (req, res, next) => {
         },
         { model: Customer, as: 'customer' },
         { model: Shop, as: 'shop' },
+        { model: Tenant, as: 'tenant', attributes: ['id', 'name'] },
         { model: User, as: 'seller', attributes: ['id', 'name'] }
       ]
     });
@@ -1497,7 +1857,9 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
     where: { tenantId, id: saleId },
     include: [
       { model: SaleItem, as: 'items', include: [{ model: Product, as: 'product' }, { model: ProductVariant, as: 'variant' }] },
-      { model: Customer, as: 'customer' }
+      { model: Customer, as: 'customer' },
+      { model: Shop, as: 'shop' },
+      { model: Tenant, as: 'tenant', attributes: ['id', 'name'] }
     ]
   });
   if (!sale?.customer) return;
@@ -1538,34 +1900,86 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
  * @returns {string} - Formatted receipt message
  */
 function buildReceiptMessage(sale, tenantId) {
-  const lines = [];
-  
-  lines.push('=== RECEIPT ===');
-  lines.push(`Sale #: ${sale.saleNumber}`);
-  lines.push(`Date: ${new Date(sale.createdAt).toLocaleDateString()}`);
-  lines.push('');
-  
-  // Items (abbreviated for SMS)
+  const message = [];
+  const receipt = [];
+  const width = 38;
+  const { formatCedi } = require('../utils/formatNumber');
+  const money = (value) => formatCedi(value);
+  const divider = (char = '-') => char.repeat(width);
+  const row = (label, value) => {
+    const left = String(label || '').trim();
+    const right = String(value || '').trim();
+    const spaces = Math.max(1, width - left.length - right.length);
+    return `${left}${' '.repeat(spaces)}${right}`;
+  };
+  const center = (value) => {
+    const text = String(value || '').trim();
+    if (text.length >= width) return text;
+    return `${' '.repeat(Math.floor((width - text.length) / 2))}${text}`;
+  };
+  const formatPayment = (value) => String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+  const customerName = sale.customer?.name?.trim() || 'Customer';
+  const business = sale.shop?.name || sale.studioLocation?.name || sale.tenant?.name || null;
+  const location = sale.shop || sale.studioLocation || {};
+  const total = typeof sale.total === 'number' ? sale.total : parseFloat(String(sale.total || 0)) || 0;
+  const paid = typeof sale.amountPaid === 'number' ? sale.amountPaid : parseFloat(String(sale.amountPaid || 0)) || 0;
+  const balance = Math.max(0, total - paid);
+
+  message.push(`Hello ${customerName}, here is your receipt${business ? ` from ${business}` : ''}.`);
+  message.push('');
+
+  if (business) receipt.push(center(business.toUpperCase()));
+  if (location.address) receipt.push(center(location.address));
+  if (location.phone) receipt.push(center(`Tel: ${location.phone}`));
+  receipt.push(divider('='));
+  receipt.push(center('SALES RECEIPT'));
+  receipt.push(divider('='));
+  if (sale.saleNumber) receipt.push(row('Receipt No.', sale.saleNumber));
+  if (sale.createdAt) receipt.push(row('Date', new Date(sale.createdAt).toLocaleString()));
+  receipt.push(row('Customer', customerName));
+  receipt.push('');
+
+  receipt.push('ITEMS');
+  receipt.push(divider());
   sale.items?.forEach(item => {
-    lines.push(`${item.quantity}x ${item.name.substring(0, 20)}`);
-    lines.push(`   GHS ${item.total?.toFixed(2) || (item.quantity * item.unitPrice).toFixed(2)}`);
+    const quantity = typeof item.quantity === 'number' ? item.quantity : parseFloat(String(item.quantity || 1)) || 1;
+    const unitPrice = typeof item.unitPrice === 'number' ? item.unitPrice : parseFloat(String(item.unitPrice || 0)) || 0;
+    const lineTotal = item.total != null
+      ? (typeof item.total === 'number' ? item.total : parseFloat(String(item.total || 0)) || 0)
+      : quantity * unitPrice;
+    const qty = Number.isInteger(quantity) ? String(quantity) : quantity.toFixed(2).replace(/\.?0+$/, '');
+    const name = String(item.name || item.product?.name || 'Item').trim();
+    receipt.push(name);
+    receipt.push(row(`   ${qty} x ${money(unitPrice)}`, money(lineTotal)));
   });
-  
-  lines.push('---------------');
-  lines.push(`TOTAL: GHS ${sale.total?.toFixed(2)}`);
-  
+
+  receipt.push(divider());
+  receipt.push(row('TOTAL', money(total)));
+  receipt.push(divider('='));
   if (sale.amountPaid) {
-    lines.push(`Paid: GHS ${sale.amountPaid?.toFixed(2)}`);
+    receipt.push(row('Paid', money(sale.amountPaid)));
   }
-  
+  if (balance > 0.009) {
+    receipt.push(row('Balance', money(balance)));
+  }
   if (sale.change > 0) {
-    lines.push(`Change: GHS ${sale.change?.toFixed(2)}`);
+    receipt.push(row('Change', money(sale.change)));
   }
-  
-  lines.push('');
-  lines.push('Thank you for your purchase!');
-  
-  return lines.join('\n');
+  if (sale.paymentMethod) {
+    receipt.push(row('Payment', formatPayment(sale.paymentMethod)));
+  }
+  receipt.push(divider('='));
+  receipt.push(center('Thank you for your purchase!'));
+
+  message.push('```');
+  message.push(...receipt);
+  message.push('```');
+
+  return message.join('\n');
 }
 
 /**
@@ -1620,12 +2034,17 @@ async function sendEmailReceipt(tenantId, email, sale, textMessage) {
   }
 
   try {
-    const tenant = await Tenant.findByPk(tenantId, { attributes: ['name', 'metadata'] });
-    const company = {
-      name: tenant?.name || 'African Business Suite',
-      logoUrl: getTenantLogoUrl(tenant),
-      primaryColor: tenant?.metadata?.primaryColor || '#166534'
-    };
+    const { resolveDocumentOrganization, organizationToEmailCompany } = require('../utils/documentOrganizationUtils');
+    let shop = sale.shop;
+    if (!shop && sale.shopId) {
+      shop = await Shop.findByPk(sale.shopId);
+    }
+    const organization = await resolveDocumentOrganization({
+      tenantId,
+      shop,
+      studioLocation: sale.studioLocation || null,
+    });
+    const company = organizationToEmailCompany(organization);
     const closing = textMessage && String(textMessage).trim() ? String(textMessage).trim() : '';
     const { subject, html, text } = emailTemplates.saleReceiptEmail(sale, company, closing);
 
@@ -1661,6 +2080,16 @@ exports.deleteSale = async (req, res, next) => {
         success: false,
         message: 'Sale not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, sale);
+    } catch (accessErr) {
+      await transaction.rollback();
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     // Prevent deletion of completed sales with paid invoices

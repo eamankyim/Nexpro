@@ -5,6 +5,7 @@ import authService from '../services/authService';
 import { useAuth } from '../context/AuthContext';
 import { showSuccess, showError } from '../utils/toast';
 import { Button } from '@/components/ui/button';
+import { AuthBrandMark } from '@/components/AppLogo';
 
 /**
  * Page reached when user clicks the verification link in email.
@@ -52,7 +53,7 @@ const VerifyEmail = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="w-full max-w-md text-center">
-          <h1 className="text-3xl font-bold text-brand mb-4">ABS</h1>
+          <AuthBrandMark showName appName="ABS" className="justify-center mb-4 mx-auto" logoClassName="h-11 w-11" />
           <Loader2 className="h-12 w-12 animate-spin text-brand mx-auto mb-4" />
           <p className="text-muted-foreground">Verifying your email...</p>
         </div>
@@ -64,7 +65,7 @@ const VerifyEmail = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="w-full max-w-md text-center">
-          <h1 className="text-3xl font-bold text-brand mb-4">ABS</h1>
+          <AuthBrandMark showName appName="ABS" className="justify-center mb-4 mx-auto" logoClassName="h-11 w-11" />
           <CheckCircle className="h-16 w-16 text-brand mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-foreground mb-2">Email verified</h2>
           <p className="text-muted-foreground mb-6">{message}</p>
@@ -82,7 +83,7 @@ const VerifyEmail = () => {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-md text-center">
-        <h1 className="text-3xl font-bold text-brand mb-4">ABS</h1>
+        <AuthBrandMark showName appName="ABS" className="justify-center mb-4 mx-auto" logoClassName="h-11 w-11" />
         <XCircle className="h-16 w-16 text-destructive mx-auto mb-4" />
         <h2 className="text-xl font-semibold text-foreground mb-2">Verification failed</h2>
         <p className="text-muted-foreground mb-6">{message}</p>

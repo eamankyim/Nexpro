@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 
 const PWAInstallContext = createContext(null);
 
@@ -153,16 +153,28 @@ export const PWAInstallProvider = ({ children }) => {
    */
   const showInstallBanner = !isInstalled && (!!deferredPrompt || isIOSDevice || installVariant === 'opera-mini' || installVariant === 'safari-desktop' || installVariant === 'firefox' || installVariant === 'edge-manual');
 
-  const value = {
-    canInstall,
-    showInstallBanner,
-    installVariant,
-    isInstalled,
-    isIOSDevice,
-    showIOSInstructions,
-    promptInstall,
-    closeIOSInstructions,
-  };
+  const value = useMemo(
+    () => ({
+      canInstall,
+      showInstallBanner,
+      installVariant,
+      isInstalled,
+      isIOSDevice,
+      showIOSInstructions,
+      promptInstall,
+      closeIOSInstructions,
+    }),
+    [
+      canInstall,
+      showInstallBanner,
+      installVariant,
+      isInstalled,
+      isIOSDevice,
+      showIOSInstructions,
+      promptInstall,
+      closeIOSInstructions,
+    ]
+  );
 
   return (
     <PWAInstallContext.Provider value={value}>

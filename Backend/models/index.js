@@ -78,6 +78,7 @@ const AutomationRule = require('./AutomationRule');
 const AutomationRun = require('./AutomationRun');
 const StudioLocation = require('./StudioLocation');
 const UserStudioLocation = require('./UserStudioLocation');
+const UserShop = require('./UserShop');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -476,16 +477,38 @@ StudioLocation.hasMany(UserStudioLocation, { foreignKey: 'studioLocationId', as:
 
 StudioLocation.hasMany(Customer, { foreignKey: 'studioLocationId', as: 'customers' });
 Customer.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+Customer.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Shop.hasMany(Customer, { foreignKey: 'shopId', as: 'customers' });
 StudioLocation.hasMany(Job, { foreignKey: 'studioLocationId', as: 'jobs' });
 Job.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
 StudioLocation.hasMany(Quote, { foreignKey: 'studioLocationId', as: 'quotes' });
 Quote.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
 StudioLocation.hasMany(Invoice, { foreignKey: 'studioLocationId', as: 'invoices' });
 Invoice.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+StudioLocation.hasMany(Lead, { foreignKey: 'studioLocationId', as: 'leads' });
+Lead.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
 
 // Shop Management Relationships
 Tenant.hasMany(Shop, { foreignKey: 'tenantId', as: 'shops' });
 Shop.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+User.belongsToMany(Shop, {
+  through: UserShop,
+  foreignKey: 'userId',
+  otherKey: 'shopId',
+  as: 'shops',
+});
+Shop.belongsToMany(User, {
+  through: UserShop,
+  foreignKey: 'shopId',
+  otherKey: 'userId',
+  as: 'users',
+});
+UserShop.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+UserShop.belongsTo(User, { foreignKey: 'userId', as: 'user' });
+Shop.hasMany(UserShop, { foreignKey: 'shopId', as: 'userAssignments' });
+Shop.belongsTo(User, { foreignKey: 'managerUserId', as: 'manager' });
+StudioLocation.belongsTo(User, { foreignKey: 'managerUserId', as: 'manager' });
 
 Tenant.hasMany(ProductCategory, { foreignKey: 'tenantId', as: 'productCategories' });
 ProductCategory.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -511,6 +534,18 @@ Tenant.hasMany(Sale, { foreignKey: 'tenantId', as: 'sales' });
 Sale.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 Sale.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
 Shop.hasMany(Sale, { foreignKey: 'shopId', as: 'sales' });
+Shop.hasMany(Expense, { foreignKey: 'shopId', as: 'expenses' });
+Expense.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Shop.hasMany(Invoice, { foreignKey: 'shopId', as: 'invoices' });
+Invoice.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Shop.hasMany(Vendor, { foreignKey: 'shopId', as: 'vendors' });
+Vendor.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Shop.hasMany(Equipment, { foreignKey: 'shopId', as: 'equipment' });
+Equipment.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Shop.hasMany(Quote, { foreignKey: 'shopId', as: 'quotes' });
+Quote.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Shop.hasMany(MaterialItem, { foreignKey: 'shopId', as: 'materialItems' });
+MaterialItem.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
 Sale.belongsTo(Customer, { foreignKey: 'customerId', as: 'customer' });
 Customer.hasMany(Sale, { foreignKey: 'customerId', as: 'sales' });
 Sale.belongsTo(Invoice, { foreignKey: 'invoiceId', as: 'invoice' });
@@ -668,6 +703,7 @@ module.exports = {
   AutomationRun,
   StudioLocation,
   UserStudioLocation,
+  UserShop,
 };
 
 

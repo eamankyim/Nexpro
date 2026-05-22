@@ -21,6 +21,7 @@ const {
 } = require('../controllers/expenseController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { shopContext } = require('../middleware/shopContext');
 const { expenseReceiptUploader, checkStorageLimit } = require('../middleware/upload');
 const { exportLimiter } = require('../middleware/rateLimiter');
 
@@ -28,6 +29,12 @@ const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(shopContext);
+router.use((req, res, next) => {
+  // Expense lists must reflect writes immediately; avoid browser 304s after create/update/archive.
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 router.get('/categories', getExpenseCategories);
 router.post('/categories', authorize('admin', 'manager', 'staff'), addCustomExpenseCategory);

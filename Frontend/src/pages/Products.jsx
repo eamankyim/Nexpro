@@ -43,7 +43,10 @@ import {
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useDebounce } from '../hooks/useDebounce';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { guardOnline } from '../utils/onlineRequired';
 import { useResponsive } from '../hooks/useResponsive';
+import { useActiveShopType } from '../hooks/useActiveShopType';
 import DetailsDrawer from '../components/DetailsDrawer';
 import MobileFormDialog from '../components/MobileFormDialog';
 import DrawerSectionCard from '../components/DrawerSectionCard';
@@ -64,8 +67,12 @@ import {
   PRODUCT_IMAGE_SKIP_COMPRESS_MAX_BYTES,
 } from '../utils/compressProductImage';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { getErrorMessage, showSuccess, showError } from '../utils/toast';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import ReceiveStockModal from '../components/ReceiveStockModal';
 import ProductQRGenerateModal from '../components/ProductQRGenerateModal';
 import ViewToggle from '../components/ViewToggle';
@@ -144,6 +151,7 @@ import {
   getWorkspaceDisplayName,
 } from '../constants';
 import { numberInputValue, handleNumberChange } from '../utils/formUtils';
+import { formatAmount, formatInteger } from '../utils/formatNumber';
 // =============================================
 // HELPER FUNCTIONS
 // =============================================
@@ -151,11 +159,7 @@ import { numberInputValue, handleNumberChange } from '../utils/formUtils';
 const sortCategories = (list = []) =>
   [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-const valueFormatter = (value, currency = '₵') =>
-  `${currency} ${parseFloat(value || 0).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })}`;
+const valueFormatter = (value, currency = '₵') => formatAmount(value, currency);
 
 const marginFormatter = (costPrice, sellingPrice) => {
   const margin = calculateMargin(costPrice, sellingPrice);
@@ -258,7 +262,7 @@ const ProductMovementTab = ({ productId, unit = 'pcs', valueFormatter }) => {
               </div>
               <div className="text-right shrink-0">
                 <div className="font-medium text-foreground">
-                  -{parseFloat(item.quantity || 0).toLocaleString()} {unit}
+                  -{formatInteger(item.quantity || 0)} {unit}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {valueFormatter ? valueFormatter(item.total) : `${item.total}`}
@@ -391,21 +395,16 @@ const quickVendorSchema = z.object({
 
 const Products = () => {
   const { user, activeTenant, activeTenantId, isAdmin, isManager } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
+  const { scopeReady } = useWorkspaceScope();
+  const activeShopName = shopContext?.activeShop?.name ?? null;
   const { isMobile } = useResponsive();
   const { setPageSearchConfig } = useSmartSearch();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Get shop type from tenant metadata
-  const shopType =
-    activeTenant?.metadata?.businessSubType ||
-    activeTenant?.metadata?.shopType ||
-    SHOP_TYPES.CONVENIENCE;
+  const shopType = useActiveShopType();
   const shopTypeFields = SHOP_TYPE_FIELDS[shopType] || [];
-
-  // Debug: log shop type and fields when they change (helps verify size/allergens show for restaurant)
-  useEffect(() => {
-    console.log('[Products] shopType=%s shopTypeFields=%o hasSize=%s activeTenant.metadata=%o', shopType, shopTypeFields, shopTypeFields.includes('size'), activeTenant?.metadata);
-  }, [shopType, shopTypeFields, activeTenant?.metadata]);
 
   // Shop-type-specific unit options (restaurant gets extra units)
   const unitOptions = useMemo(() => {
@@ -497,9 +496,7 @@ const Products = () => {
   const [importLoading, setImportLoading] = useState(false);
   const [templateLoading, setTemplateLoading] = useState(false);
 
-  // Offline state
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [pendingChanges, setPendingChanges] = useState(0);
+  const { isOnline } = useOnlineStatus();
 
   // Stats
   const [stats, setStats] = useState({
@@ -634,153 +631,6 @@ const Products = () => {
     });
   }, [editingProduct, form, categories, handleOpenQRGenerate]);
 
-  // =============================================
-  // MEMOIZED VALUES
-  // =============================================
-
-  const tableColumns = useMemo(() => [
-    {
-      key: 'name',
-      title: 'Product',
-      width: '22rem',
-      cellClassName: 'min-w-0',
-      render: (_, record) => (
-        <div className="flex min-w-0 max-w-full items-center gap-3">
-          <div className="w-10 h-10 shrink-0 rounded border border-border bg-muted overflow-hidden flex items-center justify-center">
-            {record.imageUrl ? (
-              <button
-                type="button"
-                onClick={() => setImagePreviewUrl(resolveProductImageUrl(record.imageUrl))}
-                className="w-full h-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset"
-              >
-                <img
-                  src={resolveProductImageUrl(record.imageUrl)}
-                  alt={record.name || 'Product'}
-                  className="w-full h-full object-cover"
-                />
-              </button>
-            ) : (
-              <Package className="h-5 w-5 text-gray-400" />
-            )}
-          </div>
-          <div className="min-w-0 flex-1 overflow-hidden">
-            <span className="block font-medium truncate" title={record.name || ''}>
-              {record.name}
-            </span>
-            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-              {record.sku && (
-                <span className="truncate" title={record.sku ? `SKU: ${record.sku}` : ''}>
-                  SKU: {record.sku}
-                </span>
-              )}
-              {record.barcode && <Barcode className="h-3 w-3 shrink-0" />}
-            </div>
-          </div>
-        </div>
-      ),
-    },
-    {
-      key: 'category',
-      title: 'Category',
-      render: (_, record) => (
-        <Badge variant="default">
-          {record.category?.name || 'Uncategorized'}
-        </Badge>
-      ),
-    },
-    {
-      key: 'quantityOnHand',
-      title: 'Stock',
-      render: (_, record) => {
-        if (record.trackStock === false) {
-          return <Badge variant="outline" className="text-muted-foreground">Made to order</Badge>;
-        }
-        const statusKey = getStockStatus(record.quantityOnHand, record.reorderLevel);
-        return (
-          <div className="flex items-center gap-2">
-            <span>{parseFloat(record.quantityOnHand || 0).toLocaleString()} {record.unit}</span>
-            <StatusChip status={statusKey} size="small" />
-          </div>
-        );
-      },
-    },
-    {
-      key: 'costPrice',
-      title: 'Cost',
-      render: (value) => valueFormatter(value),
-      hidden: isMobile,
-    },
-    {
-      key: 'sellingPrice',
-      title: 'Price',
-      render: (value) => valueFormatter(value),
-    },
-    {
-      key: 'margin',
-      title: 'Margin',
-      render: (_, record) => {
-        const margin = calculateMargin(record.costPrice, record.sellingPrice);
-        const color = getMarginColor(margin);
-        return (
-          <Badge variant="outline" className={color}>
-            {margin.toFixed(1)}%
-          </Badge>
-        );
-      },
-      hidden: isMobile,
-    },
-    {
-      key: 'isActive',
-      title: 'Status',
-      render: (value) => (
-        <StatusChip status={value ? 'active_flag' : 'inactive_flag'} size="small" />
-      ),
-      hidden: isMobile,
-    },
-    {
-      key: 'actions',
-      title: '',
-      render: (_, record) => (
-        <ActionColumn
-          onView={() => handleViewProduct(record)}
-          record={record}
-          extraActions={[
-            {
-              key: 'duplicate',
-              label: 'Duplicate',
-              icon: <Copy className="h-4 w-4" />,
-              onClick: () => handleDuplicateProduct(record),
-            },
-            {
-              key: 'share',
-              label: 'Share via WhatsApp',
-              icon: <Share2 className="h-4 w-4" />,
-              onClick: () => handleWhatsAppShare(record),
-            },
-            {
-              key: 'qr',
-              label: 'Generate QR',
-              icon: <QrCode className="h-4 w-4" />,
-              onClick: () => handleOpenQRGenerate(record),
-            },
-            ...(isAdmin
-              ? [
-                  {
-                    key: 'delete',
-                    label: 'Delete',
-                    icon: <Trash2 className="h-4 w-4" />,
-                    onClick: () => {
-                      setProductToDelete(record);
-                      setDeleteDialogOpen(true);
-                    },
-                  },
-                ]
-              : []),
-          ]}
-        />
-      ),
-    },
-  ], [isMobile, isAdmin, handleOpenQRGenerate, handleDuplicateProduct, handleWhatsAppShare]);
 
   // =============================================
   // DATA FETCHING
@@ -813,24 +663,13 @@ const Products = () => {
         total: body?.count ?? body?.pagination?.total ?? 0,
       }));
 
-      if (Array.isArray(list) && list.length) {
-        productService.cacheProducts(list);
-      }
     } catch (error) {
       console.error('Failed to fetch products:', error);
-      
-      // Try to use cached data
-      const cached = productService.getCachedProducts(true);
-      if (cached) {
-        setProducts(cached);
-        showError(null, 'Using cached data - check your connection');
-      } else {
-        showError(error, 'Failed to load products');
-      }
+      showError(error, 'Failed to load products');
     } finally {
       setLoading(false);
     }
-  }, [pagination.current, pagination.pageSize, debouncedSearch, categoryFilter, stockFilter]);
+  }, [pagination.current, pagination.pageSize, debouncedSearch, categoryFilter, stockFilter, activeShopId]);
 
   const fetchCategories = useCallback(async () => {
     try {
@@ -850,7 +689,6 @@ const Products = () => {
         console.log('[Products fetchCategories] Loaded', categoryList.length, 'product_categories (NOT inventory_categories):', categoryList.map(c => c.name));
       }
       setCategories(sortCategories(categoryList));
-      productService.cacheCategories(categoryList);
     } catch (error) {
       const status = error?.response?.status;
       const message = error?.response?.data?.message ?? error?.message;
@@ -859,13 +697,6 @@ const Products = () => {
         message,
         fullError: error
       });
-      const cached = productService.getCachedCategories();
-      if (cached?.length) {
-        console.log('[Products fetchCategories] Using', cached.length, 'cached categories');
-        setCategories(sortCategories(cached));
-      } else {
-        console.warn('[Products fetchCategories] No cached categories; dropdown will be empty');
-      }
     }
   }, []);
 
@@ -904,11 +735,7 @@ const Products = () => {
       const newCategory = response.data || response;
       
       if (newCategory?.id) {
-        setCategories(prev => {
-          const updated = sortCategories([...prev, newCategory]);
-          productService.cacheCategories(updated);
-          return updated;
-        });
+        setCategories((prev) => sortCategories([...prev, newCategory]));
         showSuccess('Category created successfully');
         setCategoryModalOpen(false);
         setNewCategoryName('');
@@ -998,18 +825,11 @@ const Products = () => {
     } finally {
       setStatsLoading(false);
     }
-  }, []);
+  }, [activeShopId]);
 
   // =============================================
   // EFFECTS
   // =============================================
-
-  // Initial load
-  useEffect(() => {
-    fetchProducts();
-    fetchCategories();
-    fetchStats();
-  }, []);
 
   // Refetch categories and vendors when Add/Edit Product modal opens so dropdowns have options (tenant-scoped)
   useEffect(() => {
@@ -1025,10 +845,27 @@ const Products = () => {
     setVendors([]);
   }, [activeTenantId]);
 
-  // Refetch on filter changes
+  // Single fetch path: filters, pagination, and scope changes
   useEffect(() => {
+    if (!scopeReady) return;
     fetchProducts();
-  }, [debouncedSearch, categoryFilter, stockFilter, pagination.current, pagination.pageSize]);
+  }, [
+    scopeReady,
+    activeTenantId,
+    activeShopId,
+    debouncedSearch,
+    categoryFilter,
+    stockFilter,
+    pagination.current,
+    pagination.pageSize,
+    fetchProducts,
+  ]);
+
+  useEffect(() => {
+    if (!scopeReady) return;
+    fetchCategories();
+    fetchStats();
+  }, [scopeReady, activeTenantId, activeShopId, fetchCategories, fetchStats]);
 
   // Set up smart search
   useEffect(() => {
@@ -1050,35 +887,6 @@ const Products = () => {
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams, form]);
-
-  // Online/offline detection
-  useEffect(() => {
-    const handleOnline = async () => {
-      setIsOnline(true);
-      const pending = await productService.getPendingChanges();
-      if (pending.length > 0) {
-        const results = await productService.syncPendingChanges();
-        if (results.synced > 0) {
-          showSuccess(`Synced ${results.synced} pending changes`);
-          fetchProducts();
-          fetchStats();
-        }
-        const after = await productService.getPendingChanges();
-        setPendingChanges(after.length);
-      }
-    };
-    const handleOffline = () => setIsOnline(false);
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
-    productService.getPendingChanges().then((p) => setPendingChanges(p.length));
-
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
 
   // =============================================
   // HANDLERS
@@ -1252,14 +1060,7 @@ const Products = () => {
 
     setSubmitting(true);
     try {
-      if (!navigator.onLine) {
-        await productService.queueOfflineChange('delete', { id: productToDelete.id });
-        showSuccess('Saved offline. Will sync when connected.');
-        productService.getPendingChanges().then((p) => setPendingChanges(p.length));
-        setDeleteDialogOpen(false);
-        setProductToDelete(null);
-        return;
-      }
+      if (!guardOnline(showError)) return;
       await productService.deleteProduct(productToDelete.id);
       showSuccess('Product deleted successfully');
       setDeleteDialogOpen(false);
@@ -1406,16 +1207,7 @@ const Products = () => {
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       };
 
-      if (!navigator.onLine) {
-        const action = editingProduct ? 'update' : 'create';
-        const data = editingProduct ? { ...payload, id: editingProduct.id } : payload;
-        await productService.queueOfflineChange(action, data);
-        showSuccess('Saved offline. Will sync when connected.');
-        productService.getPendingChanges().then((p) => setPendingChanges(p.length));
-        setFormOpen(false);
-        setEditingProduct(null);
-        return;
-      }
+      if (!guardOnline(showError)) return;
 
       if (editingProduct) {
         await productService.updateProduct(editingProduct.id, payload);
@@ -1569,8 +1361,155 @@ const Products = () => {
     window.open(`https://wa.me/?text=${message}`, '_blank');
   };
 
+  // =============================================
+  // TABLE COLUMNS
+  // =============================================
+
+  const tableColumns = useMemo(() => [
+    {
+      key: 'name',
+      title: 'Product',
+      width: '22rem',
+      cellClassName: 'min-w-0',
+      render: (_, record) => (
+        <div className="flex min-w-0 max-w-full items-center gap-3">
+          <div className="w-10 h-10 shrink-0 rounded border border-border bg-muted overflow-hidden flex items-center justify-center">
+            {record.imageUrl ? (
+              <button
+                type="button"
+                onClick={() => setImagePreviewUrl(resolveProductImageUrl(record.imageUrl))}
+                className="w-full h-full cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-inset"
+              >
+                <img
+                  src={resolveProductImageUrl(record.imageUrl)}
+                  alt={record.name || 'Product'}
+                  className="w-full h-full object-cover"
+                />
+              </button>
+            ) : (
+              <Package className="h-5 w-5 text-gray-400" />
+            )}
+          </div>
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <span className="block font-medium truncate" title={record.name || ''}>
+              {record.name}
+            </span>
+            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              {record.sku && (
+                <span className="truncate" title={record.sku ? `SKU: ${record.sku}` : ''}>
+                  SKU: {record.sku}
+                </span>
+              )}
+              {record.barcode && <Barcode className="h-3 w-3 shrink-0" />}
+            </div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'category',
+      title: 'Category',
+      render: (_, record) => (
+        <Badge variant="default">
+          {record.category?.name || 'Uncategorized'}
+        </Badge>
+      ),
+    },
+    {
+      key: 'quantityOnHand',
+      title: 'Stock',
+      render: (_, record) => {
+        if (record.trackStock === false) {
+          return <Badge variant="outline" className="text-muted-foreground">Made to order</Badge>;
+        }
+        const statusKey = getStockStatus(record.quantityOnHand, record.reorderLevel);
+        return (
+          <div className="flex items-center gap-2">
+            <span>{formatInteger(record.quantityOnHand || 0)} {record.unit}</span>
+            <StatusChip status={statusKey} size="small" />
+          </div>
+        );
+      },
+    },
+    {
+      key: 'costPrice',
+      title: 'Cost',
+      render: (value) => valueFormatter(value),
+      hidden: isMobile,
+    },
+    {
+      key: 'sellingPrice',
+      title: 'Price',
+      render: (value) => valueFormatter(value),
+    },
+    {
+      key: 'margin',
+      title: 'Margin',
+      render: (_, record) => {
+        const margin = calculateMargin(record.costPrice, record.sellingPrice);
+        const color = getMarginColor(margin);
+        return (
+          <Badge variant="outline" className={color}>
+            {margin.toFixed(1)}%
+          </Badge>
+        );
+      },
+      hidden: isMobile,
+    },
+    {
+      key: 'isActive',
+      title: 'Status',
+      render: (value) => (
+        <StatusChip status={value ? 'active_flag' : 'inactive_flag'} size="small" />
+      ),
+      hidden: isMobile,
+    },
+    {
+      key: 'actions',
+      title: '',
+      render: (_, record) => (
+        <ActionColumn
+          onView={() => handleViewProduct(record)}
+          record={record}
+          extraActions={[
+            {
+              key: 'duplicate',
+              label: 'Duplicate',
+              icon: <Copy className="h-4 w-4" />,
+              onClick: () => handleDuplicateProduct(record),
+            },
+            {
+              key: 'share',
+              label: 'Share via WhatsApp',
+              icon: <Share2 className="h-4 w-4" />,
+              onClick: () => handleWhatsAppShare(record),
+            },
+            {
+              key: 'qr',
+              label: 'Generate QR',
+              icon: <QrCode className="h-4 w-4" />,
+              onClick: () => handleOpenQRGenerate(record),
+            },
+            ...(isAdmin
+              ? [
+                  {
+                    key: 'delete',
+                    label: 'Delete',
+                    icon: <Trash2 className="h-4 w-4" />,
+                    onClick: () => {
+                      setProductToDelete(record);
+                      setDeleteDialogOpen(true);
+                    },
+                  },
+                ]
+              : []),
+          ]}
+        />
+      ),
+    },
+  ], [isMobile, isAdmin, handleOpenQRGenerate, handleDuplicateProduct, handleWhatsAppShare, handleViewProduct]);
+
   const handleRefresh = () => {
-    productService.clearCache();
     fetchProducts();
     fetchCategories();
     fetchStats();
@@ -1579,6 +1518,30 @@ const Products = () => {
   const handlePageChange = (newPagination) => {
     setPagination(prev => ({ ...prev, ...newPagination }));
   };
+
+  const handleClearProductFilters = useCallback(() => {
+    setSearchText('');
+    setCategoryFilter('all');
+    setStockFilter('all');
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, []);
+
+  const hasActiveProductFilters = useMemo(
+    () => !!debouncedSearch || categoryFilter !== 'all' || stockFilter !== 'all',
+    [debouncedSearch, categoryFilter, stockFilter]
+  );
+
+  const productsEmptyState = useMemo(() => {
+    if (hasActiveProductFilters) {
+      return getEmptyStateProps(EMPTY_STATES.PRODUCTS_FILTERED, {
+        primary: handleClearProductFilters,
+      });
+    }
+    return getEmptyStateProps(EMPTY_STATES.PRODUCTS, {
+      primary: handleCreateProduct,
+      secondary: () => setImportModalOpen(true),
+    });
+  }, [hasActiveProductFilters, handleClearProductFilters, handleCreateProduct]);
 
   // =============================================
   // RENDER HELPERS
@@ -2249,13 +2212,11 @@ const Products = () => {
 
   return (
     <div className="space-y-4 md:space-y-6">
-      {/* Offline Indicator */}
       {!isOnline && (
         <Alert variant="warning" className="mb-4">
           <WifiOff className="h-4 w-4" />
           <AlertDescription>
-            You are offline. Changes will be synced when you reconnect.
-            {pendingChanges > 0 && ` (${pendingChanges} pending)`}
+            You are offline. Reconnect to edit products, or use the mobile app for offline work.
           </AlertDescription>
         </Alert>
       )}
@@ -2264,7 +2225,11 @@ const Products = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <WelcomeSection
           title="Products"
-          subtitle="Manage your product catalog"
+          subtitle={
+            shopContext?.isShopWorkspace && activeShopName
+              ? `Catalog for ${activeShopName} — each shop has its own products`
+              : 'Manage your product catalog'
+          }
           icon={<Package className="h-6 w-6" />}
         />
       <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
@@ -2435,51 +2400,19 @@ const Products = () => {
         </Card>
       )}
 
-      {/* Products Table - no Card container on mobile (standalone cards) */}
-      {loading ? (
-        <TableSkeleton rows={5} columns={isMobile ? 4 : 7} />
-      ) : (
-        isMobile ? (
-          <DashboardTable
-            data={products}
-            columns={tableColumns}
-            loading={loading}
-            emptyIcon={<Package className="h-12 w-12 text-muted-foreground" />}
-            emptyDescription="No products yet. Add your inventory to start selling."
-            emptyAction={
-              <Button onClick={handleCreateProduct}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add First Product
-              </Button>
-            }
-            pageSize={pagination.pageSize}
-            externalPagination={{ current: pagination.current, total: pagination.total }}
-            onPageChange={handlePageChange}
-            viewMode={tableViewMode}
-            onViewModeChange={setTableViewMode}
-          />
-        ) : (
-          <DashboardTable
-            data={products}
-            columns={tableColumns}
-            loading={loading}
-            title={null}
-            emptyIcon={<Package className="h-12 w-12 text-muted-foreground" />}
-            emptyDescription="No products yet. Add your inventory to start selling."
-            emptyAction={
-              <Button onClick={handleCreateProduct}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add First Product
-              </Button>
-            }
-            pageSize={pagination.pageSize}
-            externalPagination={{ current: pagination.current, total: pagination.total }}
-            onPageChange={handlePageChange}
-            viewMode={tableViewMode}
-            onViewModeChange={setTableViewMode}
-          />
-        )
-      )}
+      {/* Products list — DashboardTable handles loading + empty state (table on desktop, cards on mobile) */}
+      <DashboardTable
+        data={products}
+        columns={tableColumns}
+        loading={loading}
+        title={null}
+        emptyState={productsEmptyState}
+        pageSize={pagination.pageSize}
+        externalPagination={{ current: pagination.current, total: pagination.total }}
+        onPageChange={handlePageChange}
+        viewMode={tableViewMode}
+        onViewModeChange={setTableViewMode}
+      />
 
       {/* Product Form Dialog */}
       <MobileFormDialog
@@ -3414,7 +3347,7 @@ const Products = () => {
                   <>
                     <DescriptionItem label="Quantity on Hand">
                       <div className="flex items-center gap-2">
-                        <span>{parseFloat(selectedProduct.quantityOnHand || 0).toLocaleString()} {selectedProduct.unit}</span>
+                        <span>{formatInteger(selectedProduct.quantityOnHand || 0)} {selectedProduct.unit}</span>
                         <StatusChip
                           status={getStockStatus(selectedProduct.quantityOnHand, selectedProduct.reorderLevel)}
                           size="small"

@@ -32,12 +32,12 @@ const cache = new NodeCache({
  * @param {object} params - Additional parameters (e.g., date filters)
  * @returns {string} Cache key
  */
-const generateCacheKey = (tenantId, endpoint, params = {}) => {
+const generateCacheKey = (tenantId, endpoint, params = {}, shopSegment = '') => {
   const paramString = Object.keys(params)
     .sort()
     .map(key => `${key}:${params[key]}`)
     .join('|');
-  return `dashboard:${tenantId}:${endpoint}${paramString ? `:${paramString}` : ''}`;
+  return `dashboard:${tenantId}:${endpoint}${shopSegment}${paramString ? `:${paramString}` : ''}`;
 };
 
 /**
@@ -80,7 +80,19 @@ const generateNotificationListKey = (req) => {
 };
 
 /**
- * Cache key for product list (per tenant + query)
+ * Shop segment for cache keys (must differ per active shop or lists bleed across shops).
+ * @param {object} req - Express request (after shopContext middleware)
+ * @returns {string}
+ */
+const getShopCacheSegment = (req) => {
+  if (!req?.shopScoped) return '';
+  if (req.shopFilterId) return `:shop:${req.shopFilterId}`;
+  if (req.canAccessAllShops) return ':shop:default';
+  return ':shop:assigned';
+};
+
+/**
+ * Cache key for product list (per tenant + shop + query)
  * @param {object} req - Express request
  * @returns {string} Cache key
  */
@@ -90,7 +102,7 @@ const generateProductListKey = (req) => {
     .sort()
     .map(k => `${k}=${req.query[k]}`)
     .join('&');
-  return `products:list:${tenantId}:${params}`;
+  return `products:list:${tenantId}${getShopCacheSegment(req)}:${params}`;
 };
 
 /** Generic list cache key (prefix e.g. customers, sales, invoices) */
@@ -100,7 +112,7 @@ const generateListKey = (prefix) => (req) => {
     .sort()
     .map(k => `${k}=${req.query[k]}`)
     .join('&');
-  return `${prefix}:list:${tenantId}:${params}`;
+  return `${prefix}:list:${tenantId}${getShopCacheSegment(req)}:${params}`;
 };
 
 const generateCustomerListKey = generateListKey('customers');
@@ -233,7 +245,9 @@ const invalidateCustomerListCache = (tenantId) => {
 };
 
 const invalidateSaleListCache = (tenantId) => {
-  return invalidateCache(tenantId, 'sales:list:.*');
+  const salesCount = invalidateCache(tenantId, 'sales:list:.*');
+  const dashboardCount = invalidateDashboardCache(tenantId);
+  return salesCount + dashboardCount;
 };
 
 const invalidateInvoiceListCache = (tenantId) => {
@@ -373,6 +387,7 @@ module.exports = {
   generateCustomerListKey,
   generateSaleListKey,
   generateInvoiceListKey,
+  getShopCacheSegment,
   invalidateCache,
   invalidateDashboardCache,
   invalidateReportCache,

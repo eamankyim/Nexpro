@@ -27,9 +27,13 @@ import expenseService from '../services/expenseService';
 import jobService from '../services/jobService';
 import vendorService from '../services/vendorService';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { STUDIO_LIKE_TYPES } from '../constants';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError, showWarning } from '../utils/toast';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -148,10 +152,14 @@ const SELECT_NONE_VALUE = '__none__';
 
 const Expenses = () => {
   const { isAdmin, activeTenant, activeTenantId } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
+  const { scopeReady } = useWorkspaceScope();
   const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
   const isStudioLike = STUDIO_LIKE_TYPES.includes(businessType);
+  const canCreateExpenseRequest = !isAdmin;
   const [submittingExpense, setSubmittingExpense] = useState(false);
   const [submittingForApproval, setSubmittingForApproval] = useState(false);
   const [approvingExpense, setApprovingExpense] = useState(false);
@@ -307,7 +315,7 @@ const Expenses = () => {
     refetch: refetchExpenses,
     isFetching: expensesRefetching,
   } = useQuery({
-    queryKey: ['expenses', activeTenantId, pagination.current, pagination.pageSize, filters],
+    queryKey: ['expenses', activeTenantId, activeShopId, pagination.current, pagination.pageSize, filters],
     queryFn: async () => {
       const params = {
         page: pagination.current,
@@ -322,8 +330,7 @@ const Expenses = () => {
       const response = await expenseService.getAll(params);
       return response;
     },
-    enabled: !!activeTenantId,
-    keepPreviousData: true,
+    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
     staleTime: 60 * 1000,
     refetchOnWindowFocus: false,
   });
@@ -338,13 +345,17 @@ const Expenses = () => {
   }, [queryClient]);
 
   useEffect(() => {
-    if (!activeTenantId) return;
+    setStats(null);
+  }, [activeTenantId, activeShopId]);
+
+  useEffect(() => {
+    if (!scopeReady) return;
     if (isPrintingPress) {
       fetchJobs();
     }
     fetchVendors();
     fetchStats();
-  }, [activeTenantId, isPrintingPress]);
+  }, [scopeReady, activeTenantId, activeShopId, isPrintingPress]);
 
   useEffect(() => {
     const total = expensesResponse?.count ?? expenses.length;
@@ -415,6 +426,7 @@ const Expenses = () => {
   };
 
   const handleCreate = (isRequest = false) => {
+    if (isRequest && !canCreateExpenseRequest) return;
     setEditingExpense(null);
     setMultipleMode(false);
     setIsExpenseRequest(isRequest);
@@ -927,6 +939,27 @@ const Expenses = () => {
 
   const hasActiveFilters = filters.category !== 'all' || filters.status !== 'all' || filters.jobId !== 'all' || filters.viewType !== 'all';
 
+  const expensesEmptyState = useMemo(() => {
+    if (hasActiveFilters) {
+      if (filters.viewType === 'requests') {
+        return getEmptyStateProps(EMPTY_STATES.EXPENSES_PENDING, {
+          primary: handleClearFilters,
+        });
+      }
+      if (filters.viewType === 'approved') {
+        return getEmptyStateProps(EMPTY_STATES.EXPENSES_APPROVED, {
+          primary: handleClearFilters,
+        });
+      }
+      return getEmptyStateProps(EMPTY_STATES.EXPENSES_FILTERED, {
+        primary: handleClearFilters,
+      });
+    }
+    return getEmptyStateProps(EMPTY_STATES.EXPENSES, {
+      primary: () => handleCreate(false),
+    });
+  }, [hasActiveFilters, filters.viewType, handleClearFilters, handleCreate]);
+
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
@@ -965,17 +998,19 @@ const Expenses = () => {
             </TooltipTrigger>
             <TooltipContent>Reload expense list</TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <SecondaryButton 
-                onClick={() => handleCreate(true)}
-              >
-                <Plus className="h-4 w-4" />
-                {!isMobile && <span className="ml-2">Expense Request</span>}
-              </SecondaryButton>
-            </TooltipTrigger>
-            <TooltipContent>Create an expense request that needs approval</TooltipContent>
-          </Tooltip>
+          {canCreateExpenseRequest && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SecondaryButton 
+                  onClick={() => handleCreate(true)}
+                >
+                  <Plus className="h-4 w-4" />
+                  {!isMobile && <span className="ml-2">Expense Request</span>}
+                </SecondaryButton>
+              </TooltipTrigger>
+              <TooltipContent>Create an expense request that needs approval</TooltipContent>
+            </Tooltip>
+          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button onClick={() => handleCreate(false)} className="flex-1 min-w-0 md:flex-none">
@@ -1030,26 +1065,7 @@ const Expenses = () => {
         columns={filters.viewType === 'requests' ? requestTableColumns : tableColumns}
         loading={expensesLoading}
         title={null}
-        emptyIcon={
-          filters.viewType === 'approved' ? <CheckCircle className="h-12 w-12 text-muted-foreground" /> :
-          filters.viewType === 'requests' ? <Send className="h-12 w-12 text-muted-foreground" /> :
-          <ShoppingCart className="h-12 w-12 text-muted-foreground" />
-        }
-        emptyDescription={
-          filters.viewType === 'approved' ? 'No approved expenses found' :
-          filters.viewType === 'requests' ? 'No expense requests found' :
-          filters.viewType === 'job-specific' ? 'No job-specific expenses found' :
-          filters.viewType === 'general' ? 'No general expenses found' :
-          'No expenses yet. Track your business spending by adding your first expense.'
-        }
-        emptyAction={
-          filters.viewType === 'all' && (
-            <Button onClick={() => handleCreate(false)}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add First Expense
-            </Button>
-          )
-        }
+        emptyState={expensesEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);
@@ -2146,7 +2162,7 @@ const Expenses = () => {
                   </DescriptionItem>
                   <DescriptionItem label="Payment Status" className="relative">
                     <div className="flex items-center justify-end w-full gap-2">
-                      {viewingExpense.status !== 'paid' && (
+                      {viewingExpense.status !== 'paid' && viewingExpense.approvalStatus === 'approved' && (
                         <Button
                           variant="link"
                           size="sm"

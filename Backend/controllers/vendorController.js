@@ -1,6 +1,11 @@
 const { Vendor, Expense } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const {
+  applyScopedFilters,
+  attachScopedToPayload,
+  assertShopRecordAccess,
+} = require('../utils/shopUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { getVendorCategories } = require('../config/vendorCategories');
 
@@ -33,7 +38,7 @@ exports.getVendors = async (req, res, next) => {
     const category = req.query.category;
     const isActive = req.query.isActive;
 
-    const where = applyTenantFilter(req.tenantId, {});
+    let where = applyScopedFilters(req, applyTenantFilter(req.tenantId, {}));
     if (typeof isActive === 'string' && (isActive === 'true' || isActive === 'false')) {
       where.isActive = isActive === 'true';
     }
@@ -76,7 +81,7 @@ exports.getVendors = async (req, res, next) => {
 exports.exportVendors = async (req, res, next) => {
   try {
     const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
-    const where = applyTenantFilter(req.tenantId, {});
+    let where = applyScopedFilters(req, applyTenantFilter(req.tenantId, {}));
 
     const vendors = await Vendor.findAll({
       where,
@@ -101,13 +106,13 @@ exports.exportVendors = async (req, res, next) => {
 exports.getVendor = async (req, res, next) => {
   try {
     const vendor = await Vendor.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
       include: [{
         model: Expense,
         as: 'expenses',
         limit: 10,
         order: [['createdAt', 'DESC']],
-        where: applyTenantFilter(req.tenantId, {}),
+        where: applyScopedFilters(req, applyTenantFilter(req.tenantId, {})),
         required: false
       }]
     });
@@ -118,6 +123,8 @@ exports.getVendor = async (req, res, next) => {
         message: 'Vendor not found'
       });
     }
+
+    assertShopRecordAccess(req, vendor);
 
     res.status(200).json({
       success: true,
@@ -139,10 +146,13 @@ exports.createVendor = async (req, res, next) => {
     if (payload.website === '' || payload.website === null || payload.website === undefined) {
       payload.website = null;
     }
-    const vendor = await Vendor.create({
-      ...payload,
-      tenantId: req.tenantId
-    });
+    delete payload.shopId;
+    const vendor = await Vendor.create(
+      attachScopedToPayload(req, {
+        ...payload,
+        tenantId: req.tenantId,
+      })
+    );
 
     res.status(201).json({
       success: true,
@@ -159,7 +169,7 @@ exports.createVendor = async (req, res, next) => {
 exports.updateVendor = async (req, res, next) => {
   try {
     const vendor = await Vendor.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id }))
     });
 
     if (!vendor) {
@@ -169,12 +179,15 @@ exports.updateVendor = async (req, res, next) => {
       });
     }
 
+    assertShopRecordAccess(req, vendor);
+
     const payload = sanitizePayload(req.body);
     if (payload.email === '') payload.email = null;
     // Normalize empty website string to null to avoid validation errors
     if (payload.website === '' || payload.website === null || payload.website === undefined) {
       payload.website = null;
     }
+    delete payload.shopId;
     await vendor.update(payload);
 
     res.status(200).json({
@@ -192,7 +205,7 @@ exports.updateVendor = async (req, res, next) => {
 exports.deleteVendor = async (req, res, next) => {
   try {
     const vendor = await Vendor.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id }))
     });
 
     if (!vendor) {
@@ -201,6 +214,8 @@ exports.deleteVendor = async (req, res, next) => {
         message: 'Vendor not found'
       });
     }
+
+    assertShopRecordAccess(req, vendor);
 
     await vendor.destroy();
 

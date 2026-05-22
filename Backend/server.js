@@ -442,16 +442,23 @@ if (!IS_VERCEL_SERVERLESS) {
           console.error(`[Server] No available port in range ${PORT_BASE}-${PORT_MAX}`);
           process.exit(1);
         }
-        server.once('error', (err) => {
+        const onError = (err) => {
           if (err.code === 'EADDRINUSE') {
             console.warn(`[Server] Port ${port} in use, trying ${port + 1}...`);
+            server.off('listening', onListening);
             tryListen(port + 1);
           } else {
             console.error('Server error:', err);
             process.exit(1);
           }
-        });
-        server.listen(port, '0.0.0.0', () => onListen(port));
+        };
+        const onListening = () => {
+          server.off('error', onError);
+          onListen(port);
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen(port, '0.0.0.0');
       };
 
       tryListen(PORT_BASE);

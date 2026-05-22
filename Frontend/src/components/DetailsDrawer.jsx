@@ -247,8 +247,13 @@ const DetailsDrawer = ({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       {moreMenuItems.map((item, index) => {
-                        const isArchive = item.key === 'archive' && onDelete;
-                        const handleClick = isArchive ? () => setDeleteDialogOpen(true) : (item.disabled ? undefined : item.onClick);
+                        const opensDeleteDialog =
+                          (item.key === 'archive' || item.key === 'delete') && onDelete;
+                        const handleClick = opensDeleteDialog
+                          ? () => setDeleteDialogOpen(true)
+                          : item.disabled
+                            ? undefined
+                            : item.onClick;
                         return (
                           <DropdownMenuItem
                             key={item.key || index}
@@ -303,7 +308,7 @@ const DetailsDrawer = ({
               </AlertDialogContent>
             </AlertDialog>
           )}
-          {showActions && !primaryAction && (onEdit || onDelete || onDownload || onPrint || onMarkPaid || extraActions.length > 0) && (
+          {showActions && !primaryAction && moreMenuItems.length === 0 && (onEdit || onDelete || onDownload || onPrint || onMarkPaid || extraActions.length > 0) && (
             <div className="flex-shrink-0 bg-background border-t border-border">
               <div className="p-6 flex flex-wrap gap-2 justify-end">
                 {onDownload && (

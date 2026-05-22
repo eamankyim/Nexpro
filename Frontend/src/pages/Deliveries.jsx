@@ -10,6 +10,8 @@ import { useResponsive } from '../hooks/useResponsive';
 import WelcomeSection from '../components/WelcomeSection';
 import TableSkeleton from '../components/TableSkeleton';
 import { showSuccess, showError, handleApiError } from '../utils/toast';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { EmptyState, getEmptyStateProps } from '../components/ui/empty-state';
 import {
   DEBOUNCE_DELAYS,
   DELIVERY_STATUS_LABELS,
@@ -17,6 +19,7 @@ import {
   SEARCH_PLACEHOLDERS,
   STUDIO_LIKE_TYPES
 } from '../constants';
+import { formatAmount } from '../utils/formatNumber';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -365,22 +368,25 @@ export default function Deliveries() {
         <TableSkeleton rows={6} columns={6} />
       ) : filteredRows.length === 0 ? (
         <Card className="border border-border">
-          <CardContent className="flex flex-col items-center justify-center gap-2 py-12 text-center text-muted-foreground">
-            <Inbox className="h-10 w-10 opacity-60" />
-            <p className="text-sm font-medium text-foreground">
-              {searchFilteredOut ? 'No matches' : filtersExcludeAll ? 'No matches for filters' : 'Nothing here yet'}
-            </p>
-            <p className="text-xs max-w-sm">
-              {searchFilteredOut
-                ? 'Try another term in the search box at the top of the page.'
-                : filtersExcludeAll
-                  ? 'Change the type or delivery status filters above.'
-                  : scope === 'active'
-                    ? isStudioLike
-                      ? 'When jobs are completed, they appear here so you can set delivery status.'
-                      : 'When sales are completed, they appear here so you can set delivery status.'
-                    : 'Delivered or returned items from the last 90 days will show in this tab.'}
-            </p>
+          <CardContent className="py-4">
+            <EmptyState
+              {...getEmptyStateProps(EMPTY_STATES.DELIVERIES)}
+              size="sm"
+              title={
+                searchFilteredOut ? 'No matches' : filtersExcludeAll ? 'No matches for filters' : 'Nothing here yet'
+              }
+              description={
+                searchFilteredOut
+                  ? 'Try another term in the search box at the top of the page.'
+                  : filtersExcludeAll
+                    ? 'Change the type or delivery status filters above.'
+                    : scope === 'active'
+                      ? isStudioLike
+                        ? 'When jobs are completed, they appear here so you can set delivery status.'
+                        : 'When sales are completed, they appear here so you can set delivery status.'
+                      : 'Delivered or returned items from the last 90 days will show in this tab.'
+              }
+            />
           </CardContent>
         </Card>
       ) : isMobile ? (
@@ -415,7 +421,7 @@ export default function Deliveries() {
                   )}
                   {row.total != null && (
                     <p className="text-sm">
-                      Total: ₵ {Number(row.total).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      Total: {formatAmount(row.total)}
                     </p>
                   )}
                   <p className="text-xs text-muted-foreground">

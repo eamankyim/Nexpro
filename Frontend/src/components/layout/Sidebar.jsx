@@ -33,9 +33,12 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuth } from '@/context/AuthContext';
 import { useBranding } from '@/context/BrandingContext';
+import { useScopedWorkspaceName } from '@/hooks/useScopedWorkspaceName';
+import SidebarScopeSwitcher from '@/components/SidebarScopeSwitcher';
+import AppLogo from '@/components/AppLogo';
 import { useHintMode } from '@/context/HintModeContext';
 import { usePWAInstall } from '@/context/PWAInstallContext';
-import { APP_NAME, isQuotesEnabledForTenant, STUDIO_LIKE_TYPES, SHOW_SHOPS } from '@/constants';
+import { APP_NAME, isQuotesEnabledForTenant, STUDIO_LIKE_TYPES } from '@/constants';
 import settingsService from '@/services/settingsService';
 import { API_BASE_URL } from '@/services/api';
 
@@ -55,20 +58,6 @@ function sidebarBrandSubtitle(appName, organizationDisplayName) {
     return (organizationDisplayName || '').trim();
   }
   return 'Powered by ABS';
-}
-
-/** App logo: first letter of app name on brand background */
-function AppLogo({ appName = DEFAULT_APP_NAME, primaryColor = DEFAULT_APP_GREEN, className = '' }) {
-  const letter = (appName || DEFAULT_APP_NAME).trim().charAt(0).toUpperCase() || 'A';
-  return (
-    <div
-      className={`flex items-center justify-center flex-shrink-0 rounded-md font-bold text-white ${className}`}
-      style={{ backgroundColor: primaryColor }}
-      aria-hidden
-    >
-      {letter}
-    </div>
-  );
 }
 
 /**
@@ -193,11 +182,8 @@ const getMenuItems = (businessType, isAdmin, isManager, shopType, hasFeature = (
     ...(hasFeature('quoteAutomation') && isQuotesEnabledForTenant(businessType, shopType) ? [{ key: '/quotes', label: 'Quotes', tooltip: MENU_HINTS['/quotes'] }] : []),
     ...(hasFeature('payroll') ? [{ key: '/employees', label: 'Employees', tooltip: MENU_HINTS['/employees'], managerOnly: true }] : []),
   ];
-  if (SHOW_SHOPS && businessType === 'shop') {
-    if (hasFeature('shopsModule')) {
-      advancedChildren.splice(2, 0, { key: '/shops', label: 'Shops', tooltip: MENU_HINTS['/shops'] });
-    }
-    // Foot Traffic temporarily hidden
+  if (businessType === 'shop' && hasFeature('shopsModule')) {
+    advancedChildren.splice(2, 0, { key: '/shops', label: 'Shops', tooltip: MENU_HINTS['/shops'] });
   }
   if (businessType === 'pharmacy') {
     if (hasFeature('pharmacyOps')) {
@@ -302,11 +288,15 @@ export function Sidebar({ collapsed, onCollapse }) {
     enabled: !!activeTenant?.id,
   });
   const organization = organizationData?.data ?? organizationData;
-  const businessName = organization?.name || activeTenant?.name || '';
+  const orgName = (organization?.name || activeTenant?.name || '').trim();
+  const businessName = useScopedWorkspaceName(organization?.name, '');
   const sidebarSubtitle = useMemo(
     () => sidebarBrandSubtitle(appName, businessName),
     [appName, businessName]
   );
+  const showScopeSwitcher =
+    (activeTenant?.businessType === 'shop' && hasFeature('shopsModule')) ||
+    (STUDIO_LIKE_TYPES.includes(activeTenant?.businessType) && hasFeature('studioLocationsModule'));
 
   const businessType = activeTenant?.businessType || null;
   const shopType =
@@ -441,18 +431,17 @@ export function Sidebar({ collapsed, onCollapse }) {
             )}
           >
             <AppLogo
-              appName={appName}
-              primaryColor={primaryColor}
-              className={cn(
-                collapsed ? 'h-9 w-9 text-base' : 'h-10 w-10 text-lg'
-              )}
+              alt={appName}
+              className={cn(collapsed ? 'h-9 w-9' : 'h-10 w-10')}
             />
             {!collapsed && (
               <div className="flex flex-col leading-tight min-w-0">
                 <span className="text-base font-semibold" style={{ color: primaryColor }}>
                   {appName}
                 </span>
-                {sidebarSubtitle ? (
+                {showScopeSwitcher ? (
+                  <SidebarScopeSwitcher organizationName={orgName} />
+                ) : sidebarSubtitle ? (
                   <span className="text-xs text-muted-foreground truncate">
                     {sidebarSubtitle}
                   </span>
@@ -689,11 +678,15 @@ export function MobileSidebar() {
     enabled: !!activeTenant?.id,
   });
   const organization = organizationData?.data ?? organizationData;
-  const businessName = organization?.name || activeTenant?.name || '';
+  const orgName = (organization?.name || activeTenant?.name || '').trim();
+  const businessName = useScopedWorkspaceName(organization?.name, '');
   const sidebarSubtitle = useMemo(
     () => sidebarBrandSubtitle(appName, businessName),
     [appName, businessName]
   );
+  const showScopeSwitcher =
+    (activeTenant?.businessType === 'shop' && hasFeature('shopsModule')) ||
+    (STUDIO_LIKE_TYPES.includes(activeTenant?.businessType) && hasFeature('studioLocationsModule'));
 
   const businessType = activeTenant?.businessType || null;
   const shopType = activeTenant?.metadata?.shopType || null;
@@ -791,12 +784,14 @@ export function MobileSidebar() {
       <SheetContent side="left" className="w-64 bg-card text-foreground p-0 border-r border-border flex flex-col overflow-hidden">
         <div className="h-16 flex-shrink-0 flex items-center justify-start px-4 border-b border-border">
           <div className="flex items-center gap-2 min-w-0">
-            <AppLogo appName={appName} primaryColor={primaryColor} className="h-9 w-9 text-base" />
+            <AppLogo alt={appName} className="h-9 w-9" />
             <div className="flex flex-col leading-tight min-w-0">
               <span className="text-sm font-semibold" style={{ color: primaryColor }}>
                 {appName}
               </span>
-              {sidebarSubtitle ? (
+              {showScopeSwitcher ? (
+                <SidebarScopeSwitcher organizationName={orgName} />
+              ) : sidebarSubtitle ? (
                 <span className="text-xs text-muted-foreground truncate">
                   {sidebarSubtitle}
                 </span>

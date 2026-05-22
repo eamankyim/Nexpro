@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -10,17 +10,28 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { saleService } from '@/services/saleService';
+import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
+import { useSmartSearch } from '@/context/SmartSearchContext';
+import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
+import { useDebounce } from '@/hooks/useDebounce';
+import { matchesSearchQuery } from '@/utils/matchesSearchQuery';
 import { useAuth } from '@/context/AuthContext';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
-import { useTheme } from '@/context/ThemeContext';
-import Colors from '@/constants/Colors';
-import { ORDER_STATUSES, ORDER_STATUS_LABELS, SHOP_TYPES } from '@/constants';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
+import { DeliveryStatusPicker } from '@/components/DeliveryStatusPicker';
+import { ORDER_STATUSES, ORDER_STATUS_LABELS, SHOP_TYPES, resolveBusinessType } from '@/constants';
 import { resolveImageUrl } from '@/utils/fileUtils';
+import { showListFilters } from '@/utils/listEmptyLayout';
+import { FilterChipRow } from '@/components/FilterChip';
+import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { getApiErrorMessage } from '@/utils/parseApiListResponse';
+import { refreshAfterOrderChange } from '@/utils/queryInvalidation';
 
 const POLL_INTERVAL_MS = 12000; // 12 seconds
 
@@ -59,6 +70,7 @@ type Order = {
   id: string;
   saleNumber: string;
   orderStatus?: string;
+  deliveryStatus?: string | null;
   createdAt: string;
   customer?: { id: string; name?: string };
   items?: Array<{ productId?: string; name?: string; quantity?: number; product?: { imageUrl?: string } }>;
@@ -67,7 +79,9 @@ type Order = {
 type OrderCardProps = {
   order: Order;
   onStatusChange: (order: Order, newStatus: string) => void;
+  onDeliveryChange: (order: Order, deliveryStatus: string | null) => void;
   loadingId: string | null;
+  deliveryLoadingId: string | null;
   colors: { tint: string };
   cardBg: string;
   borderColor: string;
@@ -75,7 +89,18 @@ type OrderCardProps = {
   mutedColor: string;
 };
 
-function OrderCard({ order, onStatusChange, loadingId, colors, cardBg, borderColor, textColor, mutedColor }: OrderCardProps) {
+function OrderCard({
+  order,
+  onStatusChange,
+  onDeliveryChange,
+  loadingId,
+  deliveryLoadingId,
+  colors,
+  cardBg,
+  borderColor,
+  textColor,
+  mutedColor,
+}: OrderCardProps) {
   const groupedItems = groupOrderItems(order.items || []);
   const customerName = order.customer?.name || 'Walk-in';
   const timeAgo = formatTimeAgo(order.createdAt);
@@ -95,7 +120,7 @@ function OrderCard({ order, onStatusChange, loadingId, colors, cardBg, borderCol
               <Image source={{ uri: resolveImageUrl(item.imageUrl) }} style={styles.itemImage} />
             ) : (
               <View style={[styles.itemImagePlaceholder, { borderColor }]}>
-                <FontAwesome name="archive" size={16} color={mutedColor} />
+                <AppIcon name="archive" size={16} color={mutedColor} />
               </View>
             )}
             <View>
@@ -113,7 +138,7 @@ function OrderCard({ order, onStatusChange, loadingId, colors, cardBg, borderCol
         <Text style={[styles.noItems, { color: mutedColor }]}>No items</Text>
       )}
       <View style={styles.customerRow}>
-        <FontAwesome name="user" size={12} color={mutedColor} />
+        <AppIcon name="user" size={12} color={mutedColor} />
         <Text style={[styles.customerName, { color: mutedColor }]}>{customerName}</Text>
       </View>
       <View style={styles.actionsRow}>
@@ -147,7 +172,7 @@ function OrderCard({ order, onStatusChange, loadingId, colors, cardBg, borderCol
           <Pressable
             onPress={() => onStatusChange(order, ORDER_STATUSES.COMPLETED)}
             disabled={loadingId === order.id}
-            style={[styles.actionBtn, { backgroundColor: '#166534' }]}
+            style={[styles.actionBtn, { backgroundColor: colors.tint }]}
           >
             {loadingId === order.id ? (
               <ActivityIndicator size="small" color="#fff" />
@@ -157,21 +182,46 @@ function OrderCard({ order, onStatusChange, loadingId, colors, cardBg, borderCol
           </Pressable>
         )}
       </View>
+      <View style={[styles.deliveryRow, { borderTopColor: borderColor }]}>
+        <Text style={[styles.deliveryLabel, { color: mutedColor }]}>Delivery</Text>
+        <DeliveryStatusPicker
+          value={order.deliveryStatus}
+          onChange={(value) => onDeliveryChange(order, value)}
+          cardBg={cardBg}
+          borderColor={borderColor}
+          textColor={textColor}
+          mutedColor={mutedColor}
+          tintColor={colors.tint}
+          loading={deliveryLoadingId === order.id}
+          disabled={loadingId === order.id}
+        />
+      </View>
     </View>
   );
 }
 
+const KITCHEN_COLUMNS = [
+  { key: ORDER_STATUSES.RECEIVED, label: 'Received' },
+  { key: ORDER_STATUSES.PREPARING, label: 'Preparing' },
+  { key: ORDER_STATUSES.READY, label: 'Ready' },
+] as const;
+
 export default function OrdersScreen() {
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
 
   const shopType = activeTenant?.metadata?.shopType;
-  const isRestaurant = shopType === SHOP_TYPES.RESTAURANT;
+  const isShop = resolveBusinessType(activeTenant?.businessType) === 'shop';
+  const isRestaurant = isShop && shopType === SHOP_TYPES.RESTAURANT;
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [deliveryLoadingId, setDeliveryLoadingId] = useState<string | null>(null);
+
+  const { searchValue } = useSmartSearch();
+  useRegisterPageSearch({ scope: 'orders', placeholder: SEARCH_PLACEHOLDERS.ORDERS });
+  const debouncedSearch = useDebounce(searchValue, 400);
 
   const today = new Date().toISOString().split('T')[0];
 
@@ -188,7 +238,7 @@ export default function OrdersScreen() {
     return res;
   }, [isRestaurant, statusFilter, today]);
 
-  const { data: response, isLoading, refetch, isRefetching } = useQuery({
+  const { data: response, isLoading, isError, error, refetch, isRefetching } = useQuery({
     queryKey: ['orders', activeTenantId, statusFilter, today],
     queryFn: fetchOrders,
     enabled: !!activeTenantId && isRestaurant && hasFeature('orders'),
@@ -199,9 +249,8 @@ export default function OrdersScreen() {
   const updateStatusMutation = useMutation({
     mutationFn: ({ orderId, orderStatus }: { orderId: string; orderStatus: string }) =>
       saleService.updateOrderStatus(orderId, orderStatus),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['orders'] });
-      queryClient.invalidateQueries({ queryKey: ['sales'] });
+    onSuccess: async (_, variables) => {
+      await refreshAfterOrderChange(queryClient);
       setLoadingId(null);
       Alert.alert('Success', `Order moved to ${ORDER_STATUS_LABELS[variables.orderStatus] || variables.orderStatus}`);
     },
@@ -219,25 +268,92 @@ export default function OrdersScreen() {
     [updateStatusMutation]
   );
 
-  const orders = (response?.data || []) as Order[];
-  const onRefresh = useCallback(() => refetch(), [refetch]);
+  const updateDeliveryMutation = useMutation({
+    mutationFn: ({ orderId, deliveryStatus }: { orderId: string; deliveryStatus: string | null }) =>
+      saleService.updateDeliveryStatus(orderId, deliveryStatus),
+    onSuccess: async () => {
+      await refreshAfterOrderChange(queryClient);
+      setDeliveryLoadingId(null);
+      Alert.alert('Success', 'Delivery status updated');
+    },
+    onError: (error: any) => {
+      setDeliveryLoadingId(null);
+      Alert.alert('Error', error?.response?.data?.error || error?.message || 'Failed to update delivery');
+    },
+  });
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
+  const handleDeliveryChange = useCallback(
+    (order: Order, deliveryStatus: string | null) => {
+      setDeliveryLoadingId(order.id);
+      updateDeliveryMutation.mutate({ orderId: order.id, deliveryStatus });
+    },
+    [updateDeliveryMutation]
+  );
+
+  const orders = useMemo(() => {
+    const list = (response?.data || []) as Order[];
+    if (!debouncedSearch.trim()) return list;
+    return list.filter((order) =>
+      matchesSearchQuery(debouncedSearch, [order.saleNumber, order.customer?.name])
+    );
+  }, [response, debouncedSearch]);
+  const rawOrders = useMemo(() => ((response?.data || []) as Order[]), [response]);
+  const ordersByStatus = useMemo(() => {
+    const map: Record<string, Order[]> = {
+      [ORDER_STATUSES.RECEIVED]: [],
+      [ORDER_STATUSES.PREPARING]: [],
+      [ORDER_STATUSES.READY]: [],
+    };
+    orders.forEach((order) => {
+      if (order.orderStatus && map[order.orderStatus]) {
+        map[order.orderStatus].push(order);
+      }
+    });
+    return map;
+  }, [orders]);
+  const statusCounts = useMemo(
+    () => ({
+      received: ordersByStatus[ORDER_STATUSES.RECEIVED]?.length ?? 0,
+      preparing: ordersByStatus[ORDER_STATUSES.PREPARING]?.length ?? 0,
+      ready: ordersByStatus[ORDER_STATUSES.READY]?.length ?? 0,
+    }),
+    [ordersByStatus]
+  );
+  const hasActiveFilter = statusFilter !== 'all' || !!debouncedSearch.trim();
+  const onRefresh = useCallback(() => refetch(), [refetch]);
+  const showGrouped = statusFilter === 'all' && !debouncedSearch.trim();
+
+  const loadErrorMessage = useMemo(
+    () => getApiErrorMessage(error, 'Could not load kitchen orders. Pull to refresh.'),
+    [error]
+  );
+
+  const orderFilterOptions = useMemo(
+    () => [
+      { value: 'all', label: `All (${rawOrders.length})` },
+      {
+        value: ORDER_STATUSES.RECEIVED,
+        label: `${ORDER_STATUS_LABELS[ORDER_STATUSES.RECEIVED] || ORDER_STATUSES.RECEIVED} (${statusCounts.received})`,
+      },
+      {
+        value: ORDER_STATUSES.PREPARING,
+        label: `${ORDER_STATUS_LABELS[ORDER_STATUSES.PREPARING] || ORDER_STATUSES.PREPARING} (${statusCounts.preparing})`,
+      },
+      {
+        value: ORDER_STATUSES.READY,
+        label: `${ORDER_STATUS_LABELS[ORDER_STATUSES.READY] || ORDER_STATUSES.READY} (${statusCounts.ready})`,
+      },
+    ],
+    [rawOrders.length, statusCounts]
+  );
+
+  const handleOrderFilterChange = useCallback((value: string) => {
+    setStatusFilter((prev) => (prev === value && value !== 'all' ? 'all' : value));
+  }, []);
+
 
   if (!isRestaurant) {
-    return (
-      <View style={[styles.container, styles.center, { backgroundColor: bg }]}>
-        <FontAwesome name="cutlery" size={48} color={mutedColor} />
-        <Text style={[styles.emptyTitle, { color: textColor }]}>Kitchen Orders</Text>
-        <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-          Order tracking is only available for restaurant tenants.
-        </Text>
-      </View>
-    );
+    return <FeatureAccessDenied message="Kitchen orders are only available for restaurant shops." />;
   }
 
   if (!hasFeature('orders')) {
@@ -245,40 +361,80 @@ export default function OrdersScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: bg }]}>
-      <View style={[styles.filterRow, { borderColor }]}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {[ORDER_STATUSES.RECEIVED, ORDER_STATUSES.PREPARING, ORDER_STATUSES.READY].map((status) => (
-            <Pressable
-              key={status}
-              onPress={() => setStatusFilter(statusFilter === status ? 'all' : status)}
-              style={[
-                styles.filterChip,
-                { borderColor, backgroundColor: statusFilter === status ? colors.tint : 'transparent' },
-              ]}
-            >
-              <Text
-                style={[styles.filterChipText, { color: statusFilter === status ? '#fff' : textColor }]}
-              >
-                {ORDER_STATUS_LABELS[status] || status}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
-        <Pressable onPress={onRefresh} disabled={isLoading} style={[styles.refreshBtn, { borderColor }]}>
-          {isRefetching ? (
-            <ActivityIndicator size="small" color={colors.tint} />
-          ) : (
-            <FontAwesome name="refresh" size={18} color={colors.tint} />
-          )}
-        </Pressable>
-      </View>
-
-      {isLoading && orders.length === 0 ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.tint} />
-          <Text style={[styles.loadingText, { color: mutedColor }]}>Loading orders...</Text>
+    <ScreenShell style={styles.container}>
+      {showListFilters(isLoading, isError, rawOrders.length, hasActiveFilter) && (
+        <View style={[styles.filterRow, { borderColor }]}>
+          <View style={styles.filterChipsWrap}>
+            <FilterChipRow
+              options={orderFilterOptions}
+              value={statusFilter}
+              onChange={handleOrderFilterChange}
+            />
+          </View>
+          <Pressable onPress={onRefresh} disabled={isLoading} style={[styles.refreshBtn, { borderColor }]}>
+            {isRefetching ? (
+              <ActivityIndicator size="small" color={colors.tint} />
+            ) : (
+              <AppIcon name="refresh" size={18} color={colors.tint} />
+            )}
+          </Pressable>
         </View>
+      )}
+
+      {isLoading && !response ? (
+        <ListLoadingState message="Loading orders..." />
+      ) : isError ? (
+        <ListErrorState title="Failed to load orders" message={loadErrorMessage} onRetry={refetch} />
+      ) : showGrouped ? (
+        <ScrollView
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={colors.tint} />
+          }
+        >
+          {orders.length === 0 ? (
+            <View style={styles.empty}>
+              <AppIcon name="cutlery" size={48} color={mutedColor} />
+              <Text style={[styles.emptyTitle, { color: textColor }]}>No active orders</Text>
+              <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
+                New orders from POS will appear here
+              </Text>
+            </View>
+          ) : (
+            KITCHEN_COLUMNS.map((col) => {
+              const columnOrders = ordersByStatus[col.key] ?? [];
+              return (
+                <View key={col.key} style={styles.kitchenSection}>
+                  <View style={styles.kitchenSectionHeader}>
+                    <Text style={[styles.kitchenSectionTitle, { color: textColor }]}>{col.label}</Text>
+                    <View style={[styles.kitchenCountBadge, { backgroundColor: colors.tint + '20' }]}>
+                      <Text style={[styles.kitchenCountText, { color: colors.tint }]}>{columnOrders.length}</Text>
+                    </View>
+                  </View>
+                  {columnOrders.length === 0 ? (
+                    <Text style={[styles.kitchenSectionEmpty, { color: mutedColor }]}>No orders</Text>
+                  ) : (
+                    columnOrders.map((item) => (
+                      <OrderCard
+                        key={item.id}
+                        order={item}
+                        onStatusChange={handleStatusChange}
+                        onDeliveryChange={handleDeliveryChange}
+                        loadingId={loadingId}
+                        deliveryLoadingId={deliveryLoadingId}
+                        colors={colors}
+                        cardBg={cardBg}
+                        borderColor={borderColor}
+                        textColor={textColor}
+                        mutedColor={mutedColor}
+                      />
+                    ))
+                  )}
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
       ) : (
         <FlatList
           data={orders}
@@ -287,7 +443,9 @@ export default function OrdersScreen() {
             <OrderCard
               order={item}
               onStatusChange={handleStatusChange}
+              onDeliveryChange={handleDeliveryChange}
               loadingId={loadingId}
+              deliveryLoadingId={deliveryLoadingId}
               colors={colors}
               cardBg={cardBg}
               borderColor={borderColor}
@@ -301,7 +459,7 @@ export default function OrdersScreen() {
           }
           ListEmptyComponent={
             <View style={styles.empty}>
-              <FontAwesome name="cutlery" size={48} color={mutedColor} />
+              <AppIcon name="cutlery" size={48} color={mutedColor} />
               <Text style={[styles.emptyTitle, { color: textColor }]}>No active orders</Text>
               <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
                 New orders from POS will appear here
@@ -310,7 +468,7 @@ export default function OrdersScreen() {
           }
         />
       )}
-    </View>
+    </ScreenShell>
   );
 }
 
@@ -321,9 +479,14 @@ const styles = StyleSheet.create({
   filterRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 12,
+    paddingRight: 12,
+    paddingVertical: 4,
     borderBottomWidth: 1,
     gap: 8,
+  },
+  filterChipsWrap: {
+    flex: 1,
+    minWidth: 0,
   },
   filterChip: {
     paddingHorizontal: 14,
@@ -387,6 +550,28 @@ const styles = StyleSheet.create({
   },
   customerName: { fontSize: 12 },
   actionsRow: { flexDirection: 'row', gap: 8 },
+  deliveryRow: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    gap: 8,
+  },
+  deliveryLabel: { fontSize: 12, fontWeight: '500' },
+  kitchenSection: { marginBottom: 20 },
+  kitchenSectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  kitchenSectionTitle: { fontSize: 16, fontWeight: '700' },
+  kitchenCountBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+  },
+  kitchenCountText: { fontSize: 13, fontWeight: '700' },
+  kitchenSectionEmpty: { fontSize: 13, marginBottom: 8, fontStyle: 'italic' },
   actionBtn: {
     paddingHorizontal: 16,
     paddingVertical: 10,

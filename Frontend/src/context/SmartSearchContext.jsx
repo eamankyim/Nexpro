@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
 import { SEARCH_PLACEHOLDERS } from '@/constants';
 
 const SmartSearchContext = createContext(null);
@@ -23,14 +23,17 @@ export function SmartSearchProvider({ children }) {
   const placeholder = pageConfig?.placeholder ?? SEARCH_PLACEHOLDERS.GLOBAL;
   const scope = pageConfig?.scope ?? 'global';
 
-  const value = {
-    pageConfig,
-    placeholder,
-    scope,
-    searchValue,
-    setSearchValue,
-    setPageSearchConfig,
-  };
+  const value = useMemo(
+    () => ({
+      pageConfig,
+      placeholder,
+      scope,
+      searchValue,
+      setSearchValue,
+      setPageSearchConfig,
+    }),
+    [pageConfig, placeholder, scope, searchValue, setPageSearchConfig]
+  );
 
   return (
     <SmartSearchContext.Provider value={value}>

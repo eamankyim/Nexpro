@@ -81,7 +81,7 @@ In **Settings** → **Environment Variables**, add:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://user:pass@host:5432/db?sslmode=require` |
+| `DATABASE_URL` | PostgreSQL connection string (**production** Neon / server DB — separate from demo) | `Backend/.env.production` on team machines; Vercel `shopwise_backend` |
 | `JWT_SECRET` | Secret for JWT signing | `openssl rand -base64 32` |
 | `JWT_EXPIRE` | Token expiry | `7d` |
 | `CORS_ORIGIN` | Allowed frontend origins (comma‑separated) | `https://myapp.africanbusinesssuite.com,https://africanbusinesssuite.com` |
@@ -96,7 +96,19 @@ Add these for **Production** (and **Preview** if you use branch deploys).
 
 ### 2.3.1 Database migrations (do not skip)
 
-Whenever backend code adds or changes database columns, run migrations against the **same** database as `DATABASE_URL` **before or immediately after** that code reaches production. From a machine that can reach Postgres:
+**Two databases:**
+
+| Target | Vercel project | `DATABASE_URL` |
+|--------|----------------|----------------|
+| Local + **demo-api** | `nexpro-backend` | Demo Neon (`ep-dry-wildflower-...`) in `Backend/.env` |
+| **Production API** | `shopwise_backend` | Production Neon (`ep-sweet-hall-...`) or VPS Postgres in `Backend/.env.production` |
+
+- Demo sync: `npm run db:sync-vercel` (from `Backend/.env`)
+- Production Vercel sync: `npm run db:restore-production-vercel` (from `Backend/.env.production`)
+
+Run migrations on **each** database when schema changes (demo first, then production).
+
+Whenever backend code adds or changes database columns, run migrations against the **matching** database **before or immediately after** deploy. From a machine that can reach Postgres:
 
 ```bash
 cd Backend && npm run migrate

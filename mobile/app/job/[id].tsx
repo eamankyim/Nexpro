@@ -10,13 +10,18 @@ import {
   Alert,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { jobService } from '@/services/jobService';
-import { useTheme } from '@/context/ThemeContext';
-import Colors from '@/constants/Colors';
+import { DetailCard, DetailLoading, DetailNotFound, DetailRow } from '@/components/EntityDetailLayout';
+import { ScreenShell } from '@/components/ScreenShell';
+import { useScreenColors } from '@/hooks/useScreenColors';
 import { CURRENCY } from '@/constants';
+import { formatCurrency } from '@/utils/formatCurrency';
+import { parseApiEntity } from '@/utils/parseApiListResponse';
+import { refreshAfterJobChange } from '@/utils/queryInvalidation';
+import { DeliveryStatusPicker } from '@/components/DeliveryStatusPicker';
 
 type TabKey = 'details' | 'services' | 'attachments' | 'activities';
 
@@ -25,11 +30,6 @@ function formatDate(dateStr?: string): string {
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return '—';
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function formatCurrency(value: number | string | null | undefined): string {
-  const numValue = typeof value === 'number' ? value : parseFloat(String(value ?? 0)) || 0;
-  return `${CURRENCY.SYMBOL} ${numValue.toFixed(CURRENCY.DECIMAL_PLACES)}`;
 }
 
 function normalizeStatus(status?: string): string {
@@ -49,16 +49,9 @@ export default function JobDetailsScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor } = useScreenColors();
   const [activeTab, setActiveTab] = useState<TabKey>('details');
   const [actionsOpen, setActionsOpen] = useState(false);
-
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: ['job', id],
@@ -67,18 +60,32 @@ export default function JobDetailsScreen() {
     staleTime: 60 * 1000,
   });
 
-  const job = useMemo(() => (data?.data || data || null) as any, [data]);
+  const job = useMemo(() => parseApiEntity<any>(data), [data]);
 
   const updateStatusMutation = useMutation({
     mutationFn: (status: string) => jobService.updateJob(String(id), { status }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['job', id] });
-      queryClient.invalidateQueries({ queryKey: ['jobs'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    onSuccess: async () => {
+      await refreshAfterJobChange(queryClient);
       setActionsOpen(false);
     },
     onError: (err: any) => {
       Alert.alert('Update failed', err?.message || 'Could not update job');
+    },
+  });
+
+  const updateDeliveryStatusMutation = useMutation({
+    mutationFn: (deliveryStatus: string | null) =>
+      jobService.updateDeliveryStatus(String(id), deliveryStatus),
+    onSuccess: async () => {
+      await refetch();
+      queryClient.invalidateQueries({ queryKey: ['deliveries-queue'] });
+      await refreshAfterJobChange(queryClient);
+    },
+    onError: (err: any) => {
+      Alert.alert(
+        'Update failed',
+        err?.response?.data?.message || err?.message || 'Could not update delivery status'
+      );
     },
   });
 
@@ -98,33 +105,24 @@ export default function JobDetailsScreen() {
   const attachments = Array.isArray(job?.attachments) ? job.attachments : [];
   const activities = Array.isArray(job?.statusHistory) ? job.statusHistory : [];
 
+  if (isLoading) return <DetailLoading title="Job details" />;
+  if (!job) return <DetailNotFound title="Job details" entityLabel="Job" />;
+
   return (
-    <View style={[styles.container, { backgroundColor: bg }]}>
+    <ScreenShell style={styles.container}>
       <Stack.Screen
         options={{
           headerShown: true,
           title: job?.jobNumber || 'Job details',
           headerRight: () => (
             <Pressable onPress={() => setActionsOpen(true)} style={styles.headerActionBtn}>
-              <FontAwesome name="ellipsis-v" size={18} color={colors.tint} />
+              <AppIcon name="ellipsis-v" size={18} color={colors.tint} />
             </Pressable>
           ),
         }}
       />
 
-      {isLoading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.tint} />
-        </View>
-      ) : !job ? (
-        <View style={styles.center}>
-          <Text style={[styles.emptyTitle, { color: textColor }]}>Job not found</Text>
-          <Pressable onPress={() => refetch()} style={[styles.retryBtn, { backgroundColor: colors.tint }]}>
-            <Text style={styles.retryBtnText}>Retry</Text>
-          </Pressable>
-        </View>
-      ) : (
-        <>
+      <>
           <View style={[styles.tabRow, { borderBottomColor: borderColor }]}>
             {(['details', 'services', 'attachments', 'activities'] as TabKey[]).map((tab) => (
               <Pressable
@@ -140,7 +138,7 @@ export default function JobDetailsScreen() {
           </View>
 
           <ScrollView contentContainerStyle={styles.content}>
-            <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
+            <DetailCard>
               {/* Keep title as block, per request */}
               <Text style={[styles.sectionTitle, { color: textColor }]}>Title</Text>
               <Text style={[styles.titleValue, { color: textColor }]}>{job.title || '—'}</Text>
@@ -148,13 +146,21 @@ export default function JobDetailsScreen() {
               {activeTab === 'details' && (
                 <View style={styles.detailList}>
                   {detailRows.map((row) => (
-                    <View key={row.label} style={[styles.detailRow, { borderBottomColor: borderColor }]}>
-                      <Text style={[styles.detailLabel, { color: mutedColor }]}>{row.label}</Text>
-                      <Text style={[styles.detailValue, { color: textColor }]} numberOfLines={1}>
-                        {row.value}
-                      </Text>
-                    </View>
+                    <DetailRow key={row.label} label={row.label} value={row.value} />
                   ))}
+                  <DetailRow label="Delivery status">
+                    <DeliveryStatusPicker
+                      value={job?.deliveryStatus}
+                      onChange={(nextStatus) => updateDeliveryStatusMutation.mutate(nextStatus)}
+                      cardBg={cardBg}
+                      borderColor={borderColor}
+                      textColor={textColor}
+                      mutedColor={mutedColor}
+                      tintColor={colors.tint}
+                      loading={updateDeliveryStatusMutation.isPending}
+                      disabled={normalizeStatus(job?.status) !== 'completed'}
+                    />
+                  </DetailRow>
                 </View>
               )}
 
@@ -164,16 +170,18 @@ export default function JobDetailsScreen() {
                   {services.length === 0 ? (
                     <Text style={[styles.emptyText, { color: mutedColor }]}>No service items</Text>
                   ) : (
-                    services.map((item: any, i: number) => (
-                      <View key={`${item?.id || i}`} style={[styles.itemRow, { borderBottomColor: borderColor }]}>
-                        <Text style={[styles.itemName, { color: textColor }]} numberOfLines={1}>
-                          {item?.description || item?.name || 'Item'} x{item?.quantity || 1}
-                        </Text>
-                        <Text style={[styles.itemAmount, { color: textColor }]}>
-                          {formatCurrency((item?.unitPrice || item?.price || 0) * (item?.quantity || 1))}
-                        </Text>
-                      </View>
-                    ))
+                    services.map((item: any, i: number) => {
+                      const qty = item?.quantity || 1;
+                      const lineTotal =
+                        (item?.unitPrice || item?.price || 0) * qty;
+                      return (
+                        <DetailRow
+                          key={`${item?.id || i}`}
+                          label={`${item?.description || item?.name || 'Item'} × ${qty}`}
+                          value={formatCurrency(lineTotal)}
+                        />
+                      );
+                    })
                   )}
                 </View>
               )}
@@ -185,12 +193,11 @@ export default function JobDetailsScreen() {
                     <Text style={[styles.emptyText, { color: mutedColor }]}>No attachments</Text>
                   ) : (
                     attachments.map((a: any, i: number) => (
-                      <View key={`${a?.id || i}`} style={[styles.detailRow, { borderBottomColor: borderColor }]}>
-                        <Text style={[styles.detailLabel, { color: mutedColor }]}>File {i + 1}</Text>
-                        <Text style={[styles.detailValue, { color: textColor }]} numberOfLines={1}>
-                          {a?.name || a?.filename || 'Attachment'}
-                        </Text>
-                      </View>
+                      <DetailRow
+                        key={`${a?.id || i}`}
+                        label={`File ${i + 1}`}
+                        value={a?.name || a?.filename || 'Attachment'}
+                      />
                     ))
                   )}
                 </View>
@@ -203,22 +210,18 @@ export default function JobDetailsScreen() {
                     <Text style={[styles.emptyText, { color: mutedColor }]}>No activity yet</Text>
                   ) : (
                     activities.map((act: any, i: number) => (
-                      <View key={`${act?.id || i}`} style={[styles.activityRow, { borderBottomColor: borderColor }]}>
-                        <Text style={[styles.activityTitle, { color: textColor }]}>
-                          {prettyStatus(act?.toStatus || act?.status || 'updated')}
-                        </Text>
-                        <Text style={[styles.activityMeta, { color: mutedColor }]}>
-                          {formatDate(act?.createdAt)}
-                        </Text>
-                      </View>
+                      <DetailRow
+                        key={`${act?.id || i}`}
+                        label={prettyStatus(act?.toStatus || act?.status || 'updated')}
+                        value={formatDate(act?.createdAt)}
+                      />
                     ))
                   )}
                 </View>
               )}
-            </View>
+            </DetailCard>
           </ScrollView>
-        </>
-      )}
+      </>
 
       <Modal visible={actionsOpen} transparent animationType="slide" onRequestClose={() => setActionsOpen(false)}>
         <Pressable style={styles.sheetOverlay} onPress={() => setActionsOpen(false)}>
@@ -253,7 +256,7 @@ export default function JobDetailsScreen() {
           </Pressable>
         </Pressable>
       </Modal>
-    </View>
+    </ScreenShell>
   );
 }
 

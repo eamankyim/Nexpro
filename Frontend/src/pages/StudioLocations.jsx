@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -17,6 +18,15 @@ import { useSmartSearch } from '../context/SmartSearchContext';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 import studioLocationService from '../services/studioLocationService';
+import userService from '../services/userService';
+import { resolveImageUrl } from '../utils/fileUtils';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
@@ -63,12 +73,13 @@ const locationSchema = z.object({
   postalCode: z.string().optional(),
   phone: z.string().optional(),
   email: z.string().email('Invalid email').optional().or(z.literal('')),
-  managerName: z.string().optional(),
+  managerUserId: z.string().optional(),
   isActive: z.boolean().default(true),
   isDefault: z.boolean().optional(),
 });
 
 const StudioLocations = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isManager } = useAuth();
   const { refreshLocations } = useStudioLocation();
   const { isMobile } = useResponsive();
@@ -82,6 +93,10 @@ const StudioLocations = () => {
   const [editing, setEditing] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [teamMembers, setTeamMembers] = useState([]);
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState('');
+  const logoInputRef = useRef(null);
 
   const form = useForm({
     resolver: zodResolver(locationSchema),
@@ -95,11 +110,25 @@ const StudioLocations = () => {
       postalCode: '',
       phone: '',
       email: '',
-      managerName: '',
+      managerUserId: '',
       isActive: true,
       isDefault: false,
     },
   });
+
+  const loadTeamMembers = useCallback(async () => {
+    try {
+      const response = await userService.getAll({ limit: 200, isActive: 'true' });
+      const list = Array.isArray(response?.data) ? response.data : response?.data?.data || [];
+      setTeamMembers(list.filter((u) => u.isActive !== false));
+    } catch {
+      setTeamMembers([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isModalOpen) loadTeamMembers();
+  }, [isModalOpen, loadTeamMembers]);
 
   const fetchLocations = useCallback(async () => {
     try {
@@ -151,10 +180,12 @@ const StudioLocations = () => {
         postalCode: row.postalCode || '',
         phone: row.phone || '',
         email: row.email || '',
-        managerName: row.managerName || '',
+        managerUserId: row.managerUserId || row.manager?.id || '',
         isActive: row.isActive ?? true,
         isDefault: row.isDefault ?? false,
       });
+      setLogoPreview(row.logoUrl ? resolveImageUrl(row.logoUrl) : '');
+      setLogoFile(null);
       setIsModalOpen(true);
     },
     [form]
@@ -188,9 +219,9 @@ const StudioLocations = () => {
         ),
       },
       {
-        key: 'managerName',
+        key: 'manager',
         label: 'Manager',
-        render: (_, record) => record?.managerName || '—',
+        render: (_, record) => record?.manager?.name || record?.manager?.email || '—',
       },
       {
         key: 'isActive',
@@ -233,7 +264,7 @@ const StudioLocations = () => {
     [handleEdit, isManager]
   );
 
-  const handleCreate = () => {
+  const handleCreate = useCallback(() => {
     setEditing(null);
     form.reset({
       name: '',
@@ -245,24 +276,49 @@ const StudioLocations = () => {
       postalCode: '',
       phone: '',
       email: '',
-      managerName: '',
+      managerUserId: '',
       isActive: true,
       isDefault: false,
     });
+    setLogoPreview('');
+    setLogoFile(null);
     setIsModalOpen(true);
-  };
+  }, [form]);
+
+  useEffect(() => {
+    if (searchParams.get('add') !== '1') return;
+    handleCreate();
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('add');
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams, handleCreate]);
 
   const onSubmit = async (data) => {
     try {
       setIsSubmitting(true);
+      const payload = {
+        ...data,
+        managerUserId: data.managerUserId || null,
+        email: data.email || null,
+        phone: data.phone || null,
+      };
+      let savedId = editing?.id;
       if (editing) {
-        await studioLocationService.update(editing.id, data);
+        const res = await studioLocationService.update(editing.id, payload);
+        savedId = res?.data?.id || res?.id || editing.id;
         showSuccess('Studio updated');
       } else {
-        await studioLocationService.create(data);
+        const res = await studioLocationService.create(payload);
+        savedId = res?.data?.id || res?.id;
         showSuccess('Studio added');
       }
+      if (logoFile && savedId) {
+        await studioLocationService.uploadLogo(savedId, logoFile);
+      }
       setIsModalOpen(false);
+      setLogoFile(null);
       fetchLocations();
       refreshLocations();
     } catch (error) {
@@ -270,6 +326,17 @@ const StudioLocations = () => {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleLogoSelect = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showError('Please choose an image file');
+      return;
+    }
+    setLogoFile(file);
+    setLogoPreview(URL.createObjectURL(file));
   };
 
   const handleDelete = async () => {
@@ -375,6 +442,60 @@ const StudioLocations = () => {
                     </FormItem>
                   )}
                 />
+
+                <div className="rounded-lg border border-border p-4 space-y-3">
+                  <FormLabel>Studio logo (optional)</FormLabel>
+                  <p className="text-sm text-muted-foreground">
+                    Used on invoices and customer documents for this studio.
+                  </p>
+                  {logoPreview ? (
+                    <img
+                      src={logoPreview}
+                      alt="Studio logo"
+                      className="max-h-20 max-w-[180px] object-contain border border-border rounded-md p-2"
+                    />
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      ref={logoInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleLogoSelect}
+                    />
+                    <Button type="button" variant="outline" size="sm" onClick={() => logoInputRef.current?.click()}>
+                      {logoPreview ? 'Change logo' : 'Upload logo'}
+                    </Button>
+                    {logoPreview ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setLogoFile(null);
+                          setLogoPreview('');
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+
+                <FormField
+                  control={form.control}
+                  name="address"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Address (optional)</FormLabel>
+                      <FormControl>
+                        <Input placeholder="Street address" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
                 <div className="grid grid-cols-2 gap-4">
                   <FormField
                     control={form.control}
@@ -405,17 +526,60 @@ const StudioLocations = () => {
                 </div>
                 <FormField
                   control={form.control}
-                  name="managerName"
+                  name="email"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>Manager (optional)</FormLabel>
+                      <FormLabel>Business email (optional)</FormLabel>
                       <FormControl>
-                        <Input {...field} />
+                        <Input type="email" placeholder="studio@example.com" {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
                 />
+
+                <FormField
+                  control={form.control}
+                  name="managerUserId"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Manager (optional)</FormLabel>
+                      <Select
+                        value={field.value || '__none__'}
+                        onValueChange={(v) => field.onChange(v === '__none__' ? '' : v)}
+                      >
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select team member" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="__none__">No manager assigned</SelectItem>
+                          {teamMembers.map((member) => (
+                            <SelectItem key={member.id} value={member.id}>
+                              {member.name || member.email}
+                              {member.role ? ` (${member.role})` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                {editing && !editing.isDefault ? (
+                  <FormField
+                    control={form.control}
+                    name="isDefault"
+                    render={({ field }) => (
+                      <FormItem className="flex items-center justify-between border rounded-lg p-4">
+                        <FormLabel>Default studio</FormLabel>
+                        <Switch checked={field.value} onCheckedChange={field.onChange} />
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
                 <FormField
                   control={form.control}
                   name="isActive"

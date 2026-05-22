@@ -48,6 +48,7 @@ import POSNumpad from './POSNumpad';
 import { useResponsive } from '../../hooks/useResponsive';
 import { useDebounce } from '../../hooks/useDebounce';
 import { CURRENCY } from '../../constants';
+import { parseDecimalInput } from '../../utils/formatNumber';
 import { showSuccess, showError } from '../../utils/toast';
 import customerService from '../../services/customerService';
 
@@ -345,7 +346,7 @@ const POSScanMode = ({
   // Handle proceed to payment
   const handleProceedToPayment = useCallback(() => {
     setCurrentStep(STEPS.PAYMENT);
-    setAmountTendered(totals.total.toString());
+    setAmountTendered(totals.total.toFixed(CURRENCY.DECIMAL_PLACES));
   }, [totals.total]);
 
   // Handle payment confirmation
@@ -377,7 +378,7 @@ const POSScanMode = ({
         })),
         customerId,
         paymentMethod,
-        amountPaid: parseFloat(amountTendered) || totals.total,
+        amountPaid: parseDecimalInput(amountTendered) || totals.total,
         metadata: {
           scanMode: true,
           customerPhone,
@@ -414,11 +415,7 @@ const POSScanMode = ({
             });
         }
 
-        if (result.isQueued) {
-          showSuccess('Sale saved offline. Will sync when connected.');
-        } else {
-          showSuccess('Sale completed!');
-        }
+        showSuccess('Sale completed!');
       }
     } catch (error) {
       console.error('Payment processing error:', error);
@@ -459,7 +456,7 @@ const POSScanMode = ({
   }, []);
 
   // Calculate change
-  const parsedAmount = parseFloat(amountTendered) || 0;
+  const parsedAmount = parseDecimalInput(amountTendered) || 0;
   const change = Math.max(0, parsedAmount - totals.total);
   const isPaymentValid = parsedAmount >= totals.total;
 

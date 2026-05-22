@@ -24,9 +24,57 @@ logger.info('API', 'Base URL:', API_BASE_URL);
 
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api`,
-  headers: { 'Content-Type': 'application/json' },
+  headers: {
+    'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+  },
   timeout: 30000,
 });
+
+let cachedToken: string | null | undefined;
+let cachedTenantId: string | null | undefined;
+let cachedStudioLocationId: string | null | undefined;
+let cachedShopId: string | null | undefined;
+
+const getCachedToken = async () => {
+  if (cachedToken !== undefined) return cachedToken;
+  cachedToken = await SecureStore.getItemAsync(STORAGE_KEYS.token);
+  return cachedToken;
+};
+
+const getCachedStorageValue = async (
+  currentValue: string | null | undefined,
+  key: string,
+  setValue: (value: string | null) => void
+) => {
+  if (currentValue !== undefined) return currentValue;
+  const value = await AsyncStorage.getItem(key);
+  setValue(value);
+  return value;
+};
+
+export const setApiAuthToken = (token: string | null) => {
+  cachedToken = token;
+};
+
+export const setApiTenantContext = (tenantId: string | null) => {
+  cachedTenantId = tenantId;
+};
+
+export const setApiStudioLocationContext = (studioLocationId: string | null) => {
+  cachedStudioLocationId = studioLocationId;
+};
+
+export const setApiShopContext = (shopId: string | null) => {
+  cachedShopId = shopId;
+};
+
+export const clearApiRequestContext = () => {
+  cachedToken = null;
+  cachedTenantId = null;
+  cachedStudioLocationId = null;
+  cachedShopId = null;
+};
 
 // Request cancellation map for canceling stale requests
 const cancelTokenSources = new Map<string, CancelTokenSource>();
@@ -68,15 +116,40 @@ api.interceptors.request.use(
   async (config) => {
     logger.debug('API', `→ ${config.method?.toUpperCase()} ${config.url}`);
 
-    const token = await SecureStore.getItemAsync('token');
+    const token = await getCachedToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
 
     if (!isPublicEndpoint(config.url)) {
-      const tenantId = await AsyncStorage.getItem(STORAGE_KEYS.ACTIVE_TENANT_ID);
+      const tenantId = await getCachedStorageValue(
+        cachedTenantId,
+        STORAGE_KEYS.ACTIVE_TENANT_ID,
+        setApiTenantContext
+      );
       if (tenantId) {
         config.headers['x-tenant-id'] = tenantId;
+        const studioLocationId = await getCachedStorageValue(
+          cachedStudioLocationId,
+          STORAGE_KEYS.ACTIVE_STUDIO_LOCATION_ID,
+          setApiStudioLocationContext
+        );
+        if (studioLocationId) {
+          config.headers['x-studio-location-id'] = studioLocationId;
+        } else {
+          delete config.headers['x-studio-location-id'];
+        }
+        const shopId = await getCachedStorageValue(
+          cachedShopId,
+          STORAGE_KEYS.ACTIVE_SHOP_ID,
+          setApiShopContext
+        );
+        const isShopAccessRequest = String(config.url || '').includes('/shops/access');
+        if (shopId && !isShopAccessRequest) {
+          config.headers['x-shop-id'] = shopId;
+        } else {
+          delete config.headers['x-shop-id'];
+        }
       } else {
         logger.warn('API', 'No activeTenantId for tenant-scoped request:', config.url);
       }
@@ -125,6 +198,7 @@ api.interceptors.response.use(
     if (status === 401) {
       logger.info('API', '401 Unauthorized - clearing token');
       await SecureStore.deleteItemAsync('token');
+      setApiAuthToken(null);
     }
 
     return Promise.reject(error);

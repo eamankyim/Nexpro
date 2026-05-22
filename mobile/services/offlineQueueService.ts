@@ -20,11 +20,12 @@ function generateClientId(): string {
 
 export const offlineQueueService = {
   async queueSale(payload: object): Promise<string> {
-    const clientId = generateClientId();
+    const payloadWithClientId = payload as { clientId?: string };
+    const clientId = payloadWithClientId.clientId || generateClientId();
     const pending: PendingSale = {
       localId: clientId,
       clientId,
-      payload,
+      payload: { ...payloadWithClientId, clientId },
       createdAt: new Date().toISOString(),
     };
     const list = await this.getPendingSales();

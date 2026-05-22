@@ -13,7 +13,13 @@ export default {
       resizeMode: 'contain',
       backgroundColor: '#166534',
     },
-    ios: { supportsTablet: true },
+    ios: {
+      supportsTablet: true,
+      infoPlist: {
+        NSCameraUsageDescription: 'African Business Suite uses the camera to scan products and attach business images when you choose to use those features.',
+        NSPhotoLibraryUsageDescription: 'African Business Suite uses your photo library to upload logos, profile photos, receipts, and other business images you choose.',
+      },
+    },
     android: {
       adaptiveIcon: {
         foregroundImage: './assets/images/adaptive-icon.png',
@@ -26,7 +32,7 @@ export default {
       output: 'static',
       favicon: './assets/images/favicon.png',
     },
-    plugins: ['expo-router', 'expo-secure-store'],
+    plugins: ['expo-router', 'expo-secure-store', 'expo-audio'],
     experiments: { typedRoutes: true },
     extra: {
       apiUrl: process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5001',

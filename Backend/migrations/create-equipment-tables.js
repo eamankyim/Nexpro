@@ -38,6 +38,7 @@ const createEquipmentTables = async () => {
       CREATE TABLE IF NOT EXISTS equipment (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         "tenantId" UUID NOT NULL REFERENCES tenants(id) ON UPDATE CASCADE ON DELETE CASCADE,
+        "shopId" UUID REFERENCES shops(id) ON UPDATE CASCADE ON DELETE SET NULL,
         "categoryId" UUID REFERENCES equipment_categories(id) ON UPDATE CASCADE ON DELETE SET NULL,
         name VARCHAR(255) NOT NULL,
         description TEXT,
@@ -59,6 +60,7 @@ const createEquipmentTables = async () => {
     await sequelize.query(`
       CREATE INDEX IF NOT EXISTS equipment_categories_tenant_idx ON equipment_categories("tenantId");
       CREATE INDEX IF NOT EXISTS equipment_tenant_idx ON equipment("tenantId");
+      CREATE INDEX IF NOT EXISTS equipment_shop_idx ON equipment("shopId");
       CREATE INDEX IF NOT EXISTS equipment_category_idx ON equipment("categoryId");
       CREATE INDEX IF NOT EXISTS equipment_status_idx ON equipment(status);
       CREATE INDEX IF NOT EXISTS equipment_vendor_idx ON equipment("vendorId");

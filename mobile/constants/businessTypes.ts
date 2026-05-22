@@ -5,7 +5,7 @@
 
 export const CORE_BUSINESS_TYPES = {
   SHOP: 'shop',
-  STUDIO: 'printing_press',
+  STUDIO: 'studio',
   PHARMACY: 'pharmacy',
 } as const;
 
@@ -24,7 +24,7 @@ export type BusinessOption = {
   label: string;
   description: string;
   group: string;
-  coreType: 'shop' | 'printing_press' | 'pharmacy';
+  coreType: 'shop' | 'studio' | 'pharmacy';
   services?: string[];
 };
 
@@ -59,7 +59,7 @@ export function findBusinessOptionById(id: string | undefined | null): BusinessO
  * Get the core business type for a given business sub-type.
  * Falls back to 'shop' when the sub-type is unknown (matches web).
  */
-export function getCoreTypeForBusinessSubType(id: string | undefined | null): 'shop' | 'printing_press' | 'pharmacy' {
+export function getCoreTypeForBusinessSubType(id: string | undefined | null): 'shop' | 'studio' | 'pharmacy' {
   const option = findBusinessOptionById(id);
   if (option?.coreType) return option.coreType;
   return CORE_BUSINESS_TYPES.SHOP;

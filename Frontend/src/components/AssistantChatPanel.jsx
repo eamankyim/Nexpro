@@ -7,29 +7,42 @@ import assistantService from '@/services/assistantService';
 import { showError } from '@/utils/toast';
 import { cn } from '@/lib/utils';
 import { formatAssistantMessage } from '@/utils/assistantMessageFormatter';
+import {
+  ASSISTANT_BUSINESS_PROMPTS,
+  ASSISTANT_DRAFT_PROMPTS,
+  ASSISTANT_SUPPORT_PROMPTS,
+} from '@/constants/assistantPrompts';
 
-const SUGGESTED_PROMPTS = [
-  'How many customers do I have this month?',
-  'Predict next month sales',
-  'Summarize this month\'s performance',
-];
-
-const HOW_TO_PROMPTS = [
-  'How do I create an expense?',
-  'How do I create a quote?',
-  'How do I record a payment on an invoice?',
-];
-
-const MARKETING_PROMPTS = [
-  'Draft a promotional email for my customers (subject + plain text for Marketing)',
-  'How do I send a promotion to all customers in ABS?',
-];
+function PromptList({ title, prompts, onSelect, loading }) {
+  return (
+    <>
+      <p className="text-xs font-medium text-foreground pt-1">{title}</p>
+      <ul className="space-y-2">
+        {prompts.map((prompt) => (
+          <li key={prompt}>
+            <button
+              type="button"
+              onClick={() => onSelect(prompt)}
+              disabled={loading}
+              className={cn(
+                'text-left text-sm w-full px-3 py-2 rounded-lg border border-gray-200',
+                'bg-muted hover:bg-muted/80 text-foreground',
+                'disabled:opacity-50 disabled:pointer-events-none'
+              )}
+            >
+              {prompt}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
 
 /**
- * AssistantChatPanel - Floating chat panel for the AI business assistant.
- * 70% viewport height, positioned bottom-right; not a full-height side drawer.
+ * Floating ABS Assistant chat panel (web).
  */
-export default function AssistantChatPanel({ open, onOpenChange }) {
+export default function AssistantChatPanel({ open, onOpenChange, pageContext }) {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
@@ -69,7 +82,7 @@ export default function AssistantChatPanel({ open, onOpenChange }) {
 
     try {
       const conversation = [...messages, userMessage];
-      const result = await assistantService.chat(conversation);
+      const result = await assistantService.chat(conversation, { pageContext });
       const assistantContent = result?.message ?? result?.error ?? 'No response from the assistant.';
       setMessages((prev) => [
         ...prev,
@@ -82,7 +95,7 @@ export default function AssistantChatPanel({ open, onOpenChange }) {
     } finally {
       setLoading(false);
     }
-  }, [inputValue, loading, messages]);
+  }, [inputValue, loading, messages, pageContext, scrollToBottom]);
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -107,7 +120,7 @@ export default function AssistantChatPanel({ open, onOpenChange }) {
       />
       <div
         role="dialog"
-        aria-label="AI Assistant"
+        aria-label="ABS Assistant"
         className={cn(
           'fixed z-50 flex flex-col w-full max-w-md h-[70vh] max-h-[70vh]',
           'right-4 bottom-4 left-4 sm:left-auto',
@@ -116,7 +129,7 @@ export default function AssistantChatPanel({ open, onOpenChange }) {
         )}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 shrink-0">
-          <h2 className="text-base font-semibold">AI Assistant</h2>
+          <h2 className="text-base font-semibold">ABS Assistant</h2>
           <Button
             type="button"
             variant="ghost"
@@ -136,65 +149,26 @@ export default function AssistantChatPanel({ open, onOpenChange }) {
           {messages.length === 0 ? (
             <div className="space-y-4">
               <p className="text-sm text-gray-500">
-                Ask about your business data (customers, revenue, sales) or how to use the app.
+                Business insights, ABS support, and customer message drafts — powered by your workspace data.
               </p>
-              <p className="text-xs font-medium text-foreground">How do I…?</p>
-              <ul className="space-y-2">
-                {HOW_TO_PROMPTS.map((prompt) => (
-                  <li key={prompt}>
-                    <button
-                      type="button"
-                      onClick={() => handleSuggestionClick(prompt)}
-                      disabled={loading}
-                      className={cn(
-                        'text-left text-sm w-full px-3 py-2 rounded-lg border border-gray-200',
-                        'bg-muted hover:bg-muted/80 text-foreground',
-                        'disabled:opacity-50 disabled:pointer-events-none'
-                      )}
-                    >
-                      {prompt}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <p className="text-xs font-medium text-foreground pt-1">Marketing &amp; customers</p>
-              <ul className="space-y-2">
-                {MARKETING_PROMPTS.map((prompt) => (
-                  <li key={prompt}>
-                    <button
-                      type="button"
-                      onClick={() => handleSuggestionClick(prompt)}
-                      disabled={loading}
-                      className={cn(
-                        'text-left text-sm w-full px-3 py-2 rounded-lg border border-gray-200',
-                        'bg-muted hover:bg-muted/80 text-foreground',
-                        'disabled:opacity-50 disabled:pointer-events-none'
-                      )}
-                    >
-                      {prompt}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              <p className="text-xs font-medium text-foreground pt-1">Data &amp; predictions</p>
-              <ul className="space-y-2">
-                {SUGGESTED_PROMPTS.map((prompt) => (
-                  <li key={prompt}>
-                    <button
-                      type="button"
-                      onClick={() => handleSuggestionClick(prompt)}
-                      disabled={loading}
-                      className={cn(
-                        'text-left text-sm w-full px-3 py-2 rounded-lg border border-gray-200',
-                        'bg-muted hover:bg-muted/80 text-foreground',
-                        'disabled:opacity-50 disabled:pointer-events-none'
-                      )}
-                    >
-                      {prompt}
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <PromptList
+                title="Business insights"
+                prompts={ASSISTANT_BUSINESS_PROMPTS}
+                onSelect={handleSuggestionClick}
+                loading={loading}
+              />
+              <PromptList
+                title="ABS support"
+                prompts={ASSISTANT_SUPPORT_PROMPTS}
+                onSelect={handleSuggestionClick}
+                loading={loading}
+              />
+              <PromptList
+                title="Draft messages"
+                prompts={ASSISTANT_DRAFT_PROMPTS}
+                onSelect={handleSuggestionClick}
+                loading={loading}
+              />
             </div>
           ) : (
             <div className="space-y-4 pb-4">
@@ -244,7 +218,7 @@ export default function AssistantChatPanel({ open, onOpenChange }) {
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Ask about your business..."
+              placeholder="Ask ABS Assistant..."
               disabled={loading}
               className="flex-1"
             />

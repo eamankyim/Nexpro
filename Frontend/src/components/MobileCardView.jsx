@@ -67,12 +67,14 @@ const MobileCardView = memo(({
   
   // Use external pagination if provided, otherwise use internal
   const pagination = externalPagination || internalPagination;
-  const setPagination = onPageChange ? 
-    (updater) => {
+  const setPagination = useCallback((updater) => {
+    if (onPageChange) {
       const newPagination = typeof updater === 'function' ? updater(pagination) : updater;
       onPageChange(newPagination);
-    } : 
-    setInternalPagination;
+      return;
+    }
+    setInternalPagination(updater);
+  }, [onPageChange, pagination]);
 
   const effectivePageSize = pagination.pageSize || pageSize;
   const totalItems = useMemo(() => externalPagination?.total ?? data.length, [externalPagination?.total, data.length]);
@@ -92,9 +94,9 @@ const MobileCardView = memo(({
     );
   }, [data, pagination.current, effectivePageSize, externalPagination]);
 
-  const handlePageChange = (newPage) => {
+  const handlePageChange = useCallback((newPage) => {
     setPagination(prev => ({ ...prev, current: newPage, pageSize }));
-  };
+  }, [pageSize, setPagination]);
 
   // Separate primary columns (first 2-3) from secondary columns
   // Filter out hidden columns (e.g. costPrice, margin on mobile)
@@ -217,12 +219,15 @@ const MobileCardView = memo(({
     );
   }
 
-  if (paginatedData.length === 0) {
+  if (!loading && data.length === 0) {
     return (
-      <div className="flex items-center justify-center p-8">
+      <div className="flex w-full min-h-[min(50dvh,28rem)] items-center justify-center px-4 py-8">
         {emptyState ? (
           <EmptyState
+            className="w-full max-w-md py-8"
             icon={emptyState.icon}
+            image={emptyState.image}
+            imageAlt={emptyState.imageAlt}
             title={emptyState.title}
             description={emptyState.description}
             primaryAction={emptyState.primaryAction}

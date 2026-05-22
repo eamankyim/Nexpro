@@ -8,19 +8,31 @@ import {
   RefreshControl,
   ActivityIndicator,
   TextInput,
-  Modal,
   ScrollView,
   Alert,
 } from 'react-native';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { FormSheetModal } from '@/components/FormSheetModal';
+import { FORM_LABELS } from '@/constants/formLabels';
+import { ListEmptyState, EmptyStateActionButton, ListActionButton } from '@/components/ListEmptyState';
+import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
+import { useSmartSearch } from '@/context/SmartSearchContext';
+import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
+import { useDebounce } from '@/hooks/useDebounce';
+import { matchesSearchQuery } from '@/utils/matchesSearchQuery';
+import { flatListStyleForEmpty, listContentStyleWhenEmpty, showListFilters } from '@/utils/listEmptyLayout';
 import { userWorkspaceService } from '@/services/userWorkspaceService';
 import { useAuth } from '@/context/AuthContext';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
-import { useTheme } from '@/context/ThemeContext';
-import Colors from '@/constants/Colors';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
+import { FilterChipRow } from '@/components/FilterChip';
+import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListResponse';
+import { refreshAfterTaskChange } from '@/utils/queryInvalidation';
 
 const STATUS_FILTERS = ['all', 'todo', 'in_progress', 'on_hold', 'completed'] as const;
 
@@ -37,8 +49,7 @@ type TaskRow = {
 export default function TasksScreen() {
   const router = useRouter();
   const { user, activeTenantId, hasFeature } = useAuth();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<string>('all');
   const [addOpen, setAddOpen] = useState(false);
@@ -46,21 +57,39 @@ export default function TasksScreen() {
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
 
-  const { data, isLoading, refetch, isRefetching } = useQuery({
+  const { searchValue } = useSmartSearch();
+  useRegisterPageSearch({ scope: 'tasks', placeholder: SEARCH_PLACEHOLDERS.TASKS });
+  const debouncedSearch = useDebounce(searchValue, 400);
+
+  const { data, isLoading, isError, error, refetch, isRefetching } = useQuery({
     queryKey: ['user-workspace', 'tasks', activeTenantId],
     queryFn: async () => userWorkspaceService.getTasks(),
     enabled: !!activeTenantId && hasFeature('jobAutomation') && user?.isPlatformAdmin !== true,
   });
 
+  const loadErrorMessage = useMemo(
+    () => getApiErrorMessage(error, 'Could not load tasks. Pull to refresh.'),
+    [error]
+  );
+
   const tasks: TaskRow[] = useMemo(() => {
-    const raw = data?.data;
-    return Array.isArray(raw) ? raw : [];
+    return parseApiListResponse(data);
   }, [data]);
 
   const filtered = useMemo(() => {
-    if (status === 'all') return tasks;
-    return tasks.filter((t) => (t.status || 'todo') === status);
-  }, [tasks, status]);
+    let list = status === 'all' ? tasks : tasks.filter((t) => (t.status || 'todo') === status);
+    if (!debouncedSearch.trim()) return list;
+    return list.filter((task) =>
+      matchesSearchQuery(debouncedSearch, [
+        task.title,
+        task.description,
+        task.status,
+        task.assignee?.name,
+      ])
+    );
+  }, [tasks, status, debouncedSearch]);
+
+  const hasActiveFilter = status !== 'all' || !!debouncedSearch.trim();
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -74,15 +103,15 @@ export default function TasksScreen() {
         isPrivate: false,
         assigneeId: user?.id || null,
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-workspace', 'tasks'] });
+    onSuccess: async () => {
+      await refreshAfterTaskChange(queryClient);
       setAddOpen(false);
       setTitle('');
       setDescription('');
       setDueDate('');
     },
-    onError: (e: Error & { response?: { data?: { message?: string } } }) => {
-      Alert.alert('Could not create task', e?.response?.data?.message || e?.message || 'Try again');
+    onError: (err: unknown) => {
+      Alert.alert('Could not create task', getApiErrorMessage(err, 'Try again'));
     },
   });
 
@@ -95,11 +124,14 @@ export default function TasksScreen() {
     return <FeatureAccessDenied message="Tasks are not enabled for this workspace." />;
   }
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
+  const filterOptions = useMemo(
+    () =>
+      STATUS_FILTERS.map((s) => ({
+        value: s,
+        label: s === 'all' ? 'All' : s.replace(/_/g, ' '),
+      })),
+    []
+  );
 
   const renderItem = ({ item }: { item: TaskRow }) => (
     <Pressable
@@ -128,112 +160,105 @@ export default function TasksScreen() {
   );
 
   return (
-    <View style={[styles.container, { backgroundColor: bg }]}>
-      <View style={[styles.headerRow, { borderBottomColor: borderColor }]}>
-        <Text style={[styles.screenTitle, { color: textColor }]}>Tasks</Text>
-        <Pressable onPress={() => setAddOpen(true)} style={[styles.addBtn, { backgroundColor: colors.tint }]}>
-          <FontAwesome name="plus" size={18} color="#fff" />
-        </Pressable>
-      </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsRow}>
-        {STATUS_FILTERS.map((s) => {
-          const active = status === s;
-          const label = s === 'all' ? 'All' : s.replace(/_/g, ' ');
-          return (
-            <Pressable
-              key={s}
-              onPress={() => setStatus(s)}
-              style={[
-                styles.chip,
-                { borderColor: active ? colors.tint : borderColor, backgroundColor: active ? `${colors.tint}22` : cardBg },
-              ]}
-            >
-              <Text style={{ color: active ? colors.tint : textColor, fontWeight: '600', textTransform: 'capitalize' }}>
-                {label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-
-      {isLoading && !data ? (
-        <ActivityIndicator style={{ marginTop: 24 }} color={colors.tint} />
-      ) : (
-        <FlatList
-          data={filtered}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={styles.list}
-          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={onRefresh} />}
-          ListEmptyComponent={<Text style={[styles.empty, { color: mutedColor }]}>No tasks in this filter.</Text>}
+    <ScreenShell style={styles.container}>
+      {!isLoading && !isError && tasks.length > 0 && (
+        <ListActionButton
+          label="Add Task"
+          onPress={() => setAddOpen(true)}
+          backgroundColor={colors.tint}
         />
       )}
 
-      <Modal visible={addOpen} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.sheet, { backgroundColor: cardBg, borderColor }]}>
-            <Text style={[styles.modalTitle, { color: textColor }]}>New task</Text>
-            <TextInput
-              placeholder="Title *"
-              placeholderTextColor={mutedColor}
-              value={title}
-              onChangeText={setTitle}
-              style={[styles.input, { borderColor, color: textColor }]}
-            />
-            <TextInput
-              placeholder="Description (optional)"
-              placeholderTextColor={mutedColor}
-              value={description}
-              onChangeText={setDescription}
-              multiline
-              style={[styles.input, { borderColor, color: textColor, minHeight: 80 }]}
-            />
-            <TextInput
-              placeholder="Due date YYYY-MM-DD (optional)"
-              placeholderTextColor={mutedColor}
-              value={dueDate}
-              onChangeText={setDueDate}
-              style={[styles.input, { borderColor, color: textColor }]}
-            />
-            <View style={styles.actions}>
-              <Pressable onPress={() => setAddOpen(false)} style={[styles.secondaryBtn, { borderColor }]}>
-                <Text style={{ color: textColor, fontWeight: '600' }}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                onPress={() => {
-                  if (!title.trim()) {
-                    Alert.alert('Title required');
-                    return;
-                  }
-                  createMutation.mutate();
-                }}
-                style={[styles.primaryBtn, { backgroundColor: colors.tint }]}
-              >
-                {createMutation.isPending ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryTxt}>Create</Text>}
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </View>
+      {showListFilters(isLoading, isError, tasks.length, hasActiveFilter) && (
+        <FilterChipRow options={filterOptions} value={status} onChange={setStatus} />
+      )}
+
+      {isLoading && !data ? (
+        <ListLoadingState message="Loading tasks..." />
+      ) : isError ? (
+        <ListErrorState title="Failed to load tasks" message={loadErrorMessage} onRetry={refetch} />
+      ) : (
+        <FlatList
+          style={flatListStyleForEmpty}
+          data={filtered}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={listContentStyleWhenEmpty(styles.list, filtered.length === 0)}
+          refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={onRefresh} />}
+          ListEmptyComponent={
+            <ListEmptyState
+              imageKey="TASKS"
+              title={status === 'all' ? 'No tasks yet' : 'No tasks in this filter'}
+              subtitle={status === 'all' ? 'Create a task to track work in your workspace' : 'Try another filter'}
+            >
+              {status === 'all' ? (
+                <EmptyStateActionButton
+                  label="Add Task"
+                  onPress={() => setAddOpen(true)}
+                  backgroundColor={colors.tint}
+                />
+              ) : null}
+            </ListEmptyState>
+          }
+        />
+      )}
+
+      <FormSheetModal
+        visible={addOpen}
+        title={FORM_LABELS.task.addTitle}
+        onClose={() => setAddOpen(false)}
+        footer={
+          <Pressable
+            onPress={() => {
+              if (!title.trim()) {
+                Alert.alert('Task title is required');
+                return;
+              }
+              createMutation.mutate();
+            }}
+            disabled={createMutation.isPending}
+            style={[styles.primaryBtn, { backgroundColor: colors.tint }]}
+          >
+            {createMutation.isPending ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.primaryTxt}>{FORM_LABELS.task.create}</Text>
+            )}
+          </Pressable>
+        }
+      >
+        <Text style={[styles.inputLabel, { color: textColor }]}>{FORM_LABELS.task.title}</Text>
+        <TextInput
+          placeholder="Call customer after meeting"
+          placeholderTextColor={mutedColor}
+          value={title}
+          onChangeText={setTitle}
+          style={[styles.input, { borderColor, color: textColor, backgroundColor: inputBg }]}
+        />
+        <Text style={[styles.inputLabel, { color: textColor }]}>{FORM_LABELS.task.description}</Text>
+        <TextInput
+          placeholder="What needs to be done?"
+          placeholderTextColor={mutedColor}
+          value={description}
+          onChangeText={setDescription}
+          multiline
+          style={[styles.input, { borderColor, color: textColor, minHeight: 80, textAlignVertical: 'top' }]}
+        />
+        <Text style={[styles.inputLabel, { color: textColor }]}>{FORM_LABELS.task.dueDate}</Text>
+        <TextInput
+          placeholder="YYYY-MM-DD"
+          placeholderTextColor={mutedColor}
+          value={dueDate}
+          onChangeText={setDueDate}
+          style={[styles.input, { borderColor, color: textColor, backgroundColor: inputBg }]}
+        />
+      </FormSheetModal>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  screenTitle: { fontSize: 22, fontWeight: '700' },
-  addBtn: { width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  chipsRow: { paddingHorizontal: 12, paddingVertical: 10, gap: 8, flexDirection: 'row', alignItems: 'center' },
-  chip: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1 },
   list: { padding: 12, paddingBottom: 32 },
   card: { borderRadius: 12, borderWidth: 1, padding: 14, marginBottom: 10 },
   rowTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' },
@@ -251,9 +276,10 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   modalTitle: { fontSize: 20, fontWeight: '700', marginBottom: 12 },
+  inputLabel: { fontSize: 14, fontWeight: '500', marginBottom: 8, marginTop: 4 },
   input: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 16, marginBottom: 12 },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 8 },
   secondaryBtn: { paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1 },
-  primaryBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 10, minWidth: 100, alignItems: 'center' },
+  primaryBtn: { paddingVertical: 14, paddingHorizontal: 20, borderRadius: 10, alignItems: 'center' },
   primaryTxt: { color: '#fff', fontWeight: '700' },
 });

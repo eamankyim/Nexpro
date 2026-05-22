@@ -26,6 +26,11 @@ const {
   normalizeFeatureOverrides,
   getTenantEffectiveEntitlements
 } = require('../utils/tenantEntitlements');
+const {
+  PLATFORM_TENANT_SLUG,
+  deleteTenantData,
+  deleteOrphanUsersWithoutTenants,
+} = require('../utils/deleteTenantData');
 
 const PLAN_PRICING = {
   trial: 0,
@@ -909,6 +914,60 @@ exports.getTenantAccessAudit = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: logs
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Permanently delete a tenant and all workspace data
+// @route   DELETE /api/admin/tenants/:id
+// @access  Platform admin (tenants.delete)
+exports.deleteTenant = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id, {
+      attributes: ['id', 'name', 'slug'],
+    });
+
+    if (!tenant) {
+      return res.status(404).json({
+        success: false,
+        message: 'Tenant not found',
+      });
+    }
+
+    if (tenant.slug === PLATFORM_TENANT_SLUG) {
+      return res.status(400).json({
+        success: false,
+        message: 'The platform workspace cannot be deleted.',
+      });
+    }
+
+    const confirmSlug = String(req.body?.confirmSlug || '').trim();
+    if (!confirmSlug || confirmSlug !== tenant.slug) {
+      return res.status(400).json({
+        success: false,
+        message: 'Type the tenant slug exactly to confirm deletion.',
+        code: 'CONFIRM_SLUG_REQUIRED',
+      });
+    }
+
+    await sequelize.transaction(async (tx) => {
+      await deleteTenantData(tenant.id, tx);
+      await deleteOrphanUsersWithoutTenants(tx);
+    });
+
+    console.log(
+      '[Admin] Tenant deleted tenantId=%s slug=%s by userId=%s',
+      tenant.id,
+      tenant.slug,
+      req.user?.id
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: `Tenant "${tenant.name}" and all related data were permanently deleted.`,
+      data: { id: tenant.id, slug: tenant.slug },
     });
   } catch (error) {
     next(error);

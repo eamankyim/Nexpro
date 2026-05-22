@@ -432,7 +432,8 @@ export const getJoyrideConfig = (businessType, run = false, brandPrimaryHex = '#
       disableOverlayClose: false,
       hideCloseButton: false,
       spotlightClicks: false,
-      spotlightPadding: 5
+      spotlightPadding: 5,
+      stepId: step.id,
     })),
     continuous: true,
     showProgress: true,

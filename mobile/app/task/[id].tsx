@@ -6,25 +6,31 @@ import {
   ScrollView,
   Pressable,
   ActivityIndicator,
-  TextInput,
   Modal,
   Alert,
 } from 'react-native';
-import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
+import { useLocalSearchParams } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { AppIcon } from '@/components/AppIcon';
+import { FormInput } from '@/components/FormField';
 import { userWorkspaceService } from '@/services/userWorkspaceService';
-import { useTheme } from '@/context/ThemeContext';
-import Colors from '@/constants/Colors';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
+import {
+  DetailCard,
+  DetailLoading,
+  DetailNotFound,
+  DetailRow,
+  EntityDetailHeader,
+} from '@/components/EntityDetailLayout';
+import { refreshAfterTaskChange } from '@/utils/queryInvalidation';
 
 const STATUSES = ['todo', 'in_progress', 'on_hold', 'completed'] as const;
 
 export default function TaskDetailScreen() {
-  const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor } = useScreenColors();
   const queryClient = useQueryClient();
   const [statusOpen, setStatusOpen] = useState(false);
   const [comment, setComment] = useState('');
@@ -49,9 +55,8 @@ export default function TaskDetailScreen() {
 
   const updateMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => userWorkspaceService.updateTask(String(id), payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-workspace', 'tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['user-workspace', 'task-detail', id] });
+    onSuccess: async () => {
+      await refreshAfterTaskChange(queryClient);
       setStatusOpen(false);
     },
     onError: (e: Error & { response?: { data?: { message?: string } } }) => {
@@ -61,9 +66,8 @@ export default function TaskDetailScreen() {
 
   const commentMutation = useMutation({
     mutationFn: () => userWorkspaceService.addTaskComment(String(id), { text: comment.trim() }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['user-workspace', 'task-comments', id] });
-      queryClient.invalidateQueries({ queryKey: ['user-workspace', 'tasks'] });
+    onSuccess: async () => {
+      await refreshAfterTaskChange(queryClient);
       setComment('');
     },
     onError: (e: Error & { response?: { data?: { message?: string } } }) => {
@@ -71,76 +75,41 @@ export default function TaskDetailScreen() {
     },
   });
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
-
-  const onBack = useCallback(() => router.back(), [router]);
-
-  if (isLoading) {
-    return (
-      <>
-        <Stack.Screen options={{ title: 'Task', headerShown: true }} />
-        <View style={[styles.center, { backgroundColor: bg }]}>
-          <ActivityIndicator color={colors.tint} />
-        </View>
-      </>
-    );
-  }
-
-  if (!task) {
-    return (
-      <>
-        <Stack.Screen options={{ title: 'Task', headerShown: true }} />
-        <View style={[styles.center, { backgroundColor: bg }]}>
-          <Text style={{ color: mutedColor }}>Task not found</Text>
-          <Pressable onPress={onBack} style={{ marginTop: 16 }}>
-            <Text style={{ color: colors.tint, fontWeight: '600' }}>Go back</Text>
-          </Pressable>
-        </View>
-      </>
-    );
-  }
+  if (isLoading) return <DetailLoading title="Task" />;
+  if (!task) return <DetailNotFound title="Task" entityLabel="Task" />;
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: task.title || 'Task',
-          headerShown: true,
-          headerLeft: () => (
-            <Pressable onPress={onBack} hitSlop={12} style={{ paddingHorizontal: 8, paddingVertical: 6 }}>
-              <FontAwesome name="chevron-left" size={18} color={colors.tint} />
+      <EntityDetailHeader title={task.title || 'Task'} />
+      <ScreenShell scrollable style={styles.container} contentContainerStyle={styles.content}>
+        <DetailCard>
+          <DetailRow label="Status">
+            <Pressable onPress={() => setStatusOpen(true)} style={[styles.statusRow, { borderColor }]}>
+              <Text style={[styles.statusText, { color: textColor }]}>
+                {(task.status || 'todo').replace(/_/g, ' ')}
+              </Text>
+              <AppIcon name="chevron-down" size={14} color={mutedColor} />
             </Pressable>
-          ),
-        }}
-      />
-      <ScrollView style={[styles.container, { backgroundColor: bg }]} contentContainerStyle={styles.content}>
-        <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
-          <Text style={[styles.label, { color: mutedColor }]}>Status</Text>
-          <Pressable onPress={() => setStatusOpen(true)} style={[styles.statusRow, { borderColor }]}>
-            <Text style={[styles.statusText, { color: textColor }]}>
-              {(task.status || 'todo').replace(/_/g, ' ')}
-            </Text>
-            <FontAwesome name="chevron-down" size={14} color={mutedColor} />
-          </Pressable>
+          </DetailRow>
           {task.description ? (
-            <>
-              <Text style={[styles.label, { color: mutedColor, marginTop: 12 }]}>Description</Text>
-              <Text style={{ color: textColor }}>{task.description}</Text>
-            </>
+            <DetailRow label="Description" value={task.description} />
           ) : null}
-        </View>
+          {task.dueDate ? (
+            <DetailRow label="Due date" value={String(task.dueDate).slice(0, 10)} />
+          ) : null}
+          {task.assignee?.name ? <DetailRow label="Assignee" value={task.assignee.name} /> : null}
+        </DetailCard>
 
-        <View style={[styles.card, { backgroundColor: cardBg, borderColor, marginTop: 12 }]}>
-          <Text style={[styles.label, { color: textColor, fontSize: 16, marginBottom: 8 }]}>Comments</Text>
+        <DetailCard>
+          <Text style={[styles.commentsTitle, { color: textColor }]}>Comments</Text>
           {comments.length === 0 ? (
             <Text style={{ color: mutedColor }}>No comments yet.</Text>
           ) : (
             comments.map((c: { id?: string; text?: string; createdAt?: string }, idx: number) => (
-              <View key={c.id || `c-${idx}`} style={{ paddingVertical: 8, borderTopWidth: 1, borderTopColor: borderColor }}>
+              <View
+                key={c.id || `c-${idx}`}
+                style={[styles.commentRow, { borderTopColor: borderColor }]}
+              >
                 <Text style={{ color: textColor }}>{c.text}</Text>
                 <Text style={{ color: mutedColor, fontSize: 12, marginTop: 4 }}>
                   {c.createdAt ? new Date(c.createdAt).toLocaleString() : ''}
@@ -148,12 +117,11 @@ export default function TaskDetailScreen() {
               </View>
             ))
           )}
-          <TextInput
+          <FormInput
             placeholder="Add a comment"
-            placeholderTextColor={mutedColor}
             value={comment}
             onChangeText={setComment}
-            style={[styles.input, { borderColor, color: textColor, marginTop: 12 }]}
+            multiline
           />
           <Pressable
             onPress={() => {
@@ -168,8 +136,8 @@ export default function TaskDetailScreen() {
               <Text style={{ color: '#fff', fontWeight: '700' }}>Send</Text>
             )}
           </Pressable>
-        </View>
-      </ScrollView>
+        </DetailCard>
+      </ScreenShell>
 
       <Modal visible={statusOpen} transparent animationType="fade">
         <Pressable style={styles.modalBackdrop} onPress={() => setStatusOpen(false)}>
@@ -184,7 +152,7 @@ export default function TaskDetailScreen() {
                 <Text style={{ color: textColor, textTransform: 'capitalize', fontSize: 16 }}>
                   {s.replace(/_/g, ' ')}
                 </Text>
-                {(task.status || 'todo') === s ? <FontAwesome name="check" color={colors.tint} /> : null}
+                {(task.status || 'todo') === s ? <AppIcon name="check" size={18} color={colors.tint} /> : null}
               </Pressable>
             ))}
           </View>
@@ -195,11 +163,10 @@ export default function TaskDetailScreen() {
 }
 
 const styles = StyleSheet.create({
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   container: { flex: 1 },
-  content: { padding: 16, paddingBottom: 40 },
-  card: { borderRadius: 12, borderWidth: 1, padding: 16 },
-  label: { fontSize: 12, fontWeight: '600', marginBottom: 4 },
+  content: { padding: 16, paddingBottom: 40, gap: 12 },
+  commentsTitle: { fontSize: 16, fontWeight: '700', marginBottom: 8 },
+  commentRow: { paddingVertical: 8, borderTopWidth: 1 },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -207,9 +174,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 10,
     padding: 12,
+    flex: 1,
   },
   statusText: { fontSize: 16, fontWeight: '600' },
-  input: { borderWidth: 1, borderRadius: 10, padding: 12, fontSize: 16 },
   sendBtn: { marginTop: 10, paddingVertical: 12, borderRadius: 10, alignItems: 'center' },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 },
   modalCard: { borderRadius: 12, borderWidth: 1, padding: 8 },

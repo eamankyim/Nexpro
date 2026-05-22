@@ -9,6 +9,12 @@ const { invalidateProductListCache } = require('../middleware/cache');
 const { invalidateAfterMutation } = require('../middleware/cache');
 const { getExpenseCategories } = require('../config/expenseCategories');
 const { generateExpenseNumber } = require('./expenseController');
+const {
+  applyShopReadFilter,
+  attachShopToPayload,
+  assertShopRecordAccess,
+  userCanAccessShopId,
+} = require('../utils/shopUtils');
 
 async function maybeCreateExpenseFromProductCost({ req, product }) {
   const settingsRow = await Setting.findOne({
@@ -67,8 +73,10 @@ exports.getProducts = async (req, res, next) => {
     const categoryId = req.query.categoryId;
     const isActive = req.query.isActive;
 
-    const where = applyTenantFilter(req.tenantId, {});
-    if (shopId) {
+    let where = applyTenantFilter(req.tenantId, {});
+    if (req.shopScoped) {
+      where = applyShopReadFilter(req, where);
+    } else if (shopId) {
       where.shopId = shopId;
     }
     if (categoryId) {
@@ -90,7 +98,9 @@ exports.getProducts = async (req, res, next) => {
       where,
       limit,
       offset,
-      // Include imageUrl so Products table / grid / cards can show thumbnails (details already had it via getProduct).
+      attributes: {
+        exclude: ['metadata'],
+      },
       include: [
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
         { model: ProductCategory, as: 'category', attributes: ['id', 'name'] }
@@ -133,6 +143,15 @@ exports.getProduct = async (req, res, next) => {
         success: false,
         message: 'Product not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, product);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     res.status(200).json({
@@ -400,7 +419,9 @@ exports.deleteProductCategory = async (req, res, next) => {
 // @access  Private
 exports.createProduct = async (req, res, next) => {
   try {
-    const payload = sanitizePayload(req.body);
+    const payload = sanitizePayload(
+      attachShopToPayload(req, req.body)
+    );
     const product = await Product.create({
       ...payload,
       tenantId: req.tenantId
@@ -437,7 +458,22 @@ exports.updateProduct = async (req, res, next) => {
       });
     }
 
+    try {
+      assertShopRecordAccess(req, product);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
     const payload = sanitizePayload(req.body);
+    if (payload.shopId && !userCanAccessShopId(req, payload.shopId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have access to this shop',
+      });
+    }
     const oldQuantity = parseFloat(product.quantity || 0);
     const newQuantity = parseFloat(payload.quantity || oldQuantity);
     const reorderLevel = parseFloat(product.reorderLevel || 0);
@@ -537,6 +573,15 @@ exports.deleteProduct = async (req, res, next) => {
         success: false,
         message: 'Product not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, product);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     await product.destroy();
@@ -957,7 +1002,7 @@ exports.importProducts = async (req, res, next) => {
         unit: (m.unit && String(m.unit).trim()) || 'pcs',
         isActive: m.isActive !== false,
       };
-      return sanitizePayload(rec);
+      return sanitizePayload(attachShopToPayload(req, rec));
     });
 
     const result = await bulkCreate(Product, products, {

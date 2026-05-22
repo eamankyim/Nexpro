@@ -11,20 +11,28 @@ import {
   Alert,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import {
+  DetailCard,
+  DetailLoading,
+  DetailNotFound,
+  EntityDetailHeader,
+} from '@/components/EntityDetailLayout';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
 import { leadService } from '@/services/leadService';
-import { useTheme } from '@/context/ThemeContext';
-import Colors from '@/constants/Colors';
+import { getApiErrorMessage, parseApiEntity } from '@/utils/parseApiListResponse';
+import { refreshAfterLeadChange } from '@/utils/queryInvalidation';
+import { formatStatusLabel } from '@/utils/formatLabels';
 
 const STATUSES = ['new', 'contacted', 'qualified', 'converted', 'lost'] as const;
 
 export default function LeadDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor } = useScreenColors();
   const queryClient = useQueryClient();
   const [statusOpen, setStatusOpen] = useState(false);
   const [noteOpen, setNoteOpen] = useState(false);
@@ -36,17 +44,16 @@ export default function LeadDetailScreen() {
     enabled: !!id,
   });
 
-  const lead = useMemo(() => (data?.data ?? data) as Record<string, any> | null, [data]);
+  const lead = useMemo(() => parseApiEntity<Record<string, any>>(data), [data]);
 
   const updateMutation = useMutation({
     mutationFn: (payload: Record<string, unknown>) => leadService.update(String(id), payload),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['lead', id] });
-      queryClient.invalidateQueries({ queryKey: ['leads'] });
+    onSuccess: async () => {
+      await refreshAfterLeadChange(queryClient);
       setStatusOpen(false);
     },
-    onError: (e: Error & { response?: { data?: { message?: string } } }) => {
-      Alert.alert('Update failed', e?.response?.data?.message || e?.message || 'Try again');
+    onError: (e: unknown) => {
+      Alert.alert('Update failed', getApiErrorMessage(e, 'Try again'));
     },
   });
 
@@ -56,8 +63,8 @@ export default function LeadDetailScreen() {
         type: 'note',
         notes: noteText.trim(),
       }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['lead', id] });
+    onSuccess: async () => {
+      await refreshAfterLeadChange(queryClient);
       setNoteOpen(false);
       setNoteText('');
     },
@@ -66,58 +73,20 @@ export default function LeadDetailScreen() {
     },
   });
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
-
-  const onBack = useCallback(() => router.back(), [router]);
-
-  if (isLoading) {
-    return (
-      <>
-        <Stack.Screen options={{ title: 'Lead', headerShown: true }} />
-        <View style={[styles.center, { backgroundColor: bg }]}>
-          <ActivityIndicator color={colors.tint} />
-        </View>
-      </>
-    );
-  }
-
-  if (!lead) {
-    return (
-      <>
-        <Stack.Screen options={{ title: 'Lead', headerShown: true }} />
-        <View style={[styles.center, { backgroundColor: bg }]}>
-          <Text style={{ color: mutedColor }}>Lead not found</Text>
-          <Pressable onPress={onBack} style={{ marginTop: 16 }}>
-            <Text style={{ color: colors.tint, fontWeight: '600' }}>Go back</Text>
-          </Pressable>
-        </View>
-      </>
-    );
-  }
+  if (isLoading) return <DetailLoading title="Lead" />;
+  if (!lead) return <DetailNotFound title="Lead" entityLabel="Lead" />;
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: lead.name || 'Lead',
-          headerShown: true,
-          headerLeft: () => (
-            <Pressable onPress={onBack} hitSlop={12} style={{ paddingHorizontal: 8, paddingVertical: 6 }}>
-              <FontAwesome name="chevron-left" size={18} color={colors.tint} />
-            </Pressable>
-          ),
-        }}
-      />
-      <ScrollView style={[styles.container, { backgroundColor: bg }]} contentContainerStyle={styles.content}>
-        <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
+      <EntityDetailHeader title={lead.name || 'Lead'} />
+      <ScreenShell scrollable style={styles.container} contentContainerStyle={styles.content}>
+        <DetailCard>
           <Text style={[styles.label, { color: mutedColor }]}>Status</Text>
           <Pressable onPress={() => setStatusOpen(true)} style={[styles.statusRow, { borderColor }]}>
-            <Text style={[styles.statusText, { color: textColor }]}>{lead.status || 'new'}</Text>
-            <FontAwesome name="chevron-down" size={14} color={mutedColor} />
+            <Text style={[styles.statusText, { color: textColor }]}>
+              {formatStatusLabel(lead.status || 'new')}
+            </Text>
+            <AppIcon name="chevron-down" size={14} color={mutedColor} />
           </Pressable>
           {lead.email ? (
             <>
@@ -137,7 +106,7 @@ export default function LeadDetailScreen() {
               <Text style={{ color: textColor }}>{lead.company}</Text>
             </>
           ) : null}
-        </View>
+        </DetailCard>
 
         <Pressable
           onPress={() => setNoteOpen(true)}
@@ -146,12 +115,12 @@ export default function LeadDetailScreen() {
             { backgroundColor: cardBg, borderColor, opacity: pressed ? 0.85 : 1 },
           ]}
         >
-          <FontAwesome name="sticky-note-o" size={18} color={colors.tint} />
+          <AppIcon name="sticky-note-o" size={18} color={colors.tint} />
           <Text style={[styles.noteBtnText, { color: colors.tint }]}>Add note</Text>
         </Pressable>
 
         {Array.isArray(lead.activities) && lead.activities.length > 0 ? (
-          <View style={[styles.card, { backgroundColor: cardBg, borderColor, marginTop: 12 }]}>
+          <DetailCard>
             <Text style={[styles.sectionTitle, { color: textColor }]}>Activity</Text>
             {lead.activities.slice(0, 20).map((a: { id: string; type?: string; notes?: string; createdAt?: string }) => (
               <View key={a.id} style={[styles.activityRow, { borderTopColor: borderColor }]}>
@@ -161,9 +130,9 @@ export default function LeadDetailScreen() {
                 {a.notes ? <Text style={{ color: textColor, marginTop: 4 }}>{a.notes}</Text> : null}
               </View>
             ))}
-          </View>
+          </DetailCard>
         ) : null}
-      </ScrollView>
+      </ScreenShell>
 
       <Modal visible={statusOpen} transparent animationType="fade">
         <Pressable style={styles.modalBackdrop} onPress={() => setStatusOpen(false)}>
@@ -176,7 +145,7 @@ export default function LeadDetailScreen() {
                 style={[styles.modalRow, { borderBottomColor: borderColor }]}
               >
                 <Text style={{ color: textColor, textTransform: 'capitalize', fontSize: 16 }}>{s}</Text>
-                {(lead.status || 'new') === s ? <FontAwesome name="check" color={colors.tint} /> : null}
+                {(lead.status || 'new') === s ? <AppIcon name="check" size={18} color={colors.tint} /> : null}
               </Pressable>
             ))}
           </View>

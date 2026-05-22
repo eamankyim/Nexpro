@@ -52,7 +52,12 @@ const csrfProtection = (req, res, next) => {
   
   const origin = req.get('Origin');
   const referer = req.get('Referer');
-  
+
+  // React Native / native apps do not send Origin or Referer (JWT auth, not cookies).
+  if (!origin && !referer) {
+    return next();
+  }
+
   // Validate origin
   if (!isOriginAllowed(origin, referer)) {
     console.warn('[CSRF] Blocked request from invalid origin:', {

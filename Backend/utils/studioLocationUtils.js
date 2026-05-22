@@ -73,6 +73,11 @@ const applyStudioLocationFilter = (req, where = {}) => {
     return { ...where, studioLocationId: req.studioLocationFilterId };
   }
 
+  // Workspace-wide users viewing "all locations" should not exclude rows with null studioLocationId.
+  if (req.canAccessAllStudioLocations) {
+    return where;
+  }
+
   if (req.allowedStudioLocationIds?.length) {
     return { ...where, studioLocationId: { [Op.in]: req.allowedStudioLocationIds } };
   }

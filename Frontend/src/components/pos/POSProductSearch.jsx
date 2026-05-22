@@ -6,7 +6,7 @@
  * Uses html5-qrcode. Optimized for offline using cached products.
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useNavigate } from 'react-router-dom';
 import { Search, Camera, X, Package, AlertCircle, Loader2, List, LayoutGrid, Plus, Circle } from 'lucide-react';
@@ -49,7 +49,7 @@ const formatCurrency = (amount) => {
 /**
  * Product search result item
  */
-const ProductItem = ({ product, onSelect, quantityInCart = 0 }) => {
+const ProductItem = memo(function ProductItem({ product, onSelect, quantityInCart = 0 }) {
   const trackStock = product.trackStock !== false;
   const qty = Number(product.quantityOnHand);
   const reorderLevel = Number(product.reorderLevel);
@@ -136,15 +136,15 @@ const ProductItem = ({ product, onSelect, quantityInCart = 0 }) => {
       </div>
         </div>
       </TooltipTrigger>
-      <TooltipContent>Add to sale</TooltipContent>
+      <TooltipContent>{isOutOfStock ? 'Out of stock' : 'Add to sale'}</TooltipContent>
     </Tooltip>
   );
-};
+});
 
 /**
  * Product card for grid view
  */
-const ProductCard = ({ product, onSelect, quantityInCart = 0, onAdjustQuantity, isMobile }) => {
+const ProductCard = memo(function ProductCard({ product, onSelect, quantityInCart = 0, onAdjustQuantity, isMobile }) {
   const trackStock = product.trackStock !== false;
   const qty = Number(product.quantityOnHand);
   const reorderLevel = Number(product.reorderLevel);
@@ -234,10 +234,10 @@ const ProductCard = ({ product, onSelect, quantityInCart = 0, onAdjustQuantity, 
       </div>
         </div>
       </TooltipTrigger>
-      <TooltipContent>Add to sale</TooltipContent>
+      <TooltipContent>{isOutOfStock ? 'Out of stock' : 'Add to sale'}</TooltipContent>
     </Tooltip>
   );
-};
+});
 
 /**
  * Scanner component (barcode + QR) using html5-qrcode.
@@ -983,7 +983,12 @@ const QRCodeScanner = ({
 
   // Desktop/non-continuous mode - use Dialog
   return (
-    <Dialog open={isOpen} onOpenChange={continuousMode ? undefined : onClose}>
+    <Dialog
+      open={isOpen}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
       <DialogContent className={`${continuousMode ? 'sm:w-[var(--modal-w-md)]' : 'sm:w-[var(--modal-w-sm)]'} sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)] ${isMobile ? 'p-4' : ''}`}>
         <DialogHeader className={isMobile ? 'pb-3' : ''}>
           <DialogTitle className={`flex items-center justify-between ${isMobile ? 'text-base' : ''}`}>
@@ -1468,14 +1473,6 @@ const POSProductSearch = ({
             </div>
           )}
         </div>
-
-        {/* Offline indicator */}
-        {!isOnline && (
-          <div className="mt-2 px-3 py-2 bg-yellow-50 rounded-lg text-sm text-yellow-700 flex items-center gap-2">
-            <AlertCircle className="h-4 w-4 flex-shrink-0" />
-            Searching offline cache
-          </div>
-        )}
 
         {/* Error message */}
         {searchError && (

@@ -40,6 +40,7 @@ import {
 import POSNumpad from './POSNumpad';
 import { usePOSConfig } from '../../hooks/usePOSConfig';
 import { CURRENCY } from '../../constants';
+import { parseDecimalInput } from '../../utils/formatNumber';
 
 /**
  * Format currency value (handles string decimals from API/cart)
@@ -246,7 +247,7 @@ const POSCart = ({
   }, [cartDiscount]);
 
   const handleApplyDiscount = useCallback(() => {
-    const discount = parseFloat(discountValue) || 0;
+    const discount = parseDecimalInput(discountValue) || 0;
     
     if (isCartDiscount) {
       onUpdateCartDiscount(discount);

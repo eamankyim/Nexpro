@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,39 +9,74 @@ import {
   ScrollView,
   Alert,
   FlatList,
+  DeviceEventEmitter,
 } from 'react-native';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { ListEmptyState, EmptyStateActionButton } from '@/components/ListEmptyState';
 import { useAuth } from '@/context/AuthContext';
+import { useShopOptional } from '@/context/ShopContext';
 import { useCart } from '@/context/CartContext';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { productService } from '@/services/productService';
 import { jobService } from '@/services/jobService';
 import { customerService } from '@/services/customerService';
-import { STUDIO_TYPES, CURRENCY } from '@/constants';
-import Colors from '@/constants/Colors';
-import { useTheme } from '@/context/ThemeContext';
+import { userWorkspaceService } from '@/services/userWorkspaceService';
+import { CURRENCY, resolveBusinessType } from '@/constants';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
+import { FormInput, FormLabel } from '@/components/FormField';
 import { BarcodeScanner } from '@/components/BarcodeScanner';
 import { parseProductQRPayload, isProductQRCode } from '@/utils/productQR';
+import { parseApiEntity, parseApiListResponse } from '@/utils/parseApiListResponse';
 import { useDebounce } from '@/hooks/useDebounce';
 import { resolveImageUrl } from '@/utils/fileUtils';
+import { refreshAfterJobChange, QUERY_STALE } from '@/utils/queryInvalidation';
+import { OPEN_SCAN_CAMERA_EVENT } from '@/utils/scanTabEvents';
+import { getOutOfStockMessage, isProductOutOfStock } from '@/utils/productStock';
 import { Image } from 'expo-image';
+
+type JobItemDraft = {
+  category: string;
+  description: string;
+  quantity: string;
+  unitPrice: string;
+};
+
+const createDefaultJobItem = (): JobItemDraft => ({
+  category: '',
+  description: '',
+  quantity: '1',
+  unitPrice: '',
+});
 
 export default function ScanScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
-  const { getItemCount, addItem } = useCart();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
+  const { items: cartItems, getItemCount, addItem, removeItem } = useCart();
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const cartItemCount = getItemCount();
+  const selectedProductIds = useMemo(
+    () => new Set(cartItems.map((item) => item.productId)),
+    [cartItems]
+  );
+  const selectedCartItemByProductId = useMemo(() => {
+    const map = new Map<string, string>();
+    cartItems.forEach((item) => {
+      map.set(item.productId, item.id);
+    });
+    return map;
+  }, [cartItems]);
 
   const businessType = activeTenant?.businessType ?? 'printing_press';
-  const isStudio = STUDIO_TYPES.includes(businessType);
+  const isStudio = resolveBusinessType(businessType) === 'studio';
   const productQueriesEnabled =
-    !!activeTenantId && !isStudio && hasFeature('products');
+    !!activeTenantId && !isStudio && hasFeature('products') && (!shopContext?.isShopWorkspace || !!activeShopId);
   const studioCustomerQueryEnabled =
     !!activeTenantId && isStudio && hasFeature('crm');
 
@@ -53,7 +88,19 @@ export default function ScanScreen() {
     title: '',
     description: '',
     dueDate: '',
+    priority: 'medium',
+    assignedTo: '',
+    items: [createDefaultJobItem()],
   });
+
+  useEffect(() => {
+    const subscription = DeviceEventEmitter.addListener(OPEN_SCAN_CAMERA_EVENT, () => {
+      if (!isStudio) {
+        setScannerVisible(true);
+      }
+    });
+    return () => subscription.remove();
+  }, [isStudio]);
 
   // Debounce search query for unified search (name or barcode)
   const debouncedSearch = useDebounce(searchQuery, 500);
@@ -63,19 +110,19 @@ export default function ScanScreen() {
 
   // Fetch default product list (most frequent/popular products) when no search
   const { data: defaultProductsResponse, isLoading: loadingDefaultProducts } = useQuery({
-    queryKey: ['products', 'default', activeTenantId],
+    queryKey: ['products', 'default', activeTenantId, activeShopId],
     queryFn: () =>
       productService.getProducts({
         limit: 30,
         isActive: true,
       }),
     enabled: productQueriesEnabled && !debouncedSearch && !scannedProduct,
-    staleTime: 2 * 60 * 1000, // 2 minutes
+    staleTime: QUERY_STALE.LIST,
     gcTime: 60 * 60 * 1000, // 1 hour
   });
 
   const { data: productsResponse, isLoading: loadingProducts } = useQuery({
-    queryKey: ['products', 'search', activeTenantId, debouncedSearch],
+    queryKey: ['products', 'search', activeTenantId, activeShopId, debouncedSearch],
     queryFn: () =>
       productService.getProducts({
         search: debouncedSearch || undefined,
@@ -87,12 +134,12 @@ export default function ScanScreen() {
       !!debouncedSearch &&
       debouncedSearch.length >= 2 &&
       !scannedProduct,
-    staleTime: 2 * 60 * 1000, // 2 minutes
+    staleTime: QUERY_STALE.LIST,
     gcTime: 60 * 60 * 1000, // 1 hour
   });
 
   const { data: barcodeResponse, isLoading: loadingBarcode, isError: barcodeError } = useQuery({
-    queryKey: ['product', 'barcode', activeTenantId, debouncedSearch],
+    queryKey: ['product', 'barcode', activeTenantId, activeShopId, debouncedSearch],
     queryFn: () => productService.getProductByBarcode(debouncedSearch),
     enabled:
       !!activeTenantId &&
@@ -106,7 +153,7 @@ export default function ScanScreen() {
   });
 
   const { data: customersResponse } = useQuery({
-    queryKey: ['customers', 'list', activeTenantId],
+    queryKey: ['customers', 'list', activeTenantId, activeShopId],
     queryFn: () => customerService.getCustomers({ limit: 50 }),
     enabled: studioCustomerQueryEnabled,
     // Customer list for dropdowns can be stale for 5 minutes
@@ -114,6 +161,29 @@ export default function ScanScreen() {
     // Keep in cache for 2 hours
     gcTime: 2 * 60 * 60 * 1000,
   });
+
+  const { data: membersResponse } = useQuery({
+    queryKey: ['task-members', activeTenantId],
+    queryFn: () => userWorkspaceService.getTaskMembers(),
+    enabled: !!activeTenantId && isStudio,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 2 * 60 * 60 * 1000,
+  });
+
+  const jobTotal = useMemo(
+    () =>
+      jobForm.items.reduce((sum, item) => {
+        const quantity = Math.max(0, parseFloat(item.quantity) || 0);
+        const unitPrice = Math.max(0, parseFloat(item.unitPrice) || 0);
+        return sum + quantity * unitPrice;
+      }, 0),
+    [jobForm.items]
+  );
+
+  const jobQuantity = useMemo(
+    () => jobForm.items.reduce((sum, item) => sum + Math.max(0, parseFloat(item.quantity) || 0), 0),
+    [jobForm.items]
+  );
 
   const createJobMutation = useMutation({
     mutationFn: (d: {
@@ -123,11 +193,29 @@ export default function ScanScreen() {
       dueDate?: string;
       status?: string;
       priority?: string;
+      assignedTo?: string;
+      quotedPrice?: number;
+      finalPrice?: number;
+      jobType?: string;
+      quantity?: number;
+      items?: Array<{
+        category: string;
+        description?: string;
+        quantity: number;
+        unitPrice: number;
+      }>;
     }) => jobService.createJob(d),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['jobs'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-      setJobForm({ customerId: '', title: '', description: '', dueDate: '' });
+    onSuccess: async () => {
+      await refreshAfterJobChange(queryClient);
+      setJobForm({
+        customerId: '',
+        title: '',
+        description: '',
+        dueDate: '',
+        priority: 'medium',
+        assignedTo: '',
+        items: [createDefaultJobItem()],
+      });
       Alert.alert('Success', 'Job created successfully');
     },
     onError: (err: Error) => {
@@ -166,19 +254,62 @@ export default function ScanScreen() {
       Alert.alert('Error', 'Please enter a title');
       return;
     }
+    const items = jobForm.items.map((item) => ({
+      category: item.category.trim(),
+      description: item.description.trim() || item.category.trim(),
+      quantity: Math.max(1, parseFloat(item.quantity) || 0),
+      unitPrice: Math.max(0, parseFloat(item.unitPrice) || 0),
+    }));
+    if (items.some((item) => !item.category || item.quantity < 1 || item.unitPrice <= 0)) {
+      Alert.alert('Error', 'Add at least one priced line item with category, quantity, and unit price');
+      return;
+    }
     createJobMutation.mutate({
       customerId: jobForm.customerId,
       title: jobForm.title.trim(),
       description: jobForm.description.trim() || undefined,
       dueDate: jobForm.dueDate || undefined,
       status: 'new',
-      priority: 'medium',
+      priority: jobForm.priority,
+      assignedTo: jobForm.assignedTo || undefined,
+      jobType: items[0]?.category,
+      quantity: Math.max(1, Math.round(jobQuantity || 1)),
+      quotedPrice: jobTotal,
+      finalPrice: jobTotal,
+      items,
     });
-  }, [jobForm, createJobMutation]);
+  }, [jobForm, createJobMutation, jobQuantity, jobTotal]);
+
+  const handleUpdateJobItem = useCallback(
+    (index: number, field: keyof JobItemDraft, value: string) => {
+      setJobForm((prev) => ({
+        ...prev,
+        items: prev.items.map((item, itemIndex) =>
+          itemIndex === index ? { ...item, [field]: value } : item
+        ),
+      }));
+    },
+    []
+  );
+
+  const handleAddJobItem = useCallback(() => {
+    setJobForm((prev) => ({ ...prev, items: [...prev.items, createDefaultJobItem()] }));
+  }, []);
+
+  const handleRemoveJobItem = useCallback((index: number) => {
+    setJobForm((prev) => ({
+      ...prev,
+      items: prev.items.length === 1 ? prev.items : prev.items.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  }, []);
 
   const handleProductSelect = useCallback(
     (selectedProduct: any) => {
-      addItem({
+      if (isProductOutOfStock(selectedProduct)) {
+        Alert.alert('Out of stock', getOutOfStockMessage(selectedProduct.name));
+        return;
+      }
+      const added = addItem({
         id: selectedProduct.id,
         name: selectedProduct.name,
         sellingPrice: selectedProduct.sellingPrice,
@@ -187,26 +318,42 @@ export default function ScanScreen() {
         imageUrl: selectedProduct.imageUrl,
         sku: selectedProduct.sku,
         barcode: selectedProduct.barcode,
+        trackStock: selectedProduct.trackStock,
+        quantityOnHand: selectedProduct.quantityOnHand,
       });
+      if (!added) {
+        Alert.alert('Out of stock', getOutOfStockMessage(selectedProduct.name));
+        return;
+      }
       setSearchQuery('');
       setScannedProduct(null);
     },
     [addItem]
   );
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const inputBg = resolvedTheme === 'dark' ? '#27272a' : '#f3f4f6';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
+  const handleProductToggle = useCallback(
+    (selectedProduct: { id: string }) => {
+      const cartItemId = selectedCartItemByProductId.get(selectedProduct.id);
+      if (cartItemId) {
+        removeItem(cartItemId);
+        return;
+      }
+      handleProductSelect(selectedProduct);
+    },
+    [handleProductSelect, removeItem, selectedCartItemByProductId]
+  );
+
+  const handleOpenProducts = useCallback(() => {
+    router.push('/(tabs)/products');
+  }, [router]);
 
   // Match web app pattern: response?.data || []
   const customers = (customersResponse?.data || []) as Array<{ id: string; name: string }>;
+  const members = parseApiListResponse<{ id: string; name: string; email?: string }>(membersResponse);
   
   // Default products (when no search) - sorted by stock quantity (most stock = likely most popular)
   const defaultProducts = useMemo(() => {
-    const products = (defaultProductsResponse?.data || []) as Array<{
+    const products = parseApiListResponse<{
       id: string;
       name: string;
       sellingPrice?: number;
@@ -217,7 +364,7 @@ export default function ScanScreen() {
       quantityOnHand?: number;
       trackStock?: boolean;
       imageUrl?: string;
-    }>;
+    }>(defaultProductsResponse);
     // Sort by stock quantity (descending), then by name (ascending). Made-to-order (trackStock false) treated as high stock.
     return [...products].sort((a, b) => {
       const stockA = a.trackStock === false ? Infinity : (a.quantityOnHand ?? 0);
@@ -230,7 +377,7 @@ export default function ScanScreen() {
   }, [defaultProductsResponse]);
 
   // Products from search
-  const products = (productsResponse?.data || []) as Array<{
+  const products = parseApiListResponse<{
     id: string;
     name: string;
     sellingPrice?: number;
@@ -241,12 +388,20 @@ export default function ScanScreen() {
     quantityOnHand?: number;
     trackStock?: boolean;
     imageUrl?: string;
-  }>;
-  
+  }>(productsResponse);
+
   // Single product from barcode search
-  const barcodeProduct = barcodeResponse?.data?.data || barcodeResponse?.data || barcodeResponse;
-  const foundBarcodeProduct =
-    !barcodeError && barcodeProduct && typeof barcodeProduct === 'object' && !Array.isArray(barcodeProduct);
+  const barcodeProduct = parseApiEntity<{
+    id: string;
+    name: string;
+    sellingPrice?: number;
+    costPrice?: number;
+    price?: number;
+    barcode?: string;
+    sku?: string;
+    imageUrl?: string;
+  }>(barcodeResponse);
+  const foundBarcodeProduct = !barcodeError && !!barcodeProduct;
   
   // Determine which products to show
   const productsToShow = debouncedSearch ? products : defaultProducts;
@@ -266,12 +421,12 @@ export default function ScanScreen() {
 
   if (isStudio) {
     return (
-      <ScrollView style={[styles.container, { backgroundColor: bg }]} contentContainerStyle={styles.content}>
+      <ScreenShell scrollable style={styles.container} contentContainerStyle={styles.content}>
         <Text style={[styles.title, { color: textColor }]}>New job</Text>
-        <Text style={[styles.subtitle, { color: mutedColor }]}>Create a new job or quote</Text>
+        <Text style={[styles.subtitle, { color: mutedColor }]}>Create a studio job with pricing and assignment</Text>
 
         <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
-          <Text style={[styles.label, { color: mutedColor }]}>Customer *</Text>
+          <FormLabel>Customer</FormLabel>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.customerScroll}>
             {customers.map((c: { id: string; name: string }) => (
               <Pressable
@@ -299,31 +454,145 @@ export default function ScanScreen() {
             <Text style={[styles.hint, { color: mutedColor }]}>Add customers first in the Customers tab</Text>
           )}
 
-          <Text style={[styles.label, { color: mutedColor }]}>Title *</Text>
-          <TextInput
-            style={[styles.input, { color: textColor, borderColor }]}
+          <FormLabel>Title</FormLabel>
+          <FormInput
             placeholder="Job title"
-            placeholderTextColor={mutedColor}
             value={jobForm.title}
             onChangeText={(t) => setJobForm((p) => ({ ...p, title: t }))}
           />
-          <Text style={[styles.label, { color: mutedColor }]}>Description</Text>
-          <TextInput
-            style={[styles.input, styles.textArea, { color: textColor, borderColor }]}
+          <FormLabel optional>Description</FormLabel>
+          <FormInput
             placeholder="Notes or description"
-            placeholderTextColor={mutedColor}
             value={jobForm.description}
             onChangeText={(t) => setJobForm((p) => ({ ...p, description: t }))}
             multiline
           />
-          <Text style={[styles.label, { color: mutedColor }]}>Due date</Text>
-          <TextInput
-            style={[styles.input, { color: textColor, borderColor }]}
+          <FormLabel optional>Due date</FormLabel>
+          <FormInput
             placeholder="YYYY-MM-DD"
-            placeholderTextColor={mutedColor}
             value={jobForm.dueDate}
             onChangeText={(t) => setJobForm((p) => ({ ...p, dueDate: t }))}
           />
+          <FormLabel>Priority</FormLabel>
+          <View style={styles.chipRow}>
+            {['low', 'medium', 'high', 'urgent'].map((priority) => (
+              <Pressable
+                key={priority}
+                onPress={() => setJobForm((p) => ({ ...p, priority }))}
+                style={[
+                  styles.customerChip,
+                  { borderColor },
+                  jobForm.priority === priority && { backgroundColor: colors.tint, borderColor: colors.tint },
+                ]}
+              >
+                <Text style={[styles.customerChipText, { color: jobForm.priority === priority ? '#fff' : textColor }]}>
+                  {priority.replace('_', ' ')}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <FormLabel optional>Assignee</FormLabel>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.customerScroll}>
+            <Pressable
+              onPress={() => setJobForm((p) => ({ ...p, assignedTo: '' }))}
+              style={[
+                styles.customerChip,
+                { borderColor },
+                !jobForm.assignedTo && { backgroundColor: colors.tint, borderColor: colors.tint },
+              ]}
+            >
+              <Text style={[styles.customerChipText, { color: !jobForm.assignedTo ? '#fff' : textColor }]}>
+                Unassigned
+              </Text>
+            </Pressable>
+            {members.map((member) => (
+              <Pressable
+                key={member.id}
+                onPress={() => setJobForm((p) => ({ ...p, assignedTo: member.id }))}
+                style={[
+                  styles.customerChip,
+                  { borderColor },
+                  jobForm.assignedTo === member.id && { backgroundColor: colors.tint, borderColor: colors.tint },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.customerChipText,
+                    { color: jobForm.assignedTo === member.id ? '#fff' : textColor },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {member.name}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: textColor, marginBottom: 0 }]}>Line items</Text>
+            <Pressable onPress={handleAddJobItem} style={[styles.secondaryBtn, { borderColor }]}>
+              <AppIcon name="plus" size={14} color={colors.tint} />
+              <Text style={[styles.secondaryBtnText, { color: colors.tint }]}>Add item</Text>
+            </Pressable>
+          </View>
+          {jobForm.items.map((item, index) => {
+            const lineTotal =
+              Math.max(0, parseFloat(item.quantity) || 0) * Math.max(0, parseFloat(item.unitPrice) || 0);
+            return (
+              <View key={index} style={[styles.lineItemCard, { borderColor, backgroundColor: inputBg }]}>
+                <View style={styles.lineItemHeader}>
+                  <Text style={[styles.lineItemTitle, { color: textColor }]}>Item {index + 1}</Text>
+                  {jobForm.items.length > 1 ? (
+                    <Pressable onPress={() => handleRemoveJobItem(index)} style={styles.removeBtn}>
+                      <AppIcon name="times" size={14} color="#ef4444" />
+                    </Pressable>
+                  ) : null}
+                </View>
+                <FormLabel>Category</FormLabel>
+                <FormInput
+                  placeholder="e.g., Banner, Flyer, Business cards"
+                  value={item.category}
+                  onChangeText={(t) => handleUpdateJobItem(index, 'category', t)}
+                />
+                <FormLabel optional>Description</FormLabel>
+                <FormInput
+                  placeholder="Size, material, or service details"
+                  value={item.description}
+                  onChangeText={(t) => handleUpdateJobItem(index, 'description', t)}
+                />
+                <View style={styles.lineItemFieldsRow}>
+                  <View style={styles.lineItemField}>
+                    <FormLabel>Qty</FormLabel>
+                    <FormInput
+                      placeholder="1"
+                      value={item.quantity}
+                      onChangeText={(t) => handleUpdateJobItem(index, 'quantity', t)}
+                      keyboardType="numeric"
+                    />
+                  </View>
+                  <View style={styles.lineItemField}>
+                    <FormLabel>Unit price</FormLabel>
+                    <FormInput
+                      placeholder="0.00"
+                      value={item.unitPrice}
+                      onChangeText={(t) => handleUpdateJobItem(index, 'unitPrice', t)}
+                      keyboardType="decimal-pad"
+                    />
+                  </View>
+                </View>
+                <Text style={[styles.lineTotal, { color: textColor }]}>
+                  Line total: {CURRENCY.SYMBOL} {lineTotal.toFixed(CURRENCY.DECIMAL_PLACES)}
+                </Text>
+              </View>
+            );
+          })}
+          <View style={[styles.totalRow, { borderColor }]}>
+            <Text style={[styles.totalLabel, { color: mutedColor }]}>Job total</Text>
+            <Text style={[styles.totalValue, { color: colors.tint }]}>
+              {CURRENCY.SYMBOL} {jobTotal.toFixed(CURRENCY.DECIMAL_PLACES)}
+            </Text>
+          </View>
           <Pressable
             onPress={handleCreateJob}
             disabled={createJobMutation.isPending}
@@ -336,7 +605,7 @@ export default function ScanScreen() {
             )}
           </Pressable>
         </View>
-      </ScrollView>
+      </ScreenShell>
     );
   }
 
@@ -348,7 +617,7 @@ export default function ScanScreen() {
           onPress={() => router.push('/(tabs)/cart')}
           style={[styles.cartFAB, { backgroundColor: colors.tint }]}
         >
-          <FontAwesome name="shopping-cart" size={20} color="#fff" />
+          <AppIcon name="shopping-cart" size={20} color="#fff" />
           {cartItemCount > 0 && (
             <View style={styles.cartBadge}>
               <Text style={styles.cartBadgeText}>{cartItemCount > 99 ? '99+' : cartItemCount}</Text>
@@ -357,16 +626,16 @@ export default function ScanScreen() {
         </Pressable>
       )}
 
-      <ScrollView style={[styles.container, { backgroundColor: bg }]} contentContainerStyle={styles.content}>
-        <Text style={[styles.title, { color: textColor }]}>Add products</Text>
+      <ScreenShell scrollable style={styles.container} contentContainerStyle={styles.content}>
+        <Text style={[styles.title, { color: textColor }]}>Select Product</Text>
         <Text style={[styles.subtitle, { color: mutedColor }]}>
-          Search by name, scan barcode, or browse products
+          Search, scan, or browse products to add them to cart
         </Text>
 
         {/* Unified Search Bar */}
         <View style={[styles.searchCard, { backgroundColor: cardBg, borderColor }]}>
           <View style={[styles.searchRow, { backgroundColor: inputBg }]}>
-            <FontAwesome name="search" size={18} color={mutedColor} style={styles.searchIcon} />
+            <AppIcon name="search" size={18} color={mutedColor} style={styles.searchIcon} />
             <TextInput
               style={[styles.searchInput, { color: textColor }]}
               placeholder="Search by name or barcode..."
@@ -391,14 +660,14 @@ export default function ScanScreen() {
                 }}
                 style={styles.clearBtn}
               >
-                <FontAwesome name="times" size={16} color={mutedColor} />
+                <AppIcon name="times" size={16} color={mutedColor} />
               </Pressable>
             )}
             <Pressable
               onPress={() => setScannerVisible(true)}
               style={[styles.scanBtn, { backgroundColor: colors.tint }]}
             >
-              <FontAwesome name="camera" size={18} color="#fff" />
+              <AppIcon name="camera" size={18} color="#fff" />
             </Pressable>
           </View>
         </View>
@@ -441,10 +710,18 @@ export default function ScanScreen() {
               </Text>
             )}
             <Pressable
-              style={[styles.addBtn, { backgroundColor: colors.tint }]}
+              style={[
+                styles.addBtn,
+                {
+                  backgroundColor: isProductOutOfStock(barcodeProduct) ? mutedColor : colors.tint,
+                },
+              ]}
+              disabled={isProductOutOfStock(barcodeProduct)}
               onPress={() => handleProductSelect(barcodeProduct)}
             >
-              <Text style={styles.addBtnText}>Add to cart</Text>
+              <Text style={styles.addBtnText}>
+                {isProductOutOfStock(barcodeProduct) ? 'Out of stock' : 'Add to cart'}
+              </Text>
             </Pressable>
           </View>
         )}
@@ -466,57 +743,89 @@ export default function ScanScreen() {
                 keyExtractor={(item) => item.id}
                 scrollEnabled={false}
                 columnWrapperStyle={styles.productRow}
-                renderItem={({ item: p }) => (
-                  <Pressable
-                    onPress={() => handleProductSelect(p)}
-                    style={[styles.productCard, { backgroundColor: cardBg, borderColor }]}
-                  >
-                    {/* Product Image */}
-                    <View style={styles.productImageContainer}>
-                      {p.imageUrl ? (
-                        <Image
-                          source={{ uri: resolveImageUrl(p.imageUrl) }}
-                          style={styles.productImage}
-                          contentFit="cover"
-                          transition={200}
-                          placeholder={require('@/assets/images/icon.png')}
-                        />
-                      ) : (
-                        <View style={[styles.productImagePlaceholder, { backgroundColor: inputBg }]}>
-                          <FontAwesome name="archive" size={20} color={mutedColor} />
-                        </View>
-                      )}
-                    </View>
-                    <View style={styles.productInfo}>
-                      <Text style={[styles.productName, { color: textColor }]} numberOfLines={2}>
-                        {p.name}
-                      </Text>
-                      <Text style={[styles.productPrice, { color: colors.tint }]}>
-                        {CURRENCY.SYMBOL}{' '}
-                        {Number(p.sellingPrice ?? p.price ?? p.costPrice ?? 0).toFixed(CURRENCY.DECIMAL_PLACES)}
-                      </Text>
-                      {p.trackStock === false ? (
-                        <Text style={[styles.productStock, { color: mutedColor }]}>
-                          Made to order
-                        </Text>
-                      ) : p.quantityOnHand !== undefined && (
-                        <Text style={[styles.productStock, { color: mutedColor }]}>
-                          Stock: {p.quantityOnHand}
-                        </Text>
-                      )}
-                    </View>
-                    {/* Add to cart button */}
+                renderItem={({ item: p }) => {
+                  const isSelected = selectedProductIds.has(p.id);
+                  const isOutOfStock = isProductOutOfStock(p);
+
+                  return (
                     <Pressable
-                      onPress={(e) => {
-                        e.stopPropagation();
+                      onPress={() => {
+                        if (isOutOfStock && !isSelected) {
+                          Alert.alert('Out of stock', getOutOfStockMessage(p.name));
+                          return;
+                        }
                         handleProductSelect(p);
                       }}
-                      style={[styles.addToCartBtn, { backgroundColor: colors.tint }]}
+                      disabled={isOutOfStock && !isSelected}
+                      style={[
+                        styles.productCard,
+                        { backgroundColor: cardBg, borderColor },
+                        isSelected && { borderColor: colors.tint, borderWidth: 2 },
+                        isOutOfStock && !isSelected && styles.productCardDisabled,
+                      ]}
                     >
-                      <FontAwesome name="plus" size={16} color="#fff" />
+                      {isSelected ? (
+                        <View style={[styles.selectedBadge, { backgroundColor: colors.tint }]}>
+                          <AppIcon name="check" size={12} color="#fff" />
+                        </View>
+                      ) : null}
+                      {/* Product Image */}
+                      <View style={styles.productImageContainer}>
+                        {p.imageUrl ? (
+                          <Image
+                            source={{ uri: resolveImageUrl(p.imageUrl) }}
+                            style={styles.productImage}
+                            contentFit="cover"
+                            transition={200}
+                            placeholder={require('@/assets/images/icon.png')}
+                          />
+                        ) : (
+                          <View style={[styles.productImagePlaceholder, { backgroundColor: inputBg }]}>
+                            <AppIcon name="archive" size={20} color={mutedColor} />
+                          </View>
+                        )}
+                      </View>
+                      <View style={styles.productInfo}>
+                        <Text style={[styles.productName, { color: textColor }]} numberOfLines={2}>
+                          {p.name}
+                        </Text>
+                        <Text style={[styles.productPrice, { color: colors.tint }]}>
+                          {CURRENCY.SYMBOL}{' '}
+                          {Number(p.sellingPrice ?? p.price ?? p.costPrice ?? 0).toFixed(CURRENCY.DECIMAL_PLACES)}
+                        </Text>
+                        {p.trackStock === false ? (
+                          <Text style={[styles.productStock, { color: mutedColor }]}>
+                            Made to order
+                          </Text>
+                        ) : isOutOfStock ? (
+                          <Text style={[styles.productStock, { color: '#ef4444' }]}>Out of stock</Text>
+                        ) : p.quantityOnHand !== undefined ? (
+                          <Text style={[styles.productStock, { color: mutedColor }]}>
+                            Stock: {p.quantityOnHand}
+                          </Text>
+                        ) : null}
+                      </View>
+                      {/* Add to cart button */}
+                      <Pressable
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          if (isOutOfStock && !isSelected) {
+                            Alert.alert('Out of stock', getOutOfStockMessage(p.name));
+                            return;
+                          }
+                          handleProductToggle(p);
+                        }}
+                        disabled={isOutOfStock && !isSelected}
+                        style={[
+                          styles.addToCartBtn,
+                          { backgroundColor: isOutOfStock && !isSelected ? mutedColor : colors.tint },
+                        ]}
+                      >
+                        <AppIcon name={isSelected ? 'check' : 'plus'} size={16} color="#fff" />
+                      </Pressable>
                     </Pressable>
-                  </Pressable>
-                )}
+                  );
+                }}
               />
             </View>
           )}
@@ -528,13 +837,14 @@ export default function ScanScreen() {
           productsToShow.length === 0 &&
           !scannedProduct &&
           !foundBarcodeProduct && (
-            <View style={styles.emptyState}>
-              <FontAwesome name="search" size={48} color={mutedColor} />
-              <Text style={[styles.emptyTitle, { color: textColor }]}>No products found</Text>
-              <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-                Try a different search term or scan a barcode
-              </Text>
-            </View>
+            <ListEmptyState
+              imageKey="SEARCH_NO_RESULTS"
+              title="No products found"
+              subtitle="Try a different search term or scan a barcode"
+              titleColor={textColor}
+              subtitleColor={mutedColor}
+              style={styles.emptyState}
+            />
           )}
 
         {/* Empty state when no products at all */}
@@ -544,13 +854,20 @@ export default function ScanScreen() {
           productsToShow.length === 0 &&
           !scannedProduct &&
           !foundBarcodeProduct && (
-            <View style={styles.emptyState}>
-              <FontAwesome name="archive" size={48} color={mutedColor} />
-              <Text style={[styles.emptyTitle, { color: textColor }]}>No products available</Text>
-              <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-                Add products to get started, or search for products
-              </Text>
-            </View>
+            <ListEmptyState
+              imageKey="PRODUCTS"
+              title="No products available"
+              subtitle="Add products to your catalog, then search or scan them here"
+              titleColor={textColor}
+              subtitleColor={mutedColor}
+              style={styles.emptyState}
+            >
+              <EmptyStateActionButton
+                label="Open Products"
+                onPress={handleOpenProducts}
+                backgroundColor={colors.tint}
+              />
+            </ListEmptyState>
           )}
 
         {/* Show scanned product from QR code */}
@@ -579,14 +896,22 @@ export default function ScanScreen() {
               </Text>
             )}
             <Pressable
-              style={[styles.addBtn, { backgroundColor: colors.tint }]}
+              style={[
+                styles.addBtn,
+                {
+                  backgroundColor: isProductOutOfStock(scannedProduct) ? mutedColor : colors.tint,
+                },
+              ]}
+              disabled={isProductOutOfStock(scannedProduct)}
               onPress={() => handleProductSelect(scannedProduct)}
             >
-              <Text style={styles.addBtnText}>Add to cart</Text>
+              <Text style={styles.addBtnText}>
+                {isProductOutOfStock(scannedProduct) ? 'Out of stock' : 'Add to cart'}
+              </Text>
             </Pressable>
           </View>
         )}
-      </ScrollView>
+      </ScreenShell>
 
       <BarcodeScanner
         visible={scannerVisible}
@@ -630,7 +955,51 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   customerChipText: { fontSize: 14, fontWeight: '500' },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
   hint: { fontSize: 13, marginTop: 4 },
+  sectionHeader: {
+    marginTop: 20,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  secondaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  secondaryBtnText: { fontSize: 13, fontWeight: '600' },
+  lineItemCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+  },
+  lineItemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  lineItemTitle: { fontSize: 15, fontWeight: '700' },
+  removeBtn: { padding: 6 },
+  lineItemFieldsRow: { flexDirection: 'row', gap: 12 },
+  lineItemField: { flex: 1 },
+  lineTotal: { marginTop: 10, fontSize: 14, fontWeight: '600', textAlign: 'right' },
+  totalRow: {
+    marginTop: 4,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  totalLabel: { fontSize: 15, fontWeight: '600' },
+  totalValue: { fontSize: 18, fontWeight: '700' },
   primaryBtn: {
     marginTop: 24,
     padding: 16,
@@ -662,6 +1031,9 @@ const styles = StyleSheet.create({
     gap: 12,
     marginBottom: 12,
   },
+  productCardDisabled: {
+    opacity: 0.6,
+  },
   productCard: {
     flex: 1,
     padding: 12,
@@ -670,6 +1042,19 @@ const styles = StyleSheet.create({
     minWidth: 0, // Important for flex items to shrink properly
     maxWidth: '48%', // Ensure two items fit per row
     position: 'relative', // For absolute positioned button
+  },
+  selectedBadge: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+    zIndex: 2,
   },
   productImageContainer: {
     width: '100%',

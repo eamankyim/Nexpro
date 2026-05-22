@@ -1,4 +1,5 @@
 import api from './api';
+import { buildScopedQueryString } from '../utils/shopScope';
 
 const vendorService = {
   // Get vendor categories (business-type and shop-type specific)
@@ -9,8 +10,8 @@ const vendorService = {
 
   // Get all vendors
   getAll: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    return await api.get(`/vendors?${queryString}`);
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/vendors?${queryString}` : '/vendors');
   },
 
   getVendors: async (params = {}) => vendorService.getAll(params),

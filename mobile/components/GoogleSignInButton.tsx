@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Text, Pressable, StyleSheet, ActivityIndicator, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import * as Google from 'expo-auth-session/providers/google';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
 const PRIMARY = '#166534';
 
 type Props = {
@@ -87,7 +87,7 @@ export function GoogleSignInButton({
         <ActivityIndicator color="#374151" />
       ) : (
         <View style={styles.buttonContent}>
-          <Ionicons name="logo-google" size={18} color="#DB4437" />
+          <AppIcon name="logo-google" size={18} color="#DB4437" />
           <Text style={styles.buttonText}>{label}</Text>
         </View>
       )}

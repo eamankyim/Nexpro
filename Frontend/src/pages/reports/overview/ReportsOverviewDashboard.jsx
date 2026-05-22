@@ -1,0 +1,354 @@
+import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
+import {
+  AlertCircle,
+  CircleDollarSign,
+  FileText,
+  Gauge,
+  Percent,
+  Receipt,
+  UserPlus,
+  Users,
+  Wallet
+} from 'lucide-react';
+import OverviewHeader from './OverviewHeader';
+import OverviewKpiCard from './OverviewKpiCard';
+import OverviewSecondaryKpiCard from './OverviewSecondaryKpiCard';
+import MiniSparkline from './MiniSparkline';
+import RevenueExpensesTrendChart from './RevenueExpensesTrendChart';
+import RevenueByCategoryChart from './RevenueByCategoryChart';
+import AIQuickInsightsCard from './AIQuickInsightsCard';
+import TopCustomersTable from './TopCustomersTable';
+import ProfitLossSummaryCard from './ProfitLossSummaryCard';
+import CashFlowSummaryCard from './CashFlowSummaryCard';
+import OutstandingPaymentsList from './OutstandingPaymentsList';
+import BusinessHealthFooter from './BusinessHealthFooter';
+import { buildAskAiUrl } from '../../../utils/buildAskAiUrl';
+import { formatPeriodLabel } from '../../../utils/formatPeriodLabel';
+import {
+  buildOverviewInsights,
+  buildProfitSparkline,
+  buildRevenueByCategory,
+  buildRevenueExpenseTrend,
+  buildSparklineSeries,
+  deriveBusinessHealth,
+  getOverdueInvoices
+} from './overviewUtils';
+
+/**
+ * Executive Reports Overview dashboard matching the product mockup.
+ */
+export default function ReportsOverviewDashboard({
+  overviewStats,
+  dateRange,
+  dateFilter,
+  onDateRangeSelect,
+  onPresetSelect,
+  onCustomize,
+  onDownload,
+  downloading = false,
+  isShop = false,
+  isPharmacy = false,
+  isStudio = false
+}) {
+  const navigate = useNavigate();
+  const isRetail = isShop || isPharmacy;
+
+  const askAiUrl = useMemo(
+    () => buildAskAiUrl({
+      from: 'reports',
+      startDate: dateRange?.[0]?.format('YYYY-MM-DD'),
+      endDate: dateRange?.[1]?.format('YYYY-MM-DD'),
+      periodLabel: formatPeriodLabel(dateFilter, dateRange),
+    }),
+    [dateFilter, dateRange]
+  );
+
+  const {
+    revenue,
+    expenses,
+    outstanding,
+    sales,
+    serviceAnalytics,
+    productSales,
+    topCustomers,
+    extendedKpis,
+    profitLossDetail,
+    cashFlow,
+    comparisonLabel = 'vs previous period'
+  } = overviewStats || {};
+
+  const current = extendedKpis?.current || {};
+  const comparison = extendedKpis?.comparison || {};
+
+  const retailRevenueFloor = isRetail
+    ? Math.max(
+        revenue?.totalRevenue || 0,
+        sales?.totalSales || 0,
+        productSales?.totalRevenue || 0
+      )
+    : 0;
+
+  const totalRevenue = isRetail
+    ? Math.max(current.totalRevenue ?? 0, retailRevenueFloor)
+    : (current.totalRevenue ?? revenue?.totalRevenue ?? 0);
+  const totalExpenses = current.totalExpenses ?? expenses?.totalExpenses ?? 0;
+  const netProfit = current.netProfit ?? (totalRevenue - totalExpenses);
+  const grossProfitMargin = current.grossProfitMargin ?? (totalRevenue > 0 ? ((netProfit / totalRevenue) * 100) : 0);
+  const netProfitMargin = current.netProfitMargin ?? grossProfitMargin;
+
+  const trendData = useMemo(
+    () => buildRevenueExpenseTrend(revenue, expenses),
+    [revenue, expenses]
+  );
+
+  const categoryData = useMemo(
+    () => buildRevenueByCategory({
+      totalRevenue,
+      serviceAnalytics,
+      productSales,
+      isShop,
+      isPharmacy,
+      isStudio
+    }),
+    [totalRevenue, serviceAnalytics, productSales, isShop, isPharmacy, isStudio]
+  );
+
+  const revenueSparkline = useMemo(
+    () => buildSparklineSeries(revenue?.byPeriod || [], 'totalRevenue'),
+    [revenue?.byPeriod]
+  );
+
+  const expenseSparkline = useMemo(
+    () => buildSparklineSeries(expenses?.byDate || [], 'totalAmount'),
+    [expenses?.byDate]
+  );
+
+  const profitSparkline = useMemo(() => buildProfitSparkline(trendData), [trendData]);
+
+  const marginSparkline = useMemo(() => {
+    if (!trendData.length) return [0];
+    return trendData.map((d) => {
+      const rev = d.revenue || 0;
+      return rev > 0 ? ((rev - (d.expenses || 0)) / rev) * 100 : 0;
+    });
+  }, [trendData]);
+
+  const insights = useMemo(
+    () => buildOverviewInsights({
+      totalRevenue,
+      totalExpenses,
+      revenueChange: comparison.totalRevenue ?? 0,
+      expenseChange: comparison.totalExpenses ?? 0,
+      topCustomers,
+      outstanding,
+      collectionRate: current.collectionRate ?? 0,
+      isShop,
+      isPharmacy,
+      productSales
+    }),
+    [totalRevenue, totalExpenses, comparison, topCustomers, outstanding, current.collectionRate, isShop, isPharmacy, productSales]
+  );
+
+  const overdueInvoices = useMemo(
+    () => getOverdueInvoices(outstanding?.invoices, 5),
+    [outstanding?.invoices]
+  );
+
+  const health = useMemo(
+    () => deriveBusinessHealth({
+      netProfitMargin,
+      collectionRate: current.collectionRate ?? 0,
+      outstanding,
+      totalRevenue,
+      revenueChange: comparison.totalRevenue ?? 0
+    }),
+    [netProfitMargin, current.collectionRate, outstanding, totalRevenue, comparison.totalRevenue]
+  );
+
+  const plData = useMemo(() => ({
+    revenue: profitLossDetail?.revenue ?? totalRevenue,
+    cogs: profitLossDetail?.cogs ?? 0,
+    expenses: profitLossDetail?.expenses ?? totalExpenses,
+    grossProfit: profitLossDetail?.grossProfit ?? netProfit,
+    netProfit: profitLossDetail?.netProfit ?? netProfit
+  }), [profitLossDetail, totalRevenue, totalExpenses, netProfit]);
+
+  const averageValueLabel = isRetail ? 'Average Sale Value' : 'Average Invoice Value';
+  const topCustomersTitle = isRetail ? 'Top Customers by Sales' : 'Top Customers by Revenue';
+
+  const Sparkline = ({ data, positive }) => (
+    <MiniSparkline data={data} positive={positive} />
+  );
+
+  return (
+    <div id="overview-report-content">
+      <OverviewHeader
+        dateRange={dateRange}
+        onDateRangeSelect={onDateRangeSelect}
+        onPresetSelect={onPresetSelect}
+        activePreset={dateFilter}
+        onCustomize={onCustomize}
+        onDownload={onDownload}
+        downloading={downloading}
+      />
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 md:gap-4 mb-4">
+        <OverviewKpiCard
+          label="Total Revenue"
+          value={totalRevenue}
+          change={comparison.totalRevenue}
+          comparisonLabel={comparisonLabel}
+          sparklineData={revenueSparkline}
+          SparklineChart={Sparkline}
+          icon={Wallet}
+          iconBgColor="#dcfce7"
+          iconColor="#166534"
+        />
+        <OverviewKpiCard
+          label="Total Expenses"
+          value={totalExpenses}
+          change={comparison.totalExpenses}
+          comparisonLabel={comparisonLabel}
+          sparklineData={expenseSparkline}
+          SparklineChart={Sparkline}
+          invertTrend
+          icon={Receipt}
+          iconBgColor="#fee2e2"
+          iconColor="#b91c1c"
+        />
+        <OverviewKpiCard
+          label="Net Profit"
+          value={netProfit}
+          change={comparison.netProfit}
+          comparisonLabel={comparisonLabel}
+          sparklineData={profitSparkline}
+          SparklineChart={Sparkline}
+          icon={CircleDollarSign}
+          iconBgColor="#dcfce7"
+          iconColor="#166534"
+        />
+        <OverviewKpiCard
+          label="Gross Profit Margin"
+          value={grossProfitMargin}
+          valueFormatter={(v) => `${Number(v).toFixed(1)}%`}
+          change={comparison.grossProfitMargin}
+          comparisonLabel={comparisonLabel}
+          sparklineData={marginSparkline}
+          SparklineChart={Sparkline}
+          icon={Percent}
+          iconBgColor="#f3e8ff"
+          iconColor="#7e22ce"
+        />
+        <OverviewKpiCard
+          label="Net Profit Margin"
+          value={netProfitMargin}
+          valueFormatter={(v) => `${Number(v).toFixed(1)}%`}
+          change={comparison.netProfitMargin}
+          comparisonLabel={comparisonLabel}
+          sparklineData={marginSparkline}
+          SparklineChart={Sparkline}
+          icon={Percent}
+          iconBgColor="#dbeafe"
+          iconColor="#1d4ed8"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 md:gap-4 mb-4">
+        <div className="lg:col-span-6">
+          <RevenueExpensesTrendChart data={trendData} />
+        </div>
+        <div className="lg:col-span-3">
+          <RevenueByCategoryChart
+            data={categoryData}
+            totalRevenue={totalRevenue}
+            onViewFullReport={() => navigate('/reports/compliance')}
+          />
+        </div>
+        <div className="lg:col-span-3">
+          <AIQuickInsightsCard
+            insights={insights}
+            onViewAll={() => navigate(askAiUrl)}
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 md:gap-4 mb-4">
+        <OverviewSecondaryKpiCard
+          label="New Customers"
+          value={current.newCustomers ?? 0}
+          valueFormatter={(v) => String(v)}
+          change={comparison.newCustomers}
+          comparisonLabel={comparisonLabel}
+          icon={UserPlus}
+          iconBgColor="#dcfce7"
+          iconColor="#166534"
+        />
+        <OverviewSecondaryKpiCard
+          label="Active Customers"
+          value={current.activeCustomers ?? 0}
+          valueFormatter={(v) => String(v)}
+          change={comparison.activeCustomers}
+          comparisonLabel={comparisonLabel}
+          icon={Users}
+          iconBgColor="#dbeafe"
+          iconColor="#1d4ed8"
+        />
+        <OverviewSecondaryKpiCard
+          label={averageValueLabel}
+          value={current.averageInvoiceValue ?? 0}
+          change={comparison.averageInvoiceValue}
+          comparisonLabel={comparisonLabel}
+          icon={FileText}
+          iconBgColor="#f3e8ff"
+          iconColor="#7e22ce"
+        />
+        <OverviewSecondaryKpiCard
+          label={isRetail ? 'Payment Collection' : 'Collection Rate'}
+          value={current.collectionRate ?? 0}
+          valueFormatter={(v) => `${Number(v).toFixed(1)}%`}
+          change={comparison.collectionRate}
+          comparisonLabel={comparisonLabel}
+          icon={Gauge}
+          iconBgColor="#dcfce7"
+          iconColor="#166534"
+        />
+        <OverviewSecondaryKpiCard
+          label={isRetail ? 'Outstanding Balance' : 'Outstanding Invoices'}
+          value={current.outstandingAmount ?? outstanding?.totalOutstanding ?? 0}
+          change={comparison.outstandingAmount}
+          comparisonLabel={comparisonLabel}
+          highlightNegative
+          icon={AlertCircle}
+          iconBgColor="#ffedd5"
+          iconColor="#c2410c"
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 md:gap-4 mb-4">
+        <TopCustomersTable
+          customers={topCustomers}
+          totalRevenue={totalRevenue}
+          title={topCustomersTitle}
+        />
+        <ProfitLossSummaryCard
+          profitLoss={plData}
+          onViewFullReport={() => navigate('/reports/compliance')}
+        />
+        <CashFlowSummaryCard
+          cashFlow={cashFlow}
+          onViewFullReport={() => navigate('/reports/compliance')}
+        />
+        <OutstandingPaymentsList
+          invoices={overdueInvoices}
+          onViewAll={() => navigate('/invoices')}
+        />
+      </div>
+
+      <BusinessHealthFooter
+        health={health}
+        onViewReport={() => navigate('/reports/smart-report')}
+      />
+    </div>
+  );
+}

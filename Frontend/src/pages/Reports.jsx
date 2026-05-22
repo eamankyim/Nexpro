@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { REPORT_CHART_COLORS as COLORS, createReportSchema, STUDIO_TYPES, getBusinessTerminology } from './reports/reportConstants';
+import { REPORT_CHART_COLORS as COLORS, createReportSchema, getBusinessTerminology } from './reports/reportConstants';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { showSuccess, showError, showWarning, showLoading } from '../utils/toast';
 import StatusChip from '../components/StatusChip';
@@ -33,7 +33,7 @@ import {
   DialogFooter,
 } from '../components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '../components/ui/dropdown-menu';
-import { DateRangePicker } from '@/components/ui/date-range-picker';
+import { DateRangePicker, DATE_RANGE_PRESET_OPTIONS } from '@/components/ui/date-range-picker';
 import { Textarea } from '@/components/ui/textarea';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -59,6 +59,7 @@ import {
   Search,
   SlidersHorizontal,
   MoreVertical,
+  Trash2,
   ArrowLeft,
   Loader2,
   AlertTriangle,
@@ -67,14 +68,27 @@ import {
   TrendingDown
 } from 'lucide-react';
 import reportService from '../services/reportService';
-import materialsService from '../services/materialsService';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { SEARCH_PLACEHOLDERS } from '../constants';
+import { STUDIO_LIKE_TYPES } from '../constants/studioLikeTypes';
 import { getPreviousPeriod } from '../utils/periodComparison';
+import { calculateDateRange, getGroupByForFilter } from '../utils/dateRangePresets';
+import { formatPeriodLabel } from '../utils/formatPeriodLabel';
 import { cn } from '@/lib/utils';
+import { formatAmount, formatDecimal, formatInteger } from '../utils/formatNumber';
 import dayjs from 'dayjs';
 import { RechartsModuleProvider, useRechartsModule } from '@/components/charts/RechartsModuleContext';
+import ReportsOverviewDashboard from './reports/overview/ReportsOverviewDashboard';
+import SmartReportDetail from './reports/smart-report/SmartReportDetail';
+import { buildSmartReportSnapshot } from './reports/smart-report/buildSmartReportSnapshot';
+import {
+  getDefaultSmartReportTypeSelection,
+  getSmartReportTabMeta,
+  getSmartReportTypeOptionsGrouped,
+  resolveSmartReportTabs,
+} from './reports/smart-report/smartReportTypeUtils';
 
 const REPORT_MONTH_NAMES = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -83,6 +97,63 @@ const REPORT_MONTH_NAMES = [
 
 /** Reports stuck in processing longer than this are marked failed on load. */
 const SMART_REPORT_PROCESSING_STALE_MS = 15 * 60 * 1000;
+
+/** Dispatched after saved reports are written to localStorage. */
+const SAVED_REPORTS_UPDATED_EVENT = 'shopwise-saved-reports-updated';
+
+/**
+ * @param {string|null} storageKey
+ * @returns {Array}
+ */
+function readSavedReportsFromStorage(storageKey) {
+  if (!storageKey) return [];
+  try {
+    const raw = localStorage.getItem(storageKey);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.warn('Failed to read saved reports from localStorage:', e);
+    return [];
+  }
+}
+
+/**
+ * @param {string|null} storageKey
+ * @param {Array} reports
+ */
+function writeSavedReportsToStorage(storageKey, reports) {
+  if (!storageKey) return;
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(reports));
+    window.dispatchEvent(new CustomEvent(SAVED_REPORTS_UPDATED_EVENT, {
+      detail: { storageKey },
+    }));
+  } catch (e) {
+    console.warn('Failed to persist saved reports:', e);
+  }
+}
+
+/**
+ * Patch one saved report in localStorage by id.
+ * @param {string|null} storageKey
+ * @param {string|number} reportId
+ * @param {(report: object) => object} updater
+ * @returns {Array|null} Updated list, or null if report id was not found
+ */
+function patchSavedReportInStorage(storageKey, reportId, updater) {
+  if (!storageKey) return null;
+  const normalizedId = String(reportId);
+  const list = readSavedReportsFromStorage(storageKey);
+  let found = false;
+  const next = list.map((report) => {
+    if (String(report.id) !== normalizedId) return report;
+    found = true;
+    return updater(report);
+  });
+  if (!found) return null;
+  writeSavedReportsToStorage(storageKey, next);
+  return next;
+}
 
 /**
  * Resolve date range for smart report generation from create-report form config.
@@ -134,6 +205,8 @@ function ReportsInner() {
   const navigate = useNavigate();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const { activeTenant, user } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
   const { isMobile } = useResponsive();
   const rc = useRechartsModule();
 
@@ -142,7 +215,10 @@ function ReportsInner() {
 
   const businessType = activeTenant?.businessType || 'printing_press';
   const metadata = activeTenant?.metadata || {};
-  const isStudio = useMemo(() => STUDIO_TYPES.includes(businessType) || businessType === 'studio', [businessType]);
+  const isStudio = useMemo(
+    () => STUDIO_LIKE_TYPES.includes(businessType) || businessType === 'studio',
+    [businessType]
+  );
   const isPrintingPress = businessType === 'printing_press';
   const isShop = businessType === 'shop';
   const isPharmacy = businessType === 'pharmacy';
@@ -166,15 +242,13 @@ function ReportsInner() {
   // Determine which view to show based on route (Overview, Smart Report, Compliance)
   const isSmartReport = location.pathname === '/reports/smart-report';
   const isCompliance = location.pathname === '/reports/compliance';
+  const isOverview = !isSmartReport && !isCompliance;
   const showSmartReportList = isSmartReport && !generatedReport;
 
   const [loading, setLoading] = useState(false);
   const [reportType, setReportType] = useState('revenue');
   const [dateFilter, setDateFilter] = useState('thisMonth'); // 'today', 'yesterday', 'thisWeek', etc.
-  const [dateRange, setDateRange] = useState([
-    dayjs().startOf('month'),
-    dayjs().endOf('month')
-  ]);
+  const [dateRange, setDateRange] = useState(() => calculateDateRange('thisMonth'));
   const [specificMonth, setSpecificMonth] = useState(dayjs().format('YYYY-MM'));
   const [specificYear, setSpecificYear] = useState(String(dayjs().year()));
   const [reportData, setReportData] = useState(null);
@@ -184,6 +258,7 @@ function ReportsInner() {
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [overviewStats, setOverviewStats] = useState(null);
+  const [overviewDownloading, setOverviewDownloading] = useState(false);
   const [createReportModalVisible, setCreateReportModalVisible] = useState(false);
   const reportConfigForm = useForm({
     resolver: zodResolver(createReportSchema),
@@ -194,7 +269,9 @@ function ReportsInner() {
       month: dayjs().format('MMMM'),
     },
   });
-  const [selectedReportTypes, setSelectedReportTypes] = useState(['cashflow']);
+  const [selectedReportTypes, setSelectedReportTypes] = useState(() =>
+    getDefaultSmartReportTypeSelection({ isShop: false, isPharmacy: false, isStudio: false })
+  );
   const [reportDateFilter, setReportDateFilter] = useState('last6months');
 
   // Compliance view: statement type and data
@@ -215,79 +292,6 @@ function ReportsInner() {
     return () => setPageSearchConfig(null);
   }, [setPageSearchConfig]);
 
-  // Calculate date range based on filter type
-  const calculateDateRange = (filterType, customDate = null, options = {}) => {
-    const date = customDate || dayjs();
-    let startDate, endDate;
-
-    switch (filterType) {
-      case 'today':
-        startDate = date.startOf('day');
-        endDate = date.endOf('day');
-        break;
-      case 'yesterday':
-        startDate = date.subtract(1, 'day').startOf('day');
-        endDate = date.subtract(1, 'day').endOf('day');
-        break;
-      case 'thisWeek':
-        startDate = date.startOf('week');
-        endDate = date.endOf('week');
-        break;
-      case 'lastWeek':
-        startDate = date.subtract(1, 'week').startOf('week');
-        endDate = date.subtract(1, 'week').endOf('week');
-        break;
-      case 'thisMonth':
-        startDate = date.startOf('month');
-        endDate = date.endOf('month');
-        break;
-      case 'lastMonth':
-        startDate = date.subtract(1, 'month').startOf('month');
-        endDate = date.subtract(1, 'month').endOf('month');
-        break;
-      case 'thisQuarter':
-        startDate = date.startOf('quarter');
-        endDate = date.endOf('quarter');
-        break;
-      case 'lastQuarter':
-        startDate = date.subtract(1, 'quarter').startOf('quarter');
-        endDate = date.subtract(1, 'quarter').endOf('quarter');
-        break;
-      case 'thisYear':
-        startDate = date.startOf('year');
-        endDate = date.endOf('year');
-        break;
-      case 'specificMonth': {
-        const parsedMonth = dayjs(options.specificMonth, 'YYYY-MM', true);
-        const monthDate = parsedMonth.isValid() ? parsedMonth : date;
-        startDate = monthDate.startOf('month');
-        endDate = monthDate.endOf('month');
-        break;
-      }
-      case 'specificYear': {
-        const parsedYear = Number.parseInt(options.specificYear, 10);
-        const yearDate = Number.isFinite(parsedYear) ? dayjs().year(parsedYear) : date;
-        startDate = yearDate.startOf('year');
-        endDate = yearDate.endOf('year');
-        break;
-      }
-      case 'lastYear':
-        startDate = date.subtract(1, 'year').startOf('year');
-        endDate = date.subtract(1, 'year').endOf('year');
-        break;
-      case 'custom':
-        // For custom date, use the selected date as both start and end
-        startDate = date.startOf('day');
-        endDate = date.endOf('day');
-        break;
-      default:
-        startDate = date.startOf('month');
-        endDate = date.endOf('month');
-    }
-
-    return [startDate, endDate];
-  };
-
   // Update date range when filter changes.
   useEffect(() => {
     if (dateFilter === 'custom') return;
@@ -298,6 +302,8 @@ function ReportsInner() {
   const [savedReports, setSavedReports] = useState([]);
   const reportsHydratedKeyRef = useRef(null);
   const generatingReportIdsRef = useRef(new Set());
+  const creatingReportRef = useRef(false);
+  const [isCreatingReport, setIsCreatingReport] = useState(false);
 
   // Storage key for saved reports (scoped by tenant)
   const reportsStorageKey = useMemo(
@@ -309,36 +315,67 @@ function ReportsInner() {
     setSavedReports((prev) => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
       if (reportsStorageKey) {
-        try {
-          localStorage.setItem(reportsStorageKey, JSON.stringify(next));
-        } catch (e) {
-          console.warn('Failed to persist saved reports:', e);
-        }
+        writeSavedReportsToStorage(reportsStorageKey, next);
       }
       return next;
     });
   }, [reportsStorageKey]);
 
   const updateSavedReportById = useCallback((reportId, updater) => {
-    persistSavedReports((prevReports) => {
-      const inState = prevReports.some((r) => r.id === reportId);
-      if (inState) {
-        return prevReports.map((r) => (r.id === reportId ? updater(r) : r));
-      }
-      if (!reportsStorageKey) return prevReports;
-      try {
-        const raw = localStorage.getItem(reportsStorageKey);
-        const fromStorage = raw ? JSON.parse(raw) : [];
-        if (!Array.isArray(fromStorage) || !fromStorage.some((r) => r.id === reportId)) {
-          return prevReports;
-        }
-        return fromStorage.map((r) => (r.id === reportId ? updater(r) : r));
-      } catch (e) {
-        console.warn('Failed to update saved report from storage:', e);
-        return prevReports;
-      }
+    if (!reportsStorageKey) return;
+    const next = patchSavedReportInStorage(reportsStorageKey, reportId, updater);
+    if (next) {
+      setSavedReports(next);
+      return;
+    }
+    console.warn('[SmartReport] Report not found when updating status:', reportId);
+  }, [reportsStorageKey]);
+
+  const handleDeleteSavedReport = useCallback((report) => {
+    if (!report) return;
+    const confirmed = window.confirm(`Delete "${report.title || 'this report'}"?`);
+    if (!confirmed) return;
+
+    const reportKey = String(report.id || `${report.generatedAt}-${report.title}`);
+    generatingReportIdsRef.current.delete(String(report.id));
+
+    persistSavedReports((prev) => prev.filter((item) => {
+      const itemKey = String(item.id || `${item.generatedAt}-${item.title}`);
+      return itemKey !== reportKey;
+    }));
+
+    setGeneratedReport((current) => {
+      if (!current) return current;
+      const currentKey = String(current.id || `${current.generatedAt}-${current.title}`);
+      return currentKey === reportKey ? null : current;
     });
-  }, [persistSavedReports, reportsStorageKey]);
+
+    showSuccess('Report deleted');
+  }, [persistSavedReports]);
+
+  // Sync list when another tab/instance finishes writing reports to storage
+  useEffect(() => {
+    const onReportsUpdated = (event) => {
+      if (event.detail?.storageKey !== reportsStorageKey) return;
+      setSavedReports(normalizeSavedReports(readSavedReportsFromStorage(reportsStorageKey)));
+    };
+    window.addEventListener(SAVED_REPORTS_UPDATED_EVENT, onReportsUpdated);
+    return () => window.removeEventListener(SAVED_REPORTS_UPDATED_EVENT, onReportsUpdated);
+  }, [reportsStorageKey]);
+
+  // Keep list in sync with localStorage while viewing Smart Report list (async generation)
+  useEffect(() => {
+    if (!showSmartReportList || !reportsStorageKey) return undefined;
+    const syncFromStorage = () => {
+      const fromStorage = normalizeSavedReports(readSavedReportsFromStorage(reportsStorageKey));
+      setSavedReports((prev) => (
+        JSON.stringify(prev) === JSON.stringify(fromStorage) ? prev : fromStorage
+      ));
+    };
+    syncFromStorage();
+    const intervalId = window.setInterval(syncFromStorage, 2000);
+    return () => window.clearInterval(intervalId);
+  }, [showSmartReportList, reportsStorageKey]);
 
   // Load saved reports from localStorage once per tenant (avoid clobbering in-flight generation)
   useEffect(() => {
@@ -409,7 +446,7 @@ function ReportsInner() {
       fetchOverviewStats();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reportType, dateRange, groupBy, isSmartReport, isCompliance, dateFilter]);
+  }, [dateRange, groupBy, isSmartReport, isCompliance, dateFilter, activeShopId]);
 
   // Fetch compliance report when on Compliance view and statement type or date changes
   useEffect(() => {
@@ -470,368 +507,139 @@ function ReportsInner() {
     };
     fetchCompliance();
     return () => { cancelled = true; };
-  }, [isCompliance, complianceStatementType, dateRange]);
+  }, [isCompliance, complianceStatementType, dateRange, activeShopId]);
 
   const handleFilterChange = (filterType) => {
     setDateFilter(filterType);
   };
 
-  // Determine groupBy based on date filter
-  const getGroupByForFilter = (filterType) => {
-    switch (filterType) {
-      case 'today':
-      case 'yesterday':
-        return 'hour'; // 2-hour intervals
-      case 'thisWeek':
-      case 'lastWeek':
-        return 'day'; // Daily
-      case 'thisMonth':
-      case 'lastMonth':
-      case 'specificMonth':
-        return 'week'; // Weekly
-      case 'thisQuarter':
-      case 'lastQuarter':
-        return 'month'; // Monthly (3 months)
-      case 'thisYear':
-      case 'lastYear':
-      case 'specificYear':
-        return 'month'; // Monthly (12 months)
-      case 'custom':
-        // For custom date, determine based on date range span
-        const daysDiff = dateRange[1].diff(dateRange[0], 'day');
-        if (daysDiff <= 1) return 'hour'; // Single day = hourly
-        if (daysDiff <= 7) return 'day'; // Week = daily
-        if (daysDiff <= 31) return 'week'; // Month = weekly
-        if (daysDiff <= 93) return 'month'; // Quarter = monthly
-        return 'month'; // Year = monthly
-      default:
-        return 'day';
-    }
-  };
-
   const fetchOverviewStats = async () => {
     try {
       setLoading(true);
-      // Format dates with time components to ensure accurate filtering
-      // Start date: beginning of day (00:00:00)
-      // End date: end of day (23:59:59)
       const startDate = dateRange[0].startOf('day').format('YYYY-MM-DD');
       const endDate = dateRange[1].endOf('day').format('YYYY-MM-DD');
-      const groupBy = getGroupByForFilter(dateFilter);
-      
-      console.log('[Reports] Fetching with date range:', {
-        startDate,
-        endDate,
-        dateFilter,
-        startDateObj: dateRange[0].format('YYYY-MM-DD HH:mm:ss'),
-        endDateObj: dateRange[1].format('YYYY-MM-DD HH:mm:ss')
-      });
-      
-      // Batched overview: 2 requests instead of 13 for faster loading
+      const groupBy = getGroupByForFilter(dateFilter, dateRange);
       const businessType = activeTenant?.businessType || 'printing_press';
       const isShopOrPharmacy = businessType === 'shop' || businessType === 'pharmacy';
 
-      // Phase 1: Single batched request (revenue, expenses, outstanding, sales, serviceAnalytics, productSales)
-      const phase1Res = await reportService.getOverviewPhase1(startDate, endDate, groupBy, isShopOrPharmacy).catch((err) => {
-        console.error('[Reports] Error fetching overview phase1:', err);
-        return { data: null };
-      });
-      const phase1 = phase1Res?.data || {};
-      const revenue = { data: phase1.revenue ?? { totalRevenue: 0, byPeriod: [], byCustomer: [] } };
-      const expenses = { data: phase1.expenses ?? { totalExpenses: 0, byCategory: [] } };
-      const outstanding = { data: phase1.outstanding ?? { totalOutstanding: 0 } };
-      const sales = { data: phase1.sales ?? { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [], jobsTrendByDate: [] } };
-      const serviceAnalytics = { data: phase1.serviceAnalytics ?? { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] } };
-      const productSalesData = { data: phase1.productSales ?? { products: [], totalRevenue: 0, totalQuantitySold: 0 } };
+      const currentPeriodStart = dayjs(dateRange[0]);
+      const currentPeriodEnd = dayjs(dateRange[1]);
+      const previousPeriod = getPreviousPeriod(dateFilter || 'custom', [currentPeriodStart, currentPeriodEnd]);
+      const comparisonLabel = previousPeriod.label || 'vs previous period';
 
-      const totalRevenuePhase1 = revenue?.data?.totalRevenue || 0;
-      const totalExpensesPhase1 = expenses?.data?.totalExpenses || 0;
+      const phase1Res = await reportService.getOverviewPhase1(startDate, endDate, groupBy, isShopOrPharmacy).catch(() => ({ data: null }));
+      const phase1 = phase1Res?.data || {};
+      const revenue = phase1.revenue ?? { totalRevenue: 0, byPeriod: [], byCustomer: [] };
+      const expenses = phase1.expenses ?? { totalExpenses: 0, byCategory: [], byDate: [] };
+      const outstanding = phase1.outstanding ?? { totalOutstanding: 0, invoices: [] };
+      const sales = phase1.sales ?? { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [], jobsTrendByDate: [] };
+      const serviceAnalytics = phase1.serviceAnalytics ?? { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] };
+      const productSales = phase1.productSales ?? { products: [], totalRevenue: 0, totalQuantitySold: 0 };
+
       setOverviewStats({
-        revenue: revenue?.data || { totalRevenue: 0, byPeriod: [], byCustomer: [] },
-        expenses: expenses?.data || { totalExpenses: 0, byCategory: [] },
-        outstanding: outstanding?.data || { totalOutstanding: 0 },
-        sales: sales?.data || { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [], jobsTrendByDate: [] },
-        serviceAnalytics: serviceAnalytics?.data || { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] },
-        productSales: productSalesData?.data || { products: [], totalRevenue: 0, totalQuantitySold: 0 },
-        productStockSummary: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
-        materialsSummary: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
-        materialsMovements: [],
-        fastestMovingItems: [],
-        revenueByChannel: [],
-        kpiSummary: { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },
+        revenue,
+        expenses,
+        outstanding,
+        sales,
+        serviceAnalytics,
+        productSales,
         topCustomers: [],
-        pipelineSummary: { activeJobs: 0, openLeads: 0, pendingInvoices: 0 },
-        profitLoss: { revenue: totalRevenuePhase1, expenses: totalExpensesPhase1, grossProfit: totalRevenuePhase1 - totalExpensesPhase1, profitMargin: totalRevenuePhase1 > 0 ? ((totalRevenuePhase1 - totalExpensesPhase1) / totalRevenuePhase1 * 100) : 0 },
-        revenueGrowth: 0,
-        periodTypeLabel: '—'
+        extendedKpis: null,
+        profitLossDetail: null,
+        cashFlow: null,
+        comparisonLabel
       });
       setLoading(false);
 
-      // Phase 2: Single batched request (inventory, KPI, top customers, pipeline, revenue by channel)
-      const phase2Res = await reportService.getOverviewPhase2(startDate, endDate, 5).catch((err) => {
-        console.error('[Reports] Error fetching overview phase2:', err);
-        return { data: null };
-      });
-      const phase2 = phase2Res?.data || {};
-      const productStockSummary = { data: phase2.productStockSummary ?? { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 } };
-      const materialsSummary = { data: phase2.materialsSummary ?? { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 } };
-      const materialsMovements = { data: phase2.materialsMovements ?? [] };
-      const fastestMovingItems = { data: phase2.fastestMovingItems ?? [] };
-      const revenueByChannel = { data: phase2.revenueByChannel ?? [] };
-      const kpiSummary = { data: phase2.kpiSummary ?? { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 } };
-      const topCustomers = { data: phase2.topCustomers ?? [] };
-      const pipelineSummary = { data: phase2.pipelineSummary ?? { activeJobs: 0, openLeads: 0, pendingInvoices: 0 } };
-
-      console.log('[Reports] All reports fetched successfully');
-      console.log('[Reports] Revenue data:', revenue?.data ? 'Present' : 'Missing');
-      console.log('[Reports] Expenses data:', expenses?.data ? 'Present' : 'Missing');
-      console.log('[Reports] Sales data:', sales?.data ? 'Present' : 'Missing');
-      console.log('[Reports] Service Analytics data:', serviceAnalytics?.data ? 'Present' : 'Missing');
-
-      // Calculate profit/loss from the same date range data (no separate API call needed)
-      const totalRevenue = revenue?.data?.totalRevenue || 0;
-      const totalExpenses = expenses?.data?.totalExpenses || 0;
-      const grossProfit = totalRevenue - totalExpenses;
-      const profitMargin = totalRevenue > 0 ? ((grossProfit / totalRevenue) * 100) : 0;
-
-      // Calculate revenue growth based on selected period type (M/M, D/D, Y/Y, W/W, Q/Q)
-      // Compare current period with previous period of the same length
-      console.log('[Revenue Growth] ===== STARTING REVENUE GROWTH CALCULATION =====');
-      console.log('[Revenue Growth] Input dateRange:', {
-        start: dateRange[0]?.format('YYYY-MM-DD'),
-        end: dateRange[1]?.format('YYYY-MM-DD'),
-        startType: typeof dateRange[0],
-        endType: typeof dateRange[1],
-        dateFilter
-      });
-      
-      const currentPeriodStart = dayjs(dateRange[0]);
-      const currentPeriodEnd = dayjs(dateRange[1]);
-      const periodLengthDays = currentPeriodEnd.diff(currentPeriodStart, 'day') + 1;
-      
-      console.log('[Revenue Growth] Period calculation:', {
-        currentPeriodStart: currentPeriodStart.format('YYYY-MM-DD'),
-        currentPeriodEnd: currentPeriodEnd.format('YYYY-MM-DD'),
-        periodLengthDays
-      });
-      
-      // Calculate previous period dates using utility function
-      const previousPeriod = getPreviousPeriod(dateFilter || 'custom', [currentPeriodStart, currentPeriodEnd]);
-      
-      console.log('[Revenue Growth] Previous period calculation:', {
-        dateFilter,
-        previousPeriodStart: previousPeriod.startDate,
-        previousPeriodEnd: previousPeriod.endDate,
-        label: previousPeriod.label,
-        calculation: `Based on ${dateFilter}, calculated previous period from ${previousPeriod.startDate} to ${previousPeriod.endDate}`
-      });
-      
-      // Determine period type label for display based on comparison label
-      let periodTypeLabel = previousPeriod.label || 'vs previous period';
-      
-      // Map labels to short format for display
-      if (periodTypeLabel.includes('yesterday')) {
-        periodTypeLabel = 'D/D';
-      } else if (periodTypeLabel.includes('week')) {
-        periodTypeLabel = 'W/W';
-      } else if (periodTypeLabel.includes('month')) {
-        periodTypeLabel = 'M/M';
-      } else if (periodTypeLabel.includes('quarter')) {
-        periodTypeLabel = 'Q/Q';
-      } else if (periodTypeLabel.includes('year')) {
-        periodTypeLabel = 'Y/Y';
-      } else {
-        // For custom ranges, determine based on length
-        if (periodLengthDays === 1) {
-          periodTypeLabel = 'D/D';
-        } else if (periodLengthDays <= 7) {
-          periodTypeLabel = 'W/W';
-        } else if (periodLengthDays <= 31) {
-          periodTypeLabel = 'M/M';
-        } else if (periodLengthDays <= 93) {
-          periodTypeLabel = 'Q/Q';
-        } else {
-          periodTypeLabel = 'Y/Y';
-        }
-      }
-      
-      console.log('[Revenue Growth] Period type determination:', {
-        dateFilter,
-        periodTypeLabel,
-        periodLengthDays
-      });
-      
-      // Fetch revenue for both current and previous periods
-      let currentPeriodRevenue = 0;
-      let previousPeriodRevenue = 0;
-      let revenueGrowth = 0;
-      
-      try {
-        console.log('[Revenue Growth] Fetching current period revenue...', {
-          start: currentPeriodStart.format('YYYY-MM-DD'),
-          end: currentPeriodEnd.format('YYYY-MM-DD')
-        });
-        
-        // Fetch revenue for current period (use the selected date range)
-        const currentPeriodRevenueData = await reportService.getRevenueReport(
-          currentPeriodStart.format('YYYY-MM-DD'),
-          currentPeriodEnd.format('YYYY-MM-DD'),
-          'day'
-        ).catch((err) => {
-          console.error('[Revenue Growth] ❌ Error fetching current period revenue:', err);
-          console.error('[Revenue Growth] Error details:', {
-            message: err?.message,
-            response: err?.response?.data,
-            stack: err?.stack
-          });
-          return { data: { totalRevenue: 0 } };
-        });
-        
-        console.log('[Revenue Growth] Current period revenue response:', {
-          fullResponse: currentPeriodRevenueData,
-          data: currentPeriodRevenueData?.data,
-          totalRevenue: currentPeriodRevenueData?.data?.totalRevenue,
-          totalRevenueType: typeof currentPeriodRevenueData?.data?.totalRevenue
-        });
-        
-        console.log('[Revenue Growth] Fetching previous period revenue...', {
-          start: previousPeriod.startDate,
-          end: previousPeriod.endDate,
-          label: previousPeriod.label
-        });
-        
-        // Fetch revenue for previous period using utility-calculated dates
-        const previousPeriodRevenueData = await reportService.getRevenueReport(
+      const [
+        phase2Res,
+        extendedRes,
+        profitLossRes,
+        cashFlowRes
+      ] = await Promise.all([
+        reportService.getOverviewPhase2(startDate, endDate, 5).catch(() => ({ data: null })),
+        reportService.getOverviewExtendedKpis(
+          startDate,
+          endDate,
           previousPeriod.startDate,
-          previousPeriod.endDate,
-          'day'
-        ).catch((err) => {
-          console.error('[Revenue Growth] ❌ Error fetching previous period revenue:', err);
-          console.error('[Revenue Growth] Error details:', {
-            message: err?.message,
-            response: err?.response?.data,
-            stack: err?.stack
-          });
-          return { data: { totalRevenue: 0 } };
-        });
-        
-        console.log('[Revenue Growth] Previous period revenue response:', {
-          fullResponse: previousPeriodRevenueData,
-          data: previousPeriodRevenueData?.data,
-          totalRevenue: previousPeriodRevenueData?.data?.totalRevenue,
-          totalRevenueType: typeof previousPeriodRevenueData?.data?.totalRevenue
-        });
-        
-        currentPeriodRevenue = parseFloat(currentPeriodRevenueData?.data?.totalRevenue || 0);
-        previousPeriodRevenue = parseFloat(previousPeriodRevenueData?.data?.totalRevenue || 0);
-        
-        console.log('[Revenue Growth] Parsed revenue values:', {
-          currentPeriodRevenue,
-          previousPeriodRevenue,
-          currentPeriodRevenueType: typeof currentPeriodRevenue,
-          previousPeriodRevenueType: typeof previousPeriodRevenue,
-          currentIsNaN: isNaN(currentPeriodRevenue),
-          previousIsNaN: isNaN(previousPeriodRevenue)
-        });
-        
-        // Calculate growth percentage
-        const currentRev = Number(currentPeriodRevenue) || 0;
-        const prevRev = Number(previousPeriodRevenue) || 0;
-        
-        console.log('[Revenue Growth] Final numeric values:', {
-          currentRev,
-          prevRev,
-          currentRevType: typeof currentRev,
-          prevRevType: typeof prevRev
-        });
-        
-        console.log('[Revenue Growth] Growth calculation conditions:', {
-          condition1_prevRevGreaterThan0: prevRev > 0,
-          condition2_currentRevGreaterThan0_prevRevLessOrEqual0: currentRev > 0 && prevRev <= 0,
-          condition3_currentRevLessOrEqual0_prevRevGreaterThan0: currentRev <= 0 && prevRev > 0,
-          condition4_bothZero: currentRev <= 0 && prevRev <= 0
-        });
-        
-        if (prevRev > 0) {
-          revenueGrowth = ((currentRev - prevRev) / prevRev) * 100;
-          console.log('[Revenue Growth] ✅ Normal growth calculation:', {
-            formula: `((${currentRev} - ${prevRev}) / ${prevRev}) * 100`,
-            calculation: `(${currentRev} - ${prevRev}) / ${prevRev} = ${(currentRev - prevRev) / prevRev}`,
-            result: revenueGrowth,
-            resultFormatted: revenueGrowth.toFixed(2) + '%'
-          });
-        } else if (currentRev > 0 && prevRev <= 0) {
-          // If previous period had no revenue but current has revenue, it's infinite growth
-          // Show as 100% for display purposes
-          revenueGrowth = 100;
-          console.log('[Revenue Growth] ✅ Previous period had 0 revenue, current has revenue - setting growth to 100%');
-          console.log('[Revenue Growth] Details:', {
-            currentRev,
-            prevRev,
-            reason: 'Infinite growth (previous = 0, current > 0)'
-          });
-        } else if (currentRev <= 0 && prevRev > 0) {
-          // If current period has no revenue but previous had revenue, it's -100% decline
-          revenueGrowth = -100;
-          console.log('[Revenue Growth] ✅ Current period has 0 revenue, previous had revenue - setting growth to -100%');
-        } else {
-          // If both are 0, growth remains 0
-          revenueGrowth = 0;
-          console.log('[Revenue Growth] ⚠️ Both periods have 0 revenue - growth is 0%');
-          console.log('[Revenue Growth] This is why growth is 0:', {
-            currentRev,
-            prevRev,
-            reason: 'Both periods have 0 revenue'
-          });
-        }
-        
-        console.log('[Revenue Growth] ===== FINAL RESULT =====');
-        console.log('[Revenue Growth] Current Period Revenue:', currentRev);
-        console.log('[Revenue Growth] Previous Period Revenue:', prevRev);
-        console.log('[Revenue Growth] Calculated Growth:', revenueGrowth);
-        console.log('[Revenue Growth] Growth Percentage:', revenueGrowth.toFixed(2) + '%');
-        console.log('[Revenue Growth] Period Type Label:', periodTypeLabel);
-        console.log('[Revenue Growth] ===== END CALCULATION =====');
-        
-      } catch (error) {
-        console.error('[Reports] Error fetching period-over-period revenue:', error);
-        // If we can't fetch, growth remains 0
-      }
+          previousPeriod.endDate
+        ).catch(() => ({ data: null })),
+        reportService.getProfitLossReport(startDate, endDate).catch(() => ({ data: null })),
+        reportService.getCashFlowReport(startDate, endDate).catch(() => ({ data: null }))
+      ]);
 
-      console.log('[Reports] Calculated metrics:', { 
-        totalRevenue, 
-        currentPeriodRevenue,
-        previousPeriodRevenue, 
-        revenueGrowth, 
-        periodTypeLabel,
-        totalExpenses, 
-        grossProfit, 
-        profitMargin 
-      });
+      const phase2 = phase2Res?.data || {};
+      const extendedKpis = extendedRes?.data || null;
+      const profitLossRaw = profitLossRes?.data || {};
+      const cashFlow = cashFlowRes?.data || null;
+
+      const totalRevenue = isShopOrPharmacy
+        ? Math.max(
+            revenue?.totalRevenue || 0,
+            sales?.totalSales || 0,
+            productSales?.totalRevenue || 0
+          )
+        : (revenue?.totalRevenue || 0);
+      const totalExpenses = expenses?.totalExpenses || 0;
+      const grossProfitValue = parseFloat(profitLossRaw.grossProfit ?? (totalRevenue - totalExpenses));
+      const netProfitValue = parseFloat(
+        profitLossRaw.netProfit ?? profitLossRaw.grossProfit ?? (totalRevenue - totalExpenses)
+      );
+      const marginPct = totalRevenue > 0 ? parseFloat((((totalRevenue - totalExpenses) / totalRevenue) * 100).toFixed(2)) : 0;
+
+      const syncedExtendedKpis = extendedKpis && isShopOrPharmacy
+        ? {
+            ...extendedKpis,
+            current: {
+              ...(extendedKpis.current || {}),
+              totalRevenue,
+              totalExpenses,
+              netProfit: netProfitValue,
+              grossProfit: grossProfitValue,
+              grossProfitMargin: extendedKpis.current?.grossProfitMargin ?? marginPct,
+              netProfitMargin: extendedKpis.current?.netProfitMargin ?? marginPct
+            }
+          }
+        : extendedKpis;
 
       setOverviewStats({
-        revenue: revenue?.data || { totalRevenue: 0, byPeriod: [], byCustomer: [] },
-        expenses: expenses?.data || { totalExpenses: 0, byCategory: [] },
-        outstanding: outstanding?.data || { totalOutstanding: 0 },
-        sales: sales?.data || { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [], jobsTrendByDate: [] },
-        serviceAnalytics: serviceAnalytics?.data || { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] },
-        productStockSummary: productStockSummary?.data || { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
-        materialsSummary: materialsSummary?.data || { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
-        materialsMovements: materialsMovements?.data || [],
-        fastestMovingItems: fastestMovingItems?.data || [],
-        revenueByChannel: revenueByChannel?.data || [],
-        kpiSummary: kpiSummary?.data || { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },
-        topCustomers: topCustomers?.data || [],
-        pipelineSummary: pipelineSummary?.data || { activeJobs: 0, openLeads: 0, pendingInvoices: 0 },
-        productSales: productSalesData?.data || { products: [], totalRevenue: 0, totalQuantitySold: 0 },
+        revenue: isShopOrPharmacy && totalRevenue > (revenue?.totalRevenue || 0)
+          ? { ...revenue, totalRevenue }
+          : revenue,
+        expenses,
+        outstanding,
+        sales,
+        serviceAnalytics,
+        productSales,
+        businessType,
+        isRetail: isShopOrPharmacy,
+        isStudio,
+        productStockSummary: phase2.productStockSummary ?? { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+        materialsSummary: phase2.materialsSummary ?? { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+        materialsMovements: phase2.materialsMovements ?? [],
+        fastestMovingItems: phase2.fastestMovingItems ?? [],
+        revenueByChannel: phase2.revenueByChannel ?? [],
+        kpiSummary: phase2.kpiSummary ?? { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },
+        topCustomers: phase2.topCustomers ?? [],
+        pipelineSummary: phase2.pipelineSummary ?? { activeJobs: 0, openLeads: 0, pendingInvoices: 0 },
+        extendedKpis: syncedExtendedKpis,
+        profitLossDetail: {
+          revenue: parseFloat(profitLossRaw.revenue ?? totalRevenue),
+          expenses: parseFloat(profitLossRaw.expenses ?? totalExpenses),
+          cogs: parseFloat(profitLossRaw.cogs ?? 0),
+          grossProfit: grossProfitValue,
+          netProfit: netProfitValue
+        },
+        cashFlow,
         profitLoss: {
           revenue: totalRevenue,
           expenses: totalExpenses,
-          grossProfit: grossProfit,
-          profitMargin: profitMargin
+          grossProfit: totalRevenue - totalExpenses,
+          profitMargin: totalRevenue > 0 ? ((totalRevenue - totalExpenses) / totalRevenue * 100) : 0
         },
-        revenueGrowth: revenueGrowth,
-        periodTypeLabel: periodTypeLabel
+        revenueGrowth: extendedKpis?.comparison?.totalRevenue ?? 0,
+        periodTypeLabel: comparisonLabel,
+        comparisonLabel
       });
     } catch (error) {
       console.error('Error fetching overview stats:', error);
@@ -841,6 +649,59 @@ function ReportsInner() {
     }
   };
 
+  const handleOverviewDateRangeSelect = useCallback((range) => {
+    if (!range?.from || !range?.to) return;
+    setDateFilter('custom');
+    setDateRange([dayjs(range.from).startOf('day'), dayjs(range.to).endOf('day')]);
+  }, []);
+
+  const handleOverviewPresetSelect = useCallback((presetKey) => {
+    setDateFilter(presetKey);
+  }, []);
+
+  const handleComplianceDateRangeSelect = useCallback((range) => {
+    if (!range?.from || !range?.to) return;
+    setDateFilter('custom');
+    setDateRange([dayjs(range.from).startOf('day'), dayjs(range.to).endOf('day')]);
+  }, []);
+
+  const handleCompliancePresetSelect = useCallback((presetKey) => {
+    setDateFilter(presetKey);
+  }, []);
+
+  const handleOverviewCustomize = useCallback(() => {
+    showWarning('Customize Dashboard will let you show or hide widgets — coming soon.');
+  }, []);
+
+  const handleOverviewDownload = useCallback(async () => {
+    const dismissLoading = showLoading('Generating PDF...', 0);
+    setOverviewDownloading(true);
+    try {
+      const html2pdf = (await import('html2pdf.js')).default;
+      const reportElement = document.getElementById('overview-report-content');
+      if (!reportElement) {
+        dismissLoading();
+        showError(null, 'Report content not found');
+        return;
+      }
+      await html2pdf().set({
+        margin: 10,
+        filename: `reports_overview_${dateRange[0].format('YYYY-MM-DD')}_${dateRange[1].format('YYYY-MM-DD')}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      }).from(reportElement).save();
+      dismissLoading();
+      showSuccess('PDF downloaded successfully!');
+    } catch (error) {
+      console.error('Error generating overview PDF:', error);
+      dismissLoading();
+      showError(null, 'Failed to generate PDF');
+    } finally {
+      setOverviewDownloading(false);
+    }
+  }, [dateRange]);
+
   const handleOpenCreateReportModal = () => {
     reportConfigForm.reset({
       reportTitle: `End of month report for ${dayjs().format('MMMM YYYY')}`,
@@ -848,11 +709,18 @@ function ReportsInner() {
       year: dayjs().year(),
       month: dayjs().format('MMMM'),
     });
-    setSelectedReportTypes(['cashflow']);
+    setSelectedReportTypes(getDefaultSmartReportTypeSelection({ isShop, isPharmacy, isStudio }));
     setCreateReportModalVisible(true);
   };
 
   const handleCreateReport = async (values) => {
+    if (creatingReportRef.current) return;
+
+    if (selectedReportTypes.length === 0) {
+      showError(null, 'Select at least one report section.');
+      return;
+    }
+
     // End-of-month reports: only allow on the last day of that month or after
     if (values.durationType === 'monthly') {
       const monthIndex = REPORT_MONTH_NAMES.indexOf(values.month);
@@ -868,6 +736,9 @@ function ReportsInner() {
       }
     }
 
+    creatingReportRef.current = true;
+    setIsCreatingReport(true);
+
     try {
       setCreateReportModalVisible(false);
 
@@ -879,20 +750,32 @@ function ReportsInner() {
 
       // Create a temporary report entry with "processing" status (scoped to tenant and business type)
       const tenantId = activeTenant?.id;
+      const reportId = typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
       const tempReport = {
         title: reportConfig.reportTitle,
         generatedAt: new Date().toISOString(),
         generatedBy: reportConfig.generatedBy,
         reportTypes: reportConfig.reportTypes,
         status: 'processing',
-        id: Date.now().toString(),
+        id: reportId,
         tenantId,
         businessType
       };
 
       // Add to saved reports immediately with processing status
       generatingReportIdsRef.current.add(tempReport.id);
-      persistSavedReports((prev) => [tempReport, ...prev]);
+      persistSavedReports((prev) => {
+        const startedRecently = prev.some(
+          (r) =>
+            r.status === 'processing'
+            && r.title === tempReport.title
+            && Date.now() - new Date(r.generatedAt).getTime() < 5000
+        );
+        if (startedRecently) return prev;
+        return [tempReport, ...prev];
+      });
 
       // Navigate to Smart Report list view
       navigate('/reports/smart-report');
@@ -905,6 +788,9 @@ function ReportsInner() {
     } catch (error) {
       console.error('Error creating report:', error);
       showError(null, 'Failed to create report');
+    } finally {
+      creatingReportRef.current = false;
+      setIsCreatingReport(false);
     }
   };
 
@@ -912,9 +798,10 @@ function ReportsInner() {
     try {
       const report = await generateSmartReport(config);
 
-      updateSavedReportById(reportId, (r) => ({
-        ...r,
+      updateSavedReportById(reportId, (existing) => ({
+        ...existing,
         ...report,
+        id: String(reportId),
         status: 'ready',
         tenantId,
         businessType,
@@ -922,9 +809,19 @@ function ReportsInner() {
 
       showSuccess('Report generated successfully!');
     } catch (error) {
+      const failureReason =
+        error?.message
+        || error?.response?.data?.error
+        || error?.response?.data?.message
+        || 'Report generation failed';
       console.error('Error generating report:', error);
-      updateSavedReportById(reportId, (r) => ({ ...r, status: 'failed' }));
-      showError(null, 'Report generation failed');
+      updateSavedReportById(reportId, (existing) => ({
+        ...existing,
+        id: String(reportId),
+        status: 'failed',
+        failureReason,
+      }));
+      showError(null, failureReason);
     } finally {
       generatingReportIdsRef.current.delete(reportId);
     }
@@ -949,11 +846,10 @@ function ReportsInner() {
       // Add product sales and inventory data for shop/pharmacy
       if (isShop || isPharmacy) {
         fetchPromises.push(
-          reportService.getProductSalesReport(startDate, endDate).catch(() => ({ data: { products: [], totalProducts: 0, totalRevenue: 0, totalQuantitySold: 0 } })),
-          materialsService.getItems().catch(() => ({ data: { data: [] } }))
+          reportService.getProductSalesReport(startDate, endDate).catch(() => ({ data: { products: [], totalProducts: 0, totalRevenue: 0, totalQuantitySold: 0 } }))
         );
       } else {
-        fetchPromises.push(Promise.resolve(null), Promise.resolve(null));
+        fetchPromises.push(Promise.resolve(null));
       }
       // Add prescription report for pharmacy
       if (isPharmacy) {
@@ -965,9 +861,32 @@ function ReportsInner() {
       }
       // Phase 2: top customers, pipeline, materials (for customer-summary, pipeline, materials-summary)
       fetchPromises.push(reportService.getOverviewPhase2(startDate, endDate, 10).catch(() => ({ data: {} })));
+      fetchPromises.push(
+        reportService.getCashFlowReport(startDate, endDate).catch(() => ({ data: {} })),
+        reportService.getProfitLossReport(startDate, endDate).catch(() => ({ data: {} })),
+        reportService.getFinancialPositionReport(endDate).catch(() => ({ data: {} })),
+        reportService.getRevenueByChannel(startDate, endDate).catch(() => ({ data: {} }))
+      );
 
-      const [revenueData, expenseData, salesData, outstandingData, serviceAnalyticsData, productSalesData, materialsData, prescriptionData, phase2Data] = await Promise.all(fetchPromises);
+      const [
+        revenueData,
+        expenseData,
+        salesData,
+        outstandingData,
+        serviceAnalyticsData,
+        productSalesData,
+        prescriptionData,
+        phase2Data,
+        cashFlowData,
+        profitLossData,
+        financialPositionData,
+        revenueByChannelData,
+      ] = await Promise.all(fetchPromises);
       const phase2 = phase2Data?.data || {};
+      const cashFlowPayload = cashFlowData?.data || cashFlowData || {};
+      const profitLossPayload = profitLossData?.data || profitLossData || {};
+      const financialPositionPayload = financialPositionData?.data || financialPositionData || {};
+      const revenueByChannelPayload = revenueByChannelData?.data || revenueByChannelData || {};
 
       const revenue = revenueData.data?.totalRevenue || 0;
       const expenses = expenseData.data?.totalExpenses || 0;
@@ -1028,10 +947,15 @@ function ReportsInner() {
           category: cat.category,
           amount: parseFloat(cat.totalAmount || 0)
         })),
-        materials: materialsData?.data?.data ? {
-          totalStocks: materialsData.data.data.length,
-          stockAvailabilityRate: materialsData.data.data.filter(item => parseFloat(item.quantity || 0) > 0).length / materialsData.data.data.length * 100
-        } : null,
+        materials: (() => {
+          const raw = phase2.productStockSummary || phase2.materialsSummary;
+          if (!raw) return null;
+          const totalStocks = raw.totalStocks ?? raw.totalItems ?? 0;
+          const stockAvailabilityRate = raw.stockAvailabilityRate ?? raw.availabilityRate ?? 0;
+          return totalStocks > 0 || stockAvailabilityRate > 0
+            ? { totalStocks, stockAvailabilityRate, isSnapshot: raw.isSnapshot, snapshotLabel: raw.snapshotLabel }
+            : null;
+        })(),
         outstandingPayments: outstandingData.data?.totalOutstanding || 0
       };
 
@@ -1041,7 +965,10 @@ function ReportsInner() {
         const aiResponse = await reportService.generateAIAnalysis(reportDataForAI, {
           businessType: activeTenant?.businessType || 'printing_press',
           studioType: activeTenant?.metadata?.studioType,
-          period: config.durationType || 'monthly',
+          period: formatPeriodLabel(
+            config.durationType === 'yearly' ? 'specificYear' : config.month ? 'specificMonth' : dateFilter,
+            [rangeStart, rangeEnd]
+          ),
           startDate,
           endDate
         });
@@ -1064,8 +991,8 @@ function ReportsInner() {
               { label: 'Net Profit', value: profit, prevValue: prevProfit, change: Math.abs(profitChange), trend: profitChange >= 0 ? 'up' : 'down', color: 'var(--color-primary)' }
             ],
             note: (revenueChange > 0)
-              ? `Your revenue is up ${revenueChange.toFixed(1)}% (₵ ${(revenue - prevRevenue).toLocaleString()}) from the previous period.`
-              : `Your revenue is down ${Math.abs(revenueChange).toFixed(1)}% (₵ ${(prevRevenue - revenue).toLocaleString()}) from the previous period.`
+              ? `Your revenue is up ${revenueChange.toFixed(1)}% (${formatAmount(revenue - prevRevenue)}) from the previous period.`
+              : `Your revenue is down ${Math.abs(revenueChange).toFixed(1)}% (${formatAmount(prevRevenue - revenue)}) from the previous period.`
           }
       ];
       const conditionalSections = reportTypes.length > 0 ? [
@@ -1169,7 +1096,7 @@ function ReportsInner() {
                   
                   if (topPercentage > 30) {
                     recommendations.push({
-                      finding: `${topProduct.productName} dominates sales with ${topPercentage.toFixed(1)}% of total revenue (₵ ${topRevenue.toLocaleString()}).`,
+                      finding: `${topProduct.productName} dominates sales with ${topPercentage.toFixed(1)}% of total revenue (${formatAmount(topRevenue)}).`,
                       recommendation: 'Consider maintaining higher stock levels for this top-performing product.'
                     });
                   }
@@ -1220,7 +1147,7 @@ function ReportsInner() {
                 
                 if (topPercentage > 30) {
                   recommendations.push({
-                    finding: `${topService.category || topService.jobType} accounts for ${topPercentage.toFixed(1)}% of total revenue (₵ ${topRevenue.toLocaleString()}).`,
+                    finding: `${topService.category || topService.jobType} accounts for ${topPercentage.toFixed(1)}% of total revenue (${formatAmount(topRevenue)}).`,
                     recommendation: 'Consider investing in additional resources to meet the high demand for this service.'
                   });
                 }
@@ -1266,7 +1193,7 @@ function ReportsInner() {
               
               if (topPercentage > 40) {
                 recommendations.push({
-                  finding: `${topCategory.category} is identified as the highest cost driver, accounting for ${topPercentage.toFixed(1)}% of total expenses (₵ ${topAmount.toLocaleString()}).`,
+                  finding: `${topCategory.category} is identified as the highest cost driver, accounting for ${topPercentage.toFixed(1)}% of total expenses (${formatAmount(topAmount)}).`,
                   recommendation: 'Negotiate bulk purchasing agreements with suppliers to reduce unit costs by 10-15%.'
                 });
               }
@@ -1280,7 +1207,7 @@ function ReportsInner() {
               if (utilitiesCategory) {
                 const utilAmount = parseFloat(utilitiesCategory.totalAmount || 0);
                 recommendations.push({
-                  finding: `Utilities costs account for ${expenses > 0 ? ((utilAmount / expenses) * 100).toFixed(1) : 0}% of total expenses (₵ ${utilAmount.toLocaleString()}).`,
+                  finding: `Utilities costs account for ${expenses > 0 ? ((utilAmount / expenses) * 100).toFixed(1) : 0}% of total expenses (${formatAmount(utilAmount)}).`,
                   recommendation: 'Consider LED lighting and energy-efficient machines to reduce energy consumption.'
                 });
               }
@@ -1315,14 +1242,14 @@ function ReportsInner() {
               
               if (outstanding > 0) {
                 recommendations.push({
-                  finding: `Total outstanding balance is ₵ ${outstanding.toLocaleString()}.`,
+                  finding: `Total outstanding balance is ${formatAmount(outstanding)}.`,
                   recommendation: 'Implement automated reminders for outstanding payments 3 days before due date.'
                 });
               }
               
               if (overdueAmount > 0) {
                 recommendations.push({
-                  finding: `Overdue invoices total ₵ ${overdueAmount.toLocaleString()} (${overdueInvoices.length} invoice${overdueInvoices.length > 1 ? 's' : ''}).`,
+                  finding: `Overdue invoices total ${formatAmount(overdueAmount)} (${overdueInvoices.length} invoice${overdueInvoices.length > 1 ? 's' : ''}).`,
                   recommendation: 'Consider implementing a late payment fee of 2% to encourage timely payments.'
                 });
               }
@@ -1345,7 +1272,7 @@ function ReportsInner() {
             recommendations: (() => {
               const total = outstandingData.data?.totalOutstanding ?? 0;
               if (total <= 0) return [];
-              return [{ finding: `Total outstanding is ₵ ${total.toLocaleString()}.`, recommendation: 'Send payment reminders and follow up on overdue invoices.' }];
+              return [{ finding: `Total outstanding is ${formatAmount(total)}.`, recommendation: 'Send payment reminders and follow up on overdue invoices.' }];
             })()
           }] : []),
           ...(reportTypes.includes('customer-summary') ? [{
@@ -1378,7 +1305,7 @@ function ReportsInner() {
           ...(isStudio && reportTypes.includes('materials-summary') ? [{
             type: 'materials-summary',
             title: 'Materials Summary',
-            description: 'Stock levels and recent movements.',
+            description: 'Movements in the selected period; stock levels are current snapshot.',
             data: {
               summary: phase2.materialsSummary || { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
               movements: (phase2.materialsMovements || []).slice(0, 10)
@@ -1388,7 +1315,7 @@ function ReportsInner() {
           ...(reportTypes.includes('pipeline') ? [{
             type: 'pipeline',
             title: 'Pipeline',
-            description: 'Active jobs, open leads, and pending invoices.',
+            description: 'Open pipeline (current) plus activity created in the selected period.',
             data: phase2.pipelineSummary || { activeJobs: 0, openLeads: 0, pendingInvoices: 0 },
             recommendations: []
           }] : []),
@@ -1424,7 +1351,7 @@ function ReportsInner() {
               if (revenue > 0 && rev > 0) {
                 const pct = (rev / revenue) * 100;
                 recommendations.push({
-                  finding: `Prescription revenue is ₵ ${rev.toLocaleString()} (${pct.toFixed(1)}% of total revenue).`,
+                  finding: `Prescription revenue is ${formatAmount(rev)} (${pct.toFixed(1)}% of total revenue).`,
                   recommendation: 'Continue tracking prescription vs OTC mix.'
                 });
               }
@@ -1445,7 +1372,7 @@ function ReportsInner() {
                 ? [`Your top ${terminology.topCategoryInsightLabel} (${productSalesData.data.products[0]?.productName || 'N/A'}) accounts for ${(revenue > 0) ? ((parseFloat(productSalesData.data.products[0]?.revenue || 0) / revenue) * 100).toFixed(1) : 0}% of total revenue.`]
                 : [`${terminology.analytics} data is being analyzed.`]),
               (outstandingData.data?.totalOutstanding > 0)
-                ? `Outstanding payments total ₵ ${outstandingData.data.totalOutstanding.toLocaleString()}. Consider implementing automated payment reminders.`
+                ? `Outstanding payments total ${formatAmount(outstandingData.data.totalOutstanding)}. Consider implementing automated payment reminders.`
                 : 'All payments are up to date.',
               (profitMargin > 0)
                 ? `Operating expenses are ${(expenses > 0) ? ((expenses / revenue) * 100).toFixed(1) : 0}% of revenue, with a profit margin of ${profitMargin.toFixed(1)}%.`
@@ -1466,7 +1393,7 @@ function ReportsInner() {
                     recommendations.push({
                       priority: 'High',
                       action: 'Implement automated follow-ups for overdue invoices',
-                      impact: `Could recover ₵ ${(outstanding * 0.4).toLocaleString()} in outstanding payments`
+                      impact: `Could recover ${formatAmount(outstanding * 0.4)} in outstanding payments`
                     });
                   }
                   
@@ -1522,9 +1449,42 @@ function ReportsInner() {
         generatedBy: config.generatedBy,
         reportTypes,
         period: `${dayjs(startDate).format('MMM DD, YYYY')} to ${dayjs(endDate).format('MMM DD, YYYY')}`,
+        periodLabel: config.durationType === 'yearly'
+          ? `Yearly Report • ${config.year}`
+          : `Monthly Report • ${dayjs(startDate).format('MMM D')} – ${dayjs(endDate).format('MMM D, YYYY')}`,
         greeting: `Hello${user?.first_name ? ` ${user.first_name}` : ''}, here is a summary of the performance of your business operations for ${config.month} ${config.year}.`,
         sections: [],
-        insights: reportInsights
+        insights: reportInsights,
+        snapshot: buildSmartReportSnapshot({
+          revenueData: revenueData?.data || revenueData || {},
+          expenseData: expenseData?.data || expenseData || {},
+          salesData: salesData?.data || salesData || {},
+          outstandingData: outstandingData?.data || outstandingData || {},
+          serviceAnalyticsData: serviceAnalyticsData?.data || serviceAnalyticsData || {},
+          productSalesData: productSalesData?.data || productSalesData || {},
+          phase2Data: phase2,
+          cashFlowData: cashFlowPayload,
+          profitLossData: profitLossPayload,
+          financialPositionData: financialPositionPayload,
+          revenueByChannelData: revenueByChannelPayload,
+          prescriptionData: prescriptionData?.data || null,
+          aiAnalysis,
+          comparison: {
+            prevRevenue,
+            prevExpenses,
+            prevProfit,
+            revenueChange,
+            expenseChange,
+            profitChange,
+            label: `vs ${dayjs(previousPeriodForComparison.startDate).format('MMM YYYY')}`,
+            startDate,
+            endDate,
+          },
+          isShop,
+          isPharmacy,
+          isStudio,
+          terminology,
+        }),
       };
 
       // Return the report data instead of saving it
@@ -2252,7 +2212,7 @@ function ReportsInner() {
     border: '1px solid #f4f4f4'
   };
 
-  const formatComplianceCurrency = (num) => `₵ ${Number(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formatComplianceCurrency = (num) => formatAmount(num);
 
   const renderComplianceView = () => {
     const statementTabs = [
@@ -2287,7 +2247,10 @@ function ReportsInner() {
           <div className="flex items-center gap-2">
             <DateRangePicker
               range={dateRange?.[0] && dateRange?.[1] ? { from: dateRange[0].toDate(), to: dateRange[1].toDate() } : undefined}
-              onSelect={(r) => r?.from && r?.to && setDateRange([dayjs(r.from), dayjs(r.to)])}
+              onSelect={handleComplianceDateRangeSelect}
+              presets={DATE_RANGE_PRESET_OPTIONS}
+              activePreset={dateFilter}
+              onPresetSelect={handleCompliancePresetSelect}
               className="w-auto min-w-[240px]"
             />
             <ShadcnButton variant="outline" size="sm" onClick={handlePrint}>
@@ -2626,950 +2589,19 @@ function ReportsInner() {
     );
   };
 
-  const renderOverviewDashboard = () => {
-    if (!overviewStats) {
-      return (
-        <div className="flex items-center justify-center p-12">
-          <div className="text-center">
-            <Skeleton className="h-4 w-48 mx-auto mb-2" />
-            <Skeleton className="h-4 w-32 mx-auto" />
-          </div>
-        </div>
-      );
-    }
 
-    const { 
-      revenue, 
-      expenses, 
-      profitLoss, 
-      revenueGrowth,
-      periodTypeLabel,
-      productStockSummary,
-      materialsSummary,
-      materialsMovements,
-      fastestMovingItems,
-      revenueByChannel: revenueByChannelFromApi,
-      serviceAnalytics,
-      sales,
-      productSales,
-      kpiSummary,
-      topCustomers,
-      pipelineSummary
-    } = overviewStats;
+  // Smart Report section options — ids match detail page tabs
+  const reportTypeOptionsGrouped = useMemo(
+    () => getSmartReportTypeOptionsGrouped({ isShop, isPharmacy, isStudio }),
+    [isShop, isPharmacy, isStudio]
+  );
 
-    // Calculate growth metrics from real data
-    const totalRevenue = revenue?.totalRevenue || 0;
-    const totalExpenses = expenses?.totalExpenses || 0;
-    
-    // Calculate net income and profit margin from the same date range data
-    const netIncome = totalRevenue - totalExpenses;
-    const profitMargin = totalRevenue > 0 ? ((netIncome / totalRevenue) * 100) : 0;
-    
-    // Expense breakdown for donut chart
-    const expenseData = expenses?.byCategory?.map((item, index) => ({
-      name: item.category,
-      value: parseFloat(item.totalAmount || 0),
-      color: COLORS[index % COLORS.length]
-    })) || [];
-
-    // Revenue trend for area chart from real data - format based on date filter
-    const formatPeriodLabel = (item, filterType) => {
-      const date = item.date || item.period || item.hour || item.week || item.month;
-      
-      switch (filterType) {
-        case 'today':
-        case 'yesterday':
-          // Format as 2-hour intervals: "00:00", "02:00", "04:00", etc.
-          if (item.hour !== undefined) {
-            const hour = parseInt(item.hour);
-            return `${hour.toString().padStart(2, '0')}:00`;
-          }
-          // Fallback: parse from date if hour not available
-          return dayjs(date).format('HH:00');
-        case 'thisWeek':
-        case 'lastWeek':
-          // Format as day names: "Mon", "Tue", etc.
-          return dayjs(date).format('ddd');
-        case 'thisMonth':
-        case 'lastMonth':
-        case 'specificMonth':
-          // Format as "Week 1", "Week 2", etc.
-          if (item.week !== undefined) {
-            return `Week ${item.week}`;
-          }
-          // Calculate week number from date
-          const weekNum = dayjs(date).week() - dayjs(dateRange[0]).week() + 1;
-          return `Week ${weekNum}`;
-        case 'thisQuarter':
-        case 'lastQuarter':
-          // Format as month names: "Jan", "Feb", "Mar"
-          if (item.month !== undefined) {
-            return dayjs().month(item.month - 1).format('MMM');
-          }
-          return dayjs(date).format('MMM');
-        case 'thisYear':
-        case 'lastYear':
-        case 'specificYear':
-          // Format as month names: "Jan", "Feb", etc.
-          if (item.month !== undefined) {
-            return dayjs().month(item.month - 1).format('MMM');
-          }
-          return dayjs(date).format('MMM');
-        default:
-          return dayjs(date).format('MMM DD');
-      }
-    };
-
-    // Build revenue trend data with proper interval filling
-    const buildRevenueTrend = () => {
-      if (!revenue?.byPeriod?.length) return [];
-
-      // For hourly (today/yesterday), ensure all 12 intervals are present
-      if (dateFilter === 'today' || dateFilter === 'yesterday') {
-        const dataMap = new Map();
-        revenue.byPeriod.forEach(item => {
-          const hour = parseInt(item.hour || 0);
-          dataMap.set(hour, parseFloat(item.totalRevenue || 0));
-        });
-
-        // Fill all 12 intervals (0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22)
-        const intervals = [];
-        for (let h = 0; h < 24; h += 2) {
-          intervals.push({
-            period: `${h.toString().padStart(2, '0')}:00`,
-            revenue: dataMap.get(h) || 0,
-            rawDate: h
-          });
-        }
-        return intervals;
-      }
-
-      // For monthly filters, ensure all 4 weeks are present
-      if (dateFilter === 'thisMonth' || dateFilter === 'lastMonth' || dateFilter === 'specificMonth') {
-        const dataMap = new Map();
-        revenue.byPeriod.forEach(item => {
-          const week = parseInt(item.week || 1);
-          dataMap.set(week, parseFloat(item.totalRevenue || 0));
-        });
-
-        // Fill all 4 weeks
-        const intervals = [];
-        for (let w = 1; w <= 4; w++) {
-          intervals.push({
-            period: `Week ${w}`,
-            revenue: dataMap.get(w) || 0,
-            rawDate: w
-          });
-        }
-        return intervals;
-      }
-
-      // For quarterly filters, ensure all 3 months are present
-      if (dateFilter === 'thisQuarter' || dateFilter === 'lastQuarter') {
-        const dataMap = new Map();
-        revenue.byPeriod.forEach(item => {
-          const month = parseInt(item.month || 1);
-          dataMap.set(month, parseFloat(item.totalRevenue || 0));
-        });
-
-        // Get quarter months based on date range start
-        const startMonth = dateRange[0].month() + 1; // dayjs months are 0-indexed, so +1 for 1-12
-        const intervals = [];
-        for (let i = 0; i < 3; i++) {
-          const monthNum = startMonth + i;
-          intervals.push({
-            period: dayjs().month(monthNum - 1).format('MMM'),
-            revenue: dataMap.get(monthNum) || 0,
-            rawDate: monthNum
-          });
-        }
-        return intervals;
-      }
-
-      // For yearly filters, ensure all 12 months are present
-      if (dateFilter === 'thisYear' || dateFilter === 'lastYear' || dateFilter === 'specificYear') {
-        const dataMap = new Map();
-        revenue.byPeriod.forEach(item => {
-          const month = parseInt(item.month || 1);
-          dataMap.set(month, parseFloat(item.totalRevenue || 0));
-        });
-
-        // Fill all 12 months
-        const intervals = [];
-        for (let m = 1; m <= 12; m++) {
-          intervals.push({
-            period: dayjs().month(m - 1).format('MMM'),
-            revenue: dataMap.get(m) || 0,
-            rawDate: m
-          });
-        }
-        return intervals;
-      }
-
-      // For weekly filters (thisWeek/lastWeek), ensure all 7 days are present
-      if (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') {
-        const dataMap = new Map();
-        revenue.byPeriod.forEach(item => {
-          const date = dayjs(item.date || item.period);
-          const dayKey = date.format('YYYY-MM-DD');
-          dataMap.set(dayKey, parseFloat(item.totalRevenue || 0));
-        });
-
-        // Fill all 7 days of the week - use dateRange[0] as the start (already calculated correctly)
-        const intervals = [];
-        const startOfWeek = dateRange[0]; // This is already the start of the week from calculateDateRange
-        
-        for (let i = 0; i < 7; i++) {
-          const day = startOfWeek.add(i, 'day');
-          const dayKey = day.format('YYYY-MM-DD');
-          intervals.push({
-            period: day.format('ddd'),
-            revenue: dataMap.get(dayKey) || 0,
-            rawDate: dayKey
-          });
-        }
-        return intervals;
-      }
-
-      // For other filters (custom), map existing data
-      return revenue.byPeriod.map((item) => ({
-        period: formatPeriodLabel(item, dateFilter),
-        revenue: parseFloat(item.totalRevenue || 0),
-        rawDate: item.date || item.period || item.hour || item.week || item.month
-      }));
-    };
-
-    const dailyRevenueTrend = buildRevenueTrend();
-
-    // Jobs trend (incoming vs completed) from backend data
-    // Incoming jobs use createdAt date, completed jobs use completionDate
-    const jobsTrend = (() => {
-      // Check if jobsTrendByDate exists and has data
-      const jobsTrendData = sales?.jobsTrendByDate || [];
-      if (!jobsTrendData || jobsTrendData.length === 0) {
-        // If no jobsTrendByDate, try to use byDate as fallback (grouped by createdAt)
-        if (sales?.byDate && sales.byDate.length > 0) {
-          const startDate = dateRange[0].startOf('day');
-          const endDate = dateRange[1].endOf('day');
-          
-          const filteredByDate = sales.byDate.filter(item => {
-            if (!item.date) return false;
-            const itemDate = dayjs(item.date).startOf('day');
-            return (itemDate.isAfter(startDate) || itemDate.isSame(startDate)) && 
-                   (itemDate.isBefore(endDate) || itemDate.isSame(endDate));
-          });
-          
-          if (filteredByDate.length === 0) return [];
-          
-          const maxDays = (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') ? 7 : 
-                         (dateFilter === 'thisMonth' || dateFilter === 'lastMonth' || dateFilter === 'specificMonth') ? 7 : 
-                         filteredByDate.length;
-          
-          return filteredByDate
-            .slice(-maxDays)
-            .map((item) => {
-              // Use jobCount as incoming, completed will be 0 (we don't have completionDate data here)
-              return {
-                day: dayjs(item.date).format('ddd'),
-                incoming: parseInt(item.jobCount) || 0,
-                completed: 0
-              };
-            });
-        }
-        return [];
-      }
-      
-      // Filter to only include dates within the selected date range
-      const startDate = dateRange[0].startOf('day');
-      const endDate = dateRange[1].endOf('day');
-      
-      const filteredTrend = jobsTrendData.filter(item => {
-        if (!item.date) return false;
-        // Handle both string and Date objects
-        const itemDate = dayjs(item.date).startOf('day');
-        return (itemDate.isAfter(startDate) || itemDate.isSame(startDate)) && 
-               (itemDate.isBefore(endDate) || itemDate.isSame(endDate));
-      });
-      
-      if (filteredTrend.length === 0) return [];
-      
-      // For weekly filters, show all days. For monthly, show last 7 days. For others, show all available.
-      const maxDays = (dateFilter === 'thisWeek' || dateFilter === 'lastWeek') ? 7 : 
-                     (dateFilter === 'thisMonth' || dateFilter === 'lastMonth' || dateFilter === 'specificMonth') ? 7 : 
-                     filteredTrend.length;
-      
-      return filteredTrend
-        .slice(-maxDays)
-        .map((item) => {
-          return {
-            day: dayjs(item.date).format('ddd'),
-            incoming: parseInt(item.incoming) || 0,
-            completed: parseInt(item.completed) || 0
-          };
-        });
-    })();
-
-    // Top revenue entities:
-    // - For shop/pharmacy: use top products by revenue
-    // - Otherwise (studio-like): use top customers by revenue
-    let topServices = [];
-    if ((isShop || isPharmacy) && (productSales?.products || []).length > 0) {
-      topServices = productSales.products.slice(0, 5).map((item) => ({
-        name: item.productName || 'Unknown',
-        value: parseFloat(item.revenue || 0)
-      }));
-    } else if (revenue?.byCustomer?.length > 0) {
-      topServices = revenue.byCustomer.slice(0, 5).map((item) => ({
-        name: item.customer?.name || 'Unknown',
-        value: parseFloat(item.totalRevenue || 0)
-      }));
-    }
-
-    // Revenue by channel - prefer API (payment method), then service analytics / job type / sales by payment method
-    const paymentMethodLabel = (method) =>
-      method === 'cash' ? 'Cash' : method === 'mobile_money' ? 'MoMo' : method === 'card' ? 'Card'
-        : method === 'credit' ? 'Credit' : method === 'bank_transfer' ? 'Bank' : (method || 'Other');
-    const channelFromPaymentMethod = sales?.byPaymentMethod?.length > 0 && !serviceAnalytics?.byCategory?.length && !sales?.byJobType?.length;
-    const revenueByChannel = (revenueByChannelFromApi?.length > 0)
-      ? revenueByChannelFromApi.map((item) => ({ channel: item.channel || 'Other', revenue: parseFloat(item.revenue || 0) }))
-      : serviceAnalytics?.byCategory?.length > 0
-      ? serviceAnalytics.byCategory.slice(0, 4).map(item => ({
-          channel: item.category || 'Other',
-          revenue: parseFloat(item.totalRevenue || 0)
-        }))
-      : sales?.byJobType?.length > 0
-      ? sales.byJobType.slice(0, 4).map(item => ({
-          channel: item.jobType || item.category || 'Other',
-          revenue: parseFloat(item.totalSales || 0)
-        }))
-      : sales?.byPaymentMethod?.length > 0
-      ? sales.byPaymentMethod.slice(0, 6).map(item => ({
-          channel: paymentMethodLabel(item.paymentMethod),
-          revenue: parseFloat(item.totalAmount || 0)
-        }))
-      : [];
-
-    // When no channel data: for shop/pharmacy show Revenue by Product (top performing products)
-    const revenueByProduct = (revenueByChannel.length === 0 && (isShop || isPharmacy) && (productSales?.products || []).length > 0)
-      ? (productSales.products || []).slice(0, 8).map(item => ({
-          channel: item.productName || 'Unknown',
-          revenue: parseFloat(item.revenue || 0)
-        }))
-      : [];
-    const showRevenueByProduct = revenueByProduct.length > 0;
-    
-    // Use service analytics total revenue if available, otherwise use sales total
-    const totalSales = serviceAnalytics?.totalRevenue || sales?.totalSales || 0;
-
-    // Format date range for display
-    const dateRangeDisplay = `${dateRange[0].format('MMM DD, YYYY')} - ${dateRange[1].format('MMM DD, YYYY')}`;
-    
-    // Check if we have any data for the selected period
-    const hasDataForPeriod = totalRevenue > 0 || totalExpenses > 0 || (sales?.totalJobs || 0) > 0;
-    
-    return (
-      <div>
-        <div className="mb-4 rounded-lg border border-border bg-card p-3 md:p-4">
-          <div className="mb-2">
-            <p className="text-sm font-medium text-foreground">Date filter</p>
-            <p className="text-xs text-muted-foreground">Choose a reporting period for overview metrics.</p>
-          </div>
-          <div className="flex flex-wrap items-end gap-2 md:gap-3">
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Period</Label>
-            <ShadcnSelect value={dateFilter} onValueChange={handleFilterChange}>
-              <SelectTrigger className="w-[220px] h-9">
-                <SelectValue placeholder="Select date filter" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="today">Today</SelectItem>
-                <SelectItem value="thisWeek">This week</SelectItem>
-                <SelectItem value="lastWeek">Last week</SelectItem>
-                <SelectItem value="thisMonth">This month</SelectItem>
-                <SelectItem value="lastMonth">Last month</SelectItem>
-                <SelectItem value="specificMonth">Specific month</SelectItem>
-                <SelectItem value="thisQuarter">This quarter</SelectItem>
-                <SelectItem value="lastQuarter">Last quarter</SelectItem>
-                <SelectItem value="thisYear">This year</SelectItem>
-                <SelectItem value="specificYear">Specific year</SelectItem>
-              </SelectContent>
-            </ShadcnSelect>
-          </div>
-
-            {dateFilter === 'specificMonth' && (
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Month</Label>
-              <ShadcnInput
-                type="month"
-                value={specificMonth}
-                onChange={(e) => setSpecificMonth(e.target.value)}
-                className="w-[180px] h-9"
-              />
-            </div>
-          )}
-
-          {dateFilter === 'specificYear' && (
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Year</Label>
-              <ShadcnInput
-                type="number"
-                min="2000"
-                max="2100"
-                value={specificYear}
-                onChange={(e) => setSpecificYear(e.target.value)}
-                className="w-[140px] h-9"
-              />
-            </div>
-          )}
-          </div>
-        </div>
-
-        {/* Date Range Indicator */}
-        <div className="mb-4 py-2 px-4 bg-muted rounded-md inline-block">
-          <span className="text-xs text-muted-foreground">
-            Showing data for: <span className="font-semibold">{dateRangeDisplay}</span>
-            {!hasDataForPeriod && (
-              <span className="text-amber-600 ml-2"> (No data found for this period)</span>
-            )}
-          </span>
-        </div>
-        
-        {/* Top Row - 3 Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-3 md:mb-4">
-          {/* Card 1: Financial Summary */}
-          <Card style={cardStyle}>
-            <CardContent className="pt-4 md:pt-6 space-y-3 md:space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground">Revenue growth {overviewStats?.periodTypeLabel || 'M/M'}</p>
-                <h2 className={cn("text-3xl font-bold mt-2", revenueGrowth >= 0 ? "text-primary" : "text-red-700")}>
-                  {revenueGrowth >= 0 ? '+' : ''}{revenueGrowth.toFixed(1)}%
-                </h2>
-              </div>
-              <Separator />
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Revenue</p>
-                  <p className="text-xl font-semibold text-foreground">₵ {(totalRevenue / 1000).toFixed(3)}K</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Net income</p>
-                  <p className="text-xl font-semibold text-foreground">₵ {(netIncome / 1000).toFixed(3)}K</p>
-                </div>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">Profit margin</p>
-                <p className="text-2xl font-semibold text-foreground">{profitMargin.toFixed(2)}%</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Card 2: Expense Chart */}
-          <Card style={cardStyle}>
-            <CardHeader className="pb-2 px-4 md:px-6 pt-4 md:pt-6">
-              <CardTitle className="text-base font-semibold">Expense Breakdown</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6">
-              {expenseData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={180}>
-                  <PieChart>
-                    <Pie
-                      data={expenseData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={55}
-                      outerRadius={75}
-                      paddingAngle={3}
-                      dataKey="value"
-                    >
-                      {expenseData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <RechartsTooltip 
-                      formatter={(value) => `₵ ${value.toLocaleString()}`}
-                      contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className={`text-center ${emptyStateClassXL}`}>No expense data available</div>
-              )}
-              <div className="mt-5">
-                {expenseData.length > 0 ? (
-                  expenseData.slice(0, 3).map((item, idx) => (
-                    <div key={idx} className="flex justify-between items-center mb-3 last:mb-0">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                        <span className="text-sm text-muted-foreground">{item.name}</span>
-                      </div>
-                      <span className="text-sm font-semibold text-foreground">
-                        {expenses.totalExpenses > 0 ? ((item.value / expenses.totalExpenses) * 100).toFixed(0) : 0}% · ₵ {(item.value / 1000).toFixed(3)}K
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-xs text-muted-foreground">No expense data available for this period</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Card 3: Jobs/Sales Summary */}
-          <Card style={cardStyle}>
-            <CardContent className="pt-4 md:pt-6 space-y-3 md:space-y-4">
-              <div>
-                <p className="text-sm text-muted-foreground">{terminology.salesLabel}</p>
-                <h2 className="text-3xl font-bold mt-2 text-foreground">
-                  {isShop || isPharmacy ? (sales?.totalJobs ?? 0) : (sales?.totalJobs ?? 0)}
-                </h2>
-              </div>
-              <Separator />
-              <div>
-                <p className="text-xs text-muted-foreground mb-1">{terminology.salesValueLabel}</p>
-                <p className="text-xl font-semibold text-foreground">
-                  ₵ {((isShop || isPharmacy ? (totalRevenue || parseFloat(sales?.totalSales) || 0) : totalRevenue) / 1000).toFixed(3)}K
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground mb-2">{terminology.rateLabel}</p>
-                <div className="flex flex-col gap-1">
-                  {(() => {
-                    if (isShop || isPharmacy) {
-                      const totalValue = parseFloat(sales?.totalSales) || 0;
-                      const byPayment = sales?.byPaymentMethod ?? [];
-                      const paymentLabels = { cash: 'Cash', card: 'Card', credit_card: 'Card', mobile_money: 'MoMo', bank_transfer: 'Bank', credit: 'Credit', other: 'Other' };
-                      const cashAmount = byPayment.find(p => (p.paymentMethod || '').toLowerCase() === 'cash')?.totalAmount ?? 0;
-                      const cashValue = parseFloat(cashAmount);
-                      const cashRate = totalValue > 0 ? Math.round((cashValue / totalValue) * 100) : 0;
-                      const sortedByValue = [...byPayment]
-                        .map(p => ({ ...p, totalAmount: parseFloat(p.totalAmount || 0) }))
-                        .filter(p => p.totalAmount > 0)
-                        .sort((a, b) => b.totalAmount - a.totalAmount);
-                      return (
-                        <>
-                          <span className="text-2xl font-semibold text-foreground">{cashRate}%</span>
-                          {sortedByValue.length > 0 && (
-                            <div className="mt-1.5 space-y-1 text-xs text-muted-foreground">
-                              {sortedByValue.map((m) => {
-                                const label = paymentLabels[(m.paymentMethod || '').toLowerCase()] || m.paymentMethod || 'Other';
-                                const val = parseFloat(m.totalAmount || 0);
-                                const pct = totalValue > 0 ? Math.round((val / totalValue) * 100) : 0;
-                                return (
-                                  <div key={m.paymentMethod || label} className="flex justify-between items-center gap-2">
-                                    <span>{label}</span>
-                                    <span className="font-medium text-foreground">₵ {val.toLocaleString()} ({pct}%)</span>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </>
-                      );
-                    } else {
-                      const totalJobs = sales?.totalJobs || 0;
-                      const completedJobs = sales?.byStatus?.find(s => s.status === 'completed')?.jobCount || 0;
-                      const completionRate = totalJobs > 0 ? Math.round((completedJobs / totalJobs) * 100) : 0;
-                      return <span className="text-2xl font-semibold text-foreground">{completionRate}%</span>;
-                    }
-                  })()}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* KPI, Top Customers, Pipeline Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-3 md:mb-4">
-          <Card style={cardStyle}>
-            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
-              <CardTitle className="text-base font-semibold">KPI Summary</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6 space-y-2 md:space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Active customers</span>
-                <span className="text-lg font-semibold text-foreground">{kpiSummary?.activeCustomers ?? 0}</span>
-              </div>
-              <Separator />
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Pending invoices</span>
-                <span className="text-lg font-semibold text-foreground">₵ {(kpiSummary?.pendingInvoices ?? 0).toLocaleString()}</span>
-              </div>
-            </CardContent>
-          </Card>
-          <Card style={cardStyle}>
-            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
-              <CardTitle className="text-base font-semibold">Top Customers by Revenue</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6">
-              {(topCustomers && topCustomers.length > 0) ? (
-                <div className="space-y-2">
-                  {topCustomers.slice(0, 5).map((item, idx) => (
-                    <div key={idx} className="flex justify-between items-center py-1.5 border-b border-border last:border-0">
-                      <span className="text-sm text-foreground flex-1 truncate">{item.customer?.name || item.customer?.company || 'Unknown'}</span>
-                      <span className="text-sm font-semibold text-primary ml-2">₵ {parseFloat(item.totalRevenue || 0).toLocaleString()}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className={`text-center ${emptyStateClass}`}>No customer data for this period</div>
-              )}
-            </CardContent>
-          </Card>
-          <Card style={cardStyle}>
-            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
-              <CardTitle className="text-base font-semibold">{isStudio ? 'Pipeline Summary' : 'Outstanding'}</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6 space-y-2 md:space-y-3">
-              {isStudio && (
-                <>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">Active jobs</span>
-                    <span className="text-lg font-semibold text-foreground">{pipelineSummary?.activeJobs ?? 0}</span>
-                  </div>
-                  <Separator />
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-muted-foreground">Open leads</span>
-                    <span className="text-lg font-semibold text-foreground">{pipelineSummary?.openLeads ?? 0}</span>
-                  </div>
-                  <Separator />
-                </>
-              )}
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-muted-foreground">Pending invoices (count)</span>
-                <span className="text-lg font-semibold text-foreground">{pipelineSummary?.pendingInvoices ?? 0}</span>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Middle Row - 2 Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4 mb-3 md:mb-4">
-          {/* Card 4: Revenue Generated */}
-          <div className="md:col-span-2">
-            <Card style={cardStyle}>
-              <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
-                <div className="mb-4 md:mb-5">
-                  <p className="text-sm text-muted-foreground mb-2">Total revenue generated</p>
-                  <h2 className="text-2xl font-bold text-primary">₵ {totalRevenue.toFixed(3)}</h2>
-                </div>
-                {dailyRevenueTrend.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={dailyRevenueTrend} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-                      <defs>
-                        <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="var(--color-primary)" stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor="var(--color-primary)" stopOpacity={0.05}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                      <XAxis 
-                        dataKey="period" 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: '#8c8c8c', fontSize: 12 }}
-                      />
-                      <YAxis 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: '#8c8c8c', fontSize: 12 }}
-                        tickFormatter={(value) => `${value / 1000}k`}
-                      />
-                      <RechartsTooltip 
-                        formatter={(value) => [`₵ ${value.toLocaleString()}`, 'Revenue']}
-                        contentStyle={{ borderRadius: 8, border: '1px solid #d9d9d9' }}
-                      />
-                      <Line 
-                        type="monotone" 
-                        dataKey="revenue" 
-                        stroke="var(--color-primary)" 
-                        fill="url(#colorRevenue)"
-                        strokeWidth={3}
-                        dot={{ fill: 'var(--color-primary)', r: 4 }}
-                        activeDot={{ r: 6 }}
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className={`text-center ${emptyStateClassLarge}`}>No revenue data available for this period</div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Card 5: Jobs/Sales Trend */}
-          <Card 
-            style={cardStyle}
-          >
-            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
-              <CardTitle className="text-base font-semibold">{terminology.trendLabel}</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6">
-              {isShop ? (
-                // For shop: show payment method breakdown or sales by day
-                (() => {
-                  const paymentMethodData = sales?.byPaymentMethod || [];
-                  if (paymentMethodData.length > 0) {
-                    const chartData = paymentMethodData.map(item => ({
-                      name: item.paymentMethod === 'cash' ? 'Cash' :
-                            item.paymentMethod === 'credit' ? 'Credit' :
-                            item.paymentMethod === 'card' ? 'Card' :
-                            item.paymentMethod === 'mobile_money' ? 'Mobile' :
-                            item.paymentMethod === 'bank_transfer' ? 'Bank' : 'Other',
-                      value: parseFloat(item.totalAmount || item.count || 0),
-                      count: parseInt(item.count || 0)
-                    }));
-                    
-                    const PAYMENT_COLORS = COLORS;
-                    
-                    return (
-                      <ResponsiveContainer width="100%" height={220}>
-                        <PieChart>
-                          <Pie
-                            data={chartData}
-                            cx="50%"
-                            cy="50%"
-                            innerRadius={50}
-                            outerRadius={80}
-                            paddingAngle={2}
-                            dataKey="count"
-                            nameKey="name"
-                            label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                            labelLine={false}
-                          >
-                            {chartData.map((entry, index) => (
-                              <Cell key={`cell-${index}`} fill={PAYMENT_COLORS[index % PAYMENT_COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <RechartsTooltip 
-                            formatter={(value, name) => [`${value} sales`, name]}
-                            contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
-                          />
-                          <Legend 
-                            wrapperStyle={{ fontSize: 11, paddingTop: 10 }}
-                            iconType="circle"
-                          />
-                        </PieChart>
-                      </ResponsiveContainer>
-                    );
-                  }
-                  // Fallback to daily sales trend if no payment method data
-                  return (
-                    <div className={`text-center ${emptyStateClassLarge}`}>No sales data available for this period</div>
-                  );
-                })()
-              ) : (
-                // For printing press: show jobs trend
-                jobsTrend.length > 0 ? (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart data={jobsTrend} margin={{ top: 5, right: 5, left: -20, bottom: 5 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                      <XAxis 
-                        dataKey="day" 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: '#8c8c8c', fontSize: 11 }}
-                      />
-                      <YAxis 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: '#8c8c8c', fontSize: 11 }}
-                      />
-                      <RechartsTooltip 
-                        contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
-                      />
-                      <Legend 
-                        wrapperStyle={{ fontSize: 12, paddingTop: 10 }}
-                        iconType="circle"
-                      />
-                      <Bar dataKey="incoming" fill="var(--color-primary)" name={terminology.incomingLabel} radius={[4, 4, 0, 0]} />
-                      <Bar dataKey="completed" fill="hsl(var(--primary) / 0.42)" name={terminology.completedLabel} radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className={`text-center ${emptyStateClassLarge}`}>No {terminology.sales.toLowerCase()} data available for this period</div>
-                )
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Bottom Row - 2 Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-          {/* Card 6: Top 5 Services/Customers */}
-          <Card style={cardStyle}>
-            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
-              <CardTitle className="text-base font-semibold">{terminology.topRevenueLabel}</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6">
-              {topServices.length > 0 ? (
-                <>
-                  <ResponsiveContainer width="100%" height={220}>
-                    <BarChart
-                      data={topServices.map(item => ({
-                        name: item.name,
-                        value: item.value,
-                        percentage: totalRevenue > 0 ? ((item.value / totalRevenue) * 100) : 0
-                      }))}
-                      layout="vertical"
-                      margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
-                      <XAxis type="number" hide />
-                      <YAxis 
-                        type="category" 
-                        dataKey="name" 
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{ fill: '#262626', fontSize: 12 }}
-                        width={75}
-                      />
-                      <RechartsTooltip 
-                        formatter={(value) => `₵ ${(value / 1000).toFixed(2)}K`}
-                        contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
-                      />
-                      <Bar 
-                        dataKey="value" 
-                        fill="var(--color-primary)" 
-                        radius={[0, 4, 4, 0]}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                  <div className="space-y-0 mt-4">
-                    {topServices.map((item, idx) => (
-                      <div key={idx} className="flex justify-between items-center py-2.5 border-b border-border last:border-0">
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-foreground mb-1">{item.name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {totalRevenue > 0 ? ((item.value / totalRevenue) * 100).toFixed(1) : 0}% of total revenue
-                          </p>
-                        </div>
-                        <span className="text-primary font-bold ml-4">₵ {(item.value / 1000).toFixed(2)}K</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <div className={`text-center ${emptyStateClassLarge}`}>No revenue sources data available</div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Card 7: Revenue by Channel, or by payment method, or Revenue by Product (top products) when no channel data */}
-          <Card style={cardStyle}>
-            <CardHeader className="py-3 md:py-4 px-4 md:px-6">
-              <CardTitle className="text-base font-semibold">
-                {showRevenueByProduct ? 'Revenue by Product' : 'Revenue by Channel'}
-                {revenueByChannel.length > 0 && channelFromPaymentMethod && (
-                  <span className="text-muted-foreground text-xs font-normal ml-1.5">(by payment method)</span>
-                )}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 px-4 md:px-6 pb-4 md:pb-6">
-              {(revenueByChannel.length > 0 || showRevenueByProduct) ? (
-                (() => {
-                  const chartData = revenueByChannel.length > 0 ? revenueByChannel : revenueByProduct;
-                  const totalForPct = revenueByChannel.length > 0 ? totalSales : (productSales?.totalRevenue || 0);
-                  return (
-                    <>
-                      <ResponsiveContainer width="100%" height={220}>
-                        <BarChart
-                          data={chartData.map(item => ({
-                            name: item.channel,
-                            value: item.revenue,
-                            percentage: totalForPct > 0 ? ((item.revenue / totalForPct) * 100) : 0
-                          }))}
-                          layout="vertical"
-                          margin={{ top: 5, right: 30, left: 80, bottom: 5 }}
-                        >
-                          <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} stroke="#f0f0f0" />
-                          <XAxis type="number" hide />
-                          <YAxis 
-                            type="category" 
-                            dataKey="name" 
-                            axisLine={false}
-                            tickLine={false}
-                            tick={{ fill: '#262626', fontSize: 12 }}
-                            width={75}
-                          />
-                          <RechartsTooltip 
-                            formatter={(value) => `₵ ${(value / 1000).toFixed(2)}K`}
-                            contentStyle={{ borderRadius: 8, border: '1px solid #f4f4f4' }}
-                          />
-                          <Bar 
-                            dataKey="value" 
-                            fill="var(--color-primary)" 
-                            radius={[0, 4, 4, 0]}
-                          />
-                        </BarChart>
-                      </ResponsiveContainer>
-                      <div className="space-y-0 mt-4">
-                        {chartData.map((item, idx) => {
-                          const percentage = totalForPct > 0 ? ((item.revenue / totalForPct) * 100) : 0;
-                          return (
-                            <div key={idx} className="flex justify-between items-center py-2.5 border-b border-border last:border-0">
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-foreground mb-1 truncate">{item.channel}</p>
-                                <p className="text-xs text-muted-foreground">{percentage.toFixed(1)}% of total</p>
-                              </div>
-                              <span className="text-brand font-bold ml-4">₵ {(item.revenue / 1000).toFixed(2)}K</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </>
-                  );
-                })()
-              ) : (
-                <div className={`text-center ${emptyStateClassLarge}`}>No data available for this period</div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-    );
-  };
-
-  // Report type options grouped and filtered by business type
-  const reportTypeOptionsGrouped = useMemo(() => {
-    const financial = [
-      { value: 'cashflow', label: 'Cashflow overview', description: 'Overall business health and financial performance' },
-      { value: 'cost-analysis', label: 'Cost analysis', description: 'Detailed view of expenses and cost-saving opportunities' },
-      { value: 'invoice-summary', label: 'Invoice summary', description: 'Overview of invoice statuses and payment trends' },
-      { value: 'outstanding-payments', label: 'Outstanding payments', description: 'AR total, aging, and overdue amounts' },
-    ];
-    const salesAndPerformance = [
-      { value: 'customer-summary', label: 'Customer summary', description: 'Top customers by revenue and activity' },
-      { value: 'sales-summary', label: isStudio ? 'Jobs summary' : 'Sales summary', description: isStudio ? 'Job volume, status, and trends' : 'Sales volume, status, and trends' },
-    ];
-    if (isStudio) {
-      salesAndPerformance.push({ value: 'service-analytics', label: terminology.analytics, description: terminology.analyticsDescription });
-      salesAndPerformance.push({ value: 'materials-summary', label: 'Materials summary', description: 'Stock levels and movements' });
-    }
-    if (isPharmacy) {
-      salesAndPerformance.push({ value: 'product-analytics', label: 'Drug Analytics', description: 'Drug and prescription performance' });
-      salesAndPerformance.push({ value: 'prescription-summary', label: 'Prescription summary', description: 'Prescription volume, status, and revenue' });
-    }
-    if (isShop && !isPharmacy) {
-      salesAndPerformance.push({ value: 'product-analytics', label: 'Product Analytics', description: 'Product sales and inventory performance' });
-    }
-    const operations = [
-      { value: 'pipeline', label: 'Pipeline', description: 'Active jobs, open leads, and pending invoices' },
-    ];
-    const groups = [
-      { groupLabel: 'Financial', options: financial },
-      { groupLabel: 'Sales & performance', options: salesAndPerformance },
-      { groupLabel: 'Operations', options: operations },
-    ];
-    return groups;
-  }, [isStudio, isPharmacy, isShop, terminology.analytics, terminology.analyticsDescription]);
-
-  // Flat list of all report types (for backward compatibility and iteration)
   const reportTypeOptions = useMemo(
     () => reportTypeOptionsGrouped.flatMap((g) => g.options),
     [reportTypeOptionsGrouped]
   );
 
-  if (!rc) {
+  if (!rc && !isOverview) {
     return (
       <div className="space-y-4 md:space-y-6 p-4 md:p-6">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -3597,51 +2629,17 @@ function ReportsInner() {
     Tooltip: RechartsTooltip,
     Legend,
     ResponsiveContainer,
-  } = rc;
+  } = rc || {};
 
   const renderGeneratedReports = () => {
     // Map report types to display names and icons
-    const getReportTypeDisplay = (reportType, report = null) => {
-      const businessType = report?.businessType || activeTenant?.businessType || 'printing_press';
-      const productLabel = businessType === 'pharmacy' ? 'Drug overview' : 'Product overview';
-      const typeMap = {
-        'cost-analysis': { label: 'Cost analysis', icon: BarChart3 },
-        'service-analytics': { label: 'Service overview', icon: Zap },
-        'cashflow': { label: 'Cashflow overview', icon: Currency },
-        'invoice-summary': { label: 'Invoice overview', icon: FileText },
-        'outstanding-payments': { label: 'Outstanding payments', icon: FileText },
-        'customer-summary': { label: 'Customer summary', icon: Users },
-        'sales-summary': { label: businessType === 'pharmacy' || businessType === 'shop' ? 'Sales summary' : 'Jobs summary', icon: BarChart3 },
-        'materials-summary': { label: 'Materials summary', icon: Zap },
-        'pipeline': { label: 'Pipeline', icon: BarChart3 },
-        'product-analytics': { label: productLabel, icon: Zap },
-        'prescription-summary': { label: 'Prescription summary', icon: FileText },
-        'inventory': { label: 'Materials overview', icon: Zap },
-        'fleet': { label: 'Fleet overview', icon: Zap }
-      };
-      return typeMap[reportType] || { label: reportType, icon: FileText };
+    const getReportTypeDisplay = (reportType) => {
+      const meta = getSmartReportTabMeta(reportType);
+      return { label: meta.label, icon: meta.icon || FileText };
     };
 
-    // Get report types from insights or default
     const getReportTypes = (report) => {
-      if (report.reportTypes && Array.isArray(report.reportTypes)) {
-        return report.reportTypes;
-      }
-      // Extract types from insights
-      const types = [];
-      if (report.insights) {
-        report.insights.forEach(insight => {
-          if (insight.type === 'cost-analysis') types.push('cost-analysis');
-          else if (insight.type === 'service-analytics' || insight.type === 'product-analytics') {
-            types.push(insight.type === 'product-analytics' ? 'product-analytics' : 'service-analytics');
-          }
-          else if (insight.type === 'invoice-summary') types.push('invoice-summary');
-          else if (insight.type === 'prescription-summary') types.push('prescription-summary');
-          else if (['outstanding-payments', 'customer-summary', 'sales-summary', 'materials-summary', 'pipeline'].includes(insight.type)) types.push(insight.type);
-        });
-      }
-      // Default if no types found
-      return types.length > 0 ? types : ['cost-analysis'];
+      return resolveSmartReportTabs(report, { isShop, isPharmacy, isStudio }).map((tab) => tab.id);
     };
 
     // Determine status from actual status field (default to 'ready' if not set for backward compatibility)
@@ -3693,11 +2691,11 @@ function ReportsInner() {
         {filteredReports.length > 0 && !aiLoading && (
           isMobile ? (
             <div className="space-y-2">
-              {filteredReports.map((report, index) => {
+              {filteredReports.map((report) => {
                 const reportTypesList = getReportTypes(report);
                 const status = getReportStatus(report);
                 return (
-                  <div key={index} className="border border-border rounded-lg p-4 bg-card">
+                  <div key={report.id || report.generatedAt} className="border border-border rounded-lg p-4 bg-card">
                           <div className="flex justify-between items-start gap-2">
                             <div className="min-w-0 flex-1">
                               <p className="font-medium text-sm truncate">{report.title}</p>
@@ -3732,12 +2730,19 @@ function ReportsInner() {
                                   <Download className="h-4 w-4 mr-2" />
                                   Download
                                 </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => handleDeleteSavedReport(report)}
+                                  className="text-red-600 focus:text-red-600"
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Delete
+                                </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </div>
                           <div className="flex flex-wrap gap-2 mt-2">
                             {reportTypesList.slice(0, 2).map((type, idx) => {
-                              const typeDisplay = getReportTypeDisplay(type, report);
+                              const typeDisplay = getReportTypeDisplay(type);
                               const Icon = typeDisplay.icon;
                               return (
                                 <Badge
@@ -3754,7 +2759,7 @@ function ReportsInner() {
                               <Badge
                                 variant="secondary"
                                 className="bg-muted text-muted-foreground border-0 flex items-center gap-1 px-2 py-1"
-                                title={reportTypesList.slice(2).map((t) => getReportTypeDisplay(t, report).label).join(', ')}
+                                title={reportTypesList.slice(2).map((t) => getReportTypeDisplay(t).label).join(', ')}
                               >
                                 +{reportTypesList.length - 2}
                               </Badge>
@@ -3763,6 +2768,7 @@ function ReportsInner() {
                           <div className="flex items-center justify-between mt-2 pt-2 border-t border-border">
                             <span className="text-xs text-muted-foreground">{report.generatedBy}</span>
                             <Badge
+                              title={status === 'failed' ? report.failureReason : undefined}
                               className={
                                 status === 'ready'
                                   ? 'bg-primary/15 text-primary border-0 px-2 py-1 hover:bg-primary/15 cursor-default'
@@ -3793,11 +2799,11 @@ function ReportsInner() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredReports.map((report, index) => {
+                    {filteredReports.map((report) => {
                       const reportTypesList = getReportTypes(report);
                       const status = getReportStatus(report);
                       return (
-                        <TableRow key={index} className="border-b border-border hover:bg-muted/50">
+                        <TableRow key={report.id || report.generatedAt} className="border-b border-border hover:bg-muted/50">
                           <TableCell className="font-medium py-4 px-6">{report.title}</TableCell>
                           <TableCell className="text-muted-foreground py-4 px-6">
                             {dayjs(report.generatedAt).format('D/MM/YYYY')}
@@ -3805,7 +2811,7 @@ function ReportsInner() {
                           <TableCell className="py-4 px-6">
                             <div className="flex flex-wrap gap-2">
                               {reportTypesList.slice(0, 2).map((type, idx) => {
-                                const typeDisplay = getReportTypeDisplay(type, report);
+                                const typeDisplay = getReportTypeDisplay(type);
                                 const Icon = typeDisplay.icon;
                                 return (
                                   <Badge
@@ -3822,7 +2828,7 @@ function ReportsInner() {
                                 <Badge
                                   variant="secondary"
                                   className="bg-muted text-muted-foreground border-0 flex items-center gap-1 px-2 py-1"
-                                  title={reportTypesList.slice(2).map((t) => getReportTypeDisplay(t, report).label).join(', ')}
+                                  title={reportTypesList.slice(2).map((t) => getReportTypeDisplay(t).label).join(', ')}
                                 >
                                   +{reportTypesList.length - 2}
                                 </Badge>
@@ -3832,6 +2838,7 @@ function ReportsInner() {
                           <TableCell className="text-muted-foreground py-4 px-6">{report.generatedBy}</TableCell>
                           <TableCell className="py-4 px-6">
                             <Badge
+                              title={status === 'failed' ? report.failureReason : undefined}
                               className={
                                 status === 'ready'
                                   ? 'bg-primary/15 text-primary border-0 px-2 py-1 hover:bg-primary/15 cursor-default'
@@ -3872,6 +2879,13 @@ function ReportsInner() {
                                 >
                                   <Download className="h-4 w-4 mr-2" />
                                   Download
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onClick={() => handleDeleteSavedReport(report)}
+                                  className="text-red-600 focus:text-red-600"
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Delete
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
@@ -4023,7 +3037,7 @@ function ReportsInner() {
                             <div key={idx} className="col-span-1">
                               <div 
                                 className="p-4 md:p-5 bg-muted rounded-lg cursor-help"
-                                title={`Full Amount: ₵ ${metric.value.toLocaleString()}\nPrevious Period: ₵ ${prevValue.toLocaleString()}\nChange Amount: ₵ ${changeAmount.toLocaleString()}\nChange %: ${metric.trend === 'up' ? '+' : '-'}${metric.change.toFixed(2)}%\nPeriod: ${generatedReport.period}`}
+                                title={`Full Amount: ${formatAmount(metric.value)}\nPrevious Period: ${formatAmount(prevValue)}\nChange Amount: ${formatAmount(changeAmount)}\nChange %: ${metric.trend === 'up' ? '+' : '-'}${metric.change.toFixed(2)}%\nPeriod: ${generatedReport.period}`}
                               >
                                 <p className="text-sm text-muted-foreground mb-2">{metric.label}</p>
                                 <h3 className="text-2xl font-bold mb-1" style={{ color: metric.color }}>
@@ -4089,14 +3103,14 @@ function ReportsInner() {
                               {isProductAnalytics ? (
                                 <>
                                   <TableCell title={`SKU: ${record.sku || 'N/A'}\nUnit: ${record.unit}`} className="cursor-help">{record.productName}</TableCell>
-                                  <TableCell className="text-right">{record.quantitySold?.toLocaleString()} {record.unit || ''}</TableCell>
-                                  <TableCell className="text-right">{record.revenue?.toLocaleString()}</TableCell>
+                                  <TableCell className="text-right">{formatInteger(record.quantitySold)} {record.unit || ''}</TableCell>
+                                  <TableCell className="text-right">{formatDecimal(record.revenue)}</TableCell>
                                 </>
                               ) : (
                                 <>
-                                  <TableCell title={`Revenue: ₵ ${record.revenue?.toLocaleString()}\nAvg Price: ₵ ${record.averagePrice?.toLocaleString() || 'N/A'}\nDemand: ${record.demand}`} className="cursor-help">{record.service}</TableCell>
+                                  <TableCell title={`Revenue: ₵ ${formatDecimal(record.revenue)}\nAvg Price: ${record.averagePrice != null ? formatAmount(record.averagePrice) : 'N/A'}\nDemand: ${record.demand}`} className="cursor-help">{record.service}</TableCell>
                                   <TableCell className="text-right">{record.quantitySold}</TableCell>
-                                  <TableCell className="text-right">{record.revenue?.toLocaleString()}</TableCell>
+                                  <TableCell className="text-right">{formatDecimal(record.revenue)}</TableCell>
                                   <TableCell>
                                     <Badge variant={record.demand === 'High' ? 'default' : record.demand === 'Medium' ? 'secondary' : 'outline'}>{record.demand}</Badge>
                                   </TableCell>
@@ -4131,7 +3145,7 @@ function ReportsInner() {
                                       <div className="bg-card border border-border rounded p-3">
                                         <p className="font-bold mb-2">{data.productName}</p>
                                         <p className="my-1"><strong>Quantity Sold:</strong> {data.quantitySold} {data.unit}</p>
-                                        <p className="my-1"><strong>Revenue:</strong> ₵ {data.revenue?.toLocaleString()}</p>
+                                        <p className="my-1"><strong>Revenue:</strong> {formatAmount(data.revenue)}</p>
                                       </div>
                                     );
                                   }
@@ -4309,10 +3323,10 @@ function ReportsInner() {
                             <TableBody>
                               {costData.map((record, idx) => (
                                 <TableRow key={idx} className={record.isTotal ? 'bg-muted/50 font-semibold' : ''}>
-                                  <TableCell title={!record.isTotal ? `Category: ${record.category}\nAmount: ₵ ${record.amount?.toLocaleString()}\nPercentage: ${record.percentage?.toFixed(1)}%` : undefined} className={!record.isTotal ? "cursor-help" : ""}>
+                                  <TableCell title={!record.isTotal ? `Category: ${record.category}\nAmount: ${formatAmount(record.amount)}\nPercentage: ${record.percentage?.toFixed(1)}%` : undefined} className={!record.isTotal ? "cursor-help" : ""}>
                                     {record.isTotal ? record.category : <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{record.category}</Badge>}
                                   </TableCell>
-                                  <TableCell className={cn("text-right", !record.isTotal && "cursor-help")} title={!record.isTotal ? `Full amount: ₵ ${record.amount?.toLocaleString()}` : undefined}>₵ {record.amount?.toLocaleString()}</TableCell>
+                                  <TableCell className={cn("text-right", !record.isTotal && "cursor-help")} title={!record.isTotal ? `Full amount: ${formatAmount(record.amount)}` : undefined}>{formatAmount(record.amount)}</TableCell>
                                   <TableCell className={cn("text-right", !record.isTotal && "cursor-help")} title={!record.isTotal ? `Represents ${record.percentage?.toFixed(1)}% of total` : undefined}>{record.percentage?.toFixed(1)}%</TableCell>
                                 </TableRow>
                               ))}
@@ -4344,9 +3358,9 @@ function ReportsInner() {
                                     return (
                                       <div className="bg-card border border-border rounded p-3">
                                         <p className="font-bold mb-2">{data.category}</p>
-                                        <p className="my-1"><strong>Amount:</strong> ₵ {data.amount.toLocaleString()}</p>
+                                        <p className="my-1"><strong>Amount:</strong> {formatAmount(data.amount)}</p>
                                         <p className="my-1"><strong>Percentage:</strong> {percentage}%</p>
-                                        <p className="my-1"><strong>Total Cost:</strong> ₵ {total.toLocaleString()}</p>
+                                        <p className="my-1"><strong>Total Cost:</strong> {formatAmount(total)}</p>
                                       </div>
                                     );
                                   }
@@ -4410,7 +3424,7 @@ function ReportsInner() {
                           {[...section.data, { status: 'Total invoiced', amount: section.totalInvoiced, percentage: 100, isTotal: true }].map((record, idx) => (
                             <TableRow key={idx} className={record.isTotal ? 'bg-muted/50 font-semibold' : ''}>
                               <TableCell>{record.status}</TableCell>
-                              <TableCell className="text-right">₵ {record.amount?.toLocaleString()}</TableCell>
+                              <TableCell className="text-right">{formatAmount(record.amount)}</TableCell>
                               <TableCell className="text-right">{record.percentage}%</TableCell>
                             </TableRow>
                           ))}
@@ -4454,7 +3468,7 @@ function ReportsInner() {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
                       <div className="rounded-lg border p-4">
                         <p className="text-sm text-muted-foreground">Total outstanding</p>
-                        <p className="text-xl font-semibold">₵ {(d.totalOutstanding ?? 0).toLocaleString()}</p>
+                        <p className="text-xl font-semibold">{formatAmount(d.totalOutstanding ?? 0)}</p>
                       </div>
                       <div className="rounded-lg border p-4">
                         <p className="text-sm text-muted-foreground">Overdue invoices</p>
@@ -4462,7 +3476,7 @@ function ReportsInner() {
                       </div>
                       <div className="rounded-lg border p-4">
                         <p className="text-sm text-muted-foreground">Overdue amount</p>
-                        <p className="text-xl font-semibold">₵ {(d.overdueAmount ?? 0).toLocaleString()}</p>
+                        <p className="text-xl font-semibold">{formatAmount(d.overdueAmount ?? 0)}</p>
                       </div>
                     </div>
                     {section.recommendations?.length > 0 && (
@@ -4501,7 +3515,7 @@ function ReportsInner() {
                           {rows.map((row, idx) => (
                             <TableRow key={idx}>
                               <TableCell>{row.name}</TableCell>
-                              <TableCell className="text-right">{row.revenue?.toLocaleString()}</TableCell>
+                              <TableCell className="text-right">{formatDecimal(row.revenue)}</TableCell>
                               <TableCell className="text-right">{row.count}</TableCell>
                             </TableRow>
                           ))}
@@ -4531,7 +3545,7 @@ function ReportsInner() {
                       </div>
                       <div className="rounded-lg border p-4">
                         <p className="text-sm text-muted-foreground">Total amount (₵)</p>
-                        <p className="text-xl font-semibold">₵ {(d.totalSales ?? 0).toLocaleString()}</p>
+                        <p className="text-xl font-semibold">{formatAmount(d.totalSales ?? 0)}</p>
                       </div>
                     </div>
                     {Array.isArray(d.byStatus) && d.byStatus.length > 0 && (
@@ -4548,7 +3562,7 @@ function ReportsInner() {
                             <TableRow key={idx}>
                               <TableCell>{row.status}</TableCell>
                               <TableCell className="text-right">{row.count}</TableCell>
-                              <TableCell className="text-right">{row.total?.toLocaleString()}</TableCell>
+                              <TableCell className="text-right">{formatDecimal(row.total)}</TableCell>
                             </TableRow>
                           ))}
                         </TableBody>
@@ -4577,7 +3591,7 @@ function ReportsInner() {
                       </div>
                       <div className="rounded-lg border p-4">
                         <p className="text-sm text-muted-foreground">Stock value (₵)</p>
-                        <p className="text-xl font-semibold">₵ {(summary.totalStockValue ?? 0).toLocaleString()}</p>
+                        <p className="text-xl font-semibold">{formatAmount(summary.totalStockValue ?? 0)}</p>
                       </div>
                       <div className="rounded-lg border p-4">
                         <p className="text-sm text-muted-foreground">Availability rate</p>
@@ -4656,7 +3670,7 @@ function ReportsInner() {
                         <Card>
                           <CardContent className="pt-6">
                             <p className="text-sm text-muted-foreground">Prescription revenue</p>
-                            <p className="text-2xl font-semibold">₵ {Number(section.prescriptionRevenue || 0).toLocaleString()}</p>
+                            <p className="text-2xl font-semibold">{formatAmount(section.prescriptionRevenue || 0)}</p>
                           </CardContent>
                         </Card>
                         <Card>
@@ -4856,7 +3870,8 @@ function ReportsInner() {
                 />
               </div>
               <div className="space-y-4 pt-1">
-                <Label className="text-sm font-medium">Report type</Label>
+                <Label className="text-sm font-medium">Report sections</Label>
+                <p className="text-xs text-muted-foreground">Selected sections appear as tabs in your Smart Report.</p>
                 <div className="space-y-4">
                   {reportTypeOptionsGrouped.map((group) => (
                     <div key={group.groupLabel}>
@@ -4916,8 +3931,8 @@ function ReportsInner() {
                 <ShadcnButton type="button" variant="outline" size="lg" onClick={() => setCreateReportModalVisible(false)}>
                   Cancel
                 </ShadcnButton>
-                <ShadcnButton type="submit" size="lg" disabled={aiLoading} className="bg-brand hover:bg-brand-dark">
-                  {aiLoading ? 'Creating...' : 'Create'}
+                <ShadcnButton type="submit" size="lg" disabled={isCreatingReport || aiLoading} className="bg-brand hover:bg-brand-dark">
+                  {isCreatingReport || aiLoading ? 'Creating...' : 'Create'}
                 </ShadcnButton>
               </DialogFooter>
             </form>
@@ -4926,6 +3941,7 @@ function ReportsInner() {
       </Dialog>
 
     <div className="bg-background min-h-screen px-0 py-2 md:px-6 md:py-4">
+      {!isOverview && !generatedReport && (
       <div className="flex flex-wrap items-center justify-between gap-3 md:gap-4 mb-3 md:mb-6 bg-card p-2 md:p-5 rounded-lg border border-border">
         <h2 className="text-2xl font-semibold">Reports & Analytics</h2>
         {showSmartReportList && (
@@ -4987,10 +4003,49 @@ function ReportsInner() {
           </div>
         )}
       </div>
+      )}
 
       {isMobile && showSmartReportList ? (
         <div className="mt-0">
           {renderGeneratedReports()}
+        </div>
+      ) : isOverview ? (
+        <div className="p-2 md:p-4">
+          {loading ? (
+            <div className="space-y-6">
+              <Skeleton className="h-10 w-full max-w-md" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3 md:gap-4">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <Card key={i}>
+                    <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
+                      <Skeleton className="h-4 w-24 mb-2" />
+                      <Skeleton className="h-8 w-32" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+              <Card>
+                <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
+                  <TableSkeleton rows={8} cols={5} />
+                </CardContent>
+              </Card>
+            </div>
+          ) : overviewStats ? (
+                <ReportsOverviewDashboard
+                  overviewStats={overviewStats}
+                  dateRange={dateRange}
+                  dateFilter={dateFilter}
+                  onDateRangeSelect={handleOverviewDateRangeSelect}
+                  onPresetSelect={handleOverviewPresetSelect}
+                  onCustomize={handleOverviewCustomize}
+                  onDownload={handleOverviewDownload}
+                  downloading={overviewDownloading}
+                  isShop={isShop}
+                  isPharmacy={isPharmacy}
+                  isStudio={isStudio}
+                  businessType={businessType}
+                />
+          ) : null}
         </div>
       ) : (
         <Card className="rounded-lg border border-border">
@@ -5000,36 +4055,16 @@ function ReportsInner() {
               {renderComplianceView()}
             </div>
           ) : isSmartReport && generatedReport ? (
-            <div className="p-4 md:p-6">
-              {renderAIReportGenerator()}
-            </div>
-          ) : showSmartReportList ? (
+            <SmartReportDetail
+              report={generatedReport}
+              onBack={() => setGeneratedReport(null)}
+              isStudio={isStudio}
+              isShop={isShop}
+              isPharmacy={isPharmacy}
+            />
+          ) : (
             <div className="p-0 md:p-6">
               {renderGeneratedReports()}
-            </div>
-          ) : (
-            <div className="p-4 md:p-6">
-              {loading ? (
-                <div className="space-y-6">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-                    {Array.from({ length: 4 }).map((_, i) => (
-                      <Card key={i}>
-                        <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
-                          <Skeleton className="h-4 w-24 mb-2" />
-                          <Skeleton className="h-8 w-32" />
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                  <Card>
-                    <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
-                      <TableSkeleton rows={8} cols={5} />
-                    </CardContent>
-                  </Card>
-                </div>
-              ) : (
-                renderOverviewDashboard()
-              )}
             </div>
           )}
           </CardContent>

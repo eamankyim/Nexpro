@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { Quote, QuoteItem, Customer, User, Job, JobItem, JobStatusHistory, QuoteActivity, Sale, SaleItem, SaleActivity, Setting, Tenant } = require('../models');
+const { Quote, QuoteItem, Customer, User, Job, JobItem, JobStatusHistory, QuoteActivity, Sale, SaleItem, SaleActivity, Setting, Tenant, Shop, StudioLocation } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { getPagination } = require('../utils/paginationUtils');
@@ -8,9 +8,23 @@ const {
   applyStudioLocationFilter,
   attachStudioLocationToPayload,
 } = require('../utils/studioLocationUtils');
+const {
+  applyScopedFilters,
+  attachScopedToPayload,
+  assertShopRecordAccess,
+} = require('../utils/shopUtils');
 const activityLogger = require('../services/activityLogger');
 const { getTaxConfigForTenant } = require('../utils/taxConfig');
 const { computeQuoteTaxSummary, computeDocumentTax } = require('../utils/taxCalculation');
+const {
+  resolveDocumentOrganization,
+  organizationToEmailCompany,
+} = require('../utils/documentOrganizationUtils');
+
+const quoteBranchIncludes = () => [
+  { model: Shop, as: 'shop', required: false },
+  { model: StudioLocation, as: 'studioLocation', required: false },
+];
 
 const generateQuoteNumber = async (tenantId) => {
   const date = new Date();
@@ -56,6 +70,10 @@ const formatQuoteResponse = (quote) => ({
   customer: quote.customer,
   creator: quote.creator,
   items: quote.items,
+  shopId: quote.shopId || null,
+  studioLocationId: quote.studioLocationId || null,
+  shop: quote.shop || null,
+  studioLocation: quote.studioLocation || null,
   convertedJobId: quote.convertedJobId || null,
   convertedJobNumber: quote.convertedJobNumber || null
 });
@@ -83,6 +101,9 @@ const calculateTotals = (items = []) => {
   };
 };
 
+const quoteWhere = (req, extra = {}) =>
+  applyScopedFilters(req, applyTenantFilter(req.tenantId, extra));
+
 exports.getQuotes = async (req, res, next) => {
   try {
     const { page, limit, offset } = getPagination(req);
@@ -90,8 +111,7 @@ exports.getQuotes = async (req, res, next) => {
     const customerId = req.query.customerId;
     const search = req.query.search || '';
 
-    let where = applyTenantFilter(req.tenantId, {});
-    where = applyStudioLocationFilter(req, where);
+    let where = applyScopedFilters(req, applyTenantFilter(req.tenantId, {}));
     // Staff see only quotes they created; admin/manager see all
     const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
     if (effectiveRole === 'staff') {
@@ -121,7 +141,8 @@ exports.getQuotes = async (req, res, next) => {
           attributes: ['id', 'name', 'company', 'email']
         },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: QuoteItem, as: 'items' }
+        { model: QuoteItem, as: 'items' },
+        ...quoteBranchIncludes()
       ],
       order: [['createdAt', 'DESC']]
     });
@@ -148,7 +169,7 @@ exports.getQuotes = async (req, res, next) => {
 exports.exportQuotes = async (req, res, next) => {
   try {
     const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = quoteWhere(req, {});
 
     const quotes = await Quote.findAll({
       where,
@@ -175,11 +196,12 @@ exports.exportQuotes = async (req, res, next) => {
 exports.getQuote = async (req, res, next) => {
   try {
     const quote = await Quote.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: quoteWhere(req, { id: req.params.id }),
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: QuoteItem, as: 'items' }
+        { model: QuoteItem, as: 'items' },
+        ...quoteBranchIncludes()
       ]
     });
 
@@ -237,7 +259,7 @@ exports.createQuote = async (req, res, next) => {
     );
 
     const quote = await Quote.create(
-      attachStudioLocationToPayload(req, {
+      attachScopedToPayload(req, {
         ...quoteData,
         tenantId: req.tenantId,
         quoteNumber,
@@ -272,7 +294,8 @@ exports.createQuote = async (req, res, next) => {
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: QuoteItem, as: 'items' }
+        { model: QuoteItem, as: 'items' },
+        ...quoteBranchIncludes()
       ]
     });
 
@@ -342,8 +365,12 @@ exports.createQuote = async (req, res, next) => {
             const intro = (typeof sendMessage === 'string' && sendMessage.trim())
               ? sendMessage.trim()
               : DEFAULT_QUOTE_SEND_MESSAGE;
-            const orgSetting = await Setting.findOne({ where: { tenantId: req.tenantId, key: 'organization' } });
-            const businessName = orgSetting?.value?.name || 'Our team';
+            const organization = await resolveDocumentOrganization({
+              tenantId: req.tenantId,
+              shop: fullQuote.shop || null,
+              studioLocation: fullQuote.studioLocation || null,
+            });
+            const businessName = organization.name || 'Our team';
             const smsMessage = `${intro} ${businessName}. View: ${quoteLink}`.substring(0, 160);
             const smsResult = await smsService.sendMessage(req.tenantId, smsPhone, smsMessage).catch(error => {
               console.error('[Quote] SMS send failed:', error);
@@ -383,14 +410,12 @@ exports.createQuote = async (req, res, next) => {
           delivery.emailSent = false;
           delivery.emailError = 'Customer has no email address. Add email in Customers to send the quote by email.';
         } else {
-          const orgSetting = await Setting.findOne({ where: { tenantId: req.tenantId, key: 'organization' } });
-          const tenant = await Tenant.findByPk(req.tenantId);
-          const org = orgSetting?.value || {};
-          const company = {
-            name: org.name || tenant?.name || 'Our team',
-            logo: org.logoUrl || tenant?.metadata?.logo || '',
-            primaryColor: org.primaryColor || tenant?.metadata?.primaryColor || '#166534'
-          };
+          const organization = await resolveDocumentOrganization({
+            tenantId: req.tenantId,
+            shop: fullQuote.shop || null,
+            studioLocation: fullQuote.studioLocation || null,
+          });
+          const company = organizationToEmailCompany(organization);
           const customMessage = (typeof sendMessage === 'string' && sendMessage.trim())
             ? sendMessage.trim()
             : DEFAULT_QUOTE_SEND_MESSAGE;
@@ -545,7 +570,11 @@ exports.respondToQuoteByToken = async (req, res, next) => {
       });
       const updated = await Quote.findOne({
         where: { id: quote.id },
-        include: [{ model: Customer, as: 'customer' }, { model: QuoteItem, as: 'items' }]
+        include: [
+          { model: Customer, as: 'customer' },
+          { model: QuoteItem, as: 'items' },
+          ...quoteBranchIncludes()
+        ]
       });
       return res.status(200).json({
         success: true,
@@ -571,13 +600,20 @@ exports.respondToQuoteByToken = async (req, res, next) => {
 
     const updatedQuote = await Quote.findOne({
       where: { id: quote.id },
-      include: [{ model: Customer, as: 'customer' }, { model: QuoteItem, as: 'items' }]
+      include: [
+        { model: Customer, as: 'customer' },
+        { model: QuoteItem, as: 'items' },
+        ...quoteBranchIncludes()
+      ]
     });
 
     // Notify tenant by email when quote is accepted (use business/org email; don't fail response if send fails)
     try {
-      const orgSetting = await Setting.findOne({ where: { tenantId, key: 'organization' } });
-      const organization = (orgSetting && orgSetting.value) ? orgSetting.value : {};
+      const organization = await resolveDocumentOrganization({
+        tenantId,
+        shop: updatedQuote.shop || null,
+        studioLocation: updatedQuote.studioLocation || null,
+      });
       const tenantEmail = organization.email || null;
       if (tenantEmail && typeof tenantEmail === 'string' && tenantEmail.includes('@')) {
         const emailService = require('../services/emailService');
@@ -585,7 +621,7 @@ exports.respondToQuoteByToken = async (req, res, next) => {
         const frontendUrl = process.env.FRONTEND_URL || '';
         const { subject, html, text } = emailTemplates.quoteAcceptedNotifyTenant(
           updatedQuote,
-          { name: organization.name, primaryColor: organization.primaryColor, logo: organization.logoUrl },
+          organizationToEmailCompany(organization),
           frontendUrl
         );
         await emailService.sendMessage(tenantId, tenantEmail, subject, html, text);
@@ -798,7 +834,8 @@ exports.getQuoteByViewToken = async (req, res, next) => {
       where: { viewToken: token },
       include: [
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email', 'phone'] },
-        { model: QuoteItem, as: 'items' }
+        { model: QuoteItem, as: 'items' },
+        ...quoteBranchIncludes()
       ]
     });
 
@@ -810,22 +847,11 @@ exports.getQuoteByViewToken = async (req, res, next) => {
     }
 
     const tenantId = quote.tenantId;
-    const orgSetting = await Setting.findOne({ where: { tenantId, key: 'organization' } });
-    const tenant = await Tenant.findByPk(tenantId);
-    const orgValue = orgSetting?.value || {};
-    const metadata = tenant?.metadata || {};
-
-    const organization = {
-      name: orgValue.name ?? tenant?.name ?? '',
-      legalName: orgValue.legalName ?? '',
-      email: orgValue.email ?? metadata.email ?? '',
-      phone: orgValue.phone ?? metadata.phone ?? '',
-      website: orgValue.website ?? metadata.website ?? '',
-      logoUrl: orgValue.logoUrl ?? metadata.logo ?? '',
-      primaryColor: metadata.primaryColor || orgValue.primaryColor || '#166534',
-      address: orgValue.address ?? {},
-      paymentDetails: orgValue.paymentDetails ?? ''
-    };
+    const organization = await resolveDocumentOrganization({
+      tenantId,
+      shop: quote.shop || null,
+      studioLocation: quote.studioLocation || null,
+    });
 
     // So the view-quote page can show "Your comment has been sent" after refresh (comment doesn't change quote status)
     const latestCustomerResponse = await QuoteActivity.findOne({
@@ -858,7 +884,7 @@ exports.updateQuote = async (req, res, next) => {
     const { items = [], taxRate: bodyTaxRate, ...quoteData } = sanitizePayload(req.body);
 
     const quote = await Quote.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: quoteWhere(req, { id: req.params.id }),
       include: [{ model: QuoteItem, as: 'items' }]
     });
 
@@ -962,7 +988,8 @@ exports.updateQuote = async (req, res, next) => {
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: QuoteItem, as: 'items' }
+        { model: QuoteItem, as: 'items' },
+        ...quoteBranchIncludes()
       ]
     });
 
@@ -987,7 +1014,7 @@ exports.updateQuoteStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
     const quote = await Quote.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: quoteWhere(req, { id: req.params.id })
     });
 
     if (!quote) {
@@ -1028,7 +1055,8 @@ exports.updateQuoteStatus = async (req, res, next) => {
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: QuoteItem, as: 'items' }
+        { model: QuoteItem, as: 'items' },
+        ...quoteBranchIncludes()
       ]
     });
 
@@ -1049,7 +1077,7 @@ exports.updateQuoteStatus = async (req, res, next) => {
 exports.deleteQuote = async (req, res, next) => {
   try {
     const quote = await Quote.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: quoteWhere(req, { id: req.params.id })
     });
 
     if (!quote) {
@@ -1084,7 +1112,7 @@ exports.convertQuoteToJob = async (req, res, next) => {
   try {
     // First, fetch quote without includes to avoid FOR UPDATE with JOIN issue
     const quote = await Quote.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: quoteWhere(req, { id: req.params.id }),
       transaction,
       lock: transaction.LOCK.UPDATE
     });
@@ -1247,7 +1275,8 @@ exports.convertQuoteToJob = async (req, res, next) => {
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: QuoteItem, as: 'items' }
+        { model: QuoteItem, as: 'items' },
+        ...quoteBranchIncludes()
       ]
     });
 
@@ -1322,7 +1351,7 @@ exports.convertQuoteToJob = async (req, res, next) => {
 exports.addQuoteActivity = async (req, res, next) => {
   try {
     const quote = await Quote.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: quoteWhere(req, { id: req.params.id })
     });
     if (!quote) {
       return res.status(404).json({ success: false, message: 'Quote not found' });
@@ -1356,7 +1385,7 @@ exports.addQuoteActivity = async (req, res, next) => {
 exports.getQuoteActivities = async (req, res, next) => {
   try {
     const quote = await Quote.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: quoteWhere(req, { id: req.params.id })
     });
     if (!quote) {
       return res.status(404).json({ success: false, message: 'Quote not found' });
@@ -1380,7 +1409,7 @@ exports.convertQuoteToSale = async (req, res, next) => {
   try {
     // First, fetch quote without includes to avoid FOR UPDATE with JOIN issue
     const quote = await Quote.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: quoteWhere(req, { id: req.params.id }),
       transaction,
       lock: transaction.LOCK.UPDATE
     });
@@ -1617,7 +1646,8 @@ exports.convertQuoteToSale = async (req, res, next) => {
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'creator', attributes: ['id', 'name', 'email'] },
-        { model: QuoteItem, as: 'items' }
+        { model: QuoteItem, as: 'items' },
+        ...quoteBranchIncludes()
       ]
     });
 

@@ -1,22 +1,24 @@
 import api from './api';
+import { buildScopedQueryString } from '../utils/shopScope';
 
 const customerService = {
   // Get all customers
   getAll: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    return await api.get(`/customers?${queryString}`);
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/customers?${queryString}` : '/customers');
   },
 
   // Get customer stats (counts) – lightweight, single query
   getStats: async () => {
-    const res = await api.get('/customers/stats');
+    const queryString = buildScopedQueryString({});
+    const res = await api.get(queryString ? `/customers/stats?${queryString}` : '/customers/stats');
     return res?.data || res;
   },
 
   // Get all customers (alias for getAll, used by POS)
   getCustomers: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    return await api.get(`/customers?${queryString}`);
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/customers?${queryString}` : '/customers');
   },
 
   // Get single customer

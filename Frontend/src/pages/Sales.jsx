@@ -8,14 +8,16 @@ const POS = lazy(() => import('./POS'));
 import { useDebounce } from '../hooks/useDebounce';
 import { usePOSConfig } from '../hooks/usePOSConfig';
 import { useResponsive } from '../hooks/useResponsive';
-import { ShoppingCart, Filter, RefreshCw, Printer, Receipt, FileText, Loader2, X, CheckCircle, Clock, XCircle, Download, Plus, Package, Archive } from 'lucide-react';
+import { ShoppingCart, Filter, RefreshCw, Printer, Receipt, FileText, Loader2, X, CheckCircle, Clock, XCircle, Download, Plus, Archive } from 'lucide-react';
 import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
 import saleService from '../services/saleService';
 import customerService from '../services/customerService';
 import invoiceService from '../services/invoiceService';
 import settingsService from '../services/settingsService';
+import { mergeBranchOrganization } from '../utils/branchOrganization';
 import productService from '../services/productService';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
 import { useQuery } from '@tanstack/react-query';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -83,6 +85,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 import { DELIVERY_STATUS_ORDER, DELIVERY_STATUS_LABELS } from '../constants';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 
 const recordPaymentSchema = z.object({
   amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Payment amount must be greater than 0'),
@@ -99,6 +103,11 @@ const Sales = () => {
   const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [totalSalesCount, setTotalSalesCount] = useState(0);
+  const [salesSummary, setSalesSummary] = useState({
+    completedCount: 0,
+    pendingCount: 0,
+    completedRevenue: 0,
+  });
   const [saleForPayment, setSaleForPayment] = useState(null);
   const [filters, setFilters] = useState({ 
     status: 'all',
@@ -123,6 +132,8 @@ const Sales = () => {
   const [saleToDelete, setSaleToDelete] = useState(null);
   const [updatingSaleDelivery, setUpdatingSaleDelivery] = useState(false);
   const { activeTenant, activeTenantId } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
   const businessType = activeTenant?.businessType || 'printing_press';
   const isShop = businessType === 'shop';
   const isRestaurant =
@@ -142,9 +153,9 @@ const Sales = () => {
 
   // Check if tenant has products (to show appropriate empty state)
   const { data: productsData } = useQuery({
-    queryKey: ['products', 'active', activeTenantId],
+    queryKey: ['products', 'active', activeTenantId, activeShopId],
     queryFn: () => productService.getAllActiveProducts(),
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
     staleTime: 60 * 1000,
   });
   const hasProducts = useMemo(() => {
@@ -152,9 +163,47 @@ const Sales = () => {
     return products.length > 0;
   }, [productsData]);
 
+  const handleClearFilters = useCallback(() => {
+    setFilters({
+      status: 'all',
+      customerId: 'all',
+      paymentMethod: 'all',
+      startDate: null,
+      endDate: null,
+    });
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, []);
+
+  const hasActiveFilters = useMemo(
+    () =>
+      filters.status !== 'all' ||
+      filters.customerId !== 'all' ||
+      filters.paymentMethod !== 'all' ||
+      !!filters.startDate ||
+      !!filters.endDate,
+    [filters]
+  );
+
+  const salesEmptyState = useMemo(() => {
+    if (!hasProducts) {
+      return getEmptyStateProps(EMPTY_STATES.SALES_NO_PRODUCTS, {
+        primary: () => navigate('/products?add=1'),
+      });
+    }
+    if (hasActiveFilters) {
+      return getEmptyStateProps(EMPTY_STATES.SALES_FILTERED, {
+        primary: handleClearFilters,
+      });
+    }
+    return getEmptyStateProps(EMPTY_STATES.SALES, {
+      primary: () => setPosModalOpen(true),
+    });
+  }, [hasProducts, hasActiveFilters, navigate, handleClearFilters]);
+
   // For restaurants: Pending = orders in kitchen (not completed); Completed = kitchen done or never sent
   const KITCHEN_PENDING_STATUSES = ['received', 'preparing', 'ready'];
   const completedCount = useMemo(() => {
+    if (!isRestaurant) return Number(salesSummary.completedCount || 0);
     if (isRestaurant) {
       return sales.filter(s =>
         s.orderStatus === 'completed' ||
@@ -162,21 +211,23 @@ const Sales = () => {
       ).length;
     }
     return sales.filter(s => s.status === 'completed').length;
-  }, [sales, isRestaurant]);
+  }, [sales, isRestaurant, salesSummary.completedCount]);
   const pendingCount = useMemo(() => {
+    if (!isRestaurant) return Number(salesSummary.pendingCount || 0);
     if (isRestaurant) {
       return sales.filter(s => KITCHEN_PENDING_STATUSES.includes(s.orderStatus)).length;
     }
     return sales.filter(s => s.status === 'pending').length;
-  }, [sales, isRestaurant]);
+  }, [sales, isRestaurant, salesSummary.pendingCount]);
 
-  // Revenue = completed sales only (aligns with Dashboard definition)
+  // Revenue = completed sales only for the full filtered result set (aligns with Dashboard definition)
   const totalRevenueCompleted = useMemo(() => {
+    if (!isRestaurant) return Number(salesSummary.completedRevenue || 0);
     const completed = isRestaurant
       ? sales.filter(s => s.orderStatus === 'completed' || (s.orderStatus == null && s.status === 'completed'))
       : sales.filter(s => s.status === 'completed');
     return completed.reduce((sum, s) => sum + parseFloat(s.total || 0), 0);
-  }, [sales, isRestaurant]);
+  }, [sales, isRestaurant, salesSummary.completedRevenue]);
 
   const fetchSales = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -207,10 +258,17 @@ const Sales = () => {
       }
 
       const response = await saleService.getSales(params);
-      const data = response?.data?.data || response?.data || [];
-      const count = response?.data?.count ?? data.length;
+      const payload = response?.data?.data != null ? response.data : response;
+      const data = Array.isArray(payload?.data) ? payload.data : (Array.isArray(payload) ? payload : []);
+      const count = payload?.count ?? data.length;
+      const summary = payload?.summary || {};
       setSales(data);
       setTotalSalesCount(count);
+      setSalesSummary({
+        completedCount: Number(summary.completedCount || 0),
+        pendingCount: Number(summary.pendingCount || 0),
+        completedRevenue: Number(summary.completedRevenue || 0),
+      });
       if (response?.data?.pagination) {
         setPagination(prev => ({ ...prev, total: count }));
       } else {
@@ -219,6 +277,7 @@ const Sales = () => {
     } catch (error) {
       showError(error, 'Failed to load sales');
       setSales([]);
+      setSalesSummary({ completedCount: 0, pendingCount: 0, completedRevenue: 0 });
     } finally {
       if (isRefresh) {
         setRefreshingSales(false);
@@ -226,7 +285,7 @@ const Sales = () => {
         setLoading(false);
       }
     }
-  }, [pagination.current, pagination.pageSize, filters]);
+  }, [pagination.current, pagination.pageSize, filters, activeShopId]);
 
   const fetchCustomers = useCallback(async () => {
     try {
@@ -235,7 +294,7 @@ const Sales = () => {
     } catch (error) {
       console.error('Failed to load customers:', error);
     }
-  }, []);
+  }, [activeShopId]);
 
   const fetchSaleDetails = useCallback(async (saleId) => {
     setLoadingSaleDetails(true);
@@ -272,6 +331,12 @@ const Sales = () => {
   });
 
   const organization = organizationData?.data?.data || organizationData?.data || {};
+
+  const receiptOrganization = useMemo(() => {
+    if (!receiptData) return organization;
+    if (receiptData.invoice?.organization) return receiptData.invoice.organization;
+    return mergeBranchOrganization(receiptData.shop, organization);
+  }, [receiptData, organization]);
   const { posConfig } = usePOSConfig();
   const printConfig = posConfig.print || { format: 'a4' };
 
@@ -279,9 +344,12 @@ const Sales = () => {
     if (!isShop) {
       return; // Only show for shop business type
     }
+    if (shopContext?.isShopWorkspace && !activeShopId) return;
+    setSales([]);
+    setTotalSalesCount(0);
     fetchSales();
     fetchCustomers();
-  }, [fetchSales, fetchCustomers, isShop]);
+  }, [fetchSales, fetchCustomers, isShop, activeTenantId, activeShopId, shopContext?.isShopWorkspace]);
 
   useEffect(() => {
     if (viewingSale?.id) {
@@ -334,14 +402,29 @@ const Sales = () => {
   const handlePrintReceipt = useCallback(async (sale) => {
     // Use already-loaded viewingSale when drawer is open (avoids redundant fetch)
     if (viewingSale?.id === sale.id && viewingSale.items && (!sale.invoiceId || viewingSale.invoice?.customer)) {
-      setReceiptData(viewingSale);
+      let printableSale = viewingSale;
+      if (printableSale.invoice?.id && !printableSale.invoice?.organization) {
+        try {
+          const invoiceResponse = await invoiceService.getById(printableSale.invoice.id);
+          const invoice = invoiceResponse?.data?.data || invoiceResponse?.data || invoiceResponse;
+          printableSale = { ...printableSale, invoice };
+        } catch (error) {
+          console.error('Failed to load invoice organization for receipt:', error);
+        }
+      }
+      setReceiptData(printableSale);
       setPrintModalVisible(true);
       return;
     }
     setLoadingReceipt(true);
     try {
       const response = await saleService.getSaleById(sale.id);
-      const saleData = response?.data?.data || response?.data || response;
+      let saleData = response?.data?.data || response?.data || response;
+      if (saleData.invoice?.id && !saleData.invoice?.organization) {
+        const invoiceResponse = await invoiceService.getById(saleData.invoice.id);
+        const invoice = invoiceResponse?.data?.data || invoiceResponse?.data || invoiceResponse;
+        saleData = { ...saleData, invoice };
+      }
       setReceiptData(saleData);
       setPrintModalVisible(true);
     } catch (error) {
@@ -715,17 +798,7 @@ const Sales = () => {
         columns={tableColumns}
         loading={loading}
         title={null}
-        emptyIcon={!hasProducts ? <Package className="h-12 w-12 text-muted-foreground" /> : <ShoppingCart className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription={!hasProducts ? "You haven't added any products yet. Add your products first before you can start selling." : "No sales found"}
-        emptyAction={!hasProducts ? (
-          <Button
-            onClick={() => navigate('/products?add=1')}
-            className="bg-brand hover:bg-brand-dark text-white"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Add Your First Product
-          </Button>
-        ) : undefined}
+        emptyState={salesEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);
@@ -1410,14 +1483,14 @@ const Sales = () => {
                     invoice={receiptData.invoice}
                     documentTitle="RECEIPT"
                     saleNumber={receiptData.saleNumber}
-                    organization={organization}
+                    organization={receiptOrganization}
                     printConfig={printConfig}
                   />
                 ) : (
                   <PrintableReceipt
                     key={receiptData.id || 'receipt'}
                     sale={receiptData}
-                    organization={organization}
+                    organization={receiptOrganization}
                     printConfig={printConfig}
                   />
                 )

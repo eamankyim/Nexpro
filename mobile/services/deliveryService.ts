@@ -1,12 +1,11 @@
 import { api } from './api';
+import { buildScopedQueryString } from '@/utils/shopScope';
 
 export type DeliveryQueueScope = 'active' | 'done';
 
 export const deliveryService = {
   getQueue: async (scope: DeliveryQueueScope = 'active') => {
-    const params = new URLSearchParams();
-    if (scope) params.set('scope', scope);
-    const q = params.toString();
+    const q = await buildScopedQueryString({ scope });
     const res = await api.get(q ? `/deliveries/queue?${q}` : '/deliveries/queue');
     return res.data;
   },
@@ -14,7 +13,8 @@ export const deliveryService = {
   patchStatuses: async (
     updates: Array<{ entityType: 'job' | 'sale'; id: string; deliveryStatus: string | null }>
   ) => {
-    const res = await api.patch('/deliveries/status', { updates });
+    const q = await buildScopedQueryString({});
+    const res = await api.patch(q ? `/deliveries/status?${q}` : '/deliveries/status', { updates });
     return res.data;
   },
 };

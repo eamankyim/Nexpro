@@ -1,8 +1,9 @@
-const { Lead, Job, Sale, Customer, Setting, Tenant, JobStatusHistory } = require('../models');
+const { Lead, Job, Sale, Customer, Setting, Tenant, JobStatusHistory, Shop, StudioLocation } = require('../models');
 const { Op } = require('sequelize');
 const { formatToE164, normalizePhoneNumber } = require('../utils/phoneUtils');
 const { resolveBusinessType } = require('../config/businessTypes');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
+const { resolveDocumentOrganization } = require('../utils/documentOrganizationUtils');
 
 const JOB_INVOICE_TRACK_DEFAULTS = {
   customerJobTrackingEnabled: false
@@ -168,7 +169,8 @@ exports.getJobTrackByToken = async (req, res, next) => {
           model: Customer,
           as: 'customer',
           attributes: ['id', 'name', 'company']
-        }
+        },
+        { model: StudioLocation, as: 'studioLocation', required: false }
       ]
     });
 
@@ -185,10 +187,12 @@ exports.getJobTrackByToken = async (req, res, next) => {
       });
     }
 
-    const orgRow = await Setting.findOne({ where: { tenantId: job.tenantId, key: 'organization' } });
-    const organization = orgRow?.value || {};
     const tenant = await Tenant.findByPk(job.tenantId, {
       attributes: ['id', 'name', 'metadata']
+    });
+    const organization = await resolveDocumentOrganization({
+      tenantId: job.tenantId,
+      studioLocation: job.studioLocation || null,
     });
 
     const latestInProgressHistory = await JobStatusHistory.findOne({
@@ -226,11 +230,7 @@ exports.getJobTrackByToken = async (req, res, next) => {
       success: true,
       data: {
         job: safeJob,
-        organization: {
-          name: organization.name || tenant?.name || '',
-          logoUrl: organization.logoUrl || getTenantLogoUrl(tenant),
-          primaryColor: organization.primaryColor || tenant?.metadata?.primaryColor || '#166534'
-        }
+        organization: buildOrganizationPublicPayload(organization, tenant)
       }
     });
   } catch (error) {
@@ -326,8 +326,6 @@ exports.lookupPublicTracking = async (req, res, next) => {
       return res.status(404).json(lookupPhoneInvalidResponse());
     }
 
-    const organizationRow = await Setting.findOne({ where: { tenantId: tenant.id, key: 'organization' } });
-    const organization = buildOrganizationPublicPayload(organizationRow?.value, tenant);
     const effectiveBusinessType = resolveBusinessType(tenant.businessType);
 
     if (effectiveBusinessType === 'studio') {
@@ -346,12 +344,20 @@ exports.lookupPublicTracking = async (req, res, next) => {
               { phone: { [Op.in]: phoneCandidates.map((value) => value.replace(/^\+/, '')) } }
             ]
           }
-        }]
+        }, { model: StudioLocation, as: 'studioLocation', required: false }]
       });
 
       if (!job) {
         return res.status(404).json(lookupNoMatchResponse());
       }
+
+      const organization = buildOrganizationPublicPayload(
+        await resolveDocumentOrganization({
+          tenantId: tenant.id,
+          studioLocation: job.studioLocation || null,
+        }),
+        tenant
+      );
 
       const lookupLatestInProgress = await JobStatusHistory.findOne({
         where: {
@@ -405,7 +411,7 @@ exports.lookupPublicTracking = async (req, res, next) => {
             { phone: { [Op.in]: phoneCandidates.map((value) => value.replace(/^\+/, '')) } }
           ]
         }
-      }],
+      }, { model: Shop, as: 'shop', required: false }],
       order: [['createdAt', 'DESC']]
     });
 
@@ -414,6 +420,13 @@ exports.lookupPublicTracking = async (req, res, next) => {
     }
 
     const summary = sale.notes || `Order total: ${sale.total || '0.00'}`;
+    const organization = buildOrganizationPublicPayload(
+      await resolveDocumentOrganization({
+        tenantId: tenant.id,
+        shop: sale.shop || null,
+      }),
+      tenant
+    );
 
     return res.status(200).json({
       success: true,

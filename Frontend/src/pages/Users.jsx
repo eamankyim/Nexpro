@@ -53,6 +53,7 @@ const inviteSchema = z.object({
   email: z.string().email('Enter a valid email'),
   role: z.enum(['admin', 'manager', 'staff']),
   studioLocationIds: z.array(z.string()).optional(),
+  shopIds: z.array(z.string()).optional(),
 });
 import {
   Trash2,
@@ -75,8 +76,11 @@ import {
 import dayjs from 'dayjs';
 import userService from '../services/userService';
 import inviteService from '../services/inviteService';
+import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { useStudioLocationOptional } from '../context/StudioLocationContext';
+import { useShopOptional } from '../context/ShopContext';
+import shopService from '../services/shopService';
 import { STUDIO_LIKE_TYPES } from '../constants';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -139,6 +143,8 @@ const Users = () => {
   const [deletingUserId, setDeletingUserId] = useState(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [submittingInvite, setSubmittingInvite] = useState(false);
+  const [inviteShops, setInviteShops] = useState([]);
+  const [loadingInviteShops, setLoadingInviteShops] = useState(false);
   /** Bumps when a new invite is sent so overlapping polls cancel */
   const inviteEmailPollGenRef = useRef(0);
   const [deletingUser, setDeletingUser] = useState(false);
@@ -147,11 +153,20 @@ const Users = () => {
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
   const { user, isAdmin, isManager, activeTenantId, activeTenant, hasFeature } = useAuth();
   const studioLocationCtx = useStudioLocationOptional();
+  const shopCtx = useShopOptional();
   const isStudioWorkspace = STUDIO_LIKE_TYPES.includes(activeTenant?.businessType);
+  const isShopWorkspace = activeTenant?.businessType === 'shop';
+  const [assignmentShopIds, setAssignmentShopIds] = useState([]);
+  const [loadingShopAssignments, setLoadingShopAssignments] = useState(false);
+  const [savingShopAssignments, setSavingShopAssignments] = useState(false);
   const showStudioLocationInvite =
     isStudioWorkspace &&
     hasFeature('studioLocationsModule') &&
     (studioLocationCtx?.locations?.length ?? 0) > 0;
+  const showShopInvite =
+    isShopWorkspace &&
+    hasFeature('shopsModule') &&
+    inviteShops.length > 0;
 
   const profileForm = useForm({
     resolver: zodResolver(profileSchema),
@@ -168,10 +183,38 @@ const Users = () => {
       email: '',
       role: 'staff',
       studioLocationIds: [],
+      shopIds: [],
     },
   });
 
   const inviteRole = inviteForm.watch('role');
+
+  const fetchInviteShops = useCallback(async () => {
+    if (!isShopWorkspace || !hasFeature('shopsModule')) {
+      setInviteShops([]);
+      return;
+    }
+    try {
+      setLoadingInviteShops(true);
+      const response = await api.get('/shops', { params: { limit: 100, page: 1 } });
+      const shopsData = Array.isArray(response?.data)
+        ? response.data
+        : (response?.data?.data || response?.data?.shops || []);
+      setInviteShops(
+        (Array.isArray(shopsData) ? shopsData : []).filter((s) => s.isActive !== false)
+      );
+    } catch {
+      setInviteShops([]);
+    } finally {
+      setLoadingInviteShops(false);
+    }
+  }, [isShopWorkspace, hasFeature]);
+
+  useEffect(() => {
+    if (inviteModalVisible) {
+      void fetchInviteShops();
+    }
+  }, [inviteModalVisible, fetchInviteShops]);
 
   const fetchPendingInvites = useCallback(async () => {
     try {
@@ -282,10 +325,20 @@ const Users = () => {
       if (debouncedSearch) params.search = debouncedSearch;
 
       const response = await userService.getAll(params);
-      setUsers(response.data.data || response.data || []);
+      const list = Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response?.data?.data)
+          ? response.data.data
+          : [];
+      setUsers(list);
+      setPagination((prev) => ({
+        ...prev,
+        total: response?.count ?? list.length,
+      }));
     } catch (error) {
       handleApiError(error, { context: 'fetch users' });
       setUsers([]);
+      setPagination((prev) => ({ ...prev, total: 0 }));
     } finally {
       if (isRefresh) {
         setRefreshingUsers(false);
@@ -295,36 +348,21 @@ const Users = () => {
     }
   };
 
-  // Apply client-side filtering
-  const filteredUsers = useMemo(() => {
-    return users; // Backend already filters
-  }, [users, filters]);
-
-  // Paginate filtered users
-  const paginatedUsers = useMemo(() => {
-    const start = (pagination.current - 1) * pagination.pageSize;
-    const end = start + pagination.pageSize;
-    return filteredUsers.slice(start, end);
-  }, [filteredUsers, pagination.current, pagination.pageSize]);
-
-  const usersCount = filteredUsers.length;
-
-  // Calculate summary stats
+  // Calculate summary stats (current page; totals use pagination.total in cards where needed)
   const calculatedStats = useMemo(() => {
-    const totalUsers = users.length;
-    const adminUsers = users.filter(u => u.role === 'admin').length;
-    const managerUsers = users.filter(u => u.role === 'manager').length;
-    const staffUsers = users.filter(u => u.role === 'staff').length;
-    
+    const adminUsers = users.filter((u) => u.role === 'admin').length;
+    const managerUsers = users.filter((u) => u.role === 'manager').length;
+    const staffUsers = users.filter((u) => u.role === 'staff').length;
+
     return {
       totals: {
-        totalUsers,
+        totalUsers: pagination.total || users.length,
         adminUsers,
         managerUsers,
-        staffUsers
-      }
+        staffUsers,
+      },
     };
-  }, [users]);
+  }, [users, pagination.total]);
 
   const handleInviteUser = () => {
     inviteForm.reset({
@@ -361,6 +399,43 @@ const Users = () => {
     setViewingUser(user);
     setDrawerVisible(true);
   }, []);
+
+  useEffect(() => {
+    if (!drawerVisible || !viewingUser?.id || !isShopWorkspace || !isAdmin) {
+      setAssignmentShopIds([]);
+      return;
+    }
+    const load = async () => {
+      try {
+        setLoadingShopAssignments(true);
+        const res = await shopService.getUserAssignments(viewingUser.id);
+        const data = res?.data ?? res;
+        setAssignmentShopIds(Array.isArray(data?.shopIds) ? data.shopIds : []);
+      } catch {
+        setAssignmentShopIds([]);
+      } finally {
+        setLoadingShopAssignments(false);
+      }
+    };
+    void load();
+  }, [drawerVisible, viewingUser?.id, isShopWorkspace, isAdmin]);
+
+  const handleSaveShopAssignments = useCallback(async () => {
+    if (!viewingUser?.id) return;
+    try {
+      setSavingShopAssignments(true);
+      await shopService.setUserAssignments(viewingUser.id, assignmentShopIds);
+      showSuccess(
+        assignmentShopIds.length
+          ? 'Shop assignments updated. The user may need to refresh the app to see their shops.'
+          : 'Shop assignments cleared.'
+      );
+    } catch (error) {
+      handleApiError(error, { context: 'update shop assignments' });
+    } finally {
+      setSavingShopAssignments(false);
+    }
+  }, [viewingUser?.id, assignmentShopIds]);
 
   const handleCloseDrawer = useCallback(() => {
     setDrawerVisible(false);
@@ -411,7 +486,7 @@ const Users = () => {
       await inviteService.generateInvite(values);
       showSuccess('Invite created. The user should receive an email shortly; delivery status updates below in a few seconds.');
       setInviteModalVisible(false);
-      inviteForm.reset({ email: '', role: 'staff', studioLocationIds: [] });
+      inviteForm.reset({ email: '', role: 'staff', studioLocationIds: [], shopIds: [] });
       await fetchPendingInvites();
       void pollInviteEmailStatusUntilSettled(invitedEmail);
     } catch (error) {
@@ -798,7 +873,7 @@ const Users = () => {
 
       {/* Users Table */}
       <DashboardTable
-        data={paginatedUsers}
+        data={users}
         columns={tableColumns}
         loading={loading}
         title={null}
@@ -822,7 +897,7 @@ const Users = () => {
         }}
         externalPagination={{
           current: pagination.current,
-          total: usersCount
+          total: pagination.total,
         }}
       />
 
@@ -989,7 +1064,66 @@ const Users = () => {
             label: 'Last Login', 
             value: viewingUser.lastLogin,
             render: (date) => date ? dayjs(date).format('MMMM DD, YYYY HH:mm') : 'Never'
-          }
+          },
+          ...(isShopWorkspace && isAdmin && (viewingUser.role === 'manager' || viewingUser.role === 'staff')
+            ? [{
+                label: 'Assigned shops',
+                value: assignmentShopIds,
+                render: () => (
+                  <div className="space-y-3">
+                    {loadingShopAssignments ? (
+                      <p className="text-sm text-muted-foreground flex items-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Loading shops…
+                      </p>
+                    ) : (
+                      <>
+                        <p className="text-sm text-muted-foreground">
+                          This user only sees data for the shops you select.
+                        </p>
+                        <div className="space-y-2 border rounded-lg p-3 max-h-48 overflow-y-auto">
+                          {(shopCtx?.shops?.length ? shopCtx.shops : inviteShops).map((shop) => {
+                            const checked = assignmentShopIds.includes(shop.id);
+                            return (
+                              <label key={shop.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(e) => {
+                                    setAssignmentShopIds((prev) => {
+                                      const next = new Set(prev);
+                                      if (e.target.checked) next.add(shop.id);
+                                      else next.delete(shop.id);
+                                      return [...next];
+                                    });
+                                  }}
+                                  className="rounded border-border"
+                                />
+                                {shop.name}
+                                {shop.isDefault ? (
+                                  <span className="text-muted-foreground text-xs">(main)</span>
+                                ) : null}
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <SecondaryButton
+                          type="button"
+                          size="sm"
+                          onClick={handleSaveShopAssignments}
+                          disabled={savingShopAssignments}
+                        >
+                          {savingShopAssignments ? (
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                          ) : null}
+                          Save shop assignments
+                        </SecondaryButton>
+                      </>
+                    )}
+                  </div>
+                ),
+              }]
+            : []),
         ] : []}
       />
 
@@ -1087,6 +1221,54 @@ const Users = () => {
                             );
                           })}
                         </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                )}
+                {showShopInvite && inviteRole !== 'admin' && (
+                  <FormField
+                    control={inviteForm.control}
+                    name="shopIds"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Shops</FormLabel>
+                        <p className="text-sm text-muted-foreground mb-2">
+                          Staff and managers only see data for the shops you select.
+                        </p>
+                        {loadingInviteShops ? (
+                          <p className="text-sm text-muted-foreground flex items-center gap-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Loading shops…
+                          </p>
+                        ) : (
+                          <div className="space-y-2 border rounded-lg p-3 max-h-40 overflow-y-auto">
+                            {inviteShops.map((shop) => {
+                              const checked = (field.value || []).includes(shop.id);
+                              return (
+                                <label key={shop.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={(e) => {
+                                      const next = new Set(field.value || []);
+                                      if (e.target.checked) next.add(shop.id);
+                                      else next.delete(shop.id);
+                                      field.onChange([...next]);
+                                    }}
+                                    className="rounded border-border"
+                                  />
+                                  <span>
+                                    {shop.name}
+                                    {shop.isDefault ? (
+                                      <span className="text-muted-foreground ml-1">(main)</span>
+                                    ) : null}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
                         <FormMessage />
                       </FormItem>
                     )}

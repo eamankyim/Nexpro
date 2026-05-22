@@ -15,6 +15,14 @@ const Equipment = sequelize.define('Equipment', {
       key: 'id'
     }
   },
+  shopId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'shops',
+      key: 'id'
+    }
+  },
   categoryId: {
     type: DataTypes.UUID,
     allowNull: true,

@@ -17,6 +17,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import { AuthBrandMark } from '@/components/AppLogo';
 
 const resetSchema = z
   .object({
@@ -62,7 +63,7 @@ const ResetPassword = () => {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="w-full max-w-md text-center">
-          <h1 className="text-3xl font-bold text-brand mb-4">ABS</h1>
+          <AuthBrandMark showName appName="ABS" className="justify-center mb-4 mx-auto" logoClassName="h-11 w-11" />
           <p className="text-muted-foreground mb-4">Invalid or missing reset link. Please request a new password reset.</p>
           <Link to="/forgot-password" className="text-brand hover:underline font-medium">
             Request new link
@@ -79,7 +80,12 @@ const ResetPassword = () => {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-0 md:p-8">
       <div className={`w-full ${isMobile ? 'h-screen' : 'max-w-md bg-card rounded-2xl border border-border'} overflow-hidden flex flex-col ${isMobile ? 'px-6 py-4' : 'p-12'}`}>
-        <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-brand`}>ABS</h1>
+        <AuthBrandMark
+          showName
+          appName="ABS"
+          className={isMobile ? 'mb-4' : 'mb-8'}
+          logoClassName={isMobile ? 'h-9 w-9' : 'h-11 w-11'}
+        />
 
         <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-foreground`}>Set new password</h2>
         <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-muted-foreground`}>

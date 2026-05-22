@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
 import { useSafeAreaInsets } from '@/hooks/useResponsive';
 import { cn } from '@/lib/utils';
 import {
@@ -84,6 +85,14 @@ const BottomSheet = ({
                   <SheetDescription className="mt-1">{description}</SheetDescription>
                 )}
               </div>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => onOpenChange(false)}
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              >
+                <X className="h-5 w-5" aria-hidden />
+              </button>
             </div>
           </SheetHeader>
         )}
@@ -97,8 +106,8 @@ const BottomSheet = ({
           
           {/* Fixed Footer - content scrolls behind */}
           {footer && (
-            <div 
-              className="flex-shrink-0 left-0 right-0 bg-background border-t border-border px-4 py-3 z-10"
+            <div
+              className="sticky bottom-0 z-20 flex-shrink-0 left-0 right-0 bg-background border-t border-border px-4 py-3"
               style={{
                 paddingBottom: safeAreaInsets.bottom > 0 
                   ? `calc(0.75rem + ${safeAreaInsets.bottom}px)` 

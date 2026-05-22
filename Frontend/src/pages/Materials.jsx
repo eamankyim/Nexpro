@@ -35,8 +35,12 @@ import WelcomeSection from '../components/WelcomeSection';
 import materialsService from '../services/materialsService';
 import vendorService from '../services/vendorService';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { showSuccess, showError } from '../utils/toast';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import { numberInputValue, handleNumberChange } from '../utils/formUtils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -92,6 +96,7 @@ import {
 } from '@/components/ui/sheet';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, getStockStatus, PRODUCT_UNITS, RESTAURANT_UNITS, SHOP_TYPES } from '../constants';
+import { formatAmount } from '../utils/formatNumber';
 
 const sortCategories = (list = []) =>
   [...list].sort((a, b) => a.name.localeCompare(b.name));
@@ -109,11 +114,7 @@ const stockStatus = (item) => {
   return { color: 'default', label: 'In stock' };
 };
 
-const valueFormatter = (value) =>
-  `₵ ${parseFloat(value || 0).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })}`;
+const valueFormatter = (value) => formatAmount(value);
 
 const numOrEmpty = (min = 0) => z.union([z.number().min(min), z.literal('')]).transform((v) => (v === '' ? (min === 0 ? 0 : undefined) : v));
 const itemSchema = z.object({
@@ -166,6 +167,9 @@ const adjustSchema = z.object({
 
 const Materials = () => {
   const { activeTenant, activeTenantId } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
+  const { scopeReady } = useWorkspaceScope();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
@@ -296,8 +300,14 @@ const Materials = () => {
   }, []);
 
   useEffect(() => {
+    if (shopContext?.isShopWorkspace && !activeShopId) return;
     fetchItems();
-  }, [pagination.current, pagination.pageSize, filters.categoryId, filters.status, filters.lowStock, filters.outOfStock, debouncedSearch]);
+  }, [pagination.current, pagination.pageSize, filters.categoryId, filters.status, filters.lowStock, filters.outOfStock, debouncedSearch, activeShopId, shopContext?.isShopWorkspace]);
+
+  useEffect(() => {
+    if (!scopeReady) return;
+    fetchSummary();
+  }, [scopeReady, activeTenantId, activeShopId, shopContext?.isShopWorkspace]);
 
   const fetchCategories = async () => {
     try {
@@ -894,6 +904,14 @@ const Materials = () => {
     ];
   }, [viewingItem]);
 
+  const materialsEmptyState = useMemo(
+    () =>
+      getEmptyStateProps(EMPTY_STATES.MATERIALS, {
+        primary: () => openItemModal(),
+      }),
+    [openItemModal]
+  );
+
   return (
     <div className="space-y-4 md:space-y-6" data-tour="materials-items">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -998,14 +1016,7 @@ const Materials = () => {
         columns={tableColumns}
         loading={loading}
         title={null}
-        emptyIcon={<Package className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No materials yet. Add raw materials to track inventory for jobs."
-        emptyAction={
-          <Button onClick={() => openItemModal()}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add First Material
-          </Button>
-        }
+        emptyState={materialsEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination((prev) => ({ ...prev, ...newPagination }));

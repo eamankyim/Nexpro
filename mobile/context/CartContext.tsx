@@ -1,7 +1,8 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from '@/context/AuthContext';
 import { STORAGE_KEYS } from '@/constants';
+import { isProductOutOfStock } from '@/utils/productStock';
 
 type CartItem = {
   id: string;
@@ -26,7 +27,9 @@ type CartContextType = {
     imageUrl?: string;
     sku?: string;
     barcode?: string;
-  }) => void;
+    trackStock?: boolean;
+    quantityOnHand?: number | null;
+  }) => boolean;
   removeItem: (itemId: string) => void;
   updateQuantity: (itemId: string, quantity: number) => void;
   updateDiscount: (itemId: string, discount: number) => void;
@@ -45,12 +48,14 @@ const getCartStorageKey = (tenantId: string | null) =>
 export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { activeTenantId } = useAuth();
   const [items, setItems] = useState<CartItem[]>([]);
+  const hasLoadedCartRef = useRef(false);
 
   // Load cart from tenant-specific storage when tenant changes
   useEffect(() => {
     const key = getCartStorageKey(activeTenantId);
     if (!key) {
       setItems([]);
+      hasLoadedCartRef.current = true;
       return;
     }
     const loadCart = async () => {
@@ -69,23 +74,26 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch (error) {
         console.error('Failed to load cart from storage:', error);
         setItems([]);
+      } finally {
+        hasLoadedCartRef.current = true;
       }
     };
+    hasLoadedCartRef.current = false;
     loadCart();
   }, [activeTenantId]);
 
-  // Save cart to tenant-specific storage whenever items or tenant changes
+  // Save cart to tenant-specific storage after brief idle time to keep scanning responsive.
   useEffect(() => {
     const key = getCartStorageKey(activeTenantId);
-    if (!key) return;
-    const saveCart = async () => {
+    if (!key || !hasLoadedCartRef.current) return;
+    const timeoutId = setTimeout(async () => {
       try {
         await AsyncStorage.setItem(key, JSON.stringify(items));
       } catch (error) {
         console.error('Failed to save cart to storage:', error);
       }
-    };
-    saveCart();
+    }, 150);
+    return () => clearTimeout(timeoutId);
   }, [items, activeTenantId]);
 
   const addItem = useCallback(
@@ -98,21 +106,20 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       imageUrl?: string;
       sku?: string;
       barcode?: string;
-    }) => {
-      const unitPrice = product.sellingPrice ?? product.price ?? product.costPrice ?? 0;
-      const existingItem = items.find((item) => item.productId === product.id);
-
-      if (existingItem) {
-        // Increase quantity if item already exists
-        setItems((prev) =>
-          prev.map((item) =>
-            item.id === existingItem.id
-              ? { ...item, quantity: item.quantity + 1 }
-              : item
-          )
-        );
-      } else {
-        // Add new item
+      trackStock?: boolean;
+      quantityOnHand?: number | null;
+    }): boolean => {
+      if (isProductOutOfStock(product)) {
+        return false;
+      }
+      setItems((prev) => {
+        const unitPrice = product.sellingPrice ?? product.price ?? product.costPrice ?? 0;
+        const existingItem = prev.find((item) => item.productId === product.id);
+        if (existingItem) {
+          return prev.map((item) =>
+            item.id === existingItem.id ? { ...item, quantity: item.quantity + 1 } : item
+          );
+        }
         const newItem: CartItem = {
           id: `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           productId: product.id,
@@ -124,10 +131,11 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
           sku: product.sku,
           barcode: product.barcode,
         };
-        setItems((prev) => [...prev, newItem]);
-      }
+        return [...prev, newItem];
+      });
+      return true;
     },
-    [items]
+    []
   );
 
   const removeItem = useCallback((itemId: string) => {

@@ -1,4 +1,22 @@
-const { Invoice, Job, Customer, JobItem, Payment, Sale, SaleItem, Prescription, SaleActivity, Tenant, Setting, Quote, QuoteItem, Product } = require('../models');
+const {
+  Invoice,
+  Job,
+  Customer,
+  JobItem,
+  Payment,
+  Sale,
+  SaleItem,
+  Prescription,
+  SaleActivity,
+  Tenant,
+  Setting,
+  Quote,
+  QuoteItem,
+  Product,
+  Shop,
+  StudioLocation,
+  User,
+} = require('../models');
 const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
 const { createInvoicePaymentJournal, createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
@@ -7,6 +25,11 @@ const {
   applyStudioLocationFilter,
   attachStudioLocationToPayload,
 } = require('../utils/studioLocationUtils');
+const {
+  applyScopedFilters,
+  attachScopedToPayload,
+  assertShopRecordAccess,
+} = require('../utils/shopUtils');
 const { invalidateInvoiceListCache, invalidateAfterMutation } = require('../middleware/cache');
 const activityLogger = require('../services/activityLogger');
 const { updateCustomerBalance } = require('../services/customerBalanceService');
@@ -17,6 +40,65 @@ const { sequelize } = require('../config/database');
 const { getTaxConfigForTenant } = require('../utils/taxConfig');
 const { convertLineItemsFromTaxInclusive } = require('../utils/taxCalculation');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
+const {
+  resolveDocumentOrganization,
+  organizationToEmailCompany,
+} = require('../utils/documentOrganizationUtils');
+
+const branchManagerInclude = {
+  model: User,
+  as: 'manager',
+  attributes: ['id', 'name', 'email'],
+  required: false,
+};
+
+const invoiceBranchIncludes = () => [
+  {
+    model: Shop,
+    as: 'shop',
+    required: false,
+    include: [branchManagerInclude],
+  },
+  {
+    model: StudioLocation,
+    as: 'studioLocation',
+    required: false,
+    include: [branchManagerInclude],
+  },
+];
+
+/**
+ * @param {import('../models').Invoice} invoice
+ * @returns {Promise<object>}
+ */
+const resolveInvoiceOrganization = async (invoice) => {
+  let shop = invoice.shop || null;
+  let studioLocation = invoice.studioLocation || null;
+
+  if (!shop && invoice.shopId) {
+    shop = await Shop.findByPk(invoice.shopId, { include: [branchManagerInclude] });
+  }
+  if (!studioLocation && invoice.studioLocationId) {
+    studioLocation = await StudioLocation.findByPk(invoice.studioLocationId, {
+      include: [branchManagerInclude],
+    });
+  }
+
+  return resolveDocumentOrganization({
+    tenantId: invoice.tenantId,
+    shop,
+    studioLocation,
+  });
+};
+
+/**
+ * @param {import('../models').Invoice} invoice
+ * @returns {Promise<{ name: string, logo: string, primaryColor: string }>}
+ */
+const companyFromInvoice = async (invoice) => {
+  const org = await resolveInvoiceOrganization(invoice);
+  return organizationToEmailCompany(org);
+};
 
 // Helper function to generate invoice number
 const generateInvoiceNumber = async (tenantId) => {
@@ -53,15 +135,14 @@ const generateInvoiceNumber = async (tenantId) => {
 const buildInvoiceVisibilityWhere = async (req) => {
   const where = applyTenantFilter(req.tenantId, {});
 
-  const businessType = req.tenant?.businessType;
-  if (businessType) {
-    if (businessType === 'printing_press') {
-      where[Op.or] = [{ sourceType: 'job' }, { sourceType: null }];
-    } else if (businessType === 'shop') {
-      where.sourceType = 'sale';
-    } else if (businessType === 'pharmacy') {
-      where.sourceType = 'prescription';
-    }
+  const { resolveBusinessType } = require('../config/businessTypes');
+  const resolved = resolveBusinessType(req.tenant?.businessType);
+  if (resolved === 'studio') {
+    where[Op.or] = [{ sourceType: 'job' }, { sourceType: 'quote' }, { sourceType: null }];
+  } else if (resolved === 'shop') {
+    where[Op.or] = [{ sourceType: 'sale' }, { sourceType: 'quote' }];
+  } else if (resolved === 'pharmacy') {
+    where.sourceType = 'prescription';
   }
 
   const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
@@ -83,8 +164,11 @@ const buildInvoiceVisibilityWhere = async (req) => {
     }
   }
 
-  return applyStudioLocationFilter(req, where);
+  return applyScopedFilters(req, where);
 };
+
+const invoiceWhere = (req, extra = {}) =>
+  applyScopedFilters(req, applyTenantFilter(req.tenantId, extra));
 
 /**
  * Send invoice paid confirmation to customer (email + optional SMS). Fire-and-forget; errors are logged only.
@@ -108,13 +192,7 @@ async function sendInvoicePaidConfirmationToCustomer(tenantId, invoice) {
       paidDate: invoice.paidDate || new Date()
     };
 
-    const { Tenant } = require('../models');
-    const tenant = await Tenant.findByPk(tenantId);
-    const company = {
-      name: tenant?.name || 'African Business Suite',
-      logo: getTenantLogoUrl(tenant),
-      primaryColor: tenant?.metadata?.primaryColor || '#166534'
-    };
+    const company = await companyFromInvoice(invoice);
 
     if (customer.email) {
       const emailService = require('../services/emailService');
@@ -319,8 +397,10 @@ exports.getInvoice = async (req, res, next) => {
         required: false
       });
     }
+    include.push(...invoiceBranchIncludes());
+
     const invoice = await Invoice.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: invoiceWhere(req, { id: req.params.id }),
       include
     });
 
@@ -345,9 +425,13 @@ exports.getInvoice = async (req, res, next) => {
       }
     }
 
+    const organization = await resolveInvoiceOrganization(invoice);
+    const payload = invoice.toJSON();
+    payload.organization = organization;
+
     res.status(200).json({
       success: true,
-      data: invoice
+      data: payload
     });
   } catch (error) {
     next(error);
@@ -541,6 +625,7 @@ exports.createInvoice = async (req, res, next) => {
       (isJobLinked && job?.studioLocationId) ||
       attachStudioLocationToPayload(req, {}).studioLocationId ||
       null;
+    const scopedMeta = attachScopedToPayload(req, {});
 
     // Create invoice
     const invoice = await Invoice.create({
@@ -549,6 +634,7 @@ exports.createInvoice = async (req, res, next) => {
       customerId: resolvedCustomerId,
       tenantId: req.tenantId,
       studioLocationId,
+      shopId: scopedMeta.shopId || null,
       sourceType,
       invoiceDate: new Date(),
       dueDate: dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days
@@ -653,7 +739,7 @@ exports.createInvoice = async (req, res, next) => {
 exports.updateInvoice = async (req, res, next) => {
   try {
     const invoice = await Invoice.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: invoiceWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -662,6 +748,8 @@ exports.updateInvoice = async (req, res, next) => {
         message: 'Invoice not found'
       });
     }
+
+    assertShopRecordAccess(req, invoice);
 
     // Don't allow updating paid or cancelled invoices
     if (invoice.status === 'paid' || invoice.status === 'cancelled') {
@@ -714,7 +802,7 @@ exports.updateInvoice = async (req, res, next) => {
 exports.deleteInvoice = async (req, res, next) => {
   try {
     const invoice = await Invoice.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: invoiceWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -761,7 +849,7 @@ exports.deleteInvoice = async (req, res, next) => {
 exports.deleteCancelledInvoice = async (req, res, next) => {
   try {
     const invoice = await Invoice.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: invoiceWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -806,7 +894,7 @@ exports.recordPayment = async (req, res, next) => {
     const { amount, paymentMethod, referenceNumber, paymentDate } = sanitizePayload(req.body);
 
     const invoice = await Invoice.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: invoiceWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -1007,7 +1095,7 @@ exports.recordPayment = async (req, res, next) => {
 exports.markInvoicePaid = async (req, res, next) => {
   try {
     const invoice = await Invoice.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: invoiceWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -1139,7 +1227,7 @@ exports.markInvoicePaid = async (req, res, next) => {
 exports.sendInvoice = async (req, res, next) => {
   try {
     const invoice = await Invoice.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: invoiceWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -1243,13 +1331,7 @@ exports.sendInvoice = async (req, res, next) => {
       
       // Check if customer has email
       if (updatedInvoice.customer && updatedInvoice.customer.email) {
-        // Get tenant/company info for email template
-        const tenant = await Tenant.findByPk(req.tenantId);
-        const company = {
-          name: tenant?.name || 'African Business Suite',
-          logo: getTenantLogoUrl(tenant),
-          primaryColor: tenant?.metadata?.primaryColor || '#166534'
-        };
+        const company = await companyFromInvoice(updatedInvoice);
         
         // Prepare invoice items for email
         const invoiceItems = updatedInvoice.items || [];
@@ -1528,6 +1610,8 @@ async function createInvoiceFromQuoteInternal(tenantId, quoteId, userId = null) 
     quoteId,
     customerId: quote.customerId,
     tenantId,
+    shopId: quote.shopId || null,
+    studioLocationId: quote.studioLocationId || null,
     sourceType: 'quote',
     invoiceDate: new Date(),
     dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
@@ -1667,8 +1751,7 @@ async function sendInvoiceToCustomer(tenantId, invoice, options = {}) {
     try {
       const emailService = require('../services/emailService');
       const emailTemplates = require('../services/emailTemplates');
-      const tenant = await Tenant.findByPk(tenantId);
-      const company = { name: tenant?.name || 'African Business Suite', logo: getTenantLogoUrl(tenant), primaryColor: tenant?.metadata?.primaryColor || '#166534' };
+      const company = await companyFromInvoice(updatedInvoice);
       if (updatedInvoice.customer.email) {
         const invoiceForEmail = { ...updatedInvoice.toJSON(), items: updatedInvoice.items || [] };
         const { subject, html, text } = emailTemplates.invoiceNotification(invoiceForEmail, updatedInvoice.customer, paymentLink, company);
@@ -1743,7 +1826,8 @@ exports.getInvoiceByToken = async (req, res, next) => {
           model: require('../models').Tenant,
           as: 'tenant',
           attributes: ['id', 'name', 'slug']
-        }
+        },
+        ...invoiceBranchIncludes(),
       ]
     });
 
@@ -1771,25 +1855,24 @@ exports.getInvoiceByToken = async (req, res, next) => {
       process.env.AIRTEL_MONEY_CLIENT_ID && process.env.AIRTEL_MONEY_CLIENT_SECRET
     );
 
-    // Organization for public invoice display (name, contact, logo – no sensitive data)
     let organization = null;
     try {
-      const orgSetting = await Setting.findOne({ where: { tenantId: invoice.tenantId, key: 'organization' } });
-      if (orgSetting?.value && typeof orgSetting.value === 'object') {
-        const v = orgSetting.value;
-        organization = {
-          name: v.name ?? invoice.tenant?.name,
-          phone: v.phone ?? '',
-          email: v.email ?? '',
-          website: v.website ?? '',
-          address: v.address ?? {},
-          logoUrl: v.logoUrl ?? '',
-          invoiceFooter: v.invoiceFooter ?? '',
-          termsAndConditions: v.defaultTermsAndConditions ?? '',
-          paymentDetails: v.paymentDetails ?? '',
-          tax: v.tax ? { vatNumber: v.tax.vatNumber, tin: v.tax.tin } : {}
-        };
-      }
+      const resolved = await resolveInvoiceOrganization(invoice);
+      organization = {
+        name: resolved.name,
+        phone: resolved.phone ?? '',
+        email: resolved.email ?? '',
+        website: resolved.website ?? '',
+        address: resolved.address ?? {},
+        logoUrl: resolved.logoUrl ?? '',
+        invoiceFooter: resolved.invoiceFooter ?? '',
+        termsAndConditions: resolved.defaultTermsAndConditions ?? '',
+        paymentDetails: resolved.paymentDetails ?? '',
+        paymentDetailsEnabled: resolved.paymentDetailsEnabled === true,
+        tax: resolved.tax
+          ? { vatNumber: resolved.tax.vatNumber, tin: resolved.tax.tin, displayLabel: resolved.tax.displayLabel }
+          : {},
+      };
     } catch (e) {
       // non-fatal
     }
@@ -2646,7 +2729,7 @@ exports.pollMobileMoneyForPublicInvoice = async (req, res, next) => {
 exports.cancelInvoice = async (req, res, next) => {
   try {
     const invoice = await Invoice.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: invoiceWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {

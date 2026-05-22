@@ -1,6 +1,7 @@
 const { FootTraffic, Shop, Sale, User } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter } = require('../utils/tenantUtils');
+const { applyShopFilter, attachShopToPayload } = require('../utils/shopUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { sequelize } = require('../config/database');
 
@@ -14,11 +15,7 @@ const getFootTraffic = async (req, res) => {
     const { page, limit, offset } = getPagination(req, { defaultPageSize: 20 });
     const { shopId, startDate, endDate, entryMethod, periodType } = req.query;
 
-    const where = applyTenantFilter({ tenantId }, req);
-
-    if (shopId) {
-      where.shopId = shopId;
-    }
+    let where = applyShopFilter(req, applyTenantFilter(req.tenantId, {}));
 
     if (entryMethod) {
       where.entryMethod = entryMethod;
@@ -77,11 +74,7 @@ const getTrafficAnalytics = async (req, res) => {
     const tenantId = req.tenantId;
     const { shopId, startDate, endDate, groupBy = 'day' } = req.query;
 
-    const where = applyTenantFilter({ tenantId }, req);
-
-    if (shopId) {
-      where.shopId = shopId;
-    }
+    const where = applyShopFilter(req, applyTenantFilter(req.tenantId, {}));
 
     // Default to last 30 days
     const end = endDate ? new Date(endDate) : new Date();

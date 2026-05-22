@@ -1,6 +1,14 @@
 const { Op } = require('sequelize');
 const { EquipmentCategory, Equipment, Vendor } = require('../models');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const {
+  applyScopedFilters,
+  attachScopedToPayload,
+  assertShopRecordAccess,
+} = require('../utils/shopUtils');
+
+const itemWhere = (req, extra = {}) =>
+  applyScopedFilters(req, applyTenantFilter(req.tenantId, extra));
 const { getPagination } = require('../utils/paginationUtils');
 
 const buildItemInclude = () => [
@@ -49,7 +57,7 @@ exports.createEquipmentCategory = async (req, res, next) => {
 exports.updateEquipmentCategory = async (req, res, next) => {
   try {
     const category = await EquipmentCategory.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: itemWhere(req, { id: req.params.id }),
     });
     if (!category) {
       return res.status(404).json({ success: false, message: 'Category not found' });
@@ -73,7 +81,7 @@ exports.getEquipmentItems = async (req, res, next) => {
     const categoryId = req.query.categoryId;
     const status = req.query.status;
 
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = itemWhere(req, {});
 
     if (search) {
       where[Op.or] = [
@@ -120,7 +128,7 @@ exports.getEquipmentItems = async (req, res, next) => {
 exports.exportEquipmentItems = async (req, res, next) => {
   try {
     const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = itemWhere(req, {});
 
     const items = await Equipment.findAll({
       where,
@@ -147,7 +155,7 @@ exports.exportEquipmentItems = async (req, res, next) => {
 exports.getEquipmentItem = async (req, res, next) => {
   try {
     const item = await Equipment.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: itemWhere(req, { id: req.params.id }),
       include: buildItemInclude()
     });
 
@@ -195,31 +203,33 @@ exports.createEquipmentItem = async (req, res, next) => {
     let validatedVendorId = vendorId || null;
     if (validatedVendorId) {
       const vendor = await Vendor.findOne({
-        where: applyTenantFilter(req.tenantId, { id: validatedVendorId })
+        where: itemWhere(req, { id: validatedVendorId })
       });
       if (!vendor) {
         return res.status(400).json({ success: false, message: 'Vendor not found for this tenant' });
       }
     }
 
-    const item = await Equipment.create({
-      name,
-      description: description || null,
-      categoryId: validatedCategoryId,
-      purchaseDate: purchaseDate || null,
-      purchaseValue: parseFloat(purchaseValue) || 0,
-      location: location || null,
-      serialNumber: serialNumber || null,
-      status: status || 'active',
-      vendorId: validatedVendorId,
-      notes: notes || null,
-      metadata: metadata || {},
-      isActive: isActive !== undefined ? Boolean(isActive) : true,
-      tenantId: req.tenantId
-    });
+    const item = await Equipment.create(
+      attachScopedToPayload(req, {
+        name,
+        description: description || null,
+        categoryId: validatedCategoryId,
+        purchaseDate: purchaseDate || null,
+        purchaseValue: parseFloat(purchaseValue) || 0,
+        location: location || null,
+        serialNumber: serialNumber || null,
+        status: status || 'active',
+        vendorId: validatedVendorId,
+        notes: notes || null,
+        metadata: metadata || {},
+        isActive: isActive !== undefined ? Boolean(isActive) : true,
+        tenantId: req.tenantId,
+      })
+    );
 
     const createdItem = await Equipment.findOne({
-      where: applyTenantFilter(req.tenantId, { id: item.id }),
+      where: itemWhere(req, { id: item.id }),
       include: buildItemInclude()
     });
 
@@ -232,11 +242,12 @@ exports.createEquipmentItem = async (req, res, next) => {
 exports.updateEquipmentItem = async (req, res, next) => {
   try {
     const item = await Equipment.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: itemWhere(req, { id: req.params.id })
     });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Equipment not found' });
     }
+    assertShopRecordAccess(req, item);
 
     const payload = sanitizePayload(req.body || {});
 
@@ -251,7 +262,7 @@ exports.updateEquipmentItem = async (req, res, next) => {
 
     if (payload.vendorId !== undefined && payload.vendorId !== null) {
       const vendor = await Vendor.findOne({
-        where: applyTenantFilter(req.tenantId, { id: payload.vendorId })
+        where: itemWhere(req, { id: payload.vendorId })
       });
       if (!vendor) {
         return res.status(400).json({ success: false, message: 'Vendor not found for this tenant' });
@@ -275,7 +286,7 @@ exports.updateEquipmentItem = async (req, res, next) => {
     await item.update(updates);
 
     const updatedItem = await Equipment.findOne({
-      where: applyTenantFilter(req.tenantId, { id: item.id }),
+      where: itemWhere(req, { id: item.id }),
       include: buildItemInclude()
     });
 
@@ -288,11 +299,12 @@ exports.updateEquipmentItem = async (req, res, next) => {
 exports.deleteEquipmentItem = async (req, res, next) => {
   try {
     const item = await Equipment.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: itemWhere(req, { id: req.params.id })
     });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Equipment not found' });
     }
+    assertShopRecordAccess(req, item);
     await item.destroy();
     res.status(200).json({ success: true, message: 'Equipment deleted' });
   } catch (error) {

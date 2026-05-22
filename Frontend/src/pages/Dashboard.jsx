@@ -9,7 +9,9 @@ import DateFilterButtons from '../components/DateFilterButtons';
 import DashboardStatsCards from '../components/DashboardStatsCards';
 import DashboardJobsTable from '../components/DashboardJobsTable';
 import { showSuccess, showError, showWarning } from '../utils/toast';
-import { getCachedDashboard, cacheDashboard } from '../utils/posDb';
+import { formatPeriodLabel } from '../utils/formatPeriodLabel';
+import { buildAskAiUrl } from '../utils/buildAskAiUrl';
+import { getCoreTypeForBusinessSubType } from '@/constants/businessTypes';
 import {
   Currency,
   ShoppingCart,
@@ -34,6 +36,7 @@ import {
   RefreshCw,
   Package,
   Sparkles,
+  X,
 } from 'lucide-react';
 import { Empty } from '../components/ui/empty';
 import { Skeleton } from '../components/ui/skeleton';
@@ -50,11 +53,16 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useNavigate } from 'react-router-dom';
 import dashboardService from '../services/dashboardService';
+import assistantService from '../services/assistantService';
 import productService from '../services/productService';
 import settingsService from '../services/settingsService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
-import { CURRENCY, DEFAULT_TENANT_NAMES, getWorkspaceDisplayName } from '../constants';
+import { useShopOptional } from '../context/ShopContext';
+import { CURRENCY, STUDIO_LIKE_TYPES, isPlaceholderBusinessName } from '../constants';
+import { formatAmount } from '../utils/formatNumber';
+import { useScopedWorkspaceName } from '../hooks/useScopedWorkspaceName';
+import { useDismissibleDashboardBanner } from '../hooks/useDismissibleDashboardBanner';
 import dayjs from 'dayjs';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
 import isoWeek from 'dayjs/plugin/isoWeek';
@@ -65,13 +73,90 @@ dayjs.extend(weekOfYear);
 dayjs.extend(isoWeek);
 dayjs.extend(relativeTime);
 
+const parseAiInsightResponse = (message = '') => {
+  const trimmed = String(message || '')
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  if (!trimmed) return null;
+
+  const parseJson = (raw) => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.title && parsed?.body) {
+        return {
+          title: String(parsed.title).trim(),
+          body: String(parsed.body).trim(),
+        };
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  };
+
+  const directJson = parseJson(trimmed);
+  if (directJson) return directJson;
+
+  const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    const extractedJson = parseJson(jsonMatch[0]);
+    if (extractedJson) return extractedJson;
+  }
+
+  const lines = trimmed.split('\n').map((line) => line.trim()).filter(Boolean);
+  const titleLine = lines.find((line) => /^title:/i.test(line));
+  const bodyLine = lines.find((line) => /^(body|insight):/i.test(line));
+  if (titleLine && bodyLine) {
+    return {
+      title: titleLine.replace(/^title:\s*/i, '').trim(),
+      body: bodyLine.replace(/^(body|insight):\s*/i, '').trim(),
+    };
+  }
+
+  return {
+    title: 'AI business insight',
+    body: trimmed.length > 140 ? `${trimmed.slice(0, 137)}...` : trimmed,
+  };
+};
+
+const buildFallbackInsight = ({ revenueValue, expenseValue, profitValue, lowStockCount, isShop, isPharmacy }) => {
+  if (lowStockCount > 0 && (isShop || isPharmacy)) {
+    return {
+      title: 'Stock needs attention',
+      body: `${lowStockCount} item${lowStockCount === 1 ? ' is' : 's are'} low on stock. Restock priority products first.`,
+    };
+  }
+
+  if (profitValue < 0 && revenueValue > 0) {
+    return {
+      title: 'Costs are outpacing revenue',
+      body: 'Expenses are higher than revenue for this period. Review spending and push higher-margin sales.',
+    };
+  }
+
+  if (revenueValue > 0 && profitValue > 0) {
+    return {
+      title: 'Business is profitable',
+      body: 'Revenue is covering expenses for this period. Keep tracking collections and costs.',
+    };
+  }
+
+  return {
+    title: 'Your dashboard is ready',
+    body: 'Ask ABS Assistant to explain trends, collections, stock, or next steps for this period.',
+  };
+};
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user, activeTenant, activeTenantId, tenantRole, wasInvited, suppressAppGuidance } = useAuth();
-  const [loading, setLoading] = useState(true);
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
   const [isRefetching, setIsRefetching] = useState(false);
   const { isMobile } = useResponsive();
-  const [overview, setOverview] = useState(null);
   const initialMonthRange = useMemo(() => [dayjs().startOf('month'), dayjs().endOf('month')], []);
   const [dateRange, setDateRange] = useState(initialMonthRange);
   const [activeFilter, setActiveFilter] = useState('month');
@@ -87,15 +172,20 @@ const Dashboard = () => {
   });
 
   const { data: overviewResponse, isLoading: overviewLoading, isError: overviewError, refetch: refetchOverview, isFetched: overviewFetched } = useQuery({
-    queryKey: ['dashboard', 'overview', activeTenantId, overviewParams.startDate, overviewParams.endDate, overviewParams.filterType],
+    queryKey: ['dashboard', 'overview', activeTenantId, activeShopId, overviewParams.startDate, overviewParams.endDate, overviewParams.filterType],
     queryFn: () => dashboardService.getOverview(overviewParams.startDate, overviewParams.endDate, overviewParams.filterType),
     enabled: !!activeTenantId,
     staleTime: 2 * 60 * 1000, // 2 min cache
     refetchOnWindowFocus: false,
     // Keep dashboard figures fresh after payments/invoice changes without manual refresh.
-    refetchInterval: 45 * 1000,
-    refetchIntervalInBackground: true,
+    refetchInterval: 2 * 60 * 1000,
+    refetchIntervalInBackground: false,
   });
+  const overview = useMemo(
+    () => (overviewResponse ? overviewResponse?.data || overviewResponse : null),
+    [overviewResponse]
+  );
+  const loading = overviewLoading;
 
   const [comparisonData, setComparisonData] = useState(null);
   const [comparisonLoading, setComparisonLoading] = useState(false);
@@ -118,7 +208,6 @@ const Dashboard = () => {
     const ed = endDate || today.format('YYYY-MM-DD');
     const ft = filterType || 'today';
     setOverviewParams({ startDate: sd, endDate: ed, filterType: ft });
-    setLoading(true);
     setIsRefetching(true);
   }, []);
 
@@ -146,49 +235,25 @@ const Dashboard = () => {
     setOverviewParams({ startDate: start.format('YYYY-MM-DD'), endDate: end.format('YYYY-MM-DD'), filterType: 'thisMonth' });
   }, []);
 
-  // Load cached dashboard data immediately on mount for instant display
+  // Clear stale overview when workspace scope changes (tenant or shop)
   useEffect(() => {
-    if (!activeTenantId) return;
-    
-    const loadCachedData = async () => {
-      try {
-        const cached = await getCachedDashboard(activeTenantId, overviewParams.filterType);
-        if (cached && !overview) {
-          setOverview(cached);
-          setLoading(false);
-          // If stale, the fresh data will replace it when React Query completes
-        }
-      } catch (err) {
-        console.error('[Dashboard] Failed to load cached data:', err);
-      }
-    };
-    loadCachedData();
-  }, [activeTenantId, overviewParams.filterType]);
+    setComparisonData(null);
+  }, [activeTenantId, activeShopId]);
 
   useEffect(() => {
-    if (!overviewResponse) return;
-    const data = overviewResponse?.data || overviewResponse;
-    setOverview(data);
+    if (!overview) return;
     setComparisonLoading(true);
     setComparisonData(null);
-    const comparison = data?.comparison || null;
+    const comparison = overview?.comparison || null;
     const id = setTimeout(() => {
       setComparisonData(comparison);
       setComparisonLoading(false);
     }, 80);
     
-    // Cache the fresh data for next time
-    if (activeTenantId && data) {
-      cacheDashboard(activeTenantId, overviewParams.filterType, data).catch(err => {
-        console.error('[Dashboard] Failed to cache data:', err);
-      });
-    }
-    
     return () => clearTimeout(id);
-  }, [overviewResponse, activeTenantId, overviewParams.filterType]);
+  }, [overview, activeTenantId, activeShopId, overviewParams.filterType]);
 
   useEffect(() => {
-    setLoading(overviewLoading);
     if (!overviewLoading) setIsRefetching(false);
   }, [overviewLoading]);
 
@@ -205,10 +270,12 @@ const Dashboard = () => {
 
   const clearFilters = useCallback(() => {
     setIsRefetching(true);
-    setDateRange(null);
-    setActiveFilter(null);
     setComparisonData(null);
-    fetchDashboardData();
+    const startOfMonth = dayjs().startOf('month');
+    const endOfMonth = dayjs().endOf('month');
+    setDateRange([startOfMonth, endOfMonth]);
+    setActiveFilter('month');
+    fetchDashboardData(startOfMonth.format('YYYY-MM-DD'), endOfMonth.format('YYYY-MM-DD'), 'thisMonth');
   }, [fetchDashboardData]);
 
   // Quick date filter functions
@@ -348,7 +415,7 @@ const Dashboard = () => {
           return {
             id: sale.id,
             jobNumber: sale.saleNumber,
-            title: `₵ ${sale.total?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            title: formatAmount(sale.total),
             customer: custName ? { name: custName } : null,
             status: 'completed',
             createdAt: sale.createdAt,
@@ -368,44 +435,63 @@ const Dashboard = () => {
     jobsPagination.current * jobsPagination.pageSize
   ), [recentJobs, jobsPagination.current, jobsPagination.pageSize]);
   const isFiltered = useMemo(() => Boolean(dateRange && dateRange[0] && dateRange[1]), [dateRange]);
+  const periodLabel = useMemo(
+    () => formatPeriodLabel(overviewParams.filterType || activeFilter, dateRange),
+    [overviewParams.filterType, activeFilter, dateRange]
+  );
   const thisMonthSummary = useMemo(() => displayData?.thisMonth || {}, [displayData]);
   const revenueValue = useMemo(() => Number(thisMonthSummary.revenue ?? 0), [thisMonthSummary.revenue]);
   const expenseValue = useMemo(() => Number(thisMonthSummary.expenses ?? 0), [thisMonthSummary.expenses]);
-  const revenueTitle = useMemo(() => isFiltered ? 'Selected Revenue' : "This Month's Revenue", [isFiltered]);
-  const expenseTitle = useMemo(() => isFiltered ? 'Selected Expenses' : "This Month's Expenses", [isFiltered]);
-  const profitTitle = useMemo(() => isFiltered ? 'Selected Profit' : "This Month's Profit", [isFiltered]);
+  const revenueTitle = useMemo(() => (isFiltered ? `${periodLabel} revenue` : "This Month's Revenue"), [isFiltered, periodLabel]);
+  const expenseTitle = useMemo(() => (isFiltered ? `${periodLabel} expenses` : "This Month's Expenses"), [isFiltered, periodLabel]);
+  const profitTitle = useMemo(() => (isFiltered ? `${periodLabel} profit` : "This Month's Profit"), [isFiltered, periodLabel]);
   const profitValue = useMemo(() => Number(thisMonthSummary.profit ?? (revenueValue - expenseValue)), [thisMonthSummary.profit, revenueValue, expenseValue]);
   const allTimeProfit = useMemo(() => Number(displayData?.allTime?.profit ?? ((displayData?.allTime?.revenue ?? 0) - (displayData?.allTime?.expenses ?? 0))), [displayData]);
   const thisMonthRange = useMemo(() => thisMonthSummary.range, [thisMonthSummary.range]);
 
   // Get business type from activeTenant (preferred) or overview response (fallback)
   const businessType = useMemo(() => activeTenant?.businessType || overview?.businessType || 'printing_press', [activeTenant?.businessType, overview?.businessType]);
-  const isShop = useMemo(() => businessType === 'shop', [businessType]);
-  const isPharmacy = useMemo(() => businessType === 'pharmacy', [businessType]);
-  const isStudio = useMemo(() => businessType === 'printing_press', [businessType]);
+  const coreBusinessType = useMemo(() => {
+    if (businessType === 'shop' || businessType === 'pharmacy') return businessType;
+    if (businessType && STUDIO_LIKE_TYPES.includes(businessType)) return businessType;
+    const subType =
+      activeTenant?.metadata?.businessSubType ||
+      activeTenant?.metadata?.shopType;
+    if (subType) return getCoreTypeForBusinessSubType(subType);
+    return businessType;
+  }, [businessType, activeTenant?.metadata?.businessSubType, activeTenant?.metadata?.shopType]);
+  const isShop = useMemo(() => coreBusinessType === 'shop', [coreBusinessType]);
+  const isPharmacy = useMemo(() => coreBusinessType === 'pharmacy', [coreBusinessType]);
+  const isStudio = useMemo(() => STUDIO_LIKE_TYPES.includes(coreBusinessType), [coreBusinessType]);
   const isStaffShopOrPharmacy = useMemo(
     () => (isShop || isPharmacy) && tenantRole === 'staff',
     [isShop, isPharmacy, tenantRole]
   );
 
   const { data: staffProductsRaw, isLoading: staffProductsLoading } = useQuery({
-    queryKey: ['products', 'active', activeTenantId],
+    queryKey: ['products', 'active', activeTenantId, activeShopId],
     queryFn: () => productService.getAllActiveProducts(),
-    enabled: isShop || isPharmacy,
+    enabled: isPharmacy || (isShop && !!activeShopId),
     staleTime: 60 * 1000,
   });
   const staffProducts = useMemo(
     () => (Array.isArray(staffProductsRaw) ? staffProductsRaw : (staffProductsRaw?.products ?? [])),
     [staffProductsRaw]
   );
-  const hasProducts = useMemo(() => staffProducts.length > 0, [staffProducts]);
+  const hasProducts = useMemo(() => {
+    if (staffProducts.length > 0) return true;
+    const overviewCount = Number(displayData?.shopData?.productCount ?? displayData?.shopData?.totalInventoryItems ?? 0);
+    if (overviewCount > 0) return true;
+    if ((displayData?.shopData?.topProducts || []).length > 0) return true;
+    return false;
+  }, [staffProducts, displayData?.shopData?.productCount, displayData?.shopData?.totalInventoryItems, displayData?.shopData?.topProducts]);
 
   const organization = useMemo(() => organizationData?.data || {}, [organizationData]);
   
   // Check if tenant has a name (not default placeholder)
   const hasBusinessName = useMemo(() => {
     const name = activeTenant?.name;
-    return !!(name && name.trim() && !DEFAULT_TENANT_NAMES.includes(name));
+    return !!(name && name.trim() && !isPlaceholderBusinessName(name));
   }, [activeTenant?.name]);
 
   const hasCompanyPhone = useMemo(() => {
@@ -416,11 +502,7 @@ const Dashboard = () => {
     return !!(organization?.email && String(organization.email).trim());
   }, [organization?.email]);
 
-  // Display name: business name when set up, "Workspace" when not
-  const displayName = useMemo(
-    () => getWorkspaceDisplayName(activeTenant?.name, organization?.name),
-    [activeTenant?.name, organization?.name]
-  );
+  const displayName = useScopedWorkspaceName(organization?.name);
 
   // Onboarding complete: metadata marker, or real workspace name + business contact (phone or org email).
   const onboardingCompleted = useMemo(() => {
@@ -441,6 +523,11 @@ const Dashboard = () => {
     if (organizationSettingsPending) return false;
     return !onboardingCompleted;
   }, [wasInvited, suppressAppGuidance, organizationSettingsPending, onboardingCompleted]);
+  const {
+    dismissed: setupBannerDismissed,
+    dismiss: dismissSetupBanner,
+  } = useDismissibleDashboardBanner('setup-checklist', activeTenantId, showSetupBanner);
+  const shouldShowSetupBanner = showSetupBanner && !setupBannerDismissed;
 
   // Welcome messages based on mode
   const welcomeMessages = useMemo(() => ({
@@ -460,6 +547,78 @@ const Dashboard = () => {
     return low + exp;
   }, [stockAlerts]);
   const showStockAlerts = useMemo(() => (isShop || isPharmacy) && stockAlerts && stockAlertsActiveCount > 0, [isShop, isPharmacy, stockAlerts, stockAlertsActiveCount]);
+
+  const fallbackDashboardInsight = useMemo(
+    () =>
+      buildFallbackInsight({
+        revenueValue,
+        expenseValue,
+        profitValue,
+        lowStockCount: (stockAlerts?.lowStock || []).length,
+        isShop,
+        isPharmacy,
+      }),
+    [revenueValue, expenseValue, profitValue, stockAlerts?.lowStock, isShop, isPharmacy]
+  );
+
+  const aiInsightPrompt = useMemo(
+    () =>
+      [
+        'Create one short web dashboard insight for this business.',
+        'Return only JSON in this exact shape: {"title":"...","body":"..."}',
+        'Keep the title under 7 words and body under 18 words.',
+        `Business type: ${businessType}`,
+        `Period: ${periodLabel} (${overviewParams.startDate} to ${overviewParams.endDate})`,
+        `Revenue: ${CURRENCY.SYMBOL} ${revenueValue.toFixed(2)}`,
+        `Expenses: ${CURRENCY.SYMBOL} ${expenseValue.toFixed(2)}`,
+        `Profit: ${CURRENCY.SYMBOL} ${profitValue.toFixed(2)}`,
+        `New customers: ${displayData?.summary?.newCustomers || 0}`,
+        `Low stock items: ${(stockAlerts?.lowStock || []).length}`,
+      ].join('\n'),
+    [
+      businessType,
+      periodLabel,
+      overviewParams.startDate,
+      overviewParams.endDate,
+      revenueValue,
+      expenseValue,
+      profitValue,
+      displayData?.summary?.newCustomers,
+      stockAlerts?.lowStock,
+    ]
+  );
+
+  const { data: aiDashboardInsight, isFetching: aiDashboardInsightLoading } = useQuery({
+    queryKey: [
+      'dashboard',
+      'ai-insight',
+      activeTenantId,
+      activeShopId,
+      overviewParams.startDate,
+      overviewParams.endDate,
+      overviewParams.filterType,
+      revenueValue,
+      expenseValue,
+      profitValue,
+      displayData?.summary?.newCustomers,
+      (stockAlerts?.lowStock || []).length,
+    ],
+    queryFn: async () => {
+      const result = await assistantService.chat([{ role: 'user', content: aiInsightPrompt }], {
+        pageContext: 'dashboard',
+        startDate: overviewParams.startDate,
+        endDate: overviewParams.endDate,
+        periodLabel,
+      });
+      return parseAiInsightResponse(result?.message || '');
+    },
+    enabled: !!activeTenantId && !!overview,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+    retry: 1,
+  });
+
+  const visibleDashboardInsight = aiDashboardInsight || fallbackDashboardInsight;
 
   // Full-page skeletons only on initial load when we have no data yet
   if (loading && !overview) {
@@ -528,7 +687,7 @@ const Dashboard = () => {
       {/* Unified Dashboard for all business types */}
       <>
       {/* Setup Checklist Banner */}
-      {showSetupBanner && (
+      {shouldShowSetupBanner && (
         <div
           data-setup-banner
           className="mb-6 rounded-lg border border-gray-200 p-4 sm:p-6"
@@ -546,27 +705,39 @@ const Dashboard = () => {
                 Complete your business profile to get the most out of African Business Suite.
               </p>
             </div>
-            <Button
-              onClick={() => navigate('/onboarding')}
-              className="w-full sm:w-auto mt-2 sm:mt-0 shrink-0 text-foreground"
-              style={{
-                backgroundColor: '#a3e635',
-                borderColor: '#a3e635',
-                color: '#000000',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#84cc16';
-                e.currentTarget.style.borderColor = '#84cc16';
-                e.currentTarget.style.color = '#000000';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = '#a3e635';
-                e.currentTarget.style.borderColor = '#a3e635';
-                e.currentTarget.style.color = '#000000';
-              }}
-            >
-              Complete Setup
-            </Button>
+            <div className="flex w-full sm:w-auto items-center gap-2 mt-2 sm:mt-0">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 shrink-0 text-white hover:bg-white/10 hover:text-white"
+                aria-label="Hide setup banner on dashboard"
+                onClick={dismissSetupBanner}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+              <Button
+                onClick={() => navigate('/onboarding')}
+                className="flex-1 sm:flex-none shrink-0 text-foreground"
+                style={{
+                  backgroundColor: '#a3e635',
+                  borderColor: '#a3e635',
+                  color: '#000000',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = '#84cc16';
+                  e.currentTarget.style.borderColor = '#84cc16';
+                  e.currentTarget.style.color = '#000000';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#a3e635';
+                  e.currentTarget.style.borderColor = '#a3e635';
+                  e.currentTarget.style.color = '#000000';
+                }}
+              >
+                Complete Setup
+              </Button>
+            </div>
           </div>
         </div>
       )}
@@ -589,7 +760,7 @@ const Dashboard = () => {
         onDateRangeChange={handleDateRangeChange}
         dateRange={dateRange}
         onAddClick={() => navigate(isShop || isPharmacy ? '/sales?openPOS=1' : '/jobs', { state: { openModal: true } })}
-        addButtonLabel={isShop || isPharmacy ? 'Add sale' : 'Add job'}
+        addButtonLabel={isShop || isPharmacy ? 'New sale' : 'New job'}
       />
 
       {/* Non-blocking refetch indicator */}
@@ -613,6 +784,70 @@ const Dashboard = () => {
         activeFilter={activeFilter}
         loading={overviewLoading}
       />
+
+      <Card className="border border-gray-200 bg-green-50/70">
+        <CardContent className="p-4 sm:p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand">
+              <Sparkles className="h-5 w-5 text-white" aria-hidden />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-brand mb-1">AI Insight</p>
+              <h3 className="text-base font-semibold text-foreground">
+                {aiDashboardInsightLoading ? 'AI is reviewing your numbers' : visibleDashboardInsight.title}
+              </h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {aiDashboardInsightLoading
+                  ? 'Generating a quick business insight from your latest dashboard data.'
+                  : visibleDashboardInsight.body}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="shrink-0 bg-white"
+              onClick={() =>
+                navigate(buildAskAiUrl({
+                  from: 'dashboard',
+                  prompt: 'Explain my dashboard insight and what I should do next.',
+                  startDate: overviewParams.startDate,
+                  endDate: overviewParams.endDate,
+                  periodLabel,
+                }))
+              }
+            >
+              Ask AI
+              <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {isShop && (displayData?.shopData?.shopBreakdown?.length ?? 0) > 0 && (
+        <Card className="border border-gray-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base sm:text-lg">
+              Revenue by shop ({isFiltered ? periodLabel : 'this month'})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0">
+            <ul className="space-y-2">
+              {displayData.shopData.shopBreakdown.map((row) => (
+                <li
+                  key={row.id}
+                  className="flex items-center justify-between gap-2 text-sm border-b border-border/60 pb-2 last:border-0 last:pb-0"
+                >
+                  <span className="font-medium truncate">{row.name}</span>
+                  <span className="text-muted-foreground shrink-0">
+                    ₵ {Number(row.monthRevenue || 0).toFixed(2)}
+                    {row.monthSalesCount != null ? ` · ${row.monthSalesCount} sales` : ''}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stock & expiry alerts (shop/pharmacy) */}
       {showStockAlerts && (
@@ -688,25 +923,49 @@ const Dashboard = () => {
             </Card>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {staffProducts.filter((p) => p && typeof p === 'object' && p.id).map((product) => (
-                <Card
-                  key={product.id}
-                  className="border border-gray-200 cursor-pointer transition-colors hover:border-green-500 hover:bg-green-50"
-                  onClick={() => navigate('/pos', { state: { addProductId: product.id } })}
-                >
-                  <CardContent className="p-4 flex flex-col items-center justify-center min-h-[100px]">
-                    <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center mb-2">
-                      <Package className="h-5 w-5 text-gray-500" />
-                    </div>
-                    <p className="font-medium text-foreground text-center line-clamp-2 text-sm">
-                      {product.name ?? product.sku ?? 'Product'}
-                    </p>
-                    <p className="text-green-700 font-semibold text-sm mt-1">
-                      {CURRENCY.SYMBOL} {Number(product.sellingPrice ?? 0).toFixed(CURRENCY.DECIMAL_PLACES)}
-                    </p>
-                  </CardContent>
-                </Card>
-              ))}
+              {staffProducts.filter((p) => p && typeof p === 'object' && p.id).map((product) => {
+                const quantityOnHand = Number(product.quantityOnHand);
+                const isOutOfStock = product.trackStock !== false && Number.isFinite(quantityOnHand) && quantityOnHand <= 0;
+
+                return (
+                  <Card
+                    key={product.id}
+                    className={cn(
+                      'border border-gray-200 transition-colors',
+                      isOutOfStock
+                        ? 'bg-muted opacity-60 cursor-not-allowed'
+                        : 'cursor-pointer hover:border-green-500 hover:bg-green-50'
+                    )}
+                    onClick={() => {
+                      if (isOutOfStock) return;
+                      navigate('/pos', { state: { addProductId: product.id } });
+                    }}
+                  >
+                    <CardContent className="p-4 flex flex-col items-center justify-center min-h-[100px]">
+                      <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center mb-2">
+                        <Package className="h-5 w-5 text-gray-500" />
+                      </div>
+                      <p className={cn(
+                        'font-medium text-center line-clamp-2 text-sm',
+                        isOutOfStock ? 'text-muted-foreground' : 'text-foreground'
+                      )}>
+                        {product.name ?? product.sku ?? 'Product'}
+                      </p>
+                      <p className={cn(
+                        'font-semibold text-sm mt-1',
+                        isOutOfStock ? 'text-muted-foreground' : 'text-green-700'
+                      )}>
+                        {CURRENCY.SYMBOL} {Number(product.sellingPrice ?? 0).toFixed(CURRENCY.DECIMAL_PLACES)}
+                      </p>
+                      {isOutOfStock && (
+                        <Badge variant="secondary" className="mt-2 text-xs">
+                          Out of stock
+                        </Badge>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
         </div>
@@ -721,7 +980,9 @@ const Dashboard = () => {
             pageSize={jobsPagination.pageSize}
             isSalesTable={isShop || isPharmacy}
             hasProducts={hasProducts}
+            productsLoading={staffProductsLoading}
             onAddProduct={(isShop || isPharmacy) ? () => navigate('/products?add=1') : undefined}
+            onOpenPOS={(isShop || isPharmacy) ? () => navigate('/pos') : undefined}
           />
         </div>
       </div>

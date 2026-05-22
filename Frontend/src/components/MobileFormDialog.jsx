@@ -67,7 +67,7 @@ const MobileFormDialog = ({
           {children}
         </div>
         {footer && (
-          <DialogFooter className="flex-shrink-0 px-6 pt-4 pb-6 border-t border-border bg-background">
+          <DialogFooter className="sticky bottom-0 z-20 flex-shrink-0 px-6 pt-4 pb-6 border-t border-border bg-background">
             {footer}
           </DialogFooter>
         )}

@@ -11,10 +11,17 @@ export const STORAGE_KEYS = {
   // SecureStore token key (must be non-empty and alphanumeric/._-)
   token: 'token',
   ACTIVE_TENANT_ID: 'activeTenantId',
+  ACTIVE_STUDIO_LOCATION_ID: 'activeStudioLocationId',
+  ACTIVE_SHOP_ID: 'activeShopId',
   CART_PREFIX: '@cart_items_',
+  /** Set after user finishes or skips the 3-screen marketing intro carousel */
+  INTRO_ONBOARDING_COMPLETED: 'introOnboardingCompleted',
 } as const;
 
 export const STUDIO_TYPES = ['printing_press', 'mechanic', 'barber', 'salon'];
+
+/** Studio-like business types (aligned with web STUDIO_LIKE_TYPES). */
+export const STUDIO_LIKE_TYPES = [...STUDIO_TYPES, 'studio'] as const;
 
 /** Shop types where Quotes are hidden (aligned with web) */
 export const QUOTES_HIDDEN_SHOP_TYPES = ['restaurant'] as const;
@@ -27,7 +34,7 @@ export function isQuotesEnabledForTenant(
   shopType: string | undefined
 ): boolean {
   if (!businessType) return false;
-  const isStudioLike = STUDIO_TYPES.includes(businessType) || businessType === 'studio';
+  const isStudioLike = resolveBusinessType(businessType) === 'studio';
   if (isStudioLike || businessType === 'pharmacy') return true;
   if (businessType === 'shop') {
     return !QUOTES_HIDDEN_SHOP_TYPES.includes((shopType || '') as (typeof QUOTES_HIDDEN_SHOP_TYPES)[number]);
@@ -101,6 +108,14 @@ export const DELIVERY_STATUS_ORDER = [
   DELIVERY_STATUSES.RETURNED,
 ] as const;
 
+export {
+  NOTIFICATION_PREFERENCE_CATEGORY_ORDER,
+  NOTIFICATION_PREFERENCE_CATEGORY_LABELS,
+  buildDefaultNotificationPreferences,
+  normalizeNotificationPreferences,
+} from './notificationPreferences';
+export type { NotificationCategoryPrefs, NotificationPrefsDraft } from './notificationPreferences';
+
 /** Expense statuses */
 export const EXPENSE_STATUSES = {
   DRAFT: 'draft',
@@ -122,3 +137,7 @@ export const resolveBusinessType = (businessType: string | undefined): 'shop' | 
   if (['shop', 'studio', 'pharmacy'].includes(businessType)) return businessType as 'shop' | 'studio' | 'pharmacy';
   return 'shop';
 };
+
+export const isStudioLikeBusinessType = (businessType: string | undefined): boolean =>
+  resolveBusinessType(businessType) === 'studio' ||
+  STUDIO_LIKE_TYPES.includes((businessType || '') as (typeof STUDIO_LIKE_TYPES)[number]);

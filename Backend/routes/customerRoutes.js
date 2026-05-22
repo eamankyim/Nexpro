@@ -18,6 +18,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { studioLocationContext } = require('../middleware/studioLocationContext');
+const { shopContext } = require('../middleware/shopContext');
 const { bulkOperationLimiter, exportLimiter } = require('../middleware/rateLimiter');
 const { cacheMiddleware, generateCustomerListKey } = require('../middleware/cache');
 
@@ -26,6 +27,7 @@ const router = express.Router();
 router.use(protect);
 router.use(tenantContext);
 router.use(studioLocationContext);
+router.use(shopContext);
 
 router.route('/')
   .get(cacheMiddleware(60, generateCustomerListKey), getCustomers)

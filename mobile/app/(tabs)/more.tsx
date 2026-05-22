@@ -7,25 +7,24 @@ import {
   Pressable,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { useAuth } from '@/context/AuthContext';
-import { useTheme } from '@/context/ThemeContext';
-import Colors from '@/constants/Colors';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
 import { resolveBusinessType, SHOP_TYPES, isQuotesEnabledForTenant } from '@/constants';
 
 type MenuItem = {
   id: string;
   label: string;
-  icon: React.ComponentProps<typeof FontAwesome>['name'];
+  icon: AppIconName;
   route: string;
 };
 
 export default function MoreScreen() {
   const router = useRouter();
   const { activeTenant, hasFeature, user } = useAuth();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, resolvedTheme } = useScreenColors();
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isShop = resolvedType === 'shop';
   const isPharmacy = resolvedType === 'pharmacy';
@@ -40,19 +39,23 @@ export default function MoreScreen() {
       hasFeature('quoteAutomation') && isQuotesEnabledForTenant(bt, shopType);
 
     if ((isShop || isPharmacy) && hasFeature('products')) {
-      items.push({ id: 'products', label: 'Products', icon: 'archive', route: '/(tabs)/products' });
+      items.push({ id: 'products', label: 'Products', icon: 'shopping-cart', route: '/(tabs)/products' });
     }
     if ((isShop || isPharmacy) && hasFeature('paymentsExpenses')) {
       items.push({ id: 'sales', label: 'Sales', icon: 'shopping-cart', route: '/(tabs)/sales' });
     }
-    if ((isShop || isPharmacy) && hasFeature('materials')) {
+    if (isRestaurant && hasFeature('orders')) {
+      items.push({ id: 'orders', label: 'Orders', icon: 'cutlery', route: '/(tabs)/orders' });
+    }
+    if ((isShop || isPharmacy || isStudio) && hasFeature('materials')) {
       items.push({ id: 'materials', label: 'Materials', icon: 'archive', route: '/(tabs)/materials' });
     }
     if (hasFeature('expenses')) {
       items.push({ id: 'expenses', label: 'Expenses', icon: 'minus-circle', route: '/(tabs)/expenses' });
     }
-    if ((isShop || isPharmacy || isStudio) && hasFeature('invoices')) {
-      items.push({ id: 'invoices', label: 'Invoices', icon: 'file-text', route: '/(tabs)/invoices' });
+    // Invoices are in the main tab bar for shops and studios when the feature is enabled
+    if (isStudio && hasFeature('jobAutomation')) {
+      items.push({ id: 'jobs', label: 'Jobs', icon: 'briefcase', route: '/(tabs)/jobs' });
     }
     if ((isShop || isPharmacy || isStudio) && quotesOk) {
       items.push({ id: 'quotes', label: 'Quotes', icon: 'file-text-o', route: '/(tabs)/quotes' });
@@ -74,14 +77,9 @@ export default function MoreScreen() {
     return items;
   }, [isShop, isPharmacy, isStudio, isRestaurant, hasFeature, activeTenant?.businessType, shopType, user?.isPlatformAdmin]);
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
 
   return (
-    <ScrollView style={[styles.container, { backgroundColor: bg }]} contentContainerStyle={styles.content}>
+    <ScreenShell scrollable contentContainerStyle={styles.content} style={styles.container}>
       <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
         {menuItems.map((item, index) => (
           <Pressable
@@ -94,14 +92,14 @@ export default function MoreScreen() {
             ]}
           >
             <View style={[styles.iconWrap, { backgroundColor: resolvedTheme === 'dark' ? '#3f3f46' : '#f3f4f6' }]}>
-              <FontAwesome name={item.icon} size={20} color={colors.tint} />
+              <AppIcon name={item.icon} size={20} color={colors.tint} />
             </View>
             <Text style={[styles.menuLabel, { color: textColor }]}>{item.label}</Text>
-            <FontAwesome name="chevron-right" size={14} color={mutedColor} />
+            <AppIcon name="chevron-right" size={14} color={mutedColor} />
           </Pressable>
         ))}
       </View>
-    </ScrollView>
+    </ScreenShell>
   );
 }
 

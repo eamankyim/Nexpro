@@ -1,8 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { authService } from '@/services/auth';
+import { settingsService } from '@/services/settings';
 import { logger } from '@/utils/logger';
 import { shouldSuppressAppGuidance } from '@/utils/appGuidanceEligibility';
+import { isOnboardingComplete } from '@/utils/onboardingStatus';
+import { membershipTenantId, normalizeMemberships } from '@/utils/membership';
 
 type User = {
   id: string;
@@ -23,7 +26,12 @@ type Membership = {
     businessType?: string;
     createdAt?: string;
     effectiveFeatureFlags?: Record<string, boolean>;
-    metadata?: { shopType?: string; onboarding?: { completedAt?: string }; phone?: string };
+    metadata?: {
+      shopType?: string;
+      onboarding?: { completedAt?: string };
+      phone?: string;
+      email?: string;
+    };
   };
   isDefault?: boolean;
   invitedBy?: string | null;
@@ -39,9 +47,16 @@ type AuthContextType = {
     businessType?: string;
     name?: string;
     effectiveFeatureFlags?: Record<string, boolean>;
-    metadata?: { shopType?: string; onboarding?: { completedAt?: string }; phone?: string };
+    metadata?: {
+      shopType?: string;
+      onboarding?: { completedAt?: string };
+      phone?: string;
+      email?: string;
+    };
   } | null;
   loading: boolean;
+  /** True while login/init is syncing memberships from /auth/me */
+  sessionSyncing: boolean;
   wasInvited: boolean;
   /** Skip forced onboarding for tenured or very active users */
   suppressAppGuidance: boolean;
@@ -63,8 +78,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const [activeTenantId, setActiveTenantIdState] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionSyncing, setSessionSyncing] = useState(false);
 
-  const activeMembership = memberships.find((m) => m.tenantId === activeTenantId) ?? null;
+  const activeMembership =
+    memberships.find((m) => membershipTenantId(m) === activeTenantId) ?? null;
   const activeTenant = activeMembership?.tenant ?? null;
 
   const activeFeatureFlags = useMemo(() => {
@@ -88,101 +105,146 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [user, activeMembership, activeTenant]
   );
 
+  const activeTenantIdRef = useRef(activeTenantId);
+  activeTenantIdRef.current = activeTenantId;
+
   const setActiveTenantId = useCallback(
     async (tenantId: string | null) => {
-      const prevId = activeTenantId;
+      const prevId = activeTenantIdRef.current;
       await authService.setActiveTenantId(tenantId);
       setActiveTenantIdState(tenantId);
-      // Invalidate all queries when switching tenants to ensure tenant isolation
+      activeTenantIdRef.current = tenantId;
       if (prevId !== tenantId) {
         queryClient.clear();
         logger.info('AuthContext', 'Tenant switched, cleared query cache');
       }
     },
-    [activeTenantId, queryClient]
+    [queryClient]
   );
 
-  // Resolve initial tenant ID from memberships (matches web app logic)
-  const resolveInitialTenant = useCallback((membershipsList: Membership[] = [], preferredTenantId: string | null = null): string | null => {
-    if (preferredTenantId) {
-      return preferredTenantId;
+  const setActiveTenantIdRef = useRef(setActiveTenantId);
+  setActiveTenantIdRef.current = setActiveTenantId;
+
+  const resolveInitialTenant = useCallback(
+    (membershipsList: Membership[] = [], preferredTenantId: string | null = null): string | null => {
+      if (preferredTenantId) return preferredTenantId;
+      if (!Array.isArray(membershipsList) || membershipsList.length === 0) return null;
+      const defaultMembership = membershipsList.find((m) => m.isDefault);
+      return membershipTenantId(defaultMembership) ?? membershipTenantId(membershipsList[0]) ?? null;
+    },
+    []
+  );
+
+  const refreshAuth = useCallback(async () => {
+    const res = await authService.getCurrentUser();
+    const userData = res?.data?.data ?? res?.data ?? res;
+    const m = normalizeMemberships(userData?.tenantMemberships ?? []);
+    if (m.length > 0) {
+      const token = await authService.getToken();
+      const defaultTenantId =
+        membershipTenantId(m.find((x) => x.isDefault)) ?? membershipTenantId(m[0]) ?? null;
+      await authService.persistAuthPayload({
+        user: userData,
+        token: token ?? undefined,
+        memberships: m,
+        defaultTenantId,
+      });
+      setUser(userData);
+      setMemberships(m as Membership[]);
+      if (defaultTenantId) await setActiveTenantId(defaultTenantId);
     }
-    if (!Array.isArray(membershipsList) || membershipsList.length === 0) {
-      return null;
+  }, [setActiveTenantId]);
+
+  const refreshAuthRef = useRef(refreshAuth);
+  refreshAuthRef.current = refreshAuth;
+
+  /** Login/register return raw Tenant rows; /auth/me attaches effectiveFeatureFlags from the plan matrix. */
+  const hydrateFeatureFlagsAfterAuth = useCallback(async () => {
+    try {
+      await refreshAuthRef.current();
+    } catch (err) {
+      logger.warn('AuthContext', '/auth/me feature-flag refresh failed', err);
     }
-    const defaultMembership = membershipsList.find((m) => m.isDefault);
-    return defaultMembership?.tenantId ?? membershipsList[0]?.tenantId ?? null;
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
+    setSessionSyncing(true);
     const res = await authService.login({ email, password });
-    // authService.login returns { ...response, data: payload } where payload is already extracted
     const payload = res?.data ?? res;
     const u = payload?.user ?? null;
-    const m = payload?.memberships ?? payload?.tenantMemberships ?? [];
+    const m = normalizeMemberships(payload?.memberships ?? payload?.tenantMemberships ?? []) as Membership[];
     setUser(u);
     setMemberships(m);
     const tid =
       payload?.defaultTenantId ??
-      m.find((x: Membership) => x.isDefault)?.tenantId ??
-      m[0]?.tenantId ??
+      membershipTenantId(m.find((x) => x.isDefault)) ??
+      membershipTenantId(m[0]) ??
       null;
     if (tid) await setActiveTenantId(tid);
-  }, [setActiveTenantId]);
+    try {
+      await hydrateFeatureFlagsAfterAuth();
+    } finally {
+      setSessionSyncing(false);
+    }
+  }, [setActiveTenantId, hydrateFeatureFlagsAfterAuth]);
 
   const logout = useCallback(async () => {
     await authService.logout();
     setUser(null);
     setMemberships([]);
     setActiveTenantIdState(null);
-  }, []);
+    queryClient.clear();
+  }, [queryClient]);
 
   const tenantSignup = useCallback(
     async (payload: { companyName?: string; companyEmail: string; adminName: string; adminEmail: string; password: string; plan?: string }) => {
+      setSessionSyncing(true);
       const res = await authService.tenantSignup(payload);
       const data = res?.data ?? res;
       const u = data?.user ?? null;
-      const m = data?.memberships ?? data?.tenantMemberships ?? [];
+      const m = normalizeMemberships(data?.memberships ?? data?.tenantMemberships ?? []) as Membership[];
       setUser(u);
       setMemberships(m);
-      const tid = data?.defaultTenantId ?? m.find((x: Membership) => x.isDefault)?.tenantId ?? m[0]?.tenantId ?? null;
+      const tid =
+        data?.defaultTenantId ??
+        membershipTenantId(m.find((x) => x.isDefault)) ??
+        membershipTenantId(m[0]) ??
+        null;
       if (tid) await setActiveTenantId(tid);
+      try {
+        await hydrateFeatureFlagsAfterAuth();
+      } finally {
+        setSessionSyncing(false);
+      }
     },
-    [setActiveTenantId]
+    [setActiveTenantId, hydrateFeatureFlagsAfterAuth]
   );
-
-  const refreshAuth = useCallback(async () => {
-    const res = await authService.getCurrentUser();
-    const userData = res?.data?.data ?? res?.data ?? res;
-    const m = userData?.tenantMemberships ?? [];
-    if (m.length > 0) {
-      const token = await authService.getToken();
-      await authService.persistAuthPayload({
-        user: userData,
-        token: token ?? undefined,
-        memberships: m,
-        defaultTenantId: m.find((x: Membership) => x.isDefault)?.tenantId ?? m[0]?.tenantId ?? null,
-      });
-      setUser(userData);
-      setMemberships(m);
-      const tid = m.find((x: Membership) => x.isDefault)?.tenantId ?? m[0]?.tenantId;
-      if (tid) await setActiveTenantId(tid);
-    }
-  }, [setActiveTenantId]);
 
   const googleAuth = useCallback(
     async (idToken: string, options?: { signUp?: boolean; companyName?: string }) => {
+      setSessionSyncing(true);
       const res = await authService.googleAuth(idToken, options ?? {});
       const data = res?.data ?? res;
       const u = data?.user ?? null;
-      const m = data?.memberships ?? data?.tenantMemberships ?? [];
+      const m = normalizeMemberships(data?.memberships ?? data?.tenantMemberships ?? []) as Membership[];
       setUser(u);
       setMemberships(m);
-      const tid = data?.defaultTenantId ?? m.find((x: Membership) => x.isDefault)?.tenantId ?? m[0]?.tenantId ?? null;
+      const tid =
+        data?.defaultTenantId ??
+        membershipTenantId(m.find((x) => x.isDefault)) ??
+        membershipTenantId(m[0]) ??
+        null;
       if (tid) await setActiveTenantId(tid);
+      try {
+        await hydrateFeatureFlagsAfterAuth();
+      } finally {
+        setSessionSyncing(false);
+      }
     },
-    [setActiveTenantId]
+    [setActiveTenantId, hydrateFeatureFlagsAfterAuth]
   );
+
+  const featureFlagsHydrateForTenantRef = useRef<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -191,7 +253,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       try {
         const storedUser = await authService.getStoredUser();
-        const storedMemberships = await authService.getStoredMemberships();
+        const storedMemberships = normalizeMemberships(
+          await authService.getStoredMemberships()
+        ) as Membership[];
         const storedTenantId = await authService.getActiveTenantId();
 
         logger.info('AuthContext', 'Stored state:', {
@@ -205,14 +269,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // Resolve activeTenantId from stored data (prefer stored if valid, then default, then first)
         // Validate that storedTenantId exists in memberships before using it
-        const isValidStoredTenant = storedTenantId && storedMemberships?.some((m: Membership) => m.tenantId === storedTenantId);
+        const isValidStoredTenant =
+          storedTenantId &&
+          storedMemberships?.some((m) => membershipTenantId(m) === storedTenantId);
         const preferredTenantId = isValidStoredTenant ? storedTenantId : null;
         const resolvedTenantId = resolveInitialTenant(storedMemberships ?? [], preferredTenantId);
         
         if (mounted && resolvedTenantId) {
-          // Always persist the resolved tenant ID to storage
           await authService.setActiveTenantId(resolvedTenantId);
           setActiveTenantIdState(resolvedTenantId);
+          activeTenantIdRef.current = resolvedTenantId;
           logger.info('AuthContext', 'Resolved activeTenantId:', resolvedTenantId, {
             fromStored: isValidStoredTenant,
             fromDefault: !isValidStoredTenant && storedMemberships?.find((m: Membership) => m.isDefault)?.tenantId === resolvedTenantId,
@@ -225,31 +291,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         const activeMembershipForFlags =
-          storedMemberships?.find((m: Membership) => m.tenantId === resolvedTenantId) ?? storedMemberships?.[0];
+          storedMemberships?.find((m) => membershipTenantId(m) === resolvedTenantId) ??
+          storedMemberships?.[0];
         const eff0 = activeMembershipForFlags?.tenant?.effectiveFeatureFlags;
         const flagsHydrated =
           eff0 != null &&
           typeof eff0 === 'object' &&
           !Array.isArray(eff0) &&
           Object.keys(eff0).length > 0;
-        const meta = activeMembershipForFlags?.tenant?.metadata;
-        if (storedUser && (!storedMemberships?.length || !meta || !flagsHydrated)) {
-          logger.info('AuthContext', 'Refetching /auth/me (stale or missing memberships)');
+        const onboardingCompleteOnCache = isOnboardingComplete(activeMembershipForFlags?.tenant);
+        if (storedUser && (!storedMemberships?.length || !flagsHydrated || !onboardingCompleteOnCache)) {
+          logger.info('AuthContext', 'Refetching /auth/me (stale session: memberships, flags, or onboarding)');
           try {
             const res = await authService.getCurrentUser();
             // Backend returns: { success: true, data: user } where user has tenantMemberships
             // Mobile API doesn't unwrap response.data, so we need response.data.data
             const user = res?.data?.data ?? res?.data ?? res;
-            const m = user?.tenantMemberships ?? [];
+            const m = normalizeMemberships(user?.tenantMemberships ?? []) as Membership[];
             if (mounted && m.length) {
+              const defaultTenantId =
+                membershipTenantId(m.find((x) => x.isDefault)) ?? membershipTenantId(m[0]) ?? null;
               setMemberships(m);
               await authService.persistAuthPayload({
                 user,
                 memberships: m,
-                defaultTenantId: m.find((x: Membership) => x.isDefault)?.tenantId ?? m[0]?.tenantId ?? null,
+                defaultTenantId,
               });
-              const tid = m.find((x: Membership) => x.isDefault)?.tenantId ?? m[0]?.tenantId;
-              if (tid) await setActiveTenantId(tid);
+              if (defaultTenantId) await setActiveTenantIdRef.current(defaultTenantId);
               logger.info('AuthContext', 'Refetched memberships:', m.length);
             }
           } catch (err) {
@@ -267,7 +335,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       mounted = false;
     };
-  }, [setActiveTenantId, resolveInitialTenant]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount; use refs for setters
+  }, []);
+
+  /** Warm backend tax config cache (used by POST /sales) before first POS checkout. */
+  useEffect(() => {
+    if (loading || !activeTenantId) return;
+    settingsService.getOrganizationSettings().catch(() => {});
+  }, [loading, activeTenantId]);
+
+  /** Hydrate effectiveFeatureFlags when session has tenant but flags were never loaded (stale cache). */
+  useEffect(() => {
+    if (loading || !user || user.isPlatformAdmin || !activeTenantId) return;
+    const m = memberships.find((x) => membershipTenantId(x) === activeTenantId);
+    const eff = m?.tenant?.effectiveFeatureFlags;
+    const looksHydrated =
+      eff != null &&
+      typeof eff === 'object' &&
+      !Array.isArray(eff) &&
+      Object.keys(eff).length > 0;
+    if (looksHydrated) {
+      featureFlagsHydrateForTenantRef.current = null;
+      return;
+    }
+    if (featureFlagsHydrateForTenantRef.current === activeTenantId) return;
+    featureFlagsHydrateForTenantRef.current = activeTenantId;
+    logger.info('AuthContext', 'Hydrating missing feature flags via /auth/me');
+    refreshAuthRef.current().catch(() => {
+      /* Keep ref set to avoid retry loop; user can reload app. */
+    });
+  }, [loading, user, activeTenantId, memberships]);
 
   const value: AuthContextType = {
     user,
@@ -275,6 +372,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     activeTenantId,
     activeTenant,
     loading,
+    sessionSyncing,
     wasInvited,
     suppressAppGuidance,
     hasFeature,

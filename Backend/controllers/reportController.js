@@ -2,8 +2,110 @@ const { sequelize } = require('../config/database');
 const { Job, Expense, Customer, Vendor, Invoice, JobItem, Lead, Sale, SaleItem, Product, Prescription, PrescriptionItem, Drug, MaterialMovement, MaterialItem, Payment } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter } = require('../utils/tenantUtils');
+const { applyShopFilter, getShopSqlFragment } = require('../utils/shopUtils');
+const { resolveBusinessType } = require('../config/businessTypes');
+
+/** Tenant + active shop filter for retail reports. */
+const scopedRetailWhere = (req, extra = {}) =>
+  applyShopFilter(req, applyTenantFilter(req.tenantId, extra));
+
+const isRetailBusiness = (req) => {
+  const resolved = resolveBusinessType(req.tenant?.businessType);
+  return resolved === 'shop' || resolved === 'pharmacy';
+};
+
+const isStudioBusiness = (req) =>
+  resolveBusinessType(req.tenant?.businessType) === 'studio';
+
+const scopedSaleWhere = (req, dateFilter = {}) =>
+  scopedRetailWhere(req, {
+    status: 'completed',
+    ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
+  });
+
+/**
+ * Total POS revenue for shop/pharmacy (scoped by active shop when applicable).
+ * @param {import('express').Request} req
+ * @param {Object} dateFilter
+ */
+const getRetailRevenueTotal = async (req, dateFilter = {}) =>
+  parseFloat(await Sale.sum('total', { where: scopedSaleWhere(req, dateFilter) }) || 0);
+
+/**
+ * POS revenue grouped by period for trend charts.
+ * @param {import('express').Request} req
+ * @param {Object} dateFilter
+ * @param {string} groupBy
+ */
+const getRetailRevenueByPeriod = async (req, dateFilter = {}, groupBy = 'day') => {
+  const hasDate = hasDateFilter(dateFilter);
+  const shopFrag = getShopSqlFragment(req, '');
+  const replacements = {
+    tenantId: req.tenantId,
+    ...(hasDate && {
+      startDate: dateFilter[Op.between][0],
+      endDate: dateFilter[Op.between][1]
+    }),
+    ...shopFrag.replacements
+  };
+  const dateClause = hasDate ? 'AND "createdAt" BETWEEN :startDate AND :endDate' : '';
+
+  if (groupBy === 'hour') {
+    return sequelize.query(
+      `SELECT FLOOR(EXTRACT(HOUR FROM "createdAt")/2)*2 as "hour", SUM("total") as "totalRevenue", COUNT("id") as "count"
+       FROM "sales" WHERE "tenantId"=:tenantId AND status='completed' AND "total" > 0 ${dateClause}${shopFrag.sql}
+       GROUP BY 1 ORDER BY 1`,
+      { replacements, type: sequelize.QueryTypes.SELECT }
+    );
+  }
+  if (groupBy === 'week') {
+    return sequelize.query(
+      `SELECT FLOOR((EXTRACT(DAY FROM "createdAt") - 1) / 7) + 1 as "week", DATE_TRUNC('month', "createdAt") as "month",
+              SUM("total") as "totalRevenue", COUNT("id") as "count"
+       FROM "sales" WHERE "tenantId"=:tenantId AND status='completed' AND "total" > 0 ${dateClause}${shopFrag.sql}
+       GROUP BY 1, 2 ORDER BY 2, 1`,
+      { replacements, type: sequelize.QueryTypes.SELECT }
+    );
+  }
+  if (groupBy === 'month') {
+    return sequelize.query(
+      `SELECT EXTRACT(MONTH FROM "createdAt") as "month", EXTRACT(YEAR FROM "createdAt") as "year",
+              SUM("total") as "totalRevenue", COUNT("id") as "count"
+       FROM "sales" WHERE "tenantId"=:tenantId AND status='completed' AND "total" > 0 ${dateClause}${shopFrag.sql}
+       GROUP BY 1, 2 ORDER BY 2, 1`,
+      { replacements, type: sequelize.QueryTypes.SELECT }
+    );
+  }
+
+  return Sale.findAll({
+    attributes: [
+      [sequelize.literal('CAST("createdAt" AS DATE)'), 'date'],
+      [sequelize.fn('SUM', sequelize.col('total')), 'totalRevenue'],
+      [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+    ],
+    where: scopedSaleWhere(req, dateFilter),
+    group: [sequelize.literal('CAST("createdAt" AS DATE)')],
+    order: [[sequelize.literal('CAST("createdAt" AS DATE)'), 'ASC']],
+    raw: true
+  });
+};
+
+/**
+ * Invoice revenue for studio types; POS revenue for shop/pharmacy.
+ * @param {import('express').Request} req
+ * @param {Object} dateFilter
+ */
+const resolveOverviewRevenueTotal = async (req, dateFilter = {}) => {
+  if (isRetailBusiness(req)) {
+    return getRetailRevenueTotal(req, dateFilter);
+  }
+  return parseFloat(
+    await Invoice.sum('amountPaid', { where: buildCollectedRevenueWhere(req.tenantId, dateFilter) }) || 0
+  );
+};
 const config = require('../config/config');
 const accountingReportService = require('../services/accountingReportService');
+const { buildDateFilterFromQuery, parseReportDateRange } = require('../utils/reportDateFilter');
 
 // Debug logging: no-op in production to avoid hot-path I/O
 const logReport = (...args) => {
@@ -22,6 +124,15 @@ const hasDateFilter = (dateFilter) => {
   return dateFilter && (Object.keys(dateFilter).length > 0 || dateFilter[Op.between] !== undefined);
 };
 
+/** Inclusive local-day range from query startDate/endDate (YYYY-MM-DD). */
+const resolveDateFilterFromQuery = (query = {}) => buildDateFilterFromQuery(query);
+
+/** Invoice collection date (qualified for joins with customers). */
+const invoicePaidAtExpr = () =>
+  sequelize.fn('COALESCE', sequelize.col('Invoice.paidDate'), sequelize.col('Invoice.updatedAt'));
+
+const INVOICE_PAID_AT_LITERAL = 'COALESCE("Invoice"."paidDate", "Invoice"."updatedAt")';
+
 const buildCollectedRevenueWhere = (tenantId, dateFilter = null) => {
   const where = applyTenantFilter(tenantId, {
     status: { [Op.ne]: 'cancelled' },
@@ -31,14 +142,39 @@ const buildCollectedRevenueWhere = (tenantId, dateFilter = null) => {
   if (hasDateFilter(dateFilter)) {
     const periodFilter = dateFilter[Op.between];
     where[Op.and] = [
-      sequelize.where(
-        sequelize.fn('COALESCE', sequelize.col('paidDate'), sequelize.col('updatedAt')),
-        { [Op.between]: periodFilter }
-      )
+      sequelize.where(invoicePaidAtExpr(), { [Op.between]: periodFilter })
     ];
   }
 
   return where;
+};
+
+/**
+ * Top customers by POS revenue for shop/pharmacy revenue reports.
+ * @param {import('express').Request} req
+ * @param {Object} dateFilter
+ * @param {number} [limit]
+ */
+const getRetailRevenueByCustomer = async (req, dateFilter = {}, limit = 20) => {
+  const rows = await Sale.findAll({
+    attributes: [
+      'customerId',
+      [sequelize.fn('SUM', sequelize.col('Sale.total')), 'totalRevenue'],
+      [sequelize.fn('COUNT', sequelize.col('Sale.id')), 'paymentCount']
+    ],
+    where: scopedSaleWhere(req, dateFilter),
+    include: [{
+      model: Customer,
+      as: 'customer',
+      attributes: ['id', 'name', 'company'],
+      required: false
+    }],
+    group: ['customerId', 'customer.id'],
+    order: [[sequelize.fn('SUM', sequelize.col('Sale.total')), 'DESC']],
+    limit,
+    subQuery: false
+  });
+  return rows.filter((row) => row.customerId);
 };
 
 // @desc    Get revenue report
@@ -51,20 +187,35 @@ exports.getRevenueReport = async (req, res, next) => {
     const { startDate, endDate, groupBy = 'day' } = req.query;
     logReport('[Revenue Report] Query params:', { startDate, endDate, groupBy });
     
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = {
-        [Op.between]: [start, end]
-      };
+    const dateFilter = resolveDateFilterFromQuery(req.query);
+    if (hasDateFilter(dateFilter)) {
+      const [start, end] = dateFilter[Op.between];
       logReport('[Revenue Report] Date filter applied:', { start, end });
     } else {
       logReport('[Revenue Report] No date filter - fetching all data');
     }
 
     const hasDateFilterValue = hasDateFilter(dateFilter);
+
+    if (isRetailBusiness(req)) {
+      const [byPeriod, byCustomer, totalRevenue] = await Promise.all([
+        getRetailRevenueByPeriod(req, dateFilter, groupBy),
+        getRetailRevenueByCustomer(req, dateFilter),
+        getRetailRevenueTotal(req, dateFilter)
+      ]);
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          totalRevenue,
+          byPeriod,
+          byCustomer,
+          byMethod: [],
+          revenueSource: 'sales'
+        }
+      });
+    }
+
     const revWhere = buildCollectedRevenueWhere(req.tenantId, dateFilter);
 
     const getRevenueByPeriod = () => {
@@ -83,11 +234,11 @@ exports.getRevenueReport = async (req, res, next) => {
       }
       return Invoice.findAll({
         attributes: groupBy === 'month'
-          ? [[sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")')), 'month'], [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM COALESCE("paidDate","updatedAt")')), 'year'], [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']]
-          : [[sequelize.literal(`CAST(COALESCE("paidDate","updatedAt") AS DATE)`), 'date'], [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']],
+          ? [[sequelize.fn('EXTRACT', sequelize.literal(`MONTH FROM ${INVOICE_PAID_AT_LITERAL}`)), 'month'], [sequelize.fn('EXTRACT', sequelize.literal(`YEAR FROM ${INVOICE_PAID_AT_LITERAL}`)), 'year'], [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']]
+          : [[sequelize.literal(`CAST(${INVOICE_PAID_AT_LITERAL} AS DATE)`), 'date'], [sequelize.fn('SUM', sequelize.literal('"Invoice"."amountPaid"')), 'totalRevenue'], [sequelize.fn('COUNT', sequelize.literal('"Invoice"."id"')), 'count']],
         where: revWhere,
-        group: groupBy === 'month' ? [sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM COALESCE("paidDate","updatedAt")')), sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")'))] : [sequelize.literal(`CAST(COALESCE("paidDate","updatedAt") AS DATE)`)],
-        order: groupBy === 'month' ? [[sequelize.fn('EXTRACT', sequelize.literal('YEAR FROM COALESCE("paidDate","updatedAt")')), 'ASC'], [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")')), 'ASC']] : [[sequelize.literal(`CAST(COALESCE("paidDate","updatedAt") AS DATE)`), 'ASC']],
+        group: groupBy === 'month' ? [sequelize.fn('EXTRACT', sequelize.literal(`YEAR FROM ${INVOICE_PAID_AT_LITERAL}`)), sequelize.fn('EXTRACT', sequelize.literal(`MONTH FROM ${INVOICE_PAID_AT_LITERAL}`))] : [sequelize.literal(`CAST(${INVOICE_PAID_AT_LITERAL} AS DATE)`)],
+        order: groupBy === 'month' ? [[sequelize.fn('EXTRACT', sequelize.literal(`YEAR FROM ${INVOICE_PAID_AT_LITERAL}`)), 'ASC'], [sequelize.fn('EXTRACT', sequelize.literal(`MONTH FROM ${INVOICE_PAID_AT_LITERAL}`)), 'ASC']] : [[sequelize.literal(`CAST(${INVOICE_PAID_AT_LITERAL} AS DATE)`), 'ASC']],
         raw: true
       });
     };
@@ -126,13 +277,17 @@ exports.getRevenueReport = async (req, res, next) => {
       }),
       Invoice.sum('amountPaid', { where: revWhere })
     ]);
-    logReport('[Revenue Report] Total revenue:', totalRevenue, '(from Invoice.amountPaid where status = paid)');
+
+    const effectiveTotalRevenue = parseFloat(totalRevenue || 0);
+    const effectiveByPeriod = revenueByPeriod;
+    logReport('[Revenue Report] Total revenue:', effectiveTotalRevenue, '(from Invoice.amountPaid)');
 
     const responseData = {
-      totalRevenue: parseFloat(totalRevenue),
-      byPeriod: revenueByPeriod,
+      totalRevenue: effectiveTotalRevenue,
+      byPeriod: effectiveByPeriod,
       byCustomer: revenueByCustomer,
-      byMethod: revenueByMethod
+      byMethod: revenueByMethod,
+      revenueSource: 'invoices'
     };
     logReport('[Revenue Report] Response data summary:', {
       totalRevenue: responseData.totalRevenue,
@@ -160,17 +315,9 @@ exports.getExpenseReport = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = {
-        [Op.between]: [start, end]
-      };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
-    const expenseWhere = applyTenantFilter(req.tenantId, {
+    const expenseWhere = scopedRetailWhere(req, {
       approvalStatus: 'approved',
       isArchived: false,
       ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
@@ -247,28 +394,34 @@ exports.getOutstandingPaymentsReport = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
     
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = {
-        [Op.between]: [start, end]
-      };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
-    // Outstanding invoices
+    const OUTSTANDING_INVOICE_LIMIT = 500;
+
+    // Outstanding invoices (capped for report performance)
     const outstandingInvoices = await Invoice.findAll({
       where: applyTenantFilter(req.tenantId, {
         status: { [Op.in]: ['sent', 'partial', 'overdue'] },
         balance: { [Op.gt]: 0 },
         ...(hasDateFilter(dateFilter) && { invoiceDate: dateFilter })
       }),
+      attributes: [
+        'id',
+        'invoiceNumber',
+        'customerId',
+        'jobId',
+        'status',
+        'balance',
+        'totalAmount',
+        'dueDate',
+        'invoiceDate',
+      ],
       include: [
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'company', 'email', 'phone'] },
         { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] }
       ],
-      order: [['dueDate', 'ASC']]
+      order: [['dueDate', 'ASC']],
+      limit: OUTSTANDING_INVOICE_LIMIT,
     });
 
     // Outstanding by customer
@@ -364,15 +517,7 @@ exports.getSalesReport = async (req, res, next) => {
   try {
     const { startDate, endDate, groupBy = 'category' } = req.query;
     
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = {
-        [Op.between]: [start, end]
-      };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
     // Sales by category - using JobItem.category (more accurate than jobType)
     let salesByCategory;
@@ -654,7 +799,7 @@ exports.getSalesReport = async (req, res, next) => {
     }) || 0;
 
     // Sales by payment method (from Sale model – shop/pharmacy; used for Revenue by Channel fallback)
-    const saleWhere = applyTenantFilter(req.tenantId, {
+    const saleWhere = scopedRetailWhere(req, {
       status: 'completed',
       ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
     });
@@ -728,24 +873,16 @@ exports.getProfitLossReport = async (req, res, next) => {
       return res.status(200).json({ success: true, data, source: 'accounting' });
     }
 
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = {
-        [Op.between]: [start, end]
-      };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
     // Revenue
-    const revenue = await Invoice.sum('amountPaid', {
-      where: buildCollectedRevenueWhere(req.tenantId, dateFilter)
-    }) || 0;
+    const revenue = await resolveOverviewRevenueTotal(req, dateFilter);
 
     // Expenses
     const expenses = await Expense.sum('amount', {
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedRetailWhere(req, {
+        approvalStatus: 'approved',
+        isArchived: false,
         ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
       })
     }) || 0;
@@ -791,16 +928,10 @@ exports.getIncomeExpenditureReport = async (req, res, next) => {
       });
     }
 
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = { [Op.between]: [start, end] };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
     const revWhere = buildCollectedRevenueWhere(req.tenantId, dateFilter);
-    const expenseWhere = applyTenantFilter(req.tenantId, {
+    const expenseWhere = scopedRetailWhere(req, {
       approvalStatus: 'approved',
       isArchived: false,
       ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
@@ -868,16 +999,10 @@ exports.getProfitLossComplianceReport = async (req, res, next) => {
       });
     }
 
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = { [Op.between]: [start, end] };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
     const revWhere = buildCollectedRevenueWhere(req.tenantId, dateFilter);
-    const expenseWhere = applyTenantFilter(req.tenantId, {
+    const expenseWhere = scopedRetailWhere(req, {
       approvalStatus: 'approved',
       isArchived: false,
       ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
@@ -930,8 +1055,14 @@ exports.getProfitLossComplianceReport = async (req, res, next) => {
 exports.getFinancialPositionReport = async (req, res, next) => {
   try {
     const { endDate } = req.query;
-    const asAtEnd = endDate ? new Date(endDate) : new Date();
-    asAtEnd.setHours(23, 59, 59, 999);
+    const asAtRange = endDate ? parseReportDateRange(endDate, endDate) : null;
+    const asAtEnd = asAtRange
+      ? asAtRange[Op.between][1]
+      : (() => {
+        const d = new Date();
+        d.setHours(23, 59, 59, 999);
+        return d;
+      })();
 
     if (await accountingReportService.hasAccountingData(req.tenantId)) {
       const data = await accountingReportService.getFinancialPositionFromAccounting(req.tenantId, asAtEnd);
@@ -953,7 +1084,7 @@ exports.getFinancialPositionReport = async (req, res, next) => {
       attributes: [
         [sequelize.literal('COALESCE(SUM("Product"."quantityOnHand" * "Product"."costPrice"), 0)'), 'totalStockValue']
       ],
-      where: applyTenantFilter(req.tenantId, {}),
+      where: scopedRetailWhere(req, {}),
       raw: true
     });
     const productInventoryValue = parseFloat(productStockResult[0]?.totalStockValue || 0);
@@ -978,15 +1109,12 @@ exports.getFinancialPositionReport = async (req, res, next) => {
           amountPaid: { [Op.gt]: 0 }
         }),
         [Op.and]: [
-          sequelize.where(
-            sequelize.fn('COALESCE', sequelize.col('paidDate'), sequelize.col('updatedAt')),
-            { [Op.lte]: asAtEnd }
-          )
+          sequelize.where(invoicePaidAtExpr(), { [Op.lte]: asAtEnd })
         ]
       }
     }) || 0;
     const expToDate = await Expense.sum('amount', {
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedRetailWhere(req, {
         approvalStatus: 'approved',
         isArchived: false,
         expenseDate: { [Op.lte]: asAtEnd }
@@ -1037,23 +1165,19 @@ exports.getCashFlowReport = async (req, res, next) => {
       return res.status(200).json({ success: true, data, source: 'accounting' });
     }
 
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = { [Op.between]: [start, end] };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
     const revWhere = buildCollectedRevenueWhere(req.tenantId, dateFilter);
-    const expenseWhere = applyTenantFilter(req.tenantId, {
+    const expenseWhere = scopedRetailWhere(req, {
       approvalStatus: 'approved',
       isArchived: false,
       ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
     });
 
     const [cashFromCustomers, cashPaidExpenses] = await Promise.all([
-      Invoice.sum('amountPaid', { where: revWhere }) || 0,
+      isRetailBusiness(req)
+        ? Sale.sum('amountPaid', { where: scopedSaleWhere(req, dateFilter) })
+        : Invoice.sum('amountPaid', { where: revWhere }),
       Expense.sum('amount', { where: expenseWhere }) || 0
     ]);
 
@@ -1088,28 +1212,20 @@ exports.getKpiSummary = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
 
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = {
-        [Op.between]: [start, end]
-      };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
-    const totalRevenue = await Invoice.sum('amountPaid', {
-      where: buildCollectedRevenueWhere(req.tenantId, dateFilter)
-    }) || 0;
+    const totalRevenue = await resolveOverviewRevenueTotal(req, dateFilter);
 
     const totalExpenses = await Expense.sum('amount', {
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedRetailWhere(req, {
+        approvalStatus: 'approved',
+        isArchived: false,
         ...(hasDateFilter(dateFilter) && { expenseDate: dateFilter })
       })
     }) || 0;
 
     const activeCustomers = await Customer.count({
-      where: applyTenantFilter(req.tenantId, {
+      where: scopedRetailWhere(req, {
         isActive: true
       })
     });
@@ -1142,14 +1258,34 @@ exports.getTopCustomers = async (req, res, next) => {
   try {
     const { startDate, endDate, limit = 5 } = req.query;
 
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = {
-        [Op.between]: [start, end]
-      };
+    const dateFilter = resolveDateFilterFromQuery(req.query);
+
+    if (isRetailBusiness(req)) {
+      const customers = await Sale.findAll({
+        attributes: [
+          'customerId',
+          [sequelize.fn('SUM', sequelize.col('total')), 'totalRevenue'],
+          [sequelize.fn('COUNT', sequelize.col('id')), 'paymentCount']
+        ],
+        where: scopedSaleWhere(req, dateFilter),
+        include: [
+          {
+            model: Customer,
+            as: 'customer',
+            attributes: ['id', 'name', 'company', 'email'],
+            required: false
+          }
+        ],
+        group: ['customerId', 'customer.id'],
+        order: [[sequelize.fn('SUM', sequelize.col('total')), 'DESC']],
+        limit: Number(limit),
+        subQuery: false
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: customers.filter((row) => row.customerId)
+      });
     }
 
     const customers = await Invoice.findAll({
@@ -1183,9 +1319,15 @@ exports.getTopCustomers = async (req, res, next) => {
 
 exports.getPipelineSummary = async (req, res, next) => {
   try {
+    const dateFilter = resolveDateFilterFromQuery(req.query);
+    const hasPeriod = hasDateFilter(dateFilter);
+
     let activeJobs = 0;
     let openLeads = 0;
     let pendingInvoices = 0;
+    let jobsCreatedInPeriod = 0;
+    let leadsCreatedInPeriod = 0;
+    let invoicesIssuedInPeriod = 0;
 
     try {
       activeJobs = await Job.count({
@@ -1193,6 +1335,11 @@ exports.getPipelineSummary = async (req, res, next) => {
           status: { [Op.notIn]: ['completed', 'cancelled'] },
         })
       });
+      if (hasPeriod) {
+        jobsCreatedInPeriod = await Job.count({
+          where: applyTenantFilter(req.tenantId, { createdAt: dateFilter })
+        });
+      }
     } catch (e) {
       logReportError('getPipelineSummary activeJobs:', e);
     }
@@ -1205,6 +1352,11 @@ exports.getPipelineSummary = async (req, res, next) => {
           isActive: true
         })
       });
+      if (hasPeriod) {
+        leadsCreatedInPeriod = await Lead.count({
+          where: applyTenantFilter(req.tenantId, { createdAt: dateFilter })
+        });
+      }
     } catch (e) {
       logReportError('getPipelineSummary openLeads:', e);
     }
@@ -1216,6 +1368,11 @@ exports.getPipelineSummary = async (req, res, next) => {
           balance: { [Op.gt]: 0 }
         })
       });
+      if (hasPeriod) {
+        invoicesIssuedInPeriod = await Invoice.count({
+          where: applyTenantFilter(req.tenantId, { invoiceDate: dateFilter })
+        });
+      }
     } catch (e) {
       logReportError('getPipelineSummary pendingInvoices:', e);
     }
@@ -1225,7 +1382,15 @@ exports.getPipelineSummary = async (req, res, next) => {
       data: {
         activeJobs,
         openLeads,
-        pendingInvoices
+        pendingInvoices,
+        jobsCreatedInPeriod,
+        leadsCreatedInPeriod,
+        invoicesIssuedInPeriod,
+        isSnapshot: true,
+        snapshotLabel: 'Current open pipeline (not limited to selected period)',
+        periodMetrics: hasPeriod
+          ? { jobsCreatedInPeriod, leadsCreatedInPeriod, invoicesIssuedInPeriod }
+          : null,
       }
     });
   } catch (error) {
@@ -1244,14 +1409,9 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
     const { startDate, endDate } = req.query;
     logReport('[Service Analytics] Query params:', { startDate, endDate });
     
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = {
-        [Op.between]: [start, end]
-      };
+    const dateFilter = resolveDateFilterFromQuery(req.query);
+    if (hasDateFilter(dateFilter)) {
+      const [start, end] = dateFilter[Op.between];
       logReport('[Service Analytics] Date filter applied:', { start, end });
     } else {
       logReport('[Service Analytics] No date filter - fetching all data');
@@ -1605,17 +1765,11 @@ exports.getProductSalesReport = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
 
-    let saleDateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      saleDateFilter = { [Op.between]: [start, end] };
-    }
+    const saleDateFilter = resolveDateFilterFromQuery(req.query);
 
-    const saleWhere = applyTenantFilter(req.tenantId, {
+    const saleWhere = scopedRetailWhere(req, {
       status: 'completed',
-      ...(saleDateFilter[Op.between] && { createdAt: saleDateFilter })
+      ...(hasDateFilter(saleDateFilter) && { createdAt: saleDateFilter })
     });
 
     // Aggregate sales by product: quantity sold and revenue per product
@@ -1650,7 +1804,7 @@ exports.getProductSalesReport = async (req, res, next) => {
 
     const productIds = [...new Set(salesByProduct.map((r) => r.productId || r.productid).filter(Boolean))];
     const products = await Product.findAll({
-      where: applyTenantFilter(req.tenantId, { id: { [Op.in]: productIds } }),
+      where: scopedRetailWhere(req, { id: { [Op.in]: productIds } }),
       attributes: ['id', 'name', 'sku', 'unit', 'quantityOnHand', 'reorderLevel'],
       raw: true
     });
@@ -1714,13 +1868,7 @@ exports.getPrescriptionReport = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
 
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = { [Op.between]: [start, end] };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
     const prescWhere = applyTenantFilter(req.tenantId, {
       ...(hasDateFilter(dateFilter) && { prescriptionDate: dateFilter })
@@ -1824,7 +1972,7 @@ exports.getPrescriptionReport = async (req, res, next) => {
 // @access  Private
 exports.getProductStockSummary = async (req, res, next) => {
   try {
-    const productWhere = applyTenantFilter(req.tenantId, {});
+    const productWhere = scopedRetailWhere(req, {});
     const totalProducts = await Product.count({ where: productWhere });
     const inStockCount = await Product.count({
       where: { ...productWhere, quantityOnHand: { [Op.gt]: 0 } }
@@ -1845,7 +1993,9 @@ exports.getProductStockSummary = async (req, res, next) => {
         totalStocks: totalProducts,
         totalStockValue,
         stockAvailabilityRate,
-        inStockCount
+        inStockCount,
+        isSnapshot: true,
+        snapshotLabel: 'Current stock levels (as of today)',
       }
     });
   } catch (error) {
@@ -1886,7 +2036,9 @@ exports.getMaterialsSummary = async (req, res, next) => {
         totalStocks: totalItems,
         totalStockValue,
         stockAvailabilityRate,
-        inStockCount: inStockCount || 0
+        inStockCount: inStockCount || 0,
+        isSnapshot: true,
+        snapshotLabel: 'Current materials on hand (as of today)',
       }
     });
   } catch (error) {
@@ -1905,13 +2057,7 @@ exports.getMaterialsMovements = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
 
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = { [Op.between]: [start, end] };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
     const movementWhere = applyTenantFilter(req.tenantId, {
       ...(hasDateFilter(dateFilter) && { occurredAt: dateFilter })
@@ -1961,18 +2107,9 @@ exports.getFastestMovingItems = async (req, res, next) => {
   try {
     const { startDate, endDate, limit = 5 } = req.query;
 
-    let saleDateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      saleDateFilter = { [Op.between]: [start, end] };
-    }
+    const saleDateFilter = resolveDateFilterFromQuery(req.query);
 
-    const saleWhere = applyTenantFilter(req.tenantId, {
-      status: 'completed',
-      ...(saleDateFilter[Op.between] && { createdAt: saleDateFilter })
-    });
+    const saleWhere = scopedSaleWhere(req, saleDateFilter);
 
     const items = await SaleItem.findAll({
       attributes: [
@@ -2035,42 +2172,35 @@ exports.getRevenueByChannel = async (req, res, next) => {
   try {
     const { startDate, endDate } = req.query;
 
-    let dateFilter = {};
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = { [Op.between]: [start, end] };
-    }
+    const dateFilter = resolveDateFilterFromQuery(req.query);
 
     const channelMap = new Map();
 
-    // Income payments (invoice/job payments) by payment method
-    const paymentWhere = applyTenantFilter(req.tenantId, {
-      type: 'income',
-      status: 'completed',
-      ...(hasDateFilter(dateFilter) && { paymentDate: dateFilter })
-    });
-    const byPayment = await Payment.findAll({
-      attributes: [
-        'paymentMethod',
-        [sequelize.fn('SUM', sequelize.col('amount')), 'total']
-      ],
-      where: paymentWhere,
-      group: ['paymentMethod'],
-      raw: true
-    });
-    byPayment.forEach((row) => {
-      const method = (row.paymentMethod || 'other').toString();
-      const rev = parseFloat(row.total || 0);
-      channelMap.set(method, (channelMap.get(method) || 0) + rev);
-    });
+    // Income payments (invoice/job payments) by payment method — studio types only
+    if (!isRetailBusiness(req)) {
+      const paymentWhere = applyTenantFilter(req.tenantId, {
+        type: 'income',
+        status: 'completed',
+        ...(hasDateFilter(dateFilter) && { paymentDate: dateFilter })
+      });
+      const byPayment = await Payment.findAll({
+        attributes: [
+          'paymentMethod',
+          [sequelize.fn('SUM', sequelize.col('amount')), 'total']
+        ],
+        where: paymentWhere,
+        group: ['paymentMethod'],
+        raw: true
+      });
+      byPayment.forEach((row) => {
+        const method = (row.paymentMethod || 'other').toString();
+        const rev = parseFloat(row.total || 0);
+        channelMap.set(method, (channelMap.get(method) || 0) + rev);
+      });
+    }
 
     // Completed sales by payment method (shop/pharmacy)
-    const saleWhere = applyTenantFilter(req.tenantId, {
-      status: 'completed',
-      ...(hasDateFilter(dateFilter) && { createdAt: dateFilter })
-    });
+    const saleWhere = scopedSaleWhere(req, dateFilter);
     const bySale = await Sale.findAll({
       attributes: [
         'paymentMethod',
@@ -2141,17 +2271,11 @@ exports.getVatReport = async (req, res, next) => {
     const { startDate, endDate, groupBy = 'month' } = req.query;
     logReport('[VAT Report] Query params:', { startDate, endDate, groupBy });
 
-    let dateFilter = {};
-    let invoiceDateFilter = {};
-    let saleDateFilter = {};
-    
-    if (startDate && endDate) {
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      end.setHours(23, 59, 59, 999);
-      dateFilter = { [Op.between]: [start, end] };
-      invoiceDateFilter = { invoiceDate: dateFilter };
-      saleDateFilter = { createdAt: dateFilter };
+    const dateFilter = resolveDateFilterFromQuery(req.query);
+    const invoiceDateFilter = hasDateFilter(dateFilter) ? { invoiceDate: dateFilter } : {};
+    const saleDateFilter = hasDateFilter(dateFilter) ? { createdAt: dateFilter } : {};
+    if (hasDateFilter(dateFilter)) {
+      const [start, end] = dateFilter[Op.between];
       logReport('[VAT Report] Date filter applied:', { start, end });
     }
 
@@ -2358,14 +2482,16 @@ exports.getVatReport = async (req, res, next) => {
  */
 exports.getOverviewPhase1 = async (req, res, next) => {
   try {
-    const includeProductSales = req.query.includeProductSales === 'true';
+    const includeProductSales = req.query.includeProductSales === 'true' || isRetailBusiness(req);
     const handlers = [
       exports.getRevenueReport,
       exports.getExpenseReport,
       exports.getOutstandingPaymentsReport,
-      exports.getSalesReport,
-      exports.getServiceAnalyticsReport
+      exports.getSalesReport
     ];
+    if (!isRetailBusiness(req)) {
+      handlers.push(exports.getServiceAnalyticsReport);
+    }
     if (includeProductSales) {
       handlers.push(exports.getProductSalesReport);
     }
@@ -2377,14 +2503,23 @@ exports.getOverviewPhase1 = async (req, res, next) => {
         })
       )
     );
-    const [revenue, expenses, outstanding, sales, serviceAnalytics, productSalesData] = results;
+    const retail = isRetailBusiness(req);
+    const revenue = results[0];
+    const expenses = results[1];
+    const outstanding = results[2];
+    const sales = results[3];
+    const serviceAnalytics = retail ? null : results[4];
+    const productSalesData = retail
+      ? (includeProductSales ? results[4] : null)
+      : (includeProductSales ? results[5] : null);
     const data = {
       revenue: revenue?.success ? revenue.data : { totalRevenue: 0, byPeriod: [], byCustomer: [] },
       expenses: expenses?.success ? expenses.data : { totalExpenses: 0, byCategory: [] },
       outstanding: outstanding?.success ? outstanding.data : { totalOutstanding: 0 },
       sales: sales?.success ? sales.data : { totalJobs: 0, totalSales: 0, byCustomer: [], byStatus: [], byDate: [], byJobType: [] },
       serviceAnalytics: serviceAnalytics?.success ? serviceAnalytics.data : { totalRevenue: 0, byCategory: [], byDate: [], byCustomer: [] },
-      productSales: productSalesData?.success ? productSalesData.data : { products: [], totalRevenue: 0, totalQuantitySold: 0 }
+      productSales: productSalesData?.success ? productSalesData.data : { products: [], totalRevenue: 0, totalQuantitySold: 0 },
+      businessType: resolveBusinessType(req.tenant?.businessType)
     };
     res.status(200).json({ success: true, data });
   } catch (error) {
@@ -2400,47 +2535,250 @@ exports.getOverviewPhase1 = async (req, res, next) => {
  */
 exports.getOverviewPhase2 = async (req, res, next) => {
   try {
-    const handlers = [
-      exports.getProductStockSummary,
-      exports.getMaterialsSummary,
-      exports.getMaterialsMovements,
-      exports.getFastestMovingItems,
-      exports.getRevenueByChannel,
-      exports.getKpiSummary,
-      exports.getTopCustomers,
-      exports.getPipelineSummary
+    const retail = isRetailBusiness(req);
+    const studio = isStudioBusiness(req);
+
+    const handlerEntries = [
+      ...(retail ? [
+        ['productStockSummary', exports.getProductStockSummary],
+        ['fastestMovingItems', exports.getFastestMovingItems]
+      ] : []),
+      ...(!retail ? [
+        ['materialsSummary', exports.getMaterialsSummary],
+        ['materialsMovements', exports.getMaterialsMovements]
+      ] : []),
+      ['revenueByChannel', exports.getRevenueByChannel],
+      ['kpiSummary', exports.getKpiSummary],
+      ['topCustomers', exports.getTopCustomers],
+      ...(studio ? [['pipelineSummary', exports.getPipelineSummary]] : [])
     ];
+
     const results = await Promise.all(
-      handlers.map((handler) =>
+      handlerEntries.map(([, handler]) =>
         runReportHandler(handler, req).catch((err) => {
           logReportError('[Overview Phase2] Handler error:', err?.message || err);
           return { success: false, data: null };
         })
       )
     );
-    const [
-      productStockSummary,
-      materialsSummary,
-      materialsMovements,
-      fastestMovingItems,
-      revenueByChannel,
-      kpiSummary,
-      topCustomers,
-      pipelineSummary
-    ] = results;
-    const data = {
-      productStockSummary: productStockSummary?.success ? productStockSummary.data : { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
-      materialsSummary: materialsSummary?.success ? materialsSummary.data : { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
-      materialsMovements: materialsMovements?.success ? materialsMovements.data : [],
-      fastestMovingItems: fastestMovingItems?.success ? fastestMovingItems.data : [],
-      revenueByChannel: revenueByChannel?.success ? revenueByChannel.data : [],
-      kpiSummary: kpiSummary?.success ? kpiSummary.data : { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },
-      topCustomers: topCustomers?.success ? topCustomers.data : [],
-      pipelineSummary: pipelineSummary?.success ? pipelineSummary.data : { activeJobs: 0, openLeads: 0, pendingInvoices: 0 }
+
+    const defaults = {
+      productStockSummary: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+      materialsSummary: { totalStocks: 0, totalStockValue: 0, stockAvailabilityRate: 0 },
+      materialsMovements: [],
+      fastestMovingItems: [],
+      revenueByChannel: [],
+      kpiSummary: { totalRevenue: 0, totalExpenses: 0, grossProfit: 0, activeCustomers: 0, pendingInvoices: 0 },
+      topCustomers: [],
+      pipelineSummary: { activeJobs: 0, openLeads: 0, pendingInvoices: 0 }
     };
+
+    const data = { ...defaults, businessType: resolveBusinessType(req.tenant?.businessType) };
+    handlerEntries.forEach(([key], index) => {
+      const result = results[index];
+      data[key] = result?.success ? result.data : defaults[key];
+    });
     res.status(200).json({ success: true, data });
   } catch (error) {
     logReportError('Error in getOverviewPhase2:', error);
+    next(error);
+  }
+};
+
+/**
+ * Compute overview KPI metrics for a date range.
+ * @param {import('express').Request} req
+ * @param {Date} rangeStart
+ * @param {Date} rangeEnd
+ * @returns {Promise<Object>}
+ */
+async function computeOverviewPeriodMetrics(req, rangeStart, rangeEnd) {
+  const dateFilter = { [Op.between]: [rangeStart, rangeEnd] };
+  const endOfRange = new Date(rangeEnd);
+
+  const customerScopeAtEnd = scopedRetailWhere(req, {
+    isActive: true,
+    createdAt: { [Op.lte]: endOfRange }
+  });
+
+  const invoicePeriodWhere = applyTenantFilter(req.tenantId, {
+    status: { [Op.ne]: 'cancelled' },
+    invoiceDate: dateFilter
+  });
+
+  const expenseWhere = scopedRetailWhere(req, {
+    approvalStatus: 'approved',
+    isArchived: false,
+    expenseDate: dateFilter
+  });
+
+  const [
+    totalRevenueRaw,
+    totalExpenses,
+    newCustomers,
+    activeCustomers,
+    invoiceAggregates,
+    outstandingInPeriod,
+    totalOutstandingAll,
+    retailSaleCount,
+    retailSalePaid
+  ] = await Promise.all([
+    resolveOverviewRevenueTotal(req, dateFilter),
+    Expense.sum('amount', { where: expenseWhere }) || 0,
+    Customer.count({
+      where: scopedRetailWhere(req, {
+        isActive: true,
+        createdAt: dateFilter
+      })
+    }),
+    Customer.count({ where: customerScopeAtEnd }),
+    isRetailBusiness(req)
+      ? Promise.resolve(null)
+      : Invoice.findOne({
+          attributes: [
+            [sequelize.fn('SUM', sequelize.col('total')), 'totalInvoiced'],
+            [sequelize.fn('SUM', sequelize.col('amountPaid')), 'totalCollected'],
+            [sequelize.fn('COUNT', sequelize.col('id')), 'invoiceCount']
+          ],
+          where: invoicePeriodWhere,
+          raw: true
+        }),
+    Invoice.sum('balance', {
+      where: applyTenantFilter(req.tenantId, {
+        status: { [Op.in]: ['sent', 'partial', 'overdue'] },
+        balance: { [Op.gt]: 0 },
+        invoiceDate: dateFilter
+      })
+    }) || 0,
+    Invoice.sum('balance', {
+      where: applyTenantFilter(req.tenantId, {
+        status: { [Op.in]: ['sent', 'partial', 'overdue'] },
+        balance: { [Op.gt]: 0 }
+      })
+    }) || 0,
+    isRetailBusiness(req)
+      ? Sale.count({ where: scopedSaleWhere(req, dateFilter) })
+      : Promise.resolve(0),
+    isRetailBusiness(req)
+      ? Sale.sum('amountPaid', { where: scopedSaleWhere(req, dateFilter) })
+      : Promise.resolve(0)
+  ]);
+
+  const revenue = parseFloat(totalRevenueRaw || 0);
+  const expenses = parseFloat(totalExpenses || 0);
+  const netProfit = revenue - expenses;
+  const netProfitMargin = revenue > 0 ? parseFloat(((netProfit / revenue) * 100).toFixed(2)) : 0;
+  const grossProfit = netProfit;
+  const grossProfitMargin = netProfitMargin;
+
+  let averageInvoiceValue = 0;
+  let collectionRate = 0;
+
+  if (isRetailBusiness(req)) {
+    const saleCount = parseInt(retailSaleCount || 0, 10);
+    averageInvoiceValue = saleCount > 0 ? parseFloat((revenue / saleCount).toFixed(2)) : 0;
+    const salePaid = parseFloat(retailSalePaid || 0);
+    collectionRate = revenue > 0 ? parseFloat(((salePaid / revenue) * 100).toFixed(2)) : 100;
+  } else {
+    const totalInvoiced = parseFloat(invoiceAggregates?.totalInvoiced || 0);
+    const totalCollected = parseFloat(invoiceAggregates?.totalCollected || 0);
+    const invoiceCount = parseInt(invoiceAggregates?.invoiceCount || 0, 10);
+    averageInvoiceValue = invoiceCount > 0 ? parseFloat((totalInvoiced / invoiceCount).toFixed(2)) : 0;
+    collectionRate = totalInvoiced > 0
+      ? parseFloat(((totalCollected / totalInvoiced) * 100).toFixed(2))
+      : 0;
+  }
+
+  return {
+    totalRevenue: revenue,
+    totalExpenses: expenses,
+    netProfit: parseFloat(netProfit.toFixed(2)),
+    grossProfit: parseFloat(grossProfit.toFixed(2)),
+    grossProfitMargin,
+    netProfitMargin,
+    newCustomers: newCustomers || 0,
+    activeCustomers: activeCustomers || 0,
+    averageInvoiceValue,
+    collectionRate,
+    outstandingAmount: parseFloat(outstandingInPeriod || 0),
+    totalOutstanding: parseFloat(totalOutstandingAll || 0),
+    revenueSource: isRetailBusiness(req) ? 'sales' : 'invoices',
+    averageMetricLabel: isRetailBusiness(req) ? 'averageSaleValue' : 'averageInvoiceValue'
+  };
+}
+
+/**
+ * @desc    Extended overview KPIs with previous-period comparison
+ * @route   GET /api/reports/overview/extended-kpis
+ * @access  Private
+ */
+exports.getOverviewExtendedKpis = async (req, res, next) => {
+  try {
+    const { startDate, endDate, compareStartDate, compareEndDate } = req.query;
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        error: 'startDate and endDate are required'
+      });
+    }
+
+    const currentRange = parseReportDateRange(startDate, endDate);
+    if (!currentRange) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid startDate or endDate'
+      });
+    }
+    const [rangeStart, rangeEnd] = currentRange[Op.between];
+
+    const current = await computeOverviewPeriodMetrics(req, rangeStart, rangeEnd);
+
+    let previous = null;
+    let comparisonLabel = 'vs previous period';
+    if (compareStartDate && compareEndDate) {
+      const prevRange = parseReportDateRange(compareStartDate, compareEndDate);
+      if (prevRange) {
+        const [prevStart, prevEnd] = prevRange[Op.between];
+        previous = await computeOverviewPeriodMetrics(req, prevStart, prevEnd);
+      }
+    }
+
+    const pctChange = (curr, prev) => {
+      const c = Number(curr) || 0;
+      const p = Number(prev) || 0;
+      if (p > 0) return parseFloat((((c - p) / p) * 100).toFixed(2));
+      if (c > 0 && p <= 0) return 100;
+      if (c <= 0 && p > 0) return -100;
+      return 0;
+    };
+
+    const comparison = previous
+      ? {
+          label: comparisonLabel,
+          totalRevenue: pctChange(current.totalRevenue, previous.totalRevenue),
+          totalExpenses: pctChange(current.totalExpenses, previous.totalExpenses),
+          netProfit: pctChange(current.netProfit, previous.netProfit),
+          grossProfitMargin: pctChange(current.grossProfitMargin, previous.grossProfitMargin),
+          netProfitMargin: pctChange(current.netProfitMargin, previous.netProfitMargin),
+          newCustomers: pctChange(current.newCustomers, previous.newCustomers),
+          activeCustomers: pctChange(current.activeCustomers, previous.activeCustomers),
+          averageInvoiceValue: pctChange(current.averageInvoiceValue, previous.averageInvoiceValue),
+          collectionRate: pctChange(current.collectionRate, previous.collectionRate),
+          outstandingAmount: pctChange(current.outstandingAmount, previous.outstandingAmount)
+        }
+      : null;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        current,
+        previous,
+        comparison,
+        businessType: resolveBusinessType(req.tenant?.businessType)
+      }
+    });
+  } catch (error) {
+    logReportError('Error in getOverviewExtendedKpis:', error);
     next(error);
   }
 };

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -49,6 +50,7 @@ const pharmacySchema = z.object({
 });
 
 const Pharmacies = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isMobile } = useResponsive();
   
   const [pharmacies, setPharmacies] = useState([]);
@@ -166,11 +168,21 @@ const Pharmacies = () => {
     },
   ], []);
   
-  const handleCreate = () => {
+  const handleCreate = useCallback(() => {
     setEditingPharmacy(null);
     form.reset();
     setIsModalOpen(true);
-  };
+  }, [form]);
+
+  useEffect(() => {
+    if (searchParams.get('add') !== '1') return;
+    handleCreate();
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('add');
+      return next;
+    }, { replace: true });
+  }, [searchParams, setSearchParams, handleCreate]);
   
   const handleEdit = (pharmacy) => {
     setEditingPharmacy(pharmacy);

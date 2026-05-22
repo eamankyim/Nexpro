@@ -1,40 +1,20 @@
 import React from 'react';
 import { View, Pressable, StyleSheet } from 'react-native';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useRouter } from 'expo-router';
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
+
+import { AppIcon } from '@/components/AppIcon';
+import { useScreenColors } from '@/hooks/useScreenColors';
 
 interface BackButtonProps {
-  /**
-   * Custom onPress handler. If not provided, defaults to router.back()
-   */
   onPress?: () => void;
-  /**
-   * Whether to show the button. Defaults to true
-   */
   visible?: boolean;
-  /**
-   * Custom hit slop area. Defaults to 8
-   */
   hitSlop?: number;
-  /**
-   * Size of the button container. Defaults to 40
-   */
   size?: number;
-  /**
-   * Size of the icon. Defaults to 18
-   */
   iconSize?: number;
 }
 
 /**
- * Reusable back button component with consistent design.
- * Shows a back arrow icon with a circular border.
- * 
- * @example
- * <BackButton />
- * <BackButton onPress={() => router.push('/home')} />
+ * Reusable back button — respects saved theme preference.
  */
 export function BackButton({
   onPress,
@@ -44,9 +24,7 @@ export function BackButton({
   iconSize = 18,
 }: BackButtonProps) {
   const router = useRouter();
-  const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? 'light'];
-  const borderColor = colorScheme === 'dark' ? '#3f3f46' : '#e5e7eb';
+  const { colors, borderColor } = useScreenColors();
 
   const handlePress = () => {
     if (onPress) {
@@ -69,13 +47,13 @@ export function BackButton({
           width: size,
           height: size,
           borderRadius: size / 2,
-          borderColor: borderColor,
+          borderColor,
         },
         pressed && styles.iconButtonPressed,
       ]}
       hitSlop={hitSlop}
     >
-      <FontAwesome name="chevron-left" size={iconSize} color={colors.tint} />
+      <AppIcon name="chevron-left" size={iconSize} color={colors.tint} />
     </Pressable>
   );
 }

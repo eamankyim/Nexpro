@@ -1,4 +1,5 @@
 import api, { postFormDataWithProgress } from './api';
+import { buildScopedQueryString } from '../utils/shopScope';
 
 const expenseService = {
   /**
@@ -29,8 +30,8 @@ const expenseService = {
 
   // Get all expenses
   getAll: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    return await api.get(`/expenses?${queryString}`);
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/expenses?${queryString}` : '/expenses');
   },
 
   // Get single expense
@@ -65,14 +66,14 @@ const expenseService = {
 
   // Get expense statistics
   getStats: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    return await api.get(`/expenses/stats/overview?${queryString}`);
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/expenses/stats/overview?${queryString}` : '/expenses/stats/overview');
   },
 
   // Get expenses by job
   getByJob: async (jobId, params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    return await api.get(`/expenses/by-job/${jobId}?${queryString}`);
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/expenses/by-job/${jobId}?${queryString}` : `/expenses/by-job/${jobId}`);
   },
 
   // Submit expense for approval

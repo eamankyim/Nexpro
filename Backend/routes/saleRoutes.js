@@ -22,16 +22,22 @@ const {
 } = require('../controllers/saleController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
-const { cacheMiddleware, generateSaleListKey } = require('../middleware/cache');
+const { shopContext } = require('../middleware/shopContext');
 const { exportLimiter } = require('../middleware/rateLimiter');
 
 const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(shopContext);
+router.use((req, res, next) => {
+  // Sale totals/cards must reflect POS writes immediately; avoid stale browser/backend list cache.
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
 router.route('/')
-  .get(cacheMiddleware(60, generateSaleListKey), getSales)
+  .get(getSales)
   .post(authorize('admin', 'manager', 'staff'), createSale);
 
 router.get('/export', exportLimiter, authorize('admin', 'manager'), exportSales);

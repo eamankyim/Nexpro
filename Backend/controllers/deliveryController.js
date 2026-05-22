@@ -2,6 +2,8 @@ const { Op } = require('sequelize');
 const { Job, Sale, Customer, SaleActivity } = require('../models');
 const { sequelize } = require('../config/database');
 const { applyTenantFilter } = require('../utils/tenantUtils');
+const { applyShopFilter } = require('../utils/shopUtils');
+const { applyStudioLocationFilter } = require('../utils/studioLocationUtils');
 const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { invalidateSaleListCache } = require('../middleware/cache');
 
@@ -62,6 +64,14 @@ function formatSaleRow(sale) {
   };
 }
 
+function applyJobScope(req, where) {
+  return applyStudioLocationFilter(req, where);
+}
+
+function applySaleScope(req, where) {
+  return applyShopFilter(req, where);
+}
+
 /**
  * @desc    List completed jobs and sales in the delivery queue (or recent finished deliveries)
  * @route   GET /api/deliveries/queue
@@ -79,14 +89,14 @@ exports.getDeliveryQueue = async (req, res, next) => {
     };
 
     if (scope === 'active') {
-      const jobWhere = applyTenantFilter(tenantId, {
+      const jobWhere = applyJobScope(req, applyTenantFilter(tenantId, {
         status: 'completed',
         ...ACTIVE_DELIVERY_OR_NULL
-      });
-      const saleWhere = applyTenantFilter(tenantId, {
+      }));
+      const saleWhere = applySaleScope(req, applyTenantFilter(tenantId, {
         status: 'completed',
         ...ACTIVE_DELIVERY_OR_NULL
-      });
+      }));
 
       const [jobs, sales] = await Promise.all([
         Job.findAll({
@@ -114,16 +124,16 @@ exports.getDeliveryQueue = async (req, res, next) => {
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
     const terminal = { [Op.in]: ['delivered', 'returned'] };
 
-    const jobWhere = applyTenantFilter(tenantId, {
+    const jobWhere = applyJobScope(req, applyTenantFilter(tenantId, {
       status: 'completed',
       deliveryStatus: terminal,
       updatedAt: { [Op.gte]: ninetyDaysAgo }
-    });
-    const saleWhere = applyTenantFilter(tenantId, {
+    }));
+    const saleWhere = applySaleScope(req, applyTenantFilter(tenantId, {
       status: 'completed',
       deliveryStatus: terminal,
       updatedAt: { [Op.gte]: ninetyDaysAgo }
-    });
+    }));
 
     const [jobs, sales] = await Promise.all([
       Job.findAll({
@@ -148,14 +158,14 @@ exports.getDeliveryQueue = async (req, res, next) => {
   }
 };
 
-async function updateJobDeliveryStatus({ tenantId, jobId, deliveryStatus }) {
+async function updateJobDeliveryStatus(req, { tenantId, jobId, deliveryStatus }) {
   const parsed = parseDeliveryStatusInput(deliveryStatus);
   if (parsed === undefined) {
     return { ok: false, message: 'Invalid deliveryStatus' };
   }
 
   const job = await Job.findOne({
-    where: applyTenantFilter(tenantId, { id: jobId })
+    where: applyJobScope(req, applyTenantFilter(tenantId, { id: jobId }))
   });
   if (!job) {
     return { ok: false, message: 'Job not found' };
@@ -171,7 +181,7 @@ async function updateJobDeliveryStatus({ tenantId, jobId, deliveryStatus }) {
   return { ok: true };
 }
 
-async function updateSaleDeliveryStatus({ tenantId, saleId, deliveryStatus, userId }) {
+async function updateSaleDeliveryStatus(req, { tenantId, saleId, deliveryStatus, userId }) {
   const parsed = parseDeliveryStatusInput(deliveryStatus);
   if (parsed === undefined) {
     return { ok: false, message: 'Invalid deliveryStatus' };
@@ -180,7 +190,7 @@ async function updateSaleDeliveryStatus({ tenantId, saleId, deliveryStatus, user
   const transaction = await sequelize.transaction();
   try {
     const sale = await Sale.findOne({
-      where: applyTenantFilter(tenantId, { id: saleId }),
+      where: applySaleScope(req, applyTenantFilter(tenantId, { id: saleId })),
       transaction,
       lock: transaction.LOCK.UPDATE
     });
@@ -278,13 +288,13 @@ exports.patchDeliveryStatuses = async (req, res, next) => {
       try {
         let r;
         if (entityType === 'job') {
-          r = await updateJobDeliveryStatus({
+          r = await updateJobDeliveryStatus(req, {
             tenantId,
             jobId: id,
             deliveryStatus: item.deliveryStatus
           });
         } else {
-          r = await updateSaleDeliveryStatus({
+          r = await updateSaleDeliveryStatus(req, {
             tenantId,
             saleId: id,
             deliveryStatus: item.deliveryStatus,

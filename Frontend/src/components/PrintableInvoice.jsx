@@ -439,8 +439,23 @@ const PrintableInvoice = ({
         }
 
         @media screen and (max-width: 639px) {
+          .printable-invoice:not(.thermal-mode) {
+            width: 100% !important;
+            max-width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            box-sizing: border-box;
+          }
+
+          .print-invoice-preview .printable-invoice:not(.thermal-mode),
+          .print-invoice-preview-inner {
+            width: 100%;
+            max-width: 100%;
+          }
+
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode),
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode),
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) {
             display: flex;
             flex-direction: column;
             gap: 10px;
@@ -449,7 +464,8 @@ const PrintableInvoice = ({
             max-width: 100%;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-header,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-header {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-header,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .invoice-header {
             flex-direction: column;
             gap: 14px;
             margin-bottom: 10px;
@@ -459,7 +475,8 @@ const PrintableInvoice = ({
             border-radius: 8px;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-info,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-info {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-info,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .invoice-info {
             text-align: left;
             min-width: 0;
             width: 100%;
@@ -467,27 +484,32 @@ const PrintableInvoice = ({
             border-top: 1px solid #e5e7eb;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-title,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-title {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-title,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .invoice-title {
             font-size: 1.75rem;
             margin-bottom: 10px;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .company-logo,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-logo {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-logo,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .company-logo {
             max-width: 120px;
             max-height: 56px;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .company-details-line--desktop,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-details-line--desktop {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-details-line--desktop,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .company-details-line--desktop {
             display: none;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .company-details-line--mobile,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-details-line--mobile {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-details-line--mobile,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .company-details-line--mobile {
             display: flex;
             align-items: flex-start;
             gap: 8px;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .company-detail-icon,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-detail-icon {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .company-detail-icon,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .company-detail-icon {
             flex-shrink: 0;
             width: 14px;
             height: 14px;
@@ -495,14 +517,16 @@ const PrintableInvoice = ({
             color: #6b7280;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-parties,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-parties {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-parties,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .invoice-parties {
             grid-template-columns: 1fr 1fr;
             gap: 8px;
             margin-bottom: 10px;
             border: none;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .billing-section,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .billing-section {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .billing-section,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .billing-section {
             background: #fff;
             border: 1px solid #e5e7eb;
             border-radius: 8px;
@@ -510,12 +534,14 @@ const PrintableInvoice = ({
             min-height: 100%;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .billing-section + .billing-section,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .billing-section + .billing-section {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .billing-section + .billing-section,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .billing-section + .billing-section {
             border-left: none;
             padding-left: 12px !important;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .invoice-table-card,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-table-card {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .invoice-table-card,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .invoice-table-card {
             background: #fff;
             border: 1px solid #e5e7eb;
             border-radius: 8px;
@@ -523,18 +549,22 @@ const PrintableInvoice = ({
             margin-bottom: 10px;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .items-table,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .items-table {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .items-table,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .items-table {
             margin: 0;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .items-table th,
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .items-table td,
           .pay-invoice-document .printable-invoice:not(.thermal-mode) .items-table th,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .items-table td {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .items-table td,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .items-table th,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .items-table td {
             padding: 8px 6px;
             font-size: 10px;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .totals-section,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .totals-section {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .totals-section,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .totals-section {
             width: 100%;
             margin-left: 0;
             background: #fff;
@@ -543,22 +573,26 @@ const PrintableInvoice = ({
             padding: 12px 14px;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .total-row,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .total-row {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .total-row,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .total-row {
             padding: 8px 0;
             border-bottom: 1px solid #f3f4f6;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .total-row:last-child,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .total-row:last-child {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .total-row:last-child,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .total-row:last-child {
             border-bottom: none;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .total-row.bold,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .total-row.bold {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .total-row.bold,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .total-row.bold {
             border-top: 1px solid #e5e7eb;
             margin-top: 4px;
             padding-top: 10px;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .notes-section,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .notes-section {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .notes-section,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .notes-section {
             margin-top: 10px;
             padding: 12px 14px;
             background: #fff;
@@ -566,7 +600,8 @@ const PrintableInvoice = ({
             border-radius: 8px;
           }
           .printable-invoice.invoice-layout-mobile:not(.thermal-mode) .footer,
-          .pay-invoice-document .printable-invoice:not(.thermal-mode) .footer {
+          .pay-invoice-document .printable-invoice:not(.thermal-mode) .footer,
+          .print-invoice-preview .printable-invoice:not(.thermal-mode) .footer {
             margin-top: 16px;
             padding-bottom: 8px;
           }

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import {
   View,
@@ -8,31 +8,36 @@ import {
   Pressable,
   RefreshControl,
   ActivityIndicator,
-  Modal,
-  ScrollView,
   TextInput,
   Alert,
   Dimensions,
 } from 'react-native';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Image } from 'expo-image';
+import * as ImagePicker from 'expo-image-picker';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { FormSheetModal } from '@/components/FormSheetModal';
+import { FORM_LABELS } from '@/constants/formLabels';
 import { productService } from '@/services/productService';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAuth } from '@/context/AuthContext';
+import { useShopOptional } from '@/context/ShopContext';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
-import { useTheme } from '@/context/ThemeContext';
-import { useCart } from '@/context/CartContext';
-import Colors from '@/constants/Colors';
-import { CURRENCY } from '@/constants';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
+import { CURRENCY, SHOP_TYPES, resolveBusinessType } from '@/constants';
+import { formatCurrency } from '@/utils/formatCurrency';
 import { resolveImageUrl } from '@/utils/fileUtils';
 import { useRouter } from 'expo-router';
 
-function formatCurrency(value: number | string | null | undefined): string {
-  const numValue = typeof value === 'number' ? value : parseFloat(String(value ?? 0)) || 0;
-  return `${CURRENCY.SYMBOL} ${numValue.toFixed(CURRENCY.DECIMAL_PLACES)}`;
-}
+import { ListEmptyState, EmptyStateActionButton, ListActionButton } from '@/components/ListEmptyState';
+import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
+import { useSmartSearch } from '@/context/SmartSearchContext';
+import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
+import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListResponse';
+import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { refreshAfterInventoryChange, QUERY_STALE } from '@/utils/queryInvalidation';
 
 type Product = {
   id: string;
@@ -51,43 +56,43 @@ type Product = {
 export default function ProductsScreen() {
   const params = useLocalSearchParams<{ search?: string; add?: string }>();
   const router = useRouter();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
-  const { addItem } = useCart();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
+  const resolvedType = resolveBusinessType(activeTenant?.businessType);
+  const isShop = resolvedType === 'shop';
+  const isPharmacy = resolvedType === 'pharmacy';
+  const isRetailLike = isShop || isPharmacy;
 
-  const [searchText, setSearchText] = useState(params.search ?? '');
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const { searchValue, setSearchValue } = useSmartSearch();
+  useRegisterPageSearch({ scope: 'products', placeholder: SEARCH_PLACEHOLDERS.PRODUCTS });
   const [addModalVisible, setAddModalVisible] = useState(params.add === '1');
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     sku: '',
     barcode: '',
+    description: '',
     sellingPrice: '',
     costPrice: '',
     quantityOnHand: '',
+    imageUrl: '',
+    allergens: '',
+    optionalFoods: '',
   });
-  const [editFormData, setEditFormData] = useState({
-    name: '',
-    sku: '',
-    barcode: '',
-    sellingPrice: '',
-    costPrice: '',
-    quantityOnHand: '',
-  });
+  const [imagePreviewUri, setImagePreviewUri] = useState<string | null>(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
   useEffect(() => {
-    if (params.search) setSearchText(params.search);
+    if (params.search) setSearchValue(String(params.search));
     if (params.add === '1') setAddModalVisible(true);
-  }, [params.search, params.add]);
+  }, [params.search, params.add, setSearchValue]);
 
-  const debouncedSearch = useDebounce(searchText, 400);
+  const debouncedSearch = useDebounce(searchValue, 400);
 
-  const { data: response, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ['products', activeTenantId, debouncedSearch],
+  const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
+    queryKey: ['products', activeTenantId, activeShopId, debouncedSearch],
     queryFn: () =>
       productService.getProducts({
         page: 1,
@@ -95,152 +100,133 @@ export default function ProductsScreen() {
         search: debouncedSearch || undefined,
         isActive: true,
       }),
-    enabled: !!activeTenantId && hasFeature('products'),
-    staleTime: 3 * 60 * 1000,
+    enabled:
+      !!activeTenantId &&
+      isRetailLike &&
+      hasFeature('products') &&
+      (!shopContext?.isShopWorkspace || !!activeShopId),
+    staleTime: QUERY_STALE.LIST,
     gcTime: 2 * 60 * 60 * 1000,
   });
 
+  const shopType = activeTenant?.metadata?.shopType;
+  const isRestaurant = shopType === SHOP_TYPES.RESTAURANT;
+
+  const resetAddForm = useCallback(() => {
+    setFormData({
+      name: '',
+      sku: '',
+      barcode: '',
+      description: '',
+      sellingPrice: '',
+      costPrice: '',
+      quantityOnHand: '',
+      imageUrl: '',
+      allergens: '',
+      optionalFoods: '',
+    });
+    setImagePreviewUri(null);
+    setUploadingImage(false);
+  }, []);
+
   const createProductMutation = useMutation({
-    mutationFn: async (data: {
-      name: string;
-      sku?: string;
-      barcode?: string;
-      sellingPrice: number;
-      costPrice?: number;
-      quantityOnHand?: number;
-    }) => {
-      // Use the API directly since productService doesn't have create method yet
-      const { api } = await import('@/services/api');
-      const res = await api.post('/products', data);
-      return res.data;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
+    mutationFn: (data: Parameters<typeof productService.createProduct>[0]) =>
+      productService.createProduct(data),
+    onSuccess: async () => {
+      await refreshAfterInventoryChange(queryClient);
       setAddModalVisible(false);
-      setFormData({ name: '', sku: '', barcode: '', sellingPrice: '', costPrice: '', quantityOnHand: '' });
+      resetAddForm();
       Alert.alert('Success', 'Product created successfully');
     },
-    onError: (error: any) => {
-      Alert.alert('Error', error?.response?.data?.message || 'Failed to create product');
+    onError: (error: unknown) => {
+      Alert.alert('Error', getApiErrorMessage(error, 'Failed to create product'));
     },
   });
 
-  const updateProductMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: {
-      name?: string;
-      sku?: string;
-      barcode?: string;
-      sellingPrice?: number;
-      costPrice?: number;
-      quantityOnHand?: number;
-      isActive?: boolean;
-    }}) => {
-      return productService.updateProduct(id, data);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
-      setEditModalVisible(false);
-      setSelectedProduct(null);
-      setEditingProduct(null);
-      setEditFormData({ name: '', sku: '', barcode: '', sellingPrice: '', costPrice: '', quantityOnHand: '' });
-      Alert.alert('Success', 'Product updated successfully');
-    },
-    onError: (error: any) => {
-      Alert.alert('Error', error?.response?.data?.message || 'Failed to update product');
-    },
-  });
-
-  const deleteProductMutation = useMutation({
-    mutationFn: async (id: string) => {
-      return productService.deleteProduct(id);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['products'] });
-      setEditModalVisible(false);
-      setSelectedProduct(null);
-      setEditingProduct(null);
-      Alert.alert('Success', 'Product deleted successfully');
-    },
-    onError: (error: any) => {
-      Alert.alert('Error', error?.response?.data?.message || 'Failed to delete product');
-    },
-  });
-
-  const products = Array.isArray(response?.data) ? response.data : (Array.isArray(response) ? response : []) as Product[];
+  const products = useMemo(() => parseApiListResponse<Product>(response), [response]);
+  const loadErrorMessage = useMemo(
+    () => getApiErrorMessage(error, 'Could not load products. Pull to refresh.'),
+    [error]
+  );
   const onRefresh = useCallback(() => refetch(), [refetch]);
 
-  const handleProductPress = useCallback((product: Product) => {
-    setSelectedProduct(product);
+  const handleProductPress = useCallback(
+    (product: Product) => {
+      router.push(`/product/${product.id}` as never);
+    },
+    [router]
+  );
+
+  const uploadProductImageFromAsset = useCallback(async (asset: ImagePicker.ImagePickerAsset) => {
+    setImagePreviewUri(asset.uri);
+    setUploadingImage(true);
+    try {
+      const imageUrl = await productService.uploadProductImage(asset.uri, asset.mimeType ?? 'image/jpeg');
+      setFormData((prev) => ({ ...prev, imageUrl }));
+    } catch (err) {
+      setImagePreviewUri(null);
+      setFormData((prev) => ({ ...prev, imageUrl: '' }));
+      Alert.alert('Upload failed', getApiErrorMessage(err, 'Could not upload product image.'));
+    } finally {
+      setUploadingImage(false);
+    }
   }, []);
 
-  const handleAddToCart = useCallback((product: Product) => {
-    addItem({
-      id: product.id,
-      name: product.name,
-      sellingPrice: product.sellingPrice,
-      imageUrl: product.imageUrl ?? undefined,
-      sku: product.sku ?? undefined,
-      barcode: product.barcode ?? undefined,
-    });
-    Alert.alert('Success', `${product.name} added to cart`);
-    setSelectedProduct(null);
-  }, [addItem]);
+  const handleTakeProductPhoto = useCallback(async () => {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow camera access to take a product photo.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+      if (result.canceled || !result.assets[0]?.uri) return;
+      await uploadProductImageFromAsset(result.assets[0]);
+    } catch (err) {
+      Alert.alert('Camera failed', getApiErrorMessage(err, 'Could not take product photo.'));
+    }
+  }, [uploadProductImageFromAsset]);
 
-  const handleEditProduct = useCallback((product: Product) => {
-    setEditingProduct(product);
-    setEditFormData({
-      name: product.name || '',
-      sku: product.sku || '',
-      barcode: product.barcode || '',
-      sellingPrice: product.sellingPrice?.toString() || '',
-      costPrice: product.costPrice?.toString() || '',
-      quantityOnHand: product.quantityOnHand?.toString() || '',
-    });
-    setSelectedProduct(null); // Close detail modal
-    setEditModalVisible(true); // Open edit modal
+  const handleChooseProductImage = useCallback(async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission needed', 'Allow photo library access to add a product image.');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.85,
+      });
+      if (result.canceled || !result.assets[0]?.uri) return;
+      await uploadProductImageFromAsset(result.assets[0]);
+    } catch (err) {
+      Alert.alert('Photo picker failed', getApiErrorMessage(err, 'Could not choose product image.'));
+    }
+  }, [uploadProductImageFromAsset]);
+
+  const handlePickProductImage = useCallback(() => {
+    Alert.alert('Product photo', 'Add a product photo using your camera or photo library.', [
+      { text: 'Take photo', onPress: handleTakeProductPhoto },
+      { text: 'Choose from library', onPress: handleChooseProductImage },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, [handleChooseProductImage, handleTakeProductPhoto]);
+
+  const handleRemoveProductImage = useCallback(() => {
+    setImagePreviewUri(null);
+    setFormData((prev) => ({ ...prev, imageUrl: '' }));
   }, []);
-
-  const handleUpdateProduct = useCallback(() => {
-    if (!editingProduct) return;
-    if (!editFormData.name.trim()) {
-      Alert.alert('Error', 'Product name is required');
-      return;
-    }
-    if (!editFormData.sellingPrice) {
-      Alert.alert('Error', 'Selling price is required');
-      return;
-    }
-
-    updateProductMutation.mutate({
-      id: editingProduct.id,
-      data: {
-        name: editFormData.name.trim(),
-        sku: editFormData.sku.trim() || undefined,
-        barcode: editFormData.barcode.trim() || undefined,
-        sellingPrice: parseFloat(editFormData.sellingPrice),
-        costPrice: editFormData.costPrice ? parseFloat(editFormData.costPrice) : undefined,
-        quantityOnHand: editFormData.quantityOnHand ? parseFloat(editFormData.quantityOnHand) : undefined,
-      },
-    });
-  }, [editingProduct, editFormData, updateProductMutation]);
-
-  const handleDeleteProduct = useCallback(() => {
-    if (!editingProduct) return;
-    Alert.alert(
-      'Delete Product',
-      `Are you sure you want to delete "${editingProduct.name}"? This action cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => deleteProductMutation.mutate(editingProduct.id),
-        },
-      ]
-    );
-  }, [editingProduct, deleteProductMutation]);
 
   const handleCreateProduct = useCallback(() => {
+    if (uploadingImage) return;
     if (!formData.name.trim()) {
       Alert.alert('Error', 'Product name is required');
       return;
@@ -250,32 +236,32 @@ export default function ProductsScreen() {
       return;
     }
 
+    const metadata: Record<string, unknown> = {};
+    if (isRestaurant) {
+      if (formData.allergens.trim()) metadata.allergens = formData.allergens.trim();
+      if (formData.optionalFoods.trim()) metadata.optionalFoods = formData.optionalFoods.trim();
+    }
+
     createProductMutation.mutate({
       name: formData.name.trim(),
       sku: formData.sku.trim() || undefined,
       barcode: formData.barcode.trim() || undefined,
+      description: formData.description.trim() || undefined,
       sellingPrice: parseFloat(formData.sellingPrice),
       costPrice: formData.costPrice ? parseFloat(formData.costPrice) : undefined,
       quantityOnHand: formData.quantityOnHand ? parseFloat(formData.quantityOnHand) : undefined,
+      imageUrl: formData.imageUrl.trim() || undefined,
+      unit: isRestaurant ? 'serving' : undefined,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
-  }, [formData, createProductMutation]);
+  }, [formData, createProductMutation, uploadingImage, isRestaurant]);
 
   if (!hasFeature('products')) {
     return <FeatureAccessDenied message="Products are not enabled for this workspace." />;
   }
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
-  const inputBg = resolvedTheme === 'dark' ? '#18181b' : '#f9fafb';
 
-  const businessType = activeTenant?.businessType ?? 'shop';
-  const isShop = businessType === 'shop';
-  const isPharmacy = businessType === 'pharmacy';
-
-  if (!isShop && !isPharmacy) {
+  if (!isRetailLike) {
     return (
       <View style={[styles.center, { backgroundColor: bg }]}>
         <Text style={[styles.emptyTitle, { color: textColor }]}>Products</Text>
@@ -285,6 +271,14 @@ export default function ProductsScreen() {
       </View>
     );
   }
+
+  const awaitingShop = shopContext?.isShopWorkspace && !activeShopId;
+
+  const addFormImageUri = useMemo(() => {
+    if (imagePreviewUri) return imagePreviewUri;
+    if (formData.imageUrl.trim()) return resolveImageUrl(formData.imageUrl);
+    return null;
+  }, [imagePreviewUri, formData.imageUrl]);
 
   const screenWidth = Dimensions.get('window').width;
   const cardWidth = (screenWidth - 16 * 2 - 12) / 2; // padding + gap between cards
@@ -317,7 +311,7 @@ export default function ProductsScreen() {
             />
           ) : (
             <View style={[styles.cardImagePlaceholder, { backgroundColor: inputBg }]}>
-              <FontAwesome name="image" size={32} color={mutedColor} />
+              <AppIcon name="image" size={32} color={mutedColor} />
             </View>
           )}
           {item.trackStock === false ? (
@@ -361,46 +355,37 @@ export default function ProductsScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: bg }]}>
-      {/* Search bar */}
-      <View style={[styles.searchContainer, { backgroundColor: cardBg, borderColor }]}>
-        <FontAwesome name="search" size={16} color={mutedColor} style={styles.searchIcon} />
-        <TextInput
-          style={[styles.searchInput, { color: textColor }]}
-          placeholder="Search products..."
-          placeholderTextColor={mutedColor}
-          value={searchText}
-          onChangeText={setSearchText}
+    <ScreenShell style={styles.container}>
+      {/* Add product — hide when empty (empty state has its own CTA) */}
+      {!isLoading && !isError && products.length > 0 && (
+        <ListActionButton
+          label="Add Product"
+          onPress={() => setAddModalVisible(true)}
+          backgroundColor={colors.tint}
         />
-        {searchText.length > 0 && (
-          <Pressable onPress={() => setSearchText('')} hitSlop={8}>
-            <FontAwesome name="times-circle" size={18} color={mutedColor} />
-          </Pressable>
-        )}
-      </View>
+      )}
 
-      {/* Add product button */}
-      <Pressable
-        onPress={() => setAddModalVisible(true)}
-        style={[styles.addButton, { backgroundColor: colors.tint }]}
-      >
-        <FontAwesome name="plus" size={18} color="#fff" />
-        <Text style={styles.addButtonText}>Add Product</Text>
-      </Pressable>
-
-      {isLoading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.tint} />
-          <Text style={[styles.loadingText, { color: mutedColor }]}>Loading products...</Text>
-        </View>
+      {awaitingShop ? (
+        <ListLoadingState message="Loading shop..." />
+      ) : isLoading && !response ? (
+        <ListLoadingState message="Loading products..." />
+      ) : isError ? (
+        <ListErrorState title="Failed to load products" message={loadErrorMessage} onRetry={refetch} />
       ) : products.length === 0 ? (
-        <View style={styles.empty}>
-          <FontAwesome name="archive" size={48} color={mutedColor} />
-          <Text style={[styles.emptyTitle, { color: textColor }]}>No products yet</Text>
-          <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-            Add your first product to get started
-          </Text>
-        </View>
+        <ListEmptyState
+          fill
+          imageKey="PRODUCTS"
+          title="Your catalog is empty"
+          subtitle="Add products to start selling"
+          titleColor={textColor}
+          subtitleColor={mutedColor}
+        >
+          <EmptyStateActionButton
+            label="Add Product"
+            onPress={() => setAddModalVisible(true)}
+            backgroundColor={colors.tint}
+          />
+        </ListEmptyState>
       ) : (
         <FlatList
           data={products}
@@ -415,366 +400,167 @@ export default function ProductsScreen() {
         />
       )}
 
-      {/* Product detail modal */}
-      <Modal
-        visible={!!selectedProduct}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setSelectedProduct(null)}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => setSelectedProduct(null)}>
-          <Pressable
-            style={[styles.modalContent, { backgroundColor: cardBg }]}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.modalContentInner}>
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: textColor }]} numberOfLines={1}>
-                {selectedProduct?.name}
-              </Text>
-              <Pressable onPress={() => setSelectedProduct(null)} hitSlop={12}>
-                <FontAwesome name="times" size={22} color={mutedColor} />
-              </Pressable>
-            </View>
-            {selectedProduct && (
-              <>
-                <ScrollView style={styles.modalBody} contentContainerStyle={styles.modalBodyContent}>
-                  {selectedProduct.imageUrl && (
-                    <Image
-                      source={{ uri: resolveImageUrl(selectedProduct.imageUrl) }}
-                      style={styles.detailImage}
-                      contentFit="cover"
-                    />
-                  )}
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Name</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>{selectedProduct.name}</Text>
-                  </View>
-                  {selectedProduct.sku && (
-                    <View style={styles.detailRow}>
-                      <Text style={[styles.detailLabel, { color: mutedColor }]}>SKU</Text>
-                      <Text style={[styles.detailValue, { color: textColor }]}>{selectedProduct.sku}</Text>
-                    </View>
-                  )}
-                  {selectedProduct.barcode && (
-                    <View style={styles.detailRow}>
-                      <Text style={[styles.detailLabel, { color: mutedColor }]}>Barcode</Text>
-                      <Text style={[styles.detailValue, { color: textColor }]}>
-                        {selectedProduct.barcode}
-                      </Text>
-                    </View>
-                  )}
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Selling Price</Text>
-                    <Text style={[styles.detailValue, { color: colors.tint, fontSize: 18, fontWeight: '700' }]}>
-                      {formatCurrency(selectedProduct.sellingPrice)}
-                    </Text>
-                  </View>
-                  {selectedProduct.costPrice && (
-                    <View style={styles.detailRow}>
-                      <Text style={[styles.detailLabel, { color: mutedColor }]}>Cost Price</Text>
-                      <Text style={[styles.detailValue, { color: textColor }]}>
-                        {formatCurrency(selectedProduct.costPrice)}
-                      </Text>
-                    </View>
-                  )}
-                  {(selectedProduct.trackStock === false || selectedProduct.quantityOnHand !== undefined) && (
-                    <View style={styles.detailRow}>
-                      <Text style={[styles.detailLabel, { color: mutedColor }]}>Stock</Text>
-                      <Text
-                        style={[
-                          styles.detailValue,
-                          selectedProduct.trackStock === false
-                            ? { color: mutedColor, fontWeight: '500' }
-                            : {
-                                color:
-                                  selectedProduct.quantityOnHand === 0
-                                    ? '#ef4444'
-                                    : selectedProduct.quantityOnHand! < 10
-                                    ? '#f59e0b'
-                                    : '#10b981',
-                                fontWeight: '600',
-                              },
-                        ]}
-                      >
-                        {selectedProduct.trackStock === false
-                          ? 'Made to order'
-                          : `${selectedProduct.quantityOnHand} units`}
-                      </Text>
-                    </View>
-                  )}
-                  {selectedProduct.category && (
-                    <View style={styles.detailRow}>
-                      <Text style={[styles.detailLabel, { color: mutedColor }]}>Category</Text>
-                      <Text style={[styles.detailValue, { color: textColor }]}>
-                        {selectedProduct.category.name}
-                      </Text>
-                    </View>
-                  )}
-                </ScrollView>
-                {/* Action buttons footer */}
-                <View style={[styles.modalFooter, { borderTopColor: borderColor }]}>
-                  <Pressable
-                    onPress={() => handleEditProduct(selectedProduct)}
-                    style={[styles.actionButton, { borderColor }]}
-                  >
-                    <FontAwesome name="edit" size={18} color={colors.tint} />
-                    <Text style={[styles.actionButtonText, { color: colors.tint }]}>Edit</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => handleAddToCart(selectedProduct)}
-                    style={[styles.actionButton, { backgroundColor: colors.tint }]}
-                  >
-                    <FontAwesome name="shopping-cart" size={18} color="#fff" />
-                    <Text style={styles.actionButtonTextPrimary}>Add to Cart</Text>
-                  </Pressable>
-                </View>
-              </>
-            )}
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Add product modal */}
-      <Modal
+      <FormSheetModal
         visible={addModalVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setAddModalVisible(false)}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => setAddModalVisible(false)}>
-          <Pressable
-            style={[styles.modalContent, { backgroundColor: cardBg }]}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: textColor }]}>Add Product</Text>
-              <Pressable onPress={() => setAddModalVisible(false)} hitSlop={12}>
-                <FontAwesome name="times" size={22} color={mutedColor} />
-              </Pressable>
-            </View>
-            <ScrollView style={styles.modalBody}>
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, { color: textColor }]}>Product Name *</Text>
-                <TextInput
-                  style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                  placeholder="Product name"
-                  placeholderTextColor={mutedColor}
-                  value={formData.name}
-                  onChangeText={(text) => setFormData({ ...formData, name: text })}
-                />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, { color: textColor }]}>SKU</Text>
-                <TextInput
-                  style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                  placeholder="SKU (optional)"
-                  placeholderTextColor={mutedColor}
-                  value={formData.sku}
-                  onChangeText={(text) => setFormData({ ...formData, sku: text })}
-                />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, { color: textColor }]}>Barcode</Text>
-                <TextInput
-                  style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                  placeholder="Barcode (optional)"
-                  placeholderTextColor={mutedColor}
-                  value={formData.barcode}
-                  onChangeText={(text) => setFormData({ ...formData, barcode: text })}
-                />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, { color: textColor }]}>Selling Price *</Text>
-                <TextInput
-                  style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                  placeholder="0.00"
-                  placeholderTextColor={mutedColor}
-                  value={formData.sellingPrice}
-                  onChangeText={(text) => setFormData({ ...formData, sellingPrice: text })}
-                  keyboardType="decimal-pad"
-                />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, { color: textColor }]}>Cost Price</Text>
-                <TextInput
-                  style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                  placeholder="0.00"
-                  placeholderTextColor={mutedColor}
-                  value={formData.costPrice}
-                  onChangeText={(text) => setFormData({ ...formData, costPrice: text })}
-                  keyboardType="decimal-pad"
-                />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, { color: textColor }]}>Initial Stock</Text>
-                <TextInput
-                  style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                  placeholder="0"
-                  placeholderTextColor={mutedColor}
-                  value={formData.quantityOnHand}
-                  onChangeText={(text) => setFormData({ ...formData, quantityOnHand: text })}
-                  keyboardType="number-pad"
-                />
-              </View>
-              <Pressable
-                onPress={handleCreateProduct}
-                disabled={createProductMutation.isPending}
-                style={[
-                  styles.submitButton,
-                  { backgroundColor: colors.tint },
-                  createProductMutation.isPending && styles.submitButtonDisabled,
-                ]}
-              >
-                {createProductMutation.isPending ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.submitButtonText}>Create Product</Text>
-                )}
-              </Pressable>
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Edit product modal */}
-      <Modal
-        visible={editModalVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => {
-          setEditModalVisible(false);
-          setEditingProduct(null);
+        title={FORM_LABELS.product.addTitle}
+        onClose={() => {
+          setAddModalVisible(false);
+          resetAddForm();
         }}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => {
-          setEditModalVisible(false);
-          setEditingProduct(null);
-        }}>
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        footer={
           <Pressable
-            style={[styles.modalContent, { backgroundColor: cardBg }]}
-            onPress={(e) => e.stopPropagation()}
+            onPress={handleCreateProduct}
+            disabled={createProductMutation.isPending || uploadingImage}
+            style={[
+              styles.submitButton,
+              { backgroundColor: colors.tint },
+              (createProductMutation.isPending || uploadingImage) && styles.submitButtonDisabled,
+            ]}
           >
-            <View style={styles.modalContentInner}>
-              <View style={styles.modalHeader}>
-                <Text style={[styles.modalTitle, { color: textColor }]}>Edit Product</Text>
-                <Pressable onPress={() => {
-                  setEditModalVisible(false);
-                  setEditingProduct(null);
-                }} hitSlop={12}>
-                  <FontAwesome name="times" size={22} color={mutedColor} />
-                </Pressable>
-              </View>
-              <ScrollView style={styles.modalBody} contentContainerStyle={styles.modalBodyContent}>
+            {createProductMutation.isPending ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.submitButtonText}>{FORM_LABELS.product.create}</Text>
+            )}
+          </Pressable>
+        }
+      >
                 <View style={styles.formGroup}>
-                  <Text style={[styles.formLabel, { color: textColor }]}>Product Name *</Text>
+                  <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.product.image}</Text>
+                  <Pressable
+                    onPress={handlePickProductImage}
+                    disabled={uploadingImage}
+                    style={[
+                      styles.imagePicker,
+                      { borderColor, backgroundColor: inputBg },
+                    ]}
+                  >
+                    {addFormImageUri ? (
+                      <Image source={{ uri: addFormImageUri }} style={styles.imagePickerPreview} contentFit="cover" />
+                    ) : (
+                      <View style={styles.imagePickerPlaceholder}>
+                        <AppIcon name="image" size={28} color={mutedColor} />
+                        <Text style={[styles.imagePickerText, { color: mutedColor }]}>Tap to add photo</Text>
+                      </View>
+                    )}
+                    {uploadingImage ? (
+                      <View style={styles.imagePickerOverlay}>
+                        <ActivityIndicator color="#fff" />
+                      </View>
+                    ) : null}
+                  </Pressable>
+                  {addFormImageUri && !uploadingImage ? (
+                    <Pressable onPress={handleRemoveProductImage} style={styles.removeImageBtn}>
+                      <Text style={styles.removeImageText}>Remove image</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+                <View style={styles.formGroup}>
+                  <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.product.name}</Text>
                   <TextInput
                     style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
                     placeholder="Product name"
                     placeholderTextColor={mutedColor}
-                    value={editFormData.name}
-                    onChangeText={(text) => setEditFormData({ ...editFormData, name: text })}
+                    value={formData.name}
+                    onChangeText={(text) => setFormData({ ...formData, name: text })}
                   />
                 </View>
                 <View style={styles.formGroup}>
-                  <Text style={[styles.formLabel, { color: textColor }]}>SKU</Text>
+                  <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.product.sku}</Text>
                   <TextInput
                     style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                    placeholder="SKU (optional)"
+                    placeholder="SKU"
                     placeholderTextColor={mutedColor}
-                    value={editFormData.sku}
-                    onChangeText={(text) => setEditFormData({ ...editFormData, sku: text })}
+                    value={formData.sku}
+                    onChangeText={(text) => setFormData({ ...formData, sku: text })}
                   />
                 </View>
                 <View style={styles.formGroup}>
-                  <Text style={[styles.formLabel, { color: textColor }]}>Barcode</Text>
+                  <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.product.barcode}</Text>
                   <TextInput
                     style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                    placeholder="Barcode (optional)"
+                    placeholder="Barcode"
                     placeholderTextColor={mutedColor}
-                    value={editFormData.barcode}
-                    onChangeText={(text) => setEditFormData({ ...editFormData, barcode: text })}
+                    value={formData.barcode}
+                    onChangeText={(text) => setFormData({ ...formData, barcode: text })}
                   />
                 </View>
+                {isRestaurant && (
+                  <>
+                    <View style={styles.formGroup}>
+                      <Text style={[styles.formLabel, { color: textColor }]}>Description (optional)</Text>
+                      <TextInput
+                        style={[styles.formInput, styles.formTextArea, { color: textColor, borderColor, backgroundColor: inputBg }]}
+                        placeholder="e.g. Delicious West African jollof rice"
+                        placeholderTextColor={mutedColor}
+                        value={formData.description}
+                        onChangeText={(text) => setFormData({ ...formData, description: text })}
+                        multiline
+                      />
+                    </View>
+                    <View style={styles.formGroup}>
+                      <Text style={[styles.formLabel, { color: textColor }]}>Allergens (optional)</Text>
+                      <TextInput
+                        style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+                        placeholder="e.g. milk, peanuts"
+                        placeholderTextColor={mutedColor}
+                        value={formData.allergens}
+                        onChangeText={(text) => setFormData({ ...formData, allergens: text })}
+                      />
+                    </View>
+                    <View style={styles.formGroup}>
+                      <Text style={[styles.formLabel, { color: textColor }]}>Add-ons (optional)</Text>
+                      <TextInput
+                        style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+                        placeholder="e.g. extra chicken, plantain"
+                        placeholderTextColor={mutedColor}
+                        value={formData.optionalFoods}
+                        onChangeText={(text) => setFormData({ ...formData, optionalFoods: text })}
+                      />
+                    </View>
+                  </>
+                )}
                 <View style={styles.formGroup}>
-                  <Text style={[styles.formLabel, { color: textColor }]}>Selling Price *</Text>
+                  <Text style={[styles.formLabel, { color: textColor }]}>
+                    {isRestaurant ? 'Cost price (optional)' : FORM_LABELS.product.costPrice}
+                  </Text>
                   <TextInput
                     style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
                     placeholder="0.00"
                     placeholderTextColor={mutedColor}
-                    value={editFormData.sellingPrice}
-                    onChangeText={(text) => setEditFormData({ ...editFormData, sellingPrice: text })}
+                    value={formData.costPrice}
+                    onChangeText={(text) => setFormData({ ...formData, costPrice: text })}
                     keyboardType="decimal-pad"
                   />
                 </View>
                 <View style={styles.formGroup}>
-                  <Text style={[styles.formLabel, { color: textColor }]}>Cost Price</Text>
+                  <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.product.sellingPrice}</Text>
                   <TextInput
                     style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
                     placeholder="0.00"
                     placeholderTextColor={mutedColor}
-                    value={editFormData.costPrice}
-                    onChangeText={(text) => setEditFormData({ ...editFormData, costPrice: text })}
+                    value={formData.sellingPrice}
+                    onChangeText={(text) => setFormData({ ...formData, sellingPrice: text })}
                     keyboardType="decimal-pad"
                   />
                 </View>
                 <View style={styles.formGroup}>
-                  <Text style={[styles.formLabel, { color: textColor }]}>Stock Quantity</Text>
+                  <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.product.quantityOnHand}</Text>
                   <TextInput
                     style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
                     placeholder="0"
                     placeholderTextColor={mutedColor}
-                    value={editFormData.quantityOnHand}
-                    onChangeText={(text) => setEditFormData({ ...editFormData, quantityOnHand: text })}
+                    value={formData.quantityOnHand}
+                    onChangeText={(text) => setFormData({ ...formData, quantityOnHand: text })}
                     keyboardType="number-pad"
                   />
                 </View>
-              </ScrollView>
-              {/* Action buttons footer */}
-              <View style={[styles.modalFooter, { borderTopColor: borderColor }]}>
-                <Pressable
-                  onPress={handleDeleteProduct}
-                  disabled={deleteProductMutation.isPending}
-                  style={[
-                    styles.actionButton,
-                    { borderColor: '#ef4444' },
-                    deleteProductMutation.isPending && styles.submitButtonDisabled,
-                  ]}
-                >
-                  {deleteProductMutation.isPending ? (
-                    <ActivityIndicator color="#ef4444" />
-                  ) : (
-                    <>
-                      <FontAwesome name="trash" size={18} color="#ef4444" />
-                      <Text style={[styles.actionButtonText, { color: '#ef4444' }]}>Delete</Text>
-                    </>
-                  )}
-                </Pressable>
-                <Pressable
-                  onPress={handleUpdateProduct}
-                  disabled={updateProductMutation.isPending}
-                  style={[
-                    styles.actionButton,
-                    { backgroundColor: colors.tint },
-                    updateProductMutation.isPending && styles.submitButtonDisabled,
-                  ]}
-                >
-                  {updateProductMutation.isPending ? (
-                    <ActivityIndicator color="#fff" />
-                  ) : (
-                    <>
-                      <FontAwesome name="save" size={18} color="#fff" />
-                      <Text style={styles.actionButtonTextPrimary}>Save Changes</Text>
-                    </>
-                  )}
-                </Pressable>
-              </View>
-            </View>
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </View>
+      </FormSheetModal>
+    </ScreenShell>
   );
 }
 
@@ -793,17 +579,6 @@ const styles = StyleSheet.create({
   },
   searchIcon: { marginRight: 8 },
   searchInput: { flex: 1, fontSize: 16 },
-  addButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginHorizontal: 16,
-    marginBottom: 12,
-    padding: 14,
-    borderRadius: 12,
-  },
-  addButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   listContent: { padding: 16, paddingBottom: 32 },
   row: { justifyContent: 'space-between', marginBottom: 12 },
   productCard: {
@@ -850,19 +625,39 @@ const styles = StyleSheet.create({
   },
   stockBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   pressed: { opacity: 0.8 },
-  empty: { alignItems: 'center', paddingVertical: 48 },
-  emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 16 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 32, paddingHorizontal: 24 },
+  emptyImage: { width: 280, height: 220, maxWidth: '100%' },
+  emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 16, textAlign: 'center' },
   emptySubtitle: { fontSize: 14, marginTop: 8, textAlign: 'center' },
+  retryButton: {
+    marginTop: 16,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
+  },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  modalSheetWrap: {
+    width: '100%',
+    maxHeight: '85%',
   },
   modalContent: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    maxHeight: '80%',
     width: '100%',
+    overflow: 'hidden',
+  },
+  modalScroll: {},
+  modalFormContent: {
+    padding: 20,
+    paddingBottom: 32,
   },
   modalContentInner: {
     flex: 1,
@@ -874,10 +669,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
   },
   modalTitle: { fontSize: 18, fontWeight: '700' },
-  modalBody: { flex: 1 },
+  modalBody: { maxHeight: Dimensions.get('window').height * 0.62 },
   modalBodyContent: { padding: 20 },
   modalFooter: {
     flexDirection: 'row',
@@ -911,6 +705,25 @@ const styles = StyleSheet.create({
   detailLabel: { fontSize: 12, marginBottom: 4 },
   detailValue: { fontSize: 16, fontWeight: '500' },
   formGroup: { marginBottom: 16 },
+  imagePicker: {
+    borderWidth: 1,
+    borderRadius: 12,
+    height: 160,
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  imagePickerPreview: { width: '100%', height: '100%' },
+  imagePickerPlaceholder: { alignItems: 'center', gap: 8 },
+  imagePickerText: { fontSize: 14, fontWeight: '500' },
+  imagePickerOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  removeImageBtn: { marginTop: 10, alignSelf: 'flex-start' },
+  removeImageText: { color: '#dc2626', fontSize: 14, fontWeight: '600' },
   formLabel: { fontSize: 14, fontWeight: '600', marginBottom: 8 },
   formInput: {
     borderWidth: 1,
@@ -918,6 +731,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 16,
+  },
+  formTextArea: {
+    minHeight: 80,
+    textAlignVertical: 'top',
   },
   submitButton: {
     height: 48,
@@ -928,4 +745,16 @@ const styles = StyleSheet.create({
   },
   submitButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   submitButtonDisabled: { opacity: 0.6 },
+  editFooterRow: { flexDirection: 'row', gap: 10 },
+  editFooterBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  editDeleteBtn: { backgroundColor: 'transparent' },
 });

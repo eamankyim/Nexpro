@@ -40,6 +40,10 @@ import leadService from '../services/leadService';
 import userService from '../services/userService';
 import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
+import { useStudioLocationOptional } from '../context/StudioLocationContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { showSuccess, showError, showWarning } from '../utils/toast';
 import { Button } from '@/components/ui/button';
@@ -142,6 +146,9 @@ const statusSchema = z.object({
 
 const Leads = () => {
   const { activeTenant, activeTenantId } = useAuth();
+  const studioLocationCtx = useStudioLocationOptional();
+  const activeStudioLocationId = studioLocationCtx?.activeStudioLocationId ?? null;
+  const { scopeReady } = useWorkspaceScope();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
@@ -220,7 +227,6 @@ const Leads = () => {
   });
 
   useEffect(() => {
-    fetchSummary();
     fetchUsers();
   }, []);
 
@@ -266,7 +272,6 @@ const Leads = () => {
     ];
   }, [leadSourceOptionsApi]);
 
-  // Pull-to-refresh hook
   const { isRefreshing, pullDistance, containerProps } = usePullToRefresh(
     () => {
       fetchLeads(true);
@@ -276,8 +281,14 @@ const Leads = () => {
   );
 
   useEffect(() => {
+    if (studioLocationCtx?.isStudioWorkspace && !activeStudioLocationId) return;
     fetchLeads();
-  }, [pagination.current, pagination.pageSize, filters, debouncedSearch]);
+  }, [pagination.current, pagination.pageSize, filters, debouncedSearch, activeStudioLocationId, studioLocationCtx?.isStudioWorkspace]);
+
+  useEffect(() => {
+    if (!scopeReady) return;
+    fetchSummary();
+  }, [scopeReady, activeTenantId, activeStudioLocationId, studioLocationCtx?.isStudioWorkspace]);
 
   const fetchUsers = async () => {
     try {
@@ -877,6 +888,14 @@ const Leads = () => {
   const statusOptions = ['all', 'new', 'contacted', 'qualified', 'converted', 'lost'];
   const priorityOptions = ['all', 'low', 'medium', 'high'];
 
+  const leadsEmptyState = useMemo(
+    () =>
+      getEmptyStateProps(EMPTY_STATES.LEADS, {
+        primary: () => openLeadModal(),
+      }),
+    [openLeadModal]
+  );
+
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
@@ -1008,14 +1027,7 @@ const Leads = () => {
           columns={tableColumns}
           loading={loading || (isMobile && isRefreshing)}
           title={null}
-          emptyIcon={<Users className="h-12 w-12 text-muted-foreground" />}
-          emptyDescription="No leads yet. Track potential customers and grow your business."
-          emptyAction={
-            <Button onClick={() => openLeadModal()}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add First Lead
-            </Button>
-          }
+          emptyState={leadsEmptyState}
           pageSize={pagination.pageSize}
           externalPagination={{ current: pagination.current, total: pagination.total }}
           onPageChange={(newPagination) => {

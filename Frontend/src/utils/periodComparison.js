@@ -1,7 +1,9 @@
 import dayjs from 'dayjs';
+import quarterOfYear from 'dayjs/plugin/quarterOfYear';
 import weekOfYear from 'dayjs/plugin/weekOfYear';
 import isoWeek from 'dayjs/plugin/isoWeek';
 
+dayjs.extend(quarterOfYear);
 dayjs.extend(weekOfYear);
 dayjs.extend(isoWeek);
 
@@ -69,20 +71,14 @@ export const getPreviousPeriod = (filterType, currentDateRange = null) => {
       break;
 
     case 'thisQuarter':
-      // Compare with last quarter
-      const currentQuarter = Math.floor(start.month() / 3);
-      const prevQuarterStart = start.startOf('year').add((currentQuarter - 1) * 3, 'months');
-      previousStart = prevQuarterStart.startOf('month');
-      previousEnd = prevQuarterStart.add(2, 'months').endOf('month');
+      previousStart = start.subtract(1, 'quarter').startOf('quarter');
+      previousEnd = previousStart.endOf('quarter');
       label = 'vs last quarter';
       break;
 
     case 'lastQuarter':
-      // Compare with quarter before last
-      const lastQuarter = Math.floor(start.month() / 3);
-      const prevPrevQuarterStart = start.startOf('year').add((lastQuarter - 2) * 3, 'months');
-      previousStart = prevPrevQuarterStart.startOf('month');
-      previousEnd = prevPrevQuarterStart.add(2, 'months').endOf('month');
+      previousStart = start.subtract(1, 'quarter').startOf('quarter');
+      previousEnd = previousStart.endOf('quarter');
       label = 'vs quarter before';
       break;
 

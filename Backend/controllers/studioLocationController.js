@@ -8,6 +8,37 @@ const {
   setUserStudioLocations,
   getUserStudioLocationIds,
 } = require('../utils/studioLocationUtils');
+const {
+  validateManagerUserId,
+  ensureManagerStudioAccess,
+} = require('../utils/branchManagerUtils');
+const { fileToDataUrl } = require('../utils/branchLogoUpload');
+
+const managerInclude = {
+  model: User,
+  as: 'manager',
+  attributes: ['id', 'name', 'email', 'role'],
+  required: false,
+};
+
+const prepareStudioPayload = async (tenantId, payload) => {
+  const next = { ...payload };
+  delete next.managerName;
+
+  if (Object.prototype.hasOwnProperty.call(next, 'managerUserId')) {
+    const check = await validateManagerUserId({
+      tenantId,
+      managerUserId: next.managerUserId,
+    });
+    if (!check.ok) {
+      const err = new Error(check.message);
+      err.statusCode = 400;
+      throw err;
+    }
+    next.managerUserId = check.managerUserId;
+  }
+  return next;
+};
 
 const assertStudioTenant = (req, res) => {
   if (!isStudioTenant(req.tenant)) {
@@ -50,6 +81,7 @@ exports.getStudioLocations = async (req, res, next) => {
         ['isDefault', 'DESC'],
         ['name', 'ASC'],
       ],
+      include: [managerInclude],
     });
 
     res.status(200).json({
@@ -104,6 +136,7 @@ exports.getStudioLocation = async (req, res, next) => {
 
     const location = await StudioLocation.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      include: [managerInclude],
     });
 
     if (!location) {
@@ -129,7 +162,7 @@ exports.createStudioLocation = async (req, res, next) => {
   try {
     if (!assertStudioTenant(req, res)) return;
 
-    const payload = sanitizePayload(req.body);
+    const payload = await prepareStudioPayload(req.tenantId, sanitizePayload(req.body));
     const isFirst =
       (await StudioLocation.count({ where: { tenantId: req.tenantId } })) === 0;
 
@@ -161,8 +194,17 @@ exports.createStudioLocation = async (req, res, next) => {
       });
     }
 
+    if (location.managerUserId) {
+      await ensureManagerStudioAccess(location.managerUserId, req.tenantId, location.id);
+    }
+
+    await location.reload({ include: [managerInclude] });
+
     res.status(201).json({ success: true, data: location });
   } catch (error) {
+    if (error.statusCode === 400) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
     next(error);
   }
 };
@@ -175,13 +217,14 @@ exports.updateStudioLocation = async (req, res, next) => {
 
     const location = await StudioLocation.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      include: [managerInclude],
     });
 
     if (!location) {
       return res.status(404).json({ success: false, message: 'Studio location not found' });
     }
 
-    const payload = sanitizePayload(req.body);
+    const payload = await prepareStudioPayload(req.tenantId, sanitizePayload(req.body));
     await location.update(payload);
 
     if (payload.isDefault) {
@@ -196,8 +239,55 @@ exports.updateStudioLocation = async (req, res, next) => {
       );
     }
 
+    if (location.managerUserId) {
+      await ensureManagerStudioAccess(location.managerUserId, req.tenantId, location.id);
+    }
+
+    await location.reload({ include: [managerInclude] });
+
     res.status(200).json({ success: true, data: location });
   } catch (error) {
+    if (error.statusCode === 400) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+    next(error);
+  }
+};
+
+// @desc    Upload studio location logo
+// @route   POST /api/studio-locations/:id/logo
+exports.uploadStudioLocationLogo = async (req, res, next) => {
+  try {
+    if (!assertStudioTenant(req, res)) return;
+
+    const location = await StudioLocation.findOne({
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+    });
+
+    if (!location) {
+      return res.status(404).json({ success: false, message: 'Studio location not found' });
+    }
+
+    if (
+      !req.canAccessAllStudioLocations &&
+      !req.allowedStudioLocationIds?.includes(location.id)
+    ) {
+      return res.status(403).json({ success: false, message: 'Access denied' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'No file uploaded' });
+    }
+
+    const logoUrl = await fileToDataUrl(req.file);
+    await location.update({ logoUrl });
+    await location.reload({ include: [managerInclude] });
+
+    res.status(200).json({ success: true, data: location });
+  } catch (error) {
+    if (error.statusCode === 400) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
     next(error);
   }
 };
@@ -210,6 +300,7 @@ exports.deleteStudioLocation = async (req, res, next) => {
 
     const location = await StudioLocation.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      include: [managerInclude],
     });
 
     if (!location) {

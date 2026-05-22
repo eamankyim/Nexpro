@@ -230,9 +230,7 @@ const sellfyCardTemplate = (innerContent, options = {}) => {
  * @param {string} currency - Currency code
  * @returns {string} - Formatted amount
  */
-const formatCurrency = (amount, currency = 'GHS') => {
-  return `${currency} ${parseFloat(amount || 0).toFixed(2)}`;
-};
+const { formatCurrency, formatCedi } = require('../utils/formatNumber');
 
 /**
  * Invoice rows use totalAmount, balance, amountPaid — not a `total` field.

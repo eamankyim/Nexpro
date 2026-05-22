@@ -19,6 +19,10 @@ const getTenantAccessAudit = async (tenantId) => api.get(`/admin/tenants/${tenan
 const updateTenantStatus = async (tenantId, action) =>
   api.patch(`/admin/tenants/${tenantId}/status`, { action });
 
+/** Permanently delete tenant and all workspace data (requires matching confirmSlug). */
+const deleteTenant = async (tenantId, confirmSlug) =>
+  api.delete(`/admin/tenants/${tenantId}`, { data: { confirmSlug } });
+
 const updateTenantAccess = async (tenantId, payload) =>
   api.patch(`/admin/tenants/${tenantId}/access`, payload);
 
@@ -171,6 +175,7 @@ export default {
   getTenantDetail,
   getTenantAccessAudit,
   updateTenantStatus,
+  deleteTenant,
   updateTenantAccess,
   updateTenantBranding,
   getBillingSummary,

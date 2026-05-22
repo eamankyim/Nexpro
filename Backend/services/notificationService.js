@@ -4,6 +4,7 @@ const {
   isNotificationChannelEnabled,
   normalizeNotificationCategory
 } = require('./notificationPreferenceHelper');
+const { formatDecimal } = require('../utils/formatNumber');
 
 const logPrefix = '[Notifications]';
 
@@ -556,7 +557,7 @@ const notifyInvoiceSent = async ({ invoice, triggeredBy = null }) => {
 
   const payload = {
     title: 'Invoice Sent',
-    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been sent (GHS ${parseFloat(invoice.totalAmount).toLocaleString()}).`,
+    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been sent (GHS ${formatDecimal(invoice.totalAmount)}).`,
     type: 'invoice',
     priority: 'normal',
     metadata: {
@@ -669,7 +670,7 @@ const notifyInvoicePaid = async ({ invoice, triggeredBy = null }) => {
 
   const payload = {
     title: 'Payment Received',
-    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been paid (GHS ${parseFloat(invoice.amountPaid).toLocaleString()}).`,
+    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been paid (GHS ${formatDecimal(invoice.amountPaid)}).`,
     type: 'payment',
     priority: 'high',
     metadata: {

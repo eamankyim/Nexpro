@@ -9,16 +9,21 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { authService } from '@/services/auth';
 import { getErrorMessage } from '@/utils/errorMessages';
 import { logger } from '@/utils/logger';
 
-const PRIMARY = '#166534';
+import { AppIcon } from '@/components/AppIcon';
+import { StackPageHeader } from '@/components/StackPageHeader';
+import { FormInput, FormLabel } from '@/components/FormField';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { BRAND_GREEN } from '@/constants/brand';
 
 export default function ForgotPasswordScreen() {
-  const [email, setEmail] = useState('');
+  const { colors, bg, cardBg, borderColor, mutedColor, textColor } = useScreenColors();
+  const { email: emailParam } = useLocalSearchParams<{ email?: string }>();
+  const [email, setEmail] = useState(typeof emailParam === 'string' ? emailParam : '');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -47,36 +52,30 @@ export default function ForgotPasswordScreen() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+      style={[styles.container, { backgroundColor: bg }]}
     >
+      <StackPageHeader
+        title="Forgot password"
+        subtitle={submitted ? undefined : "We'll email you a reset link."}
+      />
       <View style={styles.content}>
-        <Text style={styles.logo}>ABS</Text>
-
-        {!submitted && (
-          <>
-            <Text style={styles.title}>Forgot password?</Text>
-            <Text style={styles.subtitle}>
-              Enter your email and we'll send you a link to reset your password.
-            </Text>
-          </>
-        )}
-
         {submitted ? (
-          <View style={styles.successCard}>
+          <View style={[styles.successCard, { backgroundColor: cardBg, borderColor }]}>
             <View style={styles.successIconWrap}>
-              <Ionicons name="checkmark-circle" size={36} color={PRIMARY} />
+              <AppIcon name="checkmark-circle" size={36} color={colors.tint} />
             </View>
-            <Text style={styles.successTitle}>Check your email</Text>
-            <Text style={styles.successText}>
+            <Text style={[styles.successTitle, { color: textColor }]}>Check your email</Text>
+            <Text style={[styles.successText, { color: mutedColor }]}>
               If an account exists for that email, we've sent a password reset link. The link
               may expire after some time.
             </Text>
-            <Text style={styles.successHint}>
+            <Text style={[styles.successHint, { color: mutedColor }]}>
               Didn't see it? Check your spam or promotions folder.
             </Text>
             <Pressable
               style={({ pressed }) => [
                 styles.primaryButton,
+                { backgroundColor: colors.tint },
                 pressed && styles.primaryButtonPressed,
               ]}
               onPress={() => router.replace('/login')}
@@ -86,22 +85,18 @@ export default function ForgotPasswordScreen() {
           </View>
         ) : (
           <>
-            <View style={styles.field}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="you@example.com"
-                placeholderTextColor="#9ca3af"
-                value={email}
-                onChangeText={setEmail}
-                autoCapitalize="none"
-                keyboardType="email-address"
-                editable={!loading}
-              />
-            </View>
+            <FormLabel>Email</FormLabel>
+            <FormInput
+              placeholder="you@example.com"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              keyboardType="email-address"
+              editable={!loading}
+            />
 
             {error ? (
-              <View style={styles.errorBox}>
+              <View style={[styles.errorBox, { borderColor: '#fecaca', backgroundColor: '#fef2f2' }]}>
                 <Text style={styles.error}>{error}</Text>
               </View>
             ) : null}
@@ -109,6 +104,7 @@ export default function ForgotPasswordScreen() {
             <Pressable
               style={({ pressed }) => [
                 styles.primaryButton,
+                { backgroundColor: colors.tint },
                 pressed && styles.primaryButtonPressed,
                 loading && styles.primaryButtonDisabled,
               ]}
@@ -122,12 +118,8 @@ export default function ForgotPasswordScreen() {
               )}
             </Pressable>
 
-            <Pressable
-              style={styles.backLink}
-              onPress={() => router.back()}
-              disabled={loading}
-            >
-              <Text style={styles.backLinkText}>Back to sign in</Text>
+            <Pressable style={styles.backLink} onPress={() => router.back()} disabled={loading}>
+              <Text style={[styles.backLinkText, { color: colors.tint }]}>Back to sign in</Text>
             </Pressable>
           </>
         )}
@@ -148,12 +140,9 @@ const styles = StyleSheet.create({
     width: '100%',
     alignSelf: 'center',
   },
-  logo: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: PRIMARY,
-    textAlign: 'center',
+  logoWrap: {
     marginBottom: 16,
+    alignSelf: 'center',
   },
   title: {
     fontSize: 24,
@@ -200,7 +189,7 @@ const styles = StyleSheet.create({
   },
   primaryButton: {
     height: 48,
-    backgroundColor: PRIMARY,
+    backgroundColor: BRAND_GREEN,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -221,7 +210,7 @@ const styles = StyleSheet.create({
   },
   backLinkText: {
     fontSize: 14,
-    color: PRIMARY,
+    color: BRAND_GREEN,
     fontWeight: '600',
   },
   successCard: {

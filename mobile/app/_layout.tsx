@@ -1,4 +1,3 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, ThemeProvider as NavigationThemeProvider } from '@react-navigation/native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client';
@@ -11,11 +10,17 @@ import { useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import 'react-native-reanimated';
 import { offlineQueueService } from '@/services/offlineQueueService';
+import { refreshAfterSale } from '@/utils/queryInvalidation';
+import { useQueryClient } from '@tanstack/react-query';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { AuthProvider } from '@/context/AuthContext';
+import { ShopProvider } from '@/context/ShopContext';
+import { StudioLocationProvider } from '@/context/StudioLocationContext';
 import { CartProvider } from '@/context/CartContext';
 import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import { useColorScheme } from '@/components/useColorScheme';
+import Colors from '@/constants/Colors';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -29,8 +34,8 @@ SplashScreen.preventAutoHideAsync();
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // Cache data for 5 minutes by default (longer for mobile to reduce network calls)
-      staleTime: 5 * 60 * 1000, // 5 minutes
+      // Default stale window; transactional screens override with QUERY_STALE
+      staleTime: 60 * 1000,
       // Keep cached data for 24 hours (allows offline access)
       gcTime: 24 * 60 * 60 * 1000, // 24 hours (formerly cacheTime)
       // Retry failed requests with exponential backoff
@@ -40,8 +45,8 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       // Refetch on reconnect (enabled - good for mobile)
       refetchOnReconnect: true,
-      // Don't refetch on mount if data is fresh
-      refetchOnMount: false,
+      // Refetch stale queries when returning to a screen (pairs with mutation invalidation)
+      refetchOnMount: true,
       // Network mode: prefer cache, fallback to network
       networkMode: 'offlineFirst',
     },
@@ -64,23 +69,28 @@ const asyncStoragePersister = createAsyncStoragePersister({
 });
 
 function OfflineSyncOnActive() {
+  const queryClient = useQueryClient();
   const appState = useRef<AppStateStatus>(AppState.currentState);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       if (appState.current === 'background' && nextState === 'active') {
-        offlineQueueService.syncPendingSales().catch(() => {});
+        offlineQueueService
+          .syncPendingSales()
+          .then(({ synced }) => {
+            if (synced > 0) return refreshAfterSale(queryClient);
+          })
+          .catch(() => {});
       }
       appState.current = nextState;
     });
     return () => sub.remove();
-  }, []);
+  }, [queryClient]);
   return null;
 }
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
-    ...FontAwesome.font,
   });
 
   useEffect(() => {
@@ -117,10 +127,14 @@ export default function RootLayout() {
     >
       <ThemeProvider>
         <AuthProvider>
-          <CartProvider>
-            <OfflineSyncOnActive />
-            <RootLayoutNav />
-          </CartProvider>
+          <ShopProvider>
+            <StudioLocationProvider>
+              <CartProvider>
+                <OfflineSyncOnActive />
+                <RootLayoutNav />
+              </CartProvider>
+            </StudioLocationProvider>
+          </ShopProvider>
         </AuthProvider>
       </ThemeProvider>
     </PersistQueryClientProvider>
@@ -130,7 +144,7 @@ export default function RootLayout() {
 function RootLayoutNav() {
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
-  const headerTint = '#166534';
+  const headerTint = Colors[resolvedTheme ?? 'light'].tint;
 
   const innerScreenOptions = {
     headerShown: true,
@@ -149,6 +163,7 @@ function RootLayoutNav() {
     <NavigationThemeProvider value={resolvedTheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
+        <Stack.Screen name="intro" />
         <Stack.Screen name="login" />
         <Stack.Screen name="signup" />
         <Stack.Screen name="onboarding" />
@@ -156,6 +171,8 @@ function RootLayoutNav() {
         <Stack.Screen name="account" options={{ ...innerScreenOptions, title: 'Account', headerShown: false }} />
         <Stack.Screen name="profile" options={{ ...innerScreenOptions, title: 'Profile', headerShown: false }} />
         <Stack.Screen name="settings" options={{ ...innerScreenOptions, title: 'Settings', headerShown: false }} />
+        <Stack.Screen name="privacy-policy" options={{ ...innerScreenOptions, title: 'Privacy Policy', headerShown: false }} />
+        <Stack.Screen name="data-deletion" options={{ ...innerScreenOptions, title: 'Data Deletion', headerShown: false }} />
         <Stack.Screen name="notifications" options={{ ...innerScreenOptions, title: 'Notifications', headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
       </Stack>

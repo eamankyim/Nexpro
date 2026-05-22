@@ -1,4 +1,5 @@
 import api from './api';
+import { withActiveShopScope } from '../utils/shopScope';
 
 const materialsService = {
   getCategories: async () => api.get('/materials/categories'),
@@ -7,7 +8,7 @@ const materialsService = {
 
   getItems: async (params = {}) => {
     const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
+    Object.entries(withActiveShopScope(params)).forEach(([key, value]) => {
       if (value === undefined || value === null || value === '') return;
       searchParams.append(key, value);
     });
@@ -15,10 +16,18 @@ const materialsService = {
     return api.get(query ? `/materials/items?${query}` : '/materials/items');
   },
 
-  getSummary: async () => api.get('/materials/items/summary'),
-  getMovements: async (params = {}) => {
+  getSummary: async () => {
+    const params = withActiveShopScope({});
     const searchParams = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => {
+      if (value) searchParams.append(key, value);
+    });
+    const query = searchParams.toString();
+    return api.get(query ? `/materials/items/summary?${query}` : '/materials/items/summary');
+  },
+  getMovements: async (params = {}) => {
+    const searchParams = new URLSearchParams();
+    Object.entries(withActiveShopScope(params)).forEach(([key, value]) => {
       if (value === undefined || value === null || value === '') return;
       searchParams.append(key, value);
     });

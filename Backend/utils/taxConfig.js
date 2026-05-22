@@ -1,4 +1,12 @@
+const NodeCache = require('node-cache');
 const { Setting } = require('../models');
+
+/** Per-tenant tax config cache (organization.tax changes rarely). */
+const taxConfigCache = new NodeCache({
+  stdTTL: 300,
+  checkperiod: 60,
+  useClones: false
+});
 
 /** @typedef {{ enabled: boolean, label: string, ratePercent: number, customerBears: boolean, appliesTo: string }} NormalizedOtherChargeConfig */
 /** @typedef {{ enabled: boolean, defaultRatePercent: number, pricesAreTaxInclusive: boolean, displayLabel: string, vatNumber: string, tin: string, otherCharges: NormalizedOtherChargeConfig }} NormalizedTaxConfig */
@@ -71,8 +79,52 @@ function getTaxFromOrganizationSettings(organizationValue = {}) {
  * @returns {Promise<NormalizedTaxConfig>}
  */
 async function getTaxConfigForTenant(tenantId) {
-  const row = await Setting.findOne({ where: { tenantId, key: 'organization' } });
-  return getTaxFromOrganizationSettings(row?.value || {});
+  if (!tenantId) {
+    return getTaxFromOrganizationSettings({});
+  }
+  if (taxConfigCache.has(tenantId)) {
+    return taxConfigCache.get(tenantId);
+  }
+
+  const row = await Setting.findOne({
+    where: { tenantId, key: 'organization' },
+    attributes: ['value']
+  });
+  const config = getTaxFromOrganizationSettings(row?.value || {});
+  taxConfigCache.set(tenantId, config);
+  return config;
+}
+
+/**
+ * Clear cached tax config after organization settings change.
+ * @param {string} [tenantId] - Tenant ID; omit to flush all tenants
+ */
+function invalidateTaxConfigCache(tenantId) {
+  if (tenantId) {
+    taxConfigCache.del(tenantId);
+    return;
+  }
+  taxConfigCache.flushAll();
+}
+
+/**
+ * Populate tax cache from organization settings already loaded (no extra DB query).
+ * @param {string} tenantId
+ * @param {Record<string, unknown>} organizationValue
+ */
+function warmTaxConfigCache(tenantId, organizationValue = {}) {
+  if (!tenantId) return;
+  const config = getTaxFromOrganizationSettings(organizationValue);
+  taxConfigCache.set(tenantId, config);
+}
+
+/**
+ * Check whether a tenant tax config is already cached.
+ * @param {string} tenantId
+ * @returns {boolean}
+ */
+function hasTaxConfigCache(tenantId) {
+  return !!tenantId && taxConfigCache.has(tenantId);
 }
 
 /**
@@ -128,5 +180,8 @@ module.exports = {
   normalizeTaxConfig,
   getTaxFromOrganizationSettings,
   getTaxConfigForTenant,
+  invalidateTaxConfigCache,
+  warmTaxConfigCache,
+  hasTaxConfigCache,
   validateMergedTaxPayload
 };

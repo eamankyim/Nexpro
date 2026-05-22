@@ -4,6 +4,7 @@ type InvoiceParams = {
   page?: number;
   limit?: number;
   status?: string;
+  search?: string;
   customerId?: string;
   startDate?: string;
   endDate?: string;
@@ -33,6 +34,26 @@ export const invoiceService = {
 
   updateInvoice: async (id: string, data: object) => {
     const res = await api.put(`/invoices/${id}`, data);
+    return res.data;
+  },
+
+  recordPayment: async (id: string, paymentData: object) => {
+    const res = await api.post(`/invoices/${id}/payment`, paymentData);
+    return res.data;
+  },
+
+  send: async (id: string) => {
+    const res = await api.post(`/invoices/${id}/send`);
+    return res.data;
+  },
+
+  cancel: async (id: string) => {
+    const res = await api.post(`/invoices/${id}/cancel`);
+    return res.data;
+  },
+
+  markAsPaid: async (id: string) => {
+    const res = await api.post(`/invoices/${id}/mark-paid`);
     return res.data;
   },
 };

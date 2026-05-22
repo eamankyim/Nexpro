@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { InviteToken, User, Tenant } = require('../models');
+const { InviteToken, User, Tenant, Shop } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const activityLogger = require('../services/activityLogger');
@@ -8,6 +8,11 @@ const { inviteEmail: inviteEmailTemplate } = require('../services/emailTemplates
 const { validateSeatLimit, getSeatUsageSummary } = require('../utils/seatLimitHelper');
 const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
 const { getFrontendBaseUrl } = require('../utils/frontendUrl');
+const { isShopTenant } = require('../utils/shopUtils');
+const {
+  enrichInviteForDisplay,
+  resolveInviteTargetDisplay,
+} = require('../utils/inviteDisplayName');
 
 // Generate a random 32-character token
 const generateToken = () => {
@@ -19,7 +24,7 @@ const generateToken = () => {
 // @access  Private/Admin
 exports.generateInvite = async (req, res, next) => {
   try {
-    const { email, role, name, expiresInDays, studioLocationIds } = req.body;
+    const { email, role, name, expiresInDays, studioLocationIds, shopIds } = req.body;
     const inviteRequestId = `inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     console.log('[Invite] Generating invite for:', {
       inviteRequestId,
@@ -115,6 +120,28 @@ exports.generateInvite = async (req, res, next) => {
       throw error;
     }
 
+    const normalizedShopIds = Array.isArray(shopIds) ? shopIds.filter(Boolean) : [];
+    const normalizedStudioLocationIds = Array.isArray(studioLocationIds)
+      ? studioLocationIds.filter(Boolean)
+      : [];
+
+    const tenant = await Tenant.findByPk(req.tenantId, { attributes: ['id', 'businessType'] });
+    if (normalizedShopIds.length && tenant && isShopTenant(tenant)) {
+      const valid = await Shop.count({
+        where: {
+          tenantId: req.tenantId,
+          id: { [Op.in]: normalizedShopIds },
+          isActive: true,
+        },
+      });
+      if (valid !== normalizedShopIds.length) {
+        return res.status(400).json({
+          success: false,
+          message: 'One or more selected shops are invalid',
+        });
+      }
+    }
+
     // Generate token
     const token = generateToken();
 
@@ -131,9 +158,8 @@ exports.generateInvite = async (req, res, next) => {
       createdBy: req.user.id,
       expiresAt,
       metadata: {
-        studioLocationIds: Array.isArray(studioLocationIds)
-          ? studioLocationIds.filter(Boolean)
-          : [],
+        studioLocationIds: normalizedStudioLocationIds,
+        shopIds: normalizedShopIds,
       },
     });
 
@@ -203,8 +229,17 @@ exports.generateInvite = async (req, res, next) => {
         const inviter = await User.findByPk(req.user.id, { attributes: ['name', 'email'] });
         const tenant = await Tenant.findByPk(req.tenantId, { attributes: ['name'] });
         const inviterName = inviter?.name || inviter?.email || 'A team member';
-        const organizationName = tenant?.name || 'African Business Suite';
-        const { subject, html, text } = inviteEmailTemplate(normalizedEmail, inviteUrl, inviterName, organizationName);
+        const { displayName: organizationName } = await resolveInviteTargetDisplay({
+          tenantId: req.tenantId,
+          tenantName: tenant?.name,
+          metadata: invite.metadata || {},
+        });
+        const { subject, html, text } = inviteEmailTemplate(
+          normalizedEmail,
+          inviteUrl,
+          inviterName,
+          organizationName || tenant?.name || 'African Business Suite'
+        );
         const tenantEmailConfig = await emailService.getConfig(req.tenantId);
         let result = null;
         let usedProvider = platformConfig?.provider || 'unknown';
@@ -349,12 +384,14 @@ exports.validateInvite = async (req, res, next) => {
       });
     }
 
+    const enriched = await enrichInviteForDisplay(invite);
+
     res.status(200).json({
       success: true,
-      data: invite
+      data: enriched,
     });
   } catch (error) {
-    console.error('[Invite] Error generating invite:', error.message);
+    console.error('[Invite] Error validating invite:', error.message);
     console.error('Full error:', error);
     next(error);
   }

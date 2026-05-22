@@ -1,37 +1,39 @@
 import api from './api';
+import { buildScopedQueryString } from '../utils/shopScope';
+
+const scopedGet = (path, params = {}) => {
+  const queryString = buildScopedQueryString(params);
+  return api.get(queryString ? `${path}?${queryString}` : path);
+};
 
 const dashboardService = {
   // Get dashboard overview (optionally includes comparison when filterType provided)
   getOverview: async (startDate = null, endDate = null, filterType = null) => {
-    const params = new URLSearchParams();
-    if (startDate) params.append('startDate', startDate);
-    if (endDate) params.append('endDate', endDate);
-    if (filterType) params.append('filterType', filterType);
-
-    const queryString = params.toString();
-    const url = queryString ? `/dashboard/overview?${queryString}` : '/dashboard/overview';
-    return await api.get(url);
+    const params = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    if (filterType) params.filterType = filterType;
+    return scopedGet('/dashboard/overview', params);
   },
 
   // Get revenue by month
   getRevenueByMonth: async (year) => {
-    const params = year ? `?year=${year}` : '';
-    return await api.get(`/dashboard/revenue-by-month${params}`);
+    return scopedGet('/dashboard/revenue-by-month', year ? { year } : {});
   },
 
   // Get expenses by category
   getExpensesByCategory: async () => {
-    return await api.get('/dashboard/expenses-by-category');
+    return scopedGet('/dashboard/expenses-by-category');
   },
 
   // Get top customers
   getTopCustomers: async (limit = 10) => {
-    return await api.get(`/dashboard/top-customers?limit=${limit}`);
+    return scopedGet('/dashboard/top-customers', { limit });
   },
 
   // Get job status distribution
   getJobStatusDistribution: async () => {
-    return await api.get('/dashboard/job-status-distribution');
+    return scopedGet('/dashboard/job-status-distribution');
   }
 };
 

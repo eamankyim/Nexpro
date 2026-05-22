@@ -51,6 +51,10 @@ const IMPORT_COLUMNS = {
   ],
 };
 
+const TEMPLATE_COLUMNS = {
+  products: ['Product Name', 'Selling Price', 'Stock'],
+};
+
 /**
  * Get CSV template (header row only) for an entity.
  * @param {'products'|'materials'|'equipment'} entity
@@ -59,7 +63,8 @@ const IMPORT_COLUMNS = {
 function getTemplateCSV(entity) {
   const cols = IMPORT_COLUMNS[entity];
   if (!cols) return '';
-  const headers = cols.map((c) => escapeCSV(c.header));
+  const templateHeaders = TEMPLATE_COLUMNS[entity];
+  const headers = (templateHeaders || cols.map((c) => c.header)).map(escapeCSV);
   return headers.join(',') + '\n';
 }
 

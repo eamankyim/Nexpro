@@ -30,6 +30,7 @@ const {
   updatePOSConfig,
   uploadProfilePicture,
   uploadOrganizationLogo,
+  requestDataDeletion,
   getPaymentCollectionBanks,
   getPaymentCollectionSettings,
   getPaystackWorkspaceTransactions,
@@ -89,6 +90,7 @@ router
   .put(updateProfile);
 
 router.post('/profile/avatar', profileUploader.single('file'), uploadProfilePicture);
+router.post('/data-deletion-request', requestDataDeletion);
 
 router
   .route('/organization')

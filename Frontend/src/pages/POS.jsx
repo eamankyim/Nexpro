@@ -2,7 +2,7 @@
  * POS (Point of Sale) Page
  *
  * Digital POS that runs on phone, tablet, and laptop. Full-featured checkout:
- * - Offline-first with product/customer cache and pending-sales queue
+ * - Online-only checkout (use mobile app for offline sales)
  * - Mobile money (direct MTN/AirtelTigo APIs; Paystack fallback), cash, card, credit
  * - Multi-channel receipts (Print, SMS, WhatsApp, Email)
  * - Responsive layout for phone, tablet, and desktop
@@ -13,7 +13,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { computeDocumentTax } from '../utils/taxCalculationClient';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { RefreshCw, Users, Loader2, Camera, CreditCard, UserPlus, Phone } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -40,9 +40,11 @@ import POSConnectionStatus from '../components/pos/POSConnectionStatus';
 import POSScanMode from '../components/pos/POSScanMode';
 
 // Hooks and Services
-import { usePOSOffline } from '../hooks/usePOSOffline';
+import { usePOS } from '../hooks/usePOS';
 import { usePOSConfig } from '../hooks/usePOSConfig';
+import { usePaymentSettings } from '../hooks/usePaymentSettings';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
@@ -54,7 +56,9 @@ import productService from '../services/productService';
 
 // Utils
 import { showSuccess, showError } from '../utils/toast';
+import { guardOnline, ONLINE_REQUIRED_MESSAGE } from '../utils/onlineRequired';
 import { normalizePhone, validatePhone } from '../utils/phoneUtils';
+import { mergeBranchOrganization } from '../utils/branchOrganization';
 import { CURRENCY, DEBOUNCE_DELAYS, QUERY_CACHE } from '../constants';
 
 /**
@@ -71,6 +75,12 @@ const generateCartItemId = () => {
   return `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 };
 
+const isProductOutOfStock = (product) => {
+  if (!product || product.trackStock === false) return false;
+  const qty = Number(product.quantityOnHand);
+  return Number.isFinite(qty) && qty <= 0;
+};
+
 /**
  * Customer selection dialog: search existing, walk-in, or quick-add (phone + name)
  */
@@ -81,16 +91,18 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
   const [quickAddLoading, setQuickAddLoading] = useState(false);
   const [quickAddError, setQuickAddError] = useState(null);
   const debouncedSearch = useDebounce(searchQuery, DEBOUNCE_DELAYS.SEARCH);
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
 
   const { data: customersData, isLoading } = useQuery({
-    queryKey: ['customers', 'pos', debouncedSearch],
+    queryKey: ['customers', 'pos', activeShopId, debouncedSearch],
     queryFn: () => customerService.getCustomers({
       search: debouncedSearch,
       limit: 20,
       isActive: true
     }),
     staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
-    enabled: isOpen
+    enabled: isOpen && (!shopContext?.isShopWorkspace || !!activeShopId)
   });
 
   const customers = Array.isArray(customersData?.data) ? customersData.data : (customersData?.data?.customers || customersData?.customers || []);
@@ -267,28 +279,21 @@ const POS = () => {
   const isShop = businessType === 'shop';
   const isRestaurant = shopType === 'restaurant';
   const tenantIdForProducts = activeTenantId || (typeof localStorage !== 'undefined' ? localStorage.getItem('activeTenantId') : null);
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
 
   const { posConfig } = usePOSConfig();
 
-  // Offline support hook
   const {
     isOnline,
-    pendingCount,
-    isSyncing,
-    lastSyncError,
-    isProductsCached,
     searchProducts,
     getProductByBarcode,
     resolveProductFromQRPayload,
-    refreshProductCache,
-    syncProductsToCache,
-    getCachedProducts,
     processSale,
-    syncPendingSales,
     getQuickAddItems,
     addQuickItem,
-    removeQuickAddItem
-  } = usePOSOffline();
+    removeQuickAddItem,
+  } = usePOS();
 
   // Cart state
   const [cart, setCart] = useState([]);
@@ -315,14 +320,13 @@ const POS = () => {
   const [mobileMoneyError, setMobileMoneyError] = useState('');
   const [mobileMoneyFallbackMode, setMobileMoneyFallbackMode] = useState(null); // null | 'manual'
 
-  /** When offline, always show manual MoMo in payment modal (record payment, no Paystack request) */
   useEffect(() => {
     if (!isOnline) {
       setMobileMoneyFallbackMode('manual');
-    } else {
+    } else if (mobileMoneyFallbackMode === 'manual' && mobileMoneyState === 'idle') {
       setMobileMoneyFallbackMode(null);
     }
-  }, [isOnline]);
+  }, [isOnline, mobileMoneyFallbackMode, mobileMoneyState]);
 
   /** When waiting for MoMo, WebSocket can push sale completed so we stop polling and show success immediately */
   const waitingMoMoSaleIdRef = useRef(null);
@@ -350,21 +354,17 @@ const POS = () => {
   const { isMobile: isMobileWidth } = useResponsive();
   const [isMobile, setIsMobile] = useState(isMobileWidth);
 
-  const [fallbackProducts, setFallbackProducts] = useState([]);
-
   const { data: activeProductsFromQuery, refetch: refetchActiveProducts, isLoading: productsLoading } = useQuery({
-    queryKey: ['products', 'active', tenantIdForProducts],
+    queryKey: ['products', 'active', tenantIdForProducts, activeShopId],
     queryFn: () => productService.getAllActiveProducts(),
-    enabled: !!tenantIdForProducts,
+    enabled: !!tenantIdForProducts && (!isShop || !!activeShopId),
     staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
-    placeholderData: keepPreviousData,
     refetchOnWindowFocus: false,
   });
-  const allProducts = useMemo(() => {
-    const fromQuery = Array.isArray(activeProductsFromQuery) ? activeProductsFromQuery : [];
-    if (fromQuery.length > 0) return fromQuery;
-    return fallbackProducts;
-  }, [activeProductsFromQuery, fallbackProducts]);
+  const allProducts = useMemo(
+    () => (Array.isArray(activeProductsFromQuery) ? activeProductsFromQuery : []),
+    [activeProductsFromQuery]
+  );
 
   const cartQuantityByProductId = useMemo(() => {
     const map = {};
@@ -391,40 +391,18 @@ const POS = () => {
     staleTime: QUERY_CACHE.STALE_TIME_STABLE
   });
 
-  // Payment collection must be configured (bank or MoMo) before using POS so funds go to tenant
-  const { data: paymentCollectionData, isLoading: paymentCollectionLoading } = useQuery({
-    queryKey: ['settings', 'payment-collection', activeTenantId],
-    queryFn: () => settingsService.getPaymentCollectionSettings(),
-    staleTime: QUERY_CACHE.STALE_TIME_STABLE,
-    enabled: !!activeTenantId && isShop
-  });
-  const paymentCollection = paymentCollectionData?.data ?? paymentCollectionData;
-  const paymentCollectionConfigured = Boolean(
-    paymentCollection?.configured === true ||
-    paymentCollection?.settlement_type === 'momo' ||
-    paymentCollection?.hasSubaccount === true
-  );
-
-  // Only require payment collection for POS when online-payment flows are enabled.
-  const { data: notificationChannelsData } = useQuery({
-    queryKey: ['settings', 'notification-channels'],
-    queryFn: settingsService.getNotificationChannels,
-    staleTime: QUERY_CACHE.STALE_TIME_STABLE,
-    enabled: !!activeTenantId && isShop,
-  });
-  const { data: quoteWorkflowData } = useQuery({
-    queryKey: ['settings', 'quote-workflow'],
-    queryFn: settingsService.getQuoteWorkflow,
-    staleTime: QUERY_CACHE.STALE_TIME_STABLE,
-    enabled: !!activeTenantId && isShop,
-  });
-  const onlinePaymentRequired = Boolean(
-    notificationChannelsData?.autoSendInvoiceToCustomer === true ||
-    (quoteWorkflowData?.onAccept || 'record_only') === 'create_job_invoice_and_send'
-  );
+  const {
+    paymentCollectionConfigured,
+    onlinePaymentRequired,
+    isLoading: paymentCollectionLoading,
+  } = usePaymentSettings();
 
   // API returns { success, data: organization }; axios wraps as { data: { success, data: organization } }
   const organizationSettings = orgSettingsData?.data?.data || orgSettingsData?.data?.organization || orgSettingsData?.data || {};
+  const scopedOrganizationSettings = useMemo(
+    () => mergeBranchOrganization(shopContext?.activeShop || null, organizationSettings),
+    [shopContext?.activeShop, organizationSettings]
+  );
 
   const posTaxConfig = useMemo(() => {
     const t = organizationSettings?.tax || {};
@@ -437,31 +415,12 @@ const POS = () => {
 
   // Fetch customers list for cart dropdown (Select existing)
   const { data: customersData } = useQuery({
-    queryKey: ['customers', 'pos-list', activeTenantId],
+    queryKey: ['customers', 'pos-list', activeTenantId, activeShopId],
     queryFn: () => customerService.getCustomers({ limit: 200, isActive: true }),
     staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
-    enabled: !!activeTenantId
+    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId)
   });
   const customersList = Array.isArray(customersData?.data) ? customersData.data : (customersData?.data?.customers || customersData?.customers || []);
-
-  // Load fallback from offline cache; products come from React Query (no duplicate fetch on mount)
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        const products = await getCachedProducts();
-        setFallbackProducts(products);
-      } catch (error) {
-        console.error('[POS] Failed to load POS data:', error);
-      }
-    };
-    loadData();
-  }, [getCachedProducts]);
-
-  // Sync React Query product list to offline cache so one fetch serves both UI and offline
-  useEffect(() => {
-    const list = Array.isArray(activeProductsFromQuery) ? activeProductsFromQuery : [];
-    if (list.length > 0) syncProductsToCache(list);
-  }, [activeProductsFromQuery, syncProductsToCache]);
 
   const cartTotals = useMemo(() => {
     const lines = cart.map((item) => ({
@@ -491,6 +450,11 @@ const POS = () => {
 
   // Add product to cart
   const addToCart = useCallback((product) => {
+    if (isProductOutOfStock(product)) {
+      showError(null, `${product.name || 'Product'} is out of stock and cannot be sold.`);
+      return;
+    }
+
     setCart(prevCart => {
       // Check if product already in cart
       const existingIndex = prevCart.findIndex(item => 
@@ -579,24 +543,18 @@ const POS = () => {
 
     const apply = async () => {
       try {
-        let product = null;
-        const products = await getCachedProducts();
-        product = products.find((p) => p.id === addProductId);
-        if (!product) {
-          const res = await productService.getProductById(addProductId);
-          const data = res?.data?.data ?? res?.data ?? res;
-          product = data?.id ? data : null;
-        }
-        if (product) {
-          addToCart(product);
-        }
+        if (!guardOnline(showError)) return;
+        const res = await productService.getProductById(addProductId);
+        const data = res?.data?.data ?? res?.data ?? res;
+        const product = data?.id ? data : null;
+        if (product) addToCart(product);
       } catch (_) {
         // ignore
       }
       navigateRef('/pos', { replace: true, state: {} });
     };
     apply();
-  }, [location.state?.addProductId, getCachedProducts, addToCart, navigateRef]);
+  }, [location.state?.addProductId, addToCart, navigateRef]);
 
   // Update cart item quantity
   const updateCartItemQuantity = useCallback((itemId, quantity) => {
@@ -647,6 +605,7 @@ const POS = () => {
 
   // Handle checkout: if quick-add phone/name filled but no selected customer, validate, find-or-create then open payment
   const handleCheckout = useCallback(async () => {
+    if (!guardOnline(showError)) return;
     if (cart.length === 0) {
       showError('Cart is empty');
       return;
@@ -709,19 +668,15 @@ const POS = () => {
         saleData.sendToKitchen = paymentDetails.sendToKitchen ?? true;
       }
 
-      // Process sale (online or queue offline)
       const result = await processSale(saleData);
 
       if (result.success) {
-        // Use backend sale (includes invoice, paymentMethod) when online; fallback for offline/queued
         const saleObj = result.sale || {
-          id: result.localId,
-          saleNumber: `OFFLINE-${result.localId ?? Date.now()}`,
           total: cartTotals.total,
           change: paymentDetails.change || 0,
           items: cart,
           paymentMethod: paymentDetails.paymentMethod,
-          ...saleData
+          ...saleData,
         };
 
         setCompletedSale(saleObj);
@@ -742,9 +697,7 @@ const POS = () => {
         const skipReceiptModal = receiptMode === 'auto_send' && integratedSendChannels.length === 0;
         setReceiptModalOpen(!skipReceiptModal);
 
-        if (result.isQueued) {
-          showSuccess('Sale saved offline. Will sync when connected.');
-        } else if (isRestaurant && saleObj?.saleNumber && (paymentDetails.sendToKitchen ?? true)) {
+        if (isRestaurant && saleObj?.saleNumber && (paymentDetails.sendToKitchen ?? true)) {
           showSuccess(`Order placed! #${saleObj.saleNumber} has been sent to the kitchen.`);
         } else {
           showSuccess('Sale completed successfully!');
@@ -779,7 +732,7 @@ const POS = () => {
         return;
       }
       if (!isOnline) {
-        showError('You are offline. Use manual MoMo or cash.');
+        showError(ONLINE_REQUIRED_MESSAGE);
         setMobileMoneyFallbackMode('manual');
         return;
       }
@@ -997,26 +950,15 @@ const POS = () => {
 
   // Handle send receipt
   const handleSendReceipt = useCallback(async ({ saleId, channels, phone, email }) => {
-    try {
-      await saleService.sendReceipt(saleId, { channels, phone, email });
-    } catch (error) {
-      // If offline or API not available, show info message
-      if (!isOnline) {
-        showSuccess('Receipt will be sent when back online');
-        return;
-      }
-      throw error;
-    }
-  }, [isOnline]);
+    if (!guardOnline(showError)) return;
+    await saleService.sendReceipt(saleId, { channels, phone, email });
+  }, []);
 
-  // Handle refresh products
   const handleRefreshProducts = useCallback(async () => {
-    await refreshProductCache();
+    if (!guardOnline(showError)) return;
     await refetchActiveProducts();
-    const products = await getCachedProducts();
-    setFallbackProducts(products);
     showSuccess('Products refreshed');
-  }, [refreshProductCache, refetchActiveProducts, getCachedProducts]);
+  }, [refetchActiveProducts]);
 
   // Handle process sale for scan mode
   const handleProcessSaleForScanMode = useCallback(async (saleData) => {
@@ -1025,16 +967,9 @@ const POS = () => {
 
   // Handle send receipt for scan mode
   const handleSendReceiptForScanMode = useCallback(async (saleId, options) => {
-    try {
-      await saleService.sendReceipt(saleId, options);
-    } catch (error) {
-      if (!isOnline) {
-        // Receipt will be sent when back online
-        return;
-      }
-      throw error;
-    }
-  }, [isOnline]);
+    if (!guardOnline(showError)) return;
+    await saleService.sendReceipt(saleId, options);
+  }, []);
 
   if (!isShop) {
     return (
@@ -1136,12 +1071,7 @@ const POS = () => {
               </Tooltip>
 
               <div className="flex-shrink-0">
-                <POSConnectionStatus
-                  isOnline={isOnline}
-                  pendingCount={pendingCount}
-                  isSyncing={isSyncing}
-                  lastSyncError={lastSyncError}
-                />
+                <POSConnectionStatus isOnline={isOnline} />
               </div>
             </div>
             <div className="flex items-center justify-end gap-2">
@@ -1178,12 +1108,7 @@ const POS = () => {
               <TooltipContent>Open barcode scanner for quick add</TooltipContent>
             </Tooltip>
 
-            <POSConnectionStatus
-              isOnline={isOnline}
-              pendingCount={pendingCount}
-              isSyncing={isSyncing}
-              lastSyncError={lastSyncError}
-            />
+            <POSConnectionStatus isOnline={isOnline} />
 
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1191,10 +1116,10 @@ const POS = () => {
                   variant="outline"
                   size="icon"
                   onClick={handleRefreshProducts}
-                  disabled={!isOnline || isSyncing}
+                  disabled={!isOnline}
                   className="hidden md:flex"
                 >
-                  <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                  <RefreshCw className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Refresh product list</TooltipContent>
@@ -1344,7 +1269,7 @@ const POS = () => {
         }}
         sale={completedSale}
         customer={customerForReceipt}
-        organizationSettings={organizationSettings}
+        organizationSettings={scopedOrganizationSettings}
         onSendReceipt={handleSendReceipt}
       />
 

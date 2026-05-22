@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { isOriginAllowed } = require('../utils/corsUtils');
+const { isOriginAllowed, ALLOWED_CORS_HEADERS } = require('../utils/corsUtils');
 
 module.exports = {
   port: process.env.PORT || 5000,
@@ -18,17 +18,7 @@ module.exports = {
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'X-Requested-With',
-      'x-tenant-id',
-      'Accept',
-      'Accept-Language',
-      'Accept-Encoding',
-      'Cache-Control',
-      'Pragma',
-    ],
+    allowedHeaders: ALLOWED_CORS_HEADERS,
     preflightContinue: true,
   },
   

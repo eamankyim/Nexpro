@@ -6,6 +6,9 @@ yarn.lock
 .env
 .env.local
 .env.*.local
+.env.vercel
+.env.vercel.*
+.env.production
 
 # Logs
 logs

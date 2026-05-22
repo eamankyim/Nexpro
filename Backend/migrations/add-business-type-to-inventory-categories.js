@@ -14,10 +14,9 @@ const addBusinessTypeToInventoryCategories = async (options = {}) => {
   const { closeConnection = true } = options;
 
   const [catTableRows] = await sequelize.query(
-    `SELECT table_name FROM information_schema.tables
-     WHERE table_schema = 'public'
-       AND table_name IN ('materials_categories', 'inventory_categories')`,
-    { type: QueryTypes.SELECT }
+    `SELECT tablename AS table_name FROM pg_tables
+     WHERE schemaname = 'public'
+       AND tablename IN ('materials_categories', 'inventory_categories')`
   );
   const present = new Set((catTableRows || []).map((r) => r.table_name));
   const targetTable = present.has('materials_categories')

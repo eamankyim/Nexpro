@@ -12,11 +12,13 @@ const {
 } = require('../controllers/footTrafficController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { shopContext } = require('../middleware/shopContext');
 
 const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(shopContext);
 
 // Analytics and summary routes (must be before /:id to avoid conflict)
 router.get('/analytics', getTrafficAnalytics);

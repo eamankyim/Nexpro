@@ -1,4 +1,5 @@
 import { api } from './api';
+import { buildScopedQueryString } from '@/utils/shopScope';
 
 export const dashboardService = {
   getOverview: async (
@@ -6,19 +7,18 @@ export const dashboardService = {
     endDate?: string | null,
     filterType?: string | null
   ) => {
-    const params = new URLSearchParams();
-    if (startDate) params.append('startDate', startDate);
-    if (endDate) params.append('endDate', endDate);
-    if (filterType) params.append('filterType', filterType);
-    const query = params.toString();
+    const params: Record<string, string> = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    if (filterType) params.filterType = filterType;
+    const query = await buildScopedQueryString(params);
     const res = await api.get(query ? `/dashboard/overview?${query}` : '/dashboard/overview');
-    // Backend returns: { success: true, data: {...} }
-    // Mobile api returns full axios response, so res.data = { success: true, data: {...} }
     return res.data;
   },
 
   getJobStatusDistribution: async () => {
-    const res = await api.get('/dashboard/job-status-distribution');
+    const query = await buildScopedQueryString({});
+    const res = await api.get(query ? `/dashboard/job-status-distribution?${query}` : '/dashboard/job-status-distribution');
     return res.data;
   },
 };

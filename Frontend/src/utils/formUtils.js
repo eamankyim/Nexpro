@@ -1,3 +1,5 @@
+import { parseDecimalInput } from './formatNumber';
+
 /**
  * Form utilities for number inputs that allow clearing (empty string) before entering a value.
  * Use with value={numberInputValue(field.value)} and onChange={(e) => handleNumberChange(e, field.onChange)}.
@@ -21,7 +23,7 @@ export const handleNumberChange = (e, onChange) => {
     onChange('');
     return;
   }
-  const n = parseFloat(raw);
+  const n = parseDecimalInput(raw);
   onChange(Number.isNaN(n) ? '' : n);
 };
 

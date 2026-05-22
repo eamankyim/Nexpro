@@ -11,7 +11,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Empty } from '@/components/ui/empty';
-import { ChevronLeft, ChevronRight, Briefcase, Plus, Package } from 'lucide-react';
+import { EmptyState, getEmptyStateProps } from '@/components/ui/empty-state';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { ChevronLeft, ChevronRight, Briefcase } from 'lucide-react';
 import TableSkeleton from './TableSkeleton';
 import { useResponsive } from '../hooks/useResponsive';
 import dayjs from 'dayjs';
@@ -25,7 +27,9 @@ import dayjs from 'dayjs';
  * @param {number} pageSize - Number of items per page (default: 5)
  * @param {boolean} isSalesTable - Whether this is showing sales data (different columns)
  * @param {Function} onAddProduct - Callback when "Add Product" button is clicked (shown when no sales and isSalesTable)
+ * @param {Function} onOpenPOS - Callback to open point of sale (shown when no sales but products exist)
  * @param {boolean} hasProducts - Whether the tenant has any products (to show appropriate empty message)
+ * @param {boolean} productsLoading - Whether product availability is still loading
  */
 const DashboardJobsTable = memo(({
   jobs = [],
@@ -35,7 +39,9 @@ const DashboardJobsTable = memo(({
   pageSize = 5,
   isSalesTable = false,
   onAddProduct,
-  hasProducts = true
+  onOpenPOS,
+  hasProducts = true,
+  productsLoading = false
 }) => {
   const { isMobile } = useResponsive();
   const [pagination, setPagination] = useState({ current: 1, pageSize });
@@ -67,25 +73,26 @@ const DashboardJobsTable = memo(({
             <TableSkeleton rows={5} cols={5} />
           </div>
         ) : paginatedJobs.length === 0 ? (
-          <div className="flex items-center justify-center p-8">
-            {isSalesTable && !hasProducts && onAddProduct ? (
-              <div className="text-center space-y-3">
-                <Package className="h-12 w-12 mx-auto text-muted-foreground opacity-50" />
-                <div>
-                  <p className="text-muted-foreground">You haven't added any products yet.</p>
-                  <p className="text-sm text-muted-foreground mt-1">Add your products first before you can start selling.</p>
-                </div>
-                <Button
-                  onClick={onAddProduct}
-                  className="bg-brand hover:bg-brand-dark text-white"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Your First Product
-                </Button>
-              </div>
+          <div className="flex items-center justify-center p-6 sm:p-8 w-full">
+            {isSalesTable && !hasProducts && !productsLoading && onAddProduct ? (
+              <EmptyState
+                {...getEmptyStateProps(EMPTY_STATES.SALES_NO_PRODUCTS, {
+                  primary: onAddProduct,
+                })}
+                size="sm"
+                className="w-full max-w-md py-6"
+              />
+            ) : isSalesTable ? (
+              <EmptyState
+                {...getEmptyStateProps(EMPTY_STATES.SALES, {
+                  ...(onOpenPOS ? { primary: onOpenPOS } : {}),
+                })}
+                size="sm"
+                className="w-full max-w-md py-6"
+              />
             ) : (
               <Empty
-                description={isSalesTable ? "No sales found" : "No jobs found"}
+                description="No jobs found"
                 image={<Briefcase className="h-12 w-12 text-muted-foreground" />}
               />
             )}

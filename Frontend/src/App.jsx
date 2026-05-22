@@ -15,15 +15,13 @@ import AdminLayout from './layouts/AdminLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import RequireWorkspaceManager from './components/RequireWorkspaceManager';
 import TableSkeleton from './components/TableSkeleton';
-import { SHOW_SHOPS } from './constants';
 import PWAInstallBanner from './components/PWAInstallBanner';
 import PWAUpdatePrompt from './components/PWAUpdatePrompt';
 import { useSwipeBack } from './hooks/useSwipeBack';
 import { useIOSKeyboardFix } from './hooks/useKeyboardHandling';
-import Products from './pages/Products';
-import TourProvider from './components/tour/TourProvider';
-
-// Lazy load heavy pages for code splitting (Products is static to avoid duplicate React)
+// Lazy load heavy pages for code splitting
+const Products = lazy(() => import('./pages/Products'));
+const TourProvider = lazy(() => import('./components/tour/TourProvider'));
 const Login = lazy(() => import('./pages/Login'));
 const Signup = lazy(() => import('./pages/Signup'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
@@ -189,7 +187,8 @@ function AppContent() {
     >
       <MobileEnhancements />
       <SSOHandler />
-      <TourProvider>
+      <Suspense fallback={null}>
+        <TourProvider>
         <Suspense fallback={<PageLoader />}>
           <Routes>
           <Route path="/login" element={<Login />} />
@@ -254,7 +253,7 @@ function AppContent() {
             <Route path="employees" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Employees /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="payroll" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Payroll /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="accounting" element={<FeatureRoute featureKey="accounting"><RequireWorkspaceManager><Accounting /></RequireWorkspaceManager></FeatureRoute>} />
-            <Route path="shops" element={SHOW_SHOPS ? <FeatureRoute featureKey="shopsModule"><Shops /></FeatureRoute> : <Navigate to="/dashboard" replace />} />
+            <Route path="shops" element={<FeatureRoute featureKey="shopsModule"><Shops /></FeatureRoute>} />
             <Route path="studio-locations" element={<FeatureRoute featureKey="studioLocationsModule"><RequireWorkspaceManager><StudioLocations /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="pharmacies" element={<FeatureRoute featureKey="pharmacyOps"><Pharmacies /></FeatureRoute>} />
             <Route path="products" element={<FeatureRoute featureKey="products"><Products /></FeatureRoute>} />
@@ -297,7 +296,8 @@ function AppContent() {
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </Suspense>
-      </TourProvider>
+        </TourProvider>
+      </Suspense>
     </Router>
   );
 }

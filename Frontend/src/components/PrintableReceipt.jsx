@@ -1,7 +1,7 @@
 import React from 'react';
 import dayjs from 'dayjs';
 import { MapPin, Phone, Globe, Mail } from 'lucide-react';
-import logoImage from '../assets/nexus logo for dark bg.png';
+import { APP_LOGO_SRC } from '../config/appBrand';
 import { API_BASE_URL } from '../services/api';
 
 const formatAddress = (address) => {
@@ -49,7 +49,7 @@ const PrintableReceipt = ({
         : (API_BASE_URL
             ? `${API_BASE_URL}${organization.logoUrl.startsWith('/') ? '' : '/'}${organization.logoUrl}`
             : organization.logoUrl))
-    : logoImage;
+    : APP_LOGO_SRC;
 
   const companyInfo = {
     name: organization.name || 'Company Name',

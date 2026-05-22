@@ -16,6 +16,7 @@ const {
   getTenantVendors,
   getTenantJobs,
   updateTenantStatus,
+  deleteTenant,
   getBillingSummary,
   getBillingTenants,
   getSystemHealth,
@@ -235,6 +236,7 @@ router.get('/tenants/:id/access-audit', requirePlatformAdminPermission('tenants.
  *         description: Tenant not found.
  */
 router.patch('/tenants/:id/status', requirePlatformAdminPermission('tenants.manage_status'), updateTenantStatus);
+router.delete('/tenants/:id', requirePlatformAdminPermission('tenants.delete'), deleteTenant);
 router.patch('/tenants/:id/access', requirePlatformAdminPermission('tenants.update'), updateTenantAccess);
 
 /**

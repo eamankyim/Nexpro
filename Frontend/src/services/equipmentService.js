@@ -1,4 +1,5 @@
 import api from './api';
+import { withActiveShopScope } from '../utils/shopScope';
 
 const equipmentService = {
   getCategories: async () => api.get('/equipment/categories'),
@@ -7,7 +8,7 @@ const equipmentService = {
 
   getItems: async (params = {}) => {
     const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
+    Object.entries(withActiveShopScope(params)).forEach(([key, value]) => {
       if (value === undefined || value === null || value === '') return;
       searchParams.append(key, value);
     });

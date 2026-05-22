@@ -1,8 +1,9 @@
 import api from './api';
+import { buildScopedQueryString } from '../utils/shopScope';
 
 const quoteService = {
   getAll: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
+    const queryString = buildScopedQueryString(params);
     const url = queryString ? `/quotes?${queryString}` : '/quotes';
     return await api.get(url, {
       headers: {

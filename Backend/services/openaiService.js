@@ -1,3 +1,6 @@
+const { getAssistantSupportGuide, getPageContextHint } = require('../utils/assistantSupportGuide');
+const { formatDecimal } = require('../utils/formatNumber');
+
 let _anthropic = null;
 
 /** Lazy-init Anthropic client for Claude; null if ANTHROPIC_API_KEY is not set. */
@@ -131,18 +134,18 @@ const analyzeReportData = async (reportData, options = {}) => {
 6. **Strategic Suggestions** (long-term strategic advice based on the data patterns)
 
 Business Data Summary:
-- Revenue: GHS ${dataSummary.financial.revenue.toLocaleString()}
-- Expenses: GHS ${dataSummary.financial.expenses.toLocaleString()}
-- Net Profit: GHS ${dataSummary.financial.profit.toLocaleString()}
+- Revenue: GHS ${formatDecimal(dataSummary.financial.revenue)}
+- Expenses: GHS ${formatDecimal(dataSummary.financial.expenses)}
+- Net Profit: GHS ${formatDecimal(dataSummary.financial.profit)}
 - Profit Margin: ${dataSummary.financial.profitMargin.toFixed(2)}%
 - Revenue Change: ${dataSummary.financial.revenueChange >= 0 ? '+' : ''}${dataSummary.financial.revenueChange.toFixed(2)}%
 - Expense Change: ${dataSummary.financial.expenseChange >= 0 ? '+' : ''}${dataSummary.financial.expenseChange.toFixed(2)}%
 - Period: ${startDate} to ${endDate}
-- Outstanding Payments: GHS ${dataSummary.outstandingPayments.toLocaleString()}
+- Outstanding Payments: GHS ${formatDecimal(dataSummary.outstandingPayments)}
 
-${dataSummary.topItems.length > 0 ? `Top Performing ${terms.items}: ${dataSummary.topItems.slice(0, 5).map(item => `${item.name || item.item} (Revenue: GHS ${(item.revenue || 0).toLocaleString()})`).join(', ')}` : ''}
+${dataSummary.topItems.length > 0 ? `Top Performing ${terms.items}: ${dataSummary.topItems.slice(0, 5).map(item => `${item.name || item.item} (Revenue: GHS ${formatDecimal(item.revenue || 0)})`).join(', ')}` : ''}
 
-${dataSummary.expenseBreakdown.length > 0 ? `Expense Breakdown: ${dataSummary.expenseBreakdown.map(exp => `${exp.category}: GHS ${exp.amount.toLocaleString()}`).join(', ')}` : ''}
+${dataSummary.expenseBreakdown.length > 0 ? `Expense Breakdown: ${dataSummary.expenseBreakdown.map(exp => `${exp.category}: GHS ${formatDecimal(exp.amount)}`).join(', ')}` : ''}
 
 ${dataSummary.materials ? `Materials Status: ${dataSummary.materials.totalStocks} total items, ${dataSummary.materials.stockAvailabilityRate}% availability rate` : ''}
 ${customQuestion ? `\nThe user also asked: "${customQuestion}". Address this question specifically in your analysis.` : ''}
@@ -201,9 +204,9 @@ const generateExecutiveSummary = async (reportData, options = {}) => {
     const prompt = `Generate a concise executive summary (2-3 paragraphs) for a ${businessType} business report covering ${startDate} to ${endDate}.
 
 Key metrics:
-- Revenue: GHS ${(reportData.revenue || 0).toLocaleString()}
-- Expenses: GHS ${(reportData.expenses || 0).toLocaleString()}
-- Profit: GHS ${((reportData.revenue || 0) - (reportData.expenses || 0)).toLocaleString()}
+- Revenue: GHS ${formatDecimal(reportData.revenue || 0)}
+- Expenses: GHS ${formatDecimal(reportData.expenses || 0)}
+- Profit: GHS ${formatDecimal((reportData.revenue || 0) - (reportData.expenses || 0))}
 - Profit Margin: ${(reportData.profitMargin || 0).toFixed(2)}%
 - Revenue Change: ${(reportData.revenueChange || 0) >= 0 ? '+' : ''}${(reportData.revenueChange || 0).toFixed(2)}%
 
@@ -235,39 +238,41 @@ Write in a professional, executive-friendly tone. Highlight key achievements, ch
 const chatWithContext = async (messages, context, options = {}) => {
   try {
     const businessType = options.businessType || context.businessType || 'printing_press';
+    const pageContext = options.pageContext;
     const workspaceContact = context.workspaceContact || {};
-    const contextBlob = JSON.stringify(
-      {
-        businessType,
-        tenantName: context.tenantName,
-        workspaceContact,
-        thisMonth: context.thisMonth,
-        last3Months: context.last3Months,
-        receivables: context.receivables
-      },
-      null,
-      2
-    );
+    const supportGuide = getAssistantSupportGuide(businessType);
+    const pageHint = getPageContextHint(pageContext);
+    const contextBlob = JSON.stringify(context, null, 2);
 
-    const systemPrompt = `You are a helpful business assistant for a ${businessType} business using the African Business Suite (ABS) app. The user can ask questions about their business data (customers, revenue, expenses, sales), ask for predictions or summaries, ask how to use the app, or ask you to draft customer-facing emails or messages.
+    const systemPrompt = `You are ABS Assistant for ${context.tenantName || 'this workspace'} (${businessType} business in African Business Suite). If you introduce yourself, say only "I'm ABS Assistant."
 
-Current business data (use only this data for factual answers; currency is GHS):
+Your roles (detect from the user's message):
+1. **Business advisor** — insights, summaries, comparisons, collections advice, inventory/restock ideas using ONLY the JSON data below.
+2. **ABS support** — how to use the app; use the product support guide below with numbered steps and exact menu names.
+3. **Message drafter** — payment reminders, promos, thank-yous; plain text, professional tone.
+
+${pageHint ? `Current screen context: ${pageHint}\n` : ''}
+${context.dateFilter?.active
+  ? `IMPORTANT: The user selected the date filter "${context.dateFilter.periodLabel || 'Selected period'}" (${context.dateFilter.startDate} to ${context.dateFilter.endDate}). For revenue, expenses, profit, sales, and customer counts, use selectedPeriod in the JSON below—not thisMonth or today—unless the user explicitly asks about a different timeframe.\n`
+  : ''}
+Current business data (GHS; never invent numbers not in this JSON):
 ${contextBlob}
 
-Workspace contact (use for email signatures and drafts when values are non-null; never invent phone numbers or emails):
-- businessName, email, phone, website appear under workspaceContact. If email or phone is null, do not use bracket placeholders like [Your phone] in the final message—instead add one short line telling the user to add missing details in Workspace / organization settings before sending.
+Product support guide:
+${supportGuide}
 
-App features (for "how do I" questions): Dashboard, Customers, Jobs (studio-type businesses), Quotes, Invoices, Sales, Expenses, Products, Materials, Vendors, Reports, Marketing, Settings. Users can create quotes (Quotes → Create Quote), record invoice payments (Invoices → open invoice → Record Payment), add expenses (Expenses → Add expense), create jobs (Jobs → Create Job), run POS/sales (Sales or POS). To email or SMS customers in bulk (promotions, announcements), use Marketing: choose channels, enter subject and plain-text message, respect consent and local rules—do not tell users to export CSV and use an external mail client unless they explicitly want that.
+Workspace contact (for signatures; never invent email/phone):
+${JSON.stringify(workspaceContact, null, 2)}
 
-Rules:
-- Answer factual questions (e.g. "How many customers this month?") using only the data above. Be concise and cite numbers.
-- When the user asks how to do something in the app (e.g. "How do I create an expense?", "How do I create a quote?", "How do I record a payment?"), give clear step-by-step instructions. Mention the relevant page or menu (e.g. "Go to Expenses", "Open the invoice and click Record Payment"). Use a short numbered list. Keep it concise and actionable.
-- Use clear formatting: put the main number in a short first line, then use a bullet list for details. Use **bold** for key numbers and labels.
-- For predictions, use the trends in the data and clearly state: "This is an estimate, not a guarantee."
-- For summaries, highlight key numbers and one or two actionable points.
-- For financial summaries/analysis, always assess receivables risk from context.receivables. If receivables.totalOutstanding is material vs thisMonth.revenue (especially when outstanding >= 30% of thisMonth.revenue, or thisMonth.revenue is low and outstanding is high), explicitly call out outstanding risk and recommend collection actions.
-- Customer-facing email drafts (promotions, newsletters, announcements): Output plain text suitable for ABS Marketing → Email (no HTML). Format exactly: first line \`Subject: ...\`, then a blank line, then the body only. Open with a friendly line (prefer "Hi there," unless the user asked for "Dear Customer" style). Include a clear single call to action (e.g. reply, call, visit). Add offers as short bullets if appropriate. Include offer end date if the user gave one; if not, omit or ask one clarifying question at the end instead of inventing a date. Add one brief line for terms if promotions are described (e.g. "Cannot be combined with other offers" only when relevant). Sign off with the business name from workspaceContact.businessName or tenantName. Use workspaceContact.phone and workspaceContact.email in the signature when present; otherwise one line: remind them to add phone/email in workspace settings. Avoid decorative emoji in professional B2B copy unless the user requests a casual tone.
-- Keep replies concise. Do not make up data not present in the context.`;
+Formatting rules:
+- Start with one short direct answer line when possible.
+- Use **bold** for key numbers and labels.
+- Use bullet lists or numbered steps (1. 2. 3.) as appropriate.
+- For predictions, end with: "This is an estimate, not a guarantee."
+- For receivables: if totalOutstanding is high vs (selectedPeriod?.revenue ?? thisMonth.revenue), recommend specific collection actions and name topDebtors when present.
+- For low stock: use inventory.lowStockProducts when present.
+- Email/SMS drafts: first line \`Subject: ...\`, blank line, then body. Sign with business name and contact when available.
+- Keep replies concise. If data is missing, say what is missing instead of guessing.`;
 
     const anthropic = requireAnthropic();
     const claudeMessages = messages.map((m) => ({ role: m.role, content: m.content }));

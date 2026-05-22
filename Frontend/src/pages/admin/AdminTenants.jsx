@@ -9,6 +9,7 @@ import StatusChip from '../../components/StatusChip';
 import { useSmartSearch } from '../../context/SmartSearchContext';
 import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../../constants';
+import { formatInteger } from '../../utils/formatNumber';
 import { showSuccess, showError, handleApiError } from '../../utils/toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,16 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -116,6 +127,11 @@ const AdminTenants = () => {
     featureOverrides: {},
   });
   const [tenantDetailTab, setTenantDetailTab] = useState('overview');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirmSlug, setDeleteConfirmSlug] = useState('');
+  const [deletingTenant, setDeletingTenant] = useState(false);
+
+  const canDeleteTenants = hasPermission('tenants.delete');
 
   const canonicalPlanCatalog = useMemo(() => {
     const fallbackLabels = {
@@ -185,6 +201,30 @@ const AdminTenants = () => {
       handleApiError(error, { context: 'update tenant status' });
     } finally {
       setStatusUpdating(false);
+    }
+  };
+
+  const handleDeleteTenant = async () => {
+    if (!selectedTenant?.id) return;
+    const slug = String(deleteConfirmSlug || '').trim();
+    if (slug !== selectedTenant.slug) {
+      showError('Type the tenant slug exactly to confirm deletion.');
+      return;
+    }
+
+    setDeletingTenant(true);
+    try {
+      await adminService.deleteTenant(selectedTenant.id, slug);
+      showSuccess(`Tenant "${selectedTenant.name}" was permanently deleted.`);
+      setDeleteDialogOpen(false);
+      setDeleteConfirmSlug('');
+      setDrawerVisible(false);
+      setSelectedTenant(null);
+      await fetchTenants(pagination.current, pagination.pageSize);
+    } catch (error) {
+      handleApiError(error, { context: 'delete tenant' });
+    } finally {
+      setDeletingTenant(false);
     }
   };
 
@@ -578,7 +618,7 @@ const AdminTenants = () => {
                   <div className="min-w-0">
                     <p className="text-sm text-muted-foreground">{label}</p>
                     <p className="text-xl font-semibold text-foreground tabular-nums">
-                      {typeof value === 'number' ? value.toLocaleString() : value}
+                      {typeof value === 'number' ? formatInteger(value) : value}
                     </p>
                   </div>
                 </div>
@@ -769,6 +809,19 @@ const AdminTenants = () => {
                   >
                     Suspend
                   </Button>
+                  {canDeleteTenants && selectedTenant.slug !== 'platform' && (
+                    <Button
+                      variant="outline"
+                      className="border-destructive text-destructive hover:bg-destructive/10"
+                      onClick={() => {
+                        setDeleteConfirmSlug('');
+                        setDeleteDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Delete
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
 
@@ -980,6 +1033,52 @@ const AdminTenants = () => {
           )}
         </SheetContent>
       </Sheet>
+
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete tenant permanently?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3 text-sm text-muted-foreground">
+                <p>
+                  This will delete <strong className="text-foreground">{selectedTenant?.name}</strong> and
+                  all workspace data. User accounts that belong only to this tenant will also be removed.
+                </p>
+                <p>
+                  Type <strong className="text-foreground">{selectedTenant?.slug}</strong> below to confirm.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="py-2">
+            <Label htmlFor="delete-tenant-slug">Tenant slug</Label>
+            <Input
+              id="delete-tenant-slug"
+              value={deleteConfirmSlug}
+              onChange={(e) => setDeleteConfirmSlug(e.target.value)}
+              placeholder={selectedTenant?.slug || 'tenant-slug'}
+              className="mt-1.5"
+              autoComplete="off"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingTenant}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                handleDeleteTenant();
+              }}
+              disabled={
+                deletingTenant ||
+                deleteConfirmSlug.trim() !== (selectedTenant?.slug || '')
+              }
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingTenant ? 'Deleting…' : 'Delete permanently'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 };

@@ -15,10 +15,15 @@ const normalizeSubscriptionPlanId = (plan = '') =>
 const { baseUploadDir } = require('../middleware/upload');
 const { seedDefaultCategories } = require('../utils/categorySeeder');
 const { sanitizePayload } = require('../utils/tenantUtils');
-const { normalizeTaxConfig, validateMergedTaxPayload } = require('../utils/taxConfig');
+const {
+  normalizeTaxConfig,
+  validateMergedTaxPayload,
+  warmTaxConfigCache
+} = require('../utils/taxConfig');
 const { normalizeTaskAutomation } = require('../utils/taskAutomationConfig');
 const { getCustomerSourceOptions } = require('../config/customerSourceOptions');
 const { getLeadSourceOptions } = require('../config/leadSourceOptions');
+const { notifyDataDeletionRequested } = require('../services/platformAdminNotificationService');
 const { sequelize } = require('../config/database');
 const { Op } = require('sequelize');
 
@@ -242,6 +247,57 @@ exports.updateProfile = async (req, res, next) => {
   }
 };
 
+// @desc    Request account and workspace data deletion
+// @route   POST /api/settings/data-deletion-request
+// @access  Private
+exports.requestDataDeletion = async (req, res, next) => {
+  try {
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const tenant = req.tenant || (req.tenantId ? await Tenant.findByPk(req.tenantId) : null);
+    const reason =
+      typeof req.body?.reason === 'string' && req.body.reason.trim()
+        ? req.body.reason.trim().slice(0, 1000)
+        : null;
+
+    const payload = {
+      requestedAt: new Date().toISOString(),
+      status: 'pending',
+      userId: user.id,
+      userEmail: user.email,
+      userName: user.name || null,
+      tenantId: req.tenantId || null,
+      tenantName: tenant?.name || null,
+      reason,
+      source: 'mobile_app',
+    };
+
+    await upsertSettingValue(
+      req.tenantId,
+      `data_deletion_request_${user.id}`,
+      payload,
+      'Mobile account and data deletion request'
+    );
+
+    setImmediate(() => {
+      notifyDataDeletionRequested(payload).catch((err) => {
+        console.error('[settings] Data deletion request email failed:', err?.message || err);
+      });
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Deletion request received',
+      data: payload,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
 exports.uploadProfilePicture = async (req, res, next) => {
   try {
     console.log('[Profile Picture Upload] Starting upload...');
@@ -389,6 +445,8 @@ exports.getOrganizationSettings = async (req, res, next) => {
       primaryColor: organizationSettings.primaryColor || ''
     };
 
+    warmTaxConfigCache(req.tenantId, organization);
+
     res.status(200).json({ success: true, data: organization });
   } catch (error) {
     next(error);
@@ -498,6 +556,7 @@ exports.updateOrganizationSettings = async (req, res, next) => {
 
     // Update organization settings in Settings model
     const updated = await upsertSettingValue(req.tenantId, 'organization', mergedIncoming);
+    warmTaxConfigCache(req.tenantId, updated);
 
     if (tenant && mergedIncoming.primaryColor !== undefined) {
       const meta = tenant.metadata || {};

@@ -32,6 +32,18 @@ export const jobService = {
     description?: string;
     dueDate?: string;
     status?: string;
+    priority?: string;
+    assignedTo?: string;
+    quotedPrice?: number;
+    finalPrice?: number;
+    jobType?: string;
+    quantity?: number;
+    items?: Array<{
+      category: string;
+      description?: string;
+      quantity: number;
+      unitPrice: number;
+    }>;
   }) => {
     const res = await api.post('/jobs', data);
     // Backend returns: { success: true, data: {...} }
@@ -41,6 +53,11 @@ export const jobService = {
   updateJob: async (id: string, data: object) => {
     const res = await api.put(`/jobs/${id}`, data);
     // Backend returns: { success: true, data: {...} }
+    return res.data;
+  },
+
+  updateDeliveryStatus: async (id: string, deliveryStatus: string | null) => {
+    const res = await api.put(`/jobs/${id}`, { deliveryStatus });
     return res.data;
   },
 };

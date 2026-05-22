@@ -9,6 +9,7 @@ import { useResponsive } from '../hooks/useResponsive';
 import vendorService from '../services/vendorService';
 import vendorPriceListService from '../services/vendorPriceListService';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -23,6 +24,8 @@ import TableSkeleton from '../components/TableSkeleton';
 import FileUpload from '../components/FileUpload';
 import FilePreview from '../components/FilePreview';
 import { showSuccess, showError } from '../utils/toast';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import { API_BASE_URL } from '../services/api';
 import { PRODUCT_UNITS } from '../constants';
 import { numberInputValue, handleNumberChange } from '../utils/formUtils';
@@ -111,6 +114,8 @@ const resolveFileUrl = (url) => {
 
 const Vendors = () => {
   const { isManager, activeTenantId } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
@@ -142,7 +147,7 @@ const Vendors = () => {
   const { data: vendorCategories = [] } = useQuery({
     queryKey: ['vendors', 'categories', activeTenantId],
     queryFn: () => vendorService.getCategories(),
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
     staleTime: 5 * 60 * 1000,
   });
 
@@ -154,7 +159,7 @@ const Vendors = () => {
     refetch: refetchVendors,
     isFetching: vendorsRefetching,
   } = useQuery({
-    queryKey: ['vendors', activeTenantId, pagination.current, pagination.pageSize, filters, debouncedSearch],
+    queryKey: ['vendors', activeTenantId, activeShopId, pagination.current, pagination.pageSize, filters, debouncedSearch],
     queryFn: async () => {
       try {
         const params = {
@@ -179,7 +184,7 @@ const Vendors = () => {
         throw error;
       }
     },
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
     keepPreviousData: true,
     staleTime: 60 * 1000, // 1 minute
     refetchOnWindowFocus: false,
@@ -545,6 +550,20 @@ const Vendors = () => {
     return Array.from(merged).sort();
   }, [vendors, vendorCategories]);
 
+  const openAddVendor = useCallback(() => {
+    setEditingVendor(null);
+    form.reset();
+    setModalVisible(true);
+  }, [form]);
+
+  const vendorsEmptyState = useMemo(
+    () =>
+      getEmptyStateProps(EMPTY_STATES.VENDORS, {
+        primary: openAddVendor,
+      }),
+    [openAddVendor]
+  );
+
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
@@ -649,18 +668,7 @@ const Vendors = () => {
         columns={tableColumns}
         loading={vendorsLoading}
         title={null}
-        emptyIcon={<Building2 className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No vendors yet. Add suppliers to track purchases and manage relationships."
-        emptyAction={
-          <Button onClick={() => {
-            setEditingVendor(null);
-            form.reset();
-            setModalVisible(true);
-          }}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add First Vendor
-          </Button>
-        }
+        emptyState={vendorsEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);

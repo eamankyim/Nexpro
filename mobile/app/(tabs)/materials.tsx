@@ -1,4 +1,5 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { useRouter } from 'expo-router';
 import {
   View,
   Text,
@@ -7,25 +8,57 @@ import {
   Pressable,
   RefreshControl,
   ActivityIndicator,
-  Modal,
   ScrollView,
   TextInput,
   Alert,
 } from 'react-native';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
+import { AppIcon } from '@/components/AppIcon';
+import { FormSheetModal } from '@/components/FormSheetModal';
+import { FORM_LABELS } from '@/constants/formLabels';
+import { ListEmptyState, EmptyStateActionButton, ListActionButton } from '@/components/ListEmptyState';
+import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
+import { useSmartSearch } from '@/context/SmartSearchContext';
+import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
+import { useDebounce } from '@/hooks/useDebounce';
+import { flatListStyleForEmpty, showListFilters } from '@/utils/listEmptyLayout';
 import { materialsService } from '@/services/materialsService';
 import { useAuth } from '@/context/AuthContext';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
-import { useTheme } from '@/context/ThemeContext';
-import Colors from '@/constants/Colors';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
+import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListResponse';
+import { FilterChipRow } from '@/components/FilterChip';
+import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { refreshAfterMaterialChange, QUERY_STALE } from '@/utils/queryInvalidation';
 import { CURRENCY, resolveBusinessType } from '@/constants';
+import { formatCurrency } from '@/utils/formatCurrency';
 
-function formatCurrency(value: number | string | null | undefined): string {
-  const numValue = typeof value === 'number' ? value : parseFloat(String(value ?? 0)) || 0;
-  return `${CURRENCY.SYMBOL} ${numValue.toFixed(CURRENCY.DECIMAL_PLACES)}`;
-}
+const MATERIAL_UNITS = [
+  { value: 'pcs', label: 'Pieces' },
+  { value: 'unit', label: 'Unit' },
+  { value: 'kg', label: 'kg' },
+  { value: 'g', label: 'g' },
+  { value: 'L', label: 'L' },
+  { value: 'mL', label: 'mL' },
+  { value: 'bag', label: 'Bag' },
+  { value: 'box', label: 'Box' },
+  { value: 'pack', label: 'Pack' },
+  { value: 'carton', label: 'Carton' },
+] as const;
+
+type MaterialCategory = { id: string; name: string };
+
+const INITIAL_FORM = {
+  name: '',
+  sku: '',
+  unit: 'pcs',
+  quantityOnHand: '0',
+  reorderLevel: '0',
+  unitCost: '',
+  categoryId: '',
+};
 
 function getStockStatus(quantity: number, reorderLevel: number): { color: string; label: string } {
   if (quantity <= 0) return { color: '#ef4444', label: 'Out of stock' };
@@ -46,103 +79,137 @@ type MaterialItem = {
 };
 
 export default function MaterialsScreen() {
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const router = useRouter();
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [selectedItem, setSelectedItem] = useState<MaterialItem | null>(null);
-  const [restockModalVisible, setRestockModalVisible] = useState(false);
-  const [restockData, setRestockData] = useState({ quantity: '', unitCost: '', reference: '' });
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [formData, setFormData] = useState(INITIAL_FORM);
+
+  const { searchValue } = useSmartSearch();
+  useRegisterPageSearch({ scope: 'materials', placeholder: SEARCH_PLACEHOLDERS.MATERIALS });
+  const debouncedSearch = useDebounce(searchValue, 400);
 
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isShop = resolvedType === 'shop';
   const isPharmacy = resolvedType === 'pharmacy';
+  const isStudio = resolvedType === 'studio';
 
-  const { data: response, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ['materials', 'items', activeTenantId, statusFilter],
+  const { data: categoriesResponse } = useQuery({
+    queryKey: ['materials', 'categories', activeTenantId],
+    queryFn: () => materialsService.getCategories(),
+    enabled: !!activeTenantId && hasFeature('materials'),
+    staleTime: QUERY_STALE.SLOW,
+  });
+
+  const categories = useMemo(
+    () => parseApiListResponse<MaterialCategory>(categoriesResponse),
+    [categoriesResponse]
+  );
+
+  const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
+    queryKey: ['materials', 'items', activeTenantId, statusFilter, debouncedSearch],
     queryFn: () => {
-      const params: { page?: number; limit?: number; status?: string; lowStock?: boolean; outOfStock?: boolean } = {
+      const params: {
+        page?: number;
+        limit?: number;
+        search?: string;
+        status?: string;
+        lowStock?: boolean;
+        outOfStock?: boolean;
+      } = {
         page: 1,
         limit: 20,
+        search: debouncedSearch || undefined,
       };
       if (statusFilter === 'low') params.lowStock = true;
       if (statusFilter === 'out') params.outOfStock = true;
       return materialsService.getItems(params);
     },
     enabled: !!activeTenantId && hasFeature('materials'),
-    staleTime: 3 * 60 * 1000,
+    staleTime: QUERY_STALE.LIST,
     gcTime: 2 * 60 * 60 * 1000,
   });
 
-  const restockMutation = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: { quantity: number; unitCost?: number; reference?: string } }) =>
-      materialsService.restock(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['materials'] });
-      setRestockModalVisible(false);
-      setRestockData({ quantity: '', unitCost: '', reference: '' });
-      Alert.alert('Success', 'Materials restocked successfully');
+  useEffect(() => {
+    if (addModalVisible && !formData.categoryId && categories.length > 0) {
+      setFormData((prev) => ({ ...prev, categoryId: categories[0].id }));
+    }
+  }, [addModalVisible, categories, formData.categoryId]);
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      materialsService.createItem({
+        name: formData.name.trim(),
+        sku: formData.sku.trim() || undefined,
+        unit: formData.unit,
+        quantityOnHand: parseFloat(formData.quantityOnHand) || 0,
+        reorderLevel: parseFloat(formData.reorderLevel) || 0,
+        unitCost: formData.unitCost ? parseFloat(formData.unitCost) : undefined,
+        categoryId: formData.categoryId || undefined,
+        isActive: true,
+      }),
+    onSuccess: async () => {
+      await refreshAfterMaterialChange(queryClient);
+      setAddModalVisible(false);
+      setFormData(INITIAL_FORM);
+      Alert.alert('Success', 'Material created successfully');
     },
-    onError: (error: any) => {
-      Alert.alert('Error', error?.response?.data?.message || 'Failed to restock materials');
+    onError: (err: unknown) => {
+      Alert.alert('Error', getApiErrorMessage(err, 'Failed to create material'));
     },
   });
 
-  const items = (response?.data || []) as MaterialItem[];
+  const items = useMemo(() => parseApiListResponse<MaterialItem>(response), [response]);
+  const loadErrorMessage = useMemo(
+    () => getApiErrorMessage(error, 'Could not load materials. Pull to refresh.'),
+    [error]
+  );
+  const hasActiveFilter = statusFilter !== 'all' || !!debouncedSearch.trim();
   const onRefresh = useCallback(() => refetch(), [refetch]);
 
-  const handleItemPress = useCallback((item: MaterialItem) => {
-    setSelectedItem(item);
-  }, []);
+  const filterOptions = useMemo(
+    () =>
+      (['all', 'low', 'out'] as const).map((s) => ({
+        value: s,
+        label: s === 'out' ? 'Out of Stock' : s.charAt(0).toUpperCase() + s.slice(1),
+      })),
+    []
+  );
 
-  const handleRestock = useCallback((item: MaterialItem) => {
-    setSelectedItem(item);
-    setRestockData({
-      quantity: '',
-      unitCost: item.unitCost?.toString() || '',
-      reference: '',
+  const openAddModal = useCallback(() => {
+    setFormData({
+      ...INITIAL_FORM,
+      categoryId: categories[0]?.id || '',
     });
-    setRestockModalVisible(true);
-  }, []);
+    setAddModalVisible(true);
+  }, [categories]);
 
-  const handleRestockSubmit = useCallback(() => {
-    if (!selectedItem) return;
-    if (!restockData.quantity || parseFloat(restockData.quantity) <= 0) {
-      Alert.alert('Error', 'Please enter a valid quantity');
+  const handleCreateMaterial = useCallback(() => {
+    if (!formData.name.trim()) {
+      Alert.alert('Error', 'Item name is required');
       return;
     }
+    createMutation.mutate();
+  }, [formData.name, createMutation]);
 
-    restockMutation.mutate({
-      id: selectedItem.id,
-      data: {
-        quantity: parseFloat(restockData.quantity),
-        unitCost: restockData.unitCost ? parseFloat(restockData.unitCost) : undefined,
-        reference: restockData.reference.trim() || undefined,
-      },
-    });
-  }, [selectedItem, restockData, restockMutation]);
+  const handleItemPress = useCallback(
+    (item: MaterialItem) => {
+      router.push(`/material/${item.id}` as never);
+    },
+    [router]
+  );
 
   if (!hasFeature('materials')) {
     return <FeatureAccessDenied message="Materials are not enabled for this workspace." />;
   }
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
-  const inputBg = resolvedTheme === 'dark' ? '#18181b' : '#f9fafb';
 
-  if (!isShop && !isPharmacy) {
+  if (!isShop && !isPharmacy && !isStudio) {
     return (
-      <View style={[styles.center, { backgroundColor: bg }]}>
-        <Text style={[styles.emptyTitle, { color: textColor }]}>Materials</Text>
-        <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-          Materials are available for shop and pharmacy businesses.
-        </Text>
-      </View>
+      <FeatureAccessDenied message="Materials are available for shop, pharmacy, and studio workspaces. Equipment is managed on the web app." />
     );
   }
 
@@ -179,46 +246,54 @@ export default function MaterialsScreen() {
               )}
             </View>
           </View>
-          <Pressable
-            onPress={() => handleRestock(item)}
-            style={[styles.restockButton, { backgroundColor: colors.tint }]}
-          >
-            <FontAwesome name="plus" size={14} color="#fff" />
-            <Text style={styles.restockButtonText}>Restock</Text>
-          </Pressable>
+          <AppIcon name="chevron-right" size={14} color={mutedColor} />
         </View>
       </Pressable>
     );
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: bg }]}>
-      {/* Status filter */}
-      <View style={styles.filterRow}>
-        {['all', 'low', 'out'].map((s) => (
-          <Pressable
-            key={s}
-            onPress={() => setStatusFilter(s)}
-            style={[
-              styles.filterBtn,
-              { borderColor },
-              statusFilter === s && { backgroundColor: colors.tint, borderColor: colors.tint },
-            ]}
-          >
-            <Text style={[styles.filterText, { color: statusFilter === s ? '#fff' : textColor }]}>
-              {s === 'out' ? 'Out of Stock' : s.charAt(0).toUpperCase() + s.slice(1)}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+    <ScreenShell style={styles.container}>
+      {!isLoading && !isError && items.length > 0 && (
+        <ListActionButton
+          label="Add Material"
+          onPress={openAddModal}
+          backgroundColor={colors.tint}
+        />
+      )}
 
-      {isLoading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.tint} />
-          <Text style={[styles.loadingText, { color: mutedColor }]}>Loading materials...</Text>
-        </View>
+      {showListFilters(isLoading, isError, items.length, hasActiveFilter) && (
+        <FilterChipRow options={filterOptions} value={statusFilter} onChange={setStatusFilter} />
+      )}
+
+      {isLoading && !response ? (
+        <ListLoadingState message="Loading materials..." />
+      ) : isError ? (
+        <ListErrorState title="Failed to load materials" message={loadErrorMessage} onRetry={refetch} />
+      ) : items.length === 0 ? (
+        <ListEmptyState
+          fill
+          imageKey="MATERIALS"
+          title={statusFilter === 'all' && !debouncedSearch.trim() ? 'No materials yet' : 'No matching materials'}
+          subtitle={
+            statusFilter === 'all' && !debouncedSearch.trim()
+              ? 'Track raw materials and supplies for your operations'
+              : 'Try adjusting your filters or search terms'
+          }
+          titleColor={textColor}
+          subtitleColor={mutedColor}
+        >
+          {statusFilter === 'all' && !debouncedSearch.trim() ? (
+            <EmptyStateActionButton
+              label="Add Material"
+              onPress={openAddModal}
+              backgroundColor={colors.tint}
+            />
+          ) : null}
+        </ListEmptyState>
       ) : (
         <FlatList
+          style={flatListStyleForEmpty}
           data={items}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
@@ -226,199 +301,148 @@ export default function MaterialsScreen() {
           refreshControl={
             <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={colors.tint} />
           }
-          ListEmptyComponent={
-            <View style={styles.empty}>
-              <FontAwesome name="archive" size={48} color={mutedColor} />
-              <Text style={[styles.emptyTitle, { color: textColor }]}>No materials items</Text>
-              <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-                Add items to track your materials
-              </Text>
-            </View>
-          }
         />
       )}
 
-      {/* Item detail modal */}
-      <Modal
-        visible={!!selectedItem && !restockModalVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setSelectedItem(null)}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => setSelectedItem(null)}>
+      <FormSheetModal
+        visible={addModalVisible}
+        title={FORM_LABELS.material.addTitle}
+        onClose={() => setAddModalVisible(false)}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        footer={
           <Pressable
-            style={[styles.modalContent, { backgroundColor: cardBg }]}
-            onPress={(e) => e.stopPropagation()}
+            onPress={handleCreateMaterial}
+            disabled={createMutation.isPending}
+            style={[
+              styles.submitButton,
+              { backgroundColor: colors.tint },
+              createMutation.isPending && styles.submitButtonDisabled,
+            ]}
           >
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: textColor }]} numberOfLines={1}>
-                {selectedItem?.name}
-              </Text>
-              <Pressable onPress={() => setSelectedItem(null)} hitSlop={12}>
-                <FontAwesome name="times" size={22} color={mutedColor} />
-              </Pressable>
-            </View>
-            {selectedItem && (
-              <ScrollView style={styles.modalBody}>
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Name</Text>
-                  <Text style={[styles.detailValue, { color: textColor }]}>{selectedItem.name}</Text>
+            {createMutation.isPending ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.submitButtonText}>{FORM_LABELS.material.add}</Text>
+            )}
+          </Pressable>
+        }
+      >
+              <View style={styles.formGroup}>
+                <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.material.itemName}</Text>
+                <TextInput
+                  style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+                  placeholder="e.g. A4 Paper Ream"
+                  placeholderTextColor={mutedColor}
+                  value={formData.name}
+                  onChangeText={(text) => setFormData({ ...formData, name: text })}
+                />
+              </View>
+              <View style={styles.formGroup}>
+                <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.material.sku}</Text>
+                <TextInput
+                  style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+                  placeholder="Optional SKU"
+                  placeholderTextColor={mutedColor}
+                  value={formData.sku}
+                  onChangeText={(text) => setFormData({ ...formData, sku: text })}
+                />
+              </View>
+              {categories.length > 0 && (
+                <View style={styles.formGroup}>
+                  <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.material.category}</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+                    {categories.map((cat) => (
+                      <Pressable
+                        key={cat.id}
+                        onPress={() => setFormData({ ...formData, categoryId: cat.id })}
+                        style={[
+                          styles.chip,
+                          {
+                            borderColor,
+                            backgroundColor: formData.categoryId === cat.id ? colors.tint : inputBg,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.chipText,
+                            { color: formData.categoryId === cat.id ? '#fff' : textColor },
+                          ]}
+                        >
+                          {cat.name}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
                 </View>
-                {selectedItem.sku && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>SKU</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>{selectedItem.sku}</Text>
-                  </View>
-                )}
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Stock</Text>
-                  <View
-                    style={[
-                      styles.stockBadge,
-                      {
-                        backgroundColor:
-                          getStockStatus(selectedItem.quantityOnHand, selectedItem.reorderLevel || 0).color +
-                          '20',
-                      },
-                    ]}
-                  >
-                    <Text
+              )}
+              <View style={styles.formGroup}>
+                <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.material.unit}</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipScroll}>
+                  {MATERIAL_UNITS.map((u) => (
+                    <Pressable
+                      key={u.value}
+                      onPress={() => setFormData({ ...formData, unit: u.value })}
                       style={[
-                        styles.stockText,
+                        styles.chip,
                         {
-                          color: getStockStatus(
-                            selectedItem.quantityOnHand,
-                            selectedItem.reorderLevel || 0
-                          ).color,
+                          borderColor,
+                          backgroundColor: formData.unit === u.value ? colors.tint : inputBg,
                         },
                       ]}
                     >
-                      {selectedItem.quantityOnHand} {selectedItem.unit || 'units'}
-                    </Text>
-                  </View>
+                      <Text
+                        style={[
+                          styles.chipText,
+                          { color: formData.unit === u.value ? '#fff' : textColor },
+                        ]}
+                      >
+                        {u.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              </View>
+              <View style={styles.formRow}>
+                <View style={[styles.formGroup, styles.formHalf]}>
+                  <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.material.quantityOnHand}</Text>
+                  <TextInput
+                    style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+                    placeholder="0"
+                    placeholderTextColor={mutedColor}
+                    value={formData.quantityOnHand}
+                    onChangeText={(text) => setFormData({ ...formData, quantityOnHand: text })}
+                    keyboardType="decimal-pad"
+                  />
                 </View>
-                {selectedItem.reorderLevel !== undefined && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Reorder Level</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>
-                      {selectedItem.reorderLevel} {selectedItem.unit || 'units'}
-                    </Text>
-                  </View>
-                )}
-                {selectedItem.unitCost && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Unit Cost</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>
-                      {formatCurrency(selectedItem.unitCost)}
-                    </Text>
-                  </View>
-                )}
-                {selectedItem.category && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Category</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>
-                      {selectedItem.category.name}
-                    </Text>
-                  </View>
-                )}
-                <Pressable
-                  onPress={() => handleRestock(selectedItem)}
-                  style={[styles.actionButton, { backgroundColor: colors.tint }]}
-                >
-                  <FontAwesome name="plus" size={16} color="#fff" />
-                  <Text style={styles.actionButtonText}>Restock</Text>
-                </Pressable>
-              </ScrollView>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
-
-      {/* Restock modal */}
-      <Modal
-        visible={restockModalVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setRestockModalVisible(false)}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => setRestockModalVisible(false)}>
-          <Pressable
-            style={[styles.modalContent, { backgroundColor: cardBg }]}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: textColor }]}>Restock Item</Text>
-              <Pressable onPress={() => setRestockModalVisible(false)} hitSlop={12}>
-                <FontAwesome name="times" size={22} color={mutedColor} />
-              </Pressable>
-            </View>
-            <ScrollView style={styles.modalBody}>
-              {selectedItem && (
-                <>
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Item</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>{selectedItem.name}</Text>
-                  </View>
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Current Stock</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>
-                      {selectedItem.quantityOnHand} {selectedItem.unit || 'units'}
-                    </Text>
-                  </View>
-                </>
-              )}
+                <View style={[styles.formGroup, styles.formHalf]}>
+                  <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.material.reorderLevel}</Text>
+                  <TextInput
+                    style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+                    placeholder="0"
+                    placeholderTextColor={mutedColor}
+                    value={formData.reorderLevel}
+                    onChangeText={(text) => setFormData({ ...formData, reorderLevel: text })}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              </View>
               <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, { color: textColor }]}>Quantity to Add *</Text>
+                <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.material.unitCost}</Text>
                 <TextInput
                   style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                  placeholder="0"
+                  placeholder={`0.00 (${CURRENCY.SYMBOL})`}
                   placeholderTextColor={mutedColor}
-                  value={restockData.quantity}
-                  onChangeText={(text) => setRestockData({ ...restockData, quantity: text })}
+                  value={formData.unitCost}
+                  onChangeText={(text) => setFormData({ ...formData, unitCost: text })}
                   keyboardType="decimal-pad"
                 />
               </View>
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, { color: textColor }]}>Unit Cost</Text>
-                <TextInput
-                  style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                  placeholder="0.00"
-                  placeholderTextColor={mutedColor}
-                  value={restockData.unitCost}
-                  onChangeText={(text) => setRestockData({ ...restockData, unitCost: text })}
-                  keyboardType="decimal-pad"
-                />
-              </View>
-              <View style={styles.formGroup}>
-                <Text style={[styles.formLabel, { color: textColor }]}>Reference</Text>
-                <TextInput
-                  style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                  placeholder="Invoice number, PO, etc."
-                  placeholderTextColor={mutedColor}
-                  value={restockData.reference}
-                  onChangeText={(text) => setRestockData({ ...restockData, reference: text })}
-                />
-              </View>
-              <Pressable
-                onPress={handleRestockSubmit}
-                disabled={restockMutation.isPending}
-                style={[
-                  styles.submitButton,
-                  { backgroundColor: colors.tint },
-                  restockMutation.isPending && styles.submitButtonDisabled,
-                ]}
-              >
-                {restockMutation.isPending ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.submitButtonText}>Restock</Text>
-                )}
-              </Pressable>
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </View>
+      </FormSheetModal>
+    </ScreenShell>
   );
 }
 
@@ -426,6 +450,13 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   loadingText: { marginTop: 12, fontSize: 14 },
+  retryButton: {
+    marginTop: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  retryButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, marginBottom: 12, flexWrap: 'wrap' },
   filterBtn: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, borderWidth: 1 },
   filterText: { fontSize: 14, fontWeight: '600' },
@@ -491,7 +522,18 @@ const styles = StyleSheet.create({
   },
   actionButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   formGroup: { marginBottom: 16 },
+  formRow: { flexDirection: 'row', gap: 12 },
+  formHalf: { flex: 1 },
   formLabel: { fontSize: 14, fontWeight: '600', marginBottom: 8 },
+  chipScroll: { marginTop: 4, marginBottom: -4 },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginRight: 8,
+  },
+  chipText: { fontSize: 14, fontWeight: '500' },
   formInput: {
     borderWidth: 1,
     borderRadius: 10,

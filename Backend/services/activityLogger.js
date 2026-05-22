@@ -1,6 +1,7 @@
 const { Notification, UserTenant } = require('../models');
 const { Op } = require('sequelize');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
+const { formatDecimal } = require('../utils/formatNumber');
 
 const logPrefix = '[ActivityLogger]';
 
@@ -725,7 +726,7 @@ const logInvoiceSent = async (invoice, triggeredBy = null) => {
     activityType: ACTIVITY_TYPES.INVOICE_SENT,
     tenantId: invoice.tenantId,
     title: 'Invoice Sent',
-    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been sent (GHS ${parseFloat(invoice.totalAmount).toLocaleString()}).`,
+    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been sent (GHS ${formatDecimal(invoice.totalAmount)}).`,
     context: {
       invoiceId: invoice.id,
       invoiceNumber: invoice.invoiceNumber,
@@ -745,7 +746,7 @@ const logInvoicePaid = async (invoice, triggeredBy = null) => {
     activityType: ACTIVITY_TYPES.INVOICE_PAID,
     tenantId: invoice.tenantId,
     title: 'Payment Received',
-    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been paid (GHS ${parseFloat(invoice.amountPaid).toLocaleString()}).`,
+    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} has been paid (GHS ${formatDecimal(invoice.amountPaid)}).`,
     context: {
       invoiceId: invoice.id,
       invoiceNumber: invoice.invoiceNumber,
@@ -766,7 +767,7 @@ const logPaymentReceived = async (invoice, amount, triggeredBy = null) => {
     activityType: ACTIVITY_TYPES.PAYMENT_RECEIVED,
     tenantId: invoice.tenantId,
     title: 'Payment Received',
-    message: `Payment of GHS ${parseFloat(amount).toLocaleString()} received for Invoice ${invoice.invoiceNumber}.`,
+    message: `Payment of GHS ${formatDecimal(amount)} received for Invoice ${invoice.invoiceNumber}.`,
     context: {
       invoiceId: invoice.id,
       invoiceNumber: invoice.invoiceNumber,
@@ -785,7 +786,7 @@ const logInvoiceOverdue = async (invoice, triggeredBy = null) => {
     activityType: ACTIVITY_TYPES.INVOICE_OVERDUE,
     tenantId: invoice.tenantId,
     title: 'Invoice Overdue',
-    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} is overdue (balance: GHS ${parseFloat(invoice.balance || invoice.totalAmount || 0).toLocaleString()}).`,
+    message: `Invoice ${invoice.invoiceNumber} for ${invoice.customer?.company || invoice.customer?.name || 'customer'} is overdue (balance: GHS ${formatDecimal(invoice.balance || invoice.totalAmount || 0)}).`,
     context: {
       invoiceId: invoice.id,
       invoiceNumber: invoice.invoiceNumber,
@@ -916,7 +917,7 @@ const logExpenseSubmitted = async (expense, triggeredBy = null) => {
     activityType: ACTIVITY_TYPES.EXPENSE_SUBMITTED,
     tenantId: expense.tenantId,
     title: 'Expense Approval Needed',
-    message: `Expense request ${expense.expenseNumber} for GHS ${parseFloat(expense.amount).toLocaleString()} needs approval.`,
+    message: `Expense request ${expense.expenseNumber} for GHS ${formatDecimal(expense.amount)} needs approval.`,
     context: {
       expenseId: expense.id,
       expenseNumber: expense.expenseNumber,
@@ -934,7 +935,7 @@ const logExpenseApproved = async (expense, triggeredBy = null) => {
     activityType: ACTIVITY_TYPES.EXPENSE_APPROVED,
     tenantId: expense.tenantId,
     title: 'Expense Approved',
-    message: `Your expense request ${expense.expenseNumber} for GHS ${parseFloat(expense.amount).toLocaleString()} has been approved.`,
+    message: `Your expense request ${expense.expenseNumber} for GHS ${formatDecimal(expense.amount)} has been approved.`,
     context: {
       expenseId: expense.id,
       expenseNumber: expense.expenseNumber,

@@ -25,6 +25,7 @@ import { SmartSearchProvider, useSmartSearch } from '../context/SmartSearchConte
 import { usePlatformAdminPermissions } from '../context/PlatformAdminPermissionsContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import AppLogo from '@/components/AppLogo';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -145,9 +146,10 @@ const AdminLayout = () => {
       {/* Desktop sidebar */}
       {!isBelowTablet && (
       <aside className="fixed left-0 top-0 bottom-0 z-50 w-[220px] flex flex-col bg-card border-r border-border overflow-hidden">
-        <div className="h-16 flex-shrink-0 flex items-center px-4 border-b border-border">
-          <span className="font-semibold text-lg tracking-wide text-foreground">
-            ABS Control Center
+        <div className="h-16 flex-shrink-0 flex items-center gap-2 px-4 border-b border-border">
+          <AppLogo className="h-8 w-8" alt="ABS" />
+          <span className="font-semibold text-lg tracking-wide text-foreground truncate">
+            Control Center
           </span>
         </div>
         {navContent}
@@ -173,9 +175,10 @@ const AdminLayout = () => {
                     </Button>
                   </SheetTrigger>
                   <SheetContent side="left" className="w-[260px] p-0 flex flex-col overflow-hidden">
-                    <div className="h-16 flex-shrink-0 flex items-center px-4 border-b border-border">
-                      <span className="font-semibold text-lg tracking-wide text-foreground">
-                        ABS Control
+                    <div className="h-16 flex-shrink-0 flex items-center gap-2 px-4 border-b border-border">
+                      <AppLogo className="h-8 w-8" alt="ABS" />
+                      <span className="font-semibold text-lg tracking-wide text-foreground truncate">
+                        Control
                       </span>
                     </div>
                     <div className="flex-1 min-h-0 overflow-y-auto">{navContent}</div>

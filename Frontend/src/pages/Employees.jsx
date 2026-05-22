@@ -29,6 +29,8 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import employeeService from '../services/employeeService';
 import customDropdownService from '../services/customDropdownService';
 import { showSuccess, showError, showWarning } from '../utils/toast';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 import ActionColumn from '../components/ActionColumn';
 import StatusChip from '../components/StatusChip';
@@ -1657,6 +1659,14 @@ const Employees = () => {
     ];
   }, [viewingEmployee, documentUploading]);
 
+  const employeesEmptyState = useMemo(
+    () =>
+      getEmptyStateProps(EMPTY_STATES.EMPLOYEES, {
+        primary: handleOpenCreate,
+      }),
+    [handleOpenCreate]
+  );
+
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
@@ -1748,14 +1758,7 @@ const Employees = () => {
         columns={tableColumns}
         loading={employeeQuery.isLoading}
         title={null}
-        emptyIcon={<Users className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No employees yet. Add your team members to manage payroll and schedules."
-        emptyAction={
-          <Button onClick={handleOpenCreate}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add First Employee
-          </Button>
-        }
+        emptyState={employeesEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);

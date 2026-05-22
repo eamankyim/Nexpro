@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import {
   Plus,
@@ -27,12 +28,13 @@ import { generatePDF } from '../utils/pdfUtils';
 import dayjs from 'dayjs';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import quoteService from '../services/quoteService';
-import offlineQueueService from '../services/offlineQueueService';
+import { guardOnline } from '../utils/onlineRequired';
 import customerService from '../services/customerService';
 import productService from '../services/productService';
 import settingsService from '../services/settingsService';
 import userService from '../services/userService';
 import customDropdownService from '../services/customDropdownService';
+import { mergeBranchOrganization } from '../utils/branchOrganization';
 import { useQuery } from '@tanstack/react-query';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -46,6 +48,8 @@ import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError } from '../utils/toast';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import {
   numberInputValue,
   handleNumberChange,
@@ -179,6 +183,8 @@ const Quotes = () => {
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { activeTenantId } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
   const { isMobile } = useResponsive();
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -217,6 +223,11 @@ const Quotes = () => {
   });
 
   const organization = organizationData?.data?.data || organizationData?.data || {};
+
+  const quotePrintOrganization = useMemo(() => {
+    const branch = quotePrintable?.shop || quotePrintable?.studioLocation || null;
+    return mergeBranchOrganization(branch, organization);
+  }, [quotePrintable, organization]);
 
   const { data: teamMembers = [] } = useQuery({
     queryKey: ['teamMembers', 'active'],
@@ -271,21 +282,18 @@ const Quotes = () => {
     },
   });
 
-  const fetchCustomers = useCallback(async () => {
-    try {
-      const raw = await customerService.getAll({ limit: 200, page: 1 });
-      setCustomers(normalizeCustomersList(raw));
-    } catch (error) {
-      console.error('Failed to load customers', error);
-      showError(error, 'Failed to load customers');
-    }
-  }, []);
+  const { data: customersQueryData, refetch: refetchCustomers } = useQuery({
+    queryKey: ['customers', 'quotes-picker', activeTenantId, activeShopId],
+    queryFn: () => customerService.getAll({ limit: 200, page: 1 }),
+    enabled: !!activeTenantId,
+    staleTime: 2 * 60 * 1000,
+  });
 
   useEffect(() => {
-    if (activeTenantId) {
-      fetchCustomers();
+    if (customersQueryData) {
+      setCustomers(normalizeCustomersList(customersQueryData));
     }
-  }, [activeTenantId, fetchCustomers]);
+  }, [customersQueryData]);
 
   const loadLineItemDescriptionOptions = useCallback(async () => {
     if (!activeTenantId) return;
@@ -330,7 +338,7 @@ const Quotes = () => {
       });
       const newCustomer = response?.data ?? response;
       if (!newCustomer?.id) throw new Error('Invalid customer response');
-      await fetchCustomers();
+      await refetchCustomers();
       setCustomerAddModalOpen(false);
       customerForm.reset({ name: '', company: '', email: '', phone: '' });
       showSuccess('Customer created successfully');
@@ -340,7 +348,7 @@ const Quotes = () => {
     } finally {
       setAddingCustomer(false);
     }
-  }, [form, fetchCustomers, customerForm]);
+  }, [form, refetchCustomers, customerForm]);
 
   const buildPrintableQuote = (quote) => {
     if (!quote) return null;
@@ -390,7 +398,7 @@ const Quotes = () => {
         items: [{ productId: '', description: '', quantity: 1, unitPrice: 0, discountAmount: 0 }],
         taxRate: '',
       });
-      void fetchCustomers();
+      void refetchCustomers();
       setQuoteModalVisible(true);
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
@@ -398,15 +406,16 @@ const Quotes = () => {
         return next;
       }, { replace: true });
     }
-  }, [searchParams, setSearchParams, form, fetchCustomers]);
+  }, [searchParams, setSearchParams, form, refetchCustomers]);
 
   useEffect(() => {
     setPagination((prev) => ({ ...prev, current: 1 }));
   }, [searchValue]);
 
   useEffect(() => {
+    if (shopContext?.isShopWorkspace && !activeShopId) return;
     fetchQuotes();
-  }, [pagination.current, pagination.pageSize, filters, debouncedSearch]);
+  }, [pagination.current, pagination.pageSize, filters, debouncedSearch, activeShopId, shopContext?.isShopWorkspace]);
 
   const fetchQuotes = async (isRefresh = false) => {
     if (isRefresh) setRefreshingQuotes(true);
@@ -542,13 +551,7 @@ const Quotes = () => {
     });
     setEditingQuote(null);
     setQuoteModalVisible(true);
-    try {
-      const raw = await customerService.getAll({ limit: 200, page: 1 });
-      setCustomers(normalizeCustomersList(raw));
-    } catch (error) {
-      console.error('Failed to load customers for new quote:', error);
-      showError(error, 'Failed to load customers');
-    }
+    void refetchCustomers();
   };
 
   const handleEditQuote = async (quote) => {
@@ -557,13 +560,7 @@ const Quotes = () => {
     if (!details) {
       return;
     }
-    try {
-      const raw = await customerService.getAll({ limit: 200, page: 1 });
-      setCustomers(normalizeCustomersList(raw));
-    } catch (error) {
-      console.error('Failed to load customers for quote editing:', error);
-      showError(error, 'Failed to load customers');
-    }
+    void refetchCustomers();
 
     form.reset({
       // Prefer explicit customerId from API; fall back to nested customer.id
@@ -596,17 +593,9 @@ const Quotes = () => {
   const handleDeleteConfirm = async () => {
     if (!deleteQuoteId) return;
     try {
-      if (!navigator.onLine) {
-        await offlineQueueService.queueAction(
-          offlineQueueService.OFFLINE_ACTION_TYPES.QUOTE,
-          'delete',
-          { id: deleteQuoteId }
-        );
-        showSuccess('Saved offline. Will sync when connected.');
-      } else {
-        await quoteService.delete(deleteQuoteId);
-        showSuccess('Quote deleted successfully');
-      }
+      if (!guardOnline(showError)) return;
+      await quoteService.delete(deleteQuoteId);
+      showSuccess('Quote deleted successfully');
       fetchQuotes();
       if (viewingQuote?.id === deleteQuoteId) {
         handleCloseDrawer();
@@ -670,16 +659,8 @@ const Quotes = () => {
     }
 
     try {
-      if (!navigator.onLine) {
-        const action = editingQuote ? 'update' : 'create';
-        const data = editingQuote ? { ...payload, id: editingQuote.id } : payload;
-        await offlineQueueService.queueAction(
-          offlineQueueService.OFFLINE_ACTION_TYPES.QUOTE,
-          action,
-          data
-        );
-        showSuccess('Saved offline. Will sync when connected.');
-      } else if (editingQuote) {
+      if (!guardOnline(showError)) return;
+      if (editingQuote) {
         await quoteService.update(editingQuote.id, payload);
         await persistLineItemDescriptions(payload.items);
         showSuccess('Quote updated successfully');
@@ -712,20 +693,24 @@ const Quotes = () => {
   const { activeTenant } = useAuth();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isShop = businessType === 'shop';
+  const isPharmacy = businessType === 'pharmacy';
+  const isRetailQuote = isShop || isPharmacy;
 
-  const { data: productsData } = useQuery({
-    queryKey: ['products', 'list', activeTenant?.id],
+  const { data: quoteProducts = [], isLoading: quoteProductsLoading } = useQuery({
+    queryKey: ['products', 'quote-picker', activeTenantId, activeShopId],
     queryFn: async () => {
-      const res = await productService.getProducts({ limit: 200 });
-      return res?.data ?? res;
+      return productService.getAllActiveProducts();
     },
-    enabled: isShop && !!activeTenant?.id,
+    enabled: isRetailQuote && !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
     staleTime: 2 * 60 * 1000,
   });
   const products = useMemo(() => {
-    const d = productsData?.data ?? productsData;
-    return Array.isArray(d) ? d : [];
-  }, [productsData]);
+    const d = quoteProducts?.data ?? quoteProducts;
+    if (Array.isArray(d)) return d;
+    if (Array.isArray(d?.data)) return d.data;
+    if (Array.isArray(d?.products)) return d.products;
+    return [];
+  }, [quoteProducts]);
 
   const openConvertToJobModal = useCallback((quote) => {
     if (!quote) return;
@@ -964,6 +949,14 @@ const Quotes = () => {
     return Boolean(conversionFromActivity);
   }, [viewingQuote, quoteActivities]);
 
+  const quotesEmptyState = useMemo(
+    () =>
+      getEmptyStateProps(EMPTY_STATES.QUOTES, {
+        primary: handleAddQuote,
+      }),
+    [handleAddQuote]
+  );
+
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
@@ -1059,14 +1052,7 @@ const Quotes = () => {
         columns={tableColumns}
         loading={loading}
         title={null}
-        emptyIcon={<FileText className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No quotes yet. Create quotes to send pricing estimates to customers."
-        emptyAction={
-          <Button onClick={handleAddQuote}>
-            <Plus className="h-4 w-4 mr-2" />
-            Create First Quote
-          </Button>
-        }
+        emptyState={quotesEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);
@@ -1145,10 +1131,10 @@ const Quotes = () => {
         title="Quote Details"
         width={720}
         primaryAction={viewingQuote ? {
-          label: isShop ? 'Convert to Sale' : 'Convert to Job',
+          label: isRetailQuote ? 'Convert to Sale' : 'Convert to Job',
           icon: <FilePlus className="h-4 w-4" />,
-          onClick: () => (isShop ? handleConvertToSale(viewingQuote) : openConvertToJobModal(viewingQuote)),
-          disabled: converting || (!isShop && isQuoteAlreadyConvertedToJob)
+          onClick: () => (isRetailQuote ? handleConvertToSale(viewingQuote) : openConvertToJobModal(viewingQuote)),
+          disabled: converting || (!isRetailQuote && isQuoteAlreadyConvertedToJob)
         } : null}
         moreMenuItems={viewingQuote ? [
           { key: 'view-pdf', label: 'View PDF', icon: <FileText className="h-4 w-4" />, onClick: () => openPrintableQuote(viewingQuote) },
@@ -1582,7 +1568,7 @@ const Quotes = () => {
                     )}
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {isShop && products.length > 0 && (
+                    {isRetailQuote && (
                       <FormField
                         control={form.control}
                         name={`items.${index}.productId`}
@@ -1591,6 +1577,7 @@ const Quotes = () => {
                             <FormLabel>Product (optional)</FormLabel>
                             <Select
                               value={field.value || '__NONE__'}
+                              disabled={quoteProductsLoading || products.length === 0}
                               onValueChange={(val) => {
                                 const next = val === '__NONE__' ? '' : val;
                                 field.onChange(next);
@@ -1604,17 +1591,23 @@ const Quotes = () => {
                               }}
                             >
                               <SelectTrigger>
-                                <SelectValue placeholder="Select product" />
+                                <SelectValue placeholder={quoteProductsLoading ? 'Loading products...' : products.length === 0 ? 'No products found' : 'Select product'} />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="__NONE__">None</SelectItem>
                                 {products.map((p) => (
                                   <SelectItem key={p.id} value={p.id}>
                                     {p.name} — ₵{parseFloat(p.sellingPrice || 0).toFixed(2)}
+                                    {p.trackStock !== false ? ` · Stock: ${Number(p.quantityOnHand || 0)}` : ''}
                                   </SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
+                            {products.length === 0 && !quoteProductsLoading && (
+                              <p className="text-xs text-muted-foreground">
+                                Add products first to pick them on quotes.
+                              </p>
+                            )}
                             <FormMessage />
                           </FormItem>
                         )}
@@ -1973,7 +1966,7 @@ const Quotes = () => {
                   invoice={buildPrintableQuote(quotePrintable)}
                   documentTitle="PROFORMA INVOICE"
                   documentSubtitle={`Quote ${quotePrintable.quoteNumber}`}
-                  organization={organization}
+                  organization={quotePrintOrganization}
                 />
               )}
             </div>

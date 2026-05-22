@@ -9,19 +9,19 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { useAuth } from '@/context/AuthContext';
+import { resetLocalSessionForOnboardingTest } from '@/utils/devSessionReset';
 import { resolveImageUrl } from '@/utils/fileUtils';
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { BackButton } from '@/components/BackButton';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
+import { StackPageHeader } from '@/components/StackPageHeader';
 
 type MenuItem = {
   id: string;
   label: string;
-  icon: React.ComponentProps<typeof FontAwesome>['name'];
+  icon: AppIconName;
   route?: string;
   destructive?: boolean;
   onPress?: () => void;
@@ -30,9 +30,7 @@ type MenuItem = {
 export default function AccountScreen() {
   const router = useRouter();
   const { user, logout } = useAuth();
-  const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? 'light'];
-  const insets = useSafeAreaInsets();
+  const { bg, cardBg, borderColor, textColor, mutedColor, colors } = useScreenColors();
 
   const handleLogout = useCallback(() => {
     Alert.alert(
@@ -52,9 +50,41 @@ export default function AccountScreen() {
     );
   }, [logout, router]);
 
+  const handleResetOnboardingTestSession = useCallback(() => {
+    Alert.alert(
+      'Reset onboarding test session',
+      'This clears local auth, intro, workspace, shop, cart, and cached data on this device.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            await resetLocalSessionForOnboardingTest();
+            await logout();
+            router.replace('/');
+          },
+        },
+      ]
+    );
+  }, [logout, router]);
+
   const menuItems: MenuItem[] = [
     { id: 'profile', label: 'Profile', icon: 'user', route: '/profile' },
     { id: 'settings', label: 'Settings', icon: 'cog', route: '/settings' },
+    { id: 'privacy', label: 'Privacy Policy', icon: 'info-circle', route: '/privacy-policy' },
+    { id: 'data-deletion', label: 'Delete account/data', icon: 'trash', route: '/data-deletion', destructive: true },
+    ...(__DEV__
+      ? [
+          {
+            id: 'reset-onboarding-test',
+            label: 'Reset onboarding test session',
+            icon: 'refresh' as AppIconName,
+            destructive: true,
+            onPress: handleResetOnboardingTestSession,
+          },
+        ]
+      : []),
     { id: 'logout', label: 'Log out', icon: 'sign-out', destructive: true, onPress: handleLogout },
   ];
 
@@ -69,145 +99,92 @@ export default function AccountScreen() {
     [router]
   );
 
-  const bg = colorScheme === 'dark' ? colors.background : '#fff';
-  const cardBg = colorScheme === 'dark' ? '#27272a' : '#f9fafb';
-  const borderColor = colorScheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = colorScheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = colorScheme === 'dark' ? '#a1a1aa' : '#6b7280';
+  const avatarUrl = resolveImageUrl(user?.profilePicture);
 
   return (
-    <>
-      {/* Header with back button */}
-      <View style={[styles.header, { backgroundColor: bg, paddingTop: insets.top > 0 ? insets.top : 12 }]}>
-        <BackButton />
-      </View>
-      <ScrollView
-        style={[styles.container, { backgroundColor: bg }]}
-        contentContainerStyle={styles.content}
-      >
-        {/* User summary */}
-        <View style={[styles.userCard, { backgroundColor: cardBg, borderColor }]}>
-          {user?.profilePicture ? (
-            <Image
-              source={{ uri: resolveImageUrl(user.profilePicture) }}
-              style={styles.avatar}
-            />
+    <ScreenShell style={styles.screen}>
+      <StackPageHeader title="Account" />
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <View style={[styles.profileCard, { backgroundColor: cardBg, borderColor }]}>
+          {avatarUrl ? (
+            <Image source={{ uri: avatarUrl }} style={styles.avatar} />
           ) : (
-            <View style={[styles.avatarFallback, { backgroundColor: colors.tint }]}>
-              <FontAwesome name="user" size={28} color="#fff" />
+            <View style={[styles.avatarPlaceholder, { backgroundColor: colors.tint }]}>
+              <Text style={styles.avatarInitial}>
+                {(user?.name?.trim()?.[0] || user?.email?.[0] || '?').toUpperCase()}
+              </Text>
             </View>
           )}
-          <View style={styles.userInfo}>
-            <Text style={[styles.userName, { color: textColor }]}>
-              {user?.name || 'User'}
-            </Text>
-            <Text style={[styles.userEmail, { color: mutedColor }]}>
-              {user?.email}
-            </Text>
-          </View>
+          <Text style={[styles.name, { color: textColor }]}>{user?.name || 'User'}</Text>
+          <Text style={[styles.email, { color: mutedColor }]}>{user?.email}</Text>
         </View>
 
-        {/* Menu items */}
         <View style={[styles.menuCard, { backgroundColor: cardBg, borderColor }]}>
           {menuItems.map((item, index) => (
             <Pressable
               key={item.id}
               onPress={() => handleMenuPress(item)}
               style={({ pressed }) => [
-                styles.menuItem,
-                index > 0 && styles.menuItemBorder,
+                styles.menuRow,
+                index > 0 && styles.menuRowBorder,
                 { borderTopColor: borderColor },
-                pressed && styles.menuItemPressed,
+                pressed && styles.pressed,
               ]}
             >
-              <FontAwesome
+              <AppIcon
                 name={item.icon}
                 size={20}
-                color={item.destructive ? '#dc2626' : colors.tint}
+                color={item.destructive ? '#ef4444' : colors.tint}
               />
               <Text
                 style={[
                   styles.menuLabel,
-                  { color: item.destructive ? '#dc2626' : textColor },
+                  { color: item.destructive ? '#ef4444' : textColor },
                 ]}
               >
                 {item.label}
               </Text>
-              {item.route && (
-                <FontAwesome name="chevron-right" size={14} color={mutedColor} />
-              )}
+              <AppIcon name="chevron-right" size={14} color={mutedColor} />
             </Pressable>
           ))}
         </View>
       </ScrollView>
-    </>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-  },
-  content: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  userCard: {
-    flexDirection: 'row',
+  screen: { flex: 1 },
+  container: { flex: 1 },
+  content: { padding: 16, paddingBottom: 32 },
+  profileCard: {
     alignItems: 'center',
-    padding: 20,
+    padding: 24,
     borderRadius: 12,
     borderWidth: 1,
-    marginBottom: 24,
+    marginBottom: 16,
   },
-  avatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-  },
-  avatarFallback: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  avatar: { width: 72, height: 72, borderRadius: 36, marginBottom: 12 },
+  avatarPlaceholder: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 12,
   },
-  userInfo: {
-    marginLeft: 16,
-    flex: 1,
-  },
-  userName: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  userEmail: {
-    fontSize: 14,
-    marginTop: 4,
-  },
-  menuCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    overflow: 'hidden',
-  },
-  menuItem: {
+  avatarInitial: { fontSize: 28, fontWeight: '700', color: '#fff' },
+  name: { fontSize: 20, fontWeight: '700', marginBottom: 4 },
+  email: { fontSize: 14 },
+  menuCard: { borderRadius: 12, borderWidth: 1, overflow: 'hidden' },
+  menuRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
     gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
-  menuItemBorder: {
-    borderTopWidth: 1,
-  },
-  menuItemPressed: {
-    opacity: 0.7,
-  },
-  menuLabel: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '500',
-  },
+  menuRowBorder: { borderTopWidth: 1 },
+  menuLabel: { flex: 1, fontSize: 16, fontWeight: '500' },
+  pressed: { opacity: 0.7 },
 });

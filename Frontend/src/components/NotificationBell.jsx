@@ -9,7 +9,8 @@ import { useAuth } from '../context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Empty } from '@/components/ui/empty';
+import { EmptyState, getEmptyStateProps } from '@/components/ui/empty-state';
+import { EMPTY_STATES } from '../constants/microcopy';
 import { cn } from '@/lib/utils';
 
 const NOTIFICATION_SUMMARY_KEY = ['notifications', 'summary'];
@@ -256,7 +257,7 @@ const NotificationBell = () => {
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         ) : displayedNotifications.length === 0 ? (
-          <Empty description="No notifications yet" className="py-6 sm:py-8" />
+          <EmptyState {...getEmptyStateProps(EMPTY_STATES.NOTIFICATIONS)} size="sm" className="py-6 sm:py-8" />
         ) : (
           <div className="flex flex-col gap-1">
             {displayedNotifications.map((item) => (

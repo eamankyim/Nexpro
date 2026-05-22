@@ -15,12 +15,10 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useAuth } from '../context/AuthContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
-import { useDebounce } from '../hooks/useDebounce';
 import feedbackService from '../services/feedbackService';
 import { showError } from '../utils/toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
@@ -36,8 +34,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
+import { SEARCH_PLACEHOLDERS } from '../constants';
 import { cn } from '@/lib/utils';
+import { formatInteger } from '../utils/formatNumber';
 
 dayjs.extend(relativeTime);
 
@@ -127,8 +126,6 @@ export default function CustomerFeedback() {
   const [pagination, setPagination] = useState({ total: 0, page: 1, limit: 100, pages: 1 });
   const [readIds, setReadIds] = useState(() => loadReadIds(tenantId));
 
-  const [listQuery, setListQuery] = useState('');
-  const debouncedListQuery = useDebounce(listQuery, DEBOUNCE_DELAYS.SEARCH);
   const [ratingFilter, setRatingFilter] = useState('all');
   const [commentFilter, setCommentFilter] = useState('all');
   const [sortBy, setSortBy] = useState('newest');
@@ -187,7 +184,6 @@ export default function CustomerFeedback() {
 
   const processedRows = useMemo(() => {
     const headerQ = (searchValue || '').trim().toLowerCase();
-    const listQ = debouncedListQuery.trim().toLowerCase();
 
     let list = [...rows];
 
@@ -198,16 +194,6 @@ export default function CustomerFeedback() {
           .join(' ')
           .toLowerCase();
         return hay.includes(headerQ);
-      });
-    }
-
-    if (listQ) {
-      list = list.filter((r) => {
-        const hay = [r.comment, r.contactName, r.contactEmail, r.contactPhone]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        return hay.includes(listQ);
       });
     }
 
@@ -231,11 +217,11 @@ export default function CustomerFeedback() {
     }
 
     return list;
-  }, [rows, searchValue, debouncedListQuery, ratingFilter, commentFilter, sortBy, readIds]);
+  }, [rows, searchValue, ratingFilter, commentFilter, sortBy, readIds]);
 
   useEffect(() => {
     setListPage(1);
-  }, [debouncedListQuery, ratingFilter, commentFilter, sortBy, searchValue]);
+  }, [ratingFilter, commentFilter, sortBy, searchValue]);
 
   const listTotal = processedRows.length;
   const listPages = Math.max(1, Math.ceil(listTotal / pageSize));
@@ -361,7 +347,7 @@ export default function CustomerFeedback() {
                 className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
                 style={{ backgroundColor: 'rgba(22, 101, 52, 0.12)' }}
               >
-                <Star className="h-5 w-5 fill-[#166534] text-[#166534]" />
+                <Star className="h-5 w-5 fill-none text-[#166534]" />
               </div>
             </div>
             <p className="mt-2 text-sm font-medium text-muted-foreground">Average rating</p>
@@ -386,7 +372,7 @@ export default function CustomerFeedback() {
           <CardContent className="p-4">
             <div className="flex items-start justify-between gap-2">
               <div className="text-3xl font-bold tabular-nums text-foreground md:text-4xl">
-                {loading ? <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /> : stats.totalAll.toLocaleString()}
+                {loading ? <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /> : formatInteger(stats.totalAll)}
               </div>
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-100 dark:bg-sky-950/50">
                 <MessageCircle className="h-5 w-5 text-sky-700 dark:text-sky-300" />
@@ -450,29 +436,8 @@ export default function CustomerFeedback() {
 
       <Card className="rounded-lg border border-border bg-card">
         <CardContent className="p-4 md:p-6">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <Input
-              placeholder="Search reviews by customer name or comment..."
-              value={listQuery}
-              onChange={(e) => setListQuery(e.target.value)}
-              className="max-w-xl"
-            />
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
-              <span className="text-sm text-muted-foreground whitespace-nowrap">Sort by:</span>
-              <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="w-full sm:w-[180px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="newest">Newest first</SelectItem>
-                  <SelectItem value="oldest">Oldest first</SelectItem>
-                  <SelectItem value="rating">Highest rating</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <div className="flex min-w-0 flex-1 flex-wrap gap-2">
             {[
               { id: 'all', label: 'All' },
               { id: '5', label: '5★' },
@@ -519,7 +484,22 @@ export default function CustomerFeedback() {
                 </Button>
               );
             })}
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="text-sm text-muted-foreground whitespace-nowrap">Sort by:</span>
+              <Select value={sortBy} onValueChange={setSortBy}>
+                <SelectTrigger className="w-[160px] sm:w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="newest">Newest first</SelectItem>
+                  <SelectItem value="oldest">Oldest first</SelectItem>
+                  <SelectItem value="rating">Highest rating</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
+
 
           <div className="mt-6 space-y-4">
             {loading && (
@@ -637,7 +617,7 @@ export default function CustomerFeedback() {
             <div className="mt-6 flex flex-col gap-3 border-t border-border pt-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
               <p>
                 Showing {(safeListPage - 1) * pageSize + 1} to {Math.min(safeListPage * pageSize, listTotal)} of{' '}
-                {listTotal.toLocaleString()} reviews
+                {formatInteger(listTotal)} reviews
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <Button

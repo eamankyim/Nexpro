@@ -8,22 +8,45 @@ import {
   RefreshControl,
   ActivityIndicator,
   TextInput,
-  Modal,
   ScrollView,
   Alert,
 } from 'react-native';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { FormSheetModal } from '@/components/FormSheetModal';
+import { FORM_LABELS } from '@/constants/formLabels';
+import { ListEmptyState, EmptyStateActionButton, ListActionButton } from '@/components/ListEmptyState';
+import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
+import { useSmartSearch } from '@/context/SmartSearchContext';
+import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
+import { flatListStyleForEmpty, listContentStyleWhenEmpty, showListFilters } from '@/utils/listEmptyLayout';
 import { leadService } from '@/services/leadService';
+import { customDropdownService } from '@/services/customDropdownService';
+import { settingsService } from '@/services/settings';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAuth } from '@/context/AuthContext';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
-import { useTheme } from '@/context/ThemeContext';
-import Colors from '@/constants/Colors';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
+import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListResponse';
+import { FilterChipRow } from '@/components/FilterChip';
+import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
+import { refreshAfterLeadChange } from '@/utils/queryInvalidation';
+import { formatStatusLabel } from '@/utils/formatLabels';
 
 const STATUS_OPTIONS = ['all', 'new', 'contacted', 'qualified', 'converted', 'lost'] as const;
+const OTHER_SOURCE_VALUE = '__OTHER__';
+
+const FALLBACK_LEAD_SOURCES = [
+  { value: 'Online - Website', label: 'Online - Website' },
+  { value: 'Referral', label: 'Referral' },
+  { value: 'Social Media', label: 'Social Media' },
+  { value: 'Walk-in', label: 'Walk-in' },
+  { value: 'Event/Exhibition', label: 'Event/Exhibition' },
+  { value: 'Cold Call', label: 'Cold Call' },
+];
 
 type LeadRow = {
   id: string;
@@ -38,18 +61,19 @@ type LeadRow = {
 export default function LeadsScreen() {
   const router = useRouter();
   const { activeTenantId, hasFeature } = useAuth();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
 
-  const [searchText, setSearchText] = useState('');
+  const { searchValue } = useSmartSearch();
+  useRegisterPageSearch({ scope: 'leads', placeholder: SEARCH_PLACEHOLDERS.LEADS });
   const [status, setStatus] = useState<string>('all');
   const [addOpen, setAddOpen] = useState(false);
-  const [form, setForm] = useState({ name: '', email: '', phone: '', company: '' });
+  const [form, setForm] = useState({ name: '', email: '', phone: '', company: '', source: '' });
+  const [customSourceValue, setCustomSourceValue] = useState('');
 
-  const debouncedSearch = useDebounce(searchText, 400);
+  const debouncedSearch = useDebounce(searchValue, 400);
 
-  const { data, isLoading, refetch, isRefetching } = useQuery({
+  const { data, isLoading, refetch, isRefetching, error, isError } = useQuery({
     queryKey: ['leads', activeTenantId, debouncedSearch, status],
     queryFn: async () =>
       leadService.getAll({
@@ -61,40 +85,103 @@ export default function LeadsScreen() {
     enabled: !!activeTenantId && hasFeature('leadPipeline'),
   });
 
-  const leads: LeadRow[] = useMemo(() => {
-    const raw = data?.data;
-    return Array.isArray(raw) ? raw : [];
-  }, [data]);
+  const { data: leadSourceOptionsApi = [] } = useQuery({
+    queryKey: ['settings', 'lead-sources', activeTenantId],
+    queryFn: () => settingsService.getLeadSources(),
+    enabled: !!activeTenantId && hasFeature('leadPipeline'),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const { data: customLeadSources = [] } = useQuery({
+    queryKey: ['custom-dropdowns', 'lead_source', activeTenantId],
+    queryFn: () => customDropdownService.getCustomOptions('lead_source'),
+    enabled: !!activeTenantId && hasFeature('leadPipeline'),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const leads = useMemo(() => parseApiListResponse<LeadRow>(data), [data]);
+  const loadErrorMessage = useMemo(
+    () => getApiErrorMessage(error, 'Could not load leads. Pull to refresh.'),
+    [error]
+  );
+  const hasActiveFilter = status !== 'all' || !!debouncedSearch.trim();
+
+  const filterOptions = useMemo(
+    () =>
+      STATUS_OPTIONS.map((s) => ({
+        value: s,
+        label: s === 'all' ? 'All' : formatStatusLabel(s),
+      })),
+    []
+  );
+
+  const leadSourceOptions = useMemo(() => {
+    const apiOptions = Array.isArray(leadSourceOptionsApi) ? leadSourceOptionsApi : [];
+    const mappedApi = apiOptions.map((source: { value: string; label?: string }) => ({
+      value: source.value,
+      label: source.label || source.value,
+    }));
+    const base = mappedApi.length > 0 ? mappedApi : FALLBACK_LEAD_SOURCES;
+    const custom = Array.isArray(customLeadSources)
+      ? customLeadSources.map((source) => ({ value: source.value, label: source.label || source.value }))
+      : [];
+    const merged = new Map<string, { value: string; label: string }>();
+    [...base, ...custom].forEach((source) => {
+      if (source.value) merged.set(source.value, source);
+    });
+    return Array.from(merged.values());
+  }, [customLeadSources, leadSourceOptionsApi]);
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      leadService.create({
+    mutationFn: (payload: Record<string, unknown>) => leadService.create(payload),
+    onSuccess: async () => {
+      await refreshAfterLeadChange(queryClient);
+      setAddOpen(false);
+      setForm({ name: '', email: '', phone: '', company: '', source: '' });
+      setCustomSourceValue('');
+    },
+    onError: (err: unknown) => {
+      Alert.alert('Could not create lead', getApiErrorMessage(err, 'Try again'));
+    },
+  });
+
+  const resolveLeadSourceValue = useCallback(async () => {
+    if (form.source !== OTHER_SOURCE_VALUE) return form.source;
+    const value = customSourceValue.trim();
+    if (!value) {
+      Alert.alert('Error', 'Please enter a lead source');
+      return null;
+    }
+    const saved = await customDropdownService.saveCustomOption('lead_source', value, value);
+    queryClient.invalidateQueries({ queryKey: ['custom-dropdowns', 'lead_source'] });
+    return saved?.value || value;
+  }, [customSourceValue, form.source, queryClient]);
+
+  const handleCreateLead = useCallback(async () => {
+    if (!form.name.trim()) {
+      Alert.alert('Lead name required');
+      return;
+    }
+
+    try {
+      const sourceValue = await resolveLeadSourceValue();
+      if (sourceValue === null) return;
+      createMutation.mutate({
         name: form.name.trim(),
         email: form.email.trim() || undefined,
         phone: form.phone.trim() || undefined,
         company: form.company.trim() || undefined,
+        source: sourceValue || undefined,
         status: 'new',
         priority: 'medium',
-        source: 'manual',
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['leads'] });
-      setAddOpen(false);
-      setForm({ name: '', email: '', phone: '', company: '' });
-    },
-    onError: (e: Error & { response?: { data?: { message?: string } } }) => {
-      const msg = e?.response?.data?.message || e?.message || 'Try again';
-      Alert.alert('Could not create lead', msg);
-    },
-  });
+      });
+    } catch (err) {
+      Alert.alert('Could not save lead source', getApiErrorMessage(err, 'Try again'));
+    }
+  }, [createMutation, form, resolveLeadSourceValue]);
 
   const onRefresh = useCallback(() => refetch(), [refetch]);
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
 
   const renderLead = ({ item }: { item: LeadRow }) => (
     <Pressable
@@ -110,7 +197,9 @@ export default function LeadsScreen() {
           {item.name || 'Untitled'}
         </Text>
         <View style={[styles.badge, { borderColor: colors.tint }]}>
-          <Text style={[styles.badgeText, { color: colors.tint }]}>{item.status || 'new'}</Text>
+          <Text style={[styles.badgeText, { color: colors.tint }]}>
+            {formatStatusLabel(item.status || 'new')}
+          </Text>
         </View>
       </View>
       {item.company || item.email || item.phone ? (
@@ -126,153 +215,151 @@ export default function LeadsScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: bg }]}>
-      <View style={[styles.toolbar, { borderBottomColor: borderColor }]}>
-        <View style={[styles.searchWrap, { backgroundColor: resolvedTheme === 'dark' ? '#18181b' : '#f3f4f6', borderColor }]}>
-          <FontAwesome name="search" size={16} color={mutedColor} style={styles.searchIcon} />
-          <TextInput
-            value={searchText}
-            onChangeText={setSearchText}
-            placeholder="Search leads"
-            placeholderTextColor={mutedColor}
-            style={[styles.searchInput, { color: textColor }]}
-            returnKeyType="search"
-          />
-        </View>
-        <Pressable
+    <ScreenShell style={styles.container}>
+      {!isLoading && !isError && leads.length > 0 && (
+        <ListActionButton
+          label="Add Lead"
           onPress={() => setAddOpen(true)}
-          style={({ pressed }) => [styles.addBtn, { backgroundColor: colors.tint }, pressed && { opacity: 0.9 }]}
-        >
-          <FontAwesome name="plus" size={18} color="#fff" />
-        </Pressable>
-      </View>
+          backgroundColor={colors.tint}
+        />
+      )}
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll} contentContainerStyle={styles.chipsRow}>
-        {STATUS_OPTIONS.map((s) => {
-          const active = status === s;
-          return (
-            <Pressable
-              key={s}
-              onPress={() => setStatus(s)}
-              style={[
-                styles.chip,
-                { borderColor: active ? colors.tint : borderColor, backgroundColor: active ? `${colors.tint}22` : cardBg },
-              ]}
-            >
-              <Text style={{ color: active ? colors.tint : textColor, fontWeight: '600', textTransform: 'capitalize' }}>
-                {s}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+      {showListFilters(isLoading, isError, leads.length, hasActiveFilter) && (
+        <FilterChipRow options={filterOptions} value={status} onChange={setStatus} />
+      )}
 
       {isLoading && !data ? (
-        <ActivityIndicator style={{ marginTop: 24 }} color={colors.tint} />
+        <ListLoadingState message="Loading leads..." />
+      ) : isError ? (
+        <ListErrorState title="Failed to load leads" message={loadErrorMessage} onRetry={refetch} />
       ) : (
         <FlatList
+          style={flatListStyleForEmpty}
           data={leads}
           keyExtractor={(item) => item.id}
           renderItem={renderLead}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={listContentStyleWhenEmpty(styles.listContent, leads.length === 0)}
           refreshControl={<RefreshControl refreshing={isRefetching} onRefresh={onRefresh} />}
           ListEmptyComponent={
-            <Text style={[styles.empty, { color: mutedColor }]}>No leads yet. Tap + to add one.</Text>
+            <ListEmptyState
+              imageKey="LEADS"
+              title={status === 'all' ? 'No leads yet' : 'No leads in this filter'}
+              subtitle={status === 'all' ? 'Add your first lead to start building your pipeline' : 'Try another filter'}
+              titleColor={textColor}
+              subtitleColor={mutedColor}
+            >
+              {status === 'all' ? (
+                <EmptyStateActionButton
+                  label="Add Lead"
+                  onPress={() => setAddOpen(true)}
+                  backgroundColor={colors.tint}
+                />
+              ) : null}
+            </ListEmptyState>
           }
         />
       )}
 
-      <Modal visible={addOpen} animationType="slide" transparent>
-        <View style={styles.modalBackdrop}>
-          <View style={[styles.modalCard, { backgroundColor: cardBg, borderColor }]}>
-            <Text style={[styles.modalTitle, { color: textColor }]}>New lead</Text>
-            <TextInput
-              placeholder="Name *"
-              placeholderTextColor={mutedColor}
-              value={form.name}
-              onChangeText={(t) => setForm((f) => ({ ...f, name: t }))}
-              style={[styles.input, { borderColor, color: textColor }]}
-            />
-            <TextInput
-              placeholder="Email (optional)"
-              placeholderTextColor={mutedColor}
-              value={form.email}
-              onChangeText={(t) => setForm((f) => ({ ...f, email: t }))}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              style={[styles.input, { borderColor, color: textColor }]}
-            />
-            <TextInput
-              placeholder="Phone (optional)"
-              placeholderTextColor={mutedColor}
-              value={form.phone}
-              onChangeText={(t) => setForm((f) => ({ ...f, phone: t }))}
-              keyboardType="phone-pad"
-              style={[styles.input, { borderColor, color: textColor }]}
-            />
-            <TextInput
-              placeholder="Company (optional)"
-              placeholderTextColor={mutedColor}
-              value={form.company}
-              onChangeText={(t) => setForm((f) => ({ ...f, company: t }))}
-              style={[styles.input, { borderColor, color: textColor }]}
-            />
-            <View style={styles.modalActions}>
-              <Pressable onPress={() => setAddOpen(false)} style={[styles.secondaryBtn, { borderColor }]}>
-                <Text style={{ color: textColor, fontWeight: '600' }}>Cancel</Text>
-              </Pressable>
+      <FormSheetModal
+        visible={addOpen}
+        title={FORM_LABELS.lead.addTitle}
+        onClose={() => setAddOpen(false)}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        textColor={textColor}
+        mutedColor={mutedColor}
+        footer={
+          <Pressable
+            onPress={handleCreateLead}
+            disabled={createMutation.isPending}
+            style={[styles.primaryBtn, { backgroundColor: colors.tint }]}
+          >
+            {createMutation.isPending ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.primaryBtnText}>{FORM_LABELS.lead.save}</Text>
+            )}
+          </Pressable>
+        }
+      >
+        <Text style={[styles.inputLabel, { color: textColor }]}>{FORM_LABELS.lead.leadName}</Text>
+        <TextInput
+          placeholder="Contact or company name"
+          placeholderTextColor={mutedColor}
+          value={form.name}
+          onChangeText={(t) => setForm((f) => ({ ...f, name: t }))}
+          style={[styles.input, { borderColor, color: textColor, backgroundColor: inputBg }]}
+        />
+        <Text style={[styles.inputLabel, { color: textColor }]}>{FORM_LABELS.lead.company}</Text>
+        <TextInput
+          placeholder="Company"
+          placeholderTextColor={mutedColor}
+          value={form.company}
+          onChangeText={(t) => setForm((f) => ({ ...f, company: t }))}
+          style={[styles.input, { borderColor, color: textColor, backgroundColor: inputBg }]}
+        />
+        <Text style={[styles.inputLabel, { color: textColor }]}>{FORM_LABELS.lead.email}</Text>
+        <TextInput
+          placeholder="Email address"
+          placeholderTextColor={mutedColor}
+          value={form.email}
+          onChangeText={(t) => setForm((f) => ({ ...f, email: t }))}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          style={[styles.input, { borderColor, color: textColor, backgroundColor: inputBg }]}
+        />
+        <Text style={[styles.inputLabel, { color: textColor }]}>{FORM_LABELS.lead.phone}</Text>
+        <TextInput
+          placeholder="Enter phone number"
+          placeholderTextColor={mutedColor}
+          value={form.phone}
+          onChangeText={(t) => setForm((f) => ({ ...f, phone: t }))}
+          keyboardType="phone-pad"
+          style={[styles.input, { borderColor, color: textColor, backgroundColor: inputBg }]}
+        />
+        <Text style={[styles.inputLabel, { color: textColor }]}>{FORM_LABELS.lead.source}</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.sourceScroll}>
+          {[...leadSourceOptions, { value: OTHER_SOURCE_VALUE, label: 'Other (specify)' }].map((source) => {
+            const selected = form.source === source.value;
+            return (
               <Pressable
-                onPress={() => {
-                  if (!form.name.trim()) {
-                    Alert.alert('Name required');
-                    return;
-                  }
-                  createMutation.mutate();
-                }}
-                style={[styles.primaryBtn, { backgroundColor: colors.tint }]}
+                key={source.value}
+                onPress={() => setForm((f) => ({ ...f, source: source.value }))}
+                style={[
+                  styles.sourceChip,
+                  { borderColor, backgroundColor: selected ? colors.tint : 'transparent' },
+                ]}
               >
-                {createMutation.isPending ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.primaryBtnText}>Save</Text>
-                )}
+                <Text style={[styles.sourceChipText, { color: selected ? '#fff' : textColor }]}>
+                  {source.label}
+                </Text>
               </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </View>
+            );
+          })}
+        </ScrollView>
+        {form.source === OTHER_SOURCE_VALUE ? (
+          <>
+            <Text style={[styles.inputLabel, { color: textColor }]}>{FORM_LABELS.lead.otherSource}</Text>
+            <TextInput
+              placeholder="e.g., Trade Show, Partner Referral"
+              placeholderTextColor={mutedColor}
+              value={customSourceValue}
+              onChangeText={setCustomSourceValue}
+              style={[styles.input, { borderColor, color: textColor, backgroundColor: inputBg }]}
+            />
+          </>
+        ) : null}
+      </FormSheetModal>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  toolbar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 10,
-    borderBottomWidth: 1,
-  },
-  searchWrap: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: 10,
-    borderWidth: 1,
-    paddingHorizontal: 10,
-    minHeight: 44,
-  },
-  searchIcon: { marginRight: 8 },
-  searchInput: { flex: 1, fontSize: 16, paddingVertical: 8 },
-  addBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  errorWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  errorTitle: { fontSize: 17, fontWeight: '600', marginTop: 12 },
+  errorMsg: { fontSize: 14, marginTop: 8, textAlign: 'center' },
+  errorRetry: { marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 },
   chipsScroll: { maxHeight: 52, flexGrow: 0 },
   chipsRow: { paddingHorizontal: 12, paddingVertical: 8, gap: 8, flexDirection: 'row', alignItems: 'center' },
   chip: {
@@ -308,6 +395,7 @@ const styles = StyleSheet.create({
     paddingBottom: 32,
   },
   modalTitle: { fontSize: 20, fontWeight: '700', marginBottom: 16 },
+  inputLabel: { fontSize: 14, fontWeight: '600', marginBottom: 8, marginTop: 4 },
   input: {
     borderWidth: 1,
     borderRadius: 10,
@@ -316,6 +404,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginBottom: 12,
   },
+  sourceScroll: { marginTop: 4, marginBottom: 4 },
+  sourceChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginRight: 8,
+  },
+  sourceChipText: { fontSize: 14, fontWeight: '500' },
   modalActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12, marginTop: 8 },
   secondaryBtn: {
     minWidth: 100,
@@ -326,8 +423,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryBtn: {
-    minWidth: 100,
-    paddingVertical: 12,
+    paddingVertical: 14,
     paddingHorizontal: 20,
     borderRadius: 10,
     alignItems: 'center',

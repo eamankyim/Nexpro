@@ -1,6 +1,6 @@
 const { canAccessFeature, canAccessRoute, getFeatureByKey } = require('../config/features');
 const { Tenant } = require('../models');
-const { getFeaturesForBusinessType, isFeatureAvailableForBusinessType } = require('../config/businessTypes');
+const { filterFeaturesForTenant } = require('../config/businessTypes');
 const { getTenantEffectiveEntitlements, resolveTenantAccessState } = require('../utils/tenantEntitlements');
 
 /**
@@ -29,13 +29,7 @@ const requireFeature = (featureKey) => {
       }
 
       const entitlements = await getTenantEffectiveEntitlements(tenant);
-      let planFeatures = entitlements.enabledFeatures;
-
-      // Filter features by business type
-      if (tenant.businessType) {
-        const businessTypeFeatures = getFeaturesForBusinessType(tenant.businessType);
-        planFeatures = planFeatures.filter(f => businessTypeFeatures.includes(f));
-      }
+      const planFeatures = filterFeaturesForTenant(entitlements.enabledFeatures, tenant);
 
       // Check if feature is available
       if (!canAccessFeature(planFeatures, featureKey)) {
@@ -87,12 +81,7 @@ const requireAnyFeature = (featureKeys) => {
       }
 
       const entitlements = await getTenantEffectiveEntitlements(tenant);
-      let planFeatures = entitlements.enabledFeatures;
-
-      if (tenant.businessType) {
-        const businessTypeFeatures = getFeaturesForBusinessType(tenant.businessType);
-        planFeatures = planFeatures.filter((f) => businessTypeFeatures.includes(f));
-      }
+      const planFeatures = filterFeaturesForTenant(entitlements.enabledFeatures, tenant);
 
       const allowed = Array.isArray(featureKeys) && featureKeys.some((k) => canAccessFeature(planFeatures, k));
       if (!allowed) {
@@ -154,13 +143,7 @@ const checkRouteAccess = async (req, res, next) => {
     }
 
     const entitlements = await getTenantEffectiveEntitlements(tenant);
-    let planFeatures = entitlements.enabledFeatures;
-
-    // Filter features by business type
-    if (tenant.businessType) {
-      const businessTypeFeatures = getFeaturesForBusinessType(tenant.businessType);
-      planFeatures = planFeatures.filter(f => businessTypeFeatures.includes(f));
-    }
+    const planFeatures = filterFeaturesForTenant(entitlements.enabledFeatures, tenant);
 
     // Check if route is accessible
     const route = req.path;
@@ -191,15 +174,7 @@ const getTenantFeatures = async (tenantId) => {
   const tenant = await Tenant.findByPk(tenantId);
   if (!tenant) return [];
   const entitlements = await getTenantEffectiveEntitlements(tenant);
-  let planFeatures = entitlements.enabledFeatures;
-
-  // Filter features by business type
-  if (tenant.businessType) {
-    const businessTypeFeatures = getFeaturesForBusinessType(tenant.businessType);
-    planFeatures = planFeatures.filter(f => businessTypeFeatures.includes(f));
-  }
-
-  return planFeatures;
+  return filterFeaturesForTenant(entitlements.enabledFeatures, tenant);
 };
 
 /**

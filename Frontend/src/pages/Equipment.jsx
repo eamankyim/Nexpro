@@ -24,8 +24,11 @@ import WelcomeSection from '../components/WelcomeSection';
 import equipmentService from '../services/equipmentService';
 import vendorService from '../services/vendorService';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { showSuccess, showError } from '../utils/toast';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -73,15 +76,12 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
+import { formatAmount } from '../utils/formatNumber';
 
 const sortCategories = (list = []) =>
   [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-const valueFormatter = (value) =>
-  `₵ ${parseFloat(value || 0).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  })}`;
+const valueFormatter = (value) => formatAmount(value);
 
 const EQUIPMENT_STATUS_OPTIONS = [
   { value: 'active', label: 'Active' },
@@ -116,6 +116,8 @@ const quickVendorSchema = z.object({
 
 const Equipment = () => {
   const { activeTenantId } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
@@ -226,15 +228,16 @@ const Equipment = () => {
       setRefreshing(false);
       setLoading(false);
     }
-  }, [pagination.current, pagination.pageSize, filters.categoryId, filters.status, debouncedSearch]);
+  }, [pagination.current, pagination.pageSize, filters.categoryId, filters.status, debouncedSearch, activeShopId]);
 
   useEffect(() => {
     fetchCategories();
   }, [fetchCategories]);
 
   useEffect(() => {
+    if (shopContext?.isShopWorkspace && !activeShopId) return;
     fetchItems();
-  }, [fetchItems]);
+  }, [fetchItems, shopContext?.isShopWorkspace, activeShopId]);
 
   const loadVendors = useCallback(async () => {
     try {
@@ -571,6 +574,14 @@ const Equipment = () => {
 
   const hasActiveFilters = filters.categoryId !== 'all' || filters.status !== 'all';
 
+  const equipmentEmptyState = useMemo(
+    () =>
+      getEmptyStateProps(EMPTY_STATES.EQUIPMENT, {
+        primary: () => openItemModal(),
+      }),
+    [openItemModal]
+  );
+
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -619,14 +630,7 @@ const Equipment = () => {
         columns={tableColumns}
         loading={loading}
         title={null}
-        emptyIcon={<Monitor className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No equipment yet. Track your business assets and maintenance schedules."
-        emptyAction={
-          <Button onClick={() => openItemModal()}>
-            <Plus className="h-4 w-4 mr-2" />
-            Add First Equipment
-          </Button>
-        }
+        emptyState={equipmentEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination((prev) => ({ ...prev, ...newPagination }));

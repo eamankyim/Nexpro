@@ -1,4 +1,5 @@
 import { api } from './api';
+import { buildScopedQueryString } from '@/utils/shopScope';
 
 type SaleParams = {
   page?: number;
@@ -10,17 +11,12 @@ type SaleParams = {
   endDate?: string;
   orderStatus?: string;
   activeOrders?: boolean;
+  shopId?: string;
 };
 
 export const saleService = {
   getSales: async (params: SaleParams = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === '') return;
-      searchParams.append(key, String(value));
-    });
-    const query = searchParams.toString();
-    // Increase timeout for sales endpoint (60 seconds) as it may have large datasets
+    const query = await buildScopedQueryString(params);
     const res = await api.get(query ? `/sales?${query}` : '/sales', {
       timeout: 60000, // 60 seconds
     });
@@ -82,6 +78,53 @@ export const saleService = {
    */
   updateOrderStatus: async (saleId: string, orderStatus: string) => {
     const res = await api.patch(`/sales/${saleId}/order-status`, { orderStatus });
+    return res.data;
+  },
+
+  updateDeliveryStatus: async (saleId: string, deliveryStatus: string | null) => {
+    const res = await api.patch(`/sales/${saleId}/delivery-status`, { deliveryStatus });
+    return res.data;
+  },
+
+  recordPayment: async (
+    saleId: string,
+    payload: {
+      amount: number;
+      paymentMethod?: string;
+      referenceNumber?: string;
+      paymentDate?: string | Date;
+    }
+  ) => {
+    const body: Record<string, string | number> = {
+      amount: payload.amount,
+      paymentMethod: payload.paymentMethod || 'cash',
+    };
+    if (payload.referenceNumber) body.referenceNumber = payload.referenceNumber;
+    if (payload.paymentDate) {
+      body.paymentDate =
+        typeof payload.paymentDate === 'string'
+          ? payload.paymentDate
+          : payload.paymentDate.toISOString().slice(0, 10);
+    }
+    const res = await api.post(`/sales/${saleId}/payment`, body);
+    return res.data;
+  },
+
+  cancelSale: async (saleId: string) => {
+    const res = await api.post(`/sales/${saleId}/cancel`);
+    return res.data;
+  },
+
+  getReceipt: async (saleId: string) => {
+    const res = await api.get(`/sales/${saleId}/receipt`);
+    return res.data;
+  },
+
+  sendReceipt: async (
+    saleId: string,
+    payload: { channels: Array<'sms' | 'whatsapp' | 'email'>; phone?: string; email?: string }
+  ) => {
+    const res = await api.post(`/sales/${saleId}/send-receipt`, payload);
     return res.data;
   },
 };

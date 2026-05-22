@@ -10,6 +10,7 @@ const {
 } = require('../controllers/vendorController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { shopContext } = require('../middleware/shopContext');
 const { exportLimiter } = require('../middleware/rateLimiter');
 
 const router = express.Router();
@@ -19,6 +20,7 @@ const priceListRoutes = require('./vendorPriceListRoutes');
 
 router.use(protect);
 router.use(tenantContext);
+router.use(shopContext);
 
 router.get('/categories', getVendorCategories);
 router.get('/export', exportLimiter, authorize('admin', 'manager'), exportVendors);

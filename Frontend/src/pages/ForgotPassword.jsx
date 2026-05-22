@@ -17,6 +17,7 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
+import { AuthBrandMark } from '@/components/AppLogo';
 
 const forgotSchema = z.object({
   email: z.string().min(1, 'Enter your email').email('Enter a valid email'),
@@ -47,7 +48,12 @@ const ForgotPassword = () => {
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-0 md:p-8">
       <div className={`w-full ${isMobile ? 'h-screen' : 'max-w-md bg-card rounded-2xl border border-border'} overflow-hidden flex flex-col ${isMobile ? 'px-6 py-4' : 'p-12'}`}>
-        <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-brand text-center`}>ABS</h1>
+        <AuthBrandMark
+          showName
+          appName="ABS"
+          className={`${isMobile ? 'mb-4' : 'mb-8'} justify-center`}
+          logoClassName={isMobile ? 'h-9 w-9' : 'h-11 w-11'}
+        />
 
         {!submitted && (
           <>

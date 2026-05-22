@@ -1,4 +1,5 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
+import { useRouter } from 'expo-router';
 import {
   View,
   Text,
@@ -7,23 +8,27 @@ import {
   Pressable,
   RefreshControl,
   ActivityIndicator,
-  Modal,
-  ScrollView,
 } from 'react-native';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery } from '@tanstack/react-query';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { ListEmptyState } from '@/components/ListEmptyState';
+import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
+import { useSmartSearch } from '@/context/SmartSearchContext';
+import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
+import { useDebounce } from '@/hooks/useDebounce';
+import { flatListStyleForEmpty, listContentStyleWhenEmpty, showListFilters } from '@/utils/listEmptyLayout';
+import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListResponse';
+import { formatStatusLabel } from '@/utils/formatLabels';
 import { invoiceService } from '@/services/invoiceService';
 import { useAuth } from '@/context/AuthContext';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
-import { useTheme } from '@/context/ThemeContext';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
+import { FilterChipRow } from '@/components/FilterChip';
+import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
 import { CURRENCY } from '@/constants';
-import Colors from '@/constants/Colors';
-
-function formatCurrency(value: number | string | null | undefined): string {
-  const numValue = typeof value === 'number' ? value : parseFloat(String(value ?? 0)) || 0;
-  return `${CURRENCY.SYMBOL} ${numValue.toFixed(CURRENCY.DECIMAL_PLACES)}`;
-}
+import { formatCurrency } from '@/utils/formatCurrency';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -55,20 +60,23 @@ type Invoice = {
 };
 
 export default function InvoicesScreen() {
+  const router = useRouter();
   const { activeTenantId, hasFeature } = useAuth();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
-  const [detailInvoice, setDetailInvoice] = useState<Invoice | null>(null);
+
+  const { searchValue } = useSmartSearch();
+  useRegisterPageSearch({ scope: 'invoices', placeholder: SEARCH_PLACEHOLDERS.INVOICES });
+  const debouncedSearch = useDebounce(searchValue, 400);
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['invoices', activeTenantId, statusFilter],
+    queryKey: ['invoices', activeTenantId, statusFilter, debouncedSearch],
     queryFn: async () => {
-      const params: { page?: number; limit?: number; status?: string } = {
+      const params: { page?: number; limit?: number; status?: string; search?: string } = {
         page: 1,
         limit: 20,
+        search: debouncedSearch || undefined,
       };
       if (statusFilter !== 'all') params.status = statusFilter;
       return invoiceService.getInvoices(params);
@@ -80,33 +88,57 @@ export default function InvoicesScreen() {
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
 
-  const invoices = (response?.data || []) as Invoice[];
+  const invoices = useMemo(() => parseApiListResponse<Invoice>(response), [response]);
+  const loadErrorMessage = useMemo(
+    () => getApiErrorMessage(error, 'An error occurred while loading invoices. Please try again.'),
+    [error]
+  );
+
+  const isEmpty = !isLoading && !isError && invoices.length === 0;
+  const hasActiveFilter = statusFilter !== 'all' || !!debouncedSearch.trim();
   const onRefresh = useCallback(() => refetch(), [refetch]);
 
-  const handleInvoicePress = useCallback(async (invoice: Invoice) => {
-    setSelectedInvoice(invoice);
-    try {
-      const res = await invoiceService.getInvoiceById(invoice.id);
-      const full = res?.data || res;
-      setDetailInvoice(full as Invoice);
-    } catch {
-      setDetailInvoice(invoice);
+  const filterOptions = useMemo(
+    () =>
+      (['all', 'draft', 'sent', 'paid', 'overdue'] as const).map((s) => ({
+        value: s,
+        label: s === 'all' ? 'All' : formatStatusLabel(s),
+      })),
+    []
+  );
+
+  const emptyMessage = useMemo(() => {
+    if (statusFilter === 'all') {
+      return {
+        title: 'No invoices yet',
+        subtitle: 'Invoices from sales and jobs will appear here',
+      };
     }
-  }, []);
+    const label = statusFilter.charAt(0).toUpperCase() + statusFilter.slice(1);
+    return {
+      title: `No ${label.toLowerCase()} invoices`,
+      subtitle: 'Try another filter or create a new invoice',
+    };
+  }, [statusFilter]);
+
+  const handleInvoicePress = useCallback(
+    (invoice: Invoice) => {
+      router.push(`/invoice/${invoice.id}` as never);
+    },
+    [router]
+  );
 
   if (!hasFeature('invoices')) {
     return <FeatureAccessDenied message="Invoices are not enabled for this workspace." />;
   }
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
 
   const renderInvoiceItem = ({ item }: { item: Invoice }) => {
-    const statusColor = getStatusColor(item.status);
-    const isOverdue = item.status === 'overdue' || (item.dueDate && new Date(item.dueDate) < new Date() && item.status !== 'paid');
+    const statusKey = item.status || 'draft';
+    const statusColor = getStatusColor(statusKey);
+    const isOverdue =
+      statusKey === 'overdue' ||
+      (item.dueDate && new Date(item.dueDate) < new Date() && statusKey !== 'paid');
 
     return (
       <Pressable
@@ -140,7 +172,7 @@ export default function InvoicesScreen() {
         <View style={styles.invoiceMeta}>
           <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
             <Text style={[styles.statusText, { color: statusColor }]}>
-              {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+              {formatStatusLabel(statusKey)}
             </Text>
           </View>
           {item.dueDate && (
@@ -157,163 +189,38 @@ export default function InvoicesScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: bg }]}>
+    <ScreenShell style={styles.container}>
       {/* Status filter */}
-      <View style={styles.filterRow}>
-        {['all', 'draft', 'sent', 'paid', 'overdue'].map((s) => (
-          <Pressable
-            key={s}
-            onPress={() => setStatusFilter(s)}
-            style={[
-              styles.filterBtn,
-              { borderColor },
-              statusFilter === s && { backgroundColor: colors.tint, borderColor: colors.tint },
-            ]}
-          >
-            <Text style={[styles.filterText, { color: statusFilter === s ? '#fff' : textColor }]}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+      {showListFilters(isLoading, isError, invoices.length, hasActiveFilter) && (
+        <FilterChipRow options={filterOptions} value={statusFilter} onChange={setStatusFilter} />
+      )}
 
-      {isLoading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.tint} />
-          <Text style={[styles.loadingText, { color: mutedColor }]}>Loading invoices...</Text>
-        </View>
+      {isLoading && !response ? (
+        <ListLoadingState message="Loading invoices..." />
       ) : isError ? (
-        <View style={styles.center}>
-          <FontAwesome name="exclamation-triangle" size={48} color="#ef4444" />
-          <Text style={[styles.emptyTitle, { color: textColor }]}>Failed to load invoices</Text>
-          <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-            {error?.message?.includes('timeout')
-              ? 'Request timed out. Please check your connection and try again.'
-              : 'An error occurred while loading invoices. Please try again.'}
-          </Text>
-          <Pressable
-            onPress={() => refetch()}
-            style={[styles.retryButton, { backgroundColor: colors.tint }]}
-          >
-            <Text style={styles.retryButtonText}>Retry</Text>
-          </Pressable>
-        </View>
+        <ListErrorState title="Failed to load invoices" message={loadErrorMessage} onRetry={refetch} />
       ) : (
         <FlatList
+          style={flatListStyleForEmpty}
           data={invoices}
           keyExtractor={(item) => item.id}
           renderItem={renderInvoiceItem}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={listContentStyleWhenEmpty(styles.listContent, isEmpty)}
           refreshControl={
             <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={colors.tint} />
           }
           ListEmptyComponent={
-            <View style={styles.empty}>
-              <FontAwesome name="file-text" size={48} color={mutedColor} />
-              <Text style={[styles.emptyTitle, { color: textColor }]}>No invoices yet</Text>
-              <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-                Invoices will appear here
-              </Text>
-            </View>
+            <ListEmptyState
+              imageKey="INVOICES"
+              title={emptyMessage.title}
+              subtitle={emptyMessage.subtitle}
+              titleColor={textColor}
+              subtitleColor={mutedColor}
+            />
           }
         />
       )}
-
-      {/* Invoice detail modal */}
-      <Modal
-        visible={!!selectedInvoice}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setSelectedInvoice(null)}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => setSelectedInvoice(null)}>
-          <Pressable
-            style={[styles.modalContent, { backgroundColor: cardBg }]}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: textColor }]}>
-                {detailInvoice?.invoiceNumber || selectedInvoice?.invoiceNumber || 'Invoice details'}
-              </Text>
-              <Pressable onPress={() => setSelectedInvoice(null)} hitSlop={12}>
-                <FontAwesome name="times" size={22} color={mutedColor} />
-              </Pressable>
-            </View>
-            {detailInvoice && (
-              <ScrollView style={styles.modalBody}>
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Total</Text>
-                  <Text style={[styles.detailValue, { color: colors.tint, fontSize: 18, fontWeight: '700' }]}>
-                    {formatCurrency(detailInvoice.totalAmount ?? detailInvoice.total)}
-                  </Text>
-                </View>
-                {((detailInvoice.amountPaid ?? detailInvoice.paidAmount) ?? 0) > 0 && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Paid</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>
-                      {formatCurrency(detailInvoice.amountPaid ?? detailInvoice.paidAmount)}
-                    </Text>
-                  </View>
-                )}
-                {((detailInvoice.totalAmount ?? detailInvoice.total) ?? 0) > ((detailInvoice.amountPaid ?? detailInvoice.paidAmount) ?? 0) && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Balance</Text>
-                    <Text style={[styles.detailValue, { color: '#ef4444', fontWeight: '600' }]}>
-                      {formatCurrency((detailInvoice.totalAmount ?? detailInvoice.total ?? 0) - (detailInvoice.amountPaid ?? detailInvoice.paidAmount ?? 0))}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Customer</Text>
-                  <Text style={[styles.detailValue, { color: textColor }]}>
-                    {detailInvoice.customer?.name ?? '—'}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Status</Text>
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(detailInvoice.status) + '20' }]}>
-                    <Text style={[styles.statusText, { color: getStatusColor(detailInvoice.status) }]}>
-                      {detailInvoice.status.charAt(0).toUpperCase() + detailInvoice.status.slice(1)}
-                    </Text>
-                  </View>
-                </View>
-                {detailInvoice.dueDate && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Due Date</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>
-                      {formatDate(detailInvoice.dueDate)}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Created</Text>
-                  <Text style={[styles.detailValue, { color: textColor }]}>
-                    {formatDate(detailInvoice.createdAt)}
-                  </Text>
-                </View>
-                {(detailInvoice as any).items?.length > 0 && (
-                  <>
-                    <Text style={[styles.detailSection, { color: textColor }]}>Items</Text>
-                    {(detailInvoice as any).items.map(
-                      (item: { description: string; quantity: number; unitPrice: number }, i: number) => (
-                        <View key={i} style={styles.itemRow}>
-                          <Text style={[styles.itemName, { color: textColor }]} numberOfLines={1}>
-                            {item.description} x{item.quantity}
-                          </Text>
-                          <Text style={[styles.itemTotal, { color: textColor }]}>
-                            {formatCurrency(item.unitPrice * item.quantity)}
-                          </Text>
-                        </View>
-                      )
-                    )}
-                  </>
-                )}
-              </ScrollView>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </View>
+    </ScreenShell>
   );
 }
 
@@ -351,9 +258,9 @@ const styles = StyleSheet.create({
   dueDate: { fontSize: 12 },
   invoiceDate: { fontSize: 12 },
   pressed: { opacity: 0.8 },
-  empty: { alignItems: 'center', paddingVertical: 48 },
-  emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 16 },
-  emptySubtitle: { fontSize: 14, marginTop: 8 },
+  empty: { alignItems: 'center', paddingVertical: 48, paddingHorizontal: 24 },
+  emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 16, textAlign: 'center' },
+  emptySubtitle: { fontSize: 14, marginTop: 8, textAlign: 'center' },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -381,4 +288,38 @@ const styles = StyleSheet.create({
   itemRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
   itemName: { flex: 1, fontSize: 14 },
   itemTotal: { fontSize: 14, fontWeight: '600' },
+  modalActions: {
+    padding: 16,
+    borderTopWidth: 1,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'flex-end',
+  },
+  actionBtnOutline: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  actionBtnPrimary: {
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    minWidth: 88,
+    alignItems: 'center',
+  },
+  actionBtnText: { fontSize: 14, fontWeight: '600' },
+  actionBtnPrimaryText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  paymentBlock: { gap: 10 },
+  inputLabel: { fontSize: 12 },
+  paymentInput: {
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+  },
 });

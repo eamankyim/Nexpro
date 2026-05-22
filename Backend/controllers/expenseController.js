@@ -1,10 +1,34 @@
 const fs = require('fs');
 const path = require('path');
-const { Expense, Vendor, Job, User } = require('../models');
+const { Expense, Vendor, Job, User, Shop } = require('../models');
 const ExpenseActivity = require('../models/ExpenseActivity');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const {
+  applyShopReadFilter,
+  attachScopedToPayload,
+  assertShopRecordAccess,
+} = require('../utils/shopUtils');
+
+/** Expense queries scoped by tenant + active shop when retail. */
+const expenseScopeWhere = (req, extra = {}) =>
+  applyShopReadFilter(req, applyTenantFilter(req.tenantId, extra));
+
+/** Load one expense with shop access checks. */
+const findScopedExpense = async (req, id, options = {}) => {
+  const expense = await Expense.findOne({
+    where: expenseScopeWhere(req, { id }),
+    ...options,
+  });
+  if (!expense) return { expense: null };
+  try {
+    assertShopRecordAccess(req, expense);
+  } catch (accessErr) {
+    return { expense, accessErr };
+  }
+  return { expense };
+};
 const { getExpenseCategories } = require('../config/expenseCategories');
 const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
@@ -321,7 +345,7 @@ exports.getExpenses = async (req, res, next) => {
     const includeArchived = req.query.includeArchived === 'true';
 
     // Filter by tenant only - returns expenses from all users in the tenant
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = expenseScopeWhere(req, {});
     if (category && category !== 'null') where.category = category;
     if (status && status !== 'null') where.status = status;
     if (jobId && jobId !== 'null') where.jobId = jobId;
@@ -341,7 +365,8 @@ exports.getExpenses = async (req, res, next) => {
         { model: Vendor, as: 'vendor', attributes: ['id', 'name', 'company'] },
         { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
-        { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
+        { model: User, as: 'approver', attributes: ['id', 'name', 'email'] },
+        { model: Shop, as: 'shop', attributes: ['id', 'name'] },
       ],
       order: [['expenseDate', 'DESC']]
     });
@@ -369,7 +394,7 @@ exports.exportExpenses = async (req, res, next) => {
     const { format = 'csv', status, category } = req.query;
     const { sendCSV, sendExcel, COLUMN_DEFINITIONS } = require('../utils/dataExport');
 
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = expenseScopeWhere(req, {});
     if (status) where.status = status;
     if (category) where.category = category;
 
@@ -407,10 +432,11 @@ exports.exportExpenses = async (req, res, next) => {
 exports.getExpense = async (req, res, next) => {
   try {
     const expense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: expenseScopeWhere(req, { id: req.params.id }),
       include: [
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
+        { model: Shop, as: 'shop', attributes: ['id', 'name'], required: false },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
         { model: User, as: 'approver', attributes: ['id', 'name', 'email'] },
         { 
@@ -428,6 +454,15 @@ exports.getExpense = async (req, res, next) => {
         success: false,
         message: 'Expense not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, expense);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     res.status(200).json({
@@ -480,16 +515,19 @@ exports.createExpense = async (req, res, next) => {
         }
       }
 
-      const isAdmin = req.user?.role === 'admin';
-      const expense = await Expense.create({
-        ...payload,
-        tenantId: req.tenantId,
-        expenseNumber,
-        submittedBy: req.userId,
-        approvalStatus: isAdmin ? 'approved' : 'draft',
-        approvedBy: isAdmin ? req.userId : null,
-        approvedAt: isAdmin ? new Date() : null
-      }, { transaction });
+      const isAdmin = req.user?.role === 'admin' || ['owner', 'admin'].includes(req.tenantRole);
+      const expense = await Expense.create(
+        attachScopedToPayload(req, {
+          ...payload,
+          tenantId: req.tenantId,
+          expenseNumber,
+          submittedBy: req.userId,
+          approvalStatus: isAdmin ? 'approved' : 'draft',
+          approvedBy: isAdmin ? req.userId : null,
+          approvedAt: isAdmin ? new Date() : null,
+        }),
+        { transaction }
+      );
 
       const expenseWithDetails = await Expense.findOne({
         where: applyTenantFilter(req.tenantId, { id: expense.id }),
@@ -598,7 +636,7 @@ exports.createBulkExpenses = async (req, res, next) => {
     }
 
     // Auto-approve expenses created by admins
-    const isAdmin = req.user?.role === 'admin';
+    const isAdmin = req.user?.role === 'admin' || ['owner', 'admin'].includes(req.tenantRole);
 
     // Create all expenses in a transaction
     const createdExpenses = [];
@@ -664,15 +702,18 @@ exports.createBulkExpenses = async (req, res, next) => {
 
       const expenseNumber = await exports.generateExpenseNumber(req.tenantId, transaction);
 
-      const expense = await Expense.create({
-        ...finalExpenseData,
-        tenantId: req.tenantId,
-        expenseNumber,
-        submittedBy: req.userId,
-        approvalStatus: isAdmin ? 'approved' : 'draft',
-        approvedBy: isAdmin ? req.userId : null,
-        approvedAt: isAdmin ? new Date() : null
-      }, { transaction });
+      const expense = await Expense.create(
+        attachScopedToPayload(req, {
+          ...finalExpenseData,
+          tenantId: req.tenantId,
+          expenseNumber,
+          submittedBy: req.userId,
+          approvalStatus: isAdmin ? 'approved' : 'draft',
+          approvedBy: isAdmin ? req.userId : null,
+          approvedAt: isAdmin ? new Date() : null,
+        }),
+        { transaction }
+      );
 
       createdExpenses.push(expense);
     }
@@ -691,7 +732,7 @@ exports.createBulkExpenses = async (req, res, next) => {
     // Fetch created expenses with details
     const expenseIds = createdExpenses.map(e => e.id);
     const expensesWithDetails = await Expense.findAll({
-      where: applyTenantFilter(req.tenantId, { id: { [Op.in]: expenseIds } }),
+      where: expenseScopeWhere(req, { id: { [Op.in]: expenseIds } }),
       include: [
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
@@ -749,7 +790,7 @@ exports.createBulkExpenses = async (req, res, next) => {
 exports.updateExpense = async (req, res, next) => {
   try {
     const expense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: expenseScopeWhere(req, { id: req.params.id }),
     });
 
     if (!expense) {
@@ -759,7 +800,29 @@ exports.updateExpense = async (req, res, next) => {
       });
     }
 
+    try {
+      assertShopRecordAccess(req, expense);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
     const updatePayload = sanitizePayload(req.body);
+    delete updatePayload.shopId;
+
+    if (updatePayload.status === 'paid' && expense.approvalStatus !== 'approved') {
+      return res.status(400).json({
+        success: false,
+        message: 'Expense must be approved before it can be marked paid'
+      });
+    }
+
+    if (updatePayload.approvalStatus === 'approved') {
+      updatePayload.approvedBy = req.userId;
+      updatePayload.approvedAt = new Date();
+    }
 
     if (updatePayload.vendorId) {
       const vendor = await Vendor.findOne({
@@ -897,9 +960,11 @@ exports.updateExpense = async (req, res, next) => {
 // @access  Private
 exports.archiveExpense = async (req, res, next) => {
   try {
-    const expense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
-    });
+    const { expense, accessErr } = await findScopedExpense(req, req.params.id);
+
+    if (accessErr?.statusCode === 403) {
+      return res.status(403).json({ success: false, message: accessErr.message });
+    }
 
     if (!expense) {
       return res.status(404).json({
@@ -935,12 +1000,13 @@ exports.archiveExpense = async (req, res, next) => {
     }
 
     const updatedExpense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: expense.id }),
+      where: expenseScopeWhere(req, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
         { model: User, as: 'submitter', attributes: ['id', 'name', 'email'] },
-        { model: User, as: 'approver', attributes: ['id', 'name', 'email'] }
+        { model: User, as: 'approver', attributes: ['id', 'name', 'email'] },
+        { model: Shop, as: 'shop', attributes: ['id', 'name'] },
       ]
     });
 
@@ -962,7 +1028,7 @@ exports.getExpenseStats = async (req, res, next) => {
     const { sequelize } = require('../config/database');
     const { jobId, startDate, endDate } = req.query;
 
-    const baseFilters = applyTenantFilter(req.tenantId, {});
+    const baseFilters = expenseScopeWhere(req, {});
 
     if (jobId) {
       baseFilters.jobId = jobId;
@@ -1028,7 +1094,7 @@ exports.getExpenseStats = async (req, res, next) => {
     let jobExpenses = null;
     if (jobId) {
       jobExpenses = await Expense.findAll({
-        where: applyTenantFilter(req.tenantId, { jobId, isArchived: false }),
+        where: expenseScopeWhere(req, { jobId, isArchived: false }),
         include: [
           { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] }
         ],
@@ -1115,9 +1181,11 @@ exports.getExpensesByJob = async (req, res, next) => {
 // @access  Manager/Staff only (admins cannot submit)
 exports.submitExpense = async (req, res, next) => {
   try {
-    const expense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
-    });
+    const { expense, accessErr } = await findScopedExpense(req, req.params.id);
+
+    if (accessErr?.statusCode === 403) {
+      return res.status(403).json({ success: false, message: accessErr.message });
+    }
 
     if (!expense) {
       return res.status(404).json({
@@ -1184,9 +1252,11 @@ exports.submitExpense = async (req, res, next) => {
 // @access  Admin only
 exports.approveExpense = async (req, res, next) => {
   try {
-    const expense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
-    });
+    const { expense, accessErr } = await findScopedExpense(req, req.params.id);
+
+    if (accessErr?.statusCode === 403) {
+      return res.status(403).json({ success: false, message: accessErr.message });
+    }
 
     if (!expense) {
       return res.status(404).json({
@@ -1264,9 +1334,11 @@ exports.rejectExpense = async (req, res, next) => {
   try {
     const { rejectionReason } = req.body;
 
-    const expense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
-    });
+    const { expense, accessErr } = await findScopedExpense(req, req.params.id);
+
+    if (accessErr?.statusCode === 403) {
+      return res.status(403).json({ success: false, message: accessErr.message });
+    }
 
     if (!expense) {
       return res.status(404).json({
@@ -1337,9 +1409,10 @@ exports.rejectExpense = async (req, res, next) => {
 // @access  Private
 exports.getExpenseActivities = async (req, res, next) => {
   try {
-    const expense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
-    });
+    const { expense, accessErr } = await findScopedExpense(req, req.params.id);
+    if (accessErr?.statusCode === 403) {
+      return res.status(403).json({ success: false, message: accessErr.message });
+    }
     if (!expense) {
       return res.status(404).json({ success: false, message: 'Expense not found' });
     }
@@ -1361,9 +1434,10 @@ exports.getExpenseActivities = async (req, res, next) => {
 // @access  Private
 exports.addExpenseActivity = async (req, res, next) => {
   try {
-    const expense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
-    });
+    const { expense, accessErr } = await findScopedExpense(req, req.params.id);
+    if (accessErr?.statusCode === 403) {
+      return res.status(403).json({ success: false, message: accessErr.message });
+    }
     if (!expense) {
       return res.status(404).json({ success: false, message: 'Expense not found' });
     }

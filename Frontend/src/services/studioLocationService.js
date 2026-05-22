@@ -42,6 +42,15 @@ const studioLocationService = {
     });
     return response?.data || response;
   },
+
+  uploadLogo: async (id, file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post(`/studio-locations/${id}/logo`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response?.data || response;
+  },
 };
 
 export default studioLocationService;

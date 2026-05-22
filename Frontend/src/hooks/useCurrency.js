@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { CURRENCIES, CURRENCY } from '../constants';
+import { formatAmount as formatAmountFixed } from '../utils/formatNumber';
 
 /**
  * Hook to get the current tenant's currency configuration
@@ -22,11 +23,7 @@ export const useCurrency = () => {
   }, [activeTenant?.metadata?.currency]);
 
   const formatAmount = useMemo(() => {
-    return (amount) => {
-      const num = Number(amount);
-      const value = Number.isFinite(num) ? num : 0;
-      return `${currency.symbol} ${value.toFixed(CURRENCY.DECIMAL_PLACES)}`;
-    };
+    return (amount) => formatAmountFixed(amount, currency.symbol, CURRENCY.DECIMAL_PLACES);
   }, [currency.symbol]);
 
   return {

@@ -1,35 +1,74 @@
 import { useEffect } from 'react';
 import { router } from 'expo-router';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import Colors from '@/constants/Colors';
 import { useAuth } from '@/context/AuthContext';
+import { settingsService } from '@/services/settings';
 import { logger } from '@/utils/logger';
+import { isOnboardingComplete, tenantWithOrganizationContact } from '@/utils/onboardingStatus';
+import {
+  hasCompletedIntroOnboarding,
+  markIntroOnboardingComplete,
+} from '@/utils/introOnboarding';
 
 export default function Index() {
-  const { user, loading, activeTenant, wasInvited, suppressAppGuidance } = useAuth();
+  const { user, loading, sessionSyncing, activeTenant, wasInvited, suppressAppGuidance } = useAuth();
 
   useEffect(() => {
-    if (loading) {
-      logger.debug('Index', 'Auth loading...');
+    if (loading || sessionSyncing) {
+      logger.debug('Index', 'Waiting for auth session...', { loading, sessionSyncing });
       return;
     }
-    if (user) {
-      const onboardingCompleted = activeTenant?.metadata?.onboarding?.completedAt;
-      if (onboardingCompleted || wasInvited || suppressAppGuidance) {
-        logger.info('Index', 'User logged in, onboarding done, redirecting to tabs');
-        router.replace('/(tabs)');
-      } else {
-        logger.info('Index', 'User logged in, onboarding not done, redirecting to onboarding');
-        router.replace('/onboarding');
+
+    let cancelled = false;
+
+    (async () => {
+      if (!user) {
+        logger.info('Index', 'No user, redirecting to login');
+        router.replace('/login');
+        return;
       }
-    } else {
-      logger.info('Index', 'No user, redirecting to login');
-      router.replace('/login');
-    }
-  }, [user, loading, activeTenant, wasInvited, suppressAppGuidance]);
+
+      if (wasInvited || suppressAppGuidance) {
+        logger.info('Index', 'Onboarding skipped (invited or tenured), redirecting to tabs');
+        router.replace('/(tabs)');
+        return;
+      }
+
+      if (isOnboardingComplete(activeTenant)) {
+        logger.info('Index', 'Onboarding complete (tenant), redirecting to tabs');
+        router.replace('/(tabs)');
+        return;
+      }
+
+      try {
+        const organization = await settingsService.getOrganizationSettings();
+        if (cancelled) return;
+        const tenantWithOrg = tenantWithOrganizationContact(activeTenant, organization);
+        if (isOnboardingComplete(tenantWithOrg)) {
+          await markIntroOnboardingComplete();
+          if (cancelled) return;
+          logger.info('Index', 'Onboarding complete (organization settings), redirecting to tabs');
+          router.replace('/(tabs)');
+          return;
+        }
+      } catch (err) {
+        logger.warn('Index', 'Could not load organization settings for onboarding check:', err);
+      }
+
+      if (cancelled) return;
+      logger.info('Index', 'Onboarding required, redirecting to onboarding');
+      router.replace('/onboarding');
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, loading, sessionSyncing, activeTenant, wasInvited, suppressAppGuidance]);
 
   return (
     <View style={styles.container}>
-      <ActivityIndicator size="large" color="#166534" />
+      <ActivityIndicator size="large" color={Colors.light.tint} />
     </View>
   );
 }

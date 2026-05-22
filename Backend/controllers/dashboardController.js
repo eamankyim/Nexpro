@@ -4,6 +4,9 @@ const { Op } = require('sequelize');
 const config = require('../config/config');
 const { getPagination } = require('../utils/paginationUtils');
 const { getPreviousPeriodDates, calculateComparison } = require('../utils/periodComparison');
+const { applyShopFilter, getShopSqlFragment, getShopReadSqlFragment } = require('../utils/shopUtils');
+const { applyTenantFilter } = require('../utils/tenantUtils');
+const { resolveBusinessType } = require('../config/businessTypes');
 
 const logDashboardDebug = (...args) => {
   if (config.nodeEnv === 'development') {
@@ -16,8 +19,8 @@ const logDashboardDebug = (...args) => {
 const dashboardCache = new Map();
 const CACHE_TTL_MS = 30 * 1000;
 
-function getCacheKey(tenantId, startDate, endDate, filterType) {
-  return `${tenantId}:${startDate || 'default'}:${endDate || 'default'}:${filterType || 'none'}`;
+function getCacheKey(tenantId, startDate, endDate, filterType, shopScope = '') {
+  return `${tenantId}:${shopScope || 'none'}:${startDate || 'default'}:${endDate || 'default'}:${filterType || 'none'}`;
 }
 
 function getCachedDashboard(cacheKey) {
@@ -126,7 +129,8 @@ exports.getDashboardOverview = async (req, res, next) => {
   logDashboardDebug('Received overview request', { startDate, endDate, tenantId });
 
   // Check cache first
-  const cacheKey = getCacheKey(tenantId, startDate, endDate, filterType);
+  const shopScopeKey = req.shopFilterId || (req.canAccessAllShops ? 'all-shops' : 'assigned');
+  const cacheKey = getCacheKey(tenantId, startDate, endDate, filterType, shopScopeKey);
   const cachedData = getCachedDashboard(cacheKey);
   if (cachedData) {
     return res.status(200).json({
@@ -146,6 +150,8 @@ exports.getDashboardOverview = async (req, res, next) => {
   } catch (err) {
     if (config.nodeEnv === 'development') console.warn('[Dashboard] Tenant lookup failed:', err?.message);
   }
+
+  const isRetailWorkspace = businessType === 'shop' || businessType === 'pharmacy';
 
   try {
     const today = new Date();
@@ -190,8 +196,14 @@ exports.getDashboardOverview = async (req, res, next) => {
     weekEnd.setHours(23, 59, 59, 999);
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const recentSalesWhere = { tenantId };
+    let recentSalesWhere = applyShopFilter(req, { tenantId });
     if (hasDateFilter) recentSalesWhere.createdAt = dateFilter;
+
+    const customerShopFrag = getShopSqlFragment(req);
+    const saleShopFrag = getShopSqlFragment(req);
+    const expenseShopFrag = getShopReadSqlFragment(req);
+    const customerCountSql = (baseWhere) =>
+      `(SELECT COUNT(*) FROM customers WHERE "tenantId" = :tenantId${customerShopFrag.sql} AND ${baseWhere})`;
 
     // Helper to safely run queries (catch missing tables / schema errors)
     const safeQuery = (p) => (p && typeof p.then === 'function' ? p.catch((err) => {
@@ -258,12 +270,13 @@ exports.getDashboardOverview = async (req, res, next) => {
         ${hasDateFilter ? `,COALESCE(SUM(CASE WHEN "expenseDate" BETWEEN :filterStart AND :filterEnd THEN amount ELSE 0 END), 0) as "filteredExpenses"` : ''}
         ${prevPeriod ? `,COALESCE(SUM(CASE WHEN "expenseDate" BETWEEN :prevStart AND :prevEnd THEN amount ELSE 0 END), 0) as "prevExpenses"` : ''}
       FROM expenses 
-      WHERE "tenantId" = :tenantId AND "approvalStatus" = 'approved' AND "isArchived" = false
+      WHERE "tenantId" = :tenantId AND "approvalStatus" = 'approved' AND "isArchived" = false${expenseShopFrag.sql}
     `, {
       replacements: { 
         tenantId, 
         monthStart: firstDayOfMonth, 
         monthEnd: lastDayOfMonth,
+        ...expenseShopFrag.replacements,
         ...(hasDateFilter ? { filterStart, filterEnd } : {}),
         ...(prevPeriod ? { prevStart: prevPeriod.start, prevEnd: prevPeriod.end } : {})
       },
@@ -273,16 +286,17 @@ exports.getDashboardOverview = async (req, res, next) => {
     // 4. Consolidated customer/vendor counts (single query)
     const entityCountsQuery = safeQuery(sequelize.query(`
       SELECT 
-        (SELECT COUNT(*) FROM customers WHERE "tenantId" = :tenantId AND "isActive" = true) as "totalCustomers",
+        ${customerCountSql('"isActive" = true')} as "totalCustomers",
         (SELECT COUNT(*) FROM vendors WHERE "tenantId" = :tenantId AND "isActive" = true) as "totalVendors",
-        (SELECT COUNT(*) FROM customers WHERE "tenantId" = :tenantId AND "isActive" = true AND "createdAt" BETWEEN :monthStart AND :monthEnd) as "newCustomersThisMonth"
-        ${hasDateFilter ? `,(SELECT COUNT(*) FROM customers WHERE "tenantId" = :tenantId AND "isActive" = true AND "createdAt" BETWEEN :filterStart AND :filterEnd) as "filteredNewCustomers"` : ''}
-        ${prevPeriod ? `,(SELECT COUNT(*) FROM customers WHERE "tenantId" = :tenantId AND "isActive" = true AND "createdAt" BETWEEN :prevStart AND :prevEnd) as "prevNewCustomers"` : ''}
+        ${customerCountSql('"isActive" = true AND "createdAt" BETWEEN :monthStart AND :monthEnd')} as "newCustomersThisMonth"
+        ${hasDateFilter ? `,${customerCountSql('"isActive" = true AND "createdAt" BETWEEN :filterStart AND :filterEnd')} as "filteredNewCustomers"` : ''}
+        ${prevPeriod ? `,${customerCountSql('"isActive" = true AND "createdAt" BETWEEN :prevStart AND :prevEnd')} as "prevNewCustomers"` : ''}
     `, {
       replacements: { 
         tenantId, 
         monthStart: firstDayOfMonth, 
         monthEnd: lastDayOfMonth,
+        ...customerShopFrag.replacements,
         ...(hasDateFilter ? { filterStart, filterEnd } : {}),
         ...(prevPeriod ? { prevStart: prevPeriod.start, prevEnd: prevPeriod.end } : {})
       },
@@ -315,50 +329,65 @@ exports.getDashboardOverview = async (req, res, next) => {
             COUNT(*) as "totalSales"
             ${hasDateFilter ? `,COALESCE(SUM(CASE WHEN "createdAt" BETWEEN :filterStart AND :filterEnd THEN total ELSE 0 END), 0) as "filteredSalesRevenue"` : ''}
             ${prevPeriod ? `,COALESCE(SUM(CASE WHEN "createdAt" BETWEEN :prevStart AND :prevEnd THEN total ELSE 0 END), 0) as "prevSalesRevenue"` : ''}
-          FROM sales WHERE "tenantId" = :tenantId AND status = 'completed'
+          FROM sales WHERE "tenantId" = :tenantId AND status = 'completed'${saleShopFrag.sql}
         `, {
           replacements: { 
             tenantId, 
             monthStart: firstDayOfMonth, 
             monthEnd: lastDayOfMonth,
             todayStart, todayEnd, weekStart, weekEnd,
+            ...saleShopFrag.replacements,
             ...(hasDateFilter ? { filterStart, filterEnd } : {}),
             ...(prevPeriod ? { prevStart: prevPeriod.start, prevEnd: prevPeriod.end } : {})
           },
           type: sequelize.QueryTypes.SELECT
         }) : Promise.resolve([{}])),
-      // Shop inventory stats
-      safeQuery(businessType === 'shop' ? 
-        sequelize.query(`
-          SELECT 
-            COUNT(*) as "totalInventoryItems",
-            COUNT(CASE WHEN "quantityOnHand" <= "reorderLevel" THEN 1 END) as "lowStockItems"
-          FROM materials_items WHERE "tenantId" = :tenantId AND "isActive" = true
-        `, { replacements: { tenantId }, type: sequelize.QueryTypes.SELECT })
-        : Promise.resolve([{}])),
-      // Recent sales (shop)
-      safeQuery(businessType === 'shop' ? Sale.findAll({ 
+      // Product inventory stats (shop/pharmacy — products table, scoped to active shop)
+      safeQuery(isRetailWorkspace ? (async () => {
+        const baseWhere = applyShopFilter(req, applyTenantFilter(tenantId, { isActive: true }));
+        const totalInventoryItems = await Product.count({ where: baseWhere });
+        const lowStockItems = await Product.count({
+          where: {
+            ...baseWhere,
+            trackStock: true,
+            [Op.and]: [
+              sequelize.where(sequelize.col('quantityOnHand'), Op.lte, sequelize.col('reorderLevel')),
+            ],
+          },
+        });
+        return [{ totalInventoryItems, lowStockItems }];
+      })() : Promise.resolve([{}])),
+      // Recent sales (shop/pharmacy)
+      safeQuery(isRetailWorkspace ? Sale.findAll({
         where: recentSalesWhere, 
         attributes: ['id', 'saleNumber', 'total', 'createdAt', 'paymentMethod'], 
         limit: 5, 
         order: [['createdAt', 'DESC']], 
         include: [{ model: Customer, as: 'customer', attributes: ['id', 'name', 'phone'], required: false }] 
       }) : Promise.resolve([])),
-      // Top products (shop)
-      safeQuery(businessType === 'shop' ? sequelize.query(`
+      // Top products (shop) — scoped to selected period when date filter is active
+      safeQuery(isRetailWorkspace ? sequelize.query(`
         SELECT "SaleItem"."productId","SaleItem"."name" as "productName",
           SUM("SaleItem"."quantity") as "totalQuantity",
           SUM("SaleItem"."total") as "totalRevenue",
           COUNT(DISTINCT "SaleItem"."saleId") as "saleCount" 
         FROM "sale_items" AS "SaleItem" 
         INNER JOIN "sales" AS "Sale" ON "SaleItem"."saleId"="Sale"."id" 
-        WHERE "Sale"."tenantId"=:tenantId AND "Sale"."status"='completed' AND "Sale"."createdAt">=:thirtyDaysAgo 
+        WHERE "Sale"."tenantId"=:tenantId AND "Sale"."status"='completed'
+          ${hasDateFilter ? 'AND "Sale"."createdAt" BETWEEN :filterStart AND :filterEnd' : 'AND "Sale"."createdAt">=:thirtyDaysAgo'}${saleShopFrag.sql.replace(/"shopId"/g, '"Sale"."shopId"')}
         GROUP BY "SaleItem"."productId","SaleItem"."name" 
         ORDER BY SUM("SaleItem"."total") DESC LIMIT 5
-      `, { replacements: { tenantId, thirtyDaysAgo: thirtyDaysAgo.toISOString() }, type: sequelize.QueryTypes.SELECT }) : Promise.resolve([])),
+      `, {
+        replacements: {
+          tenantId,
+          ...(hasDateFilter ? { filterStart, filterEnd } : { thirtyDaysAgo: thirtyDaysAgo.toISOString() }),
+          ...saleShopFrag.replacements,
+        },
+        type: sequelize.QueryTypes.SELECT,
+      }) : Promise.resolve([])),
       // Stock alerts for shop/pharmacy: low-stock and expiring products (from products table)
       safeQuery((businessType === 'shop' || businessType === 'pharmacy') ? Product.findAll({
-        where: {
+        where: applyShopFilter(req, {
           tenantId,
           isActive: true,
           trackStock: true,
@@ -366,7 +395,7 @@ exports.getDashboardOverview = async (req, res, next) => {
             sequelize.where(sequelize.col('quantityOnHand'), Op.lte, sequelize.col('reorderLevel')),
             sequelize.where(sequelize.col('quantityOnHand'), Op.gte, 0)
           ]
-        },
+        }),
         attributes: ['id', 'name', 'quantityOnHand', 'reorderLevel', 'unit'],
         limit: 20,
         raw: true
@@ -516,11 +545,12 @@ exports.getDashboardOverview = async (req, res, next) => {
 
     // Shop-specific data (from batch)
     let shopData = null;
-    if (businessType === 'shop') {
+    if (isRetailWorkspace) {
       try {
         const salesList = Array.isArray(recentSales) ? recentSales : [];
         const productsList = Array.isArray(topProducts) ? topProducts : [];
         shopData = {
+          activeShopId: req.shopFilterId || null,
           todaySales: Number(parseFloat(todaySales || 0).toFixed(2)),
           weekSales: Number(parseFloat(weekSales || 0).toFixed(2)),
           monthSales: Number(parseFloat(monthSales || 0).toFixed(2)),
@@ -528,6 +558,7 @@ exports.getDashboardOverview = async (req, res, next) => {
           todaySalesCount: todaySalesCount ?? 0,
           lowStockItems: lowStockItems ?? 0,
           totalInventoryItems: totalInventoryItems ?? 0,
+          productCount: totalInventoryItems ?? 0,
           recentSales: salesList.map(sale => ({
             id: sale.id,
             saleNumber: sale.saleNumber,
@@ -542,8 +573,44 @@ exports.getDashboardOverview = async (req, res, next) => {
             totalQuantity: Number(parseFloat(product.totalQuantity).toFixed(2)),
             totalRevenue: Number(parseFloat(product.totalRevenue).toFixed(2)),
             saleCount: parseInt(product.saleCount)
-          }))
+          })),
+          shopBreakdown: [],
         };
+
+        if (req.canAccessAllShops && !req.shopFilterId && resolveBusinessType(businessType) === 'shop') {
+          try {
+            const breakdownStart = hasDateFilter ? filterStart : firstDayOfMonth;
+            const breakdownEnd = hasDateFilter ? filterEnd : lastDayOfMonth;
+            const breakdownRows = await sequelize.query(
+              `
+              SELECT sh.id, sh.name,
+                COALESCE(SUM(CASE WHEN s."createdAt" BETWEEN :periodStart AND :periodEnd THEN s.total ELSE 0 END), 0) AS "periodRevenue",
+                COUNT(s.id) FILTER (WHERE s."createdAt" BETWEEN :periodStart AND :periodEnd) AS "periodSalesCount"
+              FROM shops sh
+              LEFT JOIN sales s ON s."shopId" = sh.id AND s."tenantId" = :tenantId AND s.status = 'completed'
+              WHERE sh."tenantId" = :tenantId AND sh."isActive" = true
+              GROUP BY sh.id, sh.name
+              ORDER BY "periodRevenue" DESC
+              `,
+              {
+                replacements: {
+                  tenantId,
+                  periodStart: breakdownStart,
+                  periodEnd: breakdownEnd,
+                },
+                type: sequelize.QueryTypes.SELECT,
+              }
+            );
+            shopData.shopBreakdown = (breakdownRows || []).map((row) => ({
+              id: row.id,
+              name: row.name,
+              monthRevenue: Number(parseFloat(row.periodRevenue || 0).toFixed(2)),
+              monthSalesCount: parseInt(row.periodSalesCount, 10) || 0,
+            }));
+          } catch (breakdownErr) {
+            logDashboardDebug('shopBreakdown query failed', breakdownErr?.message);
+          }
+        }
       } catch (error) {
         const isMissingTable = error?.name === 'SequelizeDatabaseError' && /relation ["']?\w+["']? does not exist/i.test(String(error?.parent?.message || ''));
         if (isMissingTable) {
@@ -596,7 +663,9 @@ exports.getDashboardOverview = async (req, res, next) => {
         range: {
           start: filterStart.toISOString(),
           end: filterEnd.toISOString()
-        }
+        },
+        filterType: filterType || 'custom',
+        periodLabel: filterType || 'custom',
       };
       responseData.thisMonth = responseData.filteredPeriod;
 
@@ -732,7 +801,10 @@ exports.getExpensesByCategory = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
         [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount']
       ],
-      where: { tenantId },
+      where: applyShopFilter(req, applyTenantFilter(tenantId, {
+        approvalStatus: 'approved',
+        isArchived: false,
+      })),
       group: ['category'],
       order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
     });

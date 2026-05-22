@@ -25,6 +25,7 @@ const {
 } = require('../controllers/productController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { shopContext } = require('../middleware/shopContext');
 const { cacheMiddleware, generateProductListKey } = require('../middleware/cache');
 const { bulkOperationLimiter, exportLimiter } = require('../middleware/rateLimiter');
 const { productImageUploader, importFileUploader } = require('../middleware/upload');
@@ -33,6 +34,7 @@ const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(shopContext);
 
 // Product routes - cache list for 90s to reduce repeated heavy queries
 router.route('/')

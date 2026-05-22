@@ -1,5 +1,6 @@
 const { SubscriptionPlan } = require('../models');
 const { getFeaturesForPlan } = require('../config/features');
+const { applyFeatureGatesToFlags } = require('../config/businessTypes');
 
 const ACCESS_STATES = ['active', 'read_only', 'restricted', 'suspended'];
 
@@ -61,7 +62,8 @@ const getTenantEffectiveEntitlements = async (tenant, options = {}) => {
   const entitlementsMeta = getTenantEntitlementsMeta(tenant);
   const featureOverrides = normalizeFeatureOverrides(entitlementsMeta.featureOverrides);
   const baseFeatureFlags = buildBaseFeatureFlags(tenant.plan, dbPlan);
-  const effectiveFeatureFlags = computeEffectiveFeatureFlags(baseFeatureFlags, featureOverrides);
+  const rawEffectiveFeatureFlags = computeEffectiveFeatureFlags(baseFeatureFlags, featureOverrides);
+  const effectiveFeatureFlags = applyFeatureGatesToFlags(rawEffectiveFeatureFlags, tenant);
   const enabledFeatures = Object.keys(effectiveFeatureFlags).filter((k) => effectiveFeatureFlags[k] === true);
   const accessState = resolveTenantAccessState(tenant);
   const matrix =

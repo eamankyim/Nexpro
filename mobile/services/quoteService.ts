@@ -35,6 +35,11 @@ export const quoteService = {
     return res.data;
   },
 
+  updateStatus: async (id: string, status: string) => {
+    const res = await api.patch(`/quotes/${id}/status`, { status });
+    return res.data;
+  },
+
   convertToJob: async (id: string) => {
     const res = await api.post(`/quotes/${id}/convert`);
     return res.data;

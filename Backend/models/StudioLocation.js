@@ -47,6 +47,16 @@ const StudioLocation = sequelize.define(
     },
     managerName: {
       type: DataTypes.STRING,
+      comment: 'Legacy display name; prefer managerUserId',
+    },
+    managerUserId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: 'users', key: 'id' },
+    },
+    logoUrl: {
+      type: DataTypes.TEXT,
+      allowNull: true,
     },
     isActive: {
       type: DataTypes.BOOLEAN,

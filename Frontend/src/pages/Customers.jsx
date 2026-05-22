@@ -7,22 +7,18 @@ import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, Loader2, RefreshCw, Filter, Users, Repeat, XCircle, CheckCircle, Phone, Mail, Briefcase, Pencil, Printer, Download, Receipt, Cloud, CloudOff } from 'lucide-react';
+import { Plus, Loader2, RefreshCw, Filter, Users, Repeat, XCircle, CheckCircle, Phone, Mail, Briefcase, Pencil, Printer, Download, Receipt, CloudOff, Trash2 } from 'lucide-react';
 import customerService from '../services/customerService';
-import offlineQueueService from '../services/offlineQueueService';
-import { 
-  cacheCustomers, 
-  getCachedCustomers, 
-  searchCustomersOffline,
-  setLastCustomerSyncTime,
-  getLastCustomerSyncTime 
-} from '../utils/posDb';
+import { guardOnline } from '../utils/onlineRequired';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import jobService from '../services/jobService';
 import invoiceService from '../services/invoiceService';
 import saleService from '../services/saleService';
 import customDropdownService from '../services/customDropdownService';
 import settingsService from '../services/settingsService';
+import { mergeBranchOrganization } from '../utils/branchOrganization';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -36,6 +32,8 @@ import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import { showSuccess, showError, showWarning, handleApiError } from '../utils/toast';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -76,6 +74,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import ResponsiveSheet from '../components/ResponsiveSheet';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../constants';
 import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
+import {
+  normalizeEntityResponse,
+  enrichSaleCustomer,
+  shouldUsePrintableInvoice,
+} from '../utils/receiptPreview';
 import PrintableReceipt from '../components/PrintableReceipt';
 import PrintableInvoice from '../components/PrintableInvoice';
 
@@ -109,11 +112,13 @@ const Customers = () => {
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearchText = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
-  const [customers, setCustomers] = useState([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState(null);
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const { isManager, isAdmin, user, activeTenant, activeTenantId } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
+  const activeShopName = shopContext?.activeShop?.name ?? null;
   const queryClient = useQueryClient();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
@@ -124,6 +129,7 @@ const Customers = () => {
   const [loadingReceipts, setLoadingReceipts] = useState(false);
   const [printModalVisible, setPrintModalVisible] = useState(false);
   const [receiptData, setReceiptData] = useState(null);
+  const [loadingReceiptPreview, setLoadingReceiptPreview] = useState(false);
   const [organization, setOrganization] = useState(null);
   const [printConfig, setPrintConfig] = useState({});
   const [loadingCustomerDetails, setLoadingCustomerDetails] = useState(false);
@@ -139,11 +145,7 @@ const Customers = () => {
     howDidYouHear: 'all',
     customerType: 'all', // 'all', 'new', 'returning'
   });
-  const [cachedCustomers, setCachedCustomers] = useState([]);
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [lastSynced, setLastSynced] = useState(null);
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
-  const initialCacheLoaded = useRef(false);
+  const { isOnline } = useOnlineStatus();
 
   const form = useForm({
     resolver: zodResolver(customerSchema),
@@ -167,38 +169,6 @@ const Customers = () => {
     return () => setPageSearchConfig(null);
   }, [setPageSearchConfig]);
 
-  // Load cached customers on mount (instant load)
-  useEffect(() => {
-    const loadCachedData = async () => {
-      try {
-        const cached = await getCachedCustomers();
-        const lastSync = await getLastCustomerSyncTime();
-        if (cached.length > 0 && !initialCacheLoaded.current) {
-          setCachedCustomers(cached);
-          setLastSynced(lastSync ? new Date(lastSync).getTime() : null);
-          initialCacheLoaded.current = true;
-        }
-      } catch (err) {
-        console.error('[Customers] Failed to load cached data:', err);
-      }
-    };
-    loadCachedData();
-  }, []);
-
-  // Handle online/offline events
-  useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
-    
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
   useEffect(() => {
     setPagination((prev) => ({ ...prev, current: 1 }));
   }, [searchValue]);
@@ -219,27 +189,20 @@ const Customers = () => {
     isLoading: loading,
     refetch: refetchCustomers,
   } = useQuery({
-    queryKey: ['customers', customersQueryParams],
+    queryKey: ['customers', activeTenantId, activeShopId, customersQueryParams],
     queryFn: () => customerService.getAll(customersQueryParams),
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
   });
 
   const { data: statsResponse } = useQuery({
-    queryKey: ['customers', 'stats'],
+    queryKey: ['customers', 'stats', activeTenantId, activeShopId],
     queryFn: () => customerService.getStats(),
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
   });
 
   const createMutation = useMutation({
     mutationFn: async (values) => {
-      if (!navigator.onLine) {
-        await offlineQueueService.queueAction(
-          offlineQueueService.OFFLINE_ACTION_TYPES.CUSTOMER,
-          'create',
-          values
-        );
-        return { _offline: true };
-      }
+      if (!guardOnline(showError)) throw new Error('offline');
       return customerService.create(values);
     },
     onSuccess: (data) => {
@@ -255,9 +218,7 @@ const Customers = () => {
         );
         return;
       }
-      showSuccess(
-        data?._offline ? 'Saved offline. Will sync when connected.' : 'Customer created successfully'
-      );
+      showSuccess('Customer created successfully');
       setModalVisible(false);
       form.reset();
       queryClient.invalidateQueries({ queryKey: ['customers'] });
@@ -267,18 +228,11 @@ const Customers = () => {
 
   const updateMutation = useMutation({
     mutationFn: async ({ id, values }) => {
-      if (!navigator.onLine) {
-        await offlineQueueService.queueAction(
-          offlineQueueService.OFFLINE_ACTION_TYPES.CUSTOMER,
-          'update',
-          { ...values, id }
-        );
-        return { _offline: true };
-      }
+      if (!guardOnline(showError)) throw new Error('offline');
       return customerService.update(id, values);
     },
-    onSuccess: (data) => {
-      showSuccess(data?._offline ? 'Saved offline. Will sync when connected.' : 'Customer updated successfully');
+    onSuccess: () => {
+      showSuccess('Customer updated successfully');
       setModalVisible(false);
       form.reset();
       queryClient.invalidateQueries({ queryKey: ['customers'] });
@@ -288,49 +242,24 @@ const Customers = () => {
 
   const deleteMutation = useMutation({
     mutationFn: async (id) => {
-      if (!navigator.onLine) {
-        await offlineQueueService.queueAction(
-          offlineQueueService.OFFLINE_ACTION_TYPES.CUSTOMER,
-          'delete',
-          { id }
-        );
-        return { _offline: true };
-      }
+      if (!guardOnline(showError)) throw new Error('offline');
       return customerService.delete(id);
     },
-    onSuccess: (data) => {
-      showSuccess(data?._offline ? 'Saved offline. Will sync when connected.' : 'Customer deleted successfully');
+    onSuccess: () => {
+      showSuccess('Customer deleted successfully');
       queryClient.invalidateQueries({ queryKey: ['customers'] });
       if (drawerVisible) handleCloseDrawer();
     },
     onError: (error) => handleApiError(error, { context: 'delete customer' }),
   });
 
-  useEffect(() => {
-    if (!customersResponse) return;
+  const customers = useMemo(() => {
+    if (!customersResponse) return [];
     let customersData = [];
     if (customersResponse?.success !== false && customersResponse?.data) {
       customersData = Array.isArray(customersResponse.data) ? customersResponse.data : [];
     } else {
       customersData = Array.isArray(customersResponse) ? customersResponse : [];
-    }
-    
-    // Cache customers for offline access (only cache full list, not filtered)
-    if (customersData.length > 0 && !debouncedSearchText && filters.isActive === 'true' && filters.howDidYouHear === 'all') {
-      const cacheData = async () => {
-        try {
-          setIsSyncing(true);
-          await cacheCustomers(customersData);
-          await setLastCustomerSyncTime(new Date().toISOString());
-          setCachedCustomers(customersData);
-          setLastSynced(Date.now());
-        } catch (err) {
-          console.error('[Customers] Failed to cache:', err);
-        } finally {
-          setIsSyncing(false);
-        }
-      };
-      cacheData();
     }
     
     if (filters.customerType !== 'all') {
@@ -341,12 +270,16 @@ const Customers = () => {
         return true;
       });
     }
-    setCustomers(customersData);
+    return customersData;
+  }, [customersResponse, filters.customerType]);
+
+  useEffect(() => {
+    if (!customersResponse) return;
     setPagination((prev) => ({
       ...prev,
-      total: customersResponse?.count ?? customersData.length,
+      total: customersResponse?.count ?? customers.length,
     }));
-  }, [customersResponse, filters.customerType, debouncedSearchText, filters.isActive, filters.howDidYouHear]);
+  }, [customersResponse, customers.length]);
 
   useEffect(() => {
     const loadCustomOptions = async () => {
@@ -490,7 +423,10 @@ const Customers = () => {
     saleService.getSales({ customerId: customer.id, limit: 50 })
       .then((response) => {
         const sales = response?.data?.data ?? response?.data ?? [];
-        setCustomerReceipts(Array.isArray(sales) ? sales : []);
+        const list = Array.isArray(sales) ? sales : [];
+        setCustomerReceipts(
+          list.filter((sale) => sale.customerId === customer.id || sale.customer?.id === customer.id)
+        );
       })
       .catch((error) => {
         console.error('Failed to load customer receipts:', error);
@@ -522,20 +458,72 @@ const Customers = () => {
   };
 
   const handlePrintReceipt = useCallback(async (sale) => {
-    setReceiptData(sale);
+    let printableSale = sale;
+    try {
+      const response = await saleService.getSaleById(sale.id);
+      printableSale = response?.data?.data || response?.data || response || sale;
+      if (printableSale?.invoice?.id) {
+        const invoiceResponse = await invoiceService.getById(printableSale.invoice.id);
+        const invoice = invoiceResponse?.data?.data || invoiceResponse?.data || invoiceResponse;
+        printableSale = { ...printableSale, invoice };
+      }
+    } catch (error) {
+      console.error('Failed to load full receipt details:', error);
+    }
+    setReceiptData(printableSale);
     setPrintModalVisible(true);
   }, []);
 
-  const handleCreateJob = () => {
+  const receiptOrganization = useMemo(() => {
+    if (!receiptData) return organization || {};
+    if (receiptData.invoice?.organization) return receiptData.invoice.organization;
+    return mergeBranchOrganization(receiptData.shop, organization || {});
+  }, [receiptData, organization]);
+
+  const handleCreateJob = useCallback(() => {
     if (viewingCustomer) {
       setDrawerVisible(false);
       navigate(`/jobs?customerId=${viewingCustomer.id}`);
     }
-  };
+  }, [viewingCustomer, navigate]);
 
-  const handleDelete = (id) => {
+  const handleDelete = useCallback((id) => {
     deleteMutation.mutate(id);
-  };
+  }, [deleteMutation]);
+
+  const customerDrawerPrimaryAction = useMemo(() => {
+    if (!viewingCustomer || !isPrintingPress) return null;
+    return {
+      label: 'Create Job',
+      icon: <Briefcase className="h-4 w-4" />,
+      onClick: handleCreateJob,
+    };
+  }, [viewingCustomer, isPrintingPress, handleCreateJob]);
+
+  const customerDrawerMoreMenuItems = useMemo(() => {
+    if (!viewingCustomer) return [];
+    const items = [];
+    if (isManager) {
+      items.push({
+        key: 'edit',
+        label: 'Edit customer',
+        icon: <Pencil className="h-4 w-4" />,
+        onClick: () => {
+          handleEdit(viewingCustomer);
+          setDrawerVisible(false);
+        },
+      });
+    }
+    if (isAdmin) {
+      items.push({
+        key: 'delete',
+        label: 'Delete customer',
+        icon: <Trash2 className="h-4 w-4" />,
+        destructive: true,
+      });
+    }
+    return items;
+  }, [viewingCustomer, isManager, isAdmin, handleEdit]);
 
   const onSubmit = async (values) => {
     if (values.howDidYouHear === '__OTHER__') {
@@ -663,53 +651,43 @@ const Customers = () => {
     setPagination({ ...pagination, current: 1 });
   };
 
-  const hasActiveFilters = filters.isActive !== 'true' || filters.howDidYouHear !== 'all' || filters.customerType !== 'all';
+  const hasActiveFilters =
+    filters.isActive !== 'true' ||
+    filters.howDidYouHear !== 'all' ||
+    filters.customerType !== 'all' ||
+    !!debouncedSearchText;
+
+  const canAddCustomer = isManager || user?.role === 'staff';
+
+  const customersEmptyState = useMemo(() => {
+    if (hasActiveFilters) {
+      return getEmptyStateProps(EMPTY_STATES.CUSTOMERS_FILTERED, {
+        primary: handleClearFilters,
+      });
+    }
+    return getEmptyStateProps(EMPTY_STATES.CUSTOMERS, {
+      ...(canAddCustomer ? { primary: handleAdd } : {}),
+    });
+  }, [hasActiveFilters, handleClearFilters, canAddCustomer, handleAdd]);
 
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 md:gap-4">
         <WelcomeSection
           welcomeMessage="Customers"
-          subText="Manage your customer relationships and track interactions."
+          subText={
+            shopContext?.isShopWorkspace && activeShopName
+              ? `Customers for ${activeShopName} — each shop keeps its own list`
+              : 'Manage your customer relationships and track interactions.'
+          }
         />
         <div className="flex items-center gap-2 flex-1 min-w-0 sm:justify-end sm:ml-auto">
-          {/* Sync status indicator */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${
-                isOffline 
-                  ? 'bg-orange-50 text-orange-600' 
-                  : isSyncing 
-                    ? 'bg-blue-50 text-blue-600' 
-                    : 'bg-green-50 text-green-600'
-              }`}>
-                {isOffline ? (
-                  <>
-                    <CloudOff className="h-3 w-3" />
-                    <span className="hidden sm:inline">Offline</span>
-                  </>
-                ) : isSyncing ? (
-                  <>
-                    <RefreshCw className="h-3 w-3 animate-spin" />
-                    <span className="hidden sm:inline">Syncing</span>
-                  </>
-                ) : (
-                  <>
-                    <Cloud className="h-3 w-3" />
-                    <span className="hidden sm:inline">Synced</span>
-                  </>
-                )}
-              </div>
-            </TooltipTrigger>
-            <TooltipContent>
-              {isOffline 
-                ? `Offline - showing ${cachedCustomers.length} cached customers` 
-                : lastSynced 
-                  ? `Last synced ${Math.round((Date.now() - lastSynced) / 60000)}m ago` 
-                  : 'Customer data synced'
-              }
-            </TooltipContent>
-          </Tooltip>
+          {!isOnline && (
+            <div className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-orange-50 text-orange-600">
+              <CloudOff className="h-3 w-3" />
+              <span className="hidden sm:inline">Offline</span>
+            </div>
+          )}
           <ViewToggle value={tableViewMode} onChange={setTableViewMode} />
           <Tooltip>
             <TooltipTrigger asChild>
@@ -824,16 +802,7 @@ const Customers = () => {
           columns={tableColumns}
           loading={loading || (isMobile && isRefreshing)}
           title={null}
-          emptyIcon={<Users className="h-12 w-12 text-muted-foreground" />}
-          emptyDescription="No customers found. Add your first customer to get started."
-          emptyAction={
-            (isManager || user?.role === 'staff') && (
-              <Button onClick={handleAdd}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add First Customer
-              </Button>
-            )
-          }
+          emptyState={customersEmptyState}
           pageSize={pagination.pageSize}
           externalPagination={{ current: pagination.current, total: pagination.total }}
           onPageChange={(newPagination) => {
@@ -1117,29 +1086,12 @@ const Customers = () => {
         onClose={handleCloseDrawer}
         title="Customer Details"
         width={720}
+        primaryAction={customerDrawerPrimaryAction}
+        moreMenuItems={customerDrawerMoreMenuItems}
         onDelete={isAdmin && viewingCustomer ? () => handleDelete(viewingCustomer.id) : null}
         deleteConfirmTitle="Delete customer?"
         deleteConfirmText="This permanently removes the customer and cannot be undone. Customers with linked jobs or invoices may fail to delete."
         deleteButtonLabel="Delete"
-        extraActions={viewingCustomer ? [
-          ...(isManager ? [{
-            key: 'edit',
-            label: 'Edit',
-            variant: 'secondary',
-            icon: <Pencil className="h-4 w-4" />,
-            onClick: () => {
-              handleEdit(viewingCustomer);
-              setDrawerVisible(false);
-            }
-          }] : []),
-          ...(isPrintingPress ? [{
-            key: 'createJob',
-            label: 'Create Job',
-            variant: 'default',
-            icon: <Briefcase className="h-4 w-4" />,
-            onClick: handleCreateJob
-          }] : [])
-        ] : []}
         tabs={viewingCustomer ? [
           {
             key: 'overview',
@@ -1377,9 +1329,14 @@ const Customers = () => {
                               variant="outline"
                               size="sm"
                               className="mt-1 text-xs"
+                              disabled={loadingReceiptPreview}
                               onClick={() => handlePrintReceipt(sale)}
                             >
-                              <Receipt className="h-3 w-3 mr-1" />
+                              {loadingReceiptPreview ? (
+                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              ) : (
+                                <Receipt className="h-3 w-3 mr-1" />
+                              )}
                               View Receipt
                             </Button>
                           </div>
@@ -1413,7 +1370,7 @@ const Customers = () => {
                   className="flex-1 sm:flex-initial"
                   onClick={() => {
                     const wrapper = document.querySelector(
-                      receiptData?.invoice ? '.printable-invoice' : '.printable-receipt'
+                      shouldUsePrintableInvoice(receiptData) ? '.printable-invoice' : '.printable-receipt'
                     )?.parentElement;
                     if (wrapper && receiptData) {
                       openPrintDialog(wrapper, `Receipt-${receiptData.saleNumber || 'receipt'}`);
@@ -1427,7 +1384,7 @@ const Customers = () => {
                   className="flex-1 sm:flex-initial"
                   onClick={async () => {
                     const element = document.querySelector(
-                      receiptData?.invoice ? '.printable-invoice' : '.printable-receipt'
+                      shouldUsePrintableInvoice(receiptData) ? '.printable-invoice' : '.printable-receipt'
                     );
                     if (element && receiptData) {
                       try {
@@ -1450,23 +1407,24 @@ const Customers = () => {
               </div>
             </div>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto overflow-x-hidden bg-muted/50 p-2 sm:p-4 md:p-8">
-            <div className="max-w-full sm:max-w-[900px] mx-auto w-full" id="receipt-pdf-content">
+          <div className="print-invoice-preview flex-1 overflow-y-auto overflow-x-hidden bg-muted/30 p-2 sm:p-4">
+            <div className="print-invoice-preview-inner max-w-full sm:max-w-[900px] mx-auto w-full" id="receipt-pdf-content">
               {receiptData && (
-                receiptData.invoice ? (
+                shouldUsePrintableInvoice(receiptData) ? (
                   <PrintableInvoice
-                    key={receiptData.invoice.id || 'receipt'}
+                    key={receiptData.invoice?.id || 'receipt'}
                     invoice={receiptData.invoice}
                     documentTitle="RECEIPT"
                     saleNumber={receiptData.saleNumber}
-                    organization={organization || {}}
+                    organization={receiptOrganization}
                     printConfig={printConfig}
+                    screenLayout={isMobile ? 'mobile' : 'auto'}
                   />
                 ) : (
                   <PrintableReceipt
                     key={receiptData.id || 'receipt'}
                     sale={receiptData}
-                    organization={organization || {}}
+                    organization={receiptOrganization}
                     printConfig={printConfig}
                   />
                 )

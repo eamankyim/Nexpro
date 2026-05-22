@@ -19,6 +19,11 @@ const Shop = sequelize.define('Shop', {
     type: DataTypes.STRING,
     allowNull: false
   },
+  shopType: {
+    type: DataTypes.STRING(50),
+    allowNull: true,
+    comment: 'Retail flavor: supermarket, hardware, restaurant, etc.',
+  },
   code: {
     type: DataTypes.STRING,
     allowNull: true
@@ -49,11 +54,28 @@ const Shop = sequelize.define('Shop', {
     }
   },
   managerName: {
-    type: DataTypes.STRING
+    type: DataTypes.STRING,
+    comment: 'Legacy display name; prefer managerUserId',
+  },
+  managerUserId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'users',
+      key: 'id',
+    },
+  },
+  logoUrl: {
+    type: DataTypes.TEXT,
+    allowNull: true,
   },
   isActive: {
     type: DataTypes.BOOLEAN,
     defaultValue: true
+  },
+  isDefault: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
   },
   metadata: {
     type: DataTypes.JSONB,

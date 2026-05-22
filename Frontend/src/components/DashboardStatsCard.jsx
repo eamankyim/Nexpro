@@ -5,6 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { TrendingUp, TrendingDown, ArrowRight } from 'lucide-react';
 import { useHintMode } from '@/context/HintModeContext';
 import { cn } from '@/lib/utils';
+import { formatDecimal, formatInteger } from '../utils/formatNumber';
 
 /**
  * DashboardStatsCard - Reusable dashboard statistics card component
@@ -47,10 +48,10 @@ const DashboardStatsCard = memo(({
 }) => {
   const { hintMode } = useHintMode();
   const displayComparison = comparisonText ?? subtitle;
-  const formattedValue = typeof value === 'number' 
+  const formattedValue = typeof value === 'number'
     ? Number.isInteger(value)
-      ? value.toLocaleString('en-US')
-      : value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      ? formatInteger(value)
+      : formatDecimal(value)
     : value;
 
   const trendDisplay = trend && trendValue;

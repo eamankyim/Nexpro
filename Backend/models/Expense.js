@@ -15,6 +15,14 @@ const Expense = sequelize.define('Expense', {
       key: 'id'
     }
   },
+  shopId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'shops',
+      key: 'id'
+    }
+  },
   expenseNumber: {
     type: DataTypes.STRING,
     allowNull: false

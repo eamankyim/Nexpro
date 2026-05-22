@@ -23,26 +23,33 @@ const {
   getVatReport,
   generateAIAnalysis,
   getOverviewPhase1,
-  getOverviewPhase2
+  getOverviewPhase2,
+  getOverviewExtendedKpis
 } = require('../controllers/reportController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { shopContext } = require('../middleware/shopContext');
 const { cacheMiddleware, generateReportCacheKey } = require('../middleware/cache');
 
 const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(shopContext);
 router.use(authorize('admin', 'manager'));
 
 // Cache report endpoints for 5 minutes (300 seconds)
 const reportCache = cacheMiddleware(300, (req) => {
-  return generateReportCacheKey(req.tenantId, req.path.replace('/api/reports/', ''), req.query);
+  return generateReportCacheKey(req.tenantId, req.path.replace('/api/reports/', ''), {
+    ...req.query,
+    shopScope: req.shopFilterId || (req.shopScoped ? 'assigned' : 'all'),
+  });
 });
 
 // Batched overview (fewer round trips for Reports page)
 router.get('/overview/phase1', reportCache, getOverviewPhase1);
 router.get('/overview/phase2', reportCache, getOverviewPhase2);
+router.get('/overview/extended-kpis', reportCache, getOverviewExtendedKpis);
 
 router.get('/revenue', reportCache, getRevenueReport);
 router.get('/expenses', reportCache, getExpenseReport);

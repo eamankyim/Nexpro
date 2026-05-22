@@ -2,24 +2,11 @@
  * Product Service
  * 
  * API service for product operations in the POS system.
- * Provides product listing, search, barcode lookup, offline caching,
- * and variant management for African market businesses.
+ * Provides product listing, search, barcode lookup, and variant management.
  */
 
 import api, { postFormDataWithProgress } from './api';
-import { getPendingActions } from '../utils/posDb';
-import offlineQueueService from './offlineQueueService';
-
-// Cache keys for offline storage
-const CACHE_KEYS = {
-  PRODUCTS: 'shopwise_products_cache',
-  PRODUCTS_TIMESTAMP: 'shopwise_products_cache_timestamp',
-  CATEGORIES: 'shopwise_categories_cache',
-  PENDING_CHANGES: 'shopwise_pending_product_changes',
-};
-
-// Cache expiration time (30 minutes)
-const CACHE_EXPIRATION_MS = 30 * 60 * 1000;
+import { buildScopedQueryString, withActiveShopScope } from '../utils/shopScope';
 
 const productService = {
   // =============================================
@@ -38,8 +25,9 @@ const productService = {
    * @returns {Promise<Object>} - { products, pagination }
    */
   getProducts: async (params = {}) => {
+    const scopedParams = withActiveShopScope(params);
     const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
+    Object.entries(scopedParams).forEach(([key, value]) => {
       if (value === undefined || value === null || value === '') return;
       searchParams.append(key, value);
     });
@@ -147,13 +135,16 @@ const productService = {
   },
 
   /**
-   * Get all active products for POS (used for offline caching)
+   * Get all active products for POS
    * @returns {Promise<Array>} - Array of products
    */
   getAllActiveProducts: async () => {
     const params = new URLSearchParams();
-    params.append('isActive', true);
-    params.append('limit', 1000); // Get all products for caching
+    const scoped = withActiveShopScope({ isActive: true, limit: 1000 });
+    Object.entries(scoped).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      params.append(key, value);
+    });
     const response = await api.get(`/products?${params.toString()}`);
     // API response interceptor returns response.data, so response is already { success, data, pagination }
     const body = response && typeof response === 'object' ? response : {};
@@ -167,10 +158,7 @@ const productService = {
    * @returns {Promise<Object>} - Created product
    */
   createProduct: async (payload) => {
-    const result = await api.post('/products', payload);
-    // Clear cache after creating
-    productService.clearCache();
-    return result;
+    return api.post('/products', payload);
   },
 
   /**
@@ -180,10 +168,7 @@ const productService = {
    * @returns {Promise<Object>} - Updated product
    */
   updateProduct: async (id, payload) => {
-    const result = await api.put(`/products/${id}`, payload);
-    // Clear cache after updating
-    productService.clearCache();
-    return result;
+    return api.put(`/products/${id}`, payload);
   },
 
   /**
@@ -192,10 +177,7 @@ const productService = {
    * @returns {Promise<void>}
    */
   deleteProduct: async (id) => {
-    const result = await api.delete(`/products/${id}`);
-    // Clear cache after deleting
-    productService.clearCache();
-    return result;
+    return api.delete(`/products/${id}`);
   },
 
   /**
@@ -232,7 +214,8 @@ const productService = {
   importProducts: async (file) => {
     const formData = new FormData();
     formData.append('file', file);
-    const response = await api.post('/products/import', formData, {
+    const query = buildScopedQueryString();
+    const response = await api.post(`/products/import${query ? `?${query}` : ''}`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
     return response?.data ?? response;
@@ -382,169 +365,6 @@ const productService = {
     }
     return results;
   },
-
-  // =============================================
-  // OFFLINE CACHING OPERATIONS
-  // =============================================
-
-  /**
-   * Cache products to localStorage for offline access
-   * @param {Array} products - Products to cache
-   * @returns {void}
-   */
-  cacheProducts: (products) => {
-    try {
-      localStorage.setItem(CACHE_KEYS.PRODUCTS, JSON.stringify(products));
-      localStorage.setItem(CACHE_KEYS.PRODUCTS_TIMESTAMP, Date.now().toString());
-    } catch (error) {
-      console.warn('[ProductService] Failed to cache products:', error);
-    }
-  },
-
-  /**
-   * Get cached products from localStorage
-   * @param {boolean} [ignoreExpiration=false] - Whether to ignore cache expiration
-   * @returns {Array|null} - Cached products or null if not found/expired
-   */
-  getCachedProducts: (ignoreExpiration = false) => {
-    try {
-      const cached = localStorage.getItem(CACHE_KEYS.PRODUCTS);
-      const timestamp = localStorage.getItem(CACHE_KEYS.PRODUCTS_TIMESTAMP);
-      
-      if (!cached) return null;
-      
-      // Check expiration
-      if (!ignoreExpiration && timestamp) {
-        const age = Date.now() - parseInt(timestamp, 10);
-        if (age > CACHE_EXPIRATION_MS) {
-          return null;
-        }
-      }
-      
-      return JSON.parse(cached);
-    } catch (error) {
-      console.warn('[ProductService] Failed to retrieve cached products:', error);
-      return null;
-    }
-  },
-
-  /**
-   * Check if cache is valid (not expired)
-   * @returns {boolean}
-   */
-  isCacheValid: () => {
-    const timestamp = localStorage.getItem(CACHE_KEYS.PRODUCTS_TIMESTAMP);
-    if (!timestamp) return false;
-    
-    const age = Date.now() - parseInt(timestamp, 10);
-    return age <= CACHE_EXPIRATION_MS;
-  },
-
-  /**
-   * Get cache age in milliseconds
-   * @returns {number|null}
-   */
-  getCacheAge: () => {
-    const timestamp = localStorage.getItem(CACHE_KEYS.PRODUCTS_TIMESTAMP);
-    if (!timestamp) return null;
-    return Date.now() - parseInt(timestamp, 10);
-  },
-
-  /**
-   * Clear product cache
-   * @returns {void}
-   */
-  clearCache: () => {
-    try {
-      localStorage.removeItem(CACHE_KEYS.PRODUCTS);
-      localStorage.removeItem(CACHE_KEYS.PRODUCTS_TIMESTAMP);
-      localStorage.removeItem(CACHE_KEYS.CATEGORIES);
-    } catch (error) {
-      console.warn('[ProductService] Failed to clear cache:', error);
-    }
-  },
-
-  /**
-   * Cache categories to localStorage
-   * @param {Array} categories - Categories to cache
-   * @returns {void}
-   */
-  cacheCategories: (categories) => {
-    try {
-      localStorage.setItem(CACHE_KEYS.CATEGORIES, JSON.stringify(categories));
-    } catch (error) {
-      console.warn('[ProductService] Failed to cache categories:', error);
-    }
-  },
-
-  /**
-   * Get cached categories
-   * @returns {Array|null}
-   */
-  getCachedCategories: () => {
-    try {
-      const cached = localStorage.getItem(CACHE_KEYS.CATEGORIES);
-      return cached ? JSON.parse(cached) : null;
-    } catch (error) {
-      console.warn('[ProductService] Failed to retrieve cached categories:', error);
-      return null;
-    }
-  },
-
-  // =============================================
-  // OFFLINE SYNC OPERATIONS
-  // =============================================
-
-  /**
-   * Queue a change for later sync (when offline). Uses unified offline queue.
-   * @param {string} action - Action type ('create', 'update', 'delete')
-   * @param {Object} data - Change data
-   * @returns {Promise<void>}
-   */
-  queueOfflineChange: async (action, data) => {
-    try {
-      await offlineQueueService.queueAction(
-        offlineQueueService.OFFLINE_ACTION_TYPES.PRODUCT,
-        action,
-        data
-      );
-    } catch (error) {
-      console.warn('[ProductService] Failed to queue offline change:', error);
-    }
-  },
-
-  /**
-   * Get pending offline changes (from unified queue)
-   * @returns {Promise<Array<{ action, data }>>}
-   */
-  getPendingChanges: async () => {
-    try {
-      const actions = await getPendingActions();
-      return actions
-        .filter((a) => a.type === offlineQueueService.OFFLINE_ACTION_TYPES.PRODUCT)
-        .map((a) => ({ action: a.action, data: a.payload }));
-    } catch (error) {
-      console.warn('[ProductService] Failed to get pending changes:', error);
-      return [];
-    }
-  },
-
-  /**
-   * Sync pending offline changes (delegates to unified queue sync)
-   * @returns {Promise<Object>} - Sync results
-   */
-  syncPendingChanges: async () => {
-    const result = await offlineQueueService.syncPendingActions();
-    if (result.synced > 0) {
-      productService.clearCache();
-    }
-    return { synced: result.synced, failed: result.failed, errors: result.errors };
-  },
-
-  /**
-   * Clear pending offline changes (no-op; unified queue is drained by sync)
-   */
-  clearPendingChanges: () => {},
 
   // =============================================
   // STOCK OPERATIONS

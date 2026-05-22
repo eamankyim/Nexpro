@@ -25,6 +25,8 @@ import userService from '../services/userService';
 import customDropdownService from '../services/customDropdownService';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
+import { useStudioLocationOptional } from '../context/StudioLocationContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import dayjs from 'dayjs';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -189,6 +191,9 @@ const Jobs = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { activeTenantId, activeTenant } = useAuth();
+  const studioLocationCtx = useStudioLocationOptional();
+  const activeStudioLocationId = studioLocationCtx?.activeStudioLocationId ?? null;
+  const { scopeReady } = useWorkspaceScope();
   const { isMobile } = useResponsive();
   const queryClient = useQueryClient();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
@@ -363,13 +368,19 @@ const Jobs = () => {
     setPagination((prev) => ({ ...prev, current: 1 }));
   }, [searchValue]);
 
-  // Fetch summary stats
   useEffect(() => {
+    setSummary(null);
+  }, [activeTenantId, activeStudioLocationId]);
+
+  // Fetch summary stats (tenant- and studio-scoped via API headers)
+  useEffect(() => {
+    if (!scopeReady) return;
+
     const fetchSummary = async () => {
       setSummaryLoading(true);
       try {
         const response = await jobService.getStats();
-        setSummary(response?.data || {});
+        setSummary(response?.data || response || []);
       } catch (error) {
         console.error('Failed to load job summary', error);
       } finally {
@@ -377,7 +388,7 @@ const Jobs = () => {
       }
     };
     fetchSummary();
-  }, []);
+  }, [scopeReady, activeTenantId, activeStudioLocationId, studioLocationCtx?.isStudioWorkspace]);
 
   const {
     data: jobsQueryResult,
@@ -385,7 +396,7 @@ const Jobs = () => {
     isFetching: isJobsFetching,
     error: jobsError,
   } = useQuery({
-    queryKey: ['jobs', pagination.current, pagination.pageSize, filters.status, filters.customerId, debouncedSearch],
+    queryKey: ['jobs', pagination.current, pagination.pageSize, filters.status, filters.customerId, debouncedSearch, activeStudioLocationId],
     queryFn: async () => {
       try {
         const params = {
@@ -421,6 +432,7 @@ const Jobs = () => {
     keepPreviousData: true,
     staleTime: 60 * 1000,
     refetchOnWindowFocus: false,
+    enabled: !studioLocationCtx?.isStudioWorkspace || !!activeStudioLocationId,
   });
 
   // Use backend pagination directly
@@ -447,7 +459,7 @@ const Jobs = () => {
 
   // Use React Query for customers, templates, and team members with caching
   const { data: customersData = [], isLoading: customersLoading } = useQuery({
-    queryKey: ['customers', 'all'],
+    queryKey: ['customers', 'all', activeTenantId, activeShopId],
     queryFn: async () => {
       const response = await customerService.getAll({ limit: 100 });
       return response.data || [];
@@ -835,7 +847,7 @@ useEffect(() => {
     
     // Prefetch data if not already cached (React Query handles caching automatically)
     queryClient.prefetchQuery({
-      queryKey: ['customers', 'all'],
+      queryKey: ['customers', 'all', activeTenantId, activeShopId],
       queryFn: async () => {
         const response = await customerService.getAll({ limit: 100 });
         return response.data || [];
@@ -885,7 +897,7 @@ useEffect(() => {
         jobService.getById(job.id),
         // Prefetch customers and templates if not cached
         queryClient.prefetchQuery({
-          queryKey: ['customers', 'all'],
+          queryKey: ['customers', 'all', activeTenantId, activeShopId],
           queryFn: async () => {
             const response = await customerService.getAll({ limit: 100 });
             return response.data || [];
@@ -1210,7 +1222,7 @@ useEffect(() => {
       customerForm.reset();
 
       // Refresh customers list so the new customer appears in the dropdown
-      await queryClient.invalidateQueries({ queryKey: ['customers', 'all'] });
+      await queryClient.invalidateQueries({ queryKey: ['customers', 'all', activeTenantId, activeShopId] });
       await queryClient.invalidateQueries({ queryKey: ['pricingTemplates', 'active'] });
 
       // Auto-select the newly created customer
@@ -1632,26 +1644,33 @@ useEffect(() => {
     { value: 'completed', label: 'Completed' }
   ];
 
-  // Calculate summary stats from all jobs (not filtered)
-  const calculatedSummary = useMemo(() => {
-    const allJobs = jobsQueryResult?.data || [];
-    const totalJobs = allJobs.length;
-    const inProgressJobs = allJobs.filter(j => j.status === 'in_progress').length;
-    const completedJobs = allJobs.filter(j => j.status === 'completed').length;
-    const overdueJobs = allJobs.filter(j => {
+  /** Totals from scoped stats API; overdue still derived from current list page. */
+  const displaySummary = useMemo(() => {
+    const rows = Array.isArray(summary) ? summary : [];
+    let totalJobs = 0;
+    let inProgressJobs = 0;
+    let completedJobs = 0;
+    for (const row of rows) {
+      const count = Number(row.count) || 0;
+      totalJobs += count;
+      if (row.status === 'in_progress') inProgressJobs += count;
+      if (row.status === 'completed') completedJobs += count;
+    }
+    const pageJobs = jobsQueryResult?.data || [];
+    const overdueJobs = pageJobs.filter((j) => {
       if (!j.dueDate) return false;
       return dayjs(j.dueDate).isBefore(dayjs(), 'day') && j.status !== 'completed';
     }).length;
-    
+
     return {
       totals: {
         totalJobs,
         inProgressJobs,
         completedJobs,
-        overdueJobs
-      }
+        overdueJobs,
+      },
     };
-  }, [jobsQueryResult?.data]);
+  }, [summary, jobsQueryResult?.data]);
 
   // Table columns for DashboardTable
   const tableColumns = useMemo(() => [
@@ -1789,7 +1808,7 @@ useEffect(() => {
         <DashboardStatsCard
           tooltip="Total number of jobs in your workspace"
           title="Total Jobs"
-          value={calculatedSummary?.totals?.totalJobs || 0}
+          value={displaySummary?.totals?.totalJobs || 0}
           icon={Briefcase}
           iconBgColor="rgba(22, 101, 52, 0.1)"
           iconColor="#166534"
@@ -1799,7 +1818,7 @@ useEffect(() => {
         <DashboardStatsCard
           tooltip="Jobs currently being worked on"
           title="In Progress"
-          value={calculatedSummary?.totals?.inProgressJobs || 0}
+          value={displaySummary?.totals?.inProgressJobs || 0}
           icon={Clock}
           iconBgColor="rgba(59, 130, 246, 0.1)"
           iconColor="#3b82f6"
@@ -1809,7 +1828,7 @@ useEffect(() => {
         <DashboardStatsCard
           tooltip="Jobs that have been completed"
           title="Completed"
-          value={calculatedSummary?.totals?.completedJobs || 0}
+          value={displaySummary?.totals?.completedJobs || 0}
           icon={CheckCircle}
           iconBgColor="rgba(132, 204, 22, 0.1)"
           iconColor="#84cc16"
@@ -1819,7 +1838,7 @@ useEffect(() => {
         <DashboardStatsCard
           tooltip="Jobs past their due date"
           title="Overdue"
-          value={calculatedSummary?.totals?.overdueJobs || 0}
+          value={displaySummary?.totals?.overdueJobs || 0}
           icon={AlertCircle}
           iconBgColor="rgba(239, 68, 68, 0.1)"
           iconColor="#ef4444"

@@ -1,5 +1,3 @@
-import html2pdf from 'html2pdf.js';
-
 /**
  * Generate a PDF from an HTML element
  * @param {HTMLElement} element - The HTML element to convert to PDF
@@ -12,6 +10,7 @@ import html2pdf from 'html2pdf.js';
  * @returns {Promise} - Promise that resolves when PDF is generated
  */
 export const generatePDF = async (element, options = {}) => {
+  const html2pdf = (await import('html2pdf.js')).default;
   const {
     filename = 'document.pdf',
     format = 'a4',

@@ -38,6 +38,8 @@ const addInviteEmailStatusFields = require('./add-invite-email-status-fields');
 const addNotificationPreferencesToUsers = require('./add-notification-preferences-to-users');
 const addTaxToQuotes = require('./add-tax-to-quotes');
 const addJobQueryIndexes = require('./add-job-query-indexes');
+const createUserTasksTable = require('./create-user-tasks-table');
+const addAssigneeToUserTasks = require('./add-assignee-to-user-tasks');
 const addTaskAutomationFieldsToUserTasks = require('./add-task-automation-fields-to-user-tasks');
 const addMetadataToUserTasks = require('./add-metadata-to-user-tasks');
 const addStartDateToUserTasks = require('./add-startDate-to-user-tasks');
@@ -51,6 +53,24 @@ const addQueryPathIndexesV2 = require('./add-query-path-indexes-v2');
 const createRecurringJournals = require('./create-recurring-journals');
 const { createCustomerFeedbackTable } = require('./create-customer-feedback-table');
 const createStudioLocations = require('./create-studio-locations');
+const addPaystackSubaccountToTenants = require('./add-paystack-subaccount-to-tenants');
+const addSeedingFlagsToTenants = require('./add-seeding-flags-to-tenants');
+const addInvoiceSourceTypes = require('./add-invoice-source-types');
+const addIsDefaultToShops = require('./add-isDefault-to-shops');
+const createUserShops = require('./create-user-shops');
+const addInviteShopStudioMetadata = require('./add-invite-shop-studio-metadata');
+const addShopIdToCustomers = require('./add-shop-id-to-customers');
+const addShopTypeToShops = require('./add-shop-type-to-shops');
+const addShopIdToExpenses = require('./add-shop-id-to-expenses');
+const addShopIdToRetailEntities = require('./add-shop-id-to-retail-entities');
+const addStudioLocationIdToLeads = require('./add-studio-location-id-to-leads');
+const addPaymentTokenToInvoices = require('./add-payment-token-to-invoices');
+const addAdminLeadIdToJobs = require('./add-admin-lead-id-to-jobs');
+const createSaleActivitiesTable = require('./create-sale-activities-table');
+const createExpenseActivitiesTable = require('./create-expense-activities-table');
+const createCustomerActivitiesTable = require('./create-customer-activities-table');
+const createEquipmentTables = require('./create-equipment-tables');
+const seedDefaultEquipmentCategories = require('./seed-default-equipment-categories');
 
 const migrate = async () => {
   try {
@@ -112,14 +132,8 @@ const migrate = async () => {
     // Add shopType to product_categories
     await addShopTypeToProductCategories({ closeConnection: false });
 
-    // Add businessType, studioType, shopType to inventory_categories
-    await addBusinessTypeToInventoryCategories({ closeConnection: false });
-    
     // Seed default product categories for all tenants
     await seedDefaultProductCategories({ closeConnection: false });
-
-    // Backfill inventory & product categories for existing tenants (materials + products by business/shop type)
-    await backfillCategoriesForExistingTenants({ closeConnection: false });
 
     // Email case-insensitivity and global uniqueness for email/phone
     await addEmailPhoneUniqueConstraints();
@@ -129,6 +143,16 @@ const migrate = async () => {
 
     // Rename inventory_* tables to materials_* for full materials/equipment consistency
     await renameInventoryTablesToMaterials.up();
+
+    // Equipment categories + equipment items (required for /api/equipment/*)
+    await createEquipmentTables();
+    await seedDefaultEquipmentCategories({ closeConnection: false });
+
+    // Add businessType, studioType, shopType to materials_categories (after rename)
+    await addBusinessTypeToInventoryCategories({ closeConnection: false });
+
+    // Backfill inventory & product categories for existing tenants (materials + products by business/shop type)
+    await backfillCategoriesForExistingTenants({ closeConnection: false });
 
     // Allow NULL tenantId for platform-wide settings (platform:branding, platform:featureFlags, etc.)
     await allowNullTenantIdInSettings();
@@ -152,6 +176,15 @@ const migrate = async () => {
     // Quote → invoice → sale flow (quoteId on invoices, productId on quote_items)
     await addQuoteInvoiceSaleFlow();
 
+    // Invoice source types (saleId, prescriptionId, sourceType enum)
+    await addInvoiceSourceTypes();
+
+    // Public invoice payment links (paymentToken)
+    await addPaymentTokenToInvoices();
+
+    // Platform admin lead link on jobs
+    await addAdminLeadIdToJobs();
+
     // Add viewToken to quotes for public quote viewing
     await addViewTokenToQuotes();
 
@@ -170,6 +203,10 @@ const migrate = async () => {
     // Jobs list/search indexes
     await addJobQueryIndexes();
 
+    // Workspace tasks (table must exist before column/index migrations)
+    await createUserTasksTable();
+    await addAssigneeToUserTasks();
+
     // Workspace task automation metadata columns
     await addTaskAutomationFieldsToUserTasks();
     await addMetadataToUserTasks.up();
@@ -186,6 +223,15 @@ const migrate = async () => {
 
     // First-party delivery tracking (jobs + sales)
     await addDeliveryStatusToJobsAndSales();
+
+    // Sale activity log (notes, status changes, payments on sales)
+    await createSaleActivitiesTable();
+
+    // Expense activity log (notes, approvals, payments on expenses)
+    await createExpenseActivitiesTable();
+
+    // Customer activity log (notes, calls, follow-ups on customers)
+    await createCustomerActivitiesTable();
 
     // Job flag: customer delivery required (vs optional); stages still set on Deliveries
     await addDeliveryRequiredToJobs();
@@ -204,6 +250,33 @@ const migrate = async () => {
 
     // Studio locations (multi-branch for studio workspaces)
     await createStudioLocations();
+
+    // Main shop flag (multi-shop for retail workspaces)
+    await addIsDefaultToShops();
+
+    // User ↔ shop access (team invites and assignments)
+    await createUserShops();
+
+    // Invite metadata (shopIds, studioLocationIds) + backfill assignments from accepted invites
+    await addInviteShopStudioMetadata();
+
+    // Customers scoped to shops; per-shop retail type (supermarket, hardware, etc.)
+    await addShopIdToCustomers();
+    await addShopTypeToShops();
+    await addShopIdToExpenses();
+    await addShopIdToRetailEntities();
+
+    // Leads scoped to studio locations (multi-branch studio workspaces)
+    await addStudioLocationIdToLeads();
+
+    const addBranchBrandingFields = require('./add-branch-branding-fields');
+    await addBranchBrandingFields();
+
+    // Paystack subaccount code per tenant (POS payment splits)
+    await addPaystackSubaccountToTenants.up();
+
+    // Category/account/equipment seeding status flags
+    await addSeedingFlagsToTenants.up();
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

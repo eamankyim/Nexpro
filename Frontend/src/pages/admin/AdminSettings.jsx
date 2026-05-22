@@ -1168,7 +1168,7 @@ const AdminSettings = () => {
                   <FormItem>
                     <FormLabel>SMS sender ID</FormLabel>
                     <FormControl>
-                      <Input placeholder="SHOPWISE" {...field} />
+                      <Input placeholder="ABS" {...field} />
                     </FormControl>
                     <FormDescription>ID used for SMS notifications, if configured.</FormDescription>
                     <FormMessage />

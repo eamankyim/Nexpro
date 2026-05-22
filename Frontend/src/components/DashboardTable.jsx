@@ -1,4 +1,4 @@
-import { memo, useState, useMemo, useRef, useEffect } from 'react';
+import { memo, useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -163,12 +163,14 @@ const DashboardTable = memo(({
   
   // Use external pagination if provided, otherwise use internal
   const pagination = externalPagination || internalPagination;
-  const setPagination = onPageChange ? 
-    (updater) => {
+  const setPagination = useCallback((updater) => {
+    if (onPageChange) {
       const newPagination = typeof updater === 'function' ? updater(pagination) : updater;
       onPageChange(newPagination);
-    } : 
-    setInternalPagination;
+      return;
+    }
+    setInternalPagination(updater);
+  }, [onPageChange, pagination]);
 
   const effectivePageSize = pagination.pageSize || pageSize;
   const totalItems = useMemo(() => externalPagination?.total ?? data.length, [externalPagination?.total, data.length]);
@@ -188,9 +190,9 @@ const DashboardTable = memo(({
     );
   }, [data, pagination.current, effectivePageSize, externalPagination]);
 
-  const handlePageChange = (newPage) => {
+  const handlePageChange = useCallback((newPage) => {
     setPagination(prev => ({ ...prev, current: newPage, pageSize }));
-  };
+  }, [pageSize, setPagination]);
 
   const tableScrollRef = useRef(null);
   const useVirtualRows = paginatedData.length >= ROW_VIRTUALIZE_MIN;
@@ -240,11 +242,17 @@ const DashboardTable = memo(({
           <div className="p-4">
             <TableSkeleton rows={pageSize} cols={visibleColumns.length || columns.length || 6} />
           </div>
-        ) : paginatedData.length === 0 ? (
-          <div className="flex items-center justify-center p-8">
+        ) : !loading && data.length === 0 ? (
+          <div className={cn(
+            "flex w-full items-center justify-center p-4 sm:p-8",
+            isMobile && "min-h-[min(50dvh,28rem)]"
+          )}>
             {emptyState ? (
               <EmptyState
+                className={cn(isMobile && "w-full max-w-md py-8")}
                 icon={emptyState.icon}
+                image={emptyState.image}
+                imageAlt={emptyState.imageAlt}
                 title={emptyState.title}
                 description={emptyState.description}
                 primaryAction={emptyState.primaryAction}

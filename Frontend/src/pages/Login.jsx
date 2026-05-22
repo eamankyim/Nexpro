@@ -21,7 +21,8 @@ import {
   FormLabel,
   FormMessage,
 } from '@/components/ui/form';
-import africanWomanImage from '../assets/African focused woman.png';
+import africanWomanImage from '../assets/African focused woman.webp';
+import { AuthBrandMark } from '@/components/AppLogo';
 
 const loginSchema = z.object({
   email: z.string().min(1, 'Enter your email').email('Enter a valid email'),
@@ -178,7 +179,12 @@ const Login = () => {
           <div className={`flex-1 ${isMobile ? 'px-6 py-4' : 'p-12'} flex flex-col justify-center ${isMobile ? 'min-h-screen' : ''}`}>
             <div className={`${isMobile ? 'w-full' : 'max-w-md'} mx-auto w-full`}>
               {/* Logo */}
-              <h1 className={`${isMobile ? 'text-2xl mb-4' : 'text-3xl mb-8'} font-bold text-brand`}>ABS</h1>
+              <AuthBrandMark
+                showName
+                appName="ABS"
+                className={isMobile ? 'mb-4' : 'mb-8'}
+                logoClassName={isMobile ? 'h-9 w-9' : 'h-11 w-11'}
+              />
               
               {/* Heading */}
               <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-foreground`}>Welcome back</h2>

@@ -132,7 +132,9 @@ const DateFilterButtons = memo(({
             </Button>
           </TooltipTrigger>
           <TooltipContent side="bottom">
-            {addButtonLabel === 'Add sale' ? 'Open Point of Sale to record a new sale' : 'Create a new job or order'}
+            {addButtonLabel === 'Add sale' || addButtonLabel === 'New sale'
+              ? 'Open Point of Sale to record a new sale'
+              : 'Create a new job or order'}
           </TooltipContent>
         </Tooltip>
       )}

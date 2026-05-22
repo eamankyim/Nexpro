@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,65 +9,49 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery } from '@tanstack/react-query';
 
+import { AppIcon } from '@/components/AppIcon';
 import { useAuth } from '@/context/AuthContext';
+import { useSmartSearch } from '@/context/SmartSearchContext';
 import { resolveImageUrl } from '@/utils/fileUtils';
-import Colors from '@/constants/Colors';
-import { useColorScheme } from '@/components/useColorScheme';
-import { BackButton } from '@/components/BackButton';
+import { resolveHeaderSearchConfig } from '@/utils/tabRouteSearch';
+import { HeaderScopeTitle } from '@/components/HeaderScopeTitle';
+import { OfflineQueueBanner } from '@/components/WorkspaceScopeSwitcher';
 import { notificationService } from '@/services/notificationService';
+import { useScreenColors } from '@/hooks/useScreenColors';
 
 /**
- * Mobile header with search bar, notification bell, and user avatar.
- * Avatar links to account page (menu with Profile, Settings, etc.).
+ * Mobile header with global page-aware search, notifications, avatar, and shop scope.
  */
-const BACK_SCREENS = ['sales', 'expenses', 'invoices', 'quotes', 'leads', 'tasks', 'deliveries'];
-const SCREEN_TITLES: Record<string, string> = {
-  sales: 'Sales',
-  expenses: 'Expenses',
-  invoices: 'Invoices',
-  quotes: 'Quotes',
-  leads: 'Leads',
-  tasks: 'Tasks',
-  deliveries: 'Deliveries',
-};
-
 export function Header() {
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
   const { user, activeTenantId } = useAuth();
-  const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? 'light'];
+  const { colors, headerBg, borderColor, inputBg, textColor, mutedColor } = useScreenColors();
+  const { pageConfig, searchValue, setSearchValue } = useSmartSearch();
 
-  const [searchValue, setSearchValue] = useState('');
+  const searchConfig = useMemo(
+    () => resolveHeaderSearchConfig(pathname, pageConfig),
+    [pathname, pageConfig]
+  );
 
   const { data: notificationSummary } = useQuery({
     queryKey: ['notifications', 'summary', activeTenantId],
     queryFn: () => notificationService.getSummary(),
     enabled: !!activeTenantId,
-    staleTime: 60 * 1000,
-    refetchInterval: 60 * 1000,
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+    refetchIntervalInBackground: false,
+    refetchOnMount: false,
   });
   const unreadCount = notificationSummary?.data?.unread ?? 0;
 
-  const showBack = BACK_SCREENS.some((s) => pathname?.includes(s));
-  const backScreenTitle = BACK_SCREENS.find((s) => pathname?.includes(s));
-  const screenTitle = backScreenTitle ? SCREEN_TITLES[backScreenTitle] : '';
-
-  const handleBackPress = useCallback(() => {
-    router.replace('/(tabs)/more');
-  }, [router]);
-
-  const handleSearchSubmit = useCallback(() => {
-    const q = searchValue.trim();
-    if (q) {
-      router.push(`/(tabs)/customers?search=${encodeURIComponent(q)}` as any);
-    }
-  }, [searchValue, router]);
+  const handleClearSearch = useCallback(() => {
+    setSearchValue('');
+  }, [setSearchValue]);
 
   const handleAvatarPress = useCallback(() => {
     router.push('/account');
@@ -81,12 +65,6 @@ export function Header() {
     router.push('/notifications');
   }, [router]);
 
-  const headerBg = colorScheme === 'dark' ? colors.background : '#fff';
-  const borderColor = colorScheme === 'dark' ? '#27272a' : '#e5e7eb';
-  const inputBg = colorScheme === 'dark' ? '#27272a' : '#f3f4f6';
-  const textColor = colorScheme === 'dark' ? '#fff' : '#000';
-  const placeholderColor = colorScheme === 'dark' ? '#a1a1aa' : '#9ca3af';
-
   return (
     <View
       style={[
@@ -98,11 +76,8 @@ export function Header() {
         },
       ]}
     >
-      {/* Row 1: Back/Avatar left, Title (when back), Chat & Notifications right */}
-      <View style={styles.topRow}>
-        {showBack ? (
-          <BackButton onPress={handleBackPress} />
-        ) : (
+      <View style={[styles.topRow, !searchConfig && styles.topRowCompact]}>
+        <View style={styles.topRowLeft}>
           <Pressable
             onPress={handleAvatarPress}
             style={({ pressed }) => [
@@ -118,38 +93,28 @@ export function Header() {
               />
             ) : (
               <View style={[styles.avatarFallback, { backgroundColor: colors.tint }]}>
-                <FontAwesome name="user" size={18} color="#fff" />
+                <AppIcon name="user" size={18} color="#fff" />
               </View>
             )}
           </Pressable>
-        )}
-        {showBack && screenTitle ? (
-          <View style={styles.titleCenter}>
-            <Text style={[styles.screenTitle, { color: textColor }]} numberOfLines={1}>
-              {screenTitle}
-            </Text>
+          <View style={styles.scopeSlot}>
+            <HeaderScopeTitle embedded />
           </View>
-        ) : null}
+        </View>
         <View style={styles.topRowRight}>
           <Pressable
             onPress={handleChatPress}
-            style={({ pressed }) => [
-              styles.iconButton,
-              pressed && styles.iconButtonPressed,
-            ]}
+            style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
             hitSlop={8}
           >
-            <FontAwesome name="comments" size={22} color={colors.text} />
+            <AppIcon name="comments" size={22} color={colors.text} />
           </Pressable>
           <Pressable
             onPress={handleNotificationPress}
-            style={({ pressed }) => [
-              styles.iconButton,
-              pressed && styles.iconButtonPressed,
-            ]}
+            style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
             hitSlop={8}
           >
-            <FontAwesome name="bell" size={22} color={colors.text} />
+            <AppIcon name="bell" size={22} color={colors.text} />
             {unreadCount > 0 && (
               <View style={styles.notificationBadge}>
                 <Text style={styles.notificationBadgeText}>
@@ -161,24 +126,28 @@ export function Header() {
         </View>
       </View>
 
-      {/* Row 2: Search bar */}
-      <View style={[styles.searchContainer, { backgroundColor: inputBg }]}>
-        <FontAwesome
-          name="search"
-          size={14}
-          color={placeholderColor}
-          style={styles.searchIcon}
-        />
-        <TextInput
-          style={[styles.searchInput, { color: textColor }]}
-          placeholder="Search customers..."
-          placeholderTextColor={placeholderColor}
-          value={searchValue}
-          onChangeText={setSearchValue}
-          returnKeyType="search"
-          onSubmitEditing={handleSearchSubmit}
-        />
-      </View>
+      <OfflineQueueBanner />
+
+      {searchConfig ? (
+        <View style={[styles.searchContainer, { backgroundColor: inputBg }]}>
+          <AppIcon name="search" size={14} color={mutedColor} style={styles.searchIcon} />
+          <TextInput
+            style={[styles.searchInput, { color: textColor }]}
+            placeholder={searchConfig.placeholder}
+            placeholderTextColor={mutedColor}
+            value={searchValue}
+            onChangeText={setSearchValue}
+            returnKeyType="search"
+            clearButtonMode="while-editing"
+            accessibilityLabel={searchConfig.placeholder}
+          />
+          {searchValue.length > 0 && Platform.OS === 'android' ? (
+            <Pressable onPress={handleClearSearch} hitSlop={8} accessibilityLabel="Clear search">
+              <AppIcon name="times-circle" size={16} color={mutedColor} />
+            </Pressable>
+          ) : null}
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -194,20 +163,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     marginBottom: 12,
+    gap: 8,
+  },
+  topRowLeft: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    minWidth: 0,
+  },
+  scopeSlot: {
+    flex: 1,
+    minWidth: 0,
+  },
+  topRowCompact: {
+    marginBottom: 0,
   },
   topRowRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  titleCenter: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  screenTitle: {
-    fontSize: 17,
-    fontWeight: '600',
+    flexShrink: 0,
   },
   searchContainer: {
     flexDirection: 'row',
@@ -257,6 +233,7 @@ const styles = StyleSheet.create({
     height: 40,
     alignItems: 'center',
     justifyContent: 'center',
+    flexShrink: 0,
   },
   avatar: {
     width: 36,

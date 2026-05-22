@@ -1,0 +1,183 @@
+import React from 'react';
+import { Text } from 'react-native';
+import type { LucideIcon } from 'lucide-react-native';
+import {
+  AlertCircle,
+  AlertTriangle,
+  Archive,
+  Brain,
+  Banknote,
+  Bell,
+  Briefcase,
+  Camera,
+  Car,
+  Check,
+  CheckCircle,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Circle,
+  Clock,
+  CreditCard,
+  Edit,
+  EllipsisVertical,
+  Eye,
+  EyeOff,
+  FileText,
+  Home,
+  Image as ImageIcon,
+  Info,
+  LineChart,
+  Lock,
+  Mail,
+  Menu,
+  MessageCircle,
+  Minus,
+  MinusCircle,
+  Moon,
+  MoreVertical,
+  Package,
+  Paperclip,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Receipt,
+  Save,
+  Scissors,
+  Search,
+  Send,
+  Settings,
+  Share2,
+  ShoppingCart,
+  Sparkles,
+  StickyNote,
+  Sun,
+  Trash2,
+  Truck,
+  User,
+  UserPlus,
+  Users,
+  UtensilsCrossed,
+  X,
+  XCircle,
+  LogOut,
+  Pill,
+  List,
+  TrendingDown,
+  TrendingUp,
+} from 'lucide-react-native';
+
+/** Icon names used across the mobile app (maps legacy FontAwesome / Ionicons names). */
+const ICON_MAP = {
+  home: Home,
+  users: Users,
+  user: User,
+  'user-plus': UserPlus,
+  plus: Plus,
+  camera: Camera,
+  'file-text': FileText,
+  'file-text-o': FileText,
+  bars: Menu,
+  menu: Menu,
+  'chevron-left': ChevronLeft,
+  'chevron-right': ChevronRight,
+  'chevron-down': ChevronDown,
+  'chevron-forward': ChevronRight,
+  'chevron-back': ChevronLeft,
+  'sticky-note-o': StickyNote,
+  check: Check,
+  'check-circle': CheckCircle,
+  'checkmark-circle': CheckCircle,
+  'sun-o': Sun,
+  sun: Sun,
+  'moon-o': Moon,
+  moon: Moon,
+  'circle-o': Circle,
+  circle: Circle,
+  bell: Bell,
+  comments: MessageCircle,
+  send: Send,
+  share: Share2,
+  search: Search,
+  times: X,
+  'times-circle': XCircle,
+  x: X,
+  minus: Minus,
+  'minus-circle': MinusCircle,
+  'shopping-cart': ShoppingCart,
+  archive: Package,
+  package: Package,
+  briefcase: Briefcase,
+  truck: Truck,
+  cutlery: UtensilsCrossed,
+  utensils: UtensilsCrossed,
+  money: Banknote,
+  'line-chart': LineChart,
+  'trending-down': TrendingDown,
+  'trending-up': TrendingUp,
+  'exclamation-triangle': AlertTriangle,
+  'exclamation-circle': AlertCircle,
+  'clock-o': Clock,
+  clock: Clock,
+  'ellipsis-v': EllipsisVertical,
+  'more-vertical': MoreVertical,
+  edit: Pencil,
+  pencil: Pencil,
+  trash: Trash2,
+  save: Save,
+  image: ImageIcon,
+  'credit-card': CreditCard,
+  receipt: Receipt,
+  paperclip: Paperclip,
+  'info-circle': Info,
+  info: Info,
+  refresh: RefreshCw,
+  lock: Lock,
+  mail: Mail,
+  'mail-outline': Mail,
+  sparkles: Sparkles,
+  brain: Brain,
+  eye: Eye,
+  'eye-off': EyeOff,
+  cog: Settings,
+  settings: Settings,
+  'sign-out': LogOut,
+  logout: LogOut,
+  'cart-outline': ShoppingCart,
+  'briefcase-outline': Briefcase,
+  'cut-outline': Scissors,
+  'car-outline': Car,
+  'restaurant-outline': UtensilsCrossed,
+  'medical-outline': Pill,
+  'camera-outline': Camera,
+  list: List,
+} satisfies Record<string, LucideIcon>;
+
+/** Includes special cases handled in AppIcon (e.g. logo-google). */
+export type AppIconName = keyof typeof ICON_MAP | 'logo-google';
+
+export type AppIconProps = {
+  name: AppIconName;
+  size?: number;
+  color?: string;
+  strokeWidth?: number;
+  style?: object;
+};
+
+/**
+ * Lucide icon wrapper — single icon set for the mobile app (aligned with web).
+ */
+export function AppIcon({ name, size = 24, color = '#000', strokeWidth = 2, style }: AppIconProps) {
+  if (name === 'logo-google') {
+    return (
+      <Text style={[{ fontSize: size * 0.85, fontWeight: '700', color: color || '#DB4437' }, style]}>
+        G
+      </Text>
+    );
+  }
+  const Icon = ICON_MAP[name] as LucideIcon | undefined;
+  if (!Icon) return null;
+  return <Icon size={size} color={color} strokeWidth={strokeWidth} style={style} />;
+}
+
+export { ICON_MAP };

@@ -6,11 +6,13 @@ import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import invoiceService from '../services/invoiceService';
-import offlineQueueService from '../services/offlineQueueService';
+import { guardOnline } from '../utils/onlineRequired';
 import settingsService from '../services/settingsService';
 import customerService from '../services/customerService';
 import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
+import { useShopOptional } from '../context/ShopContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import ActionColumn from '../components/ActionColumn';
 import DashboardTable from '../components/DashboardTable';
 import ViewToggle from '../components/ViewToggle';
@@ -39,6 +41,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -64,7 +67,10 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { STUDIO_LIKE_TYPES } from '../constants';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
+import { useResponsive } from '../hooks/useResponsive';
 
 const paymentSchema = z.object({
   amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Payment amount must be greater than 0'),
@@ -101,7 +107,11 @@ const Invoices = () => {
   const [markAsPaidModalVisible, setMarkAsPaidModalVisible] = useState(false);
   const [printModalVisible, setPrintModalVisible] = useState(false);
   const [stats, setStats] = useState(null);
-  const { isAdmin, isManager, activeTenant } = useAuth();
+  const { isAdmin, isManager, activeTenant, activeTenantId } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
+  const { scopeReady } = useWorkspaceScope();
+  const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
   const isStudioLike = STUDIO_LIKE_TYPES.includes(businessType);
@@ -132,6 +142,13 @@ const Invoices = () => {
   });
 
   const organization = organizationData?.data?.data || organizationData?.data || {};
+
+  const printOrganization = useMemo(() => {
+    if (viewingInvoice?.organization && typeof viewingInvoice.organization === 'object') {
+      return viewingInvoice.organization;
+    }
+    return organization;
+  }, [viewingInvoice, organization]);
 
   const paymentForm = useForm({
     resolver: zodResolver(paymentSchema),
@@ -169,7 +186,7 @@ const Invoices = () => {
     } finally {
       setLoading(false);
     }
-  }, [pagination.current, pagination.pageSize, filters]);
+  }, [pagination.current, pagination.pageSize, filters, activeShopId]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -178,12 +195,13 @@ const Invoices = () => {
     } catch (error) {
       console.error('Failed to load invoice stats:', error);
     }
-  }, []);
+  }, [activeShopId]);
 
   useEffect(() => {
+    if (!scopeReady) return;
     fetchInvoices();
     fetchStats();
-  }, [fetchInvoices, fetchStats, refreshTrigger]);
+  }, [scopeReady, activeTenantId, activeShopId, fetchInvoices, fetchStats, refreshTrigger, shopContext?.isShopWorkspace]);
 
   useEffect(() => {
     if (location.state?.openInvoiceId && invoices.length > 0) {
@@ -370,10 +388,17 @@ const Invoices = () => {
     }
   }, [newInvoice, resetCreateInvoiceForm, persistLineItemDescriptions]);
 
-  const handleView = (invoice) => {
-    setViewingInvoice(invoice);
+  const handleView = useCallback(async (invoice) => {
     setDrawerVisible(true);
-  };
+    setViewingInvoice(invoice);
+    try {
+      const response = await invoiceService.getById(invoice.id);
+      const full = response?.data ?? response;
+      if (full) setViewingInvoice(full);
+    } catch (error) {
+      console.error('Failed to load invoice details:', error);
+    }
+  }, []);
 
   const handleCloseDrawer = () => {
     setDrawerVisible(false);
@@ -402,7 +427,7 @@ const Invoices = () => {
       }
       
       const opt = {
-        margin: 0,
+        margin: isMobile ? [4, 4, 4, 4] : [0, 0, 0, 0],
         filename: `Invoice_${viewingInvoice.invoiceNumber}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true },
@@ -613,21 +638,13 @@ const Invoices = () => {
 
   const handleDeleteInvoice = async (id) => {
     try {
-      if (!navigator.onLine) {
-        await offlineQueueService.queueAction(
-          offlineQueueService.OFFLINE_ACTION_TYPES.INVOICE,
-          'delete',
-          { id }
-        );
-        showSuccess('Saved offline. Will sync when connected.');
+      if (!guardOnline(showError)) return;
+      if (invoiceToDelete?.status === 'cancelled') {
+        await invoiceService.deleteCancelled(id);
+        showSuccess('Cancelled invoice deleted');
       } else {
-        if (invoiceToDelete?.status === 'cancelled') {
-          await invoiceService.deleteCancelled(id);
-          showSuccess('Cancelled invoice deleted');
-        } else {
-          await invoiceService.delete(id);
-          showSuccess('Draft invoice deleted');
-        }
+        await invoiceService.delete(id);
+        showSuccess('Draft invoice deleted');
       }
       setInvoiceToDelete(null);
       setRefreshTrigger(prev => prev + 1);
@@ -701,6 +718,25 @@ const Invoices = () => {
       ),
     },
   ], [isPrintingPress, handleView]);
+
+  const invoicesEmptyState = useMemo(() => {
+    if (filters.status) {
+      return getEmptyStateProps(EMPTY_STATES.INVOICES_FILTERED, {
+        primary: () => {
+          setFilters({ status: '' });
+          setPagination((prev) => ({ ...prev, current: 1 }));
+        },
+      });
+    }
+    if (isStudioLike) {
+      const actions = { primary: () => navigate('/jobs') };
+      if (canCreateManualInvoice) actions.secondary = handleOpenCreateModal;
+      return getEmptyStateProps(EMPTY_STATES.INVOICES, actions);
+    }
+    return getEmptyStateProps(EMPTY_STATES.INVOICES_SHOP, {
+      ...(canCreateManualInvoice ? { primary: handleOpenCreateModal } : {}),
+    });
+  }, [filters.status, isStudioLike, canCreateManualInvoice, navigate, handleOpenCreateModal]);
 
   return (
     <div className="space-y-6">
@@ -778,19 +814,7 @@ const Invoices = () => {
         columns={tableColumns}
         loading={loading}
         title={null}
-        emptyIcon={<FileText className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription={
-          isStudioLike
-            ? "No invoices yet. Invoices are automatically created when you complete a job and generate an invoice from it."
-            : "No invoices found. Create invoices from your sales or orders to track payments."
-        }
-        emptyAction={
-          isStudioLike && (
-            <Button onClick={() => navigate('/jobs')}>
-              Go to Jobs
-            </Button>
-          )
-        }
+        emptyState={invoicesEmptyState}
         pageSize={pagination.pageSize}
         externalPagination={{ current: pagination.current, total: pagination.total }}
         onPageChange={(newPagination) => setPagination(prev => ({ ...prev, ...newPagination }))}
@@ -1224,38 +1248,41 @@ const Invoices = () => {
       </MobileFormDialog>
 
       <Dialog open={printModalVisible} onOpenChange={setPrintModalVisible}>
-        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center justify-between w-full">
-              <span>Print Invoice</span>
-              <div className="flex items-center gap-2">
+        <DialogContent className="max-w-[100vw] sm:max-w-6xl max-h-[100dvh] sm:max-h-[90vh] flex flex-col p-0 gap-0 overflow-hidden">
+          <DialogHeader className="px-3 sm:px-6 py-3 border-b flex-shrink-0 text-left">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <DialogTitle>Print Invoice</DialogTitle>
+                <DialogDescription className="sr-only sm:not-sr-only">
+                  Preview, download, or print this invoice
+                </DialogDescription>
+              </div>
+              <div className="flex gap-2 w-full sm:w-auto">
                 <Button
                   variant="outline"
+                  className="flex-1 sm:flex-initial"
                   onClick={handleDownloadInvoice}
                 >
                   <Download className="h-4 w-4 mr-2" />
                   Download
                 </Button>
-                <Button
-                  onClick={handlePrintInvoice}
-                >
+                <Button className="flex-1 sm:flex-initial" onClick={handlePrintInvoice}>
                   <Printer className="h-4 w-4 mr-2" />
                   Print
                 </Button>
               </div>
-            </DialogTitle>
+            </div>
           </DialogHeader>
           {viewingInvoice && (
-            <PrintableInvoice
-              invoice={viewingInvoice}
-              organization={organization}
-              onClose={() => {
-                setPrintModalVisible(false);
-                if (!drawerVisible) {
-                  setViewingInvoice(null);
-                }
-              }}
-            />
+            <div className="print-invoice-preview flex-1 overflow-y-auto overflow-x-hidden bg-muted/30 p-2 sm:p-4">
+              <div className="print-invoice-preview-inner w-full max-w-full sm:max-w-[900px] sm:mx-auto">
+                <PrintableInvoice
+                  invoice={viewingInvoice}
+                  organization={printOrganization}
+                  screenLayout={isMobile ? 'mobile' : 'auto'}
+                />
+              </div>
+            </div>
           )}
         </DialogContent>
       </Dialog>

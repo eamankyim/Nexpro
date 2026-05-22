@@ -434,6 +434,16 @@ exports.register = async (req, res, next) => {
       }
     }
 
+    const inviteShopIds = invite.metadata?.shopIds;
+    if (Array.isArray(inviteShopIds) && inviteShopIds.length > 0) {
+      const { setUserShops } = require('../utils/shopUtils');
+      try {
+        await setUserShops(user.id, invite.tenantId, inviteShopIds);
+      } catch (assignErr) {
+        console.warn('[Auth] Shop assignment from invite failed:', assignErr?.message);
+      }
+    }
+
     await invite.update({
       used: true,
       usedAt: new Date(),
@@ -985,10 +995,18 @@ exports.getMe = async (req, res, next) => {
     userJson.notificationPreferences = mergeNotificationPreferences(user.notificationPreferences);
     if (Array.isArray(userJson.tenantMemberships)) {
       userJson.tenantMemberships = userJson.tenantMemberships.map((membership) => {
-        const mappedTenant = tenantFeatureMap[String(membership.tenantId)];
-        if (!mappedTenant) return membership;
+        const plain =
+          membership && typeof membership.toJSON === 'function'
+            ? membership.toJSON()
+            : membership?.dataValues
+              ? { ...membership.dataValues }
+              : { ...membership };
+        const tenantId = plain.tenantId ?? plain.tenant?.id;
+        const mappedTenant = tenantFeatureMap[String(tenantId)];
+        if (!mappedTenant) return plain;
         return {
-          ...membership,
+          ...plain,
+          tenantId,
           tenant: mappedTenant
         };
       });

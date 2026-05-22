@@ -2,21 +2,25 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, Pressable, Modal, ActivityIndicator } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
+import { useAudioPlayer } from 'expo-audio';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
 interface BarcodeScannerProps {
   visible: boolean;
   onClose: () => void;
   onScan: (barcode: string) => void;
 }
 
+const SCAN_BEEP_SOURCE = require('@/assets/sounds/scan-beep.wav');
+
 export function BarcodeScanner({ visible, onClose, onScan }: BarcodeScannerProps) {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const beepPlayer = useAudioPlayer(SCAN_BEEP_SOURCE, { keepAudioSessionActive: true });
 
   useEffect(() => {
     if (visible) {
@@ -29,6 +33,12 @@ export function BarcodeScanner({ visible, onClose, onScan }: BarcodeScannerProps
     setScanned(true);
     // Haptic feedback on successful scan
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+    beepPlayer
+      .seekTo(0)
+      .then(() => beepPlayer.play())
+      .catch(() => {
+        beepPlayer.play();
+      });
     onScan(data);
     onClose();
   };
@@ -53,7 +63,7 @@ export function BarcodeScanner({ visible, onClose, onScan }: BarcodeScannerProps
       <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
         <View style={[styles.container, { backgroundColor: colors.background }]}>
           <View style={styles.centerContent}>
-            <FontAwesome name="camera" size={64} color={colors.tint} style={styles.icon} />
+            <AppIcon name="camera" size={64} color={colors.tint} style={styles.icon} />
             <Text style={[styles.title, { color: colors.text }]}>Camera Permission Required</Text>
             <Text style={[styles.text, { color: colors.text }]}>
               We need access to your camera to scan barcodes.
@@ -102,7 +112,7 @@ export function BarcodeScanner({ visible, onClose, onScan }: BarcodeScannerProps
         <View style={styles.overlay}>
           <View style={styles.header}>
             <Pressable onPress={onClose} style={styles.closeButton}>
-              <FontAwesome name="times" size={24} color="#fff" />
+              <AppIcon name="times" size={24} color="#fff" />
             </Pressable>
           </View>
           <View style={styles.scanArea}>

@@ -10,6 +10,14 @@ const {
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const {
+  applyScopedFilters,
+  attachScopedToPayload,
+  assertShopRecordAccess,
+} = require('../utils/shopUtils');
+
+const itemWhere = (req, extra = {}) =>
+  applyScopedFilters(req, applyTenantFilter(req.tenantId, extra));
 const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
 
@@ -200,7 +208,7 @@ exports.getMaterialsItems = async (req, res, next) => {
     const includeLowStock = req.query.lowStock === 'true';
     const outOfStockOnly = req.query.outOfStock === 'true';
 
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = itemWhere(req, {});
 
     if (search) {
       where[Op.or] = [
@@ -257,7 +265,7 @@ exports.getMaterialsItems = async (req, res, next) => {
 exports.exportMaterialsItems = async (req, res, next) => {
   try {
     const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = itemWhere(req, {});
 
     const items = await MaterialItem.findAll({
       where,
@@ -284,7 +292,7 @@ exports.exportMaterialsItems = async (req, res, next) => {
 exports.getMaterialItem = async (req, res, next) => {
   try {
     const item = await MaterialItem.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: itemWhere(req, { id: req.params.id }),
       include: [
         ...buildItemInclude(),
         {
@@ -343,7 +351,7 @@ exports.createMaterialItem = async (req, res, next) => {
     let validatedVendorId = preferredVendorId || null;
     if (validatedVendorId) {
       const vendor = await Vendor.findOne({
-        where: applyTenantFilter(req.tenantId, { id: validatedVendorId })
+        where: itemWhere(req, { id: validatedVendorId })
       });
       if (!vendor) {
         return res.status(400).json({ success: false, message: 'Vendor not found for this tenant' });
@@ -352,21 +360,23 @@ exports.createMaterialItem = async (req, res, next) => {
 
     const initialQuantity = parseDecimal(quantityOnHand, 0);
     
-    const item = await MaterialItem.create({
-      name,
-      sku: sku || null,
-      description: description || null,
-      categoryId: validatedCategoryId,
-      unit: unit || 'pcs',
-      quantityOnHand: initialQuantity,
-      reorderLevel: parseDecimal(reorderLevel, 0),
-      preferredVendorId: validatedVendorId,
-      unitCost: parseDecimal(unitCost, 0),
-      location: location || null,
-      metadata: metadata || {},
-      isActive: isActive !== undefined ? Boolean(isActive) : true,
-      tenantId: req.tenantId
-    });
+    const item = await MaterialItem.create(
+      attachScopedToPayload(req, {
+        name,
+        sku: sku || null,
+        description: description || null,
+        categoryId: validatedCategoryId,
+        unit: unit || 'pcs',
+        quantityOnHand: initialQuantity,
+        reorderLevel: parseDecimal(reorderLevel, 0),
+        preferredVendorId: validatedVendorId,
+        unitCost: parseDecimal(unitCost, 0),
+        location: location || null,
+        metadata: metadata || {},
+        isActive: isActive !== undefined ? Boolean(isActive) : true,
+        tenantId: req.tenantId,
+      })
+    );
 
     // Create initial movement record if item was created with quantity
     if (initialQuantity > 0) {
@@ -399,7 +409,7 @@ exports.createMaterialItem = async (req, res, next) => {
 exports.updateMaterialItem = async (req, res, next) => {
   try {
     const item = await MaterialItem.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: itemWhere(req, { id: req.params.id })
     });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Material item not found' });
@@ -418,7 +428,7 @@ exports.updateMaterialItem = async (req, res, next) => {
 
     if (payload.preferredVendorId !== undefined && payload.preferredVendorId !== null) {
       const vendor = await Vendor.findOne({
-        where: applyTenantFilter(req.tenantId, { id: payload.preferredVendorId })
+        where: itemWhere(req, { id: payload.preferredVendorId })
       });
       if (!vendor) {
         return res.status(400).json({ success: false, message: 'Vendor not found for this tenant' });
@@ -441,7 +451,7 @@ exports.updateMaterialItem = async (req, res, next) => {
     await item.update(updates);
 
     const updatedItem = await MaterialItem.findOne({
-      where: applyTenantFilter(req.tenantId, { id: item.id }),
+      where: itemWhere(req, { id: item.id }),
       include: buildItemInclude()
     });
 
@@ -477,7 +487,7 @@ exports.getMaterialsSummary = async (req, res, next) => {
           'outOfStockCount'
         ]
       ],
-      where: applyTenantFilter(req.tenantId, {})
+      where: itemWhere(req, {})
     });
 
     const categories = await MaterialCategory.findAll({
@@ -491,7 +501,7 @@ exports.getMaterialsSummary = async (req, res, next) => {
           model: MaterialItem,
           as: 'items',
           attributes: [],
-          where: applyTenantFilter(req.tenantId, {}),
+          where: itemWhere(req, {}),
           required: false
         }
       ],
@@ -517,19 +527,10 @@ exports.getMaterialsMovements = async (req, res, next) => {
     const { page, limit, offset } = getPagination(req);
     const itemId = req.query.itemId;
 
-    const where = applyTenantFilter(req.tenantId, {});
-    if (itemId) {
-      const item = await MaterialItem.findOne({
-        where: applyTenantFilter(req.tenantId, { id: itemId })
-      });
-      if (!item) {
-        return res.status(404).json({ success: false, message: 'Material item not found' });
-      }
-      where.itemId = itemId;
-    }
+    const itemFilter = itemWhere(req, itemId ? { id: itemId } : {});
 
     const { count, rows } = await MaterialMovement.findAndCountAll({
-      where,
+      where: applyTenantFilter(req.tenantId, {}),
       limit,
       offset,
       order: [['occurredAt', 'DESC']],
@@ -538,8 +539,8 @@ exports.getMaterialsMovements = async (req, res, next) => {
           model: MaterialItem,
           as: 'item',
           attributes: ['id', 'name', 'sku', 'unit'],
-          where: applyTenantFilter(req.tenantId, {}),
-          required: false
+          where: itemFilter,
+          required: true
         },
         { model: User, as: 'createdByUser', attributes: ['id', 'name', 'email'] },
         {
@@ -628,7 +629,7 @@ const createMovementAndUpdateItem = async ({
 exports.restockMaterialItem = async (req, res, next) => {
   try {
     const item = await MaterialItem.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: itemWhere(req, { id: req.params.id })
     });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Material item not found' });
@@ -653,7 +654,7 @@ exports.restockMaterialItem = async (req, res, next) => {
     });
 
     const refreshedItem = await MaterialItem.findOne({
-      where: applyTenantFilter(req.tenantId, { id: updatedItem.id }),
+      where: itemWhere(req, { id: updatedItem.id }),
       include: buildItemInclude()
     });
 
@@ -673,7 +674,7 @@ exports.restockMaterialItem = async (req, res, next) => {
 exports.adjustMaterialItem = async (req, res, next) => {
   try {
     const item = await MaterialItem.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: itemWhere(req, { id: req.params.id })
     });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Material item not found' });
@@ -704,7 +705,7 @@ exports.adjustMaterialItem = async (req, res, next) => {
     });
 
     const refreshedItem = await MaterialItem.findOne({
-      where: applyTenantFilter(req.tenantId, { id: updatedItem.id }),
+      where: itemWhere(req, { id: updatedItem.id }),
       include: buildItemInclude()
     });
 
@@ -737,7 +738,7 @@ exports.adjustMaterialItem = async (req, res, next) => {
 exports.recordUsageForJob = async (req, res, next) => {
   try {
     const item = await MaterialItem.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: itemWhere(req, { id: req.params.id })
     });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Material item not found' });
@@ -784,7 +785,7 @@ exports.recordUsageForJob = async (req, res, next) => {
     }
 
     const refreshedItem = await MaterialItem.findOne({
-      where: applyTenantFilter(req.tenantId, { id: updatedItem.id }),
+      where: itemWhere(req, { id: updatedItem.id }),
       include: buildItemInclude()
     });
 
@@ -804,7 +805,7 @@ exports.recordUsageForJob = async (req, res, next) => {
 exports.deleteMaterialItem = async (req, res, next) => {
   try {
     const item = await MaterialItem.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: itemWhere(req, { id: req.params.id })
     });
     if (!item) {
       return res.status(404).json({ success: false, message: 'Material item not found' });

@@ -206,6 +206,24 @@ exports.signupTenant = async (req, res, next) => {
         );
       }
 
+      if (finalBusinessType === 'shop') {
+        const { resolveShopSeedData } = require('../utils/shopUtils');
+        const { Shop } = require('../models');
+        const shopPayload = await resolveShopSeedData(
+          tenant.id,
+          {
+            name: trimmedCompanyName,
+            phone: normalizedCompanyPhone,
+            email: companyEmail || normalizedEmail,
+            source: 'signup',
+          },
+          transaction
+        );
+        if (shopPayload) {
+          await Shop.create({ ...shopPayload, tenantId: tenant.id }, { transaction });
+        }
+      }
+
       await Setting.bulkCreate(
         [
           {
@@ -397,6 +415,7 @@ exports.completeOnboarding = async (req, res, next) => {
   const {
     businessType,
     shopType,
+    studioType,
     businessSubType,
     industry,
     companyName,
@@ -452,14 +471,12 @@ exports.completeOnboarding = async (req, res, next) => {
       }
     }
 
-    // Update tenant with onboarding data
-    const updates = {};
-    
-    if (businessType) {
-      updates.businessType = businessType;
-    }
-
-    updates.name = trimmedCompanyName;
+    const { resolveBusinessType } = require('../config/businessTypes');
+    const previousBusinessType = tenant.businessType;
+    const resolvedBusinessType = businessType ? resolveBusinessType(businessType) : tenant.businessType;
+    const selectedStudioType = resolvedBusinessType === 'studio'
+      ? (studioType || businessSubType || tenant.metadata?.studioType || null)
+      : null;
 
     // Store onboarding data in metadata
     // Create a new metadata object to ensure Sequelize detects the change
@@ -476,13 +493,21 @@ exports.completeOnboarding = async (req, res, next) => {
     }
     
     // Store shop type in metadata (for shop business type)
-    if (businessType === 'shop' && shopType) {
+    if (resolvedBusinessType === 'shop' && shopType) {
       metadata.shopType = shopType;
       console.log('[tenant] completeOnboarding tenantId=%s businessType=shop shopType=%s (stored in metadata)', tenantId, shopType);
-    } else if (businessType === 'shop' && !shopType) {
+      delete metadata.studioType;
+    } else if (resolvedBusinessType === 'shop' && !shopType) {
       console.log('[tenant] completeOnboarding tenantId=%s businessType=shop shopType=missing', tenantId);
+      delete metadata.studioType;
+    } else if (resolvedBusinessType === 'studio') {
+      if (selectedStudioType) metadata.studioType = selectedStudioType;
+      delete metadata.shopType;
+      console.log('[tenant] completeOnboarding tenantId=%s businessType=studio studioType=%s', tenantId, selectedStudioType || 'default');
     } else if (businessType) {
-      console.log('[tenant] completeOnboarding tenantId=%s businessType=%s shopType=n/a', tenantId, businessType);
+      delete metadata.shopType;
+      delete metadata.studioType;
+      console.log('[tenant] completeOnboarding tenantId=%s businessType=%s shopType=n/a', tenantId, resolvedBusinessType);
     }
 
     // Store business contact information in metadata
@@ -501,7 +526,7 @@ exports.completeOnboarding = async (req, res, next) => {
     
     // Apply updates
     if (businessType) {
-      tenant.businessType = businessType;
+      tenant.businessType = resolvedBusinessType;
     }
     tenant.name = trimmedCompanyName;
 
@@ -536,19 +561,51 @@ exports.completeOnboarding = async (req, res, next) => {
     // Reload to get the latest data
     await tenant.reload();
 
+    const resolvedOnboardingType = resolvedBusinessType || tenant.businessType;
+    if (resolvedOnboardingType === 'shop') {
+      try {
+        const { syncDefaultShopFromOrganization } = require('../utils/shopUtils');
+        await syncDefaultShopFromOrganization(tenantId, {
+          name: trimmedCompanyName,
+          phone: normalizedCompanyPhone,
+          email: companyEmail || orgUpdate.email,
+          address: companyAddress,
+          source: 'onboarding',
+        });
+        console.log('[tenant] completeOnboarding ensured default shop for tenantId=%s', tenantId);
+      } catch (shopErr) {
+        console.error('[tenant] completeOnboarding default shop failed (non-blocking):', shopErr.message);
+      }
+    } else if (resolvedOnboardingType === 'studio') {
+      try {
+        const { ensureDefaultStudioLocation } = require('../utils/studioLocationUtils');
+        await ensureDefaultStudioLocation(tenantId, trimmedCompanyName);
+        console.log('[tenant] completeOnboarding ensured default studio location for tenantId=%s', tenantId);
+      } catch (studioErr) {
+        console.error('[tenant] completeOnboarding default studio location failed (non-blocking):', studioErr.message);
+      }
+    }
+
     // Seed default categories based on business type and shop type
     // This runs if business type is set/changed, or if shop type is provided
     const shouldSeedCategories = businessType && (
-      !tenant.businessType || // First time setting business type
-      tenant.businessType !== businessType || // Business type changed
-      (businessType === 'shop' && shopType) // Shop type provided
+      !previousBusinessType || // First time setting business type
+      resolveBusinessType(previousBusinessType) !== resolvedBusinessType || // Business type changed
+      (resolvedBusinessType === 'shop' && shopType) || // Shop type provided
+      (resolvedBusinessType === 'studio' && selectedStudioType) // Studio type provided
     );
     
     if (shouldSeedCategories) {
       try {
         // Pass force=true to bypass cache/flag checks since this is onboarding
-        await seedDefaultCategories(tenantId, businessType, shopType || null, null, true);
-        console.log(`✅ Seeded default categories for ${businessType}${shopType ? ` (${shopType})` : ''}`);
+        await seedDefaultCategories(
+          tenantId,
+          resolvedBusinessType,
+          resolvedBusinessType === 'shop' ? shopType || null : null,
+          resolvedBusinessType === 'studio' ? selectedStudioType : null,
+          true
+        );
+        console.log(`✅ Seeded default categories for ${resolvedBusinessType}${shopType ? ` (${shopType})` : ''}${selectedStudioType ? ` (${selectedStudioType})` : ''}`);
       } catch (error) {
         console.error('Failed to seed categories during onboarding:', error);
         // Don't fail onboarding if category seeding fails

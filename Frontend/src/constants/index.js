@@ -87,7 +87,7 @@ export const BUSINESS_TYPES = {
 };
 
 /** Business types that use Jobs (studio-like: printing press, mechanic, barber, salon) */
-export const STUDIO_LIKE_TYPES = ['printing_press', 'mechanic', 'barber', 'salon', 'studio'];
+export { STUDIO_LIKE_TYPES } from './studioLikeTypes.js';
 
 /**
  * Default review / service tags for the public review form when the tenant has no
@@ -122,8 +122,8 @@ export function getReviewCategoryOptions(businessType, customFromApi) {
   return map.default;
 }
 
-/** Phase 2: set to true to show Shops menu and page for shop business type */
-export const SHOW_SHOPS = false;
+/** @deprecated Use hasFeature('shopsModule') — kept for backwards compatibility */
+export const SHOW_SHOPS = true;
 
 // Job Statuses
 export const JOB_STATUSES = {

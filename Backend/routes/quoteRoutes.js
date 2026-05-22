@@ -14,6 +14,7 @@ const {
 } = require('../controllers/quoteController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { shopContext } = require('../middleware/shopContext');
 const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { exportLimiter } = require('../middleware/rateLimiter');
 
@@ -21,6 +22,7 @@ const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(shopContext);
 router.use(studioLocationContext);
 
 router.get('/export', exportLimiter, authorize('admin', 'manager'), exportQuotes);

@@ -42,6 +42,7 @@ import { usePOSConfig } from '../../hooks/usePOSConfig';
 import { CURRENCY } from '../../constants';
 import { showSuccess, showError } from '../../utils/toast';
 import { normalizePhone, validatePhone } from '../../utils/phoneUtils';
+import { mergeBranchOrganization } from '../../utils/branchOrganization';
 
 /**
  * Format currency value (handles string/number from API or form state)
@@ -372,14 +373,19 @@ const POSReceiptModal = ({
   }, [deliveryOptions, phone, email, sale, needsPhone, needsEmail, handlePrint, onSendReceipt, onClose, sendStatus]);
 
   // Receipt data for preview
+  const receiptOrganization = useMemo(() => {
+    if (sale?.invoice?.organization) return sale.invoice.organization;
+    return mergeBranchOrganization(sale?.shop || null, organizationSettings || {});
+  }, [sale, organizationSettings]);
+
   const receiptData = useMemo(() => {
     if (!sale) return null;
     return {
       ...sale,
       customer,
-      organization: organizationSettings
+      organization: receiptOrganization
     };
-  }, [sale, customer, organizationSettings]);
+  }, [sale, customer, receiptOrganization]);
 
   const canAutoExecute = receiptMode === 'auto_print'
     || receiptMode === 'auto_both'
@@ -394,7 +400,7 @@ const POSReceiptModal = ({
           invoice={receiptData.invoice}
           documentTitle={printDocumentTitle}
           saleNumber={receiptData.saleNumber}
-          organization={organizationSettings}
+          organization={receiptOrganization}
           printConfig={printConfig}
         />
       );
@@ -403,7 +409,7 @@ const POSReceiptModal = ({
       <PrintableReceipt
         sale={receiptData}
         documentTitle={printDocumentTitle}
-        organization={organizationSettings}
+        organization={receiptOrganization}
         printConfig={printConfig}
       />
     );

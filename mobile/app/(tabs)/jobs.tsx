@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -9,21 +9,26 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery } from '@tanstack/react-query';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { ListEmptyState, EmptyStateActionButton, ListActionButton } from '@/components/ListEmptyState';
 import { useAuth } from '@/context/AuthContext';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
-import { useTheme } from '@/context/ThemeContext';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
 import { jobService } from '@/services/jobService';
+import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
+import { useSmartSearch } from '@/context/SmartSearchContext';
+import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
+import { useDebounce } from '@/hooks/useDebounce';
 import { CURRENCY } from '@/constants';
-import Colors from '@/constants/Colors';
+import { formatCurrency } from '@/utils/formatCurrency';
 import { resolveBusinessType } from '@/constants';
-
-function formatCurrency(value: number | string | null | undefined): string {
-  const numValue = typeof value === 'number' ? value : parseFloat(String(value ?? 0)) || 0;
-  return `${CURRENCY.SYMBOL} ${numValue.toFixed(CURRENCY.DECIMAL_PLACES)}`;
-}
+import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListResponse';
+import { formatStatusLabel } from '@/utils/formatLabels';
+import { showListFilters } from '@/utils/listEmptyLayout';
+import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -67,18 +72,21 @@ export default function JobsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ openJobId?: string }>();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
 
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isStudio = resolvedType === 'studio';
+  const { searchValue } = useSmartSearch();
+  useRegisterPageSearch({ scope: 'jobs', placeholder: SEARCH_PLACEHOLDERS.JOBS });
+  const debouncedSearch = useDebounce(searchValue, 400);
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['jobs', activeTenantId],
+    queryKey: ['jobs', activeTenantId, debouncedSearch],
     queryFn: async () => {
-      const params: { page?: number; limit?: number } = {
+      const params: { page?: number; limit?: number; search?: string } = {
         page: 1,
         limit: 50,
+        search: debouncedSearch || undefined,
       };
       return jobService.getJobs(params);
     },
@@ -89,7 +97,11 @@ export default function JobsScreen() {
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
   });
 
-  const jobs = (response?.data || []) as Job[];
+  const jobs = useMemo(() => parseApiListResponse<Job>(response), [response]);
+  const loadErrorMessage = useMemo(
+    () => getApiErrorMessage(error, 'Could not load jobs. Pull to refresh.'),
+    [error]
+  );
   const openJobId = typeof params.openJobId === 'string' ? params.openJobId : null;
 
   const totalJobs = jobs.length;
@@ -120,11 +132,6 @@ export default function JobsScreen() {
     router.push('/(tabs)/scan');
   }, [router]);
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
 
   if (!isStudio) {
     return <FeatureAccessDenied message="Jobs are only available for studio-type workspaces." />;
@@ -199,24 +206,23 @@ export default function JobsScreen() {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: bg }]}>
-      {/* Create Job button */}
-      <Pressable
-        onPress={handleCreateJob}
-        style={[styles.createButton, { backgroundColor: colors.tint }]}
-      >
-        <FontAwesome name="plus" size={20} color="#fff" />
-        <Text style={styles.createButtonText}>New Job</Text>
-      </Pressable>
+    <ScreenShell style={styles.container}>
+      {!isLoading && !isError && jobs.length > 0 && (
+        <ListActionButton
+          label="New Job"
+          onPress={handleCreateJob}
+          backgroundColor={colors.tint}
+        />
+      )}
 
       {/* Stats cards (match web Jobs summary with icons) */}
-      {!isLoading && !isError && totalJobs >= 0 && (
-        <View style={styles.statsRow}>
+      {showListFilters(isLoading, isError, jobs.length) && (
+      <View style={styles.statsRow}>
           <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
             <View style={styles.statHeader}>
               <Text style={[styles.statLabel, { color: mutedColor }]}>Total Jobs</Text>
               <View style={[styles.statIconWrap, { backgroundColor: 'rgba(22, 101, 52, 0.1)' }]}>
-                <FontAwesome name="briefcase" size={16} color={colors.tint} />
+                <AppIcon name="briefcase" size={16} color={colors.tint} />
               </View>
             </View>
             <Text style={[styles.statValue, { color: textColor }]}>{totalJobs}</Text>
@@ -225,7 +231,7 @@ export default function JobsScreen() {
             <View style={styles.statHeader}>
               <Text style={[styles.statLabel, { color: mutedColor }]}>In Progress</Text>
               <View style={[styles.statIconWrap, { backgroundColor: 'rgba(59, 130, 246, 0.1)' }]}>
-                <FontAwesome name="clock-o" size={16} color={colors.tint} />
+                <AppIcon name="clock-o" size={16} color={colors.tint} />
               </View>
             </View>
             <Text style={[styles.statValue, { color: textColor }]}>{inProgressJobs}</Text>
@@ -234,7 +240,7 @@ export default function JobsScreen() {
             <View style={styles.statHeader}>
               <Text style={[styles.statLabel, { color: mutedColor }]}>Completed</Text>
               <View style={[styles.statIconWrap, { backgroundColor: 'rgba(132, 204, 22, 0.1)' }]}>
-                <FontAwesome name="check-circle" size={16} color="#84cc16" />
+                <AppIcon name="check-circle" size={16} color="#84cc16" />
               </View>
             </View>
             <Text style={[styles.statValue, { color: textColor }]}>{completedJobs}</Text>
@@ -243,7 +249,7 @@ export default function JobsScreen() {
             <View style={styles.statHeader}>
               <Text style={[styles.statLabel, { color: mutedColor }]}>Overdue</Text>
               <View style={[styles.statIconWrap, { backgroundColor: 'rgba(239, 68, 68, 0.1)' }]}>
-                <FontAwesome name="exclamation-circle" size={16} color="#ef4444" />
+                <AppIcon name="exclamation-circle" size={16} color="#ef4444" />
               </View>
             </View>
             <Text style={[styles.statValue, { color: textColor }]}>{overdueJobs}</Text>
@@ -251,27 +257,10 @@ export default function JobsScreen() {
         </View>
       )}
 
-      {isLoading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.tint} />
-          <Text style={[styles.loadingText, { color: mutedColor }]}>Loading jobs...</Text>
-        </View>
+      {isLoading && !response ? (
+        <ListLoadingState message="Loading jobs..." />
       ) : isError ? (
-        <View style={styles.center}>
-          <FontAwesome name="exclamation-triangle" size={48} color="#ef4444" />
-          <Text style={[styles.emptyTitle, { color: textColor }]}>Failed to load jobs</Text>
-          <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-            {error?.message?.includes('timeout')
-              ? 'Request timed out. Please check your connection and try again.'
-              : 'An error occurred while loading jobs. Please try again.'}
-          </Text>
-          <Pressable
-            onPress={() => refetch()}
-            style={[styles.retryButton, { backgroundColor: colors.tint }]}
-          >
-            <Text style={styles.retryButtonText}>Retry</Text>
-          </Pressable>
-        </View>
+        <ListErrorState title="Failed to load jobs" message={loadErrorMessage} onRetry={refetch} />
       ) : (
         <FlatList
           data={jobs}
@@ -282,18 +271,24 @@ export default function JobsScreen() {
             <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={colors.tint} />
           }
           ListEmptyComponent={
-            <View style={styles.empty}>
-              <FontAwesome name="briefcase" size={48} color={mutedColor} />
-              <Text style={[styles.emptyTitle, { color: textColor }]}>No jobs yet</Text>
-              <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-                Create your first job to get started
-              </Text>
-            </View>
+            <ListEmptyState
+              imageKey="TASKS"
+              title="No jobs yet"
+              subtitle="Create your first job to get started"
+              titleColor={textColor}
+              subtitleColor={mutedColor}
+            >
+              <EmptyStateActionButton
+                label="New Job"
+                onPress={handleCreateJob}
+                backgroundColor={colors.tint}
+              />
+            </ListEmptyState>
           }
         />
       )}
 
-    </View>
+    </ScreenShell>
   );
 }
 
@@ -308,16 +303,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   retryButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  createButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    margin: 16,
-    padding: 14,
-    borderRadius: 12,
-  },
-  createButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   statsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -375,7 +360,6 @@ const styles = StyleSheet.create({
   priorityText: { fontSize: 12, fontWeight: '600' },
   dueDate: { fontSize: 12 },
   pressed: { opacity: 0.8 },
-  empty: { alignItems: 'center', paddingVertical: 48 },
   emptyTitle: { fontSize: 18, fontWeight: '600', marginTop: 16 },
   emptySubtitle: { fontSize: 14, marginTop: 8, textAlign: 'center' },
 });

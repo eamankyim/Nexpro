@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -8,16 +8,23 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
+import { useQueryClient } from '@tanstack/react-query';
+import { AppBrandLogo } from '@/components/AppBrandLogo';
 import { router, Link } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { usePublicConfig } from '@/hooks/usePublicConfig';
 import { GoogleSignInButton } from '@/components/GoogleSignInButton';
 import { getErrorMessage } from '@/utils/errorMessages';
 import { logger } from '@/utils/logger';
+import { resetLocalSessionForOnboardingTest } from '@/utils/devSessionReset';
+import { hasCompletedIntroOnboarding } from '@/utils/introOnboarding';
 
-const PRIMARY = '#166534';
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { FormInput, FormLabel } from '@/components/FormField';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { BRAND_GREEN } from '@/constants/brand';
 
 const ERROR_MESSAGES = {
   EMPTY_FIELDS: 'Please enter your email and password.',
@@ -26,13 +33,34 @@ const ERROR_MESSAGES = {
 };
 
 export default function LoginScreen() {
+  const { colors, bg, textColor, mutedColor, borderColor } = useScreenColors();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [checkingIntro, setCheckingIntro] = useState(true);
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const queryClient = useQueryClient();
   const { login, googleAuth } = useAuth();
   const { googleClientId } = usePublicConfig();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const introDone = await hasCompletedIntroOnboarding();
+      if (cancelled) return;
+      if (!introDone) {
+        router.replace('/intro');
+        return;
+      }
+      setCheckingIntro(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleGoogleSuccess = async (idToken: string) => {
     setError('');
@@ -64,58 +92,68 @@ export default function LoginScreen() {
     }
   };
 
+  const handleResetOnboardingTestSession = async () => {
+    try {
+      await resetLocalSessionForOnboardingTest();
+      queryClient.clear();
+      Alert.alert('Reset complete', 'Local session and onboarding state were cleared.');
+      router.replace('/');
+    } catch (err) {
+      Alert.alert('Reset failed', getErrorMessage(err, 'Could not clear local session.'));
+    }
+  };
+
+  if (checkingIntro) {
+    return (
+      <View style={[styles.loadingContainer, { backgroundColor: bg }]}>
+        <ActivityIndicator size="large" color={colors.tint} />
+      </View>
+    );
+  }
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+      style={[styles.container, { backgroundColor: bg }]}
     >
       <View style={styles.content}>
-        <Text style={styles.logo}>ABS</Text>
-        <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>Sign in to manage your business</Text>
+        <AppBrandLogo size={88} style={styles.logoWrap} />
+        <Text style={[styles.title, { color: textColor }]}>Welcome back</Text>
+        <Text style={[styles.subtitle, { color: mutedColor }]}>Sign in to manage your business</Text>
 
-        <View style={styles.field}>
-          <Text style={styles.label}>Email</Text>
-          <TextInput
-            style={styles.input}
+        <FormLabel>Email</FormLabel>
+        <FormInput
             placeholder="you@example.com"
-            placeholderTextColor="#9ca3af"
             value={email}
             onChangeText={setEmail}
             autoCapitalize="none"
             keyboardType="email-address"
             editable={!loading}
           />
+
+        <FormLabel>Password</FormLabel>
+        <View style={[styles.inputWithIcon, { borderColor }]}>
+          <TextInput
+            style={[styles.inputInner, { color: textColor }]}
+            placeholder="Enter your password"
+            placeholderTextColor={mutedColor}
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry={!showPassword}
+            editable={!loading}
+          />
+          <Pressable
+            style={styles.eyeButton}
+            onPress={() => setShowPassword((prev) => !prev)}
+            disabled={loading}
+          >
+            <AppIcon name={showPassword ? 'eye-off' : 'eye'} size={20} color={mutedColor} />
+          </Pressable>
         </View>
-        <View style={styles.field}>
-          <Text style={styles.label}>Password</Text>
-          <View style={styles.inputWithIcon}>
-            <TextInput
-              style={styles.inputInner}
-              placeholder="Enter your password"
-              placeholderTextColor="#9ca3af"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry={!showPassword}
-              editable={!loading}
-            />
-            <Pressable
-              style={styles.eyeButton}
-              onPress={() => setShowPassword((prev) => !prev)}
-              disabled={loading}
-            >
-              <Ionicons
-                name={showPassword ? 'eye-off' : 'eye'}
-                size={20}
-                color="#6b7280"
-              />
-            </Pressable>
-          </View>
-          <View style={styles.forgotRow}>
-            <Pressable onPress={() => router.push('/forgot-password')} disabled={loading}>
-              <Text style={styles.link}>Forgot password?</Text>
-            </Pressable>
-          </View>
+        <View style={styles.forgotRow}>
+          <Pressable onPress={() => router.push('/forgot-password')} disabled={loading}>
+            <Text style={[styles.link, { color: colors.tint }]}>Forgot password?</Text>
+          </Pressable>
         </View>
 
         {error ? (
@@ -127,6 +165,7 @@ export default function LoginScreen() {
         <Pressable
           style={({ pressed }) => [
             styles.button,
+            { backgroundColor: colors.tint },
             pressed && styles.buttonPressed,
             loading && styles.buttonDisabled,
           ]}
@@ -158,19 +197,45 @@ export default function LoginScreen() {
         ) : null}
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Don't have an account? </Text>
+          <Text style={[styles.footerText, { color: mutedColor }]}>Don't have an account? </Text>
           <Link href="/signup" asChild>
             <Pressable disabled={loading}>
-              <Text style={styles.link}>Create account</Text>
+              <Text style={[styles.link, { color: colors.tint }]}>Create account</Text>
             </Pressable>
           </Link>
         </View>
+
+        <View style={styles.legalFooter}>
+          <Pressable onPress={() => router.push('/privacy-policy')} disabled={loading}>
+            <Text style={[styles.legalLink, { color: colors.tint }]}>Privacy Policy</Text>
+          </Pressable>
+          <Text style={styles.legalSeparator}>•</Text>
+          <Pressable onPress={() => router.push('/data-deletion')} disabled={loading}>
+            <Text style={[styles.legalLink, { color: colors.tint }]}>Data Deletion</Text>
+          </Pressable>
+        </View>
+
+        {__DEV__ ? (
+          <Pressable
+            onPress={handleResetOnboardingTestSession}
+            disabled={loading}
+            style={({ pressed }) => [styles.devResetButton, pressed && styles.buttonPressed]}
+          >
+            <Text style={styles.devResetText}>Reset onboarding test session</Text>
+          </Pressable>
+        ) : null}
       </View>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
   container: {
     flex: 1,
     backgroundColor: '#fff',
@@ -181,12 +246,11 @@ const styles = StyleSheet.create({
     maxWidth: 400,
     width: '100%',
     alignSelf: 'center',
+    transform: [{ translateY: -24 }],
   },
-  logo: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: PRIMARY,
-    marginBottom: 8,
+  logoWrap: {
+    marginBottom: 12,
+    alignSelf: 'center',
   },
   title: {
     fontSize: 24,
@@ -265,7 +329,7 @@ const styles = StyleSheet.create({
   },
   button: {
     height: 48,
-    backgroundColor: PRIMARY,
+    backgroundColor: BRAND_GREEN,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -297,9 +361,36 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#6b7280',
   },
+  legalFooter: {
+    marginTop: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+  },
+  legalLink: {
+    fontSize: 13,
+    color: BRAND_GREEN,
+    fontWeight: '600',
+  },
+  legalSeparator: {
+    color: '#9ca3af',
+    fontSize: 13,
+  },
   link: {
     fontSize: 15,
-    color: PRIMARY,
+    color: BRAND_GREEN,
     fontWeight: '600',
+  },
+  devResetButton: {
+    alignSelf: 'center',
+    marginTop: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  devResetText: {
+    color: '#6b7280',
+    fontSize: 13,
+    fontWeight: '500',
   },
 });

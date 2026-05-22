@@ -10,7 +10,6 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { router, Link } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { usePublicConfig } from '@/hooks/usePublicConfig';
@@ -20,7 +19,11 @@ import { ConfettiBurst } from '@/components/ConfettiBurst';
 import { getErrorMessage } from '@/utils/errorMessages';
 import { logger } from '@/utils/logger';
 
-const PRIMARY = '#166534';
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { AppBrandLogo } from '@/components/AppBrandLogo';
+import { BRAND_GREEN } from '@/constants/brand';
+import { FormInput, FormLabel } from '@/components/FormField';
+import { useScreenColors } from '@/hooks/useScreenColors';
 const WELCOME_BG = '#0E1801';
 /** Minimum time (ms) the loading animation runs before transitioning to success (matches web). */
 const MIN_LOADING_DISPLAY_MS = 5200;
@@ -34,6 +37,7 @@ const ERROR_MESSAGES = {
 };
 
 export default function SignupScreen() {
+  const { colors, bg, textColor, mutedColor, borderColor } = useScreenColors();
   const [step, setStep] = useState(1);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -183,7 +187,7 @@ export default function SignupScreen() {
 
   const handleWelcomeContinue = () => {
     setShowWelcomeScreen(false);
-    router.replace('/onboarding');
+    router.replace('/');
   };
 
   const handleWelcomeErrorAction = () => {
@@ -199,7 +203,7 @@ export default function SignupScreen() {
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={styles.container}
+      style={[styles.container, { backgroundColor: bg }]}
     >
       {showWelcomeScreen ? (
         <View style={styles.welcomeOverlay}>
@@ -264,12 +268,12 @@ export default function SignupScreen() {
             style={styles.backIcon}
             disabled={loading}
           >
-            <Ionicons name="chevron-back" size={22} color="#111827" />
+            <AppIcon name="chevron-back" size={22} color="#111827" />
           </Pressable>
         </View>
         <View style={styles.contentCenter}>
           <View style={styles.content}>
-            <Text style={styles.logo}>ABS</Text>
+            <AppBrandLogo size={88} style={styles.logoWrap} />
           <View style={styles.titleRow}>
             <Text style={styles.title}>Create account</Text>
             <View style={styles.stepper}>
@@ -291,83 +295,63 @@ export default function SignupScreen() {
 
           {step === 1 ? (
             <>
-              <View style={styles.field}>
-                <Text style={styles.label}>Full name</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="Enter your full name"
-                  placeholderTextColor="#9ca3af"
-                  value={name}
-                  onChangeText={setName}
-                  autoCapitalize="words"
-                  editable={!loading}
-                />
-              </View>
-              <View style={styles.field}>
-                <Text style={styles.label}>Email</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="you@example.com"
-                  placeholderTextColor="#9ca3af"
-                  value={email}
-                  onChangeText={setEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  editable={!loading}
-                />
-              </View>
+              <FormLabel>Full name</FormLabel>
+              <FormInput
+                placeholder="Enter your full name"
+                value={name}
+                onChangeText={setName}
+                autoCapitalize="words"
+                editable={!loading}
+              />
+              <FormLabel>Email</FormLabel>
+              <FormInput
+                placeholder="you@example.com"
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                editable={!loading}
+              />
             </>
           ) : (
             <>
-              <View style={styles.field}>
-                <Text style={styles.label}>Password</Text>
-                <View style={styles.inputWithIcon}>
-                  <TextInput
-                    style={styles.inputInner}
-                    placeholder="At least 6 characters"
-                    placeholderTextColor="#9ca3af"
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry={!showPassword}
-                    editable={!loading}
-                  />
-                  <Pressable
-                    style={styles.eyeButton}
-                    onPress={() => setShowPassword((prev) => !prev)}
-                    disabled={loading}
-                  >
-                    <Ionicons
-                      name={showPassword ? 'eye-off' : 'eye'}
-                      size={20}
-                      color="#6b7280"
-                    />
-                  </Pressable>
-                </View>
+              <FormLabel>Password</FormLabel>
+              <View style={[styles.inputWithIcon, { borderColor }]}>
+                <TextInput
+                  style={[styles.inputInner, { color: textColor }]}
+                  placeholder="At least 6 characters"
+                  placeholderTextColor={mutedColor}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  editable={!loading}
+                />
+                <Pressable
+                  style={styles.eyeButton}
+                  onPress={() => setShowPassword((prev) => !prev)}
+                  disabled={loading}
+                >
+                  <AppIcon name={showPassword ? 'eye-off' : 'eye'} size={20} color={mutedColor} />
+                </Pressable>
               </View>
-              <View style={styles.field}>
-                <Text style={styles.label}>Confirm password</Text>
-                <View style={styles.inputWithIcon}>
-                  <TextInput
-                    style={styles.inputInner}
-                    placeholder="Re-enter your password"
-                    placeholderTextColor="#9ca3af"
-                    value={confirmPassword}
-                    onChangeText={setConfirmPassword}
-                    secureTextEntry={!showConfirmPassword}
-                    editable={!loading}
-                  />
-                  <Pressable
-                    style={styles.eyeButton}
-                    onPress={() => setShowConfirmPassword((prev) => !prev)}
-                    disabled={loading}
-                  >
-                    <Ionicons
-                      name={showConfirmPassword ? 'eye-off' : 'eye'}
-                      size={20}
-                      color="#6b7280"
-                    />
-                  </Pressable>
-                </View>
+              <FormLabel>Confirm password</FormLabel>
+              <View style={[styles.inputWithIcon, { borderColor }]}>
+                <TextInput
+                  style={[styles.inputInner, { color: textColor }]}
+                  placeholder="Re-enter your password"
+                  placeholderTextColor={mutedColor}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  secureTextEntry={!showConfirmPassword}
+                  editable={!loading}
+                />
+                <Pressable
+                  style={styles.eyeButton}
+                  onPress={() => setShowConfirmPassword((prev) => !prev)}
+                  disabled={loading}
+                >
+                  <AppIcon name={showConfirmPassword ? 'eye-off' : 'eye'} size={20} color={mutedColor} />
+                </Pressable>
               </View>
             </>
           )}
@@ -382,6 +366,7 @@ export default function SignupScreen() {
             <Pressable
               style={({ pressed }) => [
                 styles.button,
+                { backgroundColor: colors.tint },
                 pressed && styles.buttonPressed,
                 (loading || checkingEmail) && styles.buttonDisabled,
               ]}
@@ -398,6 +383,7 @@ export default function SignupScreen() {
             <Pressable
               style={({ pressed }) => [
                 styles.button,
+                { backgroundColor: colors.tint },
                 pressed && styles.buttonPressed,
                 loading && styles.buttonDisabled,
               ]}
@@ -433,9 +419,18 @@ export default function SignupScreen() {
             <Text style={styles.footerText}>Already have an account? </Text>
             <Link href="/login" asChild>
               <Pressable disabled={loading}>
-                <Text style={styles.link}>Sign in</Text>
+                <Text style={[styles.link, { color: colors.tint }]}>Sign in</Text>
               </Pressable>
             </Link>
+          </View>
+          <View style={styles.legalFooter}>
+            <Pressable onPress={() => router.push('/privacy-policy')} disabled={loading}>
+              <Text style={styles.legalLink}>Privacy Policy</Text>
+            </Pressable>
+            <Text style={styles.legalSeparator}>•</Text>
+            <Pressable onPress={() => router.push('/data-deletion')} disabled={loading}>
+              <Text style={styles.legalLink}>Data Deletion</Text>
+            </Pressable>
           </View>
           </View>
         </View>
@@ -496,7 +491,7 @@ const styles = StyleSheet.create({
     lineHeight: 24,
   },
   welcomeButton: {
-    backgroundColor: PRIMARY,
+    backgroundColor: BRAND_GREEN,
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderRadius: 8,
@@ -523,6 +518,7 @@ const styles = StyleSheet.create({
   contentCenter: {
     flex: 1,
     justifyContent: 'center',
+    transform: [{ translateY: -24 }],
   },
   content: {
     maxWidth: 400,
@@ -538,11 +534,9 @@ const styles = StyleSheet.create({
     borderColor: '#e5e7eb',
     borderRadius: 8,
   },
-  logo: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: PRIMARY,
-    marginBottom: 8,
+  logoWrap: {
+    marginBottom: 12,
+    alignSelf: 'center',
   },
   title: {
     fontSize: 24,
@@ -573,7 +567,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#e5e7eb',
   },
   stepBarActive: {
-    backgroundColor: PRIMARY,
+    backgroundColor: BRAND_GREEN,
   },
   input: {
     height: 48,
@@ -636,7 +630,7 @@ const styles = StyleSheet.create({
   },
   button: {
     height: 48,
-    backgroundColor: PRIMARY,
+    backgroundColor: BRAND_GREEN,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -668,9 +662,25 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#6b7280',
   },
+  legalFooter: {
+    marginTop: 16,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+  },
+  legalLink: {
+    fontSize: 13,
+    color: BRAND_GREEN,
+    fontWeight: '600',
+  },
+  legalSeparator: {
+    color: '#9ca3af',
+    fontSize: 13,
+  },
   link: {
     fontSize: 15,
-    color: PRIMARY,
+    color: BRAND_GREEN,
     fontWeight: '600',
   },
 });

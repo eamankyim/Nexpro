@@ -1,6 +1,8 @@
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { loadEmptyStateImage } from "../../config/emptyStateImages"
+import { useResponsive } from "@/hooks/useResponsive"
 import {
   Users,
   Briefcase,
@@ -82,9 +84,42 @@ const iconMap = {
  *   secondaryAction={{ label: "Import CSV", onClick: handleImport }}
  * />
  */
+/**
+ * Loads empty-state illustration on demand.
+ */
+function EmptyStateImage({ imageKey, imageAlt, className }) {
+  const [src, setSrc] = React.useState(null);
+
+  React.useEffect(() => {
+    if (!imageKey) return;
+    let cancelled = false;
+    loadEmptyStateImage(imageKey).then((url) => {
+      if (!cancelled && url) setSrc(url);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [imageKey]);
+
+  if (!src) return null;
+
+  return (
+    <img
+      src={src}
+      alt={imageAlt}
+      loading="lazy"
+      decoding="async"
+      className={className}
+    />
+  );
+}
+
 const EmptyState = React.forwardRef(({ 
   className,
   icon,
+  image,
+  imageKey,
+  imageAlt = '',
   title,
   description,
   primaryAction,
@@ -93,11 +128,15 @@ const EmptyState = React.forwardRef(({
   size = "default",
   ...props 
 }, ref) => {
+  const { isMobile } = useResponsive()
   const IconComponent = typeof icon === 'string' ? iconMap[icon] : null
-  const iconSize = size === "sm" ? "h-8 w-8" : size === "lg" ? "h-16 w-16" : "h-12 w-12"
-  const titleSize = size === "sm" ? "text-base" : size === "lg" ? "text-xl" : "text-lg"
-  const descSize = size === "sm" ? "text-xs" : "text-sm"
-  const padding = size === "sm" ? "py-6" : size === "lg" ? "py-16" : "py-12"
+  const resolvedSize = size === "default" && isMobile ? "sm" : size
+  const iconSize = resolvedSize === "sm" ? "h-8 w-8" : resolvedSize === "lg" ? "h-16 w-16" : "h-12 w-12"
+  const imageMaxWidth =
+    resolvedSize === "sm" ? "max-w-[220px]" : resolvedSize === "lg" ? "max-w-[320px]" : "max-w-[280px]"
+  const titleSize = resolvedSize === "sm" ? "text-base" : resolvedSize === "lg" ? "text-xl" : "text-lg"
+  const descSize = resolvedSize === "sm" ? "text-xs" : "text-sm"
+  const padding = resolvedSize === "sm" ? "py-6" : resolvedSize === "lg" ? "py-16" : "py-12"
 
   return (
     <div
@@ -109,8 +148,22 @@ const EmptyState = React.forwardRef(({
       )}
       {...props}
     >
-      {/* Icon */}
-      {icon && (
+      {/* Illustration or icon */}
+      {imageKey ? (
+        <EmptyStateImage
+          imageKey={imageKey}
+          imageAlt={imageAlt}
+          className={cn("mb-4 w-full h-auto object-contain", imageMaxWidth)}
+        />
+      ) : image ? (
+        <img
+          src={image}
+          alt={imageAlt}
+          loading="lazy"
+          decoding="async"
+          className={cn("mb-4 w-full h-auto object-contain", imageMaxWidth)}
+        />
+      ) : icon ? (
         <div className="mb-4 text-muted-foreground">
           {typeof icon === 'string' && IconComponent ? (
             <IconComponent className={cn(iconSize, "stroke-[1.5]")} />
@@ -118,7 +171,7 @@ const EmptyState = React.forwardRef(({
             icon
           )}
         </div>
-      )}
+      ) : null}
       
       {/* Title */}
       {title && (
@@ -139,7 +192,7 @@ const EmptyState = React.forwardRef(({
         <div className="mt-4 flex flex-wrap gap-2 justify-center">
           {primaryAction && (
             <Button 
-              size={size === "sm" ? "sm" : "default"}
+              size={resolvedSize === "sm" ? "sm" : "default"}
               onClick={primaryAction.onClick}
               disabled={primaryAction.disabled}
             >
@@ -150,7 +203,7 @@ const EmptyState = React.forwardRef(({
           {secondaryAction && (
             <Button 
               variant="outline"
-              size={size === "sm" ? "sm" : "default"}
+              size={resolvedSize === "sm" ? "sm" : "default"}
               onClick={secondaryAction.onClick}
               disabled={secondaryAction.disabled}
             >
@@ -179,7 +232,9 @@ export const getEmptyStateProps = (config, actions = {}) => {
   if (!config) return {}
   
   return {
-    icon: config.icon,
+    icon: config.imageKey ? undefined : config.icon,
+    imageKey: config.imageKey,
+    imageAlt: config.title ?? '',
     title: config.title,
     description: config.description,
     primaryAction: config.primaryAction && actions.primary ? {

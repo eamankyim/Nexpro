@@ -1,5 +1,10 @@
 require('dotenv').config();
 const { Sequelize } = require('sequelize');
+const {
+  DEMO_CANONICAL_DB_HOST,
+  isDemoCanonicalDatabaseUrl,
+  getDatabaseHost,
+} = require('../config/canonicalDatabase');
 
 const testConnection = async () => {
   const dbUrl = process.env.DATABASE_URL;
@@ -7,6 +12,13 @@ const testConnection = async () => {
   if (!dbUrl) {
     console.error('❌ DATABASE_URL is not set in .env file');
     process.exit(1);
+  }
+
+  if (!isDemoCanonicalDatabaseUrl(dbUrl)) {
+    console.warn(
+      `⚠️  DATABASE_URL host is "${getDatabaseHost(dbUrl)}", not the demo DB "${DEMO_CANONICAL_DB_HOST}".`
+    );
+    console.warn('   Local + demo-api should use the demo Neon URL. Production uses a separate DB.\n');
   }
 
   // Mask password in URL for logging

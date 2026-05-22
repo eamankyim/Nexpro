@@ -1,10 +1,11 @@
 import api from './api';
+import { withActiveShopScope, buildScopedQueryString } from '../utils/shopScope';
 
 const saleService = {
   // Get all sales
   getSales: async (params = {}) => {
     const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
+    Object.entries(withActiveShopScope(params)).forEach(([key, value]) => {
       if (value === undefined || value === null || value === '') return;
       searchParams.append(key, value);
     });
@@ -110,20 +111,20 @@ const saleService = {
 
   // Get sales statistics
   getSalesStats: async (startDate = null, endDate = null) => {
-    const params = new URLSearchParams();
-    if (startDate) params.append('startDate', startDate);
-    if (endDate) params.append('endDate', endDate);
-    const query = params.toString();
-    return api.get(query ? `/sales/stats?${query}` : '/sales/stats');
+    const params = {};
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    const queryString = buildScopedQueryString(params);
+    return api.get(queryString ? `/sales/stats?${queryString}` : '/sales/stats');
   },
 
   // Get top selling products
   getTopProducts: async (limit = 10, startDate = null, endDate = null) => {
-    const params = new URLSearchParams();
-    params.append('limit', limit);
-    if (startDate) params.append('startDate', startDate);
-    if (endDate) params.append('endDate', endDate);
-    return api.get(`/sales/top-products?${params.toString()}`);
+    const params = { limit };
+    if (startDate) params.startDate = startDate;
+    if (endDate) params.endDate = endDate;
+    const queryString = buildScopedQueryString(params);
+    return api.get(queryString ? `/sales/top-products?${queryString}` : '/sales/top-products');
   },
 
   // Get sale activities

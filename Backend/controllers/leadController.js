@@ -12,6 +12,11 @@ const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
 const taskAutomationService = require('../services/taskAutomationService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const {
+  applyStudioLocationFilter,
+  attachStudioLocationToPayload,
+} = require('../utils/studioLocationUtils');
+const { attachScopedToPayload } = require('../utils/shopUtils');
 
 /** Empty string is not a valid UUID for PostgreSQL; treat as unassigned. */
 const normalizeAssignedTo = (value) => {
@@ -48,6 +53,9 @@ const buildLeadInclude = () => ([
   }
 ]);
 
+const leadWhere = (req, extra = {}) =>
+  applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, extra));
+
 exports.getLeads = async (req, res, next) => {
   try {
     const { page, limit, offset } = getPagination(req);
@@ -59,7 +67,7 @@ exports.getLeads = async (req, res, next) => {
     const source = req.query.source;
     const isActive = req.query.isActive;
 
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = leadWhere(req, {});
 
     if (search) {
       where[Op.or] = [
@@ -114,7 +122,7 @@ exports.getLeads = async (req, res, next) => {
 exports.exportLeads = async (req, res, next) => {
   try {
     const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = leadWhere(req, {});
 
     const leads = await Lead.findAll({
       where,
@@ -144,7 +152,7 @@ exports.exportLeads = async (req, res, next) => {
 exports.getLead = async (req, res, next) => {
   try {
     const lead = await Lead.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: leadWhere(req, { id: req.params.id }),
       include: [
         ...buildLeadInclude(),
         {
@@ -191,15 +199,17 @@ exports.createLead = async (req, res, next) => {
       }
     }
 
-    const lead = await Lead.create({
-      ...payload,
-      tenantId: req.tenantId,
-      source: payload.source || 'unknown',
-      status: payload.status || 'new',
-      priority: payload.priority || 'medium',
-      tags: payload.tags || [],
-      createdBy: req.user?.id || null
-    });
+    const lead = await Lead.create(
+      attachStudioLocationToPayload(req, {
+        ...payload,
+        tenantId: req.tenantId,
+        source: payload.source || 'unknown',
+        status: payload.status || 'new',
+        priority: payload.priority || 'medium',
+        tags: payload.tags || [],
+        createdBy: req.user?.id || null
+      })
+    );
 
     const createdLead = await Lead.findOne({
       where: applyTenantFilter(req.tenantId, { id: lead.id }),
@@ -225,7 +235,7 @@ exports.updateLead = async (req, res, next) => {
   
   try {
     const lead = await Lead.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: leadWhere(req, { id: req.params.id }),
       transaction
     });
     if (!lead) {
@@ -449,7 +459,7 @@ exports.updateLead = async (req, res, next) => {
 exports.deleteLead = async (req, res, next) => {
   try {
     const lead = await Lead.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: leadWhere(req, { id: req.params.id })
     });
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
@@ -465,7 +475,7 @@ exports.deleteLead = async (req, res, next) => {
 exports.addLeadActivity = async (req, res, next) => {
   try {
     const lead = await Lead.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: leadWhere(req, { id: req.params.id })
     });
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
@@ -519,7 +529,7 @@ exports.addLeadActivity = async (req, res, next) => {
 exports.getLeadActivities = async (req, res, next) => {
   try {
     const lead = await Lead.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: leadWhere(req, { id: req.params.id })
     });
     if (!lead) {
       return res.status(404).json({ success: false, message: 'Lead not found' });
@@ -547,11 +557,11 @@ exports.getLeadSummary = async (req, res, next) => {
         [Sequelize.fn('SUM', Sequelize.literal(`CASE WHEN status = 'converted' THEN 1 ELSE 0 END`)), 'convertedLeads'],
         [Sequelize.fn('SUM', Sequelize.literal(`CASE WHEN status = 'lost' THEN 1 ELSE 0 END`)), 'lostLeads']
       ],
-      where: applyTenantFilter(req.tenantId, {})
+      where: leadWhere(req, {})
     });
 
     const upcomingFollowUps = await Lead.findAll({
-      where: applyTenantFilter(req.tenantId, {
+      where: leadWhere(req, {
         nextFollowUp: {
           [Op.ne]: null,
           [Op.lte]: Sequelize.literal("NOW() + interval '7 days'")
@@ -581,7 +591,7 @@ exports.convertLead = async (req, res, next) => {
   try {
     // First, fetch lead without includes to avoid FOR UPDATE with JOIN issue
     const lead = await Lead.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      where: leadWhere(req, { id: req.params.id }),
       transaction,
       lock: transaction.LOCK.UPDATE
     });
@@ -611,7 +621,7 @@ exports.convertLead = async (req, res, next) => {
     };
 
     const customer = await Customer.create(
-      { ...customerPayload, tenantId: req.tenantId },
+      attachScopedToPayload(req, { ...customerPayload, tenantId: req.tenantId }),
       { transaction }
     );
 

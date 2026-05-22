@@ -9,19 +9,36 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
+import { MiniSparkline } from '@/components/dashboard/MiniSparkline';
+import { buildDashboardInsight } from '@/utils/dashboardInsights';
+import { formatStatusLabel, getSaleStatusColors } from '@/utils/formatLabels';
 import { useRouter } from 'expo-router';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { useAuth } from '@/context/AuthContext';
+import { useShopOptional } from '@/context/ShopContext';
 import { dashboardService } from '@/services/dashboardService';
+import { assistantService } from '@/services/assistantService';
 import { authService } from '@/services/auth';
-import { CURRENCY, STUDIO_TYPES, DEFAULT_TENANT_NAMES } from '@/constants';
-import Colors from '@/constants/Colors';
-import { useTheme } from '@/context/ThemeContext';
+import { CURRENCY, ORDER_STATUSES, resolveBusinessType, SHOP_TYPES, isQuotesEnabledForTenant } from '@/constants';
+import { formatCurrency } from '@/utils/formatCurrency';
+import { saleService } from '@/services/saleService';
+import { isOnboardingComplete } from '@/utils/onboardingStatus';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { ScreenShell } from '@/components/ScreenShell';
+import { ListErrorState, ListLoadingState } from '@/components/ListScreenStates';
+import { getApiErrorMessage } from '@/utils/parseApiListResponse';
+import { QUERY_STALE } from '@/utils/queryInvalidation';
+import { BRAND_GREEN } from '@/constants/brand';
 
 type FilterType = 'today' | 'week' | 'month' | 'year';
+type ComparisonMetric = {
+  percentage?: number;
+  isPositive?: boolean;
+  isNegative?: boolean;
+  isNeutral?: boolean;
+};
 
 function formatDateRange(filterType: FilterType): { start: string; end: string } {
   const today = new Date();
@@ -49,8 +66,145 @@ function formatDateRange(filterType: FilterType): { start: string; end: string }
   };
 }
 
-function formatCurrency(value: number): string {
-  return `${CURRENCY.SYMBOL} ${(value ?? 0).toFixed(CURRENCY.DECIMAL_PLACES)}`;
+function getTimeGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function formatComparisonPercent(comparison?: ComparisonMetric): string {
+  const percentage = Math.abs(Number(comparison?.percentage ?? 0));
+  const formatted = Number.isInteger(percentage) ? percentage.toFixed(0) : percentage.toFixed(1);
+  return `${formatted}%`;
+}
+
+function getComparisonColor(comparison: ComparisonMetric | undefined, metric: 'default' | 'expenses'): string {
+  if (!comparison || comparison.isNeutral) return '#6b7280';
+  const isGood = metric === 'expenses' ? comparison.isNegative : comparison.isPositive;
+  return isGood ? '#16a34a' : '#dc2626';
+}
+
+function getComparisonIcon(comparison?: ComparisonMetric): AppIconName {
+  if (comparison?.isNegative) return 'trending-down';
+  return 'trending-up';
+}
+
+function getTrendDirection(comparison?: ComparisonMetric): 'up' | 'down' | 'flat' {
+  if (!comparison || comparison.isNeutral) return 'flat';
+  if (comparison.isPositive) return 'up';
+  if (comparison.isNegative) return 'down';
+  return 'flat';
+}
+
+function getFilterLabel(filterType: FilterType): string {
+  if (filterType === 'today') return 'Today';
+  if (filterType === 'week') return 'This Week';
+  if (filterType === 'month') return 'This Month';
+  return 'This Year';
+}
+
+function formatShortDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+type QuickAction = {
+  label: string;
+  icon: AppIconName;
+  route: string;
+  color: string;
+};
+
+type RecentSale = {
+  id: string;
+  saleNumber?: string;
+  total: number;
+  createdAt: string;
+  status?: string;
+  customer?: { name?: string; phone?: string } | null;
+};
+
+type AiInsightResponse = {
+  title: string;
+  body: string;
+};
+
+function iconTint(color: string): string {
+  if (/^#[0-9a-fA-F]{6}$/.test(color)) return `${color}1A`;
+  return 'rgba(22, 101, 52, 0.1)';
+}
+
+function parseAiInsightResponse(message: string): AiInsightResponse | null {
+  const trimmed = String(message || '')
+    .trim()
+    .replace(/```(?:json)?/gi, '')
+    .replace(/```/g, '')
+    .trim();
+  if (!trimmed) return null;
+
+  const parseInsightJson = (raw: string): AiInsightResponse | null => {
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed === 'string') {
+        return parseInsightJson(parsed);
+      }
+      const candidate = parsed?.title || parsed?.body
+        ? parsed
+        : parsed?.message && typeof parsed.message === 'string'
+          ? parseInsightJson(parsed.message)
+          : null;
+      if (!candidate) return null;
+      const insight = candidate as Partial<AiInsightResponse>;
+      if (insight.title && insight.body) {
+        return {
+          title: String(insight.title).replace(/^["'`]+|["'`]+$/g, '').trim(),
+          body: String(insight.body).replace(/^["'`]+|["'`]+$/g, '').trim(),
+        };
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  };
+
+  const directJson = parseInsightJson(trimmed);
+  if (directJson) return directJson;
+
+  const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    const extractedJson = parseInsightJson(jsonMatch[0]);
+    if (extractedJson) return extractedJson;
+  }
+
+  const quotedTitleMatch = trimmed.match(/["']?title["']?\s*:\s*["']([^"']+)["']/i);
+  const quotedBodyMatch = trimmed.match(/["']?(?:body|insight)["']?\s*:\s*["']([^"']+)["']/i);
+  if (quotedTitleMatch && quotedBodyMatch) {
+    return {
+      title: quotedTitleMatch[1].trim(),
+      body: quotedBodyMatch[1].trim(),
+    };
+  }
+
+  const lines = trimmed.split('\n').map((line) => line.trim()).filter(Boolean);
+  const titleLine = lines.find((line) => /^title:/i.test(line));
+  const bodyLine = lines.find((line) => /^(body|insight):/i.test(line));
+  if (titleLine && bodyLine) {
+    return {
+      title: titleLine.replace(/^title:\s*/i, '').trim(),
+      body: bodyLine.replace(/^(body|insight):\s*/i, '').trim(),
+    };
+  }
+
+  if (/^\{[\s\S]*["']title["'][\s\S]*["']body["'][\s\S]*\}$/.test(trimmed)) {
+    return null;
+  }
+
+  return {
+    title: 'AI business insight',
+    body: trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed,
+  };
 }
 
 function getDueDateBadge(
@@ -93,34 +247,23 @@ function getDueDateBadge(
   return {
     label: `Due in ${days}d`,
     bg: '#dcfce7',
-    text: '#166534',
+    text: BRAND_GREEN,
     border: '#86efac',
   };
 }
 
 export default function DashboardScreen() {
   const router = useRouter();
-  const { user, activeTenant, activeTenantId, wasInvited, suppressAppGuidance, refreshAuth } = useAuth();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { user, activeTenant, activeTenantId, wasInvited, suppressAppGuidance, refreshAuth, hasFeature } = useAuth();
+  const shopContext = useShopOptional();
+  const activeShopId = shopContext?.activeShopId ?? null;
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg, resolvedTheme } = useScreenColors();
 
-  const [filterType, setFilterType] = useState<FilterType>('today');
+  const [filterType, setFilterType] = useState<FilterType>('month');
   const [resendLoading, setResendLoading] = useState(false);
   const dateRange = useMemo(() => formatDateRange(filterType), [filterType]);
 
-  const hasBusinessName = useMemo(() => {
-    const name = activeTenant?.name;
-    return !!(name && typeof name === 'string' && name.trim() && !DEFAULT_TENANT_NAMES.includes(name));
-  }, [activeTenant?.name]);
-
-  const hasCompanyPhone = useMemo(() => {
-    return !!(activeTenant?.metadata?.phone && String(activeTenant.metadata.phone).trim());
-  }, [activeTenant?.metadata?.phone]);
-
-  const onboardingCompleted = useMemo(() => {
-    if (activeTenant?.metadata?.onboarding?.completedAt) return true;
-    return hasBusinessName && hasCompanyPhone;
-  }, [activeTenant?.metadata?.onboarding?.completedAt, hasBusinessName, hasCompanyPhone]);
+  const onboardingCompleted = useMemo(() => isOnboardingComplete(activeTenant), [activeTenant]);
 
   const showSetupBanner = useMemo(
     () => !onboardingCompleted && !wasInvited && !suppressAppGuidance,
@@ -142,13 +285,13 @@ export default function DashboardScreen() {
     }
   }, [refreshAuth]);
 
-  const { data: overviewResponse, isLoading, refetch, isRefetching } = useQuery({
-    queryKey: ['dashboard', 'overview', activeTenantId, dateRange.start, dateRange.end, filterType],
+  const { data: overviewResponse, isLoading, isError, error, refetch, isRefetching } = useQuery({
+    queryKey: ['dashboard', 'overview', activeTenantId, activeShopId, dateRange.start, dateRange.end, filterType],
     queryFn: () =>
       dashboardService.getOverview(dateRange.start, dateRange.end, filterType),
-    enabled: !!activeTenantId, // Only fetch when we have an active tenant
+    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
     // Dashboard data can be stale for 2 minutes (frequent updates but not real-time critical)
-    staleTime: 2 * 60 * 1000,
+    staleTime: QUERY_STALE.TRANSACTIONAL,
     // Keep in cache for 1 hour
     gcTime: 60 * 60 * 1000,
   });
@@ -158,16 +301,46 @@ export default function DashboardScreen() {
   }, [refetch]);
 
   const businessType = activeTenant?.businessType ?? 'printing_press';
-  const isShop = businessType === 'shop';
-  const isPharmacy = businessType === 'pharmacy';
-  const isStudio = STUDIO_TYPES.includes(businessType);
-  const isPrintingPress = businessType === 'printing_press';
+  const resolvedType = resolveBusinessType(businessType);
+  const isShop = resolvedType === 'shop';
+  const isPharmacy = resolvedType === 'pharmacy';
+  const isStudio = resolvedType === 'studio';
+  const shopType = activeTenant?.metadata?.shopType;
+  const isRestaurant = shopType === SHOP_TYPES.RESTAURANT;
+  const canCreateQuote = hasFeature('quoteAutomation') && isQuotesEnabledForTenant(businessType, shopType);
+
+  const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
+
+  const { data: kitchenOrdersResponse } = useQuery({
+    queryKey: ['orders', 'dashboard-count', activeTenantId, activeShopId, todayIso],
+    queryFn: () =>
+      saleService.getOrders({
+        activeOrders: true,
+        startDate: todayIso,
+        endDate: todayIso,
+        limit: 100,
+      }),
+    enabled: !!activeTenantId && isRestaurant && hasFeature('orders'),
+    staleTime: 30 * 1000,
+    refetchInterval: 30 * 1000,
+  });
+
+  const kitchenOrderCounts = useMemo(() => {
+    const list = (kitchenOrdersResponse?.data || []) as Array<{ orderStatus?: string }>;
+    return {
+      received: list.filter((o) => o.orderStatus === ORDER_STATUSES.RECEIVED).length,
+      preparing: list.filter((o) => o.orderStatus === ORDER_STATUSES.PREPARING).length,
+      ready: list.filter((o) => o.orderStatus === ORDER_STATUSES.READY).length,
+      total: list.length,
+    };
+  }, [kitchenOrdersResponse]);
 
   // Match web app pattern: overviewResponse?.data || overviewResponse
   const overview = overviewResponse?.data || overviewResponse;
   const summary = overview?.summary ?? {};
   const currentMonth = overview?.currentMonth ?? overview?.thisMonth ?? {};
   const filteredPeriod = overview?.filteredPeriod;
+  const comparison = overview?.comparison ?? {};
   const recentJobs = overview?.recentJobs ?? [];
   const shopData = overview?.shopData ?? {};
 
@@ -177,67 +350,180 @@ export default function DashboardScreen() {
   const lowStockItems = shopData.lowStockItems ?? 0;
 
   const quickActions = useMemo(() => {
-    const actions: { label: string; icon: React.ComponentProps<typeof FontAwesome>['name']; route: string }[] = [];
+    const actions: QuickAction[] = [];
     if (isShop || isPharmacy) {
-      actions.push({ label: 'Point of Sale', icon: 'shopping-cart', route: '/(tabs)/scan' });
-      actions.push({ label: 'Add customer', icon: 'user-plus', route: '/(tabs)/customers?add=1' });
-    }
-    if (isStudio) {
-      actions.push({ label: 'New job', icon: 'plus', route: '/(tabs)/scan' });
-      actions.push({ label: 'Add customer', icon: 'user-plus', route: '/(tabs)/customers?add=1' });
-      if (isPrintingPress) {
-        actions.push({ label: 'New quote', icon: 'file-text-o', route: '/(tabs)/quotes' });
+      actions.push({ label: 'New sale', icon: 'shopping-cart', route: '/(tabs)/scan', color: colors.tint });
+      if (isRestaurant && hasFeature('orders')) {
+        actions.push({ label: 'Kitchen orders', icon: 'cutlery', route: '/(tabs)/orders', color: '#ea580c' });
+      } else {
+        actions.push({ label: 'Add customer', icon: 'user-plus', route: '/(tabs)/customers?add=1', color: colors.tint });
       }
     }
-    if (isShop || isPharmacy) {
-      actions.push({ label: 'Restock', icon: 'archive', route: '/(tabs)/scan' });
+    if (isStudio) {
+      actions.push({ label: 'New job', icon: 'plus', route: '/(tabs)/scan', color: colors.tint });
+      actions.push({ label: 'Add customer', icon: 'user-plus', route: '/(tabs)/customers?add=1', color: colors.tint });
+      if (canCreateQuote) {
+        actions.push({ label: 'New quote', icon: 'file-text-o', route: '/(tabs)/quotes', color: '#2563eb' });
+      }
+    }
+    if (hasFeature('expenses')) {
+      actions.push({ label: 'Add expense', icon: 'minus-circle', route: '/(tabs)/expenses', color: '#ea580c' });
     }
     return actions;
-  }, [isShop, isPharmacy, isStudio, isPrintingPress]);
+  }, [isShop, isPharmacy, isStudio, isRestaurant, canCreateQuote, hasFeature, colors.tint]);
 
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
+  const recentSales = useMemo(
+    () => (shopData.recentSales ?? []) as RecentSale[],
+    [shopData.recentSales]
+  );
+
+  const dashboardInsight = useMemo(
+    () =>
+      buildDashboardInsight({
+        revenue,
+        expenses,
+        profit,
+        comparison,
+        lowStockItems,
+        isShop,
+        isPharmacy,
+      }),
+    [revenue, expenses, profit, comparison, lowStockItems, isShop, isPharmacy]
+  );
+
+  const aiInsightPrompt = useMemo(
+    () =>
+      [
+        'Create one short mobile dashboard insight for this business.',
+        'Return only JSON in this exact shape: {"title":"...","body":"..."}',
+        'Keep the title under 7 words and body under 18 words.',
+        `Business type: ${businessType}`,
+        `Period: ${getFilterLabel(filterType)}`,
+        `Revenue: ${formatCurrency(revenue)}`,
+        `Expenses: ${formatCurrency(expenses)}`,
+        `Profit: ${formatCurrency(profit)}`,
+        `New customers: ${summary.newCustomers ?? 0}`,
+        `Low stock items: ${lowStockItems}`,
+      ].join('\n'),
+    [businessType, filterType, revenue, expenses, profit, summary.newCustomers, lowStockItems]
+  );
+
+  const { data: aiDashboardInsight, isFetching: isFetchingAiInsight } = useQuery({
+    queryKey: [
+      'dashboard',
+      'ai-insight',
+      'v2',
+      activeTenantId,
+      activeShopId,
+      filterType,
+      revenue,
+      expenses,
+      profit,
+      summary.newCustomers,
+      lowStockItems,
+    ],
+    queryFn: async () => {
+      const response = await assistantService.chat([{ role: 'user', content: aiInsightPrompt }], {
+        pageContext: 'dashboard',
+      });
+      return parseAiInsightResponse(response?.message ?? '');
+    },
+    enabled: !!activeTenantId && !isLoading && !!overviewResponse,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
+    retry: 1,
+  });
+
+  const visibleDashboardInsight = aiDashboardInsight ?? dashboardInsight;
+
+  const showPeriodPicker = useCallback(() => {
+    Alert.alert('Period', 'Choose a time range', [
+      { text: 'Today', onPress: () => setFilterType('today') },
+      { text: 'This Week', onPress: () => setFilterType('week') },
+      { text: 'This Month', onPress: () => setFilterType('month') },
+      { text: 'This Year', onPress: () => setFilterType('year') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, []);
+
+  const revenueColor = colors.tint;
+  const newCustomersColor = '#7c3aed';
+  const profitColor = profit >= 0 ? '#16a34a' : '#dc2626';
+  const firstName = user?.name?.trim().split(/\s+/)[0];
+  const greeting = `${getTimeGreeting()}${firstName ? `, ${firstName}` : ''} 👋`;
+  const comparisonLabel = comparison?.periodLabel ?? comparison?.label ?? 'vs previous period';
+
+  const overviewErrorMessage = useMemo(
+    () => getApiErrorMessage(error, 'Could not load your dashboard. Pull down to try again.'),
+    [error]
+  );
 
   if (isLoading && !overviewResponse) {
     return (
-      <View style={[styles.center, { backgroundColor: bg }]}>
-        <ActivityIndicator size="large" color={colors.tint} />
-      </View>
+      <ScreenShell>
+        <ListLoadingState message="Loading dashboard..." />
+      </ScreenShell>
+    );
+  }
+
+  if (isError && !overviewResponse) {
+    return (
+      <ScreenShell>
+        <ListErrorState
+          title="Dashboard unavailable"
+          message={overviewErrorMessage}
+          onRetry={() => refetch()}
+        />
+      </ScreenShell>
     );
   }
 
   if (!activeTenantId) {
     return (
-      <View style={[styles.center, { backgroundColor: bg, padding: 24 }]}>
+      <ScreenShell style={[styles.center, { padding: 24 }]}>
         <Text style={[styles.welcome, { color: textColor, marginBottom: 8 }]}>
           No Active Workspace
         </Text>
         <Text style={[styles.subtitle, { color: mutedColor, textAlign: 'center' }]}>
           Please select a workspace from Settings to view your dashboard.
         </Text>
-      </View>
+      </ScreenShell>
     );
   }
 
   return (
+    <ScreenShell style={styles.container}>
     <ScrollView
-      style={[styles.container, { backgroundColor: bg }]}
+      style={styles.scrollFlex}
       contentContainerStyle={styles.content}
       refreshControl={
         <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={colors.tint} />
       }
     >
-      <Text style={[styles.welcome, { color: textColor }]}>
-        Welcome{user?.name ? `, ${user.name}` : ''}
-      </Text>
+      <View style={styles.greetingRow}>
+        <View style={styles.greetingTextCol}>
+          <Text style={[styles.welcome, { color: textColor }]}>{greeting}</Text>
+          <Text style={[styles.dashboardSubtitle, { color: mutedColor }]}>
+            Here's your business overview for {getFilterLabel(filterType).toLowerCase()}
+          </Text>
+        </View>
+        <Pressable
+          onPress={showPeriodPicker}
+          style={({ pressed }) => [
+            styles.periodPill,
+            { backgroundColor: cardBg, borderColor },
+            pressed && styles.pressed,
+          ]}
+        >
+          <Text style={[styles.periodPillText, { color: textColor }]}>{getFilterLabel(filterType)}</Text>
+          <AppIcon name="chevron-down" size={16} color={mutedColor} />
+        </Pressable>
+      </View>
 
       {/* Verify email banner (matches web MainLayout) */}
       {showVerifyEmailBanner && (
         <View style={styles.verifyBanner}>
-          <Ionicons name="mail-outline" size={20} color="#b45309" />
+          <AppIcon name="mail-outline" size={20} color="#b45309" />
           <View style={styles.verifyBannerText}>
             <Text style={styles.verifyBannerTitle}>Verify your email</Text>
             <Text style={styles.verifyBannerSubtitle}>
@@ -265,7 +551,7 @@ export default function DashboardScreen() {
           onPress={() => router.push('/onboarding' as any)}
         >
           <View style={styles.setupBannerIcon}>
-            <Ionicons name="sparkles" size={22} color="#166534" />
+            <AppIcon name="sparkles" size={22} color={colors.tint} />
           </View>
           <View style={styles.setupBannerText}>
             <Text style={styles.setupBannerTitle}>Finish setting up your business</Text>
@@ -273,104 +559,225 @@ export default function DashboardScreen() {
               Complete your business profile to get the most out of African Business Suite.
             </Text>
           </View>
-          <Ionicons name="chevron-forward" size={18} color={mutedColor} />
+          <AppIcon name="chevron-forward" size={18} color={mutedColor} />
         </Pressable>
       )}
-
-      {/* Date filter */}
-      <View style={styles.filterRow}>
-        {(['today', 'week', 'month', 'year'] as const).map((f) => (
-          <Pressable
-            key={f}
-            onPress={() => setFilterType(f)}
-            style={[
-              styles.filterBtn,
-              { borderColor },
-              filterType === f && { backgroundColor: colors.tint, borderColor: colors.tint },
-            ]}
-          >
-            <Text
-              style={[
-                styles.filterText,
-                { color: filterType === f ? '#fff' : textColor },
-              ]}
-            >
-              {f === 'today'
-                ? 'Today'
-                : f === 'week'
-                  ? 'This Week'
-                  : f === 'month'
-                    ? 'This Month'
-                    : 'This Year'}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
 
       {/* Stats cards */}
       <View style={styles.statsGrid}>
-        <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
-          <FontAwesome name="money" size={20} color={colors.tint} />
-          <Text style={[styles.statValue, { color: textColor }]}>{formatCurrency(revenue)}</Text>
-          <Text style={[styles.statLabel, { color: mutedColor }]}>Revenue</Text>
-        </View>
-        <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
-          <FontAwesome name="minus-circle" size={20} color="#dc2626" />
-          <Text style={[styles.statValue, { color: textColor }]}>{formatCurrency(expenses)}</Text>
-          <Text style={[styles.statLabel, { color: mutedColor }]}>Expenses</Text>
-        </View>
-        <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
-          <FontAwesome name="line-chart" size={20} color={profit >= 0 ? '#16a34a' : '#dc2626'} />
-          <Text style={[styles.statValue, { color: textColor }]}>{formatCurrency(profit)}</Text>
-          <Text style={[styles.statLabel, { color: mutedColor }]}>Profit</Text>
-        </View>
+        <StatMetricCard
+          label="Revenue"
+          value={formatCurrency(revenue)}
+          icon="money"
+          iconColor={revenueColor}
+          comparison={comparison.revenue}
+          comparisonLabel={comparisonLabel}
+          metric="default"
+          cardBg={cardBg}
+          borderColor={borderColor}
+          textColor={textColor}
+          mutedColor={mutedColor}
+        />
+        <StatMetricCard
+          label="Expenses"
+          value={formatCurrency(expenses)}
+          icon="minus-circle"
+          iconColor="#dc2626"
+          comparison={comparison.expenses}
+          comparisonLabel={comparisonLabel}
+          metric="expenses"
+          cardBg={cardBg}
+          borderColor={borderColor}
+          textColor={textColor}
+          mutedColor={mutedColor}
+        />
+        <StatMetricCard
+          label="Profit"
+          value={formatCurrency(profit)}
+          icon="line-chart"
+          iconColor={profitColor}
+          comparison={comparison.profit}
+          comparisonLabel={comparisonLabel}
+          metric="default"
+          cardBg={cardBg}
+          borderColor={borderColor}
+          textColor={textColor}
+          mutedColor={mutedColor}
+        />
         {(isShop || isPharmacy) && (
-          <View style={[styles.statCard, { backgroundColor: cardBg, borderColor }]}>
-            <FontAwesome name="user-plus" size={20} color={colors.tint} />
-            <Text style={[styles.statValue, { color: textColor }]}>{summary.newCustomers ?? 0}</Text>
-            <Text style={[styles.statLabel, { color: mutedColor }]}>New customers</Text>
-          </View>
+          <StatMetricCard
+            label="New customers"
+            value={String(summary.newCustomers ?? 0)}
+            icon="user-plus"
+            iconColor={newCustomersColor}
+            comparison={comparison.newCustomers}
+            comparisonLabel={comparisonLabel}
+            metric="default"
+            cardBg={cardBg}
+            borderColor={borderColor}
+            textColor={textColor}
+            mutedColor={mutedColor}
+          />
         )}
       </View>
 
-      {/* Low stock alert */}
-      {(isShop || isPharmacy) && lowStockItems > 0 && (
-        <Pressable
-          style={[styles.alertCard, { backgroundColor: '#fef3c7', borderColor: '#f59e0b' }]}
-          onPress={() => router.push('/(tabs)/scan' as any)}
-        >
-          <FontAwesome name="exclamation-triangle" size={20} color="#d97706" />
-          <Text style={styles.alertText}>
-            {lowStockItems} item{lowStockItems !== 1 ? 's' : ''} low on stock
+      {/* AI insight */}
+      <Pressable
+        onPress={() =>
+          router.push({
+            pathname: '/(tabs)/chat',
+            params: {
+              prompt: 'Explain my dashboard insight and what I should do next.',
+              pageContext: 'dashboard',
+            },
+          } as never)
+        }
+        style={({ pressed }) => [
+          styles.insightCard,
+          { backgroundColor: resolvedTheme === 'dark' ? '#14532d' : '#ecfdf5', borderColor: resolvedTheme === 'dark' ? colors.tint : '#bbf7d0' },
+          pressed && styles.pressed,
+        ]}
+      >
+        <View style={[styles.insightIconCircle, { backgroundColor: colors.tint }]}>
+          <AppIcon name="brain" size={20} color="#fff" />
+        </View>
+        <View style={styles.insightTextCol}>
+          <Text style={[styles.insightEyebrow, { color: colors.tint }]}>AI Insight</Text>
+          <Text style={[styles.insightTitle, { color: textColor }]} numberOfLines={2}>
+            {isFetchingAiInsight ? 'AI is reviewing your numbers' : visibleDashboardInsight.title}
           </Text>
-        </Pressable>
+          <Text style={[styles.insightBody, { color: mutedColor }]} numberOfLines={2}>
+            {isFetchingAiInsight ? 'Generating a quick business insight from your latest dashboard data.' : visibleDashboardInsight.body}
+          </Text>
+        </View>
+        <View style={[styles.insightCta, { backgroundColor: cardBg, borderColor }]}>
+          <Text style={[styles.insightCtaText, { color: colors.tint }]}>View</Text>
+          <AppIcon name="chevron-right" size={14} color={colors.tint} />
+        </View>
+      </Pressable>
+
+      {isRestaurant && hasFeature('orders') && kitchenOrderCounts.total > 0 && (
+        <>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, { color: textColor, marginBottom: 0 }]}>Kitchen today</Text>
+            <Pressable onPress={() => router.push('/(tabs)/orders' as never)} hitSlop={8}>
+              <Text style={[styles.sectionLink, { color: colors.tint }]}>View all</Text>
+            </Pressable>
+          </View>
+          <View style={styles.kitchenStatsRow}>
+            <Pressable
+              onPress={() => router.push('/(tabs)/orders' as never)}
+              style={[styles.kitchenStatCard, { backgroundColor: cardBg, borderColor }]}
+            >
+              <Text style={[styles.kitchenStatValue, { color: '#ca8a04' }]}>{kitchenOrderCounts.received}</Text>
+              <Text style={[styles.kitchenStatLabel, { color: mutedColor }]}>Received</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push('/(tabs)/orders' as never)}
+              style={[styles.kitchenStatCard, { backgroundColor: cardBg, borderColor }]}
+            >
+              <Text style={[styles.kitchenStatValue, { color: '#2563eb' }]}>{kitchenOrderCounts.preparing}</Text>
+              <Text style={[styles.kitchenStatLabel, { color: mutedColor }]}>Preparing</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => router.push('/(tabs)/orders' as never)}
+              style={[styles.kitchenStatCard, { backgroundColor: cardBg, borderColor }]}
+            >
+              <Text style={[styles.kitchenStatValue, { color: '#16a34a' }]}>{kitchenOrderCounts.ready}</Text>
+              <Text style={[styles.kitchenStatLabel, { color: mutedColor }]}>Ready</Text>
+            </Pressable>
+          </View>
+        </>
       )}
 
       {/* Quick actions */}
-      <Text style={[styles.sectionTitle, { color: textColor }]}>Quick actions</Text>
+      <View style={styles.sectionHeaderRow}>
+        <Text style={[styles.sectionTitle, { color: textColor, marginBottom: 0 }]}>Quick Actions</Text>
+        <Pressable onPress={() => router.push('/(tabs)/more' as never)} hitSlop={8}>
+          <Text style={[styles.sectionLink, { color: colors.tint }]}>View all</Text>
+        </Pressable>
+      </View>
       <View style={styles.actionsRow}>
         {quickActions.map((action) => (
           <Pressable
             key={action.label}
-            onPress={() => router.push(action.route as any)}
+            onPress={() => router.push(action.route as never)}
             style={({ pressed }) => [
               styles.actionBtn,
               { backgroundColor: cardBg, borderColor },
               pressed && styles.pressed,
             ]}
           >
-            <FontAwesome name={action.icon} size={24} color={colors.tint} />
-            <Text style={[styles.actionLabel, { color: textColor }]} numberOfLines={1}>
+            <View style={[styles.actionIconCircle, { backgroundColor: iconTint(action.color) }]}>
+              <AppIcon name={action.icon} size={22} color={action.color} />
+            </View>
+            <Text style={[styles.actionLabel, { color: textColor }]} numberOfLines={2}>
               {action.label}
             </Text>
           </Pressable>
         ))}
       </View>
 
+      {/* Recent transactions (retail) */}
+      {(isShop || isPharmacy) && recentSales.length > 0 && (
+        <>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, { color: textColor, marginBottom: 0 }]}>Recent Transactions</Text>
+            <Pressable onPress={() => router.push('/(tabs)/sales' as never)} hitSlop={8}>
+              <Text style={[styles.sectionLink, { color: colors.tint }]}>View all</Text>
+            </Pressable>
+          </View>
+          <View style={[styles.transactionsCard, { backgroundColor: cardBg, borderColor }]}>
+            {recentSales.slice(0, 5).map((sale, index) => {
+              const statusColors = getSaleStatusColors(sale.status ?? 'completed');
+              const statusLabel = sale.status === 'completed' ? 'Paid' : formatStatusLabel(sale.status);
+              return (
+                <Pressable
+                  key={sale.id}
+                  onPress={() => router.push(`/sale/${sale.id}` as never)}
+                  style={({ pressed }) => [
+                    styles.transactionRow,
+                    index < Math.min(recentSales.length, 5) - 1 && { borderBottomWidth: 1, borderBottomColor: borderColor },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={[styles.transactionIcon, { backgroundColor: iconTint(colors.tint) }]}>
+                    <AppIcon name="shopping-cart" size={18} color={colors.tint} />
+                  </View>
+                  <View style={styles.transactionInfo}>
+                    <Text style={[styles.transactionTitle, { color: textColor }]} numberOfLines={1}>
+                      Sale to {sale.customer?.name ?? 'Walk-in'}
+                    </Text>
+                    <Text style={[styles.transactionMeta, { color: mutedColor }]} numberOfLines={1}>
+                      {sale.saleNumber ? `${sale.saleNumber} · ` : ''}
+                      {formatShortDate(sale.createdAt)}
+                    </Text>
+                  </View>
+                  <View style={styles.transactionRight}>
+                    <Text style={[styles.transactionAmount, { color: textColor }]}>
+                      {formatCurrency(sale.total)}
+                    </Text>
+                    <View style={styles.transactionStatusRow}>
+                      <View style={[styles.statusDot, { backgroundColor: statusColors.text }]} />
+                      <Text style={[styles.transactionStatus, { color: statusColors.text }]}>{statusLabel}</Text>
+                    </View>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      )}
+
       {/* Recent jobs (studio) */}
       {isStudio && recentJobs.length > 0 && (
         <>
-          <Text style={[styles.sectionTitle, { color: textColor }]}>In progress</Text>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, { color: textColor, marginBottom: 0 }]}>Recent Activity</Text>
+            <Pressable onPress={() => router.push('/(tabs)/jobs' as never)} hitSlop={8}>
+              <Text style={[styles.sectionLink, { color: colors.tint }]}>View all</Text>
+            </Pressable>
+          </View>
           <View style={[styles.jobsCard, { backgroundColor: cardBg, borderColor }]}>
             {recentJobs.slice(0, 5).map((job: { id: string; title: string; jobNumber?: string; status: string; dueDate?: string; customer?: { name: string } }) => (
               <Pressable
@@ -400,7 +807,7 @@ export default function DashboardScreen() {
                       {getDueDateBadge(job.dueDate).label}
                     </Text>
                   </View>
-                  <FontAwesome name="chevron-right" size={14} color={mutedColor} />
+                  <AppIcon name="chevron-right" size={14} color={mutedColor} />
                 </View>
               </Pressable>
             ))}
@@ -408,8 +815,104 @@ export default function DashboardScreen() {
         </>
       )}
     </ScrollView>
+    </ScreenShell>
   );
 }
+
+type StatMetricCardProps = {
+  label: string;
+  value: string;
+  icon: AppIconName;
+  iconColor: string;
+  comparison?: ComparisonMetric;
+  comparisonLabel: string;
+  metric: 'default' | 'expenses';
+  cardBg: string;
+  borderColor: string;
+  textColor: string;
+  mutedColor: string;
+};
+
+function StatMetricCard({
+  label,
+  value,
+  icon,
+  iconColor,
+  comparison,
+  comparisonLabel,
+  metric,
+  cardBg,
+  borderColor,
+  textColor,
+  mutedColor,
+}: StatMetricCardProps) {
+  const comparisonColor = getComparisonColor(comparison, metric);
+  const sparkColor = metric === 'expenses' && comparison?.isPositive ? '#dc2626' : comparisonColor;
+
+  return (
+    <View style={[statStyles.card, { backgroundColor: cardBg, borderColor }]}>
+      <View style={statStyles.topRow}>
+        <Text style={[statStyles.label, { color: mutedColor }]}>{label}</Text>
+        <View style={[statStyles.iconCircle, { backgroundColor: iconTint(iconColor) }]}>
+          <AppIcon name={icon} size={18} color={iconColor} />
+        </View>
+      </View>
+      <Text style={[statStyles.value, { color: textColor }]} numberOfLines={1} adjustsFontSizeToFit>
+        {value}
+      </Text>
+      <View style={statStyles.comparisonRow}>
+        <AppIcon name={getComparisonIcon(comparison)} size={12} color={comparisonColor} />
+        <Text style={[statStyles.comparisonText, { color: comparisonColor }]} numberOfLines={1}>
+          {formatComparisonPercent(comparison)} {comparisonLabel}
+        </Text>
+      </View>
+      <MiniSparkline color={sparkColor === '#6b7280' ? iconColor : sparkColor} trend={getTrendDirection(comparison)} />
+    </View>
+  );
+}
+
+const statStyles = StyleSheet.create({
+  card: {
+    flex: 1,
+    minWidth: '45%',
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    minHeight: 148,
+  },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  iconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  value: {
+    fontSize: 17,
+    fontWeight: '700',
+    marginTop: 10,
+  },
+  comparisonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 6,
+  },
+  comparisonText: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '600',
+  },
+});
 
 const styles = StyleSheet.create({
   center: {
@@ -420,14 +923,158 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  scrollFlex: {
+    flex: 1,
+  },
   content: {
     padding: 16,
     paddingBottom: 32,
   },
-  welcome: {
-    fontSize: 20,
-    fontWeight: '700',
+  greetingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
     marginBottom: 16,
+  },
+  greetingTextCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  welcome: {
+    fontSize: 22,
+    fontWeight: '700',
+  },
+  dashboardSubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginTop: 4,
+  },
+  periodPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    flexShrink: 0,
+  },
+  periodPillText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  insightCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+  insightIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  insightTextCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  insightEyebrow: {
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  insightTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  insightBody: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  insightCta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    flexShrink: 0,
+  },
+  insightCtaText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  sectionLink: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  transactionsCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginBottom: 24,
+  },
+  transactionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    gap: 12,
+  },
+  transactionIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  transactionInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  transactionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  transactionMeta: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  transactionRight: {
+    alignItems: 'flex-end',
+    flexShrink: 0,
+  },
+  transactionAmount: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  transactionStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  transactionStatus: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   verifyBanner: {
     flexDirection: 'row',
@@ -474,42 +1121,11 @@ const styles = StyleSheet.create({
   setupBannerText: { flex: 1, minWidth: 0 },
   setupBannerTitle: { fontSize: 15, fontWeight: '600' },
   setupBannerSubtitle: { fontSize: 13, marginTop: 4 },
-  filterRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 20,
-  },
-  filterBtn: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 10,
-    borderWidth: 1,
-  },
-  filterText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 12,
     marginBottom: 20,
-  },
-  statCard: {
-    flex: 1,
-    minWidth: '45%',
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-  },
-  statValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginTop: 8,
-  },
-  statLabel: {
-    fontSize: 12,
-    marginTop: 4,
   },
   alertCard: {
     flexDirection: 'row',
@@ -530,19 +1146,41 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 12,
   },
+  kitchenStatsRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 20,
+  },
+  kitchenStatCard: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+  },
+  kitchenStatValue: { fontSize: 22, fontWeight: '700', marginBottom: 4 },
+  kitchenStatLabel: { fontSize: 12, fontWeight: '500' },
   actionsRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
+    gap: 10,
     marginBottom: 24,
   },
   actionBtn: {
-    width: '30%',
-    minWidth: 90,
-    padding: 16,
-    borderRadius: 12,
+    flex: 1,
+    minWidth: 0,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderRadius: 14,
     borderWidth: 1,
     alignItems: 'center',
+  },
+  actionIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   actionLabel: {
     fontSize: 12,

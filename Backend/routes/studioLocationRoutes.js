@@ -1,4 +1,5 @@
 const express = require('express');
+const multer = require('multer');
 const {
   getStudioLocations,
   getStudioLocationAccess,
@@ -6,12 +7,22 @@ const {
   createStudioLocation,
   updateStudioLocation,
   deleteStudioLocation,
+  uploadStudioLocationLogo,
   setUserStudioLocationAssignments,
   getUserStudioLocationAssignments,
 } = require('../controllers/studioLocationController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { studioLocationContext } = require('../middleware/studioLocationContext');
+
+const branchLogoUploader = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: parseInt(process.env.UPLOAD_MAX_SIZE_MB || '5', 10) * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype?.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed'), false);
+  },
+});
 
 const router = express.Router();
 
@@ -30,6 +41,13 @@ router
   .route('/')
   .get(getStudioLocations)
   .post(authorize('admin', 'manager'), createStudioLocation);
+
+router.post(
+  '/:id/logo',
+  authorize('admin', 'manager'),
+  branchLogoUploader.single('file'),
+  uploadStudioLocationLogo
+);
 
 router
   .route('/:id')

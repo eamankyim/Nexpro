@@ -9,22 +9,27 @@ export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     VitePWA({
-      registerType: 'prompt', // User sees "New version available" and can refresh to load update
+      registerType: 'prompt',
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.js',
       injectManifest: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
-        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024, // 3MB
+        globIgnores: [
+          '**/empty-states/**',
+          '**/tour/**',
+          '**/African focused woman*',
+          '**/html2pdf*.js',
+        ],
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
       },
-      manifest: false, // We use existing public/manifest.json
-      dev: false, // No SW in dev to avoid cache/HMR issues
+      manifest: false,
+      dev: false,
     }),
   ],
   resolve: {
     alias: {
       '@': path.join(projectRoot, 'src'),
-      // Force a single React instance (fixes "useState of null" / invalid hook in lazy chunks)
       'react': path.join(projectRoot, 'node_modules/react'),
       'react-dom': path.join(projectRoot, 'node_modules/react-dom'),
     },
@@ -35,8 +40,8 @@ export default defineConfig(({ mode }) => ({
   },
   server: {
     port: 3000,
-    host: true, // Listen on 0.0.0.0 so you can test on phone via LAN IP
-    hmr: false, // Disable HMR to avoid WebSocket errors; full reload still works
+    host: true,
+    hmr: false,
     proxy: {
       '/api': {
         target: 'http://localhost:5001',
@@ -48,22 +53,17 @@ export default defineConfig(({ mode }) => ({
       },
     },
   },
-  // Vite 8 uses Rolldown: custom manualChunks (vendor buckets) produced invalid module graphs —
-  // shared chunks importing React via recharts/query bundles → __SECRET_INTERNALS on undefined in
-  // production while `vite` dev worked. Use default code-splitting.
   build: {
-    chunkSizeWarningLimit: 1000, // Increase limit to 1MB per chunk
+    chunkSizeWarningLimit: 1000,
     minify: mode === 'production' ? 'terser' : 'esbuild',
     terserOptions:
       mode === 'production'
         ? {
             compress: {
               pure_funcs: ['console.log', 'console.info', 'console.debug', 'console.trace'],
-              passes: 2
-            }
+              passes: 2,
+            },
           }
-        : undefined
-  }
+        : undefined,
+  },
 }));
-
-

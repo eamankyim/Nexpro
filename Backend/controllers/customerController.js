@@ -6,6 +6,12 @@ const {
   applyStudioLocationFilter,
   attachStudioLocationToPayload,
 } = require('../utils/studioLocationUtils');
+const {
+  applyScopedFilters,
+  attachScopedToPayload,
+  assertShopRecordAccess,
+  getShopSqlFragment,
+} = require('../utils/shopUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateCustomerListCache } = require('../middleware/cache');
 
@@ -24,6 +30,9 @@ exports.getCustomerStats = async (req, res, next) => {
       locationSql = ' AND "studioLocationId" IN (:studioLocationIds)';
       replacements.studioLocationIds = req.allowedStudioLocationIds;
     }
+    const shopFrag = getShopSqlFragment(req);
+    locationSql += shopFrag.sql;
+    Object.assign(replacements, shopFrag.replacements);
     const [result] = await sequelize.query(
       `SELECT
         COUNT(*)::int AS "totalCustomers",
@@ -56,8 +65,7 @@ exports.getCustomers = async (req, res, next) => {
     const { page, limit, offset } = getPagination(req);
     const search = req.query.search || '';
 
-    let where = applyTenantFilter(req.tenantId, {});
-    where = applyStudioLocationFilter(req, where);
+    let where = applyScopedFilters(req, applyTenantFilter(req.tenantId, {}));
     if (search) {
       const term = `%${search}%`;
       where[Op.or] = [
@@ -72,6 +80,21 @@ exports.getCustomers = async (req, res, next) => {
       where,
       limit,
       offset,
+      attributes: [
+        'id',
+        'name',
+        'company',
+        'email',
+        'phone',
+        'isActive',
+        'balance',
+        'creditLimit',
+        'shopId',
+        'tenantId',
+        'howDidYouHear',
+        'createdAt',
+        'updatedAt',
+      ],
       order: [['createdAt', 'DESC']]
     });
 
@@ -96,7 +119,7 @@ exports.getCustomers = async (req, res, next) => {
 exports.getCustomer = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({
-      where: applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
+      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
       include: [
         {
           model: Job,
@@ -140,7 +163,7 @@ exports.createCustomer = async (req, res, next) => {
     const payload = sanitizePayload(req.body);
     if (payload.email === '') payload.email = null;
     const customer = await Customer.create(
-      attachStudioLocationToPayload(req, {
+      attachScopedToPayload(req, {
         ...payload,
         tenantId: req.tenantId,
       })
@@ -162,7 +185,7 @@ exports.createCustomer = async (req, res, next) => {
 exports.updateCustomer = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({
-      where: applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
+      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
     });
 
     if (!customer) {
@@ -172,9 +195,19 @@ exports.updateCustomer = async (req, res, next) => {
       });
     }
 
+    try {
+      assertShopRecordAccess(req, customer);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
     const payload = sanitizePayload(req.body);
     if (payload.email === '') payload.email = null;
     delete payload.studioLocationId;
+    delete payload.shopId;
     await customer.update(payload);
     invalidateCustomerListCache(req.tenantId);
 
@@ -193,7 +226,7 @@ exports.updateCustomer = async (req, res, next) => {
 exports.deleteCustomer = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
     });
 
     if (!customer) {
@@ -201,6 +234,15 @@ exports.deleteCustomer = async (req, res, next) => {
         success: false,
         message: 'Customer not found'
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, customer);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     await customer.destroy();
@@ -221,7 +263,7 @@ exports.deleteCustomer = async (req, res, next) => {
 exports.addCustomerActivity = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
     });
     if (!customer) {
       return res.status(404).json({ success: false, message: 'Customer not found' });
@@ -304,7 +346,7 @@ exports.findOrCreateCustomer = async (req, res, next) => {
     // Try to find existing customer by phone (normalized and raw for backwards compatibility)
     const rawTrimmed = phone.trim().replace(/[\s\-\(\)]/g, '');
     let customer = await Customer.findOne({
-      where: applyTenantFilter(req.tenantId, {
+      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, {
         phone: {
           [Op.or]: [
             { [Op.eq]: normalizedPhone },
@@ -312,23 +354,24 @@ exports.findOrCreateCustomer = async (req, res, next) => {
             { [Op.eq]: phone.trim() }
           ]
         }
-      })
+      })),
     });
 
     let created = false;
 
     if (!customer) {
-      // Create new customer
-      customer = await Customer.create({
-        name: name || `Customer ${normalizedPhone.slice(-4)}`,
-        phone: normalizedPhone,
-        tenantId: req.tenantId,
-        source: 'pos', // Mark as created from POS
-        metadata: {
-          createdFrom: 'pos_scan_mode',
-          createdAt: new Date().toISOString()
-        }
-      });
+      customer = await Customer.create(
+        attachScopedToPayload(req, {
+          name: name || `Customer ${normalizedPhone.slice(-4)}`,
+          phone: normalizedPhone,
+          tenantId: req.tenantId,
+          source: 'pos',
+          metadata: {
+            createdFrom: 'pos_scan_mode',
+            createdAt: new Date().toISOString(),
+          },
+        })
+      );
       created = true;
     } else if (name && !customer.name) {
       // Update name if customer exists but has no name

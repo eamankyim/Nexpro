@@ -13,7 +13,6 @@ import {
   Image,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
@@ -28,10 +27,11 @@ import {
 } from '@/constants/businessTypes';
 import { BUSINESS_GROUPS } from '@/constants/businessTypes';
 
-const PRIMARY = '#166534';
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { BRAND_GREEN } from '@/constants/brand';
 
 /** Icon name per business group (retail = cart; matches web concepts: Briefcase, Scissors, Car, UtensilsCrossed, Pill). */
-function getBusinessGroupIconName(groupKey: string): keyof typeof Ionicons.glyphMap {
+function getBusinessGroupIconName(groupKey: string): AppIconName {
   switch (groupKey) {
     case BUSINESS_GROUPS.RETAIL:
       return 'cart-outline';
@@ -186,6 +186,8 @@ export default function OnboardingScreen() {
     formData.append('businessSubType', businessSubType);
     if (businessType === 'shop') {
       formData.append('shopType', businessSubType);
+    } else if (businessType === 'studio') {
+      formData.append('studioType', businessSubType);
     }
     formData.append('companyName', companyName.trim());
     if (companyLogo) {
@@ -247,7 +249,7 @@ export default function OnboardingScreen() {
                 >
                   <View style={styles.optionCardRow}>
                     <View style={[styles.optionIconWrap, selected && styles.optionIconWrapSelected]}>
-                      <Ionicons name={iconName} size={20} color={iconColor} />
+                      <AppIcon name={iconName} size={20} color={iconColor} />
                     </View>
                     <View style={styles.optionCardText}>
                       <Text style={[styles.optionLabel, selected && styles.optionLabelSelected]}>{label}</Text>
@@ -268,7 +270,7 @@ export default function OnboardingScreen() {
                   <Image source={{ uri: companyLogo }} style={styles.logoPreview} />
                 ) : (
                   <View style={styles.logoPlaceholder}>
-                    <Ionicons name="camera-outline" size={24} color="#9ca3af" />
+                    <AppIcon name="camera-outline" size={24} color="#9ca3af" />
                     <Text style={styles.logoPlaceholderText}>Logo</Text>
                   </View>
                 )}
@@ -306,7 +308,7 @@ export default function OnboardingScreen() {
               <Text style={[styles.dropdownTriggerText, !businessSubType && styles.dropdownTriggerPlaceholder]}>
                 {businessSubType ? findBusinessOptionById(businessSubType)?.label ?? businessSubType : (optionsForSelectedGroup.length > 0 ? 'Select what best matches your business' : 'Select business type first')}
               </Text>
-              <Ionicons name="chevron-down" size={20} color="#6b7280" />
+              <AppIcon name="chevron-down" size={20} color="#6b7280" />
             </Pressable>
 
             <Modal visible={subTypeDropdownVisible} transparent animationType="fade">
@@ -343,7 +345,7 @@ export default function OnboardingScreen() {
                 disabled={loading}
               >
                 <Text style={styles.countryDropdownText}>{phoneCountryCode}</Text>
-                <Ionicons name="chevron-down" size={18} color="#6b7280" />
+                <AppIcon name="chevron-down" size={18} color="#6b7280" />
               </Pressable>
               <TextInput
                 style={styles.phoneInput}
@@ -471,8 +473,8 @@ const styles = StyleSheet.create({
   title: { fontSize: 28, fontWeight: '700', color: '#111', marginBottom: 12 },
   stepper: { flexDirection: 'row', gap: 8 },
   stepDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#d1d5db' },
-  stepDotCurrent: { backgroundColor: PRIMARY },
-  stepDotDone: { backgroundColor: PRIMARY },
+  stepDotCurrent: { backgroundColor: BRAND_GREEN },
+  stepDotDone: { backgroundColor: BRAND_GREEN },
   scroll: { flex: 1 },
   scrollContent: { padding: 24, paddingBottom: 24 },
   stepTitle: { fontSize: 20, fontWeight: '700', color: '#111', marginBottom: 4 },
@@ -483,13 +485,13 @@ const styles = StyleSheet.create({
   group: { gap: 8 },
   groupLabel: { fontSize: 14, fontWeight: '600', color: '#6b7280', marginBottom: 4 },
   optionCard: { borderWidth: 1, borderColor: '#e5e7eb', borderRadius: 8, padding: 14 },
-  optionCardSelected: { borderColor: PRIMARY, backgroundColor: 'rgba(22, 101, 52, 0.06)' },
+  optionCardSelected: { borderColor: BRAND_GREEN, backgroundColor: 'rgba(22, 101, 52, 0.06)' },
   optionCardRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   optionIconWrap: { width: 40, height: 40, borderRadius: 8, backgroundColor: '#f3f4f6', alignItems: 'center', justifyContent: 'center' },
-  optionIconWrapSelected: { backgroundColor: PRIMARY },
+  optionIconWrapSelected: { backgroundColor: BRAND_GREEN },
   optionCardText: { flex: 1, minWidth: 0 },
   optionLabel: { fontSize: 16, fontWeight: '600', color: '#111' },
-  optionLabelSelected: { color: PRIMARY },
+  optionLabelSelected: { color: BRAND_GREEN },
   optionDesc: { fontSize: 13, color: '#6b7280', marginTop: 2 },
   setupLaterButtonFooter: {
     paddingVertical: 12,
@@ -519,7 +521,7 @@ const styles = StyleSheet.create({
   dropdownItem: { paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#f3f4f6' },
   dropdownItemSelected: { backgroundColor: 'rgba(22, 101, 52, 0.08)' },
   dropdownItemLabel: { fontSize: 16, fontWeight: '600', color: '#111' },
-  dropdownItemLabelSelected: { color: PRIMARY },
+  dropdownItemLabelSelected: { color: BRAND_GREEN },
   dropdownItemDesc: { fontSize: 13, color: '#6b7280', marginTop: 2 },
   input: {
     height: 48,
@@ -573,11 +575,11 @@ const styles = StyleSheet.create({
     borderColor: '#d1d5db',
     borderRadius: 8,
   },
-  backButtonText: { fontSize: 16, color: PRIMARY, fontWeight: '600' },
+  backButtonText: { fontSize: 16, color: BRAND_GREEN, fontWeight: '600' },
   nextButton: {
     flex: 1,
     height: 48,
-    backgroundColor: PRIMARY,
+    backgroundColor: BRAND_GREEN,
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',

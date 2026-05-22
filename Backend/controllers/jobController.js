@@ -18,6 +18,9 @@ const { getJobItemCategories } = require('../config/jobItemCategories');
 const { getMaterialTypesForStudioType } = require('../config/studioTypes');
 const { buildCustomerFacingJobTitle } = require('../utils/jobCustomerMessageText');
 
+const jobWhere = (req, extra = {}) =>
+  applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, extra));
+
 const WHATSAPP_TEMPLATE_CREATED = 'job_created';
 const WHATSAPP_TEMPLATE_COMPLETED = 'job_completed';
 
@@ -546,8 +549,7 @@ exports.getJobs = async (req, res, next) => {
     const dueDateFilter = req.query.dueDate;
 
     // Start with tenant filter - CRITICAL for data isolation
-    let where = applyTenantFilter(req.tenantId, {});
-    where = applyStudioLocationFilter(req, where);
+    let where = jobWhere(req, {});
     
     if (search) {
       where[Op.or] = [
@@ -634,7 +636,7 @@ exports.getJobs = async (req, res, next) => {
 exports.exportJobs = async (req, res, next) => {
   try {
     const { sendCSV, COLUMN_DEFINITIONS } = require('../utils/dataExport');
-    const where = applyTenantFilter(req.tenantId, {});
+    const where = jobWhere(req, {});
 
     const jobs = await Job.findAll({
       where,
@@ -667,7 +669,7 @@ exports.exportJobs = async (req, res, next) => {
 exports.getJob = async (req, res, next) => {
   try {
     const job = await Job.findOne({
-      where: applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
+      where: jobWhere(req, { id: req.params.id }),
       include: [
         { model: Customer, as: 'customer' },
         { model: User, as: 'assignedUser', attributes: ['id', 'name', 'email'] },
@@ -936,7 +938,7 @@ exports.createJob = async (req, res, next) => {
 exports.updateJob = async (req, res, next) => {
   try {
     const job = await Job.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: jobWhere(req, { id: req.params.id })
     });
 
     if (!job) {
@@ -1109,7 +1111,7 @@ exports.updateJob = async (req, res, next) => {
 exports.deleteJob = async (req, res, next) => {
   try {
     const job = await Job.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: jobWhere(req, { id: req.params.id })
     });
 
     if (!job) {
@@ -1138,7 +1140,7 @@ exports.getJobStats = async (req, res, next) => {
     const { sequelize } = require('../config/database');
 
     const stats = await Job.findAll({
-      where: applyTenantFilter(req.tenantId, {}),
+      where: jobWhere(req, {}),
       attributes: [
         'status',
         [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
@@ -1180,7 +1182,7 @@ exports.uploadJobAttachment = async (req, res, next) => {
   try {
     console.log('[Job Attachment Upload] Starting upload...');
     const job = await Job.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: jobWhere(req, { id: req.params.id })
     });
     if (!job) {
       return res.status(404).json({ success: false, message: 'Job not found' });
@@ -1274,7 +1276,7 @@ exports.uploadJobAttachment = async (req, res, next) => {
 exports.deleteJobAttachment = async (req, res, next) => {
   try {
     const job = await Job.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: jobWhere(req, { id: req.params.id })
     });
     if (!job) {
       return res.status(404).json({ success: false, message: 'Job not found' });

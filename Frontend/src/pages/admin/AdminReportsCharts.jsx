@@ -14,6 +14,7 @@ import {
 import dayjs from 'dayjs';
 import { Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { formatAmount, formatInteger } from '../../utils/formatNumber';
 
 /**
  * Platform admin report charts (async chunk).
@@ -52,7 +53,7 @@ export default function AdminReportsCharts({
                 <XAxis dataKey="date" tickFormatter={(value) => dayjs(value).format('MMM D')} />
                 <YAxis allowDecimals={false} />
                 <Tooltip
-                  formatter={(value) => `${Number(value).toLocaleString()} signups`}
+                  formatter={(value) => `${formatInteger(value)} signups`}
                   labelFormatter={(value) => dayjs(value).format('MMMM D, YYYY')}
                 />
                 <Area
@@ -83,7 +84,7 @@ export default function AdminReportsCharts({
                 <XAxis dataKey="date" tickFormatter={(value) => dayjs(value).format('MMM D')} />
                 <YAxis allowDecimals={false} />
                 <Tooltip
-                  formatter={(value) => `₵ ${Number(value).toLocaleString()}`}
+                  formatter={(value) => formatAmount(value)}
                   labelFormatter={(value) => dayjs(value).format('MMMM D, YYYY')}
                 />
                 <Line

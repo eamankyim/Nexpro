@@ -10,6 +10,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import payrollService from '../services/payrollService';
 import employeeService from '../services/employeeService';
 import { showSuccess, showError } from '../utils/toast';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 
 const payrollRunSchema = z.object({
   periodStart: z.date({ required_error: 'Period start is required' }),
@@ -495,6 +497,8 @@ const Payroll = () => {
     ];
   }, [viewingRun, entriesPagination]);
 
+  const payrollEmptyState = useMemo(() => getEmptyStateProps(EMPTY_STATES.PAYROLL), []);
+
   return (
     <div className="space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -584,8 +588,7 @@ const Payroll = () => {
         columns={tableColumns}
         loading={runsQuery.isLoading}
         title={null}
-        emptyIcon={<FileText className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No payroll runs yet. Select employees below and click 'Run Payroll' to process your first payroll."
+        emptyState={payrollEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);

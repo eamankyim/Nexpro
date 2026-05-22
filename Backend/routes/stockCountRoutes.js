@@ -11,11 +11,13 @@ const {
 } = require('../controllers/stockCountController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
+const { shopContext } = require('../middleware/shopContext');
 
 const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(shopContext);
 
 // Report route (before :id routes)
 router.get('/reconciliation-report', getReconciliationReport);

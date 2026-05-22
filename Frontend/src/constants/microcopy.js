@@ -142,6 +142,7 @@ export const SEARCH_PLACEHOLDERS = {
 export const EMPTY_STATES = {
   // Customers
   CUSTOMERS: {
+    imageKey: 'CUSTOMERS',
     icon: 'Users',
     title: 'No customers yet',
     description: 'Add your first customer to start tracking sales and building relationships.',
@@ -168,9 +169,25 @@ export const EMPTY_STATES = {
     description: 'Try adjusting your filters or search terms.',
     primaryAction: 'Clear Filters',
   },
+
+  DELIVERIES: {
+    imageKey: 'DELIVERIES',
+    icon: 'Truck',
+    title: 'Nothing here yet',
+    description: 'Deliveries will appear when jobs or sales need delivery.',
+  },
+
+  TASKS: {
+    imageKey: 'TASKS',
+    icon: 'Clock',
+    title: 'No tasks yet',
+    description: 'Create tasks to track work in your workspace.',
+    primaryAction: 'Add Task',
+  },
   
   // Invoices
   INVOICES: {
+    imageKey: 'INVOICES',
     icon: 'FileText',
     title: 'No invoices yet',
     description: 'Invoices are created automatically when you complete jobs.',
@@ -183,9 +200,17 @@ export const EMPTY_STATES = {
     description: 'Try adjusting your filters or search terms.',
     primaryAction: 'Clear Filters',
   },
+  INVOICES_SHOP: {
+    imageKey: 'INVOICES',
+    icon: 'FileText',
+    title: 'No invoices yet',
+    description: 'Create invoices from your sales or orders to track payments.',
+    primaryAction: 'Create Invoice',
+  },
   
   // Products
   PRODUCTS: {
+    imageKey: 'PRODUCTS',
     icon: 'Package',
     title: 'Your catalog is empty',
     description: 'Add products to start selling.',
@@ -201,6 +226,7 @@ export const EMPTY_STATES = {
   
   // Sales
   SALES: {
+    imageKey: 'SALES',
     icon: 'ShoppingCart',
     title: 'No sales yet',
     description: 'Complete your first sale to see it here.',
@@ -212,9 +238,17 @@ export const EMPTY_STATES = {
     description: 'Try adjusting your filters or search terms.',
     primaryAction: 'Clear Filters',
   },
+  SALES_NO_PRODUCTS: {
+    imageKey: 'SALES_NO_PRODUCTS',
+    icon: 'Package',
+    title: 'Add products before selling',
+    description: "You haven't added any products yet. Add your products first before you can start selling.",
+    primaryAction: 'Add Your First Product',
+  },
   
   // Expenses
   EXPENSES: {
+    imageKey: 'EXPENSES',
     icon: 'Receipt',
     title: 'No expenses yet',
     description: 'Track your business expenses to manage cash flow.',
@@ -241,6 +275,7 @@ export const EMPTY_STATES = {
   
   // Leads
   LEADS: {
+    imageKey: 'LEADS',
     icon: 'UserPlus',
     title: 'No leads yet',
     description: 'Track potential customers and convert them to sales.',
@@ -269,6 +304,7 @@ export const EMPTY_STATES = {
   
   // Employees
   EMPLOYEES: {
+    imageKey: 'EMPLOYEES',
     icon: 'Users',
     title: 'No employees yet',
     description: 'Add team members to manage payroll and schedules.',
@@ -297,6 +333,7 @@ export const EMPTY_STATES = {
   
   // Quotes
   QUOTES: {
+    imageKey: 'QUOTES',
     icon: 'FileText',
     title: 'No quotes yet',
     description: 'Create quotes to share pricing with potential customers.',
@@ -311,6 +348,7 @@ export const EMPTY_STATES = {
   
   // Equipment
   EQUIPMENT: {
+    imageKey: 'EQUIPMENT',
     icon: 'Monitor',
     title: 'No equipment yet',
     description: 'Track company assets like computers, vehicles, and furniture.',
@@ -325,6 +363,7 @@ export const EMPTY_STATES = {
   
   // Materials
   MATERIALS: {
+    imageKey: 'MATERIALS',
     icon: 'Layers',
     title: 'No materials yet',
     description: 'Track raw materials and supplies for your operations.',
@@ -395,6 +434,7 @@ export const EMPTY_STATES = {
   
   // Payroll
   PAYROLL: {
+    imageKey: 'PAYROLL',
     icon: 'Wallet',
     title: 'No payroll runs',
     description: 'Create a payroll run to process employee payments.',
@@ -403,6 +443,7 @@ export const EMPTY_STATES = {
   
   // Reports
   REPORTS: {
+    imageKey: 'REPORTS',
     icon: 'BarChart3',
     title: 'No reports yet',
     description: 'Generate reports to analyze your business performance.',
@@ -411,6 +452,7 @@ export const EMPTY_STATES = {
   
   // Notifications
   NOTIFICATIONS: {
+    imageKey: 'NOTIFICATIONS',
     icon: 'Bell',
     title: 'No notifications',
     description: 'You\'re all caught up!',
@@ -418,6 +460,7 @@ export const EMPTY_STATES = {
   
   // Search results
   SEARCH_NO_RESULTS: {
+    imageKey: 'SEARCH_NO_RESULTS',
     icon: 'Search',
     title: 'No results found',
     description: 'Try different keywords or check spelling.',

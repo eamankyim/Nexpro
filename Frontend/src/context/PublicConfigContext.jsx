@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import api from '../services/api';
 
 const PublicConfigContext = createContext({
@@ -47,7 +47,10 @@ export function PublicConfigProvider({ children }) {
       .finally(() => setConfigLoaded((c) => true));
   }, [envGoogleId]);
 
-  const value = { googleClientId, selfSignupEnabled, configLoaded };
+  const value = useMemo(
+    () => ({ googleClientId, selfSignupEnabled, configLoaded }),
+    [googleClientId, selfSignupEnabled, configLoaded]
+  );
   const logged = useRef(false);
   useEffect(() => {
     if (configLoaded && !logged.current) {

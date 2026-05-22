@@ -1,68 +1,59 @@
 import api from './api';
+import { buildScopedQueryString } from '../utils/shopScope';
 
 const invoiceService = {
-  // Get all invoices
   getAll: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    return await api.get(`/invoices?${queryString}`);
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/invoices?${queryString}` : '/invoices');
   },
 
-  // Get single invoice
   getById: async (id) => {
     return await api.get(`/invoices/${id}`);
   },
 
-  // Create invoice from job
   create: async (invoiceData) => {
     return await api.post('/invoices', invoiceData);
   },
 
-  // Update invoice
   update: async (id, invoiceData) => {
     return await api.put(`/invoices/${id}`, invoiceData);
   },
 
-  // Delete invoice
   delete: async (id) => {
     return await api.delete(`/invoices/${id}`);
   },
 
-  // Delete cancelled invoice (admin only)
   deleteCancelled: async (id) => {
     return await api.delete(`/invoices/${id}/cancelled`);
   },
 
-  // Record payment on invoice
   recordPayment: async (id, paymentData) => {
     return await api.post(`/invoices/${id}/payment`, paymentData);
   },
 
-  // Send invoice to customer
   send: async (id) => {
     return await api.post(`/invoices/${id}/send`);
   },
 
-  // Cancel invoice
   cancel: async (id) => {
     return await api.post(`/invoices/${id}/cancel`);
   },
 
-  // Mark invoice as fully paid
-  markAsPaid: async (id) => {
+  markPaid: async (id) => {
     return await api.post(`/invoices/${id}/mark-paid`);
   },
 
-  // Get invoice statistics
-  getStats: async () => {
-    return await api.get('/invoices/stats/summary');
-  }
+  getStats: async (params = {}) => {
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/invoices/stats/summary?${queryString}` : '/invoices/stats/summary');
+  },
+
+  exportInvoices: async (params = {}) => {
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/invoices/export?${queryString}` : '/invoices/export', {
+      responseType: 'blob',
+    });
+  },
 };
 
 export default invoiceService;
-
-
-
-
-
-
-

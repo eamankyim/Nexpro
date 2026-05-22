@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Copy, FileDown, Loader2, Send, Sparkles } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,15 +10,14 @@ import { generatePDF } from '@/utils/pdfUtils';
 import { showError, showSuccess } from '@/utils/toast';
 import { cn } from '@/lib/utils';
 import { formatAssistantMessage } from '@/utils/assistantMessageFormatter';
+import {
+  ASSISTANT_BUSINESS_PROMPTS,
+  ASSISTANT_DRAFT_PROMPTS,
+  ASSISTANT_PAGE_PROMPTS,
+  ASSISTANT_SUPPORT_PROMPTS,
+} from '@/constants/assistantPrompts';
 
 const CARD_BORDER = { border: '1px solid #e5e7eb' };
-
-const STARTER_PROMPTS = [
-  'How many customers do I have this month?',
-  'Analyze my data and highlight key trends this month.',
-  'Summarize this month performance in 5 bullets.',
-  'Draft a promotional email for my customers.'
-];
 
 const extractMarketingDraft = (content = '') => {
   const text = String(content || '').trim();
@@ -41,15 +40,68 @@ const isMarketingDraft = (content = '') => {
   return /promotional|campaign|offer|newsletter|email/i.test(text);
 };
 
+function PromptSection({ title, prompts, onSelect, loading }) {
+  return (
+    <div className="space-y-2">
+      <p className="text-xs font-medium text-foreground">{title}</p>
+      <div className="flex flex-wrap gap-2">
+        {prompts.map((prompt) => (
+          <Button
+            key={prompt}
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => onSelect(prompt)}
+            disabled={loading}
+            className="text-left h-auto py-2 whitespace-normal"
+          >
+            {prompt}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
- * Ask AI page for workspace managers.
+ * Ask AI page — ABS Assistant for business insights, support, and drafts.
  */
 export default function AskAI() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const pageContext = searchParams.get('from') || searchParams.get('pageContext') || undefined;
+  const initialPrompt = searchParams.get('prompt') || undefined;
+  const startDate = searchParams.get('startDate') || undefined;
+  const endDate = searchParams.get('endDate') || undefined;
+  const periodLabel = searchParams.get('periodLabel') || undefined;
+
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef(null);
+  const handledInitialPromptRef = useRef(null);
+
+  const pagePrompts = useMemo(() => {
+    if (!pageContext) return [];
+    const base = ASSISTANT_PAGE_PROMPTS[pageContext] || [];
+    if (!startDate || !endDate) return base;
+    const period = periodLabel || 'this period';
+    if (pageContext === 'reports' || pageContext === 'dashboard') {
+      return [
+        `Summarize performance for ${period}`,
+        `What should I focus on for ${period}?`,
+        'Compare this period to the previous period',
+      ];
+    }
+    return base;
+  }, [pageContext, startDate, endDate, periodLabel]);
+
+  const assistantContextOptions = useMemo(() => ({
+    pageContext,
+    startDate,
+    endDate,
+    periodLabel,
+  }), [pageContext, startDate, endDate, periodLabel]);
 
   const scrollToBottom = useCallback(() => {
     const viewport = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]');
@@ -67,7 +119,7 @@ export default function AskAI() {
     setLoading(true);
 
     try {
-      const res = await assistantService.chat(nextConversation);
+      const res = await assistantService.chat(nextConversation, assistantContextOptions);
       const content = res?.message || 'No response from assistant.';
       setMessages((prev) => [...prev, { role: 'assistant', content }]);
       requestAnimationFrame(scrollToBottom);
@@ -77,9 +129,15 @@ export default function AskAI() {
     } finally {
       setLoading(false);
     }
-  }, [loading, messages, scrollToBottom]);
+  }, [assistantContextOptions, loading, messages, scrollToBottom]);
 
-  const emptyState = useMemo(() => messages.length === 0, [messages.length]);
+  useEffect(() => {
+    if (!initialPrompt || handledInitialPromptRef.current === initialPrompt) return;
+    handledInitialPromptRef.current = initialPrompt;
+    sendMessage(initialPrompt);
+  }, [initialPrompt, sendMessage]);
+
+  const emptyState = messages.length === 0;
 
   const handleCopy = useCallback(async (content) => {
     try {
@@ -109,7 +167,7 @@ export default function AskAI() {
     printable.style.color = '#111827';
     printable.style.fontFamily = 'Inter, Arial, sans-serif';
     printable.innerHTML = `
-      <h2 style="margin:0 0 12px 0;">Ask AI Response</h2>
+      <h2 style="margin:0 0 12px 0;">ABS Assistant</h2>
       <p style="margin:0 0 16px 0;color:#6b7280;font-size:12px;">Generated on ${new Date().toLocaleString()}</p>
       <div>${formatAssistantMessage(String(content || ''))}</div>
     `;
@@ -117,7 +175,7 @@ export default function AskAI() {
     document.body.appendChild(printable);
     try {
       await generatePDF(printable, {
-        filename: `ask-ai-${new Date().toISOString().split('T')[0]}.pdf`,
+        filename: `abs-assistant-${new Date().toISOString().split('T')[0]}.pdf`,
       });
       showSuccess('Exported as PDF');
     } catch (err) {
@@ -135,34 +193,47 @@ export default function AskAI() {
           <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold text-foreground">Ask AI</h1>
         </div>
         <p className="text-muted-foreground mt-2 text-sm md:text-base max-w-3xl">
-          Ask AI about your business performance, trends, and recommendations.
+          ABS Assistant helps with business insights, ABS support, payment reminders, and customer message drafts.
         </p>
       </div>
 
       <Card style={CARD_BORDER}>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Assistant</CardTitle>
-          <CardDescription>Responses are based on your workspace context.</CardDescription>
+          <CardTitle className="text-base">ABS Assistant</CardTitle>
+          <CardDescription>
+            Answers use your live workspace data{startDate && endDate ? ` for ${periodLabel || 'the selected period'}` : ''}. Predictions are estimates only.
+          </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <ScrollArea ref={scrollRef} className="h-[55vh] rounded-md border border-border p-3">
             {emptyState ? (
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">Try one of these prompts:</p>
-                <div className="flex flex-wrap gap-2">
-                  {STARTER_PROMPTS.map((prompt) => (
-                    <Button
-                      key={prompt}
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => sendMessage(prompt)}
-                      disabled={loading}
-                    >
-                      {prompt}
-                    </Button>
-                  ))}
-                </div>
+              <div className="space-y-4">
+                {pagePrompts.length > 0 && (
+                  <PromptSection
+                    title="For this page"
+                    prompts={pagePrompts}
+                    onSelect={sendMessage}
+                    loading={loading}
+                  />
+                )}
+                <PromptSection
+                  title="Business insights"
+                  prompts={ASSISTANT_BUSINESS_PROMPTS}
+                  onSelect={sendMessage}
+                  loading={loading}
+                />
+                <PromptSection
+                  title="ABS support"
+                  prompts={ASSISTANT_SUPPORT_PROMPTS}
+                  onSelect={sendMessage}
+                  loading={loading}
+                />
+                <PromptSection
+                  title="Draft messages"
+                  prompts={ASSISTANT_DRAFT_PROMPTS}
+                  onSelect={sendMessage}
+                  loading={loading}
+                />
               </div>
             ) : (
               <div className="space-y-3">
@@ -197,14 +268,14 @@ export default function AskAI() {
                             Export PDF
                           </Button>
                           {isMarketingDraft(msg.content) && (
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handlePostToMarketing(msg.content)}
-                          >
-                            Post to Marketing
-                          </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handlePostToMarketing(msg.content)}
+                            >
+                              Post to Marketing
+                            </Button>
                           )}
                         </div>
                       )}
@@ -223,6 +294,8 @@ export default function AskAI() {
             )}
           </ScrollArea>
 
+          <p className="text-xs text-muted-foreground">AI predictions are estimates, not guarantees.</p>
+
           <form
             className="flex items-center gap-2"
             onSubmit={(e) => {
@@ -233,7 +306,7 @@ export default function AskAI() {
             <Input
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              placeholder="Ask about your business, reports, or draft customer email..."
+              placeholder="Ask ABS Assistant about your business or how to use ABS..."
               disabled={loading}
             />
             <Button type="submit" className="bg-brand hover:bg-brand-dark" disabled={loading || !inputValue.trim()}>

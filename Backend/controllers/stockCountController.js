@@ -1,6 +1,10 @@
 const { StockCount, StockCountItem, Product, ProductVariant, Shop, User } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter } = require('../utils/tenantUtils');
+const {
+  applyShopFilter,
+  assertShopRecordAccess,
+} = require('../utils/shopUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { sequelize } = require('../config/database');
 
@@ -35,10 +39,9 @@ exports.getStockCounts = async (req, res) => {
     const { page, limit, offset } = getPagination(req, { defaultPageSize: 20 });
     const { status, shopId, startDate, endDate } = req.query;
 
-    const where = applyTenantFilter({ tenantId }, req);
+    let where = applyShopFilter(req, applyTenantFilter(tenantId, {}));
 
     if (status) where.status = status;
-    if (shopId) where.shopId = shopId;
     if (startDate || endDate) {
       where.countDate = {};
       if (startDate) where.countDate[Op.gte] = new Date(startDate);
@@ -83,7 +86,7 @@ exports.getStockCount = async (req, res) => {
     const { id } = req.params;
 
     const stockCount = await StockCount.findOne({
-      where: { id, tenantId },
+      where: applyShopFilter(req, applyTenantFilter(tenantId, { id })),
       include: [
         { model: Shop, as: 'shop' },
         { model: User, as: 'counter', attributes: ['id', 'name', 'email'] },
@@ -103,6 +106,15 @@ exports.getStockCount = async (req, res) => {
       return res.status(404).json({ success: false, error: 'Stock count not found' });
     }
 
+    try {
+      assertShopRecordAccess(req, stockCount);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
+    }
+
     res.json({ success: true, data: stockCount });
   } catch (error) {
     console.error('Error fetching stock count:', error);
@@ -120,14 +132,19 @@ exports.createStockCount = async (req, res) => {
   try {
     const tenantId = req.tenantId;
     const userId = req.user.id;
-    const { shopId, countType = 'full', countDate = new Date(), notes, productIds = [] } = req.body;
+    const { countType = 'full', countDate = new Date(), notes, productIds = [] } = req.body;
+    const resolvedShopId = req.shopFilterId || req.defaultShopId || null;
+    if (!resolvedShopId && req.shopScoped) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        error: 'Select a shop before starting a stock count',
+      });
+    }
 
-    // Generate count number
     const countNumber = await generateCountNumber(tenantId);
 
-    // Get products to count
-    const productWhere = { tenantId, isActive: true };
-    if (shopId) productWhere.shopId = shopId;
+    let productWhere = applyShopFilter(req, applyTenantFilter(tenantId, { isActive: true }));
     if (productIds.length > 0) productWhere.id = { [Op.in]: productIds };
 
     const products = await Product.findAll({
@@ -135,10 +152,9 @@ exports.createStockCount = async (req, res) => {
       transaction
     });
 
-    // Create stock count
     const stockCount = await StockCount.create({
       tenantId,
-      shopId,
+      shopId: resolvedShopId,
       countNumber,
       countDate: new Date(countDate),
       status: 'in_progress',
@@ -193,7 +209,7 @@ exports.updateCountItem = async (req, res) => {
     const { countedQuantity, notes } = req.body;
 
     const stockCount = await StockCount.findOne({
-      where: { id, tenantId, status: 'in_progress' }
+      where: applyShopFilter(req, applyTenantFilter(tenantId, { id, status: 'in_progress' })),
     });
 
     if (!stockCount) {
@@ -201,6 +217,15 @@ exports.updateCountItem = async (req, res) => {
         success: false, 
         error: 'Stock count not found or not in progress' 
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, stockCount);
+    } catch (accessErr) {
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     const item = await StockCountItem.findOne({
@@ -250,7 +275,7 @@ exports.completeStockCount = async (req, res) => {
     const { id } = req.params;
 
     const stockCount = await StockCount.findOne({
-      where: { id, tenantId, status: 'in_progress' },
+      where: applyShopFilter(req, applyTenantFilter(tenantId, { id, status: 'in_progress' })),
       transaction,
       lock: transaction.LOCK.UPDATE
     });
@@ -261,6 +286,16 @@ exports.completeStockCount = async (req, res) => {
         success: false, 
         error: 'Stock count not found or not in progress' 
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, stockCount);
+    } catch (accessErr) {
+      await transaction.rollback();
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     // Calculate summary from items
@@ -389,10 +424,11 @@ exports.approveStockCount = async (req, res) => {
 exports.getReconciliationReport = async (req, res) => {
   try {
     const tenantId = req.tenantId;
-    const { startDate, endDate, shopId } = req.query;
+    const { startDate, endDate } = req.query;
 
-    const where = { tenantId, status: { [Op.in]: ['completed', 'approved'] } };
-    if (shopId) where.shopId = shopId;
+    const where = applyShopFilter(req, applyTenantFilter(tenantId, {
+      status: { [Op.in]: ['completed', 'approved'] },
+    }));
     if (startDate || endDate) {
       where.countDate = {};
       if (startDate) where.countDate[Op.gte] = new Date(startDate);
@@ -474,11 +510,10 @@ exports.deleteStockCount = async (req, res) => {
     const { id } = req.params;
 
     const stockCount = await StockCount.findOne({
-      where: { 
-        id, 
-        tenantId, 
-        status: { [Op.in]: ['draft', 'cancelled'] } 
-      },
+      where: applyShopFilter(req, applyTenantFilter(tenantId, {
+        id,
+        status: { [Op.in]: ['draft', 'cancelled'] },
+      })),
       transaction
     });
 
@@ -488,6 +523,16 @@ exports.deleteStockCount = async (req, res) => {
         success: false, 
         error: 'Stock count not found or cannot be deleted' 
       });
+    }
+
+    try {
+      assertShopRecordAccess(req, stockCount);
+    } catch (accessErr) {
+      await transaction.rollback();
+      if (accessErr.statusCode === 403) {
+        return res.status(403).json({ success: false, message: accessErr.message });
+      }
+      throw accessErr;
     }
 
     await StockCountItem.destroy({ where: { stockCountId: id }, transaction });

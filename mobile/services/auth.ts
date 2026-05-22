@@ -1,8 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import { api } from './api';
+import { api, clearApiRequestContext, setApiAuthToken, setApiTenantContext } from './api';
 import { logger } from '@/utils/logger';
 import { STORAGE_KEYS } from '@/constants';
+import { membershipTenantId, normalizeMemberships } from '@/utils/membership';
 
 const AUTH_STORAGE_KEYS = {
   token: 'token',
@@ -14,25 +15,31 @@ const AUTH_STORAGE_KEYS = {
 async function persistAuthPayload(payload: {
   user?: object;
   token?: string;
-  memberships?: Array<{ tenantId: string; isDefault?: boolean }>;
-  defaultTenantId?: string;
+  memberships?: Array<{ tenantId?: string; isDefault?: boolean }>;
+  defaultTenantId?: string | null;
 }) {
   const { user, token, memberships = [], defaultTenantId } = payload;
+  const normalizedMemberships = normalizeMemberships(memberships);
 
-  if (token) await SecureStore.setItemAsync(AUTH_STORAGE_KEYS.token, token);
+  if (token) {
+    await SecureStore.setItemAsync(AUTH_STORAGE_KEYS.token, token);
+    setApiAuthToken(token);
+  }
   if (user) await AsyncStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
-  await AsyncStorage.setItem(AUTH_STORAGE_KEYS.memberships, JSON.stringify(memberships));
+  await AsyncStorage.setItem(AUTH_STORAGE_KEYS.memberships, JSON.stringify(normalizedMemberships));
 
   const preferredTenantId =
     defaultTenantId ||
-    memberships.find((m) => m.isDefault)?.tenantId ||
-    memberships[0]?.tenantId ||
+    membershipTenantId(normalizedMemberships.find((m) => m.isDefault)) ||
+    membershipTenantId(normalizedMemberships[0]) ||
     null;
 
   if (preferredTenantId) {
     await AsyncStorage.setItem(AUTH_STORAGE_KEYS.activeTenant, preferredTenantId);
+    setApiTenantContext(preferredTenantId);
   } else {
     await AsyncStorage.removeItem(AUTH_STORAGE_KEYS.activeTenant);
+    setApiTenantContext(null);
   }
 }
 
@@ -43,6 +50,7 @@ async function clearAuthStorage() {
     AUTH_STORAGE_KEYS.memberships,
     AUTH_STORAGE_KEYS.activeTenant,
   ]);
+  clearApiRequestContext();
 }
 
 export const authService = {
@@ -103,6 +111,13 @@ export const authService = {
     await api.post('/auth/resend-verification');
   },
 
+  updateNotificationPreferences: async (
+    categories: Record<string, { in_app?: boolean; email?: boolean }>
+  ) => {
+    const res = await api.patch('/auth/notification-preferences', { categories });
+    return res?.data ?? res;
+  },
+
   forgotPassword: async (email: string) => {
     logger.info('Auth', 'Requesting password reset for:', email);
     await api.post('/auth/forgot-password', { email });
@@ -116,6 +131,7 @@ export const authService = {
   setActiveTenantId: async (tenantId: string | null) => {
     if (tenantId) await AsyncStorage.setItem(AUTH_STORAGE_KEYS.activeTenant, tenantId);
     else await AsyncStorage.removeItem(AUTH_STORAGE_KEYS.activeTenant);
+    setApiTenantContext(tenantId);
   },
 
   getStoredUser: async () => {

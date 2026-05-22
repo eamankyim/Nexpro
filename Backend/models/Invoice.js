@@ -24,6 +24,14 @@ const Invoice = sequelize.define('Invoice', {
       key: 'id'
     }
   },
+  shopId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'shops',
+      key: 'id'
+    }
+  },
   invoiceNumber: {
     type: DataTypes.STRING,
     allowNull: false

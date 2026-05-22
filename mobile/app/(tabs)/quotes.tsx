@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,24 +7,29 @@ import {
   Pressable,
   RefreshControl,
   ActivityIndicator,
-  Modal,
-  ScrollView,
 } from 'react-native';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'expo-router';
 
+import { AppIcon, type AppIconName } from '@/components/AppIcon';
+import { ListEmptyState, EmptyStateActionButton, ListActionButton } from '@/components/ListEmptyState';
+import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
+import { useSmartSearch } from '@/context/SmartSearchContext';
+import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
+import { useDebounce } from '@/hooks/useDebounce';
+import { flatListStyleForEmpty, listContentStyleWhenEmpty, showListFilters } from '@/utils/listEmptyLayout';
 import { quoteService } from '@/services/quoteService';
 import { useAuth } from '@/context/AuthContext';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
-import { useTheme } from '@/context/ThemeContext';
+import { useScreenColors } from '@/hooks/useScreenColors';
+import { BRAND_GREEN } from '@/constants/brand';
+import { ScreenShell } from '@/components/ScreenShell';
+import { FilterChipRow } from '@/components/FilterChip';
+import { ListLoadingState, ListErrorState } from '@/components/ListScreenStates';
 import { CURRENCY, isQuotesEnabledForTenant } from '@/constants';
-import Colors from '@/constants/Colors';
-
-function formatCurrency(value: number | string | null | undefined): string {
-  const numValue = typeof value === 'number' ? value : parseFloat(String(value ?? 0)) || 0;
-  return `${CURRENCY.SYMBOL} ${numValue.toFixed(CURRENCY.DECIMAL_PLACES)}`;
-}
+import { formatCurrency } from '@/utils/formatCurrency';
+import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListResponse';
+import { formatStatusLabel } from '@/utils/formatLabels';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -56,26 +61,26 @@ type Quote = {
 export default function QuotesScreen() {
   const router = useRouter();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
-  const { resolvedTheme } = useTheme();
-  const colors = Colors[resolvedTheme ?? 'light'];
+  const { colors, bg, cardBg, borderColor, textColor, mutedColor } = useScreenColors();
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
-  const [detailQuote, setDetailQuote] = useState<Quote | null>(null);
-  const [converting, setConverting] = useState(false);
+
+  const { searchValue } = useSmartSearch();
+  useRegisterPageSearch({ scope: 'quotes', placeholder: SEARCH_PLACEHOLDERS.QUOTES });
+  const debouncedSearch = useDebounce(searchValue, 400);
 
   const shopType = activeTenant?.metadata?.shopType;
   const businessType = activeTenant?.businessType ?? 'printing_press';
-  const isPrintingPress = businessType === 'printing_press';
   const quotesFeatureOk =
     hasFeature('quoteAutomation') && isQuotesEnabledForTenant(businessType, shopType);
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['quotes', activeTenantId, statusFilter],
+    queryKey: ['quotes', activeTenantId, statusFilter, debouncedSearch],
     queryFn: async () => {
-      const params: { page?: number; limit?: number; status?: string } = {
+      const params: { page?: number; limit?: number; status?: string; search?: string } = {
         page: 1,
         limit: 20,
+        search: debouncedSearch || undefined,
       };
       if (statusFilter !== 'all') params.status = statusFilter;
       return quoteService.getQuotes(params);
@@ -87,49 +92,29 @@ export default function QuotesScreen() {
     enabled: !!activeTenantId && quotesFeatureOk,
   });
 
-  const quotes = (response?.data || []) as Quote[];
+  const quotes = useMemo(() => parseApiListResponse<Quote>(response), [response]);
+  const loadErrorMessage = useMemo(
+    () => getApiErrorMessage(error, 'Could not load quotes. Pull to refresh.'),
+    [error]
+  );
+  const hasActiveFilter = statusFilter !== 'all' || !!debouncedSearch.trim();
   const onRefresh = useCallback(() => refetch(), [refetch]);
 
-  const handleQuotePress = useCallback(async (quote: Quote) => {
-    setSelectedQuote(quote);
-    // Immediately show basic details while loading full quote from API
-    setDetailQuote(quote);
-    try {
-      const res = await quoteService.getQuoteById(quote.id);
-      const full = res?.data || res;
-      setDetailQuote(full as Quote);
-    } catch {
-      // Keep basic quote info if full fetch fails
-      setDetailQuote(quote);
-    }
-  }, []);
+  const handleQuotePress = useCallback(
+    (quote: Quote) => {
+      router.push(`/quote/${quote.id}` as never);
+    },
+    [router]
+  );
 
-  const handleConvertToJob = useCallback(async () => {
-    if (!detailQuote) return;
-    setConverting(true);
-    try {
-      const res = await quoteService.convertToJob(detailQuote.id);
-      const data = res?.data ?? res;
-      const job: any = data?.job ?? data?.data?.job ?? data;
-      // Simple mobile feedback; jobNumber may be undefined if shape differs
-      const jobNumber = job?.jobNumber ? ` ${job.jobNumber}` : '';
-      alert(`Quote converted to job${jobNumber}.`);
-      setSelectedQuote(null);
-      setDetailQuote(null);
-      refetch();
-    } catch (err: any) {
-      console.error('Failed to convert quote to job:', err);
-      alert(err?.response?.data?.message || 'Failed to convert quote to job.');
-    } finally {
-      setConverting(false);
-    }
-  }, [detailQuote, refetch]);
-
-  const bg = resolvedTheme === 'dark' ? colors.background : '#f9fafb';
-  const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
-  const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
-  const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
+  const quoteFilterOptions = useMemo(
+    () =>
+      ['all', 'draft', 'sent', 'accepted', 'declined'].map((s) => ({
+        value: s,
+        label: s.charAt(0).toUpperCase() + s.slice(1),
+      })),
+    []
+  );
 
   if (!quotesFeatureOk) {
     return <FeatureAccessDenied message="Quotes are not enabled for this workspace." />;
@@ -167,7 +152,7 @@ export default function QuotesScreen() {
         <View style={styles.quoteMeta}>
           <View style={[styles.statusBadge, { backgroundColor: statusColor + '20' }]}>
             <Text style={[styles.statusText, { color: statusColor }]}>
-              {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+              {formatStatusLabel(item.status)}
             </Text>
           </View>
           {item.validUntil && (
@@ -183,215 +168,69 @@ export default function QuotesScreen() {
     );
   };
 
-  return (
-    <View style={[styles.container, { backgroundColor: bg }]}>
-      <View style={styles.headerRow}>
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.pageTitle, { color: textColor }]}>Quotes</Text>
-          <Text style={[styles.pageSubtitle, { color: mutedColor }]}>
-            Create quotes and track status.
-          </Text>
-        </View>
-        {quotesFeatureOk && (
-          <Pressable
-            onPress={() => router.push('/quotes-new')}
-            style={[styles.newQuoteButton, { borderColor }]}
-          >
-            <FontAwesome name="file-text-o" size={14} color={colors.tint} />
-            <Text style={[styles.newQuoteButtonText, { color: colors.tint }]}>New quote</Text>
-          </Pressable>
-        )}
-      </View>
+  const handleNewQuote = useCallback(() => {
+    router.push('/quotes-new');
+  }, [router]);
 
-      <View style={styles.filterRow}>
-        {['all', 'draft', 'sent', 'accepted', 'declined'].map((s) => (
-          <Pressable
-            key={s}
-            onPress={() => setStatusFilter(s)}
-            style={[
-              styles.filterBtn,
-              { borderColor },
-              statusFilter === s && { backgroundColor: colors.tint, borderColor: colors.tint },
-            ]}
-          >
-            <Text style={[styles.filterText, { color: statusFilter === s ? '#fff' : textColor }]}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+  return (
+    <ScreenShell style={styles.container}>
+      {!isLoading && !isError && quotes.length > 0 && quotesFeatureOk && (
+        <ListActionButton
+          label="New Quote"
+          onPress={handleNewQuote}
+          backgroundColor={colors.tint}
+        />
+      )}
+
+      {showListFilters(isLoading, isError, quotes.length, hasActiveFilter) && (
+        <FilterChipRow
+          options={quoteFilterOptions}
+          value={statusFilter}
+          onChange={setStatusFilter}
+        />
+      )}
 
       {isLoading ? (
-        <View style={styles.center}>
-          <ActivityIndicator size="large" color={colors.tint} />
-          <Text style={[styles.loadingText, { color: mutedColor }]}>Loading quotes...</Text>
-        </View>
+        <ListLoadingState message="Loading quotes..." />
       ) : isError ? (
-        <View style={styles.center}>
-          <FontAwesome name="exclamation-triangle" size={48} color="#ef4444" />
-          <Text style={[styles.emptyTitle, { color: textColor }]}>Failed to load quotes</Text>
-          <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-            {error?.message?.includes('timeout')
-              ? 'Request timed out. Please check your connection and try again.'
-              : 'An error occurred while loading quotes. Please try again.'}
-          </Text>
-          <Pressable
-            onPress={() => refetch()}
-            style={[styles.retryButton, { backgroundColor: colors.tint }]}
-          >
-            <Text style={styles.retryButtonText}>Retry</Text>
-          </Pressable>
-        </View>
+        <ListErrorState title="Failed to load quotes" message={loadErrorMessage} onRetry={refetch} />
       ) : (
         <FlatList
+          style={flatListStyleForEmpty}
           data={quotes}
           keyExtractor={(item) => item.id}
           renderItem={renderQuoteItem}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={listContentStyleWhenEmpty(styles.listContent, quotes.length === 0)}
           refreshControl={
             <RefreshControl refreshing={isRefetching} onRefresh={onRefresh} tintColor={colors.tint} />
           }
           ListEmptyComponent={
-            <View style={styles.empty}>
-              <FontAwesome name="file-text-o" size={48} color={mutedColor} />
-              <Text style={[styles.emptyTitle, { color: textColor }]}>No quotes yet</Text>
-              <Text style={[styles.emptySubtitle, { color: mutedColor }]}>
-                Quotes will appear here
-              </Text>
-            </View>
+            <ListEmptyState
+              imageKey="QUOTES"
+              title={statusFilter === 'all' ? 'No quotes yet' : 'No quotes in this filter'}
+              subtitle={
+                statusFilter === 'all'
+                  ? 'Create quotes to share pricing with customers'
+                  : 'Try another filter'
+              }
+            >
+              {statusFilter === 'all' && quotesFeatureOk ? (
+                <EmptyStateActionButton
+                  label="New Quote"
+                  onPress={handleNewQuote}
+                  backgroundColor={colors.tint}
+                />
+              ) : null}
+            </ListEmptyState>
           }
         />
       )}
-
-      {/* Quote detail modal */}
-      <Modal
-        visible={!!selectedQuote}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setSelectedQuote(null)}
-      >
-        <Pressable style={styles.modalOverlay} onPress={() => setSelectedQuote(null)}>
-          <Pressable
-            style={[styles.modalContent, { backgroundColor: cardBg }]}
-            onPress={(e) => e.stopPropagation()}
-          >
-            <View style={styles.modalHeader}>
-              <Text style={[styles.modalTitle, { color: textColor }]}>
-                {detailQuote?.quoteNumber || selectedQuote?.quoteNumber || 'Quote details'}
-              </Text>
-              <Pressable onPress={() => setSelectedQuote(null)} hitSlop={12}>
-                <FontAwesome name="times" size={22} color={mutedColor} />
-              </Pressable>
-            </View>
-            {detailQuote && (
-              <ScrollView style={styles.modalBody}>
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Title</Text>
-                  <Text style={[styles.detailValue, { color: textColor }]}>{detailQuote.title}</Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Total</Text>
-                  <Text style={[styles.detailValue, { color: colors.tint, fontSize: 18, fontWeight: '700' }]}>
-                    {formatCurrency(detailQuote.totalAmount)}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Customer</Text>
-                  <Text style={[styles.detailValue, { color: textColor }]}>
-                    {detailQuote.customer?.name ?? '—'}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Status</Text>
-                  <View style={[styles.statusBadge, { backgroundColor: getStatusColor(detailQuote.status) + '20' }]}>
-                    <Text style={[styles.statusText, { color: getStatusColor(detailQuote.status) }]}>
-                      {detailQuote.status.charAt(0).toUpperCase() + detailQuote.status.slice(1)}
-                    </Text>
-                  </View>
-                </View>
-                {detailQuote.validUntil && (
-                  <View style={styles.detailRow}>
-                    <Text style={[styles.detailLabel, { color: mutedColor }]}>Valid Until</Text>
-                    <Text style={[styles.detailValue, { color: textColor }]}>
-                      {formatDate(detailQuote.validUntil)}
-                    </Text>
-                  </View>
-                )}
-                <View style={styles.detailRow}>
-                  <Text style={[styles.detailLabel, { color: mutedColor }]}>Created</Text>
-                  <Text style={[styles.detailValue, { color: textColor }]}>
-                    {formatDate(detailQuote.createdAt)}
-                  </Text>
-                </View>
-                {(detailQuote as any).items?.length > 0 && (
-                  <>
-                    <Text style={[styles.detailSection, { color: textColor }]}>Items</Text>
-                    {(detailQuote as any).items.map(
-                      (item: { description: string; quantity: number; unitPrice: number; total: number }, i: number) => (
-                        <View key={i} style={styles.itemRow}>
-                          <Text style={[styles.itemName, { color: textColor }]} numberOfLines={1}>
-                            {item.description} x{item.quantity}
-                          </Text>
-                          <Text style={[styles.itemTotal, { color: textColor }]}>
-                            {formatCurrency(item.total || item.unitPrice * item.quantity)}
-                          </Text>
-                        </View>
-                      )
-                    )}
-                  </>
-                )}
-              </ScrollView>
-            )}
-            {detailQuote && isPrintingPress && (
-              <View style={styles.modalFooter}>
-                <Pressable
-                  style={[
-                    styles.convertButton,
-                    converting && styles.convertButtonDisabled,
-                  ]}
-                  onPress={handleConvertToJob}
-                  disabled={converting}
-                >
-                  <Text style={styles.convertButtonText}>
-                    {converting ? 'Converting…' : 'Convert to job'}
-                  </Text>
-                </Pressable>
-              </View>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </View>
+    </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 8,
-    gap: 12,
-  },
-  pageTitle: { fontSize: 20, fontWeight: '700' },
-  pageSubtitle: { fontSize: 13 },
-  newQuoteButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    backgroundColor: '#fff',
-  },
-  newQuoteButtonText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 },
   loadingText: { marginTop: 12, fontSize: 14 },
   retryButton: {
@@ -456,12 +295,24 @@ const styles = StyleSheet.create({
   modalFooter: {
     padding: 16,
     borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
   },
+  footerActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'flex-end',
+  },
+  footerBtnOutline: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  footerBtnOutlineText: { fontSize: 15, fontWeight: '600' },
   convertButton: {
     height: 48,
     borderRadius: 8,
-    backgroundColor: '#166534',
+    backgroundColor: BRAND_GREEN,
     alignItems: 'center',
     justifyContent: 'center',
   },

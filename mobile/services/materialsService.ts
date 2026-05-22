@@ -3,6 +3,7 @@ import { api } from './api';
 type MaterialsParams = {
   page?: number;
   limit?: number;
+  search?: string;
   categoryId?: string;
   status?: string;
   lowStock?: boolean;
@@ -10,6 +11,11 @@ type MaterialsParams = {
 };
 
 export const materialsService = {
+  getCategories: async () => {
+    const res = await api.get('/materials/categories');
+    return res.data;
+  },
+
   getItems: async (params: MaterialsParams = {}) => {
     const searchParams = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => {
