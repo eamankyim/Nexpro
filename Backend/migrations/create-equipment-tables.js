@@ -56,6 +56,13 @@ const createEquipmentTables = async () => {
       );
     `, { transaction });
 
+    // equipment may predate shopId; CREATE TABLE IF NOT EXISTS does not add new columns
+    console.log('Ensuring equipment.shopId column exists...');
+    await sequelize.query(`
+      ALTER TABLE equipment
+      ADD COLUMN IF NOT EXISTS "shopId" UUID REFERENCES shops(id) ON UPDATE CASCADE ON DELETE SET NULL;
+    `, { transaction });
+
     console.log('Creating indexes for equipment tables...');
     await sequelize.query(`
       CREATE INDEX IF NOT EXISTS equipment_categories_tenant_idx ON equipment_categories("tenantId");
