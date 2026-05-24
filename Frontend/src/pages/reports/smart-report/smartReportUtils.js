@@ -55,6 +55,15 @@ export function getSmartReportSnapshot(report) {
  */
 export function formatSmartReportPeriodLabel(report) {
   if (report?.periodLabel) return report.periodLabel;
+  if (report?.durationType && ['day', 'week', 'month', 'custom'].includes(report.durationType)) {
+    const label = {
+      day: 'Daily',
+      week: 'Weekly',
+      month: 'Monthly',
+      custom: 'Custom',
+    }[report.durationType];
+    return report?.period ? `${label} Report • ${report.period}` : `${label} Report`;
+  }
   if (report?.durationType === 'yearly' && report?.year) {
     return `Yearly Report • ${report.year}`;
   }

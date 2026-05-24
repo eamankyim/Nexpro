@@ -75,23 +75,42 @@ exports.handleWhatsAppWebhook = async (req, res) => {
 
       // Process webhook results (update message status, handle incoming messages, etc.)
       for (const result of results) {
+        const tenantId = await whatsappService.findTenantIdByPhoneNumberId(result.phoneNumberId);
         if (result.type === 'status') {
           console.log('[WhatsApp Webhook] Message status update:', {
             messageId: result.messageId,
             status: result.status,
             recipientId: result.recipientId?.substring(0, 7) + '***' // Partial for privacy
           });
-          
-          // TODO: Store message status in database if needed
-          // You could create a WhatsAppMessage model to track messages
+          await whatsappService.recordEvent({
+            tenantId,
+            phoneNumberId: result.phoneNumberId || null,
+            messageId: result.messageId || null,
+            direction: 'outbound',
+            eventType: 'status',
+            status: result.status || null,
+            recipientPhone: result.recipientId || null,
+            payload: result.payload || {},
+            occurredAt: result.timestamp ? new Date(Number(result.timestamp) * 1000) : new Date()
+          });
         } else if (result.type === 'message') {
           console.log('[WhatsApp Webhook] Incoming message:', {
             messageId: result.messageId,
             from: result.from?.substring(0, 7) + '***',
             messageType: result.messageType
           });
-          
-          // TODO: Handle incoming messages for two-way communication
+          await whatsappService.recordEvent({
+            tenantId,
+            phoneNumberId: result.phoneNumberId || null,
+            messageId: result.messageId || null,
+            direction: 'inbound',
+            eventType: 'message',
+            status: 'received',
+            senderPhone: result.from || null,
+            payload: result.payload || {},
+            metadata: { messageType: result.messageType, textPreview: result.text ? String(result.text).slice(0, 200) : null },
+            occurredAt: result.timestamp ? new Date(Number(result.timestamp) * 1000) : new Date()
+          });
         }
       }
 

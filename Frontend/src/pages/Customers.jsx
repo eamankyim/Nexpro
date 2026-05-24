@@ -99,6 +99,7 @@ const customerSchema = z.object({
   ),
   company: customerString,
   phone: customerString,
+  dateOfBirth: customerString,
   address: customerString,
   city: customerString,
   state: customerString,
@@ -154,6 +155,7 @@ const Customers = () => {
       company: '',
       email: '',
       phone: '',
+      dateOfBirth: '',
       address: '',
       city: '',
       state: '',
@@ -311,6 +313,7 @@ const Customers = () => {
         company: '',
         email: '',
         phone: '',
+        dateOfBirth: '',
         address: '',
         howDidYouHear: '',
         referralName: '',
@@ -346,6 +349,7 @@ const Customers = () => {
       company: '',
       email: '',
       phone: '',
+      dateOfBirth: '',
       address: '',
       howDidYouHear: '',
       referralName: '',
@@ -358,7 +362,10 @@ const Customers = () => {
 
   const handleEdit = (customer) => {
     setEditingCustomer(customer);
-    form.reset(customer);
+    form.reset({
+      ...customer,
+      dateOfBirth: customer.dateOfBirth || '',
+    });
     setShowReferralName(customer.howDidYouHear === 'Referral');
     setModalVisible(true);
   };
@@ -895,6 +902,19 @@ const Customers = () => {
                   </FormItem>
                 )}
               />
+              <FormField
+                control={form.control}
+                name="dateOfBirth"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Date of birth (optional)</FormLabel>
+                    <FormControl>
+                      <Input {...field} type="date" />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </FormFieldGrid>
 
               <FormField
@@ -1111,6 +1131,11 @@ const Customers = () => {
                     </DescriptionItem>
                     <DescriptionItem label="Phone">
                       <span className="text-foreground">{viewingCustomer.phone || '—'}</span>
+                    </DescriptionItem>
+                    <DescriptionItem label="Birthday">
+                      <span className="text-foreground">
+                        {viewingCustomer.dateOfBirth ? dayjs(viewingCustomer.dateOfBirth).format('MMM DD') : '—'}
+                      </span>
                     </DescriptionItem>
                   </Descriptions>
                 </DrawerSectionCard>

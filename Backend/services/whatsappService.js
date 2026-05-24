@@ -1,7 +1,16 @@
 const axios = require('axios');
 const crypto = require('crypto');
+const { Op } = require('sequelize');
 const { formatToE164, isValidPhoneNumber } = require('../utils/phoneUtils');
-const { Setting } = require('../models');
+const { Customer, Setting, WhatsAppMessageEvent } = require('../models');
+const { decryptSecret } = require('../utils/secretCrypto');
+
+const WHATSAPP_TOKEN_KEY_ENV = 'WHATSAPP_CREDENTIALS_ENCRYPTION_KEY';
+const RETRYABLE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * Mask E.164 for logs (no full number).
@@ -114,11 +123,51 @@ class WhatsAppService {
         return null;
       }
 
-      return setting.value;
+      const value = { ...setting.value };
+      if (value.accessToken) {
+        value.accessToken = decryptSecret(value.accessToken, WHATSAPP_TOKEN_KEY_ENV);
+      }
+      return value;
     } catch (error) {
       console.error('[WhatsApp] Error getting config:', error);
       return null;
     }
+  }
+
+  /**
+   * Find tenant from configured Meta phone number id.
+   * @param {string} phoneNumberId
+   * @returns {Promise<string|null>}
+   */
+  async findTenantIdByPhoneNumberId(phoneNumberId) {
+    if (!phoneNumberId) return null;
+    const rows = await Setting.findAll({
+      where: { key: 'whatsapp' },
+      attributes: ['tenantId', 'value'],
+      limit: 500
+    }).catch(() => []);
+    const match = rows.find((row) => String(row.value?.phoneNumberId || '') === String(phoneNumberId));
+    return match?.tenantId || null;
+  }
+
+  async hasCustomerConsent(tenantId, phoneNumber, options = {}) {
+    const { category = 'transactional' } = options;
+    const formattedPhone = this.validatePhoneNumber(phoneNumber);
+    if (!formattedPhone) return { allowed: false, reason: 'invalid_phone' };
+    const customer = await Customer.findOne({
+      where: {
+        tenantId,
+        phone: { [Op.in]: [formattedPhone, phoneNumber] }
+      },
+      attributes: ['id', 'whatsappConsent', 'marketingConsent']
+    }).catch(() => null);
+
+    if (!customer) return { allowed: true, reason: 'no_customer_record' };
+    if (customer.whatsappConsent === false) return { allowed: false, reason: 'whatsapp_opted_out' };
+    if (category === 'marketing' && customer.marketingConsent !== true) {
+      return { allowed: false, reason: 'marketing_consent_required' };
+    }
+    return { allowed: true, reason: 'allowed', customerId: customer.id };
   }
 
   /**
@@ -148,6 +197,51 @@ class WhatsAppService {
     
     this.rateLimitCache.set(key, count + 1);
     return true;
+  }
+
+  async recordEvent(event) {
+    try {
+      await WhatsAppMessageEvent.create({
+        tenantId: event.tenantId || null,
+        campaignId: event.campaignId || null,
+        phoneNumberId: event.phoneNumberId || null,
+        messageId: event.messageId || null,
+        direction: event.direction || 'outbound',
+        eventType: event.eventType || 'send',
+        status: event.status || null,
+        recipientPhone: event.recipientPhone || null,
+        senderPhone: event.senderPhone || null,
+        templateName: event.templateName || null,
+        error: event.error || null,
+        payload: event.payload || {},
+        metadata: event.metadata || {},
+        occurredAt: event.occurredAt || new Date()
+      });
+    } catch (error) {
+      console.error('[WhatsApp] Failed to persist event:', error?.message || error);
+    }
+  }
+
+  async postWithRetry(url, payload, config, options = {}) {
+    const maxAttempts = Math.max(1, Math.min(5, Number(options.maxAttempts || 3)));
+    let lastError;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await axios.post(url, payload, config);
+      } catch (error) {
+        lastError = error;
+        const status = error.response?.status;
+        if (attempt >= maxAttempts || !RETRYABLE_STATUSES.has(status)) {
+          throw error;
+        }
+        const retryAfterSeconds = Number.parseInt(error.response?.headers?.['retry-after'], 10);
+        const delay = Number.isFinite(retryAfterSeconds)
+          ? retryAfterSeconds * 1000
+          : Math.min(5000, 250 * (2 ** (attempt - 1)));
+        await sleep(delay);
+      }
+    }
+    throw lastError;
   }
 
   /**
@@ -180,6 +274,28 @@ class WhatsAppService {
         return {
           success: false,
           error: 'Invalid phone number format'
+        };
+      }
+
+      const consent = await this.hasCustomerConsent(tenantId, formattedPhone, {
+        category: options.category || options.messageCategory || 'transactional'
+      });
+      if (!consent.allowed) {
+        await this.recordEvent({
+          tenantId,
+          phoneNumberId: config.phoneNumberId,
+          direction: 'outbound',
+          eventType: 'send_skipped',
+          status: 'skipped',
+          recipientPhone: formattedPhone,
+          templateName,
+          error: consent.reason,
+          campaignId: options.campaignId || null,
+          metadata: { reason: consent.reason, category: options.category || 'transactional', ...(options.metadata || {}) }
+        });
+        return {
+          success: false,
+          error: consent.reason
         };
       }
 
@@ -225,13 +341,13 @@ class WhatsAppService {
         }
       };
 
-      const response = await axios.post(url, payload, {
+      const response = await this.postWithRetry(url, payload, {
         headers: {
           'Authorization': `Bearer ${config.accessToken}`,
           'Content-Type': 'application/json'
         },
         timeout: 10000
-      });
+      }, { maxAttempts: options.maxAttempts || 3 });
 
       console.log('[WhatsApp] Message sent successfully:', {
         tenantId,
@@ -240,11 +356,25 @@ class WhatsAppService {
         messageId: response.data?.messages?.[0]?.id
       });
 
-      return {
+      const result = {
         success: true,
         messageId: response.data?.messages?.[0]?.id,
         data: response.data
       };
+      await this.recordEvent({
+        tenantId,
+        phoneNumberId: config.phoneNumberId,
+        messageId: result.messageId || null,
+        direction: 'outbound',
+        eventType: 'send',
+        status: 'sent',
+        recipientPhone: formattedPhone,
+        templateName,
+        payload: { templateName, language, parameterCount: parameters.length },
+        campaignId: options.campaignId || null,
+        metadata: options.metadata || {}
+      });
+      return result;
 
     } catch (error) {
       const meta = extractMetaGraphError(error);
@@ -274,6 +404,20 @@ class WhatsAppService {
         metaMessage: meta.metaMessage,
         fbtraceId: meta.fbtraceId,
         errorBodyPreview: meta.errorBodyPreview
+      });
+
+      await this.recordEvent({
+        tenantId,
+        phoneNumberId: config?.phoneNumberId || null,
+        direction: 'outbound',
+        eventType: 'send_failed',
+        status: 'failed',
+        recipientPhone: formattedPhone,
+        templateName,
+        error: meta.metaMessage || error.message || 'Failed to send WhatsApp message',
+        payload: { language, parameterCount: parameters.length },
+        campaignId: options.campaignId || null,
+        metadata: { meta, ...(options.metadata || {}) }
       });
 
       // Handle specific error cases
@@ -356,19 +500,30 @@ class WhatsAppService {
         }
       };
 
-      const response = await axios.post(url, payload, {
+      const response = await this.postWithRetry(url, payload, {
         headers: {
           'Authorization': `Bearer ${config.accessToken}`,
           'Content-Type': 'application/json'
         },
         timeout: 10000
-      });
+      }, { maxAttempts: 3 });
 
-      return {
+      const result = {
         success: true,
         messageId: response.data?.messages?.[0]?.id,
         data: response.data
       };
+      await this.recordEvent({
+        tenantId,
+        phoneNumberId: config.phoneNumberId,
+        messageId: result.messageId || null,
+        direction: 'outbound',
+        eventType: 'send',
+        status: 'sent',
+        recipientPhone: formattedPhone,
+        payload: { type: 'text' }
+      });
+      return result;
 
     } catch (error) {
       const meta = extractMetaGraphError(error);
@@ -384,6 +539,17 @@ class WhatsAppService {
         metaMessage: meta.metaMessage,
         fbtraceId: meta.fbtraceId,
         errorBodyPreview: meta.errorBodyPreview
+      });
+      await this.recordEvent({
+        tenantId,
+        phoneNumberId: config?.phoneNumberId || null,
+        direction: 'outbound',
+        eventType: 'send_failed',
+        status: 'failed',
+        recipientPhone: formattedPhone,
+        error: meta.metaMessage || error.message,
+        payload: { type: 'text' },
+        metadata: { meta }
       });
       return {
         success: false,
@@ -477,6 +643,7 @@ class WhatsAppService {
       for (const change of changes) {
         if (change.field === 'messages') {
           const value = change.value;
+          const phoneNumberId = value?.metadata?.phone_number_id || null;
           
           // Handle message status updates
           if (value.statuses) {
@@ -484,9 +651,11 @@ class WhatsAppService {
               results.push({
                 type: 'status',
                 messageId: status.id,
+                phoneNumberId,
                 status: status.status, // sent, delivered, read, failed
                 timestamp: status.timestamp,
-                recipientId: status.recipient_id
+                recipientId: status.recipient_id,
+                payload: status
               });
             }
           }
@@ -497,10 +666,12 @@ class WhatsAppService {
               results.push({
                 type: 'message',
                 messageId: message.id,
+                phoneNumberId,
                 from: message.from,
                 timestamp: message.timestamp,
                 messageType: message.type,
-                text: message.text?.body
+                text: message.text?.body,
+                payload: message
               });
             }
           }

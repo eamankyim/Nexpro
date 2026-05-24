@@ -898,6 +898,7 @@ exports.getWhatsAppSettings = async (req, res, next) => {
 // @access  Private
 exports.updateWhatsAppSettings = async (req, res, next) => {
   try {
+    const { decryptSecret, encryptSecret } = require('../utils/secretCrypto');
     const {
       enabled,
       phoneNumberId,
@@ -906,13 +907,17 @@ exports.updateWhatsAppSettings = async (req, res, next) => {
       webhookVerifyToken,
       templateNamespace
     } = sanitizePayload(req.body);
+    const providedAccessToken = accessToken && accessToken !== '***' ? accessToken : '';
 
     // Get existing settings to preserve access token if not provided
     const existing = await getSettingValue(req.tenantId, 'whatsapp', {});
+    const existingAccessToken = existing.accessToken
+      ? decryptSecret(existing.accessToken, 'WHATSAPP_CREDENTIALS_ENCRYPTION_KEY')
+      : '';
 
     // Validate required fields if enabling
     if (enabled) {
-      const finalAccessToken = accessToken || existing.accessToken;
+      const finalAccessToken = providedAccessToken || existingAccessToken;
       const finalPhoneNumberId = phoneNumberId || existing.phoneNumberId;
 
       if (!finalPhoneNumberId || !finalAccessToken) {
@@ -938,7 +943,9 @@ exports.updateWhatsAppSettings = async (req, res, next) => {
     const whatsappData = {
       enabled: enabled !== undefined ? enabled : existing.enabled || false,
       phoneNumberId: phoneNumberId || existing.phoneNumberId || '',
-      accessToken: accessToken || existing.accessToken || '', // In production, encrypt this
+      accessToken: providedAccessToken
+        ? encryptSecret(providedAccessToken, 'WHATSAPP_CREDENTIALS_ENCRYPTION_KEY')
+        : existing.accessToken || '',
       businessAccountId: businessAccountId || existing.businessAccountId || '',
       webhookVerifyToken: webhookVerifyToken || existing.webhookVerifyToken || '',
       templateNamespace: templateNamespace || existing.templateNamespace || ''
@@ -980,9 +987,11 @@ exports.updateWhatsAppSettings = async (req, res, next) => {
 // @access  Private
 exports.testWhatsAppConnection = async (req, res, next) => {
   try {
+    const { decryptSecret } = require('../utils/secretCrypto');
     const { accessToken, phoneNumberId } = sanitizePayload(req.body);
     const existing = await getSettingValue(req.tenantId, 'whatsapp', {});
-    const finalAccessToken = accessToken || existing.accessToken || '';
+    const providedAccessToken = accessToken && accessToken !== '***' ? accessToken : '';
+    const finalAccessToken = providedAccessToken || (existing.accessToken ? decryptSecret(existing.accessToken, 'WHATSAPP_CREDENTIALS_ENCRYPTION_KEY') : '');
     const finalPhoneNumberId = phoneNumberId || existing.phoneNumberId || '';
 
     if (!finalAccessToken || !finalPhoneNumberId) {

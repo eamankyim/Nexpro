@@ -415,6 +415,14 @@ if (!IS_VERCEL_SERVERLESS) {
       console.error('[Server] Failed to start auto task scheduler service:', error);
     }
     try {
+      require('./services/automationSchedulerService').start();
+      if (config.nodeEnv === 'development') {
+        console.log('[Server] ✅ Automation scheduler service started');
+      }
+    } catch (error) {
+      console.error('[Server] Failed to start automation scheduler service:', error);
+    }
+    try {
       require('./services/recurringJournalSchedulerService').start();
       if (config.nodeEnv === 'development') {
         console.log('[Server] ✅ Recurring journal scheduler service started');

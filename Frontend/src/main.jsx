@@ -11,7 +11,13 @@ if (typeof window !== 'undefined') {
   window.APP_NAME = APP_NAME;
 }
 
-// PWA service worker is registered via PWAUpdatePrompt (prod only)
+// PWA service worker is registered via PWAUpdatePrompt (prod only).
+// In dev, unregister any leftover SW from preview/prod on localhost so it does not serve stale chunks.
+if (import.meta.env.DEV && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then((registrations) => {
+    registrations.forEach((registration) => registration.unregister());
+  });
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {

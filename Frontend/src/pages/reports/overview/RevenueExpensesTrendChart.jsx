@@ -38,7 +38,10 @@ export default function RevenueExpensesTrendChart({ data, emptyMessage = 'No tre
                 tickFormatter={(v) => `${v / 1000}k`}
               />
               <Tooltip
-                formatter={(value, name) => [formatOverviewCurrency(value), name === 'revenue' ? 'Revenue' : 'Expenses']}
+                formatter={(value, _name, { dataKey }) => [
+                  formatOverviewCurrency(value),
+                  dataKey === 'revenue' ? 'Revenue' : dataKey === 'expenses' ? 'Expenses' : _name
+                ]}
                 contentStyle={{ borderRadius: 8, border: '1px solid #e5e7eb' }}
               />
               <Legend wrapperStyle={{ fontSize: 12 }} />

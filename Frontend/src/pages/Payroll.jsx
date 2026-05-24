@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useResponsive } from '../hooks/useResponsive';
+import { useCurrency } from '../hooks/useCurrency';
 // Removed Ant Design imports - using shadcn/ui only
 import { Plus, RefreshCw, Loader2, Currency, Calendar, Users, FileText } from 'lucide-react';
 import dayjs from 'dayjs';
@@ -63,6 +64,7 @@ import {
 import { Separator } from '@/components/ui/separator';
 
 const Payroll = () => {
+  const { formatAmount } = useCurrency();
   const queryClient = useQueryClient();
   const { isMobile } = useResponsive();
   const [runModalVisible, setRunModalVisible] = useState(false);
@@ -161,12 +163,12 @@ const Payroll = () => {
     {
       key: 'totalGross',
       label: 'Gross',
-      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.totalGross || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium">{formatAmount(record?.totalGross)}</span>
     },
     {
       key: 'totalNet',
       label: 'Net',
-      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.totalNet || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium">{formatAmount(record?.totalNet)}</span>
     },
     {
       key: 'status',
@@ -352,13 +354,13 @@ const Payroll = () => {
               </DescriptionItem>
               <DescriptionItem label="Total Employees">{viewingRun.totalEmployees}</DescriptionItem>
               <DescriptionItem label="Total Gross">
-                <strong className="text-base">₵ {parseFloat(viewingRun.totalGross || 0).toFixed(2)}</strong>
+                <strong className="text-base">{formatAmount(viewingRun.totalGross)}</strong>
               </DescriptionItem>
               <DescriptionItem label="Total Tax">
-                ₵ {parseFloat(viewingRun.totalTax || 0).toFixed(2)}
+                {formatAmount(viewingRun.totalTax)}
               </DescriptionItem>
               <DescriptionItem label="Total Net">
-                <strong className="text-base text-green-600">₵ {parseFloat(viewingRun.totalNet || 0).toFixed(2)}</strong>
+                <strong className="text-base text-green-600">{formatAmount(viewingRun.totalNet)}</strong>
               </DescriptionItem>
               {viewingRun.notes && (
                 <DescriptionItem label="Notes">{viewingRun.notes}</DescriptionItem>
@@ -394,7 +396,7 @@ const Payroll = () => {
                 key: 'gross',
                 align: 'right',
                 width: 120,
-                render: (value) => <strong>₵ {parseFloat(value || 0).toFixed(2)}</strong>
+                render: (value) => <strong>{formatAmount(value)}</strong>
               },
               {
                 title: 'Allowances',
@@ -404,9 +406,9 @@ const Payroll = () => {
                 render: (_, entry) => {
                   const totalAllowances = (entry.allowances || []).reduce((sum, a) => sum + parseFloat(a.amount || 0), 0);
                   return totalAllowances > 0 ? (
-                    <span className="text-green-600">+ ₵ {totalAllowances.toFixed(2)}</span>
+                    <span className="text-green-600">+ {formatAmount(totalAllowances)}</span>
                   ) : (
-                    <span className="text-muted-foreground">₵ 0.00</span>
+                    <span className="text-muted-foreground">{formatAmount(0)}</span>
                   );
                 }
               },
@@ -418,9 +420,9 @@ const Payroll = () => {
                 render: (_, entry) => {
                   const totalDeductions = (entry.deductions || []).reduce((sum, d) => sum + parseFloat(d.amount || 0), 0);
                   return totalDeductions > 0 ? (
-                    <span className="text-red-600">- ₵ {totalDeductions.toFixed(2)}</span>
+                    <span className="text-red-600">-{formatAmount(totalDeductions)}</span>
                   ) : (
-                    <span className="text-muted-foreground">₵ 0.00</span>
+                    <span className="text-muted-foreground">{formatAmount(0)}</span>
                   );
                 }
               },
@@ -432,9 +434,9 @@ const Payroll = () => {
                 render: (_, entry) => {
                   const totalTaxes = (entry.taxes || []).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
                   return totalTaxes > 0 ? (
-                    <span className="text-orange-600">₵ {totalTaxes.toFixed(2)}</span>
+                    <span className="text-orange-600">{formatAmount(totalTaxes)}</span>
                   ) : (
-                    <span className="text-muted-foreground">₵ 0.00</span>
+                    <span className="text-muted-foreground">{formatAmount(0)}</span>
                   );
                 }
               },
@@ -447,7 +449,7 @@ const Payroll = () => {
                 fixed: 'right',
                 render: (value) => (
                   <strong className="text-base text-green-600">
-                    ₵ {parseFloat(value || 0).toFixed(2)}
+                    {formatAmount(value)}
                   </strong>
                 )
               }
@@ -471,7 +473,7 @@ const Payroll = () => {
                       <strong>Total ({pageData.length} employees)</strong>
                     </TableCell>
                     <TableCell style={{ textAlign: 'right' }}>
-                      <strong>₵ {totalGross.toFixed(2)}</strong>
+                      <strong>{formatAmount(totalGross)}</strong>
                     </TableCell>
                     <TableCell style={{ textAlign: 'right' }}>
                       <span className="text-muted-foreground">—</span>
@@ -480,11 +482,11 @@ const Payroll = () => {
                       <span className="text-muted-foreground">—</span>
                     </TableCell>
                     <TableCell style={{ textAlign: 'right' }}>
-                      <strong className="text-orange-600">₵ {totalTaxes.toFixed(2)}</strong>
+                      <strong className="text-orange-600">{formatAmount(totalTaxes)}</strong>
                     </TableCell>
                     <TableCell style={{ textAlign: 'right' }}>
                       <strong className="text-base text-green-600">
-                        ₵ {totalNet.toFixed(2)}
+                        {formatAmount(totalNet)}
                       </strong>
                     </TableCell>
                   </>

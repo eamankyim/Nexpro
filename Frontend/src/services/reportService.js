@@ -123,11 +123,11 @@ const reportService = {
     return scopedGet('/reports/vat', params);
   },
 
-  generateAIAnalysis: async (reportData, options = {}) => {
+  generateAIAnalysis: async (reportData, options = {}, requestConfig = {}) => {
     return api.post('/reports/ai-analysis', {
       reportData,
       options,
-    });
+    }, requestConfig);
   },
 
   getKpiSummary: async (startDate = null, endDate = null) => {

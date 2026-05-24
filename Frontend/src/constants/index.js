@@ -46,38 +46,11 @@ export const QUERY_CACHE = {
   CACHE_TIME: 10 * 60 * 1000, // 10 minutes cache time
 };
 
-// Default tenant names (placeholders when business not set up)
-export const DEFAULT_TENANT_NAMES = ['My Workspace', 'My Business'];
-
-/** Matches "Eric's Business", "Eric's Workspace" etc. - treated as placeholder, not real business name */
-const PLACEHOLDER_PATTERN = /^.+'s (Business|Workspace)$/i;
-
-/**
- * Check if a name is a placeholder (not a real business name set by the user).
- */
-export const isPlaceholderBusinessName = (name) => {
-  if (!name || !name.trim()) return true;
-  if (DEFAULT_TENANT_NAMES.includes(name.trim())) return true;
-  return PLACEHOLDER_PATTERN.test(name.trim());
-};
-
-/**
- * Get display name for business. Uses the business name set during onboarding everywhere.
- * Avoids "Workspace" or "Eric's Business" - shows actual business name when set.
- * @param {string} tenantName - activeTenant?.name
- * @param {string} [organizationName] - organization?.name (from Settings)
- * @param {string} [fallback] - Fallback when no business name (default: 'your business')
- * @returns {string}
- */
-export const getWorkspaceDisplayName = (tenantName, organizationName, fallback = 'your business') => {
-  const tenant = (tenantName || '').trim();
-  const org = (organizationName || '').trim();
-
-  if (tenant && !isPlaceholderBusinessName(tenant)) return tenant;
-  if (org && !isPlaceholderBusinessName(org)) return org;
-
-  return fallback;
-};
+export {
+  DEFAULT_TENANT_NAMES,
+  isPlaceholderBusinessName,
+  getWorkspaceDisplayName,
+} from './tenantPlaceholders.js';
 
 // Business Types
 export const BUSINESS_TYPES = {
@@ -317,6 +290,13 @@ export const STATUS_CHIP_CLASSES = {
   completed: CHIP_GREEN,
   pending: CHIP_ORANGE,
   partially_paid: CHIP_ORANGE,
+  // Task statuses and sources
+  todo: CHIP_GRAY,
+  task_source_lead: CHIP_PURPLE,
+  task_source_invoice: CHIP_BLUE,
+  task_source_quote: CHIP_PURPLE,
+  task_source_stock: CHIP_GREEN,
+  task_source_manual: CHIP_GRAY,
   // Payroll run statuses (approved, paid same as expense)
   // Employee statuses
   active: CHIP_BLUE,
@@ -505,6 +485,7 @@ export const SEARCH_PLACEHOLDERS = {
   PAYROLL: 'Employee name or period...',
   ACCOUNTING: 'Account, code, or entry...',
   REPORTS: 'Report name or type...',
+  TASKS: 'Title, description, or assignee...',
   SHOPS: 'Name, code, or location...',
   PHARMACIES: 'Name, code, or pharmacist...',
   PRODUCTS: 'Name, SKU, or barcode...',

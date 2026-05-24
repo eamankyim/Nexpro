@@ -71,6 +71,9 @@ const createExpenseActivitiesTable = require('./create-expense-activities-table'
 const createCustomerActivitiesTable = require('./create-customer-activities-table');
 const createEquipmentTables = require('./create-equipment-tables');
 const seedDefaultEquipmentCategories = require('./seed-default-equipment-categories');
+const addCommunicationConsentAndWhatsAppEvents = require('./add-communication-consent-and-whatsapp-events');
+const addCustomerDateOfBirth = require('./add-customer-date-of-birth');
+const createMarketingCampaigns = require('./create-marketing-campaigns');
 
 const migrate = async () => {
   try {
@@ -217,6 +220,15 @@ const migrate = async () => {
 
     // Automations V1 tables
     await createAutomationsTables.up({ closeConnection: false });
+
+    // Customer communication consent and WhatsApp webhook/send event history
+    await addCommunicationConsentAndWhatsAppEvents.up({ closeConnection: false });
+
+    // Customer date of birth for birthday automations
+    await addCustomerDateOfBirth.up({ closeConnection: false });
+
+    // Persisted marketing campaigns and broadcast history
+    await createMarketingCampaigns.up({ closeConnection: false });
 
     // Normalize all tenant plan values to canonical trial
     await normalizeTenantPlansToTrial.up({ closeConnection: false });

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
 import { useStudioLocationOptional } from '../context/StudioLocationContext';
-import { getWorkspaceDisplayName } from '../constants';
+import { getWorkspaceDisplayName } from '../constants/tenantPlaceholders';
 
 /**
  * Display name for the active workspace scope: shop or studio when selected,

@@ -1,40 +1,33 @@
-import { useMemo, useCallback, useEffect, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { z } from 'zod';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Megaphone, Loader2, Info } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  Loader2,
+  Megaphone,
+  Plus,
+  Send,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import marketingService from '../services/marketingService';
-import { showSuccess, showError, handleApiError } from '../utils/toast';
+import { handleApiError, showError, showSuccess } from '../utils/toast';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { cn } from '@/lib/utils';
 import {
   Table,
   TableBody,
@@ -43,71 +36,20 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
 
 const CARD_BORDER = { border: '1px solid #e5e7eb' };
+const DEFAULT_CAMPAIGN_PAGE_SIZE = 10;
 
-const marketingFormSchema = z
-  .object({
-    channelEmail: z.boolean(),
-    channelSms: z.boolean(),
-    channelWhatsapp: z.boolean(),
-    activeOnly: z.boolean(),
-    dryRun: z.boolean(),
-    subject: z.string(),
-    emailBody: z.string(),
-    smsBody: z.string(),
-    whatsappTemplateName: z.string(),
-    whatsappLanguage: z.string(),
-    whatsappParamsText: z.string(),
-    whatsappPrependCustomerName: z.boolean(),
-  })
-  .superRefine((data, ctx) => {
-    const any = data.channelEmail || data.channelSms || data.channelWhatsapp;
-    if (!any) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Select at least one channel',
-        path: ['channelEmail'],
-      });
-    }
-    if (data.channelEmail) {
-      if (!data.subject?.trim()) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Subject is required',
-          path: ['subject'],
-        });
-      }
-      if (!data.emailBody?.trim()) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'Email body is required',
-          path: ['emailBody'],
-        });
-      }
-    }
-    if (data.channelSms && !data.smsBody?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'SMS text is required',
-        path: ['smsBody'],
-      });
-    }
-    if (data.channelWhatsapp && !data.whatsappTemplateName?.trim()) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Template name is required',
-        path: ['whatsappTemplateName'],
-      });
-    }
-  });
-
-const defaultValues = {
-  channelEmail: false,
-  channelSms: false,
-  channelWhatsapp: false,
+const DEFAULT_FORM = {
+  name: '',
+  goal: 'Promotion',
   activeOnly: true,
-  dryRun: false,
+  marketingConsentOnly: false,
+  lastPurchaseWindowDays: '',
+  owingOnly: false,
+  inactiveDays: '',
+  channels: [],
   subject: '',
   emailBody: '',
   smsBody: '',
@@ -115,759 +57,1014 @@ const defaultValues = {
   whatsappLanguage: 'en',
   whatsappParamsText: '',
   whatsappPrependCustomerName: false,
+  customerIds: undefined,
 };
 
-export default function Marketing() {
-  const location = useLocation();
+const STEPS = ['Campaign details', 'Audience', 'Message', 'Review'];
+const STATUS_STYLES = {
+  draft: 'bg-slate-100 text-slate-700 border-slate-200',
+  scheduled: 'bg-amber-100 text-amber-800 border-amber-200',
+  sent: 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  failed: 'bg-red-100 text-red-800 border-red-200',
+};
+
+function PageHeader({ title, description, actions }) {
+  return (
+    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <div>
+        <div className="flex items-center gap-2">
+          <Megaphone className="h-8 w-8 shrink-0" style={{ color: 'var(--color-primary)' }} aria-hidden />
+          <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold text-foreground">{title}</h1>
+        </div>
+        <p className="text-muted-foreground mt-2 text-sm md:text-base max-w-3xl">{description}</p>
+      </div>
+      {actions ? <div className="flex flex-wrap gap-2">{actions}</div> : null}
+    </div>
+  );
+}
+
+function getDefaultForm() {
+  return {
+    ...DEFAULT_FORM,
+    channels: [],
+    customerIds: undefined,
+  };
+}
+
+function StatusBadge({ status }) {
+  return (
+    <Badge variant="outline" className={STATUS_STYLES[status] || STATUS_STYLES.draft}>
+      {status || 'draft'}
+    </Badge>
+  );
+}
+
+function channelsLabel(channels = []) {
+  return Array.isArray(channels) && channels.length > 0 ? channels.join(', ') : 'No channels';
+}
+
+function formatDate(value) {
+  if (!value) return 'Not set';
+  return new Date(value).toLocaleString();
+}
+
+function statValue(campaign, key) {
+  const stats = campaign?.stats || {};
+  if (typeof stats[key] === 'number') return stats[key];
+  return 0;
+}
+
+function toCampaignPayload(form) {
+  const whatsappParameters = form.whatsappParamsText
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  return {
+    name: form.name.trim(),
+    goal: form.goal.trim() || null,
+    channels: form.channels,
+    audienceFilter: {
+      activeOnly: form.activeOnly,
+      marketingConsentOnly: form.marketingConsentOnly,
+      lastPurchaseWindowDays: form.lastPurchaseWindowDays ? Number(form.lastPurchaseWindowDays) : null,
+      owingOnly: form.owingOnly,
+      inactiveDays: form.inactiveDays ? Number(form.inactiveDays) : null,
+      customerIds: form.customerIds,
+    },
+    messageContent: {
+      subject: form.subject.trim(),
+      emailBody: form.emailBody,
+      smsBody: form.smsBody.trim(),
+      whatsappTemplateName: form.whatsappTemplateName.trim(),
+      whatsappLanguage: form.whatsappLanguage.trim() || 'en',
+      whatsappParameters,
+      whatsappPrependCustomerName: form.whatsappPrependCustomerName,
+    },
+  };
+}
+
+function formFromCampaign(campaign) {
+  const audience = campaign?.audienceFilter || {};
+  const message = campaign?.messageContent || {};
+  return {
+    ...DEFAULT_FORM,
+    name: campaign?.name || '',
+    goal: campaign?.goal || '',
+    activeOnly: audience.activeOnly !== false,
+    marketingConsentOnly: Boolean(audience.marketingConsentOnly),
+    lastPurchaseWindowDays: audience.lastPurchaseWindowDays || '',
+    owingOnly: Boolean(audience.owingOnly),
+    inactiveDays: audience.inactiveDays || '',
+    customerIds: audience.customerIds,
+    channels: Array.isArray(campaign?.channels) ? campaign.channels : [],
+    subject: message.subject || '',
+    emailBody: message.emailBody || '',
+    smsBody: message.smsBody || '',
+    whatsappTemplateName: message.whatsappTemplateName || '',
+    whatsappLanguage: message.whatsappLanguage || 'en',
+    whatsappParamsText: Array.isArray(message.whatsappParameters) ? message.whatsappParameters.join('\n') : '',
+    whatsappPrependCustomerName: Boolean(message.whatsappPrependCustomerName),
+  };
+}
+
+function validateStep(step, form) {
+  if (step === 0) {
+    if (!form.name.trim()) return 'Campaign name is required';
+  }
+  if (step === 2 || step === 3) {
+    if (form.channels.length === 0) return 'Select at least one channel';
+    if (form.channels.includes('email') && (!form.subject.trim() || !form.emailBody.trim())) {
+      return 'Email subject and message are required';
+    }
+    if (form.channels.includes('sms') && !form.smsBody.trim()) return 'SMS message is required';
+    if (form.channels.includes('whatsapp') && !form.whatsappTemplateName.trim()) {
+      return 'WhatsApp template name is required';
+    }
+  }
+  return null;
+}
+
+function MarketingOverview() {
+  const { activeTenantId } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [campaignPage, setCampaignPage] = useState(1);
+  const campaignModal = searchParams.get('campaign');
+  const editCampaignId = searchParams.get('id');
+  const isCampaignDialogOpen = campaignModal === 'new' || (campaignModal === 'edit' && Boolean(editCampaignId));
+  const campaignDialogMode = campaignModal === 'edit' && editCampaignId ? 'edit' : 'create';
+  const { data, isLoading } = useQuery({
+    queryKey: ['marketing', 'overview', activeTenantId],
+    queryFn: () => marketingService.getOverview(),
+    enabled: !!activeTenantId,
+  });
+  const { data: campaignResponse, isLoading: campaignsLoading } = useQuery({
+    queryKey: ['marketing', 'campaigns', 'overview', activeTenantId, campaignPage],
+    queryFn: () => marketingService.listCampaigns({ page: campaignPage, limit: DEFAULT_CAMPAIGN_PAGE_SIZE }),
+    enabled: !!activeTenantId,
+  });
+  const overview = data?.data || {};
+  const stats = overview.stats || {};
+  const campaignData = campaignResponse?.data || {};
+  const campaigns = Array.isArray(campaignData.campaigns) ? campaignData.campaigns : [];
+
+  const openCreateDialog = useCallback(() => {
+    setSearchParams((params) => {
+      const next = new URLSearchParams(params);
+      next.set('campaign', 'new');
+      next.delete('id');
+      return next;
+    });
+  }, [setSearchParams]);
+
+  const closeCampaignDialog = useCallback(() => {
+    setSearchParams((params) => {
+      const next = new URLSearchParams(params);
+      next.delete('campaign');
+      next.delete('id');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const handleCampaignComplete = useCallback(() => {
+    setCampaignPage(1);
+    closeCampaignDialog();
+  }, [closeCampaignDialog]);
+
+  return (
+    <div className="w-full space-y-4 md:space-y-6" data-tour="marketing-main">
+      <PageHeader
+        title="Marketing"
+        description="Plan, send, and track consent-aware customer campaigns across email, SMS, and WhatsApp."
+        actions={
+          <>
+            <Button type="button" className="bg-brand hover:bg-brand-dark" onClick={openCreateDialog}>
+              <Plus className="mr-2 h-4 w-4" />
+              New campaign
+            </Button>
+          </>
+        }
+      />
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+        {[
+          ['Total campaigns', stats.total || 0],
+          ['Drafts', stats.draft || 0],
+          ['Scheduled', stats.scheduled || 0],
+          ['Sent', stats.sent || 0],
+        ].map(([label, value]) => (
+          <Card key={label} style={CARD_BORDER}>
+            <CardContent className="p-4">
+              <p className="text-xs text-muted-foreground">{label}</p>
+              <p className="mt-2 text-2xl font-semibold">{isLoading ? '…' : value}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <CampaignListCard
+        title="All campaigns"
+        description="Every saved broadcast and draft, newest first."
+        campaigns={campaigns}
+        pagination={campaignData}
+        isLoading={campaignsLoading}
+        emptyMessage="Create a draft, preview your audience, then send when ready."
+        onPageChange={setCampaignPage}
+      />
+
+      <CreateCampaignDialog
+        open={isCampaignDialogOpen}
+        mode={campaignDialogMode}
+        campaignId={campaignDialogMode === 'edit' ? editCampaignId : undefined}
+        onOpenChange={(open) => {
+          if (!open) closeCampaignDialog();
+        }}
+        onComplete={handleCampaignComplete}
+      />
+    </div>
+  );
+}
+
+function CampaignTable({ campaigns }) {
+  return (
+    <div className="rounded-md border border-border overflow-hidden">
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead>Name</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead className="hidden md:table-cell">Channels</TableHead>
+            <TableHead className="hidden lg:table-cell">Sent</TableHead>
+            <TableHead className="text-right">Updated</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {campaigns.map((campaign) => (
+            <TableRow key={campaign.id}>
+              <TableCell>
+                <Link to={`/marketing/campaigns/${campaign.id}`} className="font-medium text-foreground hover:underline">
+                  {campaign.name}
+                </Link>
+                {campaign.goal ? <div className="text-xs text-muted-foreground">{campaign.goal}</div> : null}
+              </TableCell>
+              <TableCell><StatusBadge status={campaign.status} /></TableCell>
+              <TableCell className="hidden md:table-cell capitalize">{channelsLabel(campaign.channels)}</TableCell>
+              <TableCell className="hidden lg:table-cell">{statValue(campaign, 'totalSent')}</TableCell>
+              <TableCell className="text-right text-sm text-muted-foreground">{formatDate(campaign.updatedAt)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function CampaignPagination({ pagination = {}, isLoading, onPageChange }) {
+  const total = Number(pagination.total || 0);
+  const limit = Number(pagination.limit || DEFAULT_CAMPAIGN_PAGE_SIZE);
+  const totalPages = Math.max(Number(pagination.totalPages || Math.ceil(total / limit) || 1), 1);
+  const currentPage = Math.min(Math.max(Number(pagination.currentPage || 1), 1), totalPages);
+  const start = total > 0 ? (currentPage - 1) * limit + 1 : 0;
+  const end = total > 0 ? Math.min(currentPage * limit, total) : 0;
+
+  if (total === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-3 pt-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+      <span>
+        Showing {start}-{end} of {total} campaigns
+      </span>
+      <div className="flex items-center justify-end gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onPageChange(currentPage - 1)}
+          disabled={isLoading || currentPage <= 1}
+        >
+          Previous
+        </Button>
+        <span className="px-2 text-xs">
+          Page {currentPage} of {totalPages}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onPageChange(currentPage + 1)}
+          disabled={isLoading || currentPage >= totalPages}
+        >
+          Next
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function CampaignListCard({
+  title,
+  description,
+  campaigns,
+  pagination,
+  isLoading,
+  emptyTitle = 'No campaigns yet',
+  emptyMessage,
+  toolbar,
+  onPageChange,
+}) {
+  return (
+    <Card style={CARD_BORDER}>
+      <CardHeader className="pb-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="text-base">{title}</CardTitle>
+            {description ? <CardDescription>{description}</CardDescription> : null}
+          </div>
+          {toolbar}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading campaigns…</p>
+        ) : campaigns.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border p-8 text-center">
+            <p className="font-medium">{emptyTitle}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{emptyMessage}</p>
+          </div>
+        ) : (
+          <>
+            <CampaignTable campaigns={campaigns} />
+            <CampaignPagination pagination={pagination} isLoading={isLoading} onPageChange={onPageChange} />
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CampaignList() {
+  const { activeTenantId } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [status, setStatus] = useState('');
+  const [page, setPage] = useState(1);
+  const campaignModal = searchParams.get('campaign');
+  const editCampaignId = searchParams.get('id');
+  const isCampaignDialogOpen = campaignModal === 'new' || (campaignModal === 'edit' && Boolean(editCampaignId));
+  const campaignDialogMode = campaignModal === 'edit' && editCampaignId ? 'edit' : 'create';
+  const { data, isLoading } = useQuery({
+    queryKey: ['marketing', 'campaigns', activeTenantId, status, page],
+    queryFn: () => marketingService.listCampaigns({
+      ...(status ? { status } : {}),
+      page,
+      limit: DEFAULT_CAMPAIGN_PAGE_SIZE,
+    }),
+    enabled: !!activeTenantId,
+  });
+  const campaignData = data?.data || {};
+  const campaigns = campaignData.campaigns || [];
+
+  const handleStatusChange = useCallback((event) => {
+    setStatus(event.target.value);
+    setPage(1);
+  }, []);
+
+  const openCreateDialog = useCallback(() => {
+    setSearchParams((params) => {
+      const next = new URLSearchParams(params);
+      next.set('campaign', 'new');
+      next.delete('id');
+      return next;
+    });
+  }, [setSearchParams]);
+
+  const closeCampaignDialog = useCallback(() => {
+    setSearchParams((params) => {
+      const next = new URLSearchParams(params);
+      next.delete('campaign');
+      next.delete('id');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const handleCampaignComplete = useCallback(() => {
+    setPage(1);
+    closeCampaignDialog();
+  }, [closeCampaignDialog]);
+
+  return (
+    <div className="w-full space-y-4 md:space-y-6">
+      <PageHeader
+        title="Campaigns"
+        description="Browse drafts, scheduled campaigns, sent history, and failed sends."
+        actions={
+          <>
+            <Button asChild variant="outline">
+              <Link to="/marketing">Overview</Link>
+            </Button>
+            <Button type="button" className="bg-brand hover:bg-brand-dark" onClick={openCreateDialog}>
+              <Plus className="mr-2 h-4 w-4" />
+              New campaign
+            </Button>
+          </>
+        }
+      />
+
+      <CampaignListCard
+        title="All campaigns"
+        description="Browse every campaign in this workspace."
+        campaigns={campaigns}
+        pagination={campaignData}
+        isLoading={isLoading}
+        emptyTitle="No campaigns match this view"
+        emptyMessage="No campaigns match this view."
+        onPageChange={setPage}
+        toolbar={(
+          <select
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            value={status}
+            onChange={handleStatusChange}
+          >
+            <option value="">All statuses</option>
+            <option value="draft">Draft</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="sent">Sent</option>
+            <option value="failed">Failed</option>
+          </select>
+        )}
+      />
+
+      <CreateCampaignDialog
+        open={isCampaignDialogOpen}
+        mode={campaignDialogMode}
+        campaignId={campaignDialogMode === 'edit' ? editCampaignId : undefined}
+        onOpenChange={(open) => {
+          if (!open) closeCampaignDialog();
+        }}
+        onComplete={handleCampaignComplete}
+      />
+    </div>
+  );
+}
+
+function ChannelToggle({ channel, label, available, form, setForm }) {
+  const checked = form.channels.includes(channel);
+  return (
+    <label className="flex items-start gap-3 rounded-md border border-border p-3">
+      <Checkbox
+        className="mt-0.5"
+        checked={checked}
+        disabled={!available}
+        onCheckedChange={(value) => {
+          setForm((prev) => ({
+            ...prev,
+            channels: value
+              ? [...new Set([...prev.channels, channel])]
+              : prev.channels.filter((item) => item !== channel),
+          }));
+        }}
+      />
+      <span>
+        <span className="block font-medium">{label}</span>
+        {!available ? <span className="text-xs text-muted-foreground">Configure this channel in Settings first.</span> : null}
+      </span>
+    </label>
+  );
+}
+
+function CampaignWizardContent({ campaignId, mode = 'create', onCancel, onComplete }) {
+  const id = campaignId;
+  const isEdit = mode === 'edit' && Boolean(id);
   const { activeTenantId } = useAuth();
   const queryClient = useQueryClient();
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [pendingPayload, setPendingPayload] = useState(null);
-  const [lastResult, setLastResult] = useState(null);
+  const [step, setStep] = useState(0);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [manualSelection, setManualSelection] = useState(false);
+  const [form, setForm] = useState(() => getDefaultForm());
 
-  const form = useForm({
-    resolver: zodResolver(marketingFormSchema),
-    defaultValues,
+  const { data: campaignResponse, isLoading: campaignLoading } = useQuery({
+    queryKey: ['marketing', 'campaign', activeTenantId, id],
+    queryFn: () => marketingService.getCampaign(id),
+    enabled: !!activeTenantId && isEdit && !!id,
   });
 
-  const activeOnly = form.watch('activeOnly');
-  const channelEmail = form.watch('channelEmail');
-  const channelSms = form.watch('channelSms');
-  const channelWhatsapp = form.watch('channelWhatsapp');
+  useEffect(() => {
+    setStep(0);
+    setSelectedIds(new Set());
+    setManualSelection(false);
+    setForm(getDefaultForm());
+  }, [id, isEdit]);
 
-  const { data: capResponse, isLoading: capLoading } = useQuery({
+  useEffect(() => {
+    if (campaignResponse?.data) {
+      const next = formFromCampaign(campaignResponse.data);
+      setForm(next);
+      setManualSelection(Array.isArray(next.customerIds) && next.customerIds.length > 0);
+      setSelectedIds(new Set(next.customerIds || []));
+    }
+  }, [campaignResponse]);
+
+  const previewParams = useMemo(() => ({
+    activeOnly: form.activeOnly ? 'true' : 'false',
+    marketingConsentOnly: form.marketingConsentOnly ? 'true' : 'false',
+    lastPurchaseWindowDays: form.lastPurchaseWindowDays || undefined,
+    owingOnly: form.owingOnly ? 'true' : undefined,
+    inactiveDays: form.inactiveDays || undefined,
+    channels: form.channels,
+    customerIds: manualSelection ? Array.from(selectedIds) : undefined,
+  }), [form.activeOnly, form.marketingConsentOnly, form.lastPurchaseWindowDays, form.owingOnly, form.inactiveDays, form.channels, manualSelection, selectedIds]);
+
+  const { data: previewResponse, isLoading: previewLoading } = useQuery({
+    queryKey: ['marketing', 'preview', activeTenantId, previewParams],
+    queryFn: () => marketingService.getPreview(previewParams),
+    enabled: !!activeTenantId,
+  });
+
+  const { data: capResponse } = useQuery({
     queryKey: ['marketing', 'capabilities', activeTenantId],
     queryFn: () => marketingService.getCapabilities(),
     enabled: !!activeTenantId,
   });
 
-  const { data: previewResponse, isLoading: previewLoading } = useQuery({
-    queryKey: ['marketing', 'preview', activeTenantId, activeOnly],
-    queryFn: () =>
-      marketingService.getPreview({ activeOnly: activeOnly ? 'true' : 'false' }),
-    enabled: !!activeTenantId,
-  });
-
-  const caps = capResponse?.data || {};
   const preview = previewResponse?.data || {};
-  const contacts = useMemo(() => (Array.isArray(preview.contacts) ? preview.contacts : []), [preview.contacts]);
-
-  /** Channels that are configured but not yet marked verified (first-time or after config change). */
-  const unverifiedChannelHints = useMemo(() => {
-    const items = [];
-    if (caps.email?.available && caps.email?.verified !== true) {
-      items.push({
-        key: 'email',
-        label: 'Email',
-        to: '/settings?tab=integration&subtab=email',
-      });
-    }
-    if (caps.sms?.available && caps.sms?.verified !== true) {
-      items.push({
-        key: 'sms',
-        label: 'SMS',
-        to: '/settings?tab=integration&subtab=sms',
-      });
-    }
-    if (caps.whatsapp?.available && caps.whatsapp?.verified !== true) {
-      items.push({
-        key: 'whatsapp',
-        label: 'WhatsApp',
-        to: '/settings?tab=integration&subtab=whatsapp',
-      });
-    }
-    return items;
-  }, [caps]);
-
-  const contactIdsFingerprint = useMemo(() => contacts.map((c) => c.id).join('|'), [contacts]);
+  const contacts = Array.isArray(preview.contacts) ? preview.contacts : [];
+  const caps = capResponse?.data || {};
 
   useEffect(() => {
-    setSelectedIds(new Set(contacts.map((c) => c.id)));
-  }, [contactIdsFingerprint]);
+    if (!manualSelection && contacts.length > 0) {
+      setSelectedIds(new Set(contacts.map((contact) => contact.id)));
+    }
+  }, [contacts, manualSelection]);
 
-  const broadcastMutation = useMutation({
-    mutationFn: (body) => marketingService.postBroadcast(body),
-    onSuccess: (res) => {
-      setLastResult(res?.data ?? null);
+  const saveMutation = useMutation({
+    mutationFn: (payload) => isEdit ? marketingService.updateCampaign(id, payload) : marketingService.createCampaign(payload),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['marketing'] });
-      if (res?.data?.dryRun) {
-        showSuccess('Dry run complete — no messages were sent');
-      } else {
-        showSuccess('Broadcast finished');
-      }
+      showSuccess('Campaign draft saved');
+      onComplete?.();
     },
-    onError: (err) => handleApiError(err, { context: 'Marketing broadcast' }),
+    onError: (err) => handleApiError(err, { context: 'Save campaign' }),
   });
 
-  const buildPayload = useCallback(
-    (values) => {
-      const channels = [];
-      if (values.channelEmail) channels.push('email');
-      if (values.channelSms) channels.push('sms');
-      if (values.channelWhatsapp) channels.push('whatsapp');
-      const whatsappParameters = values.whatsappParamsText
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean);
+  const sendMutation = useMutation({
+    mutationFn: async () => {
       const payload = {
-        channels,
-        activeOnly: values.activeOnly,
-        dryRun: values.dryRun,
-        subject: values.subject?.trim() || undefined,
-        emailBody: values.emailBody || undefined,
-        smsBody: values.smsBody?.trim() || undefined,
-        whatsappTemplateName: values.whatsappTemplateName?.trim() || undefined,
-        whatsappLanguage: values.whatsappLanguage?.trim() || 'en',
-        whatsappParameters,
-        whatsappPrependCustomerName: values.whatsappPrependCustomerName,
+        ...toCampaignPayload({
+          ...form,
+          customerIds: manualSelection ? Array.from(selectedIds) : undefined,
+        }),
       };
-      const allSelected =
-        contacts.length > 0 &&
-        selectedIds.size === contacts.length &&
-        contacts.every((c) => selectedIds.has(c.id));
-      if (!allSelected && selectedIds.size > 0) {
-        payload.customerIds = Array.from(selectedIds);
-      }
-      return payload;
+      const saved = isEdit
+        ? await marketingService.updateCampaign(id, payload)
+        : await marketingService.createCampaign(payload);
+      return marketingService.sendCampaign(saved.data.id);
     },
-    [contacts, selectedIds]
-  );
-
-  const validateAgainstCapabilities = useCallback(
-    (values) => {
-      if (values.channelEmail && !caps.email?.available) {
-        showError('Email is not configured for this workspace');
-        return false;
-      }
-      if (values.channelSms && !caps.sms?.available) {
-        showError('SMS is not configured for this workspace');
-        return false;
-      }
-      if (values.channelWhatsapp && !caps.whatsapp?.available) {
-        showError('WhatsApp is not configured for this workspace');
-        return false;
-      }
-      return true;
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['marketing'] });
+      showSuccess('Campaign sent');
+      onComplete?.();
     },
-    [caps]
-  );
+    onError: (err) => handleApiError(err, { context: 'Send campaign' }),
+  });
 
-  const onValid = useCallback(
-    (values) => {
-      if (!validateAgainstCapabilities(values)) return;
-      if (contacts.length === 0) {
-        showError('No contacts in this audience. Add customers or turn off “Active customers only”.');
-        return;
-      }
-      if (selectedIds.size === 0) {
-        showError('Select at least one contact');
-        return;
-      }
-      const payload = buildPayload(values);
-      if (values.dryRun) {
-        broadcastMutation.mutate(payload);
-        return;
-      }
-      setPendingPayload(payload);
-      setConfirmOpen(true);
-    },
-    [validateAgainstCapabilities, buildPayload, broadcastMutation, contacts.length, selectedIds.size]
-  );
+  const selectedCount = manualSelection ? selectedIds.size : contacts.length;
+  const totalEligible = form.channels.reduce((sum, channel) => sum + Number(preview.eligible?.[channel] || 0), 0);
 
-  const handleConfirmSend = useCallback(() => {
-    if (pendingPayload) {
-      broadcastMutation.mutate(pendingPayload);
-    }
-    setConfirmOpen(false);
-    setPendingPayload(null);
-  }, [pendingPayload, broadcastMutation]);
-
-  const loading = capLoading || previewLoading;
-
-  const reachSummary = useMemo(() => {
-    if (loading) return null;
-    const parts = [];
-    if (preview.totalInWorkspace != null) parts.push(`${preview.totalInWorkspace} customers`);
-    if (preview.batchSize != null) {
-      parts.push(
-        `${preview.batchSize} in send batch (max ${preview.maxRecipients ?? 500})`
-      );
-    }
-    parts.push(`${preview.withEmail ?? 0} with email`);
-    parts.push(`${preview.withSmsPhone ?? 0} with phone`);
-    if (contacts.length > 0) {
-      parts.push(`${selectedIds.size} selected for send`);
-    }
-    return parts.join(' · ');
-  }, [preview, loading, contacts.length, selectedIds.size]);
-
-  const allContactsSelected =
-    contacts.length > 0 && selectedIds.size === contacts.length;
-  const someContactsSelected = selectedIds.size > 0 && !allContactsSelected;
-
-  const toggleContactSelected = useCallback((id) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  const setField = useCallback((field, value) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
   }, []);
 
-  const setSelectAllContacts = useCallback((selectAll) => {
-    if (selectAll) {
-      setSelectedIds(new Set(contacts.map((c) => c.id)));
-    } else {
-      setSelectedIds(new Set());
+  const handleNext = () => {
+    const error = validateStep(step, form);
+    if (error) {
+      showError(error);
+      return;
     }
-  }, [contacts]);
+    setStep((prev) => Math.min(prev + 1, STEPS.length - 1));
+  };
 
-  const composeCardCount =
-    (channelEmail ? 1 : 0) + (channelSms ? 1 : 0) + (channelWhatsapp ? 1 : 0);
-  const whatsappAloneWide = channelWhatsapp && !channelEmail && !channelSms;
+  const saveDraft = () => {
+    const error = validateStep(0, form);
+    if (error) {
+      showError(error);
+      return;
+    }
+    saveMutation.mutate(toCampaignPayload({
+      ...form,
+      customerIds: manualSelection ? Array.from(selectedIds) : undefined,
+    }));
+  };
 
-  useEffect(() => {
-    const prefill = location.state?.prefill;
-    if (!prefill || typeof prefill !== 'object') return;
-    form.reset({
-      ...defaultValues,
-      ...prefill,
-    });
-  }, [location.state, form]);
+  const sendNow = () => {
+    const error = validateStep(3, form);
+    if (error) {
+      showError(error);
+      return;
+    }
+    if (selectedCount === 0) {
+      showError('Select at least one recipient');
+      return;
+    }
+    sendMutation.mutate();
+  };
+
+  if (campaignLoading) {
+    return <p className="text-sm text-muted-foreground">Loading campaign…</p>;
+  }
 
   return (
-    <div className="w-full space-y-4 md:space-y-6" data-tour="marketing-main">
-      <div className="mb-2 md:mb-0">
-        <div className="flex items-center gap-2">
-          <Megaphone className="h-8 w-8 shrink-0" style={{ color: 'var(--color-primary)' }} aria-hidden />
-          <h1 className="text-2xl md:text-3xl lg:text-4xl font-bold text-foreground">Marketing</h1>
-        </div>
-        <p className="text-muted-foreground mt-2 text-sm md:text-base max-w-3xl">
-          Bulk message customers. Configure channels in Settings. WhatsApp uses Meta-approved templates only.
-        </p>
-      </div>
-
-      {unverifiedChannelHints.length > 0 && (
-        <Alert className="border-amber-200 bg-amber-50/80 dark:bg-amber-950/20 dark:border-amber-900">
-          <Info className="h-4 w-4 text-amber-800 dark:text-amber-200" />
-          <AlertTitle className="text-amber-900 dark:text-amber-100">One-time channel check</AlertTitle>
-          <AlertDescription className="text-sm text-amber-950/90 dark:text-amber-100/90">
-            <p className="mb-2">
-              These channels are enabled but not marked verified yet. Open each in Settings → Integrations and
-              save (connection is tested on save), or send a successful broadcast — then you will not need to
-              repeat this unless you change the integration.
-            </p>
-            <ul className="list-disc pl-5 space-y-1">
-              {unverifiedChannelHints.map((row) => (
-                <li key={row.key}>
-                  <Link to={row.to} className="font-medium underline text-foreground">
-                    {row.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 lg:items-stretch">
-        <Alert className="border-border h-fit">
-          <Info className="h-4 w-4" />
-          <AlertTitle>Compliance</AlertTitle>
-          <AlertDescription className="text-sm">
-            Get consent for promotional messages and follow local rules.
-          </AlertDescription>
-        </Alert>
-
-        <Card className="h-fit" style={CARD_BORDER}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Workspace reach</CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-muted-foreground">
-            {loading ? (
-              <p>Loading…</p>
-            ) : (
-              <>
-                <p>{reachSummary}</p>
-                {preview.truncated && (
-                  <p className="mt-2 text-xs">
-                    Oldest customers are outside this batch (limit {preview.maxRecipients ?? 500}).
-                  </p>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onValid)} className="space-y-4 md:space-y-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 lg:items-stretch">
-            <Card style={CARD_BORDER}>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Audience</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <FormField
-                  control={form.control}
-                  name="activeOnly"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-center justify-between rounded-md border border-border p-3 gap-3">
-                      <FormLabel className="!mt-0 cursor-pointer">Active customers only</FormLabel>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="dryRun"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-center justify-between rounded-md border border-border p-3 gap-3">
-                      <FormLabel className="!mt-0 cursor-pointer">Dry run (optional)</FormLabel>
-                      <FormControl>
-                        <Switch checked={field.value} onCheckedChange={field.onChange} />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <div className="rounded-md border border-border overflow-hidden">
-                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-muted/40 border-b border-border">
-                    <p className="text-sm font-medium text-foreground">Contacts in this batch</p>
-                    <div className="flex items-center gap-3">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8"
-                        disabled={previewLoading || contacts.length === 0}
-                        onClick={() => setSelectAllContacts(true)}
-                      >
-                        Select all
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8"
-                        disabled={previewLoading || contacts.length === 0}
-                        onClick={() => setSelectAllContacts(false)}
-                      >
-                        Clear
-                      </Button>
-                    </div>
-                  </div>
-                  {previewLoading ? (
-                    <p className="text-sm text-muted-foreground p-4">Loading contacts…</p>
-                  ) : contacts.length === 0 ? (
-                    <p className="text-sm text-muted-foreground p-4">
-                      No contacts match this audience. Try turning off “Active customers only” or add customers.
-                    </p>
-                  ) : (
-                    <div className="max-h-72 overflow-y-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow className="hover:bg-transparent">
-                            <TableHead className="w-10 px-2">
-                              <Checkbox
-                                checked={
-                                  contacts.length === 0
-                                    ? false
-                                    : allContactsSelected
-                                      ? true
-                                      : someContactsSelected
-                                        ? 'indeterminate'
-                                        : false
-                                }
-                                onCheckedChange={(v) => {
-                                  if (v === true) setSelectAllContacts(true);
-                                  else setSelectAllContacts(false);
-                                }}
-                                aria-label="Select all contacts"
-                              />
-                            </TableHead>
-                            <TableHead>Name</TableHead>
-                            <TableHead className="hidden sm:table-cell">Email</TableHead>
-                            <TableHead className="hidden md:table-cell">Phone</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {contacts.map((c) => {
-                            const label = (c.name && String(c.name).trim()) || (c.company && String(c.company).trim()) || 'Customer';
-                            return (
-                              <TableRow key={c.id}>
-                                <TableCell className="px-2 align-middle">
-                                  <Checkbox
-                                    checked={selectedIds.has(c.id)}
-                                    onCheckedChange={() => toggleContactSelected(c.id)}
-                                    aria-label={`Select ${label}`}
-                                  />
-                                </TableCell>
-                                <TableCell className="text-sm">
-                                  <div className="font-medium text-foreground">{label}</div>
-                                  {c.company && c.name ? (
-                                    <div className="text-xs text-muted-foreground sm:hidden">{c.company}</div>
-                                  ) : null}
-                                  <div className="text-xs text-muted-foreground sm:hidden mt-1 space-y-0.5">
-                                    {c.email ? <div>{c.email}</div> : null}
-                                    {c.phone ? <div>{c.phone}</div> : null}
-                                  </div>
-                                </TableCell>
-                                <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
-                                  {c.email || '—'}
-                                </TableCell>
-                                <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
-                                  {c.phone || '—'}
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card style={CARD_BORDER}>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-base">Channels</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <FormField
-                  control={form.control}
-                  name="channelEmail"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                      <FormControl>
-                        <Checkbox
-                          className="mt-0.5"
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          disabled={!caps.email?.available}
-                        />
-                      </FormControl>
-                      <div className="space-y-0.5 flex-1 min-w-0 leading-snug">
-                        <FormLabel className="font-medium">Email</FormLabel>
-                        {!caps.email?.available && (
-                          <FormDescription className="text-xs">
-                            {caps.email?.businessProfileEmailSet ? (
-                              <>
-                                Company email is saved under Workspace, but broadcasts need outbound mail in{' '}
-                                <Link
-                                  to="/settings?tab=integration&subtab=email"
-                                  className="underline font-medium text-foreground"
-                                >
-                                  Settings → Integrations → Email
-                                </Link>{' '}
-                                (enable and add SMTP, SendGrid, or SES).
-                              </>
-                            ) : (
-                              <>
-                                Enable outbound email in{' '}
-                                <Link
-                                  to="/settings?tab=integration&subtab=email"
-                                  className="underline font-medium text-foreground"
-                                >
-                                  Settings → Integrations → Email
-                                </Link>
-                                .
-                              </>
-                            )}
-                          </FormDescription>
-                        )}
-                        <FormMessage />
-                      </div>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="channelSms"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                      <FormControl>
-                        <Checkbox
-                          className="mt-0.5"
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          disabled={!caps.sms?.available}
-                        />
-                      </FormControl>
-                      <div className="space-y-0.5 leading-snug">
-                        <FormLabel className="font-medium">SMS</FormLabel>
-                        {!caps.sms?.available && (
-                          <FormDescription className="text-xs">Enable in Settings</FormDescription>
-                        )}
-                      </div>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name="channelWhatsapp"
-                  render={({ field }) => (
-                    <FormItem className="flex flex-row items-start space-x-3 space-y-0">
-                      <FormControl>
-                        <Checkbox
-                          className="mt-0.5"
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          disabled={!caps.whatsapp?.available}
-                        />
-                      </FormControl>
-                      <div className="space-y-0.5 leading-snug">
-                        <FormLabel className="font-medium">WhatsApp</FormLabel>
-                        {!caps.whatsapp?.available && (
-                          <FormDescription className="text-xs">Enable in Settings</FormDescription>
-                        )}
-                      </div>
-                    </FormItem>
-                  )}
-                />
-              </CardContent>
-            </Card>
+    <>
+      <DialogBody>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {STEPS.map((label, index) => (
+              <button
+                key={label}
+                type="button"
+                className={`rounded-md border px-3 py-2 text-left text-sm ${index === step ? 'border-brand bg-brand/10 text-brand' : 'border-border bg-background'}`}
+                onClick={() => setStep(index)}
+              >
+                <span className="block text-xs text-muted-foreground">Step {index + 1}</span>
+                <span className="font-medium">{label}</span>
+              </button>
+            ))}
           </div>
 
-          {composeCardCount > 0 ? (
-            <div
-              className={cn(
-                'grid gap-4 md:gap-6',
-                composeCardCount >= 2 && 'lg:grid-cols-2',
-                whatsappAloneWide && 'lg:grid-cols-1'
-              )}
-            >
-              {channelEmail && (
-                <Card style={CARD_BORDER}>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base">Email</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <FormField
-                      control={form.control}
-                      name="subject"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Subject</FormLabel>
-                          <FormControl>
-                            <Input placeholder="Holiday hours" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="emailBody"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Message</FormLabel>
-                          <FormControl>
-                            <Textarea rows={5} placeholder="Plain text" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </CardContent>
-                </Card>
-              )}
+          {step === 0 && (
+        <Card style={CARD_BORDER}>
+          <CardHeader>
+            <CardTitle className="text-base">Campaign details</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-2">
+            <label className="space-y-2">
+              <span className="text-sm font-medium">Campaign name</span>
+              <Input value={form.name} onChange={(event) => setField('name', event.target.value)} placeholder="June promo" />
+            </label>
+            <label className="space-y-2">
+              <span className="text-sm font-medium">Goal (optional)</span>
+              <Input value={form.goal} onChange={(event) => setField('goal', event.target.value)} placeholder="Win back inactive customers" />
+            </label>
+          </CardContent>
+        </Card>
+          )}
 
-              {channelSms && (
-                <Card style={CARD_BORDER}>
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base">SMS</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <FormField
-                      control={form.control}
-                      name="smsBody"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Message</FormLabel>
-                          <FormControl>
-                            <Textarea rows={5} maxLength={480} placeholder="Up to 480 characters" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </CardContent>
-                </Card>
-              )}
+          {step === 1 && (
+        <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+          <Card style={CARD_BORDER}>
+            <CardHeader>
+              <CardTitle className="text-base">Smart filters</CardTitle>
+              <CardDescription>Start broad, then narrow with consent and behavior filters.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {[
+                ['activeOnly', 'Active customers only'],
+                ['marketingConsentOnly', 'Marketing consent only'],
+                ['owingOnly', 'Customers owing money'],
+              ].map(([field, label]) => (
+                <label key={field} className="flex items-center justify-between rounded-md border border-border p-3">
+                  <span className="text-sm font-medium">{label}</span>
+                  <Checkbox checked={Boolean(form[field])} onCheckedChange={(value) => setField(field, Boolean(value))} />
+                </label>
+              ))}
+              <label className="space-y-2">
+                <span className="text-sm font-medium">Purchased in last N days (optional)</span>
+                <Input type="number" min="1" value={form.lastPurchaseWindowDays} onChange={(event) => setField('lastPurchaseWindowDays', event.target.value)} placeholder="30" />
+              </label>
+              <label className="space-y-2">
+                <span className="text-sm font-medium">Inactive for N days (optional)</span>
+                <Input type="number" min="1" value={form.inactiveDays} onChange={(event) => setField('inactiveDays', event.target.value)} placeholder="90" />
+              </label>
+            </CardContent>
+          </Card>
 
-              {channelWhatsapp && (
-                <Card
-                  className={cn(
-                    channelEmail && channelSms && 'lg:col-span-2'
-                  )}
-                  style={CARD_BORDER}
-                >
-                  <CardHeader className="pb-3">
-                    <CardTitle className="text-base">WhatsApp template</CardTitle>
-                    <CardDescription className="text-xs sm:text-sm">
-                      Name must match Meta. Variables: one line each. Toggle below adds customer name as {'{{1}}'}.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <FormField
-                        control={form.control}
-                        name="whatsappTemplateName"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Template name</FormLabel>
-                            <FormControl>
-                              <Input placeholder="seasonal_promo" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="whatsappLanguage"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Language code (optional)</FormLabel>
-                            <FormControl>
-                              <Input placeholder="en" {...field} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <FormField
-                      control={form.control}
-                      name="whatsappPrependCustomerName"
-                      render={({ field }) => (
-                        <FormItem className="flex flex-row items-center justify-between rounded-md border border-border p-3 gap-3">
-                          <FormLabel className="!mt-0 cursor-pointer text-sm">
-                            Prepend customer name as first variable
-                          </FormLabel>
-                          <FormControl>
-                            <Switch checked={field.value} onCheckedChange={field.onChange} />
-                          </FormControl>
-                        </FormItem>
-                      )}
-                    />
-                    <FormField
-                      control={form.control}
-                      name="whatsappParamsText"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>More variables (optional)</FormLabel>
-                          <FormControl>
-                            <Textarea
-                              rows={3}
-                              placeholder="One line per variable"
-                              {...field}
+          <Card style={CARD_BORDER}>
+            <CardHeader>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">Audience preview</CardTitle>
+                  <CardDescription>{previewLoading ? 'Loading…' : `${contacts.length} contacts in preview, ${selectedCount} selected`}</CardDescription>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => setManualSelection((prev) => !prev)}>
+                  {manualSelection ? 'Use smart audience' : 'Select manually'}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {contacts.length === 0 ? (
+                <p className="rounded-md border border-dashed border-border p-6 text-center text-sm text-muted-foreground">No customers match these filters.</p>
+              ) : (
+                <div className="max-h-80 overflow-y-auto rounded-md border border-border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="w-10"></TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead className="hidden md:table-cell">Consent</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {contacts.map((contact) => (
+                        <TableRow key={contact.id}>
+                          <TableCell>
+                            <Checkbox
+                              checked={selectedIds.has(contact.id)}
+                              disabled={!manualSelection}
+                              onCheckedChange={(value) => {
+                                setSelectedIds((prev) => {
+                                  const next = new Set(prev);
+                                  if (value) next.add(contact.id);
+                                  else next.delete(contact.id);
+                                  return next;
+                                });
+                              }}
                             />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </CardContent>
-                </Card>
+                          </TableCell>
+                          <TableCell>
+                            <div className="font-medium">{contact.name || contact.company || 'Customer'}</div>
+                            <div className="text-xs text-muted-foreground">{contact.email || contact.phone || 'No contact info'}</div>
+                          </TableCell>
+                          <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                            Marketing {contact.consent?.marketing === true ? 'yes' : 'missing'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               )}
-            </div>
-          ) : (
-            <Card className="border-dashed border-border bg-muted/30" style={CARD_BORDER}>
-              <CardContent className="py-8 text-center text-sm text-muted-foreground">
-                Select at least one channel above to compose your message.
+            </CardContent>
+          </Card>
+        </div>
+          )}
+
+          {step === 2 && (
+        <div className="space-y-4">
+          <Card style={CARD_BORDER}>
+            <CardHeader>
+              <CardTitle className="text-base">Channels</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-3">
+              <ChannelToggle channel="email" label="Email" available={caps.email?.available} form={form} setForm={setForm} />
+              <ChannelToggle channel="sms" label="SMS" available={caps.sms?.available} form={form} setForm={setForm} />
+              <ChannelToggle channel="whatsapp" label="WhatsApp" available={caps.whatsapp?.available} form={form} setForm={setForm} />
+            </CardContent>
+          </Card>
+
+          {form.channels.includes('email') && (
+            <Card style={CARD_BORDER}>
+              <CardHeader><CardTitle className="text-base">Email message</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                <Input value={form.subject} onChange={(event) => setField('subject', event.target.value)} placeholder="Subject" />
+                <Textarea rows={5} value={form.emailBody} onChange={(event) => setField('emailBody', event.target.value)} placeholder="Plain text email message" />
               </CardContent>
             </Card>
           )}
 
-          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-1">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                form.reset(defaultValues);
-                setLastResult(null);
-                setSelectedIds(new Set(contacts.map((c) => c.id)));
-              }}
-            >
-              Reset form
-            </Button>
-            <Button
-              type="submit"
-              disabled={broadcastMutation.isPending}
-              className="bg-brand hover:bg-brand-dark"
-            >
-              {broadcastMutation.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Working…
-                </>
-              ) : form.watch('dryRun') ? (
-                'Run dry run'
-              ) : (
-                'Send broadcast'
-              )}
-            </Button>
-          </div>
-        </form>
-      </Form>
+          {form.channels.includes('sms') && (
+            <Card style={CARD_BORDER}>
+              <CardHeader><CardTitle className="text-base">SMS message</CardTitle></CardHeader>
+              <CardContent>
+                <Textarea rows={4} maxLength={480} value={form.smsBody} onChange={(event) => setField('smsBody', event.target.value)} placeholder="Up to 480 characters" />
+              </CardContent>
+            </Card>
+          )}
 
-      <AlertDialog
-        open={confirmOpen}
-        onOpenChange={(open) => {
-          setConfirmOpen(open);
-          if (!open) setPendingPayload(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Send to customers?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Send to {selectedIds.size} recipient{selectedIds.size === 1 ? '' : 's'}. Provider limits apply.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setPendingPayload(null)}>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={handleConfirmSend}>Send</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {lastResult && (
-        <Card style={CARD_BORDER}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Last result</CardTitle>
-            <CardDescription>
-              {lastResult.dryRun ? 'Dry run (no sends).' : 'Done.'}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="text-sm space-y-2 font-mono">
-            {['email', 'sms', 'whatsapp'].map((ch) => {
-              const block = lastResult[ch];
-              if (!block) return null;
-              return (
-                <div key={ch}>
-                  <span className="font-semibold capitalize">{ch}</span>: sent {block.sent}, skipped{' '}
-                  {block.skipped}, failed {block.failed?.length ?? 0}
-                  {block.failed?.length > 0 && (
-                    <ul className="mt-1 list-disc pl-4 text-xs text-muted-foreground">
-                      {block.failed.slice(0, 8).map((f) => (
-                        <li key={`${f.customerId}-${f.reason}`}>
-                          {f.customerId}: {f.reason}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+          {form.channels.includes('whatsapp') && (
+            <Card style={CARD_BORDER}>
+              <CardHeader>
+                <CardTitle className="text-base">WhatsApp template</CardTitle>
+                <CardDescription>Use a Meta-approved template name. Variables are one per line.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Input value={form.whatsappTemplateName} onChange={(event) => setField('whatsappTemplateName', event.target.value)} placeholder="seasonal_promo" />
+                  <Input value={form.whatsappLanguage} onChange={(event) => setField('whatsappLanguage', event.target.value)} placeholder="Language code (optional)" />
                 </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      )}
-    </div>
+                <label className="flex items-center justify-between rounded-md border border-border p-3">
+                  <span className="text-sm font-medium">Prepend customer name as first variable</span>
+                  <Checkbox checked={form.whatsappPrependCustomerName} onCheckedChange={(value) => setField('whatsappPrependCustomerName', Boolean(value))} />
+                </label>
+                <Textarea rows={3} value={form.whatsappParamsText} onChange={(event) => setField('whatsappParamsText', event.target.value)} placeholder="More variables (optional)" />
+              </CardContent>
+            </Card>
+          )}
+        </div>
+          )}
+
+          {step === 3 && (
+        <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <Card style={CARD_BORDER}>
+            <CardHeader>
+              <CardTitle className="text-base">Review campaign</CardTitle>
+              <CardDescription>Confirm audience, channels, and consent before sending.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-md border border-border p-3"><p className="text-xs text-muted-foreground">Recipients</p><p className="text-xl font-semibold">{selectedCount}</p></div>
+                <div className="rounded-md border border-border p-3"><p className="text-xs text-muted-foreground">Eligible sends</p><p className="text-xl font-semibold">{totalEligible}</p></div>
+                <div className="rounded-md border border-border p-3"><p className="text-xs text-muted-foreground">Channels</p><p className="text-sm font-semibold capitalize">{channelsLabel(form.channels)}</p></div>
+                <div className="rounded-md border border-border p-3"><p className="text-xs text-muted-foreground">Batch limit</p><p className="text-xl font-semibold">{preview.maxRecipients || 500}</p></div>
+              </div>
+              <Alert className="border-amber-200 bg-amber-50/80">
+                <AlertCircle className="h-4 w-4 text-amber-800" />
+                <AlertTitle className="text-amber-900">Consent warnings</AlertTitle>
+                <AlertDescription className="text-sm text-amber-950/90">
+                  {preview.consentWarnings?.marketingConsentRequired || 0} contacts need marketing consent. SMS opt-outs: {preview.consentWarnings?.smsOptedOut || 0}. WhatsApp opt-outs: {preview.consentWarnings?.whatsappOptedOut || 0}.
+                </AlertDescription>
+              </Alert>
+              {preview.truncated ? (
+                <Alert>
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Audience capped</AlertTitle>
+                  <AlertDescription>Only the newest {preview.maxRecipients || 500} matching customers are included in this send batch.</AlertDescription>
+                </Alert>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card style={CARD_BORDER}>
+            <CardHeader>
+              <CardTitle className="text-base">Ready to send</CardTitle>
+              <CardDescription>Scheduling is stored as campaign metadata; automatic dispatch worker is not enabled yet.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <p>Use Save draft to keep this campaign for later, or Send now to dispatch to the selected eligible audience.</p>
+            </CardContent>
+          </Card>
+        </div>
+          )}
+        </div>
+      </DialogBody>
+
+      <DialogFooter className="gap-2 sm:space-x-0 sm:justify-between">
+        <div>
+          {step > 0 ? (
+            <Button type="button" variant="outline" onClick={() => setStep((prev) => Math.max(prev - 1, 0))}>
+              Back
+            </Button>
+          ) : null}
+        </div>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button type="button" variant="outline" onClick={onCancel} disabled={saveMutation.isPending || sendMutation.isPending}>
+            Cancel
+          </Button>
+          <Button type="button" variant="outline" onClick={saveDraft} disabled={saveMutation.isPending || sendMutation.isPending}>
+            {saveMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+            Save draft
+          </Button>
+          {step < STEPS.length - 1 ? (
+            <Button type="button" className="bg-brand hover:bg-brand-dark" onClick={handleNext}>
+              Next
+            </Button>
+          ) : (
+            <Button type="button" className="bg-brand hover:bg-brand-dark" onClick={sendNow} disabled={sendMutation.isPending || saveMutation.isPending}>
+              {sendMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+              Send now
+            </Button>
+          )}
+        </div>
+      </DialogFooter>
+    </>
   );
+}
+
+function CreateCampaignDialog({ open, mode = 'create', campaignId, onOpenChange, onComplete }) {
+  const isEdit = mode === 'edit';
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="[--modal-w:min(1100px,94vw)] [--modal-min-h:720px] [--modal-max-h:95dvh]"
+        aria-describedby="create-campaign-dialog-description"
+      >
+        <DialogHeader>
+          <DialogTitle>{isEdit ? 'Edit campaign' : 'Create campaign'}</DialogTitle>
+          <DialogDescription id="create-campaign-dialog-description">
+            Build a campaign in four steps: details, audience, message, and review.
+          </DialogDescription>
+        </DialogHeader>
+        {open ? (
+          <CampaignWizardContent
+            mode={mode}
+            campaignId={campaignId}
+            onCancel={() => onOpenChange(false)}
+            onComplete={onComplete}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function CampaignDetail() {
+  const { id } = useParams();
+  const { activeTenantId } = useAuth();
+  const queryClient = useQueryClient();
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const { data, isLoading } = useQuery({
+    queryKey: ['marketing', 'campaign', activeTenantId, id],
+    queryFn: () => marketingService.getCampaign(id),
+    enabled: !!activeTenantId && !!id,
+  });
+  const campaign = data?.data;
+
+  const sendMutation = useMutation({
+    mutationFn: () => marketingService.sendCampaign(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['marketing'] });
+      showSuccess('Campaign sent');
+    },
+    onError: (err) => handleApiError(err, { context: 'Send campaign' }),
+  });
+
+  if (isLoading) return <p className="text-sm text-muted-foreground">Loading campaign…</p>;
+  if (!campaign) return <p className="text-sm text-muted-foreground">Campaign not found.</p>;
+
+  const snapshot = campaign.audienceSnapshot || {};
+  const stats = campaign.stats || {};
+
+  return (
+    <>
+      <div className="w-full space-y-4 md:space-y-6">
+        <PageHeader
+          title={campaign.name}
+          description={campaign.goal || 'Campaign details and delivery history.'}
+          actions={
+            <>
+              <Button asChild variant="outline"><Link to="/marketing/campaigns"><ArrowLeft className="mr-2 h-4 w-4" />Campaigns</Link></Button>
+              {campaign.status !== 'sent' ? (
+                <Button type="button" variant="outline" onClick={() => setIsEditDialogOpen(true)}>
+                  Edit draft
+                </Button>
+              ) : null}
+              {campaign.status !== 'sent' ? (
+                <Button className="bg-brand hover:bg-brand-dark" onClick={() => sendMutation.mutate()} disabled={sendMutation.isPending}>
+                  {sendMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                  Send now
+                </Button>
+              ) : null}
+            </>
+          }
+        />
+
+        <div className="grid gap-4 md:grid-cols-4">
+          <Card style={CARD_BORDER}><CardContent className="p-4"><p className="text-xs text-muted-foreground">Status</p><div className="mt-2"><StatusBadge status={campaign.status} /></div></CardContent></Card>
+          <Card style={CARD_BORDER}><CardContent className="p-4"><p className="text-xs text-muted-foreground">Recipients</p><p className="mt-2 text-2xl font-semibold">{snapshot.batchSize || 0}</p></CardContent></Card>
+          <Card style={CARD_BORDER}><CardContent className="p-4"><p className="text-xs text-muted-foreground">Sent</p><p className="mt-2 text-2xl font-semibold">{stats.totalSent || 0}</p></CardContent></Card>
+          <Card style={CARD_BORDER}><CardContent className="p-4"><p className="text-xs text-muted-foreground">Failed</p><p className="mt-2 text-2xl font-semibold">{stats.totalFailed || 0}</p></CardContent></Card>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card style={CARD_BORDER}>
+            <CardHeader><CardTitle className="text-base">Campaign summary</CardTitle></CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <p><span className="text-muted-foreground">Channels:</span> <span className="capitalize">{channelsLabel(campaign.channels)}</span></p>
+              <p><span className="text-muted-foreground">Created:</span> {formatDate(campaign.createdAt)}</p>
+              <p><span className="text-muted-foreground">Scheduled:</span> {formatDate(campaign.scheduledAt)}</p>
+              <p><span className="text-muted-foreground">Sent:</span> {formatDate(campaign.sentAt)}</p>
+            </CardContent>
+          </Card>
+
+          <Card style={CARD_BORDER}>
+            <CardHeader><CardTitle className="text-base">Channel stats</CardTitle></CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {['email', 'sms', 'whatsapp'].map((channel) => (
+                <div key={channel} className="flex items-center justify-between rounded-md border border-border p-3">
+                  <span className="capitalize">{channel}</span>
+                  <span className="text-muted-foreground">
+                    sent {stats[channel]?.sent || 0}, skipped {stats[channel]?.skipped || 0}, failed {stats[channel]?.failed || 0}
+                  </span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+      <CreateCampaignDialog
+        open={isEditDialogOpen}
+        mode="edit"
+        campaignId={campaign.id}
+        onOpenChange={setIsEditDialogOpen}
+        onComplete={() => setIsEditDialogOpen(false)}
+      />
+    </>
+  );
+}
+
+export default function Marketing() {
+  const { pathname } = useLocation();
+
+  if (pathname.endsWith('/campaigns/new')) {
+    return <Navigate to="/marketing?campaign=new" replace />;
+  }
+  if (pathname.endsWith('/edit')) {
+    const editMatch = pathname.match(/\/marketing\/campaigns\/([^/]+)\/edit$/);
+    return <Navigate to={`/marketing?campaign=edit&id=${encodeURIComponent(editMatch?.[1] || '')}`} replace />;
+  }
+  if (/\/marketing\/campaigns\/[^/]+$/.test(pathname)) {
+    return <CampaignDetail />;
+  }
+  if (pathname.endsWith('/campaigns')) {
+    return <CampaignList />;
+  }
+  return <MarketingOverview />;
 }

@@ -87,6 +87,8 @@ import DetailsDrawer from '../components/DetailsDrawer';
 import DashboardTable from '../components/DashboardTable';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import {
   Tooltip,
@@ -115,7 +117,7 @@ import StatusChip from '../components/StatusChip';
 import { resolveImageUrl } from '../utils/fileUtils';
 
 const Users = () => {
-  const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
   const [users, setUsers] = useState([]);
@@ -640,15 +642,32 @@ const Users = () => {
     { value: 'false', label: 'Inactive' }
   ];
 
-  const handleClearFilters = () => {
+  const handleClearFilters = useCallback(() => {
     setFilters({
       role: 'all',
       isActive: 'all'
     });
-    setPagination({ ...pagination, current: 1 });
-  };
+    setSearchValue('');
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [setSearchValue]);
 
-  const hasActiveFilters = filters.role !== 'all' || filters.isActive !== 'all';
+  const hasActiveFilters =
+    filters.role !== 'all' ||
+    filters.isActive !== 'all' ||
+    debouncedSearch.trim();
+
+  const usersEmptyState = useMemo(() => {
+    if (hasActiveFilters) {
+      return getEmptyStateProps(EMPTY_STATES.USERS_FILTERED, {
+        primary: handleClearFilters,
+      });
+    }
+
+    return getEmptyStateProps(EMPTY_STATES.USERS, {
+      ...(isAdmin ? { primary: handleInviteUser } : {}),
+    });
+  }, [hasActiveFilters, handleClearFilters, isAdmin, handleInviteUser]);
+
   const getEmailStatusBadge = (status) => {
     if (status === 'sent') return <StatusChip status="sent" />;
     if (status === 'failed') return <StatusChip status="failed" />;
@@ -877,20 +896,7 @@ const Users = () => {
         columns={tableColumns}
         loading={loading}
         title={null}
-        emptyIcon={<UsersIcon className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription={
-          isAdmin
-            ? 'No team members yet. Invite users to collaborate on your workspace.'
-            : 'No team members match your filters, or the workspace is empty. Ask an administrator to invite users.'
-        }
-        emptyAction={
-          isAdmin ? (
-            <Button onClick={handleInviteUser}>
-              <Link className="h-4 w-4 mr-2" />
-              Invite User
-            </Button>
-          ) : undefined
-        }
+        emptyState={usersEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);

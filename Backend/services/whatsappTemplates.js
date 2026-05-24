@@ -39,6 +39,13 @@ const TEMPLATES = {
     description: 'Alert shop owner about low stock',
     parameters: ['productName', 'currentStock', 'reorderLevel'],
     example: 'Alert: {{1}} is running low. Current stock: {{2}}, Reorder level: {{3}}'
+  },
+  sale_receipt: {
+    name: 'sale_receipt',
+    language: 'en',
+    description: 'Send POS sale receipt summary',
+    parameters: ['customerName', 'saleNumber', 'amount', 'businessName'],
+    example: 'Hello {{1}}, receipt {{2}} for {{3}} from {{4}} is ready. Thank you for your purchase.'
   }
 };
 
@@ -126,6 +133,17 @@ function prepareLowStockAlert(product) {
   ];
 }
 
+function prepareSaleReceipt(sale) {
+  const customer = sale.customer || {};
+  const business = sale.shop?.name || sale.tenant?.name || 'Business';
+  return [
+    customer.name || customer.company || 'Customer',
+    sale.saleNumber || 'N/A',
+    formatCurrency(sale.total || 0),
+    business
+  ];
+}
+
 /**
  * Get template definition
  * @param {string} templateName - Template name
@@ -156,6 +174,7 @@ module.exports = {
   prepareOrderConfirmation,
   preparePaymentReminder,
   prepareLowStockAlert,
+  prepareSaleReceipt,
   getTemplate,
   validateParameters
 };

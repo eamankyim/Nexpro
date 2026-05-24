@@ -32,19 +32,11 @@ import { cn } from '@/lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useResponsive } from '../../hooks/useResponsive';
-import { CURRENCY, DEBOUNCE_DELAYS } from '../../constants';
+import { DEBOUNCE_DELAYS } from '../../constants';
+import { formatAmount } from '../../utils/formatNumber';
 import { parseProductQRPayload } from '../../utils/productQR';
 import { resolveImageUrl } from '../../utils/fileUtils';
 import api from '../../services/api';
-
-/**
- * Format currency value (handles string decimals from API)
- */
-const formatCurrency = (amount) => {
-  const num = Number(amount);
-  const value = Number.isFinite(num) ? num : 0;
-  return `${CURRENCY.SYMBOL} ${value.toFixed(CURRENCY.DECIMAL_PLACES)}`;
-};
 
 /**
  * Product search result item
@@ -116,7 +108,7 @@ const ProductItem = memo(function ProductItem({ product, onSelect, quantityInCar
           </Badge>
         )}
         <p className="font-semibold text-green-700">
-          {formatCurrency(product.sellingPrice)}
+          {formatAmount(product.sellingPrice)}
         </p>
         <div className="flex items-center gap-1 justify-end">
           {!trackStock ? (
@@ -219,7 +211,7 @@ const ProductCard = memo(function ProductCard({ product, onSelect, quantityInCar
         {product.name}
       </p>
       <p className="font-semibold text-green-700 text-sm mt-1">
-        {formatCurrency(product.sellingPrice)}
+        {formatAmount(product.sellingPrice)}
       </p>
       <div className="mt-1.5">
         {!trackStock ? (

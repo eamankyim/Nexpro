@@ -34,6 +34,7 @@ const StatusChip = memo(({ status, className, ...props }) => {
     sold: 'Sold',
     sent: 'Sent',
     pending: 'Pending',
+    todo: 'To do',
   };
   const formatStatusText = (s) => {
     if (displayOverrides[s]) return displayOverrides[s];

@@ -38,6 +38,7 @@ import POSPaymentModal from '../components/pos/POSPaymentModal';
 import POSReceiptModal from '../components/pos/POSReceiptModal';
 import POSConnectionStatus from '../components/pos/POSConnectionStatus';
 import POSScanMode from '../components/pos/POSScanMode';
+import FeatureNotAvailable from '../components/FeatureNotAvailable';
 
 // Hooks and Services
 import { usePOS } from '../hooks/usePOS';
@@ -60,13 +61,8 @@ import { guardOnline, ONLINE_REQUIRED_MESSAGE } from '../utils/onlineRequired';
 import { normalizePhone, validatePhone } from '../utils/phoneUtils';
 import { mergeBranchOrganization } from '../utils/branchOrganization';
 import { CURRENCY, DEBOUNCE_DELAYS, QUERY_CACHE } from '../constants';
-
-/**
- * Format currency value
- */
-const formatCurrency = (amount) => {
-  return `${CURRENCY.SYMBOL} ${(amount || 0).toFixed(CURRENCY.DECIMAL_PLACES)}`;
-};
+import { formatAmount } from '../utils/formatNumber';
+import { FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
 
 /**
  * Generate cart item ID
@@ -153,13 +149,13 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
         <DialogBody>
         {/* Quick add customer: phone (required) + name */}
         <div className="p-3 bg-muted rounded-lg border border-border space-y-2">
-          <p className="text-sm font-medium text-gray-700 flex items-center gap-2">
+          <p className="text-sm font-medium text-foreground flex items-center gap-2">
             <UserPlus className="h-4 w-4" />
             Quick add customer
           </p>
           <div className="grid grid-cols-1 gap-2">
             <div>
-              <label className="text-xs text-gray-600">Phone (required)</label>
+              <label className="text-xs text-muted-foreground">Phone (required)</label>
               <div className="relative mt-0.5">
                 <Phone className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <Input
@@ -172,7 +168,7 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
               </div>
             </div>
             <div>
-              <label className="text-xs text-gray-600">Name (optional)</label>
+              <label className="text-xs text-muted-foreground">Name (optional)</label>
               <Input
                 placeholder="Customer name"
                 value={quickName}
@@ -230,13 +226,13 @@ const CustomerSelectDialog = ({ isOpen, onClose, onSelect, onFindOrCreate }) => 
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-foreground truncate">{customer.name || customer.company || 'No name'}</p>
-                    <p className="text-sm text-gray-500 truncate">{customer.phone || customer.email || ''}</p>
+                    <p className="text-sm text-muted-foreground truncate">{customer.phone || customer.email || ''}</p>
                   </div>
                   {customer.creditLimit > 0 && (
                     <div className="text-right">
-                      <p className="text-xs text-gray-500">Credit</p>
+                      <p className="text-xs text-muted-foreground">Credit</p>
                       <p className="text-sm font-medium text-green-600">
-                        {formatCurrency(customer.creditLimit - (customer.balance || 0))}
+                        {formatAmount(customer.creditLimit - (customer.balance || 0))}
                       </p>
                     </div>
                   )}
@@ -974,27 +970,15 @@ const POS = () => {
   if (!isShop) {
     return (
       <div className="p-4 md:p-6 space-y-4 md:space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">Point of Sale</h1>
-            <p className="text-gray-600 mt-1">Quick checkout and sales processing</p>
-          </div>
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Point of Sale</h1>
+          <p className="text-muted-foreground mt-1">Quick checkout and sales processing</p>
         </div>
-        <Card className="border border-gray-200">
-          <CardContent className="p-12">
-            <div className="flex flex-col items-center justify-center text-center space-y-4">
-              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
-                <CreditCard className="h-10 w-10 text-gray-400" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-semibold text-foreground mb-2">Not Available</h2>
-                <p className="text-gray-600 max-w-md">
-                  POS is only available for shop business types.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <FeatureNotAvailable
+          icon="CreditCard"
+          title={FEATURE_NOT_AVAILABLE.SHOP_ONLY.title}
+          description={FEATURE_NOT_AVAILABLE.SHOP_ONLY.description}
+        />
       </div>
     );
   }
@@ -1005,10 +989,10 @@ const POS = () => {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-foreground">Point of Sale</h1>
-            <p className="text-gray-600 mt-1">Quick checkout and sales processing</p>
+            <p className="text-muted-foreground mt-1">Quick checkout and sales processing</p>
           </div>
         </div>
-        <Card className="border border-gray-200">
+        <Card className="border border-border">
           <CardContent className="p-12">
             <div className="flex flex-col items-center justify-center text-center space-y-4">
               <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
@@ -1016,7 +1000,7 @@ const POS = () => {
               </div>
               <div>
                 <h2 className="text-2xl font-semibold text-foreground mb-2">Set up payment collection</h2>
-                <p className="text-gray-600 max-w-md mb-4">
+                <p className="text-muted-foreground max-w-md mb-4">
                   {isManager
                     ? 'Configure where to receive card and mobile money payments from customers before using POS. Your funds will go to your bank or MoMo account.'
                     : 'Payment collection must be configured before POS can take online payments. Ask a workspace manager or administrator to set this up in Settings.'}
@@ -1049,7 +1033,7 @@ const POS = () => {
           <h1 className="text-xl sm:text-2xl font-bold text-foreground truncate">
             Point of Sale
           </h1>
-          <p className="text-gray-600 text-xs sm:text-sm truncate">
+          <p className="text-muted-foreground text-xs sm:text-sm truncate">
             Quick checkout and sales processing
           </p>
         </div>
@@ -1235,7 +1219,7 @@ const POS = () => {
               {cartTotals.itemCount} item{cartTotals.itemCount !== 1 ? 's' : ''}
             </span>
             <span className="text-lg font-semibold text-green-700">
-              {formatCurrency(cartTotals.total)}
+              {formatAmount(cartTotals.total)}
             </span>
           </div>
           <div className="flex items-center gap-2">

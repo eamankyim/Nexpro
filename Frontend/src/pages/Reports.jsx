@@ -47,7 +47,6 @@ import {
   Currency,
   ShoppingCart,
   FileText,
-  Calendar,
   Bot,
   Zap,
   Eye,
@@ -90,13 +89,11 @@ import {
   resolveSmartReportTabs,
 } from './reports/smart-report/smartReportTypeUtils';
 
-const REPORT_MONTH_NAMES = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-];
-
 /** Reports stuck in processing longer than this are marked failed on load. */
 const SMART_REPORT_PROCESSING_STALE_MS = 15 * 60 * 1000;
+
+/** Do not let a slow external AI provider block deterministic report generation. */
+const SMART_REPORT_AI_TIMEOUT_MS = 10000;
 
 /** Dispatched after saved reports are written to localStorage. */
 const SAVED_REPORTS_UPDATED_EVENT = 'shopwise-saved-reports-updated';
@@ -156,32 +153,69 @@ function patchSavedReportInStorage(storageKey, reportId, updater) {
 }
 
 /**
- * Resolve date range for smart report generation from create-report form config.
- * @param {Object} config - Report form values (month, year, durationType)
+ * Resolve date range for smart report generation from selected page filter.
+ * @param {Object} config - Report form values plus selected date metadata
  * @param {Array} fallbackRange - Page date filter range [dayjs, dayjs]
  * @returns {[import('dayjs').Dayjs, import('dayjs').Dayjs]}
  */
 function resolveSmartReportDateRange(config, fallbackRange) {
-  const year = Number(config?.year) || dayjs().year();
-  const durationType = config?.durationType || 'monthly';
-
-  if (durationType === 'yearly') {
-    const start = dayjs().year(year).startOf('year');
-    return [start, start.endOf('year')];
-  }
-
-  const monthIndex = REPORT_MONTH_NAMES.indexOf(config?.month);
-  if (monthIndex >= 0) {
-    const start = dayjs().year(year).month(monthIndex).startOf('month');
-    return [start, start.endOf('month')];
+  if (config?.startDate && config?.endDate) {
+    return [dayjs(config.startDate).startOf('day'), dayjs(config.endDate).endOf('day')];
   }
 
   if (fallbackRange?.[0] && fallbackRange?.[1]) {
-    return [dayjs(fallbackRange[0]), dayjs(fallbackRange[1])];
+    return [dayjs(fallbackRange[0]).startOf('day'), dayjs(fallbackRange[1]).endOf('day')];
   }
 
   const now = dayjs();
   return [now.startOf('month'), now.endOf('month')];
+}
+
+/**
+ * Infer Smart Report period type from selected filter/range.
+ * @param {string} filterType
+ * @param {[import('dayjs').Dayjs, import('dayjs').Dayjs]} range
+ * @returns {'day'|'week'|'month'|'custom'}
+ */
+function getSmartReportPeriodType(filterType, range) {
+  if (['today', 'yesterday'].includes(filterType)) return 'day';
+  if (['thisWeek', 'lastWeek'].includes(filterType)) return 'week';
+  if (['thisMonth', 'lastMonth', 'specificMonth'].includes(filterType)) return 'month';
+
+  const [start, end] = range || [];
+  if (start && end) {
+    const rangeStart = dayjs(start);
+    const rangeEnd = dayjs(end);
+    if (rangeStart.isSame(rangeEnd, 'day')) return 'day';
+    if (
+      rangeStart.isSame(rangeStart.startOf('isoWeek'), 'day') &&
+      rangeEnd.isSame(rangeStart.endOf('isoWeek'), 'day')
+    ) {
+      return 'week';
+    }
+    if (
+      rangeStart.isSame(rangeStart.startOf('month'), 'day') &&
+      rangeEnd.isSame(rangeStart.endOf('month'), 'day')
+    ) {
+      return 'month';
+    }
+  }
+
+  return 'custom';
+}
+
+function formatSmartReportTypeLabel(periodType) {
+  const labels = {
+    day: 'Daily',
+    week: 'Weekly',
+    month: 'Monthly',
+    custom: 'Custom',
+  };
+  return labels[periodType] || 'Custom';
+}
+
+function getSmartReportTitleForPeriod(filterType, range) {
+  return `Smart report for ${formatPeriodLabel(filterType, range)}`;
 }
 
 /**
@@ -263,10 +297,7 @@ function ReportsInner() {
   const reportConfigForm = useForm({
     resolver: zodResolver(createReportSchema),
     defaultValues: {
-      reportTitle: `End of month report for ${dayjs().format('MMMM YYYY')}`,
-      durationType: 'monthly',
-      year: dayjs().year(),
-      month: dayjs().format('MMMM'),
+      reportTitle: getSmartReportTitleForPeriod('thisMonth', calculateDateRange('thisMonth')),
     },
   });
   const [selectedReportTypes, setSelectedReportTypes] = useState(() =>
@@ -669,6 +700,16 @@ function ReportsInner() {
     setDateFilter(presetKey);
   }, []);
 
+  const handleSmartReportDateRangeSelect = useCallback((range) => {
+    if (!range?.from || !range?.to) return;
+    setDateFilter('custom');
+    setDateRange([dayjs(range.from).startOf('day'), dayjs(range.to).endOf('day')]);
+  }, []);
+
+  const handleSmartReportPresetSelect = useCallback((presetKey) => {
+    setDateFilter(presetKey);
+  }, []);
+
   const handleOverviewCustomize = useCallback(() => {
     showWarning('Customize Dashboard will let you show or hide widgets — coming soon.');
   }, []);
@@ -703,11 +744,11 @@ function ReportsInner() {
   }, [dateRange]);
 
   const handleOpenCreateReportModal = () => {
+    const selectedRange = dateFilter === 'custom' && dateRange?.[0] && dateRange?.[1]
+      ? [dayjs(dateRange[0]), dayjs(dateRange[1])]
+      : calculateDateRange(dateFilter || 'thisMonth', dayjs(), { specificMonth, specificYear });
     reportConfigForm.reset({
-      reportTitle: `End of month report for ${dayjs().format('MMMM YYYY')}`,
-      durationType: 'monthly',
-      year: dayjs().year(),
-      month: dayjs().format('MMMM'),
+      reportTitle: getSmartReportTitleForPeriod(dateFilter || 'custom', selectedRange),
     });
     setSelectedReportTypes(getDefaultSmartReportTypeSelection({ isShop, isPharmacy, isStudio }));
     setCreateReportModalVisible(true);
@@ -721,31 +762,32 @@ function ReportsInner() {
       return;
     }
 
-    // End-of-month reports: only allow on the last day of that month or after
-    if (values.durationType === 'monthly') {
-      const monthIndex = REPORT_MONTH_NAMES.indexOf(values.month);
-      if (monthIndex === -1 || values.year == null) {
-        showError(null, 'Please select a valid month and year.');
-        return;
-      }
-      const lastDayOfReportMonth = dayjs().year(values.year).month(monthIndex).endOf('month');
-      const today = dayjs().startOf('day');
-      if (today.isBefore(lastDayOfReportMonth, 'day')) {
-        showError(null, 'End of month reports can only be generated on the last day of the month or after the month has ended.');
-        return;
-      }
-    }
-
     creatingReportRef.current = true;
     setIsCreatingReport(true);
 
     try {
       setCreateReportModalVisible(false);
+      const selectedRange = dateFilter === 'custom' && dateRange?.[0] && dateRange?.[1]
+        ? [dayjs(dateRange[0]), dayjs(dateRange[1])]
+        : calculateDateRange(dateFilter || 'thisMonth', dayjs(), { specificMonth, specificYear });
+      const rangeStart = selectedRange[0].startOf('day');
+      const rangeEnd = selectedRange[1].endOf('day');
+      const periodType = getSmartReportPeriodType(dateFilter || 'custom', [rangeStart, rangeEnd]);
+      const periodLabel = formatPeriodLabel(dateFilter || 'custom', [rangeStart, rangeEnd]);
+      const previousPeriod = getPreviousPeriod(dateFilter || 'custom', [rangeStart, rangeEnd]);
 
       const reportConfig = {
         ...values,
         reportTypes: selectedReportTypes,
-        generatedBy: user?.name || user?.first_name || 'System User'
+        generatedBy: user?.name || user?.first_name || 'System User',
+        dateFilter: dateFilter || 'custom',
+        periodType,
+        periodLabel,
+        startDate: rangeStart.format('YYYY-MM-DD'),
+        endDate: rangeEnd.format('YYYY-MM-DD'),
+        comparisonStartDate: previousPeriod.startDate,
+        comparisonEndDate: previousPeriod.endDate,
+        comparisonLabel: previousPeriod.label,
       };
 
       // Create a temporary report entry with "processing" status (scoped to tenant and business type)
@@ -761,7 +803,16 @@ function ReportsInner() {
         status: 'processing',
         id: reportId,
         tenantId,
-        businessType
+        businessType,
+        periodType,
+        period: `${rangeStart.format('MMM DD, YYYY')} to ${rangeEnd.format('MMM DD, YYYY')}`,
+        periodLabel: `${formatSmartReportTypeLabel(periodType)} Report • ${periodLabel}`,
+        dateFilter: dateFilter || 'custom',
+        startDate: reportConfig.startDate,
+        endDate: reportConfig.endDate,
+        comparisonStartDate: previousPeriod.startDate,
+        comparisonEndDate: previousPeriod.endDate,
+        comparisonLabel: previousPeriod.label,
       };
 
       // Add to saved reports immediately with processing status
@@ -895,30 +946,50 @@ function ReportsInner() {
       const profit = revenue - expenses;
       const profitMargin = revenue > 0 ? ((profit / revenue) * 100) : 0;
 
-      // Calculate previous period for comparison using utility
-      const comparisonFilterType =
-        config.durationType === 'yearly'
-          ? 'specificYear'
-          : config.month
-            ? 'specificMonth'
-            : dateFilter || 'custom';
-      const previousPeriodForComparison = getPreviousPeriod(comparisonFilterType, [
-        rangeStart,
-        rangeEnd,
-      ]);
+      // Calculate previous equivalent period from the same selected filter/range.
+      const comparisonFilterType = config.dateFilter || dateFilter || 'custom';
+      const previousPeriodForComparison = config.comparisonStartDate && config.comparisonEndDate
+        ? {
+            startDate: config.comparisonStartDate,
+            endDate: config.comparisonEndDate,
+            label: config.comparisonLabel || 'vs previous period',
+          }
+        : getPreviousPeriod(comparisonFilterType, [
+            rangeStart,
+            rangeEnd,
+          ]);
+      const periodType = config.periodType || getSmartReportPeriodType(comparisonFilterType, [rangeStart, rangeEnd]);
+      const selectedPeriodLabel = config.periodLabel || formatPeriodLabel(comparisonFilterType, [rangeStart, rangeEnd]);
       
-      const [prevRevenueData, prevExpenseData] = await Promise.all([
+      const [prevRevenueData, prevExpenseData, extendedKpisData] = await Promise.all([
         reportService.getRevenueReport(previousPeriodForComparison.startDate, previousPeriodForComparison.endDate, 'day').catch(() => ({ data: { totalRevenue: 0 } })),
-        reportService.getExpenseReport(previousPeriodForComparison.startDate, previousPeriodForComparison.endDate).catch(() => ({ data: { totalExpenses: 0 } }))
+        reportService.getExpenseReport(previousPeriodForComparison.startDate, previousPeriodForComparison.endDate).catch(() => ({ data: { totalExpenses: 0 } })),
+        reportService.getOverviewExtendedKpis(
+          startDate,
+          endDate,
+          previousPeriodForComparison.startDate,
+          previousPeriodForComparison.endDate
+        ).catch(() => ({ data: null }))
       ]);
+      const phase2ForSnapshot = {
+        ...phase2,
+        extendedKpis: extendedKpisData?.data || phase2.extendedKpis || null,
+      };
 
       const prevRevenue = prevRevenueData.data?.totalRevenue || 0;
       const prevExpenses = prevExpenseData.data?.totalExpenses || 0;
       const prevProfit = prevRevenue - prevExpenses;
 
-      const revenueChange = prevRevenue > 0 ? ((revenue - prevRevenue) / prevRevenue * 100) : 0;
-      const expenseChange = prevExpenses > 0 ? ((expenses - prevExpenses) / prevExpenses * 100) : 0;
-      const profitChange = prevProfit > 0 ? ((profit - prevProfit) / prevProfit * 100) : 0;
+      const calculateChange = (current, previous) => {
+        if (previous > 0) return ((current - previous) / previous) * 100;
+        if (current > 0 && previous <= 0) return 100;
+        if (current <= 0 && previous > 0) return -100;
+        return 0;
+      };
+
+      const revenueChange = calculateChange(revenue, prevRevenue);
+      const expenseChange = calculateChange(expenses, prevExpenses);
+      const profitChange = calculateChange(profit, prevProfit);
 
       // Prepare report data for AI analysis
       const reportDataForAI = {
@@ -961,20 +1032,33 @@ function ReportsInner() {
 
       // Fetch AI analysis
       let aiAnalysis = null;
+      const aiAbortController = typeof AbortController !== 'undefined'
+        ? new AbortController()
+        : null;
+      const aiTimeoutId = aiAbortController
+        ? window.setTimeout(() => aiAbortController.abort(), SMART_REPORT_AI_TIMEOUT_MS)
+        : null;
       try {
         const aiResponse = await reportService.generateAIAnalysis(reportDataForAI, {
           businessType: activeTenant?.businessType || 'printing_press',
           studioType: activeTenant?.metadata?.studioType,
-          period: formatPeriodLabel(
-            config.durationType === 'yearly' ? 'specificYear' : config.month ? 'specificMonth' : dateFilter,
-            [rangeStart, rangeEnd]
-          ),
+          period: selectedPeriodLabel,
+          periodType,
           startDate,
-          endDate
+          endDate,
+          comparisonStartDate: previousPeriodForComparison.startDate,
+          comparisonEndDate: previousPeriodForComparison.endDate,
+          comparisonLabel: previousPeriodForComparison.label,
+        }, {
+          ...(aiAbortController && { signal: aiAbortController.signal })
         });
         aiAnalysis = aiResponse?.data || null;
       } catch (aiError) {
         console.warn('AI analysis failed, using fallback insights:', aiError);
+      } finally {
+        if (aiTimeoutId) {
+          window.clearTimeout(aiTimeoutId);
+        }
       }
 
       // Generate comprehensive smart report with real data (build array via push to avoid JSX parse issue)
@@ -985,6 +1069,7 @@ function ReportsInner() {
             prevRevenue,
             prevExpenses,
             prevProfit,
+            comparisonLabel: previousPeriodForComparison.label,
             metrics: [
               { label: 'Total Revenue', value: revenue, prevValue: prevRevenue, change: Math.abs(revenueChange), trend: revenueChange >= 0 ? 'up' : 'down', color: 'var(--color-primary)' },
               { label: 'Total Expenses', value: expenses, prevValue: prevExpenses, change: Math.abs(expenseChange), trend: expenseChange <= 0 ? 'down' : 'up', color: expenseChange <= 0 ? 'var(--color-primary)' : 'hsl(var(--destructive))' },
@@ -1442,17 +1527,20 @@ function ReportsInner() {
       );
       const mockReport = {
         title: config.reportTitle,
-        durationType: config.durationType,
-        year: config.year,
-        month: config.month,
+        durationType: periodType,
+        periodType,
+        dateFilter: comparisonFilterType,
+        startDate,
+        endDate,
+        comparisonStartDate: previousPeriodForComparison.startDate,
+        comparisonEndDate: previousPeriodForComparison.endDate,
+        comparisonLabel: previousPeriodForComparison.label,
         generatedAt: new Date().toISOString(),
         generatedBy: config.generatedBy,
         reportTypes,
         period: `${dayjs(startDate).format('MMM DD, YYYY')} to ${dayjs(endDate).format('MMM DD, YYYY')}`,
-        periodLabel: config.durationType === 'yearly'
-          ? `Yearly Report • ${config.year}`
-          : `Monthly Report • ${dayjs(startDate).format('MMM D')} – ${dayjs(endDate).format('MMM D, YYYY')}`,
-        greeting: `Hello${user?.first_name ? ` ${user.first_name}` : ''}, here is a summary of the performance of your business operations for ${config.month} ${config.year}.`,
+        periodLabel: `${formatSmartReportTypeLabel(periodType)} Report • ${selectedPeriodLabel}`,
+        greeting: `Hello${user?.first_name ? ` ${user.first_name}` : ''}, here is a summary of your business performance for ${selectedPeriodLabel}.`,
         sections: [],
         insights: reportInsights,
         snapshot: buildSmartReportSnapshot({
@@ -1462,7 +1550,7 @@ function ReportsInner() {
           outstandingData: outstandingData?.data || outstandingData || {},
           serviceAnalyticsData: serviceAnalyticsData?.data || serviceAnalyticsData || {},
           productSalesData: productSalesData?.data || productSalesData || {},
-          phase2Data: phase2,
+          phase2Data: phase2ForSnapshot,
           cashFlowData: cashFlowPayload,
           profitLossData: profitLossPayload,
           financialPositionData: financialPositionPayload,
@@ -1476,9 +1564,11 @@ function ReportsInner() {
             revenueChange,
             expenseChange,
             profitChange,
-            label: `vs ${dayjs(previousPeriodForComparison.startDate).format('MMM YYYY')}`,
+            label: previousPeriodForComparison.label,
             startDate,
             endDate,
+            comparisonStartDate: previousPeriodForComparison.startDate,
+            comparisonEndDate: previousPeriodForComparison.endDate,
           },
           isShop,
           isPharmacy,
@@ -1610,7 +1700,7 @@ function ReportsInner() {
           <Card>
             <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
               <p className="text-sm text-muted-foreground">Total Revenue</p>
-              <p className="text-2xl font-semibold text-primary">₵ {parseFloat(totalRevenue || 0).toFixed(2)}</p>
+              <p className="text-2xl font-semibold text-primary">{formatAmount(totalRevenue)}</p>
             </CardContent>
           </Card>
         </div>
@@ -1635,7 +1725,7 @@ function ReportsInner() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                   <Legend />
                   <Line type="monotone" dataKey="revenue" stroke="var(--color-primary)" strokeWidth={2} name="Revenue" />
                 </LineChart>
@@ -1655,7 +1745,7 @@ function ReportsInner() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                   <Bar dataKey="revenue" fill="var(--color-primary)" />
                 </BarChart>
               </ResponsiveContainer>
@@ -1682,7 +1772,7 @@ function ReportsInner() {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                 </PieChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1700,7 +1790,7 @@ function ReportsInner() {
                 columns={[
                   { key: 'customer', label: 'Customer', render: (_, r) => r.customer?.name || '-' },
                   { key: 'company', label: 'Company', render: (_, r) => r.customer?.company || '-' },
-                  { key: 'totalRevenue', label: 'Total Revenue', render: (_, r) => `₵ ${parseFloat(r.totalRevenue || 0).toFixed(2)}` },
+                  { key: 'totalRevenue', label: 'Total Revenue', render: (_, r) => formatAmount(r.totalRevenue) },
                   { key: 'paymentCount', label: 'Payments', render: (_, r) => r.paymentCount ?? '-' },
                 ]}
                 data={customerData.slice(0, 10)}
@@ -1738,7 +1828,7 @@ function ReportsInner() {
           <Card>
             <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
               <p className="text-sm text-muted-foreground">Total Expenses</p>
-              <p className="text-2xl font-semibold text-red-700">₵ {parseFloat(totalExpenses || 0).toFixed(2)}</p>
+              <p className="text-2xl font-semibold text-red-700">{formatAmount(totalExpenses)}</p>
             </CardContent>
           </Card>
         </div>
@@ -1765,7 +1855,7 @@ function ReportsInner() {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                 </PieChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1780,7 +1870,7 @@ function ReportsInner() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                   <Bar dataKey="amount" fill="hsl(var(--destructive))" />
                 </BarChart>
               </ResponsiveContainer>
@@ -1799,7 +1889,7 @@ function ReportsInner() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                   <Legend />
                   <Line type="monotone" dataKey="amount" stroke="hsl(var(--destructive))" strokeWidth={2} name="Expenses" />
                 </LineChart>
@@ -1818,7 +1908,7 @@ function ReportsInner() {
                 title="Expenses by category"
                 columns={[
                   { key: 'category', label: 'Category', render: (v) => <Badge className="border-transparent bg-brand text-white hover:bg-brand-dark">{v || '—'}</Badge> },
-                  { key: 'totalAmount', label: 'Amount', render: (v) => `₵ ${parseFloat(v || 0).toFixed(2)}` },
+                  { key: 'totalAmount', label: 'Amount', render: (v) => formatAmount(v) },
                   { key: 'count', label: 'Count' },
                 ]}
                 data={byCategory || []}
@@ -1834,7 +1924,7 @@ function ReportsInner() {
                 title="Top vendors"
                 columns={[
                   { key: 'vendor', label: 'Vendor', render: (_, r) => r.vendor?.name || '-' },
-                  { key: 'totalAmount', label: 'Amount', render: (v) => `₵ ${parseFloat(v || 0).toFixed(2)}` },
+                  { key: 'totalAmount', label: 'Amount', render: (v) => formatAmount(v) },
                   { key: 'count', label: 'Count' },
                 ]}
                 data={byVendor?.slice(0, 10) || []}
@@ -1871,7 +1961,7 @@ function ReportsInner() {
           <Card>
             <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
               <p className="text-sm text-muted-foreground">Total Outstanding</p>
-              <p className="text-2xl font-semibold text-red-700">₵ {parseFloat(totalOutstanding || 0).toFixed(2)}</p>
+              <p className="text-2xl font-semibold text-red-700">{formatAmount(totalOutstanding)}</p>
             </CardContent>
           </Card>
         </div>
@@ -1887,7 +1977,7 @@ function ReportsInner() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                   <Bar dataKey="amount" fill="hsl(var(--destructive))" />
                 </BarChart>
               </ResponsiveContainer>
@@ -1914,7 +2004,7 @@ function ReportsInner() {
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
                   </Pie>
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                 </PieChart>
               </ResponsiveContainer>
             </CardContent>
@@ -1932,7 +2022,7 @@ function ReportsInner() {
                   { key: 'invoiceNumber', label: 'Invoice Number' },
                   { key: 'customer', label: 'Customer', render: (_, r) => r.customer?.name || '-' },
                   { key: 'dueDate', label: 'Due Date', render: (v) => dayjs(v).format('MMM DD, YYYY') },
-                  { key: 'balance', label: 'Balance', render: (v) => `₵ ${parseFloat(v || 0).toFixed(2)}` },
+                  { key: 'balance', label: 'Balance', render: (v) => formatAmount(v) },
                   { key: 'status', label: 'Status', mobileDashboardPlacement: 'headerEnd', render: (_, r) => <StatusChip status={r.status} /> },
                 ]}
                 data={invoicesList}
@@ -1970,7 +2060,7 @@ function ReportsInner() {
           <Card>
             <CardContent className="pt-4 md:pt-6 px-4 md:px-6 pb-4 md:pb-6">
               <p className="text-sm text-muted-foreground">{terminology.salesLabel}</p>
-              <p className="text-2xl font-semibold text-primary">₵ {parseFloat(totalSales || 0).toFixed(2)}</p>
+              <p className="text-2xl font-semibold text-primary">{formatAmount(totalSales)}</p>
             </CardContent>
           </Card>
         </div>
@@ -1998,7 +2088,7 @@ function ReportsInner() {
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                    <RechartsTooltip formatter={(value) => formatAmount(value)} />
                   </PieChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -2014,7 +2104,7 @@ function ReportsInner() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} />
                   <YAxis />
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                   <Bar dataKey="sales" fill="var(--color-primary)" />
                 </BarChart>
               </ResponsiveContainer>
@@ -2033,7 +2123,7 @@ function ReportsInner() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                   <Legend />
                   <Line type="monotone" dataKey="sales" stroke="var(--color-primary)" strokeWidth={2} name={terminology.revenue} />
                 </LineChart>
@@ -2063,9 +2153,9 @@ function ReportsInner() {
                     {(byJobType || []).map((item) => (
                       <TableRow key={item.jobType}>
                         <TableCell>{item.jobType || '-'}</TableCell>
-                        <TableCell>₵ {parseFloat(item.totalSales || 0).toFixed(2)}</TableCell>
+                        <TableCell>{formatAmount(item.totalSales)}</TableCell>
                         <TableCell>{item.jobCount ?? '-'}</TableCell>
-                        <TableCell>₵ {parseFloat(item.averagePrice || 0).toFixed(2)}</TableCell>
+                        <TableCell>{formatAmount(item.averagePrice)}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -2092,7 +2182,7 @@ function ReportsInner() {
                   {(byStatus || []).map((item) => (
                     <TableRow key={item.status}>
                       <TableCell><StatusChip status={item.status} /></TableCell>
-                      <TableCell>₵ {parseFloat(item.totalSales || 0).toFixed(2)}</TableCell>
+                      <TableCell>{formatAmount(item.totalSales)}</TableCell>
                       <TableCell>{item.jobCount ?? '-'}</TableCell>
                     </TableRow>
                   ))}
@@ -2130,19 +2220,19 @@ function ReportsInner() {
           <Card>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">Revenue</p>
-              <p className="text-2xl font-semibold text-primary">₵ {parseFloat(revenue || 0).toFixed(2)}</p>
+              <p className="text-2xl font-semibold text-primary">{formatAmount(revenue)}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">Expenses</p>
-              <p className="text-2xl font-semibold text-red-700">₵ {parseFloat(expenses || 0).toFixed(2)}</p>
+              <p className="text-2xl font-semibold text-red-700">{formatAmount(expenses)}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
               <p className="text-sm text-muted-foreground">Gross Profit</p>
-              <p className={cn("text-2xl font-semibold", grossProfit >= 0 ? "text-green-700" : "text-red-700")}>₵ {parseFloat(grossProfit || 0).toFixed(2)}</p>
+              <p className={cn("text-2xl font-semibold", grossProfit >= 0 ? "text-green-700" : "text-red-700")}>{formatAmount(grossProfit)}</p>
             </CardContent>
           </Card>
         </div>
@@ -2167,7 +2257,7 @@ function ReportsInner() {
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="name" />
                   <YAxis />
-                  <RechartsTooltip formatter={(value) => `₵ ${parseFloat(value).toFixed(2)}`} />
+                  <RechartsTooltip formatter={(value) => formatAmount(value)} />
                   <Bar dataKey="value" fill="var(--color-primary)">
                     {profitData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
@@ -2912,7 +3002,7 @@ function ReportsInner() {
             <Bot className="h-4 w-4" /> Smart Report
           </h4>
           <p className="text-muted-foreground text-sm mt-1">
-            Auto-generated monthly business intelligence report with AI-powered insights
+            Auto-generated business intelligence report with AI-powered insights for your selected period
           </p>
         </div>
 
@@ -3045,7 +3135,7 @@ function ReportsInner() {
                                 </h3>
                                 <p className="text-sm flex items-center gap-1" style={{ color: metric.color }}>
                                   {metric.trend === 'up' ? <TrendingUp className="h-4 w-4 shrink-0" /> : <TrendingDown className="h-4 w-4 shrink-0" />}
-                                  {metric.change.toFixed(2)}% from last month
+                                  {metric.change.toFixed(2)}% {perfSection.comparisonLabel || generatedReport.comparisonLabel || 'vs previous period'}
                                 </p>
                               </div>
                             </div>
@@ -3760,13 +3850,6 @@ function ReportsInner() {
     );
   };
 
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
-
-  const years = Array.from({ length: 5 }, (_, i) => dayjs().year() - 2 + i);
-
   return (
     <>
       {/* Create Report Modal - shadcn Dialog + Form */}
@@ -3791,83 +3874,19 @@ function ReportsInner() {
                   </FormItem>
                 )}
               />
-              <FormField
-                control={reportConfigForm.control}
-                name="durationType"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Duration type</FormLabel>
-                    <ShadcnSelect value={field.value} onValueChange={field.onChange}>
-                      <FormControl>
-                        <SelectTrigger className="h-11">
-                          <SelectValue placeholder="Select duration type" />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent>
-                        <SelectItem value="daily">Daily</SelectItem>
-                        <SelectItem value="weekly">Weekly</SelectItem>
-                        <SelectItem value="monthly">Monthly</SelectItem>
-                        <SelectItem value="quarterly">Quarterly</SelectItem>
-                        <SelectItem value="yearly">Yearly</SelectItem>
-                      </SelectContent>
-                    </ShadcnSelect>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <div className="grid grid-cols-2 gap-4">
-                <FormField
-                  control={reportConfigForm.control}
-                  name="year"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Year</FormLabel>
-                      <ShadcnSelect
-                        value={field.value != null ? String(field.value) : undefined}
-                        onValueChange={(v) => field.onChange(v ? parseInt(v, 10) : undefined)}
-                      >
-                        <FormControl>
-                          <SelectTrigger className="h-11">
-                            <SelectValue placeholder="Select year" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {years.map((y) => (
-                            <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </ShadcnSelect>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Report period</Label>
+                <DateRangePicker
+                  range={dateRange?.[0] && dateRange?.[1] ? { from: dateRange[0].toDate(), to: dateRange[1].toDate() } : undefined}
+                  onSelect={handleSmartReportDateRangeSelect}
+                  presets={DATE_RANGE_PRESET_OPTIONS}
+                  activePreset={dateFilter}
+                  onPresetSelect={handleSmartReportPresetSelect}
+                  className="h-11"
                 />
-                <FormField
-                  control={reportConfigForm.control}
-                  name="month"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Month</FormLabel>
-                      <ShadcnSelect value={field.value} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger className="h-11">
-                            <SelectValue placeholder="Select month" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          {months.map((m) => (
-                            <SelectItem key={m} value={m}>{m}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </ShadcnSelect>
-                      {reportConfigForm.watch('durationType') === 'monthly' && (
-                        <p className="text-xs text-muted-foreground mt-1.5">
-                          End of month reports can only be generated on the last day of the month or after.
-                        </p>
-                      )}
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                <p className="text-xs text-muted-foreground">
+                  Smart Report uses this selected range and compares it with the previous equivalent period.
+                </p>
               </div>
               <div className="space-y-4 pt-1">
                 <Label className="text-sm font-medium">Report sections</Label>
@@ -3946,22 +3965,14 @@ function ReportsInner() {
         <h2 className="text-2xl font-semibold">Reports & Analytics</h2>
         {showSmartReportList && (
           <div className="flex items-center gap-3">
-            {/* Date Filter */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <ShadcnButton
-                  variant="outline"
-                  className="border-border bg-card"
-                  onClick={() => {
-                    // Date filter handler
-                  }}
-                >
-                  <Calendar className="h-4 w-4 mr-2" />
-                  Last 6 months
-                </ShadcnButton>
-              </TooltipTrigger>
-              <TooltipContent>Change date range for reports</TooltipContent>
-            </Tooltip>
+            <DateRangePicker
+              range={dateRange?.[0] && dateRange?.[1] ? { from: dateRange[0].toDate(), to: dateRange[1].toDate() } : undefined}
+              onSelect={handleSmartReportDateRangeSelect}
+              presets={DATE_RANGE_PRESET_OPTIONS}
+              activePreset={dateFilter}
+              onPresetSelect={handleSmartReportPresetSelect}
+              className="w-auto min-w-[240px] border-border bg-card"
+            />
 
             {/* Filter/Sort Button */}
             <Tooltip>

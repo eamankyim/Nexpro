@@ -25,6 +25,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { resolveImageUrl } from '../utils/fileUtils';
+import FeatureNotAvailable from '../components/FeatureNotAvailable';
+import { FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
 
 const POLL_INTERVAL_MS = 12000; // 12 seconds
 const KANBAN_COLUMNS = [
@@ -317,8 +319,13 @@ const Orders = () => {
 
   if (!isRestaurant) {
     return (
-      <div>
-        <p className="text-muted-foreground">Order tracking is only available for restaurant tenants.</p>
+      <div className="space-y-4">
+        <h1 className="text-2xl font-bold text-foreground">Kitchen Orders</h1>
+        <FeatureNotAvailable
+          icon="ClipboardList"
+          title={FEATURE_NOT_AVAILABLE.RESTAURANT_ONLY.title}
+          description={FEATURE_NOT_AVAILABLE.RESTAURANT_ONLY.description}
+        />
       </div>
     );
   }

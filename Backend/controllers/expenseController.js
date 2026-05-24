@@ -35,6 +35,10 @@ const activityLogger = require('../services/activityLogger');
 const { createExpenseJournal } = require('../services/expenseAccountingService');
 const { invalidateAfterMutation } = require('../middleware/cache');
 const { baseUploadDir, ensureDirExists } = require('../middleware/upload');
+const {
+  getCreateApprovalDefaults,
+  stripCreateApprovalFields
+} = require('../utils/expenseApprovalDefaults');
 
 /**
  * Generate unique expense number with optional transaction for advisory lock (prevents race conditions).
@@ -515,16 +519,18 @@ exports.createExpense = async (req, res, next) => {
         }
       }
 
-      const isAdmin = req.user?.role === 'admin' || ['owner', 'admin'].includes(req.tenantRole);
+      const approvalDefaults = getCreateApprovalDefaults(payload, req.userId);
+      stripCreateApprovalFields(payload);
+
       const expense = await Expense.create(
         attachScopedToPayload(req, {
           ...payload,
           tenantId: req.tenantId,
           expenseNumber,
           submittedBy: req.userId,
-          approvalStatus: isAdmin ? 'approved' : 'draft',
-          approvedBy: isAdmin ? req.userId : null,
-          approvedAt: isAdmin ? new Date() : null,
+          approvalStatus: approvalDefaults.approvalStatus,
+          approvedBy: approvalDefaults.approvedBy,
+          approvedAt: approvalDefaults.approvedAt,
         }),
         { transaction }
       );
@@ -546,12 +552,12 @@ exports.createExpense = async (req, res, next) => {
           tenantId: req.tenantId,
           type: 'creation',
           subject: 'Expense Created',
-          notes: `Expense ${expense.expenseNumber} was created${isAdmin ? ' and auto-approved' : ' as draft'}`,
+          notes: `Expense ${expense.expenseNumber} was created${approvalDefaults.isExpenseRequest ? ' as an approval request' : ' and auto-approved'}`,
           createdBy: req.userId,
           metadata: {
             amount: expense.amount,
             category: expense.category,
-            autoApproved: isAdmin
+            autoApproved: !approvalDefaults.isExpenseRequest
           }
         }, { transaction });
       } catch (activityErr) {
@@ -561,7 +567,7 @@ exports.createExpense = async (req, res, next) => {
       await transaction.commit();
       invalidateAfterMutation(req.tenantId);
 
-      if (isAdmin) {
+      if (!approvalDefaults.isExpenseRequest) {
         try {
           await createExpenseJournal(expenseWithDetails, req.userId);
         } catch (journalError) {
@@ -635,11 +641,9 @@ exports.createBulkExpenses = async (req, res, next) => {
       }
     }
 
-    // Auto-approve expenses created by admins
-    const isAdmin = req.user?.role === 'admin' || ['owner', 'admin'].includes(req.tenantRole);
-
     // Create all expenses in a transaction
     const createdExpenses = [];
+    const createdExpenseApprovalDefaults = new Map();
     for (const expenseData of expenses) {
       // Skip invalid expenses
       if (!expenseData.category || !expenseData.amount || !expenseData.description) {
@@ -667,6 +671,7 @@ exports.createBulkExpenses = async (req, res, next) => {
         vendorId: expenseData.vendorId || commonFields?.vendorId || null,
         paymentMethod: expenseData.paymentMethod || commonFields?.paymentMethod || null,
         status: expenseData.status || commonFields?.status || null,
+        approvalStatus: expenseData.approvalStatus || commonFields?.approvalStatus,
         notes: expenseData.notes || commonFields?.notes || null
       };
 
@@ -701,6 +706,8 @@ exports.createBulkExpenses = async (req, res, next) => {
       }
 
       const expenseNumber = await exports.generateExpenseNumber(req.tenantId, transaction);
+      const approvalDefaults = getCreateApprovalDefaults(finalExpenseData, req.userId);
+      stripCreateApprovalFields(finalExpenseData);
 
       const expense = await Expense.create(
         attachScopedToPayload(req, {
@@ -708,14 +715,15 @@ exports.createBulkExpenses = async (req, res, next) => {
           tenantId: req.tenantId,
           expenseNumber,
           submittedBy: req.userId,
-          approvalStatus: isAdmin ? 'approved' : 'draft',
-          approvedBy: isAdmin ? req.userId : null,
-          approvedAt: isAdmin ? new Date() : null,
+          approvalStatus: approvalDefaults.approvalStatus,
+          approvedBy: approvalDefaults.approvedBy,
+          approvedAt: approvalDefaults.approvedAt,
         }),
         { transaction }
       );
 
       createdExpenses.push(expense);
+      createdExpenseApprovalDefaults.set(expense.id, approvalDefaults);
     }
 
     if (createdExpenses.length === 0) {
@@ -745,17 +753,18 @@ exports.createBulkExpenses = async (req, res, next) => {
     // Create creation activities for all expenses
     try {
       for (const expense of createdExpenses) {
+        const approvalDefaults = createdExpenseApprovalDefaults.get(expense.id);
         await ExpenseActivity.create({
           expenseId: expense.id,
           tenantId: req.tenantId,
           type: 'creation',
           subject: 'Expense Created',
-          notes: `Expense ${expense.expenseNumber} was created${isAdmin ? ' and auto-approved' : ' as draft'}`,
+          notes: `Expense ${expense.expenseNumber} was created${approvalDefaults?.isExpenseRequest ? ' as an approval request' : ' and auto-approved'}`,
           createdBy: req.userId,
           metadata: {
             amount: expense.amount,
             category: expense.category,
-            autoApproved: isAdmin
+            autoApproved: !approvalDefaults?.isExpenseRequest
           }
         });
       }
@@ -763,13 +772,16 @@ exports.createBulkExpenses = async (req, res, next) => {
       console.error('Failed to create expense activities:', error);
     }
 
-    if (isAdmin) {
-      for (const exp of expensesWithDetails) {
-        try {
-          await createExpenseJournal(exp, req.userId);
-        } catch (journalError) {
-          console.error('Failed to create accounting entry for auto-approved expense', exp.expenseNumber, journalError?.message);
-        }
+    for (const exp of expensesWithDetails) {
+      const approvalDefaults = createdExpenseApprovalDefaults.get(exp.id);
+      if (approvalDefaults?.isExpenseRequest) {
+        continue;
+      }
+
+      try {
+        await createExpenseJournal(exp, req.userId);
+      } catch (journalError) {
+        console.error('Failed to create accounting entry for auto-approved expense', exp.expenseNumber, journalError?.message);
       }
     }
 

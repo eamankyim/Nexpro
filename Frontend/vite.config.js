@@ -40,6 +40,8 @@ export default defineConfig(({ mode }) => ({
   },
   server: {
     port: 3000,
+    // Fail fast when 3000 is taken instead of silently moving to 3001 (avoids stale tabs on the wrong port).
+    strictPort: true,
     host: true,
     hmr: false,
     proxy: {

@@ -5,9 +5,13 @@ import { DragDropContext, Draggable, Droppable } from 'react-beautiful-dnd';
 
 import { useAuth } from '../context/AuthContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
+import { useDebounce } from '../hooks/useDebounce';
 import userWorkspaceService from '../services/userWorkspaceService';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { showError, showSuccess } from '../utils/toast';
+import WelcomeSection from '../components/WelcomeSection';
+import StatusChip from '../components/StatusChip';
+import { DEBOUNCE_DELAYS, PRIORITY_CHIP_CLASSES, SEARCH_PLACEHOLDERS, STATUS_CHIP_CLASSES, STATUS_CHIP_DEFAULT_CLASS } from '../constants';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -51,13 +55,6 @@ const STATUS_LABELS = {
   completed: 'Completed'
 };
 
-const STATUS_ICON = {
-  todo: Clock3,
-  in_progress: Calendar,
-  on_hold: PauseCircle,
-  completed: CheckCircle2
-};
-
 const SOURCE_LABEL = {
   lead: 'Lead follow-up',
   invoice: 'Invoice collection',
@@ -65,27 +62,11 @@ const SOURCE_LABEL = {
   stock: 'Restock'
 };
 
-const STATUS_BADGE_CLASS = {
-  todo: 'bg-slate-100 text-slate-700 border-slate-200',
-  in_progress: 'bg-blue-100 text-blue-700 border-blue-200',
-  on_hold: 'bg-amber-100 text-amber-700 border-amber-200',
-  completed: 'bg-green-100 text-green-700 border-green-200'
-};
+const getPriorityChipClass = (priority = 'medium') =>
+  PRIORITY_CHIP_CLASSES[priority] || PRIORITY_CHIP_CLASSES.medium;
 
-const PRIORITY_BADGE_CLASS = {
-  low: 'bg-slate-100 text-slate-700 border-slate-200',
-  medium: 'bg-blue-100 text-blue-700 border-blue-200',
-  high: 'bg-orange-100 text-orange-700 border-orange-200',
-  urgent: 'bg-red-100 text-red-700 border-red-200'
-};
-
-const SOURCE_BADGE_CLASS = {
-  lead: 'bg-purple-100 text-purple-700 border-purple-200',
-  invoice: 'bg-cyan-100 text-cyan-700 border-cyan-200',
-  quote: 'bg-indigo-100 text-indigo-700 border-indigo-200',
-  stock: 'bg-teal-100 text-teal-700 border-teal-200',
-  manual: 'bg-slate-100 text-slate-700 border-slate-200'
-};
+const getSourceChipClass = (source = 'manual') =>
+  STATUS_CHIP_CLASSES[`task_source_${source}`] || STATUS_CHIP_CLASSES.task_source_manual || STATUS_CHIP_DEFAULT_CLASS;
 
 function getDueState(task) {
   if (!task?.dueDate) return 'none';
@@ -140,6 +121,7 @@ const initialForm = {
 const Tasks = () => {
   const { user } = useAuth();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearchValue = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const queryClient = useQueryClient();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -164,7 +146,7 @@ const Tasks = () => {
   useEffect(() => {
     setPageSearchConfig({
       scope: 'tasks',
-      placeholder: 'Search tasks by title, description, assignee...'
+      placeholder: SEARCH_PLACEHOLDERS.TASKS,
     });
     return () => setPageSearchConfig(null);
   }, [setPageSearchConfig]);
@@ -344,7 +326,7 @@ const Tasks = () => {
   }, [tasksData]);
 
   const filteredTasks = useMemo(() => {
-    const q = searchValue.trim().toLowerCase();
+    const q = debouncedSearchValue.trim().toLowerCase();
     return tasksData.filter((task) => {
       if (statusFilter !== 'all' && task.status !== statusFilter) return false;
       if (scopeFilter === 'assigned_to_me' && task.assigneeId !== user?.id) return false;
@@ -369,7 +351,7 @@ const Tasks = () => {
     });
   }, [
     tasksData,
-    searchValue,
+    debouncedSearchValue,
     statusFilter,
     scopeFilter,
     priorityFilter,
@@ -522,12 +504,10 @@ const Tasks = () => {
   return (
     <div className="flex flex-col gap-2 px-0 py-1.5 sm:gap-4 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8">
       <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Tasks</h1>
-          <p className="text-sm text-muted-foreground">
-            Track meetings, follow-ups, due work, and automated tasks in one place.
-          </p>
-        </div>
+        <WelcomeSection
+          welcomeMessage="Tasks"
+          subText="Track meetings, follow-ups, due work, and automated tasks in one place."
+        />
         <div className="flex items-center gap-2">
           <div className="sm:hidden flex items-center gap-1 rounded-md border border-border p-1">
             <Button
@@ -621,7 +601,6 @@ const Tasks = () => {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
             <div className="lg:col-span-2 space-y-2 sm:space-y-3">
               {filteredTasks.map((task) => {
-                const Icon = STATUS_ICON[task.status] || Clock3;
                 return (
                   <Card
                     key={task.id}
@@ -647,34 +626,22 @@ const Tasks = () => {
                             </span>
                             <span>Due: {formatDate(task.dueDate)}</span>
                             {task.sourceType ? (
-                              <Badge
-                                variant="outline"
-                                className={SOURCE_BADGE_CLASS[task.sourceType] || SOURCE_BADGE_CLASS.manual}
-                              >
+                              <Badge variant="outline" className={getSourceChipClass(task.sourceType)}>
                                 {SOURCE_LABEL[task.sourceType] || task.sourceType}
                               </Badge>
                             ) : (
-                              <Badge variant="outline" className={SOURCE_BADGE_CLASS.manual}>
+                              <Badge variant="outline" className={getSourceChipClass('manual')}>
                                 Manual
                               </Badge>
                             )}
                             {task.isPrivate && <Badge variant="outline">Private</Badge>}
-                            <Badge
-                              variant="outline"
-                              className={PRIORITY_BADGE_CLASS[task.priority || 'medium'] || PRIORITY_BADGE_CLASS.medium}
-                            >
+                            <Badge variant="outline" className={getPriorityChipClass(task.priority || 'medium')}>
                               {String(task.priority || 'medium').toUpperCase()}
                             </Badge>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Badge
-                            variant="outline"
-                            className={`capitalize ${STATUS_BADGE_CLASS[task.status] || STATUS_BADGE_CLASS.todo}`}
-                          >
-                            <Icon className="mr-1 h-3 w-3" />
-                            {STATUS_LABELS[task.status] || task.status}
-                          </Badge>
+                          <StatusChip status={task.status} />
                         </div>
                       </div>
                     </CardHeader>
@@ -808,7 +775,7 @@ const Tasks = () => {
                                     {task.sourceType ? (
                                       <Badge
                                         variant="outline"
-                                        className={`text-[10px] ${SOURCE_BADGE_CLASS[task.sourceType] || SOURCE_BADGE_CLASS.manual}`}
+                                        className={`text-[10px] ${getSourceChipClass(task.sourceType)}`}
                                       >
                                         {SOURCE_LABEL[task.sourceType] || task.sourceType}
                                       </Badge>
@@ -820,7 +787,7 @@ const Tasks = () => {
                                     ) : null}
                                     <Badge
                                       variant="outline"
-                                      className={`text-[10px] ${PRIORITY_BADGE_CLASS[task.priority || 'medium'] || PRIORITY_BADGE_CLASS.medium}`}
+                                      className={`text-[10px] ${getPriorityChipClass(task.priority || 'medium')}`}
                                     >
                                       {String(task.priority || 'medium').toUpperCase()}
                                     </Badge>
@@ -1159,13 +1126,11 @@ const Tasks = () => {
                         </div>
                         <div className="flex items-start justify-between gap-4">
                           <p className="text-sm text-muted-foreground">Status</p>
-                          <Badge variant="outline" className={`capitalize ${STATUS_BADGE_CLASS[form.status] || STATUS_BADGE_CLASS.todo}`}>
-                            {STATUS_LABELS[form.status] || form.status}
-                          </Badge>
+                          <StatusChip status={form.status} />
                         </div>
                         <div className="flex items-start justify-between gap-4">
                           <p className="text-sm text-muted-foreground">Priority</p>
-                          <Badge variant="outline" className={PRIORITY_BADGE_CLASS[form.priority || 'medium'] || PRIORITY_BADGE_CLASS.medium}>
+                          <Badge variant="outline" className={getPriorityChipClass(form.priority || 'medium')}>
                             {String(form.priority || 'medium').toUpperCase()}
                           </Badge>
                         </div>

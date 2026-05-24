@@ -1804,7 +1804,7 @@ exports.sendReceipt = async (req, res, next) => {
               results.whatsapp = { success: false, error: 'No phone number provided' };
               break;
             }
-            results.whatsapp = await sendWhatsAppReceipt(req.tenantId, recipientPhone, receiptMessage);
+            results.whatsapp = await sendWhatsAppReceipt(req.tenantId, recipientPhone, sale, receiptMessage);
             break;
 
           case 'email':
@@ -1887,7 +1887,7 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
     );
   }
   if (whatsappConfig?.phoneNumberId && hasPhone) {
-    await sendWhatsAppReceipt(tenantId, whatsappService.validatePhoneNumber(phone), receiptMessage).catch((e) =>
+    await sendWhatsAppReceipt(tenantId, whatsappService.validatePhoneNumber(phone), sale, receiptMessage).catch((e) =>
       console.error('[AutoSendReceipt] WhatsApp failed:', e?.message)
     );
   }
@@ -1999,21 +1999,31 @@ async function sendSMSReceipt(tenantId, phone, message) {
 /**
  * Send WhatsApp receipt using configured WhatsApp service
  */
-async function sendWhatsAppReceipt(tenantId, phone, message) {
-  const { Setting } = require('../models');
-  
-  // Get WhatsApp settings
-  const whatsappSettings = await Setting.findOne({
-    where: { tenantId, key: 'whatsapp' }
-  });
-  
-  if (!whatsappSettings?.value?.enabled) {
+async function sendWhatsAppReceipt(tenantId, phone, sale, fallbackMessage = '') {
+  const whatsappService = require('../services/whatsappService');
+  const whatsappTemplates = require('../services/whatsappTemplates');
+
+  const whatsappConfig = await whatsappService.getConfig(tenantId);
+  if (!whatsappConfig?.enabled) {
     return { success: false, error: 'WhatsApp service not configured' };
   }
-  
-  // WhatsApp Business API implementation would go here
-  // For now, return a placeholder response
-  return { success: false, error: 'WhatsApp integration not yet implemented' };
+
+  const templateName = whatsappConfig.receiptTemplateName || 'sale_receipt';
+  const parameters = templateName === 'sale_receipt'
+    ? whatsappTemplates.prepareSaleReceipt(sale)
+    : [String(fallbackMessage || '').slice(0, 900)];
+  const result = await whatsappService.sendMessage(
+    tenantId,
+    phone,
+    templateName,
+    parameters.length ? parameters : [message.slice(0, 900)],
+    whatsappConfig.receiptTemplateLanguage || 'en',
+    { category: 'transactional', metadata: { source: 'sale_receipt' } }
+  );
+
+  return result.success
+    ? { success: true, messageId: result.messageId || null }
+    : { success: false, error: result.error || 'WhatsApp receipt failed' };
 }
 
 /**

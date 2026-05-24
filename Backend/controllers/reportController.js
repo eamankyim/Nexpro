@@ -1264,8 +1264,8 @@ exports.getTopCustomers = async (req, res, next) => {
       const customers = await Sale.findAll({
         attributes: [
           'customerId',
-          [sequelize.fn('SUM', sequelize.col('total')), 'totalRevenue'],
-          [sequelize.fn('COUNT', sequelize.col('id')), 'paymentCount']
+          [sequelize.fn('SUM', sequelize.col('Sale.total')), 'totalRevenue'],
+          [sequelize.fn('COUNT', sequelize.col('Sale.id')), 'paymentCount']
         ],
         where: scopedSaleWhere(req, dateFilter),
         include: [
@@ -1276,8 +1276,8 @@ exports.getTopCustomers = async (req, res, next) => {
             required: false
           }
         ],
-        group: ['customerId', 'customer.id'],
-        order: [[sequelize.fn('SUM', sequelize.col('total')), 'DESC']],
+        group: ['Sale.customerId', 'customer.id'],
+        order: [[sequelize.fn('SUM', sequelize.col('Sale.total')), 'DESC']],
         limit: Number(limit),
         subQuery: false
       });
@@ -1693,7 +1693,7 @@ exports.getServiceAnalyticsReport = async (req, res, next) => {
 exports.generateAIAnalysis = async (req, res, next) => {
   try {
     const openaiService = require('../services/openaiService');
-    const { reportData, options } = req.body;
+    const { reportData, options = {} } = req.body;
 
     if (!reportData) {
       return res.status(400).json({
@@ -1721,10 +1721,24 @@ exports.generateAIAnalysis = async (req, res, next) => {
     });
   } catch (error) {
     if (error.code === 'OPENAI_NOT_CONFIGURED') {
-      return res.status(503).json({
-        success: false,
-        error: 'AI analysis is not configured. Set ANTHROPIC_API_KEY in the backend .env to enable.',
-        code: 'OPENAI_NOT_CONFIGURED'
+      return res.status(200).json({
+        success: true,
+        data: {
+          keyFindings: [
+            'Revenue and expense data has been analyzed.',
+            'Smart Report generated without AI because Anthropic is not configured.',
+            'Set ANTHROPIC_API_KEY in Backend/.env to enable AI-generated insights.'
+          ],
+          performanceAnalysis: 'The report was generated from business data. AI-powered narrative analysis is disabled until ANTHROPIC_API_KEY is configured.',
+          recommendations: [],
+          riskAssessment: [],
+          growthOpportunities: [],
+          strategicSuggestions: [
+            'Review the financial, sales, expenses, cash flow, and inventory tabs for detailed performance signals.'
+          ],
+          aiConfigured: false,
+          aiUnavailableReason: 'ANTHROPIC_API_KEY is not configured'
+        }
       });
     }
     if (error.code === 'invalid_api_key' || error.status === 401) {

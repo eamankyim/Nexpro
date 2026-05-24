@@ -84,7 +84,12 @@ export default function SmartReportExpensesTab({ snapshot, periodLabel }) {
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                   <XAxis dataKey="period" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${v / 1000}k`} />
-                  <Tooltip formatter={(v, name) => [formatOverviewCurrency(v), name === 'expenses' ? 'Expenses' : 'Avg daily']} />
+                  <Tooltip
+                    formatter={(v, _name, { dataKey }) => [
+                      formatOverviewCurrency(v),
+                      dataKey === 'expenses' ? 'Expenses' : 'Avg daily'
+                    ]}
+                  />
                   <Line type="monotone" dataKey="expenses" name="Expenses" stroke="#b91c1c" strokeWidth={2} dot={false} />
                   <Line type="monotone" dataKey="avgDaily" name="Avg daily" stroke="#2563eb" strokeWidth={2} strokeDasharray="4 4" dot={false} />
                 </LineChart>

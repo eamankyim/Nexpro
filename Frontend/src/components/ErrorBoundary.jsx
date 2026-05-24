@@ -85,9 +85,16 @@ class ErrorBoundary extends React.Component {
     }
 
     const chunkError = isChunkLoadError(this.state.error);
-    const title = chunkError ? 'New version available' : 'Something went wrong';
+    const isDev = import.meta.env.DEV;
+    const title = chunkError
+      ? isDev
+        ? 'Could not load page module'
+        : 'New version available'
+      : 'Something went wrong';
     const message = chunkError
-      ? 'A new version of the app is available. Please refresh the page to load the latest version.'
+      ? isDev
+        ? 'The dev server may have restarted on a different port, or another Vite instance is still running. Open the URL shown in your terminal (usually http://localhost:3000), stop duplicate "npm run dev" processes, hard-refresh (Cmd+Shift+R), and clear site data for localhost if this persists.'
+        : 'A new version of the app is available. Please refresh the page to load the latest version.'
       : "We're sorry, but something unexpected happened. Our team has been notified and is working to fix the issue.";
 
     return (

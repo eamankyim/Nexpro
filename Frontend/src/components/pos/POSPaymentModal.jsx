@@ -38,7 +38,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { CURRENCY } from '../../constants';
-import { parseDecimalInput } from '../../utils/formatNumber';
+import { formatAmount, parseDecimalInput } from '../../utils/formatNumber';
 import { useResponsive } from '../../hooks/useResponsive';
 import mobileMoneyService from '../../services/mobileMoneyService';
 
@@ -75,17 +75,6 @@ const MOBILE_MONEY_PROVIDERS = {
     textColor: 'text-white',
     borderColor: 'border-red-600',
   },
-};
-
-/**
- * @param {number|string|object} amount
- * @returns {string}
- */
-const formatCurrency = (amount) => {
-  const num = typeof amount === 'number' && Number.isFinite(amount) ? amount : Number(amount);
-  const value = Number.isFinite(num) ? num : 0;
-  const decimals = typeof CURRENCY?.DECIMAL_PLACES === 'number' ? CURRENCY.DECIMAL_PLACES : 2;
-  return `${CURRENCY?.SYMBOL ?? '₵'} ${value.toFixed(decimals)}`;
 };
 
 /**
@@ -145,21 +134,21 @@ function PaymentSummaryCards({ total, taxSummary }) {
     <div className="grid grid-cols-2 gap-4">
       <div className={cn(SECTION_CARD, 'p-4')}>
         <p className="text-sm text-muted-foreground">Amount Due</p>
-        <p className="text-2xl font-bold text-green-700 mt-1">{formatCurrency(total)}</p>
+        <p className="text-2xl font-bold text-green-700 mt-1">{formatAmount(total)}</p>
       </div>
       <div className={cn(SECTION_CARD, 'p-4 space-y-2')}>
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Subtotal</span>
-          <span className="text-foreground">{formatCurrency(subtotal)}</span>
+          <span className="text-foreground">{formatAmount(subtotal)}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">{taxLabel}</span>
-          <span className="text-foreground">{formatCurrency(taxAmount)}</span>
+          <span className="text-foreground">{formatAmount(taxAmount)}</span>
         </div>
         <Separator />
         <div className="flex items-center justify-between text-sm font-semibold text-foreground">
           <span>Total Due</span>
-          <span>{formatCurrency(total)}</span>
+          <span>{formatAmount(total)}</span>
         </div>
       </div>
     </div>
@@ -325,7 +314,7 @@ function SaleItemsSection({ items, onEditItems }) {
               <span className="text-muted-foreground">× {Number(item.quantity) || 0}</span>
             </span>
             <span className="font-medium text-foreground shrink-0">
-              {formatCurrency(
+              {formatAmount(
                 (Number(item.unitPrice) || 0) * (Number(item.quantity) || 0) - (Number(item.discount) || 0)
               )}
             </span>
@@ -360,7 +349,7 @@ const CashPayment = ({ total, items, onConfirm, isProcessing, onEditItems }) => 
 
       <div className="text-center">
         <p className="text-sm text-muted-foreground">Amount to Pay</p>
-        <p className="text-3xl font-bold text-green-700 mt-1">{formatCurrency(total)}</p>
+        <p className="text-3xl font-bold text-green-700 mt-1">{formatAmount(total)}</p>
       </div>
 
       <div className="grid grid-cols-4 gap-3">
@@ -377,7 +366,7 @@ const CashPayment = ({ total, items, onConfirm, isProcessing, onEditItems }) => 
               typeof CURRENCY?.DECIMAL_PLACES === 'number' ? CURRENCY.DECIMAL_PLACES : 2
             ))}
           >
-            {formatCurrency(amount)}
+            {formatAmount(amount)}
           </Button>
         ))}
       </div>
@@ -404,8 +393,8 @@ const CashPayment = ({ total, items, onConfirm, isProcessing, onEditItems }) => 
           <p className="text-xs text-muted-foreground mb-1">Change</p>
           <p className={cn('text-xl font-bold', isValid || parsedAmount === 0 ? 'text-green-700' : 'text-red-600')}>
             {parsedAmount > 0 && !isValid
-              ? formatCurrency(total - parsedAmount)
-              : formatCurrency(change)}
+              ? formatAmount(total - parsedAmount)
+              : formatAmount(change)}
           </p>
         </div>
       </div>
@@ -467,7 +456,7 @@ const MobileMoneyPayment = ({
     <div className={SECTION_STACK}>
       <div className="text-center py-2">
         <p className="text-sm text-muted-foreground">Amount to Pay</p>
-        <p className="text-3xl font-bold text-green-700 mt-1">{formatCurrency(total)}</p>
+        <p className="text-3xl font-bold text-green-700 mt-1">{formatAmount(total)}</p>
       </div>
 
       <div>
@@ -536,7 +525,7 @@ const MobileMoneyPayment = ({
               <ol className="text-sm text-yellow-700 space-y-1 list-decimal list-inside">
                 <li>Customer dials *{provider === 'mtn' ? '170' : '110'}#</li>
                 <li>Select &quot;Send Money&quot; or &quot;Pay Bill&quot;</li>
-                <li>Enter amount: {formatCurrency(total)}</li>
+                <li>Enter amount: {formatAmount(total)}</li>
                 <li>Confirm payment on their phone</li>
               </ol>
             </CardContent>
@@ -586,7 +575,7 @@ const CardPayment = ({ total, onConfirm, isProcessing }) => {
     <div className={SECTION_STACK}>
       <div className="text-center py-2">
         <p className="text-sm text-muted-foreground">Amount to Pay</p>
-        <p className="text-3xl font-bold text-green-700 mt-1">{formatCurrency(total)}</p>
+        <p className="text-3xl font-bold text-green-700 mt-1">{formatAmount(total)}</p>
       </div>
 
       <Card className="border-green-200 bg-green-50">
@@ -653,7 +642,7 @@ const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
     <div className={SECTION_STACK}>
       <div className="text-center py-2">
         <p className="text-sm text-muted-foreground">Amount to Credit</p>
-        <p className="text-3xl font-bold text-green-700 mt-1">{formatCurrency(totalSafe)}</p>
+        <p className="text-3xl font-bold text-green-700 mt-1">{formatAmount(totalSafe)}</p>
       </div>
 
       {!hasCustomer ? (
@@ -677,17 +666,17 @@ const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
               <Separator />
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Current Balance</span>
-                <span className="font-medium text-orange-600">{formatCurrency(Number.isFinite(balance) ? balance : 0)}</span>
+                <span className="font-medium text-orange-600">{formatAmount(Number.isFinite(balance) ? balance : 0)}</span>
               </div>
               {hasLimit ? (
                 <>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Credit Limit</span>
-                    <span className="font-medium">{formatCurrency(creditLimit)}</span>
+                    <span className="font-medium">{formatAmount(creditLimit)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Available Credit</span>
-                    <span className="font-bold text-green-600">{formatCurrency(creditAvailable)}</span>
+                    <span className="font-bold text-green-600">{formatAmount(creditAvailable)}</span>
                   </div>
                 </>
               ) : (
@@ -781,7 +770,7 @@ const POSPaymentModal = ({
         <DialogHeader className="pb-2 mb-2">
           <DialogTitle className="text-lg font-semibold text-foreground pr-10">Payment</DialogTitle>
           <DialogDescription className="sr-only">
-            Choose payment method and complete payment for {formatCurrency(total)}.
+            Choose payment method and complete payment for {formatAmount(total)}.
           </DialogDescription>
         </DialogHeader>
 

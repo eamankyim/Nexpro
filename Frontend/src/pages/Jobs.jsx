@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useDebounce } from '../hooks/useDebounce';
+import { useCurrency } from '../hooks/useCurrency';
 import { useResponsive } from '../hooks/useResponsive';
 import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useForm, useFieldArray } from 'react-hook-form';
@@ -41,6 +42,8 @@ import DashboardTable from '../components/DashboardTable';
 import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
+import { EMPTY_STATES } from '../constants/microcopy';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import { showSuccess, showError, showWarning, showInfo } from '../utils/toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -198,6 +201,7 @@ const Jobs = () => {
   const queryClient = useQueryClient();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
+  const { formatAmount } = useCurrency();
   const [pagination, setPagination] = useState({ current: 1, pageSize: 10, total: 0 });
   const [filters, setFilters] = useState({ 
     status: 'all',
@@ -1714,7 +1718,7 @@ useEffect(() => {
     {
       key: 'price',
       label: 'Price',
-      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.finalPrice || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium">{formatAmount(record?.finalPrice)}</span>
     },
     {
       key: 'dueDate',
@@ -1731,19 +1735,36 @@ useEffect(() => {
         />
       )
     }
-  ], [handleView]);
+  ], [handleView, formatAmount]);
 
-  const handleClearFilters = () => {
+  const handleClearFilters = useCallback(() => {
     setFilters({
       status: 'all',
       priority: 'all',
       customerId: 'all',
       dueDate: 'all'
     });
-    setPagination({ ...pagination, current: 1 });
-  };
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, []);
 
-  const hasActiveFilters = filters.status !== 'all' || filters.priority !== 'all' || filters.customerId !== 'all' || filters.dueDate !== 'all';
+  const hasActiveFilters =
+    filters.status !== 'all' ||
+    filters.priority !== 'all' ||
+    filters.customerId !== 'all' ||
+    filters.dueDate !== 'all' ||
+    debouncedSearch.trim();
+
+  const jobsEmptyState = useMemo(() => {
+    if (hasActiveFilters) {
+      return getEmptyStateProps(EMPTY_STATES.JOBS_FILTERED, {
+        primary: handleClearFilters,
+      });
+    }
+
+    return getEmptyStateProps(EMPTY_STATES.JOBS, {
+      primary: handleAddJob,
+    });
+  }, [hasActiveFilters, handleClearFilters, handleAddJob]);
 
   return (
     <div className="space-y-4 md:space-y-6">
@@ -1869,14 +1890,7 @@ useEffect(() => {
           columns={tableColumns}
           loading={isJobsLoading || isJobsFetching || (isMobile && isRefreshing)}
           title={null}
-          emptyIcon={<Briefcase className="h-12 w-12 text-muted-foreground" />}
-          emptyDescription="No jobs yet. Create a job to track work orders and generate invoices."
-          emptyAction={
-            <Button onClick={handleAddJob}>
-              <Plus className="h-4 w-4 mr-2" />
-              Create First Job
-            </Button>
-          }
+          emptyState={jobsEmptyState}
           pageSize={pagination.pageSize}
           onPageChange={(newPagination) => {
             setPagination(newPagination);
@@ -2154,7 +2168,7 @@ useEffect(() => {
                       <Descriptions column={1} className="space-y-2">
                       <DescriptionItem label="Final Price">
                         <strong className="text-base" style={{ color: 'var(--color-primary)' }}>
-                          ₵ {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
+                          {formatAmount(viewingJob.finalPrice)}
                         </strong>
                       </DescriptionItem>
                       <DescriptionItem label="Invoice">
@@ -2221,12 +2235,12 @@ useEffect(() => {
                             </div>
                             <div className="col-span-2 text-right">
                               <div className="text-xs text-muted-foreground mb-1">Unit Price</div>
-                              <div className="text-sm font-medium">₵ {parseFloat(item.unitPrice || 0).toFixed(2)}</div>
+                              <div className="text-sm font-medium">{formatAmount(item.unitPrice)}</div>
                             </div>
                             <div className="col-span-2 text-right">
                               <div className="text-xs text-muted-foreground mb-1">Total</div>
                               <div className="font-bold text-sm" style={{ color: 'var(--color-primary)' }}>
-                                ₵ {(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}
+                                {formatAmount((parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)))}
                               </div>
                             </div>
                           </div>
@@ -2235,7 +2249,7 @@ useEffect(() => {
                       <div className="border border-border/50 rounded-md p-4 flex justify-between items-center bg-muted/30">
                         <strong className="text-base font-semibold">Total:</strong>
                         <strong className="text-lg font-bold" style={{ color: 'var(--color-primary)' }}>
-                          ₵ {parseFloat(viewingJob.finalPrice || 0).toFixed(2)}
+                          {formatAmount(viewingJob.finalPrice)}
                         </strong>
                       </div>
                     </div>
@@ -2655,9 +2669,9 @@ useEffect(() => {
                                 const hasSquareFootPricing = Number.isFinite(parseFloat(template.pricePerSquareFoot)) && parseFloat(template.pricePerSquareFoot) > 0;
                                 const priceLabel = (() => {
                                   if (resolvedPrice <= 0) return '';
-                                  if (hasUnitPricing) return ` (₵ ${resolvedPrice.toFixed(2)}/unit)`;
-                                  if (hasSquareFootPricing) return ` (₵ ${resolvedPrice.toFixed(2)}/sq ft)`;
-                                  return ` (₵ ${resolvedPrice.toFixed(2)})`;
+                                  if (hasUnitPricing) return ` (${formatAmount(resolvedPrice)}/unit)`;
+                                  if (hasSquareFootPricing) return ` (${formatAmount(resolvedPrice)}/sq ft)`;
+                                  return ` (${formatAmount(resolvedPrice)})`;
                                 })();
                                 return (
                                 <SelectItem key={template.id} value={template.id}>
@@ -2884,7 +2898,7 @@ useEffect(() => {
                       <div className="space-y-2">
                         <Label>Total</Label>
                         <div className="h-10 px-3 py-2 border border-input rounded-md bg-background flex items-center text-sm font-semibold">
-                          ₵ {(() => {
+                          {(() => {
                             const items = form.getValues('items') || [];
                             const currentItem = items[index] || {};
                             const qty = parseFloat(currentItem.quantity || 1);
@@ -2892,7 +2906,7 @@ useEffect(() => {
                             const discountAmount = parseFloat(currentItem.discountAmount || 0);
                             const subtotal = qty * price;
                             const total = subtotal - discountAmount;
-                            return total.toFixed(2);
+                            return formatAmount(total);
                           })()}
                         </div>
                       </div>
@@ -2957,21 +2971,21 @@ useEffect(() => {
               return (
                   <div className="bg-muted/50 border border-border rounded-md mb-4 overflow-hidden">
                     <div className="p-3">
-                    <div className="flex justify-between mb-1 text-sm text-gray-600">
+                    <div className="flex justify-between mb-1 text-sm text-muted-foreground">
                       <span>Subtotal:</span>
-                      <span className="font-medium">₵ {subtotal.toFixed(2)}</span>
+                      <span className="font-medium">{formatAmount(subtotal)}</span>
                     </div>
                   {totalDiscount > 0 && (
-                      <div className="flex justify-between mb-1 text-sm text-gray-600">
+                      <div className="flex justify-between mb-1 text-sm text-muted-foreground">
                         <span>Total Discount:</span>
-                        <span className="font-medium">-₵ {totalDiscount.toFixed(2)}</span>
+                        <span className="font-medium">-{formatAmount(totalDiscount)}</span>
                       </div>
                     )}
                     </div>
                     <Separator className="w-full" />
                     <div className="p-3 flex justify-between">
                       <span className="text-base font-bold">Grand Total:</span>
-                      <span className="text-lg font-bold">₵ {total.toFixed(2)}</span>
+                      <span className="text-lg font-bold">{formatAmount(total)}</span>
                     </div>
                 </div>
               );

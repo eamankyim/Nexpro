@@ -30,8 +30,10 @@ import DashboardTable from '../components/DashboardTable';
 import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
+import FeatureNotAvailable from '../components/FeatureNotAvailable';
 import { showSuccess, showError } from '../utils/toast';
 import { resolveImageUrl } from '../utils/fileUtils';
+import { formatAmount } from '../utils/formatNumber';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -85,7 +87,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 import { DELIVERY_STATUS_ORDER, DELIVERY_STATUS_LABELS } from '../constants';
-import { EMPTY_STATES } from '../constants/microcopy';
+import { EMPTY_STATES, FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 
 const recordPaymentSchema = z.object({
@@ -543,7 +545,7 @@ const Sales = () => {
       label: 'Total',
       render: (_, record) => (
         <span className="text-foreground font-medium">
-          ₵ {parseFloat(record.total || 0).toFixed(2)}
+          {formatAmount(record.total)}
         </span>
       )
     },
@@ -625,31 +627,31 @@ const Sales = () => {
     },
     {
       label: 'Subtotal',
-      value: `₵ ${parseFloat(viewingSale.subtotal || 0).toFixed(2)}`
+      value: formatAmount(viewingSale.subtotal)
     },
     {
       label: 'Discount',
-      value: `₵ ${parseFloat(viewingSale.discount || 0).toFixed(2)}`
+      value: formatAmount(viewingSale.discount)
     },
     {
       label: 'Tax',
-      value: `₵ ${parseFloat(viewingSale.tax || 0).toFixed(2)}`
+      value: formatAmount(viewingSale.tax)
     },
     {
       label: 'Total',
       value: (
         <strong className="text-lg text-primary">
-          ₵ {parseFloat(viewingSale.total || 0).toFixed(2)}
+          {formatAmount(viewingSale.total)}
         </strong>
       )
     },
     {
       label: 'Amount Paid',
-      value: `₵ ${parseFloat(viewingSale.amountPaid || 0).toFixed(2)}`
+      value: formatAmount(viewingSale.amountPaid)
     },
     viewingSale.change > 0 && {
       label: 'Change',
-      value: `₵ ${parseFloat(viewingSale.change || 0).toFixed(2)}`
+      value: formatAmount(viewingSale.change)
     },
     viewingSale.shop && {
       label: 'Shop',
@@ -681,28 +683,15 @@ const Sales = () => {
   if (!isShop) {
     return (
       <div className="px-6 py-4 md:p-6 space-y-4 md:space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">Sales</h1>
-            <p className="text-gray-600 mt-1">Track and manage your sales transactions</p>
-          </div>
-        </div>
-
-        <Card className="border border-gray-200">
-          <CardContent className="p-12">
-            <div className="flex flex-col items-center justify-center text-center space-y-4">
-              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
-                <ShoppingCart className="h-10 w-10 text-gray-400" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-semibold text-foreground mb-2">Not Available</h2>
-                <p className="text-gray-600 max-w-md">
-                  Sales management is only available for shop business types.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <WelcomeSection
+          welcomeMessage="Sales"
+          subText="Track and manage your sales transactions."
+        />
+        <FeatureNotAvailable
+          icon="ShoppingCart"
+          title={FEATURE_NOT_AVAILABLE.SHOP_ONLY.title}
+          description={FEATURE_NOT_AVAILABLE.SHOP_ONLY.description}
+        />
       </div>
     );
   }
@@ -785,7 +774,7 @@ const Sales = () => {
         <DashboardStatsCard
           tooltip="Revenue from completed sales only (matches Dashboard). Pending and partially paid sales are not counted until completed."
           title="Total Revenue"
-          value={`₵ ${totalRevenueCompleted.toFixed(2)}`}
+          value={formatAmount(totalRevenueCompleted)}
           icon={Receipt}
           iconBgColor="rgba(22, 101, 52, 0.1)"
           iconColor="#166534"
@@ -976,16 +965,16 @@ const Sales = () => {
                   <Separator />
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-muted-foreground">Total</span>
-                    <span>₵ {total.toFixed(2)}</span>
+                    <span>{formatAmount(total)}</span>
                   </div>
                   <div className="flex justify-between items-center text-sm">
                     <span className="text-muted-foreground">Amount paid</span>
-                    <span>₵ {amountPaid.toFixed(2)}</span>
+                    <span>{formatAmount(amountPaid)}</span>
                   </div>
                   <div className="flex justify-between items-center pt-1">
                     <span className="font-medium text-foreground">Balance due</span>
                     <span className={`text-lg font-semibold ${balanceDue > 0 ? 'text-orange-600' : 'text-green-600'}`}>
-                      ₵ {balanceDue.toFixed(2)}
+                      {formatAmount(balanceDue)}
                     </span>
                   </div>
                 </div>
@@ -1187,7 +1176,7 @@ const Sales = () => {
               <div className="space-y-6">
                 <DrawerSectionCard title="Sale summary">
                   {(viewingSale.items || []).some((i) => i?.product?.imageUrl) && (
-                    <div className="flex flex-wrap gap-2 mb-4 pb-4 border-b border-gray-200">
+                    <div className="flex flex-wrap gap-2 mb-4 pb-4 border-b border-border">
                       {viewingSale.items
                         .filter((i) => i?.product?.imageUrl)
                         .map((item) => (
@@ -1215,7 +1204,7 @@ const Sales = () => {
                     <div className="text-right">
                       <div className="text-sm text-muted-foreground">Total Amount</div>
                       <div className="text-2xl font-bold text-primary">
-                        ₵ {parseFloat(viewingSale.total || 0).toFixed(2)}
+                        {formatAmount(viewingSale.total)}
                       </div>
                     </div>
                   </div>
@@ -1259,16 +1248,16 @@ const Sales = () => {
               <DrawerSectionCard title="Itemized charges">
                 {(viewingSale.items || []).length ? (
                   <div className="space-y-0">
-                    <div className="grid grid-cols-12 gap-2 pb-2 border-b border-gray-200 text-sm font-semibold text-foreground">
+                    <div className="grid grid-cols-12 gap-2 pb-2 border-b border-border text-sm font-semibold text-foreground">
                       <div className="col-span-6">Item</div>
                       <div className="col-span-2 text-right">Qty</div>
-                      <div className="col-span-2 text-right">Unit price (₵)</div>
-                      <div className="col-span-2 text-right">Total (₵)</div>
+                      <div className="col-span-2 text-right">Unit price</div>
+                      <div className="col-span-2 text-right">Total</div>
                     </div>
                     {viewingSale.items.map((item) => (
                       <div
                         key={item.id}
-                        className="grid grid-cols-12 gap-2 py-3 border-b border-gray-200/80 last:border-b-0 text-sm items-center"
+                        className="grid grid-cols-12 gap-2 py-3 border-b border-border/80 last:border-b-0 text-sm items-center"
                       >
                         <div className="col-span-6 flex items-center gap-3">
                           {item?.product?.imageUrl ? (
@@ -1292,27 +1281,27 @@ const Sales = () => {
                             )}
                           </div>
                         </div>
-                        <div className="col-span-2 text-right text-gray-700">{item.quantity}</div>
-                        <div className="col-span-2 text-right text-gray-700">{parseFloat(item.unitPrice || 0).toFixed(2)}</div>
-                        <div className="col-span-2 text-right font-medium text-foreground">{parseFloat(item.total || 0).toFixed(2)}</div>
+                        <div className="col-span-2 text-right text-muted-foreground">{item.quantity}</div>
+                        <div className="col-span-2 text-right text-muted-foreground">{formatAmount(item.unitPrice)}</div>
+                        <div className="col-span-2 text-right font-medium text-foreground">{formatAmount(item.total)}</div>
                       </div>
                     ))}
-                    <div className="pt-3 mt-2 border-t border-gray-200 space-y-1 text-sm">
+                    <div className="pt-3 mt-2 border-t border-border space-y-1 text-sm">
                       <div className="flex justify-between text-muted-foreground">
                         <span>Subtotal</span>
-                        <span className="text-foreground font-medium">₵ {parseFloat(viewingSale.subtotal || 0).toFixed(2)}</span>
+                        <span className="text-foreground font-medium">{formatAmount(viewingSale.subtotal)}</span>
                       </div>
                       <div className="flex justify-between text-muted-foreground">
                         <span>Discount</span>
-                        <span className="text-foreground">-₵ {parseFloat(viewingSale.discount || 0).toFixed(2)}</span>
+                        <span className="text-foreground">-{formatAmount(viewingSale.discount)}</span>
                       </div>
                       <div className="flex justify-between text-muted-foreground">
                         <span>Tax</span>
-                        <span className="text-foreground">₵ {parseFloat(viewingSale.tax || 0).toFixed(2)}</span>
+                        <span className="text-foreground">{formatAmount(viewingSale.tax)}</span>
                       </div>
                       <div className="flex justify-between text-base font-semibold text-foreground pt-2">
                         <span>Total</span>
-                        <span>₵ {parseFloat(viewingSale.total || 0).toFixed(2)}</span>
+                        <span>{formatAmount(viewingSale.total)}</span>
                       </div>
                     </div>
                   </div>

@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { Plus, Currency, FileText, Clock, CheckCircle, Printer, Download, Loader2, Share2, Copy, Archive, Trash2, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { useDebounce } from '../hooks/useDebounce';
 import invoiceService from '../services/invoiceService';
 import { guardOnline } from '../utils/onlineRequired';
 import settingsService from '../services/settingsService';
@@ -12,6 +13,7 @@ import customerService from '../services/customerService';
 import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
+import { useSmartSearch } from '../context/SmartSearchContext';
 import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import ActionColumn from '../components/ActionColumn';
 import DashboardTable from '../components/DashboardTable';
@@ -29,6 +31,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import DashboardStatsCard from '../components/DashboardStatsCard';
+import WelcomeSection from '../components/WelcomeSection';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
 import { DatePicker } from '@/components/ui/date-picker';
 import {
@@ -66,7 +69,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { STUDIO_LIKE_TYPES } from '../constants';
+import { DEBOUNCE_DELAYS, SEARCH_PLACEHOLDERS, STUDIO_LIKE_TYPES } from '../constants';
 import { EMPTY_STATES } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
@@ -133,6 +136,8 @@ const Invoices = () => {
     notes: '',
   });
   const [lineItemDescriptionOptions, setLineItemDescriptionOptions] = useState([]);
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
+  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
 
   // Organization branding for printable invoices
   const { data: organizationData } = useQuery({
@@ -173,6 +178,7 @@ const Invoices = () => {
     try {
       const cleanFilters = {};
       if (filters.status) cleanFilters.status = filters.status;
+      if (debouncedSearch.trim()) cleanFilters.search = debouncedSearch.trim();
 
       const response = await invoiceService.getAll({
         page: pagination.current,
@@ -186,7 +192,7 @@ const Invoices = () => {
     } finally {
       setLoading(false);
     }
-  }, [pagination.current, pagination.pageSize, filters, activeShopId]);
+  }, [pagination.current, pagination.pageSize, filters, activeShopId, debouncedSearch]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -202,6 +208,15 @@ const Invoices = () => {
     fetchInvoices();
     fetchStats();
   }, [scopeReady, activeTenantId, activeShopId, fetchInvoices, fetchStats, refreshTrigger, shopContext?.isShopWorkspace]);
+
+  useEffect(() => {
+    setPageSearchConfig({ scope: 'invoices', placeholder: SEARCH_PLACEHOLDERS.INVOICES });
+    return () => setPageSearchConfig(null);
+  }, [setPageSearchConfig]);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [searchValue]);
 
   useEffect(() => {
     if (location.state?.openInvoiceId && invoices.length > 0) {
@@ -720,10 +735,11 @@ const Invoices = () => {
   ], [isPrintingPress, handleView]);
 
   const invoicesEmptyState = useMemo(() => {
-    if (filters.status) {
+    if (filters.status || debouncedSearch.trim()) {
       return getEmptyStateProps(EMPTY_STATES.INVOICES_FILTERED, {
         primary: () => {
           setFilters({ status: '' });
+          setSearchValue('');
           setPagination((prev) => ({ ...prev, current: 1 }));
         },
       });
@@ -736,11 +752,14 @@ const Invoices = () => {
     return getEmptyStateProps(EMPTY_STATES.INVOICES_SHOP, {
       ...(canCreateManualInvoice ? { primary: handleOpenCreateModal } : {}),
     });
-  }, [filters.status, isStudioLike, canCreateManualInvoice, navigate, handleOpenCreateModal]);
+  }, [filters.status, debouncedSearch, isStudioLike, canCreateManualInvoice, navigate, handleOpenCreateModal, setSearchValue]);
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Invoices</h1>
+      <WelcomeSection
+        welcomeMessage="Invoices"
+        subText="Create, send, and track invoice payments."
+      />
 
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4">

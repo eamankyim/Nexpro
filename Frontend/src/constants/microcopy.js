@@ -121,6 +121,7 @@ export const SEARCH_PLACEHOLDERS = {
   PAYROLL: 'Employee name or period...',
   ACCOUNTING: 'Account, code, or entry...',
   REPORTS: 'Report name or type...',
+  TASKS: 'Title, description, or assignee...',
   SHOPS: 'Name, code, or location...',
   PHARMACIES: 'Name, code, or pharmacist...',
   PRODUCTS: 'Name, SKU, or barcode...',
@@ -133,6 +134,17 @@ export const SEARCH_PLACEHOLDERS = {
   ADMIN_JOBS: 'Title, description, or job #...',
   ADMIN_EXPENSES: 'Number, description, or category...',
   ADMIN_CUSTOMERS: 'Name, company, email, or phone...',
+};
+
+export const FEATURE_NOT_AVAILABLE = {
+  SHOP_ONLY: {
+    title: 'Feature not available',
+    description: 'This feature is only available for shop business types.',
+  },
+  RESTAURANT_ONLY: {
+    title: 'Feature not available',
+    description: 'Order tracking is only available for restaurant tenants.',
+  },
 };
 
 // =============================================

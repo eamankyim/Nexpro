@@ -1,5 +1,5 @@
 const cron = require('node-cron');
-const { Invoice, Customer, Tenant, Setting } = require('../models');
+const { Invoice, Customer, Tenant, Setting, WhatsAppMessageEvent } = require('../models');
 const { Op } = require('sequelize');
 const whatsappService = require('./whatsappService');
 const whatsappTemplates = require('./whatsappTemplates');
@@ -95,18 +95,33 @@ class PaymentReminderService {
           if (whatsappConfig && whatsappConfig.enabled) {
             const phoneNumber = whatsappService.validatePhoneNumber(invoice.customer.phone);
             if (phoneNumber && whatsappService.checkRateLimit(invoice.tenantId)) {
-              const parameters = whatsappTemplates.preparePaymentReminder(invoice, paymentLink);
-              const result = await whatsappService.sendMessage(
-                invoice.tenantId,
-                phoneNumber,
-                'payment_reminder',
-                parameters
-              );
-              if (result.success) {
-                reminderSent = true;
-                console.log(`[PaymentReminder] WhatsApp reminder sent for invoice ${invoice.invoiceNumber}`);
-              } else {
-                console.error(`[PaymentReminder] WhatsApp failed for ${invoice.invoiceNumber}:`, result.error);
+              const reminderCooldownHours = Math.max(1, Number(whatsappConfig.paymentReminderCooldownHours || 24));
+              const recentWhatsAppReminder = await WhatsAppMessageEvent.findOne({
+                where: {
+                  tenantId: invoice.tenantId,
+                  eventType: 'send',
+                  status: 'sent',
+                  templateName: 'payment_reminder',
+                  createdAt: { [Op.gte]: new Date(Date.now() - reminderCooldownHours * 60 * 60 * 1000) },
+                  metadata: { invoiceId: invoice.id }
+                }
+              });
+              if (!recentWhatsAppReminder) {
+                const parameters = whatsappTemplates.preparePaymentReminder(invoice, paymentLink);
+                const result = await whatsappService.sendMessage(
+                  invoice.tenantId,
+                  phoneNumber,
+                  'payment_reminder',
+                  parameters,
+                  'en',
+                  { category: 'transactional', metadata: { source: 'payment_reminder', invoiceId: invoice.id } }
+                );
+                if (result.success) {
+                  reminderSent = true;
+                  console.log(`[PaymentReminder] WhatsApp reminder sent for invoice ${invoice.invoiceNumber}`);
+                } else {
+                  console.error(`[PaymentReminder] WhatsApp failed for ${invoice.invoiceNumber}:`, result.error);
+                }
               }
               await new Promise(resolve => setTimeout(resolve, 100));
             }

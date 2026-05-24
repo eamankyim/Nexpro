@@ -1,5 +1,16 @@
 const express = require('express');
-const { getCapabilities, getPreview, postBroadcast } = require('../controllers/marketingController');
+const {
+  createCampaign,
+  getCampaign,
+  getCapabilities,
+  getOverview,
+  getPreview,
+  listCampaigns,
+  postBroadcast,
+  scheduleCampaign,
+  sendCampaign,
+  updateCampaign,
+} = require('../controllers/marketingController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { bulkOperationLimiter } = require('../middleware/rateLimiter');
@@ -21,6 +32,7 @@ router.use(tenantContext);
  *         description: Per-channel configured flag
  */
 router.get('/capabilities', authorize('admin', 'manager'), getCapabilities);
+router.get('/overview', authorize('admin', 'manager'), getOverview);
 
 /**
  * @openapi
@@ -38,6 +50,12 @@ router.get('/capabilities', authorize('admin', 'manager'), getCapabilities);
  *         description: Counts and capabilities
  */
 router.get('/preview', authorize('admin', 'manager'), getPreview);
+router.get('/campaigns', authorize('admin', 'manager'), listCampaigns);
+router.post('/campaigns', authorize('admin', 'manager'), createCampaign);
+router.get('/campaigns/:id', authorize('admin', 'manager'), getCampaign);
+router.put('/campaigns/:id', authorize('admin', 'manager'), updateCampaign);
+router.post('/campaigns/:id/send', bulkOperationLimiter, authorize('admin', 'manager'), sendCampaign);
+router.post('/campaigns/:id/schedule', authorize('admin', 'manager'), scheduleCampaign);
 
 /**
  * @openapi

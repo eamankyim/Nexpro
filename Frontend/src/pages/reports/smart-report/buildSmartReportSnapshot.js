@@ -250,7 +250,7 @@ export function buildSmartReportSnapshot({
 
   const aiSummary = aiAnalysis?.summary
     || (revenueChange > 0
-      ? `Your financial performance is strong this month. Revenue grew by ${revenueChange.toFixed(1)}% and profitability improved across key metrics.`
+      ? `Your financial performance is strong this period. Revenue grew by ${revenueChange.toFixed(1)}% and profitability improved across key metrics.`
       : 'Review revenue drivers and expense categories to improve performance next period.');
 
   const executiveAiInsight = aiAnalysis?.quickInsight
@@ -259,11 +259,11 @@ export function buildSmartReportSnapshot({
       : `Revenue changed by ${revenueChange.toFixed(1)}% this period. Focus on top customers and expense control.`);
 
   const salesAiSummary = revenueChange > 0
-    ? `Sales grew by ${revenueChange.toFixed(1)}% this month, driven by strong ${isShop || isPharmacy ? 'product sales' : 'service revenue'} and customer activity.`
+    ? `Sales grew by ${revenueChange.toFixed(1)}% this period, driven by strong ${isShop || isPharmacy ? 'product sales' : 'service revenue'} and customer activity.`
     : `Sales activity for this period — monitor trends and follow up with top customers.`;
 
   const expensesAiSummary = expenseChange > 0
-    ? `Total expenses increased by ${expenseChange.toFixed(1)}% this month.${expenseCategories[0] ? ` ${expenseCategories[0].category} remains the highest cost driver at ${expenseCategories[0].percent.toFixed(1)}% of total expenses.` : ''}`
+    ? `Total expenses increased by ${expenseChange.toFixed(1)}% this period.${expenseCategories[0] ? ` ${expenseCategories[0].category} remains the highest cost driver at ${expenseCategories[0].percent.toFixed(1)}% of total expenses.` : ''}`
     : `Expenses are ${expenseToRevenue.toFixed(1)}% of revenue for this period.`;
 
   const recommendationsRaw = aiAnalysis?.recommendations || [];

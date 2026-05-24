@@ -10,9 +10,9 @@ export const REPORT_CHART_COLORS = CHART_COLORS;
 
 export const createReportSchema = z.object({
   reportTitle: z.string().min(1, 'Please enter report title'),
-  durationType: z.string().min(1, 'Please select duration type'),
-  year: z.number({ required_error: 'Please select year' }),
-  month: z.string().min(1, 'Please select month'),
+  durationType: z.string().optional(),
+  year: z.number().optional(),
+  month: z.string().optional(),
 });
 
 /** Studio types that use Jobs (printing_press, mechanic, barber, salon) */

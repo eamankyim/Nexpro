@@ -29,6 +29,11 @@ export const TRIGGER_OPTIONS = [
     label: 'Inactive customer',
     hint: 'When a customer has not been active for a while.',
   },
+  {
+    value: 'customer_birthday',
+    label: 'Customer birthday',
+    hint: 'When today matches a customer date of birth.',
+  },
 ];
 
 export const THRESHOLD_MODE_OPTIONS = [
@@ -65,6 +70,8 @@ export function defaultTriggerForm(triggerType) {
       return { silentDays: 7 };
     case 'customer_inactive_days':
       return { inactiveDays: 30 };
+    case 'customer_birthday':
+      return {};
     default:
       return {};
   }
@@ -110,6 +117,8 @@ export function buildTriggerConfig(triggerType, triggerForm) {
       return {
         inactiveDays: Math.max(1, Math.min(730, Number(merged.inactiveDays) || 30)),
       };
+    case 'customer_birthday':
+      return {};
     default:
       return merged && typeof merged === 'object' && !Array.isArray(merged) ? merged : {};
   }
@@ -246,23 +255,95 @@ export function actionRowsFromConfig(actionConfig) {
  */
 export function buildConditionConfig(form) {
   const o = {};
-  const raw = form?.minInvoiceAmount;
-  if (raw !== '' && raw != null && String(raw).trim() !== '') {
+  const addNumberCondition = (valueKey, operatorKey, outValueKey, outOperatorKey, allowedOperators = ['greater_than', 'less_than', 'equal_to']) => {
+    const raw = form?.[valueKey];
+    if (raw === '' || raw == null || String(raw).trim() === '') return;
     const n = Number(raw);
-    if (!Number.isNaN(n) && n >= 0) o.minInvoiceAmount = n;
+    if (Number.isNaN(n) || n < 0) return;
+    o[outValueKey] = n;
+    const operator = allowedOperators.includes(form?.[operatorKey]) ? form[operatorKey] : allowedOperators[0];
+    o[outOperatorKey] = operator;
+  };
+  const addBooleanCondition = (formKey, outKey) => {
+    if (form?.[formKey] === 'yes') o[outKey] = true;
+    if (form?.[formKey] === 'no') o[outKey] = false;
+  };
+
+  addNumberCondition('invoiceAmountValue', 'invoiceAmountOperator', 'invoiceAmountValue', 'invoiceAmountOperator');
+  addNumberCondition('balanceDueValue', 'balanceDueOperator', 'balanceDueValue', 'balanceDueOperator');
+  addNumberCondition('overdueDaysValue', 'overdueDaysOperator', 'overdueDaysValue', 'overdueDaysOperator');
+  addNumberCondition('totalSpendValue', 'totalSpendOperator', 'totalSpendValue', 'totalSpendOperator');
+  addNumberCondition('quantityValue', 'quantityOperator', 'quantityValue', 'quantityOperator', ['less_than']);
+
+  if (form?.invoiceStatus) o.invoiceStatus = String(form.invoiceStatus);
+  if (form?.paymentStatus) o.paymentStatus = String(form.paymentStatus);
+  if (form?.birthdayMatch) o.birthdayMatch = String(form.birthdayMatch);
+
+  addBooleanCondition('hasOverdueInvoices', 'hasOverdueInvoices');
+  addBooleanCondition('customerHasPhone', 'customerHasPhone');
+  addBooleanCondition('customerHasEmail', 'customerHasEmail');
+  addBooleanCondition('whatsappConsent', 'whatsappConsent');
+  addBooleanCondition('smsConsent', 'smsConsent');
+  addBooleanCondition('marketingConsent', 'marketingConsent');
+
+  if (form?.lastPurchaseOlderThanDays !== '' && form?.lastPurchaseOlderThanDays != null) {
+    const n = Number(form.lastPurchaseOlderThanDays);
+    if (!Number.isNaN(n) && n >= 0) o.lastPurchaseOlderThanDays = n;
+  }
+  if (form?.stockBelowReorderLevel) o.stockBelowReorderLevel = true;
+
+  // Backward compatibility with older saved builder state.
+  const raw = form?.minInvoiceAmount;
+  if (raw !== '' && raw != null && String(raw).trim() !== '' && o.invoiceAmountValue == null) {
+    const n = Number(raw);
+    if (!Number.isNaN(n) && n >= 0) {
+      o.invoiceAmountValue = n;
+      o.invoiceAmountOperator = 'greater_than';
+      o.minInvoiceAmount = n;
+    }
   }
   if (form?.weekdaysOnly) o.weekdaysOnly = true;
+  if (form?.runAfterTime) o.runAfterTime = String(form.runAfterTime);
+  if (form?.runBeforeTime) o.runBeforeTime = String(form.runBeforeTime);
   return o;
 }
 
 /**
  * @param {Record<string, unknown>} conditionConfig
+ * @param {Record<string, unknown>} scheduleConfig
  */
-export function conditionFormFromConfig(conditionConfig) {
+export function conditionFormFromConfig(conditionConfig, scheduleConfig = {}) {
   const c = conditionConfig && typeof conditionConfig === 'object' ? conditionConfig : {};
+  const s = scheduleConfig && typeof scheduleConfig === 'object' ? scheduleConfig : {};
+  const boolToChoice = (value) => (value === true ? 'yes' : value === false ? 'no' : '');
+  const legacyMinInvoiceAmount = c.invoiceAmountValue == null && c.minInvoiceAmount != null ? c.minInvoiceAmount : c.invoiceAmountValue;
   return {
     minInvoiceAmount: c.minInvoiceAmount != null ? String(c.minInvoiceAmount) : '',
+    invoiceAmountOperator: c.invoiceAmountOperator || 'greater_than',
+    invoiceAmountValue: legacyMinInvoiceAmount != null ? String(legacyMinInvoiceAmount) : '',
+    balanceDueOperator: c.balanceDueOperator || 'greater_than',
+    balanceDueValue: c.balanceDueValue != null ? String(c.balanceDueValue) : '',
+    invoiceStatus: c.invoiceStatus || '',
+    paymentStatus: c.paymentStatus || '',
+    overdueDaysOperator: c.overdueDaysOperator || 'greater_than',
+    overdueDaysValue: c.overdueDaysValue != null ? String(c.overdueDaysValue) : '',
+    hasOverdueInvoices: boolToChoice(c.hasOverdueInvoices),
+    customerHasPhone: boolToChoice(c.customerHasPhone),
+    customerHasEmail: boolToChoice(c.customerHasEmail),
+    whatsappConsent: boolToChoice(c.whatsappConsent),
+    smsConsent: boolToChoice(c.smsConsent),
+    marketingConsent: boolToChoice(c.marketingConsent),
+    lastPurchaseOlderThanDays: c.lastPurchaseOlderThanDays != null ? String(c.lastPurchaseOlderThanDays) : '',
+    totalSpendOperator: c.totalSpendOperator || 'greater_than',
+    totalSpendValue: c.totalSpendValue != null ? String(c.totalSpendValue) : '',
+    birthdayMatch: c.birthdayMatch || '',
     weekdaysOnly: c.weekdaysOnly === true,
+    runAfterTime: c.runAfterTime || '',
+    runBeforeTime: c.runBeforeTime || '',
+    cooldownDays: Number(s.cooldownHours) > 0 ? String(Number(s.cooldownHours) / 24) : '',
+    stockBelowReorderLevel: c.stockBelowReorderLevel === true,
+    quantityOperator: c.quantityOperator || 'less_than',
+    quantityValue: c.quantityValue != null ? String(c.quantityValue) : '',
   };
 }
 
@@ -298,13 +379,128 @@ export function parseJsonObject(raw, fieldLabel) {
  */
 export function buildRulePayloadFromForm({ name, triggerType, triggerForm, conditionForm, actionRows }) {
   const actions = (actionRows || []).map((r) => actionFormRowToPayload(r));
+  const scheduleConfig = {};
+  if (conditionForm?.cooldownDays !== '' && conditionForm?.cooldownDays != null) {
+    const n = Number(conditionForm.cooldownDays);
+    if (!Number.isNaN(n) && n > 0) scheduleConfig.cooldownHours = Math.round(n * 24);
+  }
   return {
     name: String(name).trim(),
     triggerType: String(triggerType).trim(),
     triggerConfig: buildTriggerConfig(triggerType, triggerForm),
     conditionConfig: buildConditionConfig(conditionForm),
     actionConfig: { actions },
-    scheduleConfig: {},
+    scheduleConfig,
+  };
+}
+
+/**
+ * Build a representative record for manually testing an automation rule.
+ * @param {object} params
+ * @param {string} params.name
+ * @param {string} params.triggerType
+ * @param {Record<string, unknown>} params.triggerForm
+ * @param {{ minInvoiceAmount: string, weekdaysOnly: boolean }} params.conditionForm
+ * @param {Record<string, unknown>[]} params.actionRows
+ * @returns {Record<string, unknown>}
+ */
+export function buildTestContextFromForm({ name, triggerType, triggerForm, conditionForm, actionRows }) {
+  const payload = buildRulePayloadFromForm({ name, triggerType, triggerForm, conditionForm, actionRows });
+  const minAmount = Number(payload.conditionConfig?.minInvoiceAmount || 0);
+  const amountCondition = Number(payload.conditionConfig?.invoiceAmountValue || minAmount || 0);
+  const matchingNumber = (value, operator, fallback = 100) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    if (operator === 'less_than') return Math.max(0, n - 1);
+    if (operator === 'equal_to') return n;
+    return n + 10;
+  };
+  const amount = Math.max(0, matchingNumber(amountCondition, payload.conditionConfig?.invoiceAmountOperator, 100));
+  const balance = Math.max(0, matchingNumber(payload.conditionConfig?.balanceDueValue ?? amount, payload.conditionConfig?.balanceDueOperator, amount));
+  const totalSpend = Math.max(0, matchingNumber(payload.conditionConfig?.totalSpendValue ?? amount * 3, payload.conditionConfig?.totalSpendOperator, amount * 3));
+  const quantityOnHand = Math.max(0, matchingNumber(payload.conditionConfig?.quantityValue ?? 2, payload.conditionConfig?.quantityOperator, 2));
+  const today = new Date();
+  const dueDate = new Date(today);
+  dueDate.setDate(today.getDate() + Number(payload.triggerConfig?.daysBeforeDue || 2));
+
+  const customer = {
+    id: 'test-customer',
+    name: 'Test Customer',
+    company: 'Test Customer Co.',
+    email: 'customer@example.com',
+    phone: '+233200000000',
+    dateOfBirth: today.toISOString().slice(0, 10),
+    whatsappConsent: true,
+    smsConsent: true,
+    marketingConsent: true,
+  };
+  const invoice = {
+    id: 'test-invoice',
+    invoiceNumber: 'INV-TEST-0001',
+    customerId: customer.id,
+    totalAmount: amount,
+    amountPaid: 0,
+    balance,
+    dueDate: dueDate.toISOString().slice(0, 10),
+    status: payload.conditionConfig?.invoiceStatus || (payload.triggerType === 'invoice_overdue' ? 'overdue' : 'sent'),
+    paymentToken: 'test',
+  };
+  const quote = {
+    id: 'test-quote',
+    quoteNumber: 'QTE-TEST-0001',
+    customerId: customer.id,
+    totalAmount: amount,
+  };
+  const product = {
+    id: 'test-product',
+    name: 'Test Product',
+    sku: 'TEST-SKU',
+    quantityOnHand,
+    reorderLevel: 5,
+    isActive: true,
+  };
+
+  return {
+    subjectKey: `test:${payload.triggerType}:${Date.now()}`,
+    triggerType: payload.triggerType,
+    scheduler: false,
+    manualTest: true,
+    test: true,
+    businessName: 'Test Business',
+    customerId: customer.id,
+    customerName: customer.name,
+    email: customer.email,
+    phone: customer.phone,
+    invoiceId: invoice.id,
+    invoiceNumber: invoice.invoiceNumber,
+    quoteId: quote.id,
+    quoteNumber: quote.quoteNumber,
+    productId: product.id,
+    productName: product.name,
+    sku: product.sku,
+    quantityOnHand: product.quantityOnHand,
+    reorderLevel: product.reorderLevel,
+    amount,
+    balance,
+    totalAmount: amount,
+    invoiceStatus: invoice.status,
+    paymentStatus: payload.conditionConfig?.paymentStatus || 'unpaid',
+    overdueDays: matchingNumber(payload.conditionConfig?.overdueDaysValue ?? (payload.triggerType === 'invoice_overdue' ? Number(payload.triggerConfig?.daysAfterDue || 1) : 0), payload.conditionConfig?.overdueDaysOperator, 0),
+    hasOverdueInvoices: payload.conditionConfig?.hasOverdueInvoices ?? (payload.triggerType === 'invoice_overdue'),
+    customerHasPhone: true,
+    customerHasEmail: true,
+    whatsappConsent: true,
+    smsConsent: true,
+    marketingConsent: true,
+    lastPurchaseDaysAgo: 45,
+    totalSpend,
+    dueDate: invoice.dueDate,
+    paymentLink: 'http://localhost:3000/pay-invoice/test',
+    message: `Test automation run for ${payload.name || 'automation rule'}.`,
+    customer,
+    invoice,
+    quote,
+    product,
   };
 }
 

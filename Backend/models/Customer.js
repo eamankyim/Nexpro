@@ -47,6 +47,22 @@ const Customer = sequelize.define('Customer', {
   phone: {
     type: DataTypes.STRING
   },
+  dateOfBirth: {
+    type: DataTypes.DATEONLY,
+    allowNull: true
+  },
+  whatsappConsent: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true
+  },
+  smsConsent: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true
+  },
+  marketingConsent: {
+    type: DataTypes.BOOLEAN,
+    allowNull: true
+  },
   address: {
     type: DataTypes.TEXT
   },

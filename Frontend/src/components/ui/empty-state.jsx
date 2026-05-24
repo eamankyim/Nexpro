@@ -190,16 +190,6 @@ const EmptyState = React.forwardRef(({
       {/* Actions */}
       {(primaryAction || secondaryAction) && (
         <div className="mt-4 flex flex-wrap gap-2 justify-center">
-          {primaryAction && (
-            <Button 
-              size={resolvedSize === "sm" ? "sm" : "default"}
-              onClick={primaryAction.onClick}
-              disabled={primaryAction.disabled}
-            >
-              {primaryAction.icon && <span className="mr-2">{primaryAction.icon}</span>}
-              {primaryAction.label}
-            </Button>
-          )}
           {secondaryAction && (
             <Button 
               variant="outline"
@@ -209,6 +199,16 @@ const EmptyState = React.forwardRef(({
             >
               {secondaryAction.icon && <span className="mr-2">{secondaryAction.icon}</span>}
               {secondaryAction.label}
+            </Button>
+          )}
+          {primaryAction && (
+            <Button 
+              size={resolvedSize === "sm" ? "sm" : "default"}
+              onClick={primaryAction.onClick}
+              disabled={primaryAction.disabled}
+            >
+              {primaryAction.icon && <span className="mr-2">{primaryAction.icon}</span>}
+              {primaryAction.label}
             </Button>
           )}
         </div>

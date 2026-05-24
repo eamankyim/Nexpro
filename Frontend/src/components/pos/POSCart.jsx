@@ -40,18 +40,7 @@ import {
 import POSNumpad from './POSNumpad';
 import { usePOSConfig } from '../../hooks/usePOSConfig';
 import { CURRENCY } from '../../constants';
-import { parseDecimalInput } from '../../utils/formatNumber';
-
-/**
- * Format currency value (handles string decimals from API/cart)
- * @param {number|string} amount - Amount to format
- * @returns {string} - Formatted currency string
- */
-const formatCurrency = (amount) => {
-  const num = Number(amount);
-  const value = Number.isFinite(num) ? num : 0;
-  return `${CURRENCY.SYMBOL} ${value.toFixed(CURRENCY.DECIMAL_PLACES)}`;
-};
+import { formatAmount, parseDecimalInput } from '../../utils/formatNumber';
 
 /**
  * Cart item component
@@ -68,11 +57,11 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount }) => {
       <div className="flex-1 min-w-0">
         <p className="font-medium text-foreground truncate">{item.name}</p>
         <p className="text-sm text-muted-foreground">
-          {formatCurrency(unitPrice)} × {quantity}
+          {formatAmount(unitPrice)} × {quantity}
         </p>
         {discount > 0 && (
           <p className="text-sm text-green-600">
-            Discount: -{formatCurrency(discount)}
+            Discount: -{formatAmount(discount)}
           </p>
         )}
       </div>
@@ -111,7 +100,7 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount }) => {
       {/* Item total and actions */}
       <div className="flex flex-col items-end gap-1">
         <span className="font-semibold text-foreground">
-          {formatCurrency(itemTotal)}
+          {formatAmount(itemTotal)}
         </span>
         <div className="flex gap-1">
           <Tooltip>
@@ -481,13 +470,13 @@ const POSCart = ({
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Subtotal</span>
-                  <span className="font-medium">{formatCurrency(totals.subtotal)}</span>
+                  <span className="font-medium">{formatAmount(totals.subtotal)}</span>
                 </div>
                 
                 {totals.itemDiscounts > 0 && (
                   <div className="flex justify-between text-sm text-green-600">
                     <span>Item Discounts</span>
-                    <span>-{formatCurrency(totals.itemDiscounts)}</span>
+                    <span>-{formatAmount(totals.itemDiscounts)}</span>
                   </div>
                 )}
 
@@ -502,7 +491,7 @@ const POSCart = ({
                         <Percent className="h-3 w-3" />
                       </span>
                   <span className={cartDiscount > 0 ? 'text-green-600' : 'text-muted-foreground'}>
-                    {cartDiscount > 0 ? `-${formatCurrency(cartDiscount)}` : 'Add'}
+                    {cartDiscount > 0 ? `-${formatAmount(cartDiscount)}` : 'Add'}
                   </span>
                     </div>
                   </TooltipTrigger>
@@ -512,7 +501,7 @@ const POSCart = ({
                 {Number(totals.taxAmount) > 0 && (
                   <div className="flex justify-between text-sm">
                     <span className="text-muted-foreground">{totals.taxLabel || 'Tax'}</span>
-                    <span className="font-medium">{formatCurrency(totals.taxAmount)}</span>
+                    <span className="font-medium">{formatAmount(totals.taxAmount)}</span>
                   </div>
                 )}
 
@@ -520,7 +509,7 @@ const POSCart = ({
                 
                 <div className="flex justify-between text-lg font-bold">
                   <span>Total</span>
-                  <span className="text-green-700">{formatCurrency(totals.total)}</span>
+                  <span className="text-green-700">{formatAmount(totals.total)}</span>
                 </div>
               </div>
 
@@ -537,7 +526,7 @@ const POSCart = ({
                     onClick={onCheckout}
                     disabled={isEmpty || !customerValidation.canCheckout}
                   >
-                    Checkout - {formatCurrency(totals.total)}
+                    Checkout - {formatAmount(totals.total)}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>Finish sale and take payment</TooltipContent>

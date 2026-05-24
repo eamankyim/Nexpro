@@ -58,9 +58,9 @@ import {
   NOTIFICATION_PREFERENCE_CATEGORY_ORDER,
   NOTIFICATION_PREFERENCE_CATEGORY_LABELS,
   STUDIO_LIKE_TYPES,
-  isPlaceholderBusinessName,
   QUERY_CACHE,
 } from '../constants';
+import { isPlaceholderBusinessName } from '../constants/tenantPlaceholders';
 import {
   Dialog,
   DialogBody,

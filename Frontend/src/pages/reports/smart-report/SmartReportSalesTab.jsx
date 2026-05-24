@@ -73,7 +73,12 @@ export default function SmartReportSalesTab({ snapshot, periodLabel, isStudio })
                   <XAxis dataKey="period" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis yAxisId="left" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} tickFormatter={(v) => `${v / 1000}k`} />
                   <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(v, name) => [name === 'orders' ? v : formatOverviewCurrency(v), name === 'orders' ? 'Orders' : 'Sales']} />
+                  <Tooltip
+                    formatter={(v, _name, { dataKey }) => [
+                      dataKey === 'orders' ? v : formatOverviewCurrency(v),
+                      dataKey === 'orders' ? 'Orders' : 'Sales'
+                    ]}
+                  />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Line yAxisId="left" type="monotone" dataKey="sales" name="Sales (₵)" stroke="var(--color-primary)" strokeWidth={2} dot={false} />
                   <Line yAxisId="right" type="monotone" dataKey="orders" name="Orders" stroke="#2563eb" strokeWidth={2} dot={false} />

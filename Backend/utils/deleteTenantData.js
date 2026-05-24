@@ -73,6 +73,7 @@ const {
   TenantAccessAudit,
   AutomationRun,
   AutomationRule,
+  WhatsAppMessageEvent,
   RecurringJournal,
   RecurringJournalRun,
   StudioLocation,
@@ -147,6 +148,7 @@ async function deleteTenantData(tenantId, transaction = null) {
 
   await del(AutomationRun, { tenantId: id }, options);
   await del(AutomationRule, { tenantId: id }, options);
+  await del(WhatsAppMessageEvent, { tenantId: id }, options);
   if (recurringJournalIds.length) {
     await del(RecurringJournalRun, { recurringJournalId: recurringJournalIds }, options);
   }

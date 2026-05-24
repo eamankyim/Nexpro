@@ -56,6 +56,7 @@ import TableSkeleton from '../components/TableSkeleton';
 import DashboardTable from '../components/DashboardTable';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
+import FeatureNotAvailable from '../components/FeatureNotAvailable';
 import productService from '../services/productService';
 import vendorService from '../services/vendorService';
 import PhoneNumberInput from '../components/PhoneNumberInput';
@@ -71,7 +72,7 @@ import { useShopOptional } from '../context/ShopContext';
 import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { getErrorMessage, showSuccess, showError } from '../utils/toast';
-import { EMPTY_STATES } from '../constants/microcopy';
+import { EMPTY_STATES, FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 import ReceiveStockModal from '../components/ReceiveStockModal';
 import ProductQRGenerateModal from '../components/ProductQRGenerateModal';
@@ -2185,27 +2186,15 @@ const Products = () => {
   if (!isShop) {
     return (
       <div className="space-y-4 md:space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-foreground">Products</h1>
-            <p className="text-gray-600 mt-1">Manage your product catalog</p>
-          </div>
-        </div>
-        <Card className="border border-gray-200">
-          <CardContent className="p-12">
-            <div className="flex flex-col items-center justify-center text-center space-y-4">
-              <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center">
-                <Package className="h-10 w-10 text-gray-400" />
-              </div>
-              <div>
-                <h2 className="text-2xl font-semibold text-foreground mb-2">Not Available</h2>
-                <p className="text-gray-600 max-w-md">
-                  Product catalog is only available for shop business types.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+        <WelcomeSection
+          welcomeMessage="Products"
+          subText="Manage your product catalog."
+        />
+        <FeatureNotAvailable
+          icon="Package"
+          title={FEATURE_NOT_AVAILABLE.SHOP_ONLY.title}
+          description={FEATURE_NOT_AVAILABLE.SHOP_ONLY.description}
+        />
       </div>
     );
   }
@@ -3458,7 +3447,7 @@ const Products = () => {
                 {selectedProduct.variants && selectedProduct.variants.length > 0 ? (
                   <div className="space-y-2">
                     {selectedProduct.variants.map((variant) => (
-                      <div key={variant.id} className="flex items-center justify-between py-2 border-b border-gray-200 last:border-b-0">
+                      <div key={variant.id} className="flex items-center justify-between py-2 border-b border-border last:border-b-0">
                         <div>
                           <p className="font-medium text-foreground">{variant.name}</p>
                           {variant.sku && (

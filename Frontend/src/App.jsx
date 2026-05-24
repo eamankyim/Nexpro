@@ -1,4 +1,4 @@
-import { BrowserRouter as Router, Routes, Route, Navigate, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useParams, useSearchParams, useLocation } from 'react-router-dom';
 import { useEffect, lazy, Suspense } from 'react';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -105,6 +105,11 @@ const FeatureRoute = ({ featureKey, children, fallback = '/dashboard' }) => {
     return <Navigate to={fallback} replace />;
   }
   return children;
+};
+
+const CampaignEditRedirect = () => {
+  const { id } = useParams();
+  return <Navigate to={`/marketing?campaign=edit&id=${encodeURIComponent(id || '')}`} replace />;
 };
 
 /** Backend Sabito SSO redirects here with ?token=JWT&success=true — must not hit * → /dashboard (strips query). */
@@ -227,6 +232,10 @@ function AppContent() {
             <Route path="reviews" element={<FeatureRoute featureKey="crm"><CustomerFeedback /></FeatureRoute>} />
             <Route path="customer-feedback" element={<Navigate to="/reviews" replace />} />
             <Route path="marketing" element={<FeatureRoute featureKey="marketing"><RequireWorkspaceManager><Marketing /></RequireWorkspaceManager></FeatureRoute>} />
+            <Route path="marketing/campaigns" element={<FeatureRoute featureKey="marketing"><RequireWorkspaceManager><Marketing /></RequireWorkspaceManager></FeatureRoute>} />
+            <Route path="marketing/campaigns/new" element={<FeatureRoute featureKey="marketing"><RequireWorkspaceManager><Navigate to="/marketing?campaign=new" replace /></RequireWorkspaceManager></FeatureRoute>} />
+            <Route path="marketing/campaigns/:id" element={<FeatureRoute featureKey="marketing"><RequireWorkspaceManager><Marketing /></RequireWorkspaceManager></FeatureRoute>} />
+            <Route path="marketing/campaigns/:id/edit" element={<FeatureRoute featureKey="marketing"><RequireWorkspaceManager><CampaignEditRedirect /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="automations" element={<FeatureRoute featureKey="automations"><RequireWorkspaceManager><Automations /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="ask-ai" element={<RequireWorkspaceManager><AskAI /></RequireWorkspaceManager>} />
             <Route path="vendors" element={<FeatureRoute featureKey="crm"><Vendors /></FeatureRoute>} />

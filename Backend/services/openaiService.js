@@ -1,5 +1,7 @@
 const { getAssistantSupportGuide, getPageContextHint } = require('../utils/assistantSupportGuide');
 const { formatDecimal } = require('../utils/formatNumber');
+const { parseAiJsonResponse } = require('../utils/parseAiJsonResponse');
+const { buildReportAnalysisFallback } = require('../utils/reportAnalysisFallback');
 
 let _anthropic = null;
 
@@ -27,6 +29,33 @@ function requireAnthropic() {
 }
 
 /**
+ * Normalize parsed AI JSON into the Smart Report analysis shape.
+ * @param {Object} aiResponse
+ * @returns {Object}
+ */
+function normalizeReportAnalysis(aiResponse) {
+  return {
+    keyFindings: Array.isArray(aiResponse.keyFindings) ? aiResponse.keyFindings : [],
+    performanceAnalysis:
+      typeof aiResponse.performanceAnalysis === 'string'
+        ? aiResponse.performanceAnalysis
+        : '',
+    recommendations: Array.isArray(aiResponse.recommendations)
+      ? aiResponse.recommendations
+      : [],
+    riskAssessment: Array.isArray(aiResponse.riskAssessment)
+      ? aiResponse.riskAssessment
+      : [],
+    growthOpportunities: Array.isArray(aiResponse.growthOpportunities)
+      ? aiResponse.growthOpportunities
+      : [],
+    strategicSuggestions: Array.isArray(aiResponse.strategicSuggestions)
+      ? aiResponse.strategicSuggestions
+      : []
+  };
+}
+
+/**
  * Generate AI-powered insights and recommendations for business report
  * @param {Object} reportData - The report data to analyze
  * @param {Object} options - Additional options (businessType, period, etc.)
@@ -48,9 +77,12 @@ const analyzeReportData = async (reportData, options = {}) => {
     const {
       businessType = 'printing_press',
       studioType,
-      period = 'monthly',
+      period = 'selected period',
       startDate,
       endDate,
+      comparisonStartDate,
+      comparisonEndDate,
+      comparisonLabel,
       customQuestion
     } = options;
 
@@ -112,7 +144,10 @@ const analyzeReportData = async (reportData, options = {}) => {
       period: {
         startDate,
         endDate,
-        type: period
+        type: period,
+        comparisonStartDate,
+        comparisonEndDate,
+        comparisonLabel
       },
       businessType: effectiveType,
       topItems: reportData.topItems || [],
@@ -141,6 +176,7 @@ Business Data Summary:
 - Revenue Change: ${dataSummary.financial.revenueChange >= 0 ? '+' : ''}${dataSummary.financial.revenueChange.toFixed(2)}%
 - Expense Change: ${dataSummary.financial.expenseChange >= 0 ? '+' : ''}${dataSummary.financial.expenseChange.toFixed(2)}%
 - Period: ${startDate} to ${endDate}
+- Comparison Period: ${comparisonStartDate && comparisonEndDate ? `${comparisonStartDate} to ${comparisonEndDate}` : 'previous equivalent period'}${comparisonLabel ? ` (${comparisonLabel})` : ''}
 - Outstanding Payments: GHS ${formatDecimal(dataSummary.outstandingPayments)}
 
 ${dataSummary.topItems.length > 0 ? `Top Performing ${terms.items}: ${dataSummary.topItems.slice(0, 5).map(item => `${item.name || item.item} (Revenue: GHS ${formatDecimal(item.revenue || 0)})`).join(', ')}` : ''}
@@ -168,26 +204,51 @@ Be specific, actionable, and data-driven. Use the actual numbers from the report
       messages: [{ role: 'user', content: userPrompt }]
     });
 
-    const rawText = completion.content?.find((b) => b.type === 'text')?.text?.trim() || '{}';
-    const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-    const jsonStr = jsonMatch ? jsonMatch[0] : rawText;
-    const aiResponse = JSON.parse(jsonStr);
+    const rawText = completion.content?.find((b) => b.type === 'text')?.text?.trim() || '';
+    const parsed = parseAiJsonResponse(rawText);
 
-    // Structure the response
+    if (!parsed.ok) {
+      console.warn('[AI report analysis] JSON parse failed; using deterministic fallback', {
+        error: parsed.error,
+        responseLength: rawText.length,
+        snippet: parsed.jsonSnippet
+      });
+      return {
+        success: true,
+        analysis: buildReportAnalysisFallback(reportData, {
+          businessType: effectiveType,
+          startDate,
+          endDate,
+          period
+        }),
+        usedFallback: true
+      };
+    }
+
     return {
       success: true,
-      analysis: {
-        keyFindings: aiResponse.keyFindings || [],
-        performanceAnalysis: aiResponse.performanceAnalysis || '',
-        recommendations: aiResponse.recommendations || [],
-        riskAssessment: aiResponse.riskAssessment || [],
-        growthOpportunities: aiResponse.growthOpportunities || [],
-        strategicSuggestions: aiResponse.strategicSuggestions || []
-      }
+      analysis: normalizeReportAnalysis(parsed.value)
     };
   } catch (error) {
-    console.error('Error in AI report analysis:', error);
-    throw error;
+    if (error.code === 'OPENAI_NOT_CONFIGURED' || error.status === 401 || error.code === 'invalid_api_key') {
+      throw error;
+    }
+    console.error('Error in AI report analysis:', {
+      message: error.message,
+      code: error.code,
+      status: error.status
+    });
+    return {
+      success: true,
+      analysis: buildReportAnalysisFallback(reportData, {
+        businessType: options.businessType || options.studioType || 'printing_press',
+        startDate: options.startDate,
+        endDate: options.endDate,
+        period: options.period
+      }),
+      usedFallback: true,
+      aiError: error.message
+    };
   }
 };
 
@@ -199,7 +260,7 @@ Be specific, actionable, and data-driven. Use the actual numbers from the report
  */
 const generateExecutiveSummary = async (reportData, options = {}) => {
   try {
-    const { businessType = 'printing_press', period = 'monthly', startDate, endDate } = options;
+    const { businessType = 'printing_press', period = 'selected period', startDate, endDate } = options;
 
     const prompt = `Generate a concise executive summary (2-3 paragraphs) for a ${businessType} business report covering ${startDate} to ${endDate}.
 
@@ -290,8 +351,63 @@ Formatting rules:
   }
 };
 
+const draftAutomationRule = async ({ instruction, businessType = 'printing_press', suggestionsContext = {} }) => {
+  const allowedTriggers = ['invoice_due_in_days', 'invoice_overdue', 'low_stock_detected', 'quote_no_response', 'customer_inactive_days'];
+  const allowedActions = ['create_task', 'send_email_platform', 'send_sms', 'send_whatsapp'];
+  const system = `You draft automation rules for African Business Suite. Return only JSON. Never enable a rule or execute actions. Use only allowed trigger/action values.`;
+  const prompt = `Create one draft automation rule from this user request:
+"${instruction}"
+
+Business type: ${businessType}
+Allowed triggers: ${allowedTriggers.join(', ')}
+Allowed action types: ${allowedActions.join(', ')}
+Context: ${JSON.stringify(suggestionsContext)}
+
+Return JSON with this exact shape:
+{
+  "name": "short rule name",
+  "triggerType": "one allowed trigger",
+  "triggerConfig": {},
+  "conditionConfig": {},
+  "scheduleConfig": {"cooldownHours": 24},
+  "actionConfig": {"actions": []},
+  "explanation": "one sentence explaining what will happen"
+}
+
+For WhatsApp actions, use template messages only and set "category" to "transactional" unless the user clearly asks for marketing. Use placeholder values like "{{customerName}}", "{{invoiceNumber}}", "{{paymentLink}}" in parameters when appropriate.`;
+
+  const anthropic = requireAnthropic();
+  const completion = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5-20250929',
+    max_tokens: 1200,
+    system,
+    messages: [{ role: 'user', content: prompt }]
+  });
+  const rawText = completion.content?.find((b) => b.type === 'text')?.text?.trim() || '{}';
+  const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+  const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : rawText);
+  if (!allowedTriggers.includes(parsed.triggerType)) {
+    throw new Error('AI returned an unsupported trigger type');
+  }
+  const actions = Array.isArray(parsed.actionConfig?.actions) ? parsed.actionConfig.actions : [];
+  if (actions.some((action) => !allowedActions.includes(action?.type))) {
+    throw new Error('AI returned an unsupported action type');
+  }
+  return {
+    name: String(parsed.name || 'AI draft automation').slice(0, 160),
+    triggerType: parsed.triggerType,
+    triggerConfig: parsed.triggerConfig && typeof parsed.triggerConfig === 'object' && !Array.isArray(parsed.triggerConfig) ? parsed.triggerConfig : {},
+    conditionConfig: parsed.conditionConfig && typeof parsed.conditionConfig === 'object' && !Array.isArray(parsed.conditionConfig) ? parsed.conditionConfig : {},
+    scheduleConfig: parsed.scheduleConfig && typeof parsed.scheduleConfig === 'object' && !Array.isArray(parsed.scheduleConfig) ? parsed.scheduleConfig : { cooldownHours: 24 },
+    actionConfig: { actions },
+    enabled: false,
+    explanation: String(parsed.explanation || 'Review and save this draft before enabling it.')
+  };
+};
+
 module.exports = {
   analyzeReportData,
   generateExecutiveSummary,
-  chatWithContext
+  chatWithContext,
+  draftAutomationRule
 };

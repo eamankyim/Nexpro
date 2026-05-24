@@ -3,6 +3,7 @@ import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuth } from '../context/AuthContext';
+import { useCurrency } from '../hooks/useCurrency';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
 // Removed Ant Design imports - using shadcn/ui only
@@ -161,6 +162,7 @@ const accountCategoriesByType = {
 
 
 const Accounting = () => {
+  const { formatAmount } = useCurrency();
   const queryClient = useQueryClient();
   const { activeTenantId } = useAuth();
   const { isMobile } = useResponsive();
@@ -570,7 +572,7 @@ const Accounting = () => {
                   <div key={line.id} className="text-sm">
                     <strong className="text-foreground">{line.account?.code}</strong> — <span className="text-foreground">{line.account?.name}</span>{' '}
                     <span className="text-muted-foreground">
-                      {line.debit > 0 ? `Debit ₵ ${parseFloat(line.debit).toFixed(2)}` : `Credit ₵ ${parseFloat(line.credit).toFixed(2)}`}
+                      {line.debit > 0 ? `Debit ${formatAmount(line.debit)}` : `Credit ${formatAmount(line.credit)}`}
                     </span>
                   </div>
                 ))}
@@ -632,17 +634,17 @@ const Accounting = () => {
     {
       key: 'debit',
       label: 'Debit',
-      render: (_, record) => <span className="text-foreground text-right">{record?.debit ? `₵ ${parseFloat(record.debit).toFixed(2)}` : '—'}</span>
+      render: (_, record) => <span className="text-foreground text-right">{record?.debit ? formatAmount(record.debit) : '—'}</span>
     },
     {
       key: 'credit',
       label: 'Credit',
-      render: (_, record) => <span className="text-foreground text-right">{record?.credit ? `₵ ${parseFloat(record.credit).toFixed(2)}` : '—'}</span>
+      render: (_, record) => <span className="text-foreground text-right">{record?.credit ? formatAmount(record.credit) : '—'}</span>
     },
     {
       key: 'balance',
       label: 'Balance',
-      render: (_, record) => <span className="text-foreground font-medium text-right">₵ {parseFloat(record?.balance || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium text-right">{formatAmount(record?.balance)}</span>
     }
   ], []);
 
@@ -665,7 +667,7 @@ const Accounting = () => {
     {
       key: 'amount',
       label: 'Amount',
-      render: (_, record) => <span className="text-foreground font-medium">₵ {parseFloat(record?.amount || 0).toFixed(2)}</span>
+      render: (_, record) => <span className="text-foreground font-medium">{formatAmount(record?.amount)}</span>
     },
     {
       key: 'nextRunDate',
@@ -969,8 +971,8 @@ const Accounting = () => {
                 <div className="flex justify-between items-center">
                   <strong className="text-foreground">Total</strong>
                   <div className="flex gap-8">
-                    <strong className="text-foreground">₵ {parseFloat(totals.debit || 0).toFixed(2)}</strong>
-                    <strong className="text-foreground">₵ {parseFloat(totals.credit || 0).toFixed(2)}</strong>
+                    <strong className="text-foreground">{formatAmount(totals.debit)}</strong>
+                    <strong className="text-foreground">{formatAmount(totals.credit)}</strong>
                     <span className="text-foreground">—</span>
                   </div>
                 </div>
@@ -1144,10 +1146,10 @@ const Accounting = () => {
                   render: (value) => (
                     value > 0 ? (
                       <strong className="text-green-600">
-                        ₵ {parseFloat(value || 0).toFixed(2)}
+                        {formatAmount(value)}
                       </strong>
                     ) : (
-                      <span className="text-muted-foreground">₵ 0.00</span>
+                      <span className="text-muted-foreground">{formatAmount(0)}</span>
                     )
                   )
                 },
@@ -1160,10 +1162,10 @@ const Accounting = () => {
                   render: (value) => (
                     value > 0 ? (
                       <strong className="text-red-600">
-                        ₵ {parseFloat(value || 0).toFixed(2)}
+                        {formatAmount(value)}
                       </strong>
                     ) : (
-                      <span className="text-muted-foreground">₵ 0.00</span>
+                      <span className="text-muted-foreground">{formatAmount(0)}</span>
                     )
                   )
                 }
@@ -1180,12 +1182,12 @@ const Accounting = () => {
                       </TableCell>
                       <TableCell style={{ textAlign: 'right' }}>
                         <strong className="text-green-600">
-                          ₵ {totalDebit.toFixed(2)}
+                          {formatAmount(totalDebit)}
                         </strong>
                       </TableCell>
                       <TableCell style={{ textAlign: 'right' }}>
                         <strong className="text-red-600">
-                          ₵ {totalCredit.toFixed(2)}
+                          {formatAmount(totalCredit)}
                         </strong>
                       </TableCell>
                     </>
