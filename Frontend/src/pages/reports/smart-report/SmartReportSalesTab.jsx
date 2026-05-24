@@ -1,5 +1,6 @@
 import {
   Briefcase,
+  ClipboardCheck,
   RefreshCw,
   ShoppingCart,
   Tag,
@@ -24,6 +25,8 @@ import DonutBreakdownCard from './DonutBreakdownCard';
 import SmartReportKpiRow from './SmartReportKpiRow';
 import SmartReportSectionHeader from './SmartReportSectionHeader';
 
+const formatInteger = (value) => Number(value || 0).toLocaleString();
+
 /**
  * Sales & Customers tab — matches mockup.
  */
@@ -36,16 +39,19 @@ export default function SmartReportSalesTab({ snapshot, periodLabel, isStudio })
     customerSegments,
     customerInsights,
     comparisonLabel,
+    operations,
   } = snapshot;
   const revenue = kpis.revenue.value;
-  const ordersLabel = isStudio ? 'Total Orders / Jobs' : 'Total Orders';
+  const ordersLabel = isStudio ? 'Jobs Created' : 'Total Orders';
+  const totalSalesLabel = isStudio ? 'Booked Job Value' : 'Total Sales';
+  const avgOrderLabel = isStudio ? 'Average Job Value' : 'Average Order Value';
 
   const kpiItems = [
-    { label: 'Total Sales', value: kpis.totalSales.value, change: kpis.totalSales.change, sparklineData: kpis.totalSales.sparkline, icon: ShoppingCart, iconBgColor: '#dcfce7', iconColor: '#166534', comparisonLabel },
-    { label: ordersLabel, value: kpis.orderCount.value, change: kpis.orderCount.change, sparklineData: kpis.orderCount.sparkline, icon: Briefcase, iconBgColor: '#dbeafe', iconColor: '#1d4ed8', comparisonLabel },
-    { label: 'Average Order Value', value: kpis.avgOrderValue.value, change: kpis.avgOrderValue.change, sparklineData: kpis.avgOrderValue.sparkline, icon: Tag, iconBgColor: '#f3e8ff', iconColor: '#7c3aed', comparisonLabel },
-    { label: 'New Customers', value: kpis.newCustomers.value, change: kpis.newCustomers.change, sparklineData: kpis.newCustomers.sparkline, icon: UserPlus, iconBgColor: '#ffedd5', iconColor: '#c2410c', comparisonLabel },
-    { label: 'Returning Customers', value: kpis.returningCustomers.value, change: kpis.returningCustomers.change, sparklineData: kpis.returningCustomers.sparkline, icon: RefreshCw, iconBgColor: '#ccfbf1', iconColor: '#0f766e', comparisonLabel },
+    { label: totalSalesLabel, value: kpis.totalSales.value, change: kpis.totalSales.change, sparklineData: kpis.totalSales.sparkline, icon: ShoppingCart, iconBgColor: '#dcfce7', iconColor: '#166534', comparisonLabel, sourceLabel: kpis.totalSales.sourceLabel },
+    { label: ordersLabel, value: kpis.orderCount.value, change: kpis.orderCount.change, sparklineData: kpis.orderCount.sparkline, valueFormatter: formatInteger, icon: Briefcase, iconBgColor: '#dbeafe', iconColor: '#1d4ed8', comparisonLabel, sourceLabel: kpis.orderCount.sourceLabel },
+    { label: avgOrderLabel, value: kpis.avgOrderValue.value, change: kpis.avgOrderValue.change, sparklineData: kpis.avgOrderValue.sparkline, icon: Tag, iconBgColor: '#f3e8ff', iconColor: '#7c3aed', comparisonLabel, sourceLabel: kpis.avgOrderValue.sourceLabel },
+    { label: 'New Customers', value: kpis.newCustomers.value, change: kpis.newCustomers.change, sparklineData: kpis.newCustomers.sparkline, valueFormatter: formatInteger, icon: UserPlus, iconBgColor: '#ffedd5', iconColor: '#c2410c', comparisonLabel, sourceLabel: kpis.newCustomers.sourceLabel },
+    { label: 'Returning Customers', value: kpis.returningCustomers.value, change: kpis.returningCustomers.change, sparklineData: kpis.returningCustomers.sparkline, valueFormatter: formatInteger, icon: RefreshCw, iconBgColor: '#ccfbf1', iconColor: '#0f766e', comparisonLabel, subLabel: kpis.returningCustomers.subLabel, hideTrend: kpis.returningCustomers.hideTrend },
   ];
 
   const categoryDonut = salesByCategory.map((c) => ({ name: c.name, value: c.value, color: c.color }));
@@ -75,13 +81,13 @@ export default function SmartReportSalesTab({ snapshot, periodLabel, isStudio })
                   <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                   <Tooltip
                     formatter={(v, _name, { dataKey }) => [
-                      dataKey === 'orders' ? v : formatOverviewCurrency(v),
-                      dataKey === 'orders' ? 'Orders' : 'Sales'
+                      dataKey === 'orders' ? formatInteger(v) : formatOverviewCurrency(v),
+                      dataKey === 'orders' ? (isStudio ? 'Jobs' : 'Orders') : (isStudio ? 'Booked Value' : 'Sales')
                     ]}
                   />
                   <Legend wrapperStyle={{ fontSize: 12 }} />
-                  <Line yAxisId="left" type="monotone" dataKey="sales" name="Sales (₵)" stroke="var(--color-primary)" strokeWidth={2} dot={false} />
-                  <Line yAxisId="right" type="monotone" dataKey="orders" name="Orders" stroke="#2563eb" strokeWidth={2} dot={false} />
+                  <Line yAxisId="left" type="monotone" dataKey="sales" name={isStudio ? 'Booked Value (₵)' : 'Sales (₵)'} stroke="var(--color-primary)" strokeWidth={2} dot={false} />
+                  <Line yAxisId="right" type="monotone" dataKey="orders" name={isStudio ? 'Jobs' : 'Orders'} stroke="#2563eb" strokeWidth={2} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
             ) : (
@@ -131,11 +137,87 @@ export default function SmartReportSalesTab({ snapshot, periodLabel, isStudio })
         <DonutBreakdownCard
           title="Sales by Category / Service"
           slices={categoryDonut}
-          total={revenue}
-          centerLabel="Total Sales"
+          total={snapshot.salesCategoryTotal || revenue}
+          centerLabel={isStudio ? 'Service Mix' : 'Total Sales'}
           viewLabel="View Category Analysis"
         />
       </div>
+
+      {isStudio && operations && (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <Card style={OVERVIEW_CARD_BORDER} className="bg-card">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <CardTitle className="text-base font-semibold">Studio Operations</CardTitle>
+              <p className="text-xs text-muted-foreground">Booked job activity, pipeline, and collections status.</p>
+            </CardHeader>
+            <CardContent className="px-4 pb-4 space-y-3 text-sm">
+              {[
+                { label: 'Active jobs', value: operations.pipelineSummary?.activeJobs, formatter: formatInteger },
+                { label: 'Open leads', value: operations.pipelineSummary?.openLeads, formatter: formatInteger },
+                { label: 'Pending invoices', value: operations.pipelineSummary?.pendingInvoices, formatter: formatInteger },
+                { label: 'Booked not collected', value: operations.pipelineSummary?.bookedVsCollectedGap, formatter: formatOverviewCurrency },
+              ].map((row) => (
+                <div key={row.label} className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">{row.label}</span>
+                  <span className="font-medium">{row.formatter(row.value)}</span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card style={OVERVIEW_CARD_BORDER} className="bg-card">
+            <CardHeader className="pb-2 pt-4 px-4 flex flex-row items-center justify-between space-y-0">
+              <CardTitle className="text-base font-semibold">Job Status</CardTitle>
+              <ClipboardCheck className="h-4 w-4 text-primary" />
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              {operations.statusBreakdown?.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Jobs</TableHead>
+                      <TableHead className="text-right">Value</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {operations.statusBreakdown.slice(0, 5).map((row) => (
+                      <TableRow key={row.status}>
+                        <TableCell>{row.label}</TableCell>
+                        <TableCell className="text-right">{formatInteger(row.count)}</TableCell>
+                        <TableCell className="text-right">{formatOverviewCurrency(row.value)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="py-10 text-center text-sm text-muted-foreground">No job status data</div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card style={OVERVIEW_CARD_BORDER} className="bg-card">
+            <CardHeader className="pb-2 pt-4 px-4">
+              <CardTitle className="text-base font-semibold">Outstanding Collections</CardTitle>
+              <p className="text-xs text-muted-foreground">Open invoices from the selected period.</p>
+            </CardHeader>
+            <CardContent className="px-4 pb-4 space-y-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Total outstanding</span>
+                <span className="font-medium">{formatOverviewCurrency(operations.outstanding?.totalOutstanding)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Open invoices</span>
+                <span className="font-medium">{formatInteger(operations.outstanding?.invoiceCount)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Overdue amount</span>
+                <span className="font-medium">{formatOverviewCurrency(operations.outstanding?.overdueAmount)}</span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <Card style={OVERVIEW_CARD_BORDER} className="bg-card">
@@ -157,7 +239,7 @@ export default function SmartReportSalesTab({ snapshot, periodLabel, isStudio })
                 {customerSegments.map((s) => (
                   <TableRow key={s.segment}>
                     <TableCell className="text-sm">{s.segment}</TableCell>
-                    <TableCell className="text-right">{s.customers}</TableCell>
+                    <TableCell className="text-right">{formatInteger(s.customers)}</TableCell>
                     <TableCell className="text-right">{formatOverviewCurrency(s.revenue)}</TableCell>
                       <TableCell className="text-right text-green-700">
                         <span className="inline-flex items-center justify-end gap-1">
@@ -177,8 +259,11 @@ export default function SmartReportSalesTab({ snapshot, periodLabel, isStudio })
             <CardTitle className="text-base font-semibold">Customer Acquisition</CardTitle>
           </CardHeader>
           <CardContent className="px-4 pb-4 text-sm text-muted-foreground">
-            <p>New customers: <span className="font-medium text-foreground">{kpis.newCustomers.value}</span></p>
-            <p className="mt-2">Returning customers: <span className="font-medium text-foreground">{kpis.returningCustomers.value}</span></p>
+            <p>New customers: <span className="font-medium text-foreground">{formatInteger(kpis.newCustomers.value)}</span></p>
+            <p className="mt-2">Returning customers: <span className="font-medium text-foreground">{formatInteger(kpis.returningCustomers.value)}</span></p>
+            {kpis.returningCustomers.hideTrend && (
+              <p className="mt-2 text-xs">Returning customer count is not currently tracked.</p>
+            )}
             <Button variant="link" className="h-auto p-0 text-xs text-primary mt-4">View Acquisition Report</Button>
           </CardContent>
         </Card>

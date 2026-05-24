@@ -26,7 +26,6 @@ import userService from '../services/userService';
 import customDropdownService from '../services/customDropdownService';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
-import { useStudioLocationOptional } from '../context/StudioLocationContext';
 import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import dayjs from 'dayjs';
 import ActionColumn from '../components/ActionColumn';
@@ -194,9 +193,12 @@ const Jobs = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { activeTenantId, activeTenant } = useAuth();
-  const studioLocationCtx = useStudioLocationOptional();
-  const activeStudioLocationId = studioLocationCtx?.activeStudioLocationId ?? null;
-  const { scopeReady } = useWorkspaceScope();
+  const {
+    scopeReady,
+    activeShopId,
+    activeStudioLocationId,
+    isStudioWorkspace,
+  } = useWorkspaceScope();
   const { isMobile } = useResponsive();
   const queryClient = useQueryClient();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
@@ -392,7 +394,7 @@ const Jobs = () => {
       }
     };
     fetchSummary();
-  }, [scopeReady, activeTenantId, activeStudioLocationId, studioLocationCtx?.isStudioWorkspace]);
+  }, [scopeReady, activeTenantId, activeStudioLocationId, isStudioWorkspace]);
 
   const {
     data: jobsQueryResult,
@@ -436,7 +438,7 @@ const Jobs = () => {
     keepPreviousData: true,
     staleTime: 60 * 1000,
     refetchOnWindowFocus: false,
-    enabled: !studioLocationCtx?.isStudioWorkspace || !!activeStudioLocationId,
+    enabled: !isStudioWorkspace || !!activeStudioLocationId,
   });
 
   // Use backend pagination directly
@@ -463,11 +465,12 @@ const Jobs = () => {
 
   // Use React Query for customers, templates, and team members with caching
   const { data: customersData = [], isLoading: customersLoading } = useQuery({
-    queryKey: ['customers', 'all', activeTenantId, activeShopId],
+    queryKey: ['customers', 'all', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: async () => {
       const response = await customerService.getAll({ limit: 100 });
       return response.data || [];
     },
+    enabled: scopeReady,
     staleTime: 5 * 60 * 1000, // 5 minutes
     cacheTime: 10 * 60 * 1000, // 10 minutes
   });
@@ -851,7 +854,7 @@ useEffect(() => {
     
     // Prefetch data if not already cached (React Query handles caching automatically)
     queryClient.prefetchQuery({
-      queryKey: ['customers', 'all', activeTenantId, activeShopId],
+      queryKey: ['customers', 'all', activeTenantId, activeShopId, activeStudioLocationId],
       queryFn: async () => {
         const response = await customerService.getAll({ limit: 100 });
         return response.data || [];
@@ -864,7 +867,7 @@ useEffect(() => {
         return response.data || [];
       },
     });
-  }, [queryClient, form]);
+  }, [queryClient, form, activeTenantId, activeShopId, activeStudioLocationId]);
 
   // Update job title and description based on job type and customer
   // Defined early to avoid temporal dead zone (used in handleEdit)
@@ -901,7 +904,7 @@ useEffect(() => {
         jobService.getById(job.id),
         // Prefetch customers and templates if not cached
         queryClient.prefetchQuery({
-          queryKey: ['customers', 'all', activeTenantId, activeShopId],
+          queryKey: ['customers', 'all', activeTenantId, activeShopId, activeStudioLocationId],
           queryFn: async () => {
             const response = await customerService.getAll({ limit: 100 });
             return response.data || [];
@@ -1226,7 +1229,7 @@ useEffect(() => {
       customerForm.reset();
 
       // Refresh customers list so the new customer appears in the dropdown
-      await queryClient.invalidateQueries({ queryKey: ['customers', 'all', activeTenantId, activeShopId] });
+      await queryClient.invalidateQueries({ queryKey: ['customers', 'all', activeTenantId, activeShopId, activeStudioLocationId] });
       await queryClient.invalidateQueries({ queryKey: ['pricingTemplates', 'active'] });
 
       // Auto-select the newly created customer

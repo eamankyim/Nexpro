@@ -136,7 +136,7 @@ const analyzeReportData = async (reportData, options = {}) => {
       financial: {
         revenue: reportData.revenue || 0,
         expenses: reportData.expenses || 0,
-        profit: (reportData.revenue || 0) - (reportData.expenses || 0),
+        profit: reportData.profit ?? ((reportData.revenue || 0) - (reportData.expenses || 0)),
         profitMargin: reportData.profitMargin || 0,
         revenueChange: reportData.revenueChange || 0,
         expenseChange: reportData.expenseChange || 0
@@ -153,7 +153,8 @@ const analyzeReportData = async (reportData, options = {}) => {
       topItems: reportData.topItems || [],
       expenseBreakdown: reportData.expenseBreakdown || [],
       materials: reportData.materials || null,
-      outstandingPayments: reportData.outstandingPayments || 0
+      outstandingPayments: reportData.outstandingPayments || 0,
+      studioMetrics: reportData.studioMetrics || null
     };
 
     // Create comprehensive prompt for AI analysis
@@ -180,6 +181,17 @@ Business Data Summary:
 - Outstanding Payments: GHS ${formatDecimal(dataSummary.outstandingPayments)}
 
 ${dataSummary.topItems.length > 0 ? `Top Performing ${terms.items}: ${dataSummary.topItems.slice(0, 5).map(item => `${item.name || item.item} (Revenue: GHS ${formatDecimal(item.revenue || 0)})`).join(', ')}` : ''}
+
+${dataSummary.studioMetrics ? `Studio Operations:
+- Collected Revenue: GHS ${formatDecimal(dataSummary.studioMetrics.collectedRevenue || 0)}
+- Booked Job Value: GHS ${formatDecimal(dataSummary.studioMetrics.bookedJobValue || 0)}
+- Booked Not Collected: GHS ${formatDecimal(dataSummary.studioMetrics.bookedNotCollected || 0)}
+- Jobs Created: ${dataSummary.studioMetrics.jobCount || 0}
+- Average Job Value: GHS ${formatDecimal(dataSummary.studioMetrics.averageJobValue || 0)}
+- Pipeline: ${JSON.stringify(dataSummary.studioMetrics.pipelineSummary || {})}
+- Job Status: ${(dataSummary.studioMetrics.byStatus || []).map(row => `${row.status}: ${row.count} jobs / GHS ${formatDecimal(row.value || 0)}`).join(', ')}
+- Service Mix: ${(dataSummary.studioMetrics.serviceMix || []).map(row => `${row.name}: GHS ${formatDecimal(row.revenue || 0)} (${row.quantity || 0})`).join(', ')}
+Use collected revenue for financial profitability and booked job value for studio operations. Do not describe uncollected booked jobs as collected revenue.` : ''}
 
 ${dataSummary.expenseBreakdown.length > 0 ? `Expense Breakdown: ${dataSummary.expenseBreakdown.map(exp => `${exp.category}: GHS ${formatDecimal(exp.amount)}`).join(', ')}` : ''}
 
@@ -241,7 +253,7 @@ Be specific, actionable, and data-driven. Use the actual numbers from the report
     return {
       success: true,
       analysis: buildReportAnalysisFallback(reportData, {
-        businessType: options.businessType || options.studioType || 'printing_press',
+        businessType: options.studioType || options.businessType || 'printing_press',
         startDate: options.startDate,
         endDate: options.endDate,
         period: options.period

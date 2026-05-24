@@ -981,19 +981,33 @@ function ReportsInner() {
       const prevProfit = prevRevenue - prevExpenses;
 
       const calculateChange = (current, previous) => {
-        if (previous > 0) return ((current - previous) / previous) * 100;
-        if (current > 0 && previous <= 0) return 100;
-        if (current <= 0 && previous > 0) return -100;
+        if (previous === 0) return current === 0 ? 0 : null;
+        if (previous !== 0) return ((current - previous) / Math.abs(previous)) * 100;
         return 0;
       };
 
       const revenueChange = calculateChange(revenue, prevRevenue);
       const expenseChange = calculateChange(expenses, prevExpenses);
       const profitChange = calculateChange(profit, prevProfit);
+      const bookedJobValue = parseFloat(salesData.data?.totalSales || 0);
+      const jobCount = parseFloat(salesData.data?.totalJobs || 0);
+      const serviceMixForAI = (serviceAnalyticsData.data?.byCategory || salesData.data?.byJobType || []).slice(0, 10).map(item => ({
+        name: item.category || item.jobType || 'Unknown',
+        revenue: parseFloat(item.totalRevenue || item.totalSales || 0),
+        quantity: parseFloat(item.totalQuantity || item.jobCount || 0),
+        averagePrice: parseFloat(item.averagePrice || 0)
+      }));
+      const jobStatusForAI = (salesData.data?.byStatus || []).map((item) => ({
+        status: item.status || item.name || 'unknown',
+        count: parseFloat(item.count || item.jobCount || 0),
+        value: parseFloat(item.totalSales || item.totalAmount || 0)
+      }));
 
       // Prepare report data for AI analysis
       const reportDataForAI = {
         revenue,
+        collectedRevenue: revenue,
+        bookedJobValue: isStudio ? bookedJobValue : undefined,
         expenses,
         profit,
         profitMargin,
@@ -1027,7 +1041,23 @@ function ReportsInner() {
             ? { totalStocks, stockAvailabilityRate, isSnapshot: raw.isSnapshot, snapshotLabel: raw.snapshotLabel }
             : null;
         })(),
-        outstandingPayments: outstandingData.data?.totalOutstanding || 0
+        outstandingPayments: outstandingData.data?.totalOutstanding || 0,
+        studioMetrics: isStudio ? {
+          collectedRevenue: revenue,
+          bookedJobValue,
+          bookedNotCollected: Math.max(0, bookedJobValue - revenue),
+          jobCount,
+          averageJobValue: jobCount > 0 ? bookedJobValue / jobCount : 0,
+          byStatus: jobStatusForAI,
+          jobsTrendByDate: (salesData.data?.jobsTrendByDate || []).slice(0, 14),
+          serviceMix: serviceMixForAI,
+          pipelineSummary: phase2.pipelineSummary || { activeJobs: 0, openLeads: 0, pendingInvoices: 0 },
+          outstanding: {
+            totalOutstanding: outstandingData.data?.totalOutstanding || 0,
+            invoiceCount: outstandingData.data?.invoices?.length || 0,
+            overdueCount: (outstandingData.data?.invoices || []).filter((invoice) => invoice.status === 'overdue').length
+          }
+        } : null
       };
 
       // Fetch AI analysis

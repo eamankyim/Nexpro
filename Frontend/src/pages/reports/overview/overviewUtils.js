@@ -114,14 +114,16 @@ export function buildRevenueByCategory({
 
   const serviceCategories = serviceAnalytics?.byCategory || [];
   if (serviceCategories.length > 0) {
-    const serviceRevenue = serviceCategories.reduce(
-      (sum, c) => sum + parseFloat(c.totalRevenue || 0),
-      0
-    );
-    if (serviceRevenue > 0) {
-      slices.push({ name: isStudio ? 'Jobs & Services' : 'Services', value: serviceRevenue });
-      allocated += serviceRevenue;
-    }
+    serviceCategories.forEach((category) => {
+      const value = parseFloat(category.totalRevenue ?? category.totalSales ?? category.revenue ?? 0);
+      if (value > 0) {
+        slices.push({
+          name: category.category || category.jobType || (isStudio ? 'Jobs & Services' : 'Services'),
+          value
+        });
+        allocated += value;
+      }
+    });
   }
 
   const remainder = Math.max(0, (totalRevenue || 0) - allocated);

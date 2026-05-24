@@ -56,6 +56,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import DashboardTable from '../components/DashboardTable';
 import StatusChip from '../components/StatusChip';
@@ -444,7 +445,7 @@ const StudioLocations = () => {
                 />
 
                 <div className="rounded-lg border border-border p-4 space-y-3">
-                  <FormLabel>Studio logo (optional)</FormLabel>
+                  <Label>Studio logo (optional)</Label>
                   <p className="text-sm text-muted-foreground">
                     Used on invoices and customer documents for this studio.
                   </p>

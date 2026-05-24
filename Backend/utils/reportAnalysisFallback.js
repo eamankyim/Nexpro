@@ -16,6 +16,7 @@ function buildReportAnalysisFallback(reportData = {}, options = {}) {
   const revenueChange = Number(reportData.revenueChange) || 0;
   const expenseChange = Number(reportData.expenseChange) || 0;
   const outstanding = Number(reportData.outstandingPayments) || 0;
+  const studioMetrics = reportData.studioMetrics || null;
   const { startDate, endDate, businessType = 'printing_press' } = options;
   const periodLabel =
     startDate && endDate ? `${startDate} to ${endDate}` : 'the selected period';
@@ -63,6 +64,15 @@ function buildReportAnalysisFallback(reportData = {}, options = {}) {
     keyFindings.push(`Top performers this period include: ${names}.`);
   }
 
+  if (studioMetrics) {
+    const bookedJobValue = Number(studioMetrics.bookedJobValue) || 0;
+    const bookedNotCollected = Number(studioMetrics.bookedNotCollected) || 0;
+    const jobCount = Number(studioMetrics.jobCount) || 0;
+    keyFindings.push(
+      `Studio operations recorded ${jobCount} job(s) with booked value of GHS ${formatDecimal(bookedJobValue)}; GHS ${formatDecimal(bookedNotCollected)} is booked but not collected.`
+    );
+  }
+
   const recommendations = [];
   if (profitMargin < 15 && revenue > 0) {
     recommendations.push({
@@ -78,6 +88,14 @@ function buildReportAnalysisFallback(reportData = {}, options = {}) {
       action: 'Follow up on overdue invoices and outstanding balances',
       impact: 'Strengthen cash position and reduce collection risk',
       reasoning: `Outstanding payments (GHS ${formatDecimal(outstanding)}) are material relative to revenue.`
+    });
+  }
+  if (studioMetrics && Number(studioMetrics.bookedNotCollected) > 0) {
+    recommendations.push({
+      priority: 'Medium',
+      action: 'Convert booked job value into collected revenue',
+      impact: 'Improve cash collections without needing new job volume',
+      reasoning: `Booked but uncollected job value is GHS ${formatDecimal(Number(studioMetrics.bookedNotCollected) || 0)}.`
     });
   }
   if (revenueChange < -5) {

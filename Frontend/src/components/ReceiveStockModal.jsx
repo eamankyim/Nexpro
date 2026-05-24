@@ -22,9 +22,10 @@ const SCANNER_ID = 'receive-stock-scanner';
 /**
  * @param {boolean} open
  * @param {() => void} onClose
+ * @param {Object} [initialProduct] – When provided, starts on the confirm step for this product.
  * @param {() => void} [onSuccess] – Called after adding stock (refresh list, etc.)
  */
-export default function ReceiveStockModal({ open, onClose, onSuccess }) {
+export default function ReceiveStockModal({ open, onClose, onSuccess, initialProduct = null }) {
   const html5QrcodeRef = useRef(null);
   const [step, setStep] = useState('scan');
   const [product, setProduct] = useState(null);
@@ -54,8 +55,20 @@ export default function ReceiveStockModal({ open, onClose, onSuccess }) {
       resetToScan();
       return;
     }
+
+    if (initialProduct?.id) {
+      setStep('confirm');
+      setProduct(initialProduct);
+      setQtyReceived(1);
+      setScanError(null);
+      setSearchQuery('');
+      setSearchResults([]);
+      setBarcodeInput('');
+      return;
+    }
+
     resetToScan();
-  }, [open, resetToScan]);
+  }, [open, initialProduct, resetToScan]);
 
   useEffect(() => {
     if (!open || step !== 'scan') return;

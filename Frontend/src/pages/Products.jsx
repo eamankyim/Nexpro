@@ -482,6 +482,7 @@ const Products = () => {
   const [categorySearchTerm, setCategorySearchTerm] = useState('');
   const [categoryFilterSearchTerm, setCategoryFilterSearchTerm] = useState('');
   const [receiveStockOpen, setReceiveStockOpen] = useState(false);
+  const [productToReceive, setProductToReceive] = useState(null);
   const [qrGenerateOpen, setQrGenerateOpen] = useState(false);
   const [productForQR, setProductForQR] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
@@ -605,6 +606,11 @@ const Products = () => {
   const handleOpenQRGenerate = useCallback((product) => {
     setProductForQR(product);
     setQrGenerateOpen(true);
+  }, []);
+
+  const handleOpenReceiveStock = useCallback((product = null) => {
+    setProductToReceive(product);
+    setReceiveStockOpen(true);
   }, []);
 
   const handleOpenQRGenerateFromForm = useCallback(() => {
@@ -1472,43 +1478,10 @@ const Products = () => {
         <ActionColumn
           onView={() => handleViewProduct(record)}
           record={record}
-          extraActions={[
-            {
-              key: 'duplicate',
-              label: 'Duplicate',
-              icon: <Copy className="h-4 w-4" />,
-              onClick: () => handleDuplicateProduct(record),
-            },
-            {
-              key: 'share',
-              label: 'Share via WhatsApp',
-              icon: <Share2 className="h-4 w-4" />,
-              onClick: () => handleWhatsAppShare(record),
-            },
-            {
-              key: 'qr',
-              label: 'Generate QR',
-              icon: <QrCode className="h-4 w-4" />,
-              onClick: () => handleOpenQRGenerate(record),
-            },
-            ...(isAdmin
-              ? [
-                  {
-                    key: 'delete',
-                    label: 'Delete',
-                    icon: <Trash2 className="h-4 w-4" />,
-                    onClick: () => {
-                      setProductToDelete(record);
-                      setDeleteDialogOpen(true);
-                    },
-                  },
-                ]
-              : []),
-          ]}
         />
       ),
     },
-  ], [isMobile, isAdmin, handleOpenQRGenerate, handleDuplicateProduct, handleWhatsAppShare, handleViewProduct]);
+  ], [isMobile, handleViewProduct]);
 
   const handleRefresh = () => {
     fetchProducts();
@@ -2253,7 +2226,7 @@ const Products = () => {
               <Button
                 variant="outline"
                 size={isMobile ? 'icon' : 'default'}
-                onClick={() => setReceiveStockOpen(true)}
+                onClick={() => handleOpenReceiveStock()}
                 aria-label="Receive stock"
               >
                 <Download className="h-4 w-4" />
@@ -3062,7 +3035,11 @@ const Products = () => {
 
       <ReceiveStockModal
         open={receiveStockOpen}
-        onClose={() => setReceiveStockOpen(false)}
+        initialProduct={productToReceive}
+        onClose={() => {
+          setReceiveStockOpen(false);
+          setProductToReceive(null);
+        }}
         onSuccess={() => {
           fetchProducts();
           fetchStats();
@@ -3239,7 +3216,15 @@ const Products = () => {
             {/* Quick Actions */}
             <div className="flex flex-wrap gap-2">
               <Button
-                variant="secondaryStroke"
+                variant="outline"
+                size="sm"
+                onClick={() => handleDuplicateProduct(selectedProduct)}
+              >
+                <Copy className="h-4 w-4 mr-2" />
+                Duplicate
+              </Button>
+              <Button
+                variant="outline"
                 size="sm"
                 onClick={() => {
                   setDrawerOpen(false);
@@ -3250,14 +3235,24 @@ const Products = () => {
                 Edit
               </Button>
               {selectedProduct.trackStock !== false && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleAdjustStockClick(selectedProduct)}
-              >
-                <Package className="h-4 w-4 mr-2" />
-                Adjust Stock
-              </Button>
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleOpenReceiveStock(selectedProduct)}
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Receive Stock
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleAdjustStockClick(selectedProduct)}
+                  >
+                    <Package className="h-4 w-4 mr-2" />
+                    Adjust Stock
+                  </Button>
+                </>
               )}
               <Button
                 variant="outline"
@@ -3270,10 +3265,18 @@ const Products = () => {
               <Button
                 variant="outline"
                 size="sm"
+                onClick={() => handleOpenQRGenerate(selectedProduct)}
+              >
+                <QrCode className="h-4 w-4 mr-2" />
+                Generate QR
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => handleOpenVariantForm()}
               >
                 <Plus className="h-4 w-4 mr-2" />
-                Add Variance
+                Add Variant
               </Button>
               {isAdmin && (
                 <Button

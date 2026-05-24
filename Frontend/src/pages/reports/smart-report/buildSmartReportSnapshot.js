@@ -10,6 +10,18 @@ import { formatAmount } from '../../../utils/formatNumber';
 
 const pct = (part, total) => (total > 0 ? ((part / total) * 100) : 0);
 const num = (v) => parseFloat(v) || 0;
+const hasValue = (v) => v !== undefined && v !== null && v !== '';
+
+const formatStatusLabel = (status = '') => String(status || 'unknown')
+  .replace(/[_-]+/g, ' ')
+  .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const isCloseAmount = (a, b) => {
+  const left = num(a);
+  const right = num(b);
+  if (left === 0 && right === 0) return true;
+  return Math.abs(left - right) <= Math.max(1, Math.max(Math.abs(left), Math.abs(right)) * 0.05);
+};
 
 /**
  * Build donut slices from category rows.
@@ -26,6 +38,29 @@ function buildCategoryDonut(rows, totalOverride) {
     .filter((s) => s.value > 0);
   const total = totalOverride ?? slices.reduce((s, i) => s + i.value, 0);
   return { slices, total };
+}
+
+function normalizeServiceMix(raw = [], denominator = 0) {
+  const serviceTotal = raw.reduce((sum, item) => (
+    sum + num(item.totalRevenue ?? item.totalSales ?? item.revenue)
+  ), 0);
+  const total = serviceTotal || denominator;
+
+  return raw
+    .map((item, index) => {
+      const revenue = num(item.totalRevenue ?? item.totalSales ?? item.revenue);
+      const quantity = num(item.totalQuantity ?? item.quantitySold ?? item.jobCount ?? item.itemCount);
+      return {
+        name: item.category || item.jobType || item.service || 'Uncategorized',
+        value: revenue,
+        revenue,
+        quantity,
+        averagePrice: num(item.averagePrice) || (quantity > 0 ? revenue / quantity : 0),
+        percent: pct(revenue, total),
+        color: REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length],
+      };
+    })
+    .filter((item) => item.value > 0 || item.quantity > 0);
 }
 
 /**
@@ -69,12 +104,55 @@ export function buildSmartReportSnapshot({
   isStudio,
   terminology,
 }) {
-  const revenue = num(revenueData?.totalRevenue);
+  const collectedRevenue = num(revenueData?.totalRevenue);
+  const bookedJobValue = num(salesData?.totalSales);
+  const revenue = collectedRevenue;
   const expenses = num(expenseData?.totalExpenses);
   const netProfit = revenue - expenses;
   const profitMargin = pct(netProfit, revenue);
-  const grossProfit = num(profitLossData?.grossProfit ?? (revenue - num(profitLossData?.cogs)));
+  const profitLossRevenue = num(profitLossData?.revenue ?? profitLossData?.totalRevenue);
+  const profitLossAlignsWithCollections = !profitLossRevenue || isCloseAmount(profitLossRevenue, collectedRevenue);
+  const reportedCogs = num(profitLossData?.cogs);
+  const alignedGrossProfit = hasValue(profitLossData?.grossProfit)
+    ? num(profitLossData.grossProfit)
+    : hasValue(profitLossData?.cogs)
+      ? revenue - reportedCogs
+      : netProfit;
+  const grossProfit = profitLossAlignsWithCollections
+    ? alignedGrossProfit
+    : netProfit;
   const grossProfitMargin = pct(grossProfit, revenue);
+  const bookedVsCollectedGap = Math.max(0, bookedJobValue - collectedRevenue);
+
+  const sourceMeta = {
+    revenue: {
+      label: isStudio ? 'Collected revenue' : 'Revenue',
+      subLabel: isStudio ? 'Cash collected from invoices in this period' : 'Recorded revenue for this period',
+      basis: revenueData?.revenueSource || (isShop || isPharmacy ? 'sales' : 'invoice_collections'),
+    },
+    bookedJobValue: {
+      label: isStudio ? 'Booked job value' : 'Booked sales value',
+      subLabel: isStudio ? 'Jobs created in this period, not necessarily collected' : 'Sales booked in this period',
+      basis: 'jobs_created',
+    },
+    grossProfit: {
+      label: profitLossAlignsWithCollections ? 'Gross profit' : 'Estimated gross profit',
+      subLabel: profitLossAlignsWithCollections
+        ? 'From profit and loss data aligned to collected revenue'
+        : 'Estimated from collected revenue because accounting revenue uses a different basis',
+      basis: profitLossAlignsWithCollections ? 'profit_loss' : 'collection_estimate',
+    },
+    netProfit: {
+      label: 'Net profit',
+      subLabel: 'Collected revenue less approved expenses',
+      basis: 'collections_less_expenses',
+    },
+    cashFlow: {
+      label: 'Cash flow',
+      subLabel: 'Cash flow report for the selected period',
+      basis: 'cash_flow_report',
+    },
+  };
 
   const prevRevenue = num(comparison?.prevRevenue);
   const prevExpenses = num(comparison?.prevExpenses);
@@ -110,7 +188,9 @@ export function buildSmartReportSnapshot({
     revenue
   );
 
-  const totalSales = num(salesData?.totalSales ?? salesData?.totalJobs ?? revenue);
+  const totalSales = isStudio
+    ? (bookedJobValue || revenue)
+    : num(salesData?.totalSales ?? salesData?.totalJobs ?? revenue);
   const orderCount = num(
     salesData?.totalJobs ??
     salesData?.transactionCount ??
@@ -120,9 +200,11 @@ export function buildSmartReportSnapshot({
   const avgOrderValue = orderCount > 0 ? totalSales / orderCount : 0;
 
   const newCustomers = num(phase2Data?.extendedKpis?.current?.newCustomers ?? phase2Data?.newCustomers ?? 0);
-  const returningCustomers = Math.max(0, topCustomers.length > 0
-    ? topCustomers.filter((_, i) => i > 0).length * 3
-    : Math.round(orderCount * 0.6));
+  const hasReturningCustomerData = hasValue(phase2Data?.extendedKpis?.current?.returningCustomers)
+    || hasValue(phase2Data?.returningCustomers);
+  const returningCustomers = hasReturningCustomerData
+    ? num(phase2Data?.extendedKpis?.current?.returningCustomers ?? phase2Data?.returningCustomers)
+    : 0;
 
   const cashInflow = num(
     cashFlowData?.operating?.cashReceivedFromCustomers ??
@@ -168,7 +250,7 @@ export function buildSmartReportSnapshot({
 
   const plCurrent = {
     revenue,
-    cogs: num(profitLossData?.cogs),
+    cogs: reportedCogs,
     grossProfit,
     operatingExpenses: expenses,
     otherIncome: num(profitLossData?.otherIncome),
@@ -206,12 +288,49 @@ export function buildSmartReportSnapshot({
     orders: num(d.count ?? d.jobCount),
   }));
 
-  const salesByCategory = revenueDonut.map((s) => ({
+  const serviceMix = normalizeServiceMix(
+    serviceAnalyticsData?.byCategory || salesData?.byJobType || [],
+    isStudio ? (bookedJobValue || revenue) : revenue
+  );
+  const salesCategoryTotal = serviceMix.length > 0
+    ? serviceMix.reduce((sum, item) => sum + item.value, 0)
+    : revenueDonut.reduce((sum, item) => sum + item.value, 0);
+  const salesCategorySource = serviceMix.length > 0 ? serviceMix : revenueDonut;
+  const salesByCategory = salesCategorySource.map((s) => ({
     name: s.name,
     value: s.value,
-    percent: pct(s.value, revenue),
+    percent: pct(s.value, salesCategoryTotal),
     color: s.color,
   }));
+
+  const statusBreakdown = (salesData?.byStatus || []).map((row, index) => {
+    const value = num(row.totalSales ?? row.totalAmount);
+    const count = num(row.count ?? row.jobCount);
+    return {
+      status: row.status || row.name || 'unknown',
+      label: formatStatusLabel(row.status || row.name),
+      count,
+      value,
+      percent: pct(count, orderCount),
+      color: REPORT_CHART_COLORS[index % REPORT_CHART_COLORS.length],
+    };
+  });
+
+  const jobsTrendByDate = (salesData?.jobsTrendByDate || []).map((row) => ({
+    date: row.date,
+    period: dayjs(row.date).format('MMM D'),
+    incoming: num(row.incoming),
+    completed: num(row.completed),
+  }));
+
+  const pipelineSummary = {
+    activeJobs: num(phase2Data?.pipelineSummary?.activeJobs),
+    openLeads: num(phase2Data?.pipelineSummary?.openLeads),
+    pendingInvoices: num(phase2Data?.pipelineSummary?.pendingInvoices),
+    bookedJobValue,
+    collectedRevenue,
+    bookedVsCollectedGap,
+  };
 
   const customerSegments = (() => {
     if (!topCustomers.length) return [];
@@ -294,6 +413,11 @@ export function buildSmartReportSnapshot({
   const operatingNet = num(
     cashFlowData?.operating?.netCashFromOperatingActivities ?? (cashInflow - cashOutflow)
   );
+  const investingInflow = Math.max(0, num(cashFlowData?.investing?.cashInflow));
+  const financingInflow = Math.max(0, num(cashFlowData?.financing?.cashInflow));
+  const otherIncome = num(profitLossData?.otherIncome);
+  const classifiedInflow = collectedRevenue + otherIncome + investingInflow + financingInflow;
+  const unclassifiedInflow = Math.max(0, cashInflow - classifiedInflow);
   const investingNet = num(
     cashFlowData?.investing?.netCashUsedInInvestingActivities
     ?? cashFlowData?.investing?.netCashFromInvestingActivities
@@ -325,6 +449,18 @@ export function buildSmartReportSnapshot({
   const otherPayments = Math.max(0, cashOutflow - operatingExpensesOut - inventoryPurchases - vendorPayments);
 
   const outstanding = num(outstandingData?.totalOutstanding);
+  const outstandingInvoices = outstandingData?.invoices || [];
+  const overdueInvoices = outstandingInvoices.filter((invoice) => invoice.status === 'overdue');
+  const overdueAmount = overdueInvoices.reduce((sum, invoice) => sum + num(invoice.balance), 0);
+  const outstandingDetail = {
+    totalOutstanding: outstanding,
+    invoiceCount: outstandingInvoices.length,
+    overdueCount: overdueInvoices.length,
+    overdueAmount,
+    agingAnalysis: outstandingData?.agingAnalysis || {},
+    byCustomer: outstandingData?.byCustomer || [],
+    invoices: outstandingInvoices.slice(0, 10),
+  };
 
   const cashFlowDetail = {
     kpis: {
@@ -356,16 +492,17 @@ export function buildSmartReportSnapshot({
     compositionDonut: {
       slices: [
         { name: 'Operating Inflow', value: cashInflow, color: REPORT_CHART_COLORS[0] },
-        { name: 'Investing Inflow', value: Math.max(0, num(cashFlowData?.investing?.cashInflow)), color: REPORT_CHART_COLORS[1] },
-        { name: 'Financing Inflow', value: Math.max(0, num(cashFlowData?.financing?.cashInflow)), color: REPORT_CHART_COLORS[2] },
+        { name: 'Investing Inflow', value: investingInflow, color: REPORT_CHART_COLORS[1] },
+        { name: 'Financing Inflow', value: financingInflow, color: REPORT_CHART_COLORS[2] },
       ].filter((s) => s.value > 0),
       total: cashInflow,
     },
     inflowBreakdown: [
-      { name: 'Sales Receipts', value: revenue * 0.85, percent: pct(revenue * 0.85, cashInflow), color: '#166534' },
-      { name: 'Customer Payments', value: num(outstandingData?.totalCollected ?? revenue * 0.15), percent: pct(num(outstandingData?.totalCollected ?? revenue * 0.15), cashInflow), color: '#2563eb' },
-      { name: 'Other Income', value: num(profitLossData?.otherIncome), percent: pct(num(profitLossData?.otherIncome), cashInflow), color: '#7c3aed' },
-      { name: 'Loan / Financing', value: Math.max(0, cashInflow - revenue - num(profitLossData?.otherIncome)), percent: 0, color: '#c2410c' },
+      { name: isStudio ? 'Collected Job Revenue' : 'Sales Receipts', value: collectedRevenue, color: '#166534' },
+      { name: 'Other Income', value: otherIncome, color: '#7c3aed' },
+      { name: 'Investing Inflow', value: investingInflow, color: '#2563eb' },
+      { name: 'Financing Inflow', value: financingInflow, color: '#c2410c' },
+      { name: 'Unclassified Inflow', value: unclassifiedInflow, color: '#64748b' },
     ].map((item) => ({ ...item, percent: item.percent || pct(item.value, cashInflow) })).filter((i) => i.value > 0),
     outflowBreakdown: [
       { name: 'Operating Expenses', value: operatingExpensesOut, color: '#b91c1c' },
@@ -595,17 +732,17 @@ export function buildSmartReportSnapshot({
 
   return {
     kpis: {
-      revenue: { value: revenue, change: revenueChange, sparkline: revenueSparkline },
-      grossProfit: { value: grossProfit, change: revenueChange * 0.95, sparkline: profitSparkline },
-      netProfit: { value: netProfit, change: profitChange, sparkline: profitSparkline },
-      expenses: { value: expenses, change: expenseChange, sparkline: expenseSparkline, invertTrend: true },
-      profitMargin: { value: profitMargin, change: marginChange, sparkline: marginSparkline, isPercent: true },
-      cashFlow: { value: netCashFlow, change: netCashChange, sparkline: profitSparkline },
-      totalSales: { value: totalSales, change: revenueChange, sparkline: revenueSparkline },
-      orderCount: { value: orderCount, change: revenueChange * 0.85, sparkline: salesByDate.map((d) => d.orders) },
-      avgOrderValue: { value: avgOrderValue, change: revenueChange - (revenueChange * 0.85), sparkline: revenueSparkline },
-      newCustomers: { value: newCustomers, change: num(phase2Data?.extendedKpis?.comparison?.newCustomersChange ?? 20), sparkline: [newCustomers] },
-      returningCustomers: { value: returningCustomers, change: 12, sparkline: [returningCustomers] },
+      revenue: { value: revenue, change: revenueChange, sparkline: revenueSparkline, sourceLabel: sourceMeta.revenue.subLabel },
+      grossProfit: { value: grossProfit, change: revenueChange * 0.95, sparkline: profitSparkline, sourceLabel: sourceMeta.grossProfit.subLabel },
+      netProfit: { value: netProfit, change: profitChange, sparkline: profitSparkline, sourceLabel: sourceMeta.netProfit.subLabel },
+      expenses: { value: expenses, change: expenseChange, sparkline: expenseSparkline, invertTrend: true, sourceLabel: 'Approved expenses for the selected period' },
+      profitMargin: { value: profitMargin, change: marginChange, sparkline: marginSparkline, isPercent: true, sourceLabel: 'Net profit divided by collected revenue' },
+      cashFlow: { value: netCashFlow, change: netCashChange, sparkline: profitSparkline, sourceLabel: sourceMeta.cashFlow.subLabel },
+      totalSales: { value: totalSales, change: revenueChange, sparkline: revenueSparkline, sourceLabel: isStudio ? sourceMeta.bookedJobValue.subLabel : sourceMeta.revenue.subLabel },
+      orderCount: { value: orderCount, change: revenueChange * 0.85, sparkline: salesByDate.map((d) => d.orders), sourceLabel: isStudio ? 'Jobs created in this period' : 'Transactions in this period' },
+      avgOrderValue: { value: avgOrderValue, change: revenueChange - (revenueChange * 0.85), sparkline: revenueSparkline, sourceLabel: isStudio ? 'Booked job value per job' : 'Revenue per order' },
+      newCustomers: { value: newCustomers, change: num(phase2Data?.extendedKpis?.comparison?.newCustomersChange ?? 0), sparkline: [newCustomers], sourceLabel: 'From customer activity data' },
+      returningCustomers: { value: returningCustomers, change: num(phase2Data?.extendedKpis?.comparison?.returningCustomersChange ?? 0), sparkline: [returningCustomers], subLabel: hasReturningCustomerData ? 'From customer activity data' : 'Returning customer count not tracked', hideTrend: !hasReturningCustomerData },
       avgDailyExpense: { value: avgDailyExpense, change: expenseChange, sparkline: expenseSparkline, invertTrend: true },
       highestExpenseDay: { label: highestExpenseDay.label, value: highestExpenseDay.amount },
       vendorCount: { value: num(phase2Data?.vendorCount ?? expenseCategories.length * 3), change: 10 },
@@ -646,12 +783,21 @@ export function buildSmartReportSnapshot({
     }))),
     salesByDate,
     salesByCategory,
+    salesCategoryTotal,
+    serviceMix,
+    operations: {
+      pipelineSummary,
+      statusBreakdown,
+      jobsTrendByDate,
+      serviceMix,
+      outstanding: outstandingDetail,
+    },
     customerSegments,
     customerInsights: [
       topCustomers[0] ? { icon: 'star', text: `Your top customer contributed ${topCustomers[0].percent.toFixed(1)}% of total revenue.` } : null,
       customerSegments[0] ? { icon: 'users', text: `Top 20% customers contributed ${customerSegments[0].percent.toFixed(1)}% of total sales.` } : null,
       newCustomers > 0 ? { icon: 'user-plus', text: `${newCustomers} new customers acquired this period.` } : null,
-      { icon: 'repeat', text: `${returningCustomers} returning customers drove repeat revenue.` },
+      hasReturningCustomerData && returningCustomers > 0 ? { icon: 'repeat', text: `${returningCustomers} returning customers drove repeat revenue.` } : null,
     ].filter(Boolean),
     expenseInsights,
     inventoryProducts,
@@ -669,6 +815,11 @@ export function buildSmartReportSnapshot({
       ? aiInsightPoints
       : [aiAnalysis?.performanceAnalysis, ...(aiAnalysis?.strategicSuggestions || [])].filter(Boolean),
     outstanding,
+    outstandingDetail,
+    collectedRevenue,
+    bookedJobValue,
+    bookedVsCollectedGap,
+    sourceMeta,
     comparisonLabel: comparison?.label || 'vs previous period',
     periodStartLabel,
     periodEndLabel,

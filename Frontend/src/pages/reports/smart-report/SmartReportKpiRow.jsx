@@ -22,6 +22,7 @@ export default function SmartReportKpiRow({ items = [] }) {
           invertTrend={item.invertTrend}
           hideTrend={item.hideTrend}
           subLabel={item.subLabel}
+          sourceLabel={item.sourceLabel}
           icon={item.icon}
           iconBgColor={item.iconBgColor}
           iconColor={item.iconColor}

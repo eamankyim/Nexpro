@@ -47,9 +47,9 @@ export default function SmartReportCashFlowTab({ snapshot, periodLabel }) {
   const comparisonLabel = snapshot.comparisonLabel;
 
   const kpiItems = [
-    { label: 'Net Cash Flow', value: kpis.net?.value, change: kpis.net?.change, sparklineData: kpis.net?.sparkline, icon: TrendingUp, iconBgColor: '#dcfce7', iconColor: '#166534', comparisonLabel },
-    { label: 'Cash Inflow', value: kpis.inflow?.value, change: kpis.inflow?.change, sparklineData: kpis.inflow?.sparkline, icon: ArrowDownLeft, iconBgColor: '#dbeafe', iconColor: '#1d4ed8', comparisonLabel },
-    { label: 'Cash Outflow', value: kpis.outflow?.value, change: kpis.outflow?.change, sparklineData: kpis.outflow?.sparkline, invertTrend: true, icon: ArrowUpRight, iconBgColor: '#fee2e2', iconColor: '#b91c1c', comparisonLabel },
+    { label: 'Net Cash Flow', value: kpis.net?.value, change: kpis.net?.change, sparklineData: kpis.net?.sparkline, icon: TrendingUp, iconBgColor: '#dcfce7', iconColor: '#166534', comparisonLabel, sourceLabel: snapshot.kpis?.cashFlow?.sourceLabel },
+    { label: 'Cash Inflow', value: kpis.inflow?.value, change: kpis.inflow?.change, sparklineData: kpis.inflow?.sparkline, icon: ArrowDownLeft, iconBgColor: '#dbeafe', iconColor: '#1d4ed8', comparisonLabel, sourceLabel: 'Cash received during the selected period' },
+    { label: 'Cash Outflow', value: kpis.outflow?.value, change: kpis.outflow?.change, sparklineData: kpis.outflow?.sparkline, invertTrend: true, icon: ArrowUpRight, iconBgColor: '#fee2e2', iconColor: '#b91c1c', comparisonLabel, sourceLabel: 'Cash paid during the selected period' },
     { label: 'Opening Balance', value: kpis.opening?.value, change: 0, sparklineData: kpis.net?.sparkline, subLabel: kpis.opening?.subLabel, hideTrend: true, icon: Landmark, iconBgColor: '#f3f4f6', iconColor: '#374151' },
     { label: 'Closing Balance', value: kpis.closing?.value, change: 0, sparklineData: kpis.net?.sparkline, subLabel: kpis.closing?.subLabel, hideTrend: true, icon: Wallet, iconBgColor: '#dcfce7', iconColor: '#166534' },
   ];

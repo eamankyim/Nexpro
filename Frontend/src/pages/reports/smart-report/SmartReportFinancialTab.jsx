@@ -39,11 +39,11 @@ export default function SmartReportFinancialTab({ snapshot, periodLabel }) {
   const previous = profitLoss.previous;
 
   const kpiItems = [
-    { label: 'Total Revenue', value: kpis.revenue.value, change: kpis.revenue.change, sparklineData: kpis.revenue.sparkline, icon: CircleDollarSign, comparisonLabel },
-    { label: 'Gross Profit', value: kpis.grossProfit.value, change: kpis.grossProfit.change, sparklineData: kpis.grossProfit.sparkline, icon: TrendingUp, comparisonLabel },
-    { label: 'Net Profit', value: kpis.netProfit.value, change: kpis.netProfit.change, sparklineData: kpis.netProfit.sparkline, icon: TrendingUp, comparisonLabel },
-    { label: 'Total Expenses', value: kpis.expenses.value, change: kpis.expenses.change, sparklineData: kpis.expenses.sparkline, invertTrend: true, icon: Receipt, comparisonLabel },
-    { label: 'Profit Margin', value: kpis.profitMargin.value, change: kpis.profitMargin.change, sparklineData: kpis.profitMargin.sparkline, valueFormatter: (v) => `${Number(v).toFixed(1)}%`, icon: Percent, comparisonLabel },
+    { label: 'Total Revenue', value: kpis.revenue.value, change: kpis.revenue.change, sparklineData: kpis.revenue.sparkline, icon: CircleDollarSign, comparisonLabel, sourceLabel: kpis.revenue.sourceLabel },
+    { label: 'Gross Profit', value: kpis.grossProfit.value, change: kpis.grossProfit.change, sparklineData: kpis.grossProfit.sparkline, icon: TrendingUp, comparisonLabel, sourceLabel: kpis.grossProfit.sourceLabel },
+    { label: 'Net Profit', value: kpis.netProfit.value, change: kpis.netProfit.change, sparklineData: kpis.netProfit.sparkline, icon: TrendingUp, comparisonLabel, sourceLabel: kpis.netProfit.sourceLabel },
+    { label: 'Total Expenses', value: kpis.expenses.value, change: kpis.expenses.change, sparklineData: kpis.expenses.sparkline, invertTrend: true, icon: Receipt, comparisonLabel, sourceLabel: kpis.expenses.sourceLabel },
+    { label: 'Profit Margin', value: kpis.profitMargin.value, change: kpis.profitMargin.change, sparklineData: kpis.profitMargin.sparkline, valueFormatter: (v) => `${Number(v).toFixed(1)}%`, icon: Percent, comparisonLabel, sourceLabel: kpis.profitMargin.sourceLabel },
   ];
 
   return (

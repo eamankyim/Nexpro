@@ -25,10 +25,20 @@ const getWsUrl = () => {
 
 const WS_URL = getWsUrl();
 
-/** When 'false' or '0', skip Socket.IO connection (backend may not have /socket.io/). Set in .env to reduce 404 log spam. */
+const ABS_PRODUCTION_HOSTS = new Set([
+  'myapp.africanbusinesssuite.com',
+  'africanbusinesssuite.com',
+]);
+
+/** When 'false' or '0', skip Socket.IO. When 'true' or '1', force on. On ABS production hosts, off unless explicitly enabled (API on Vercel has no socket.io). */
 const isWsEnabled = () => {
-  const v = import.meta.env.VITE_WS_ENABLED;
-  return v !== 'false' && v !== '0';
+  const v = import.meta.env.VITE_WS_ENABLED?.trim().toLowerCase();
+  if (v === 'false' || v === '0') return false;
+  if (v === 'true' || v === '1') return true;
+  if (typeof window !== 'undefined' && ABS_PRODUCTION_HOSTS.has(window.location.hostname)) {
+    return false;
+  }
+  return true;
 };
 
 /**
@@ -61,6 +71,7 @@ export const useWebSocket = (options = {}) => {
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState(null);
   const reconnectAttempts = useRef(0);
+  const connectErrorLogged = useRef(false);
   const maxReconnectAttempts = 5;
 
   /** Stable key so inline `channels={[]}` does not recreate the socket every render */
@@ -117,6 +128,7 @@ export const useWebSocket = (options = {}) => {
       console.log('[WebSocket] Connected');
       setIsConnected(true);
       reconnectAttempts.current = 0;
+      connectErrorLogged.current = false;
 
       if (channelList.length > 0) {
         socket.emit('subscribe', channelList);
@@ -130,7 +142,6 @@ export const useWebSocket = (options = {}) => {
 
     socket.on('connect_error', (error) => {
       const msg = error?.message || (typeof error === 'string' ? error : 'websocket error');
-      console.error('[WebSocket] Connection error:', msg);
 
       if (error?.message === 'Invalid authentication token') {
         try {
@@ -144,8 +155,15 @@ export const useWebSocket = (options = {}) => {
       }
 
       reconnectAttempts.current += 1;
+      if (!connectErrorLogged.current) {
+        connectErrorLogged.current = true;
+        console.warn('[WebSocket] Connection error:', msg);
+      }
       if (reconnectAttempts.current >= maxReconnectAttempts) {
-        console.warn('[WebSocket] Max reconnection attempts reached');
+        socket.io.opts.reconnection = false;
+        if (reconnectAttempts.current === maxReconnectAttempts) {
+          console.warn('[WebSocket] Max reconnection attempts reached; real-time updates disabled until refresh');
+        }
       }
     });
 

@@ -19,6 +19,7 @@ export default function OverviewKpiCard({
   invertTrend = false,
   hideTrend = false,
   subLabel,
+  sourceLabel,
   icon: Icon,
   iconBgColor = '#dcfce7',
   iconColor = '#166534'
@@ -62,6 +63,9 @@ export default function OverviewKpiCard({
           <div className="h-10 w-full min-h-[40px]">
             <SparklineChart data={sparkline} positive={isPositive} />
           </div>
+        )}
+        {sourceLabel && (
+          <p className="text-[11px] text-muted-foreground mt-2">{sourceLabel}</p>
         )}
       </CardContent>
     </Card>
