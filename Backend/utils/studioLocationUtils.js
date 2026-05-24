@@ -10,25 +10,63 @@ const hasWorkspaceWideStudioAccess = (tenantRole) =>
   WORKSPACE_WIDE_ROLES.includes(tenantRole);
 
 /**
+ * Ensure the workspace has a default studio location.
+ * Creates one if missing; promotes the first existing location if none is marked default.
  * @param {string} tenantId
- * @param {string} [defaultName]
+ * @param {string|object} [options]
+ * @param {import('sequelize').Transaction} [transaction]
  * @returns {Promise<import('../models/StudioLocation').default>}
  */
-const ensureDefaultStudioLocation = async (tenantId, defaultName = 'Main studio') => {
+const ensureDefaultStudioLocation = async (tenantId, options = 'Main studio', transaction = null) => {
+  const defaultName = typeof options === 'string' ? options : options?.name || 'Main studio';
+  const metadata = typeof options === 'object' && options !== null ? options.metadata : {};
+  const source = typeof options === 'object' && options !== null ? options.source : null;
+  const opts = transaction ? { transaction } : {};
+
   const existingDefault = await StudioLocation.findOne({
     where: { tenantId, isDefault: true },
+    ...opts,
   });
   if (existingDefault) return existingDefault;
 
-  const any = await StudioLocation.findOne({ where: { tenantId } });
-  if (any) return any;
+  const any = await StudioLocation.findOne({
+    where: { tenantId },
+    order: [['createdAt', 'ASC']],
+    ...opts,
+  });
+  if (any) {
+    await any.update({ isDefault: true }, opts);
+    return any;
+  }
 
   return StudioLocation.create({
     tenantId,
     name: defaultName,
     isDefault: true,
     isActive: true,
-  });
+    metadata: {
+      ...metadata,
+      ...(source ? { source } : {}),
+    },
+  }, opts);
+};
+
+/**
+ * Clear isDefault on sibling studio locations when one is set default.
+ * @param {string} tenantId
+ * @param {string} studioLocationId
+ */
+const setAsOnlyDefaultStudioLocation = async (tenantId, studioLocationId) => {
+  await StudioLocation.update(
+    { isDefault: false },
+    {
+      where: {
+        tenantId,
+        id: { [Op.ne]: studioLocationId },
+      },
+    }
+  );
+  await StudioLocation.update({ isDefault: true }, { where: { tenantId, id: studioLocationId } });
 };
 
 /**
@@ -144,6 +182,7 @@ module.exports = {
   isStudioTenant,
   hasWorkspaceWideStudioAccess,
   ensureDefaultStudioLocation,
+  setAsOnlyDefaultStudioLocation,
   getUserStudioLocationIds,
   applyStudioLocationFilter,
   getStudioLocationIdForWrite,

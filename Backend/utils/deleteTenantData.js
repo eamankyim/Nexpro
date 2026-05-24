@@ -74,6 +74,7 @@ const {
   AutomationRun,
   AutomationRule,
   WhatsAppMessageEvent,
+  MarketingCampaign,
   RecurringJournal,
   RecurringJournalRun,
   StudioLocation,
@@ -90,6 +91,9 @@ async function del(Model, where, opts = {}) {
   try {
     return await Model.destroy({ where, ...opts });
   } catch (err) {
+    if (opts.strict || process.env.DELETE_TENANT_DATA_STRICT === 'true') {
+      throw err;
+    }
     console.warn(`[deleteTenantData] ${Model.name}: ${err.message}`);
     return 0;
   }
@@ -117,6 +121,9 @@ async function deleteTenantData(tenantId, transaction = null) {
   ).map((r) => r.id);
   const productIds = (
     await Product.findAll({ where: { tenantId: id }, attributes: ['id'], ...options })
+  ).map((r) => r.id);
+  const shopIds = (
+    await Shop.findAll({ where: { tenantId: id }, attributes: ['id'], ...options })
   ).map((r) => r.id);
   const prescriptionIds = (
     await Prescription.findAll({ where: { tenantId: id }, attributes: ['id'], ...options })
@@ -149,6 +156,7 @@ async function deleteTenantData(tenantId, transaction = null) {
   await del(AutomationRun, { tenantId: id }, options);
   await del(AutomationRule, { tenantId: id }, options);
   await del(WhatsAppMessageEvent, { tenantId: id }, options);
+  await del(MarketingCampaign, { tenantId: id }, options);
   if (recurringJournalIds.length) {
     await del(RecurringJournalRun, { recurringJournalId: recurringJournalIds }, options);
   }
@@ -162,25 +170,29 @@ async function deleteTenantData(tenantId, transaction = null) {
   await del(ExpenseActivity, { tenantId: id }, options);
   await del(Payment, { tenantId: id }, options);
   await del(Expense, { tenantId: id }, options);
+  await Sale.update({ invoiceId: null }, { where: { tenantId: id }, ...options });
+  await Prescription.update({ invoiceId: null }, { where: { tenantId: id }, ...options });
   await del(Invoice, { tenantId: id }, options);
   if (leadIds.length) await del(LeadActivity, { leadId: leadIds }, options);
+  await Lead.update({ convertedJobId: null }, { where: { tenantId: id }, ...options });
+  await Job.update({ adminLeadId: null }, { where: { tenantId: id }, ...options });
   await del(Job, { tenantId: id }, options);
   if (quoteIds.length) await del(QuoteItem, { quoteId: quoteIds }, options);
-  await del(Quote, { tenantId: id }, options);
   await del(QuoteActivity, { tenantId: id }, options);
+  await del(Quote, { tenantId: id }, options);
   await del(Lead, { tenantId: id }, options);
   if (saleIds.length) await del(SaleItem, { saleId: saleIds }, options);
-  await del(Sale, { tenantId: id }, options);
   await del(SaleActivity, { tenantId: id }, options);
-  if (productIds.length) await del(ProductVariant, { productId: productIds }, options);
+  await del(Sale, { tenantId: id }, options);
+  if (stockCountIds.length) await del(StockCountItem, { stockCountId: stockCountIds }, options);
   await del(Barcode, { tenantId: id }, options);
+  if (productIds.length) await del(ProductVariant, { productId: productIds }, options);
   await del(Product, { tenantId: id }, options);
   await del(ProductCategory, { tenantId: id }, options);
   if (shopIds.length) {
     await del(UserShop, { shopId: shopIds }, options);
   }
   await del(UserShop, { tenantId: id }, options);
-  await del(Shop, { tenantId: id }, options);
   if (prescriptionIds.length) await del(PrescriptionItem, { prescriptionId: prescriptionIds }, options);
   await del(DrugInteraction, { tenantId: id }, options);
   if (drugIds.length) await del(ExpiryAlert, { drugId: drugIds }, options);
@@ -208,17 +220,17 @@ async function deleteTenantData(tenantId, transaction = null) {
   await del(CustomerActivity, { tenantId: id }, options);
   await del(CustomerFeedback, { tenantId: id }, options);
   await del(Customer, { tenantId: id }, options);
+  await del(VendorPriceList, { tenantId: id }, options);
   await del(Vendor, { tenantId: id }, options);
   await del(Setting, { tenantId: id }, options);
   await del(PricingTemplate, { tenantId: id }, options);
-  await del(VendorPriceList, { tenantId: id }, options);
   await del(CustomDropdownOption, { tenantId: id }, options);
   await del(InviteToken, { tenantId: id }, options);
   await del(Notification, { tenantId: id }, options);
   await del(SabitoTenantMapping, { nexproTenantId: id }, options);
-  if (stockCountIds.length) await del(StockCountItem, { stockCountId: stockCountIds }, options);
   await del(StockCount, { tenantId: id }, options);
   await del(FootTraffic, { tenantId: id }, options);
+  await del(Shop, { tenantId: id }, options);
   await del(UserTask, { tenantId: id }, options);
   if (checklistIds.length) await del(UserChecklistItem, { checklistId: checklistIds }, options);
   await del(UserChecklist, { tenantId: id }, options);
