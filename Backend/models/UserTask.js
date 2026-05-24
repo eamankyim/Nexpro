@@ -17,6 +17,16 @@ const UserTask = sequelize.define('UserTask', {
     onDelete: 'CASCADE',
     onUpdate: 'CASCADE'
   },
+  studioLocationId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'studio_locations',
+      key: 'id'
+    },
+    onDelete: 'SET NULL',
+    onUpdate: 'CASCADE'
+  },
   userId: {
     type: DataTypes.UUID,
     allowNull: false,

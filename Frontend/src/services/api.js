@@ -329,6 +329,14 @@ function getPrivateApiHeadersForUpload() {
 
   if (tenantId) {
     headers['x-tenant-id'] = tenantId;
+    const studioLocationId = localStorage.getItem('activeStudioLocationId');
+    if (studioLocationId) {
+      headers['x-studio-location-id'] = studioLocationId;
+    }
+    const activeShopId = localStorage.getItem('activeShopId');
+    if (activeShopId) {
+      headers['x-shop-id'] = activeShopId;
+    }
   }
 
   return headers;

@@ -18,7 +18,7 @@ import {
  * @param {Array} data - Array of data objects
  * @param {Array} columns - Column definitions: { key, label, render, hidden?, mobileDashboardPlacement?: 'headerEnd' } (headerEnd = top-right opposite first column in list + grid card views)
  * @param {boolean} loading - Loading state
- * @param {Object} emptyState - EmptyState config { icon, title, description, primaryAction, secondaryAction }
+ * @param {Object} emptyState - EmptyState config { icon, imageKey, title, description, primaryAction, secondaryAction }
  * @param {string} emptyDescription - (Legacy) Description text when empty
  * @param {string} emptyTitle - (Legacy) Title text when empty
  * @param {React.ReactNode} emptyIcon - Icon to show when empty
@@ -227,6 +227,7 @@ const MobileCardView = memo(({
             className="w-full max-w-md py-8"
             icon={emptyState.icon}
             image={emptyState.image}
+            imageKey={emptyState.imageKey}
             imageAlt={emptyState.imageAlt}
             title={emptyState.title}
             description={emptyState.description}

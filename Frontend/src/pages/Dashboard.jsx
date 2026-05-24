@@ -58,7 +58,7 @@ import productService from '../services/productService';
 import settingsService from '../services/settingsService';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../context/AuthContext';
-import { useShopOptional } from '../context/ShopContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { CURRENCY, STUDIO_LIKE_TYPES } from '../constants';
 import { isPlaceholderBusinessName } from '../constants/tenantPlaceholders';
 import { formatAmount } from '../utils/formatNumber';
@@ -284,9 +284,13 @@ const buildBusinessHealthOverrideInsight = ({ businessHealthContext }) => {
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, activeTenant, activeTenantId, tenantRole, wasInvited, suppressAppGuidance } = useAuth();
-  const shopContext = useShopOptional();
-  const activeShopId = shopContext?.activeShopId ?? null;
+  const { user, activeTenant, tenantRole, wasInvited, suppressAppGuidance } = useAuth();
+  const {
+    activeTenantId,
+    activeShopId,
+    activeStudioLocationId,
+    scopeReady,
+  } = useWorkspaceScope();
   const [isRefetching, setIsRefetching] = useState(false);
   const { isMobile } = useResponsive();
   const initialMonthRange = useMemo(() => [dayjs().startOf('month'), dayjs().endOf('month')], []);
@@ -304,9 +308,9 @@ const Dashboard = () => {
   });
 
   const { data: overviewResponse, isLoading: overviewLoading, isError: overviewError, refetch: refetchOverview, isFetched: overviewFetched } = useQuery({
-    queryKey: ['dashboard', 'overview', activeTenantId, activeShopId, overviewParams.startDate, overviewParams.endDate, overviewParams.filterType],
+    queryKey: ['dashboard', 'overview', activeTenantId, activeShopId, activeStudioLocationId, overviewParams.startDate, overviewParams.endDate, overviewParams.filterType],
     queryFn: () => dashboardService.getOverview(overviewParams.startDate, overviewParams.endDate, overviewParams.filterType),
-    enabled: !!activeTenantId,
+    enabled: scopeReady,
     staleTime: 2 * 60 * 1000, // 2 min cache
     refetchOnWindowFocus: false,
     // Keep dashboard figures fresh after payments/invoice changes without manual refresh.
@@ -367,10 +371,10 @@ const Dashboard = () => {
     setOverviewParams({ startDate: start.format('YYYY-MM-DD'), endDate: end.format('YYYY-MM-DD'), filterType: 'thisMonth' });
   }, []);
 
-  // Clear stale overview when workspace scope changes (tenant or shop)
+  // Clear stale overview when workspace scope changes (tenant, shop, or studio location)
   useEffect(() => {
     setComparisonData(null);
-  }, [activeTenantId, activeShopId]);
+  }, [activeTenantId, activeShopId, activeStudioLocationId]);
 
   useEffect(() => {
     if (!overview) return;
@@ -383,7 +387,7 @@ const Dashboard = () => {
     }, 80);
     
     return () => clearTimeout(id);
-  }, [overview, activeTenantId, activeShopId, overviewParams.filterType]);
+  }, [overview, activeTenantId, activeShopId, activeStudioLocationId, overviewParams.filterType]);
 
   useEffect(() => {
     if (!overviewLoading) setIsRefetching(false);
@@ -807,6 +811,7 @@ const Dashboard = () => {
       'ai-insight',
       activeTenantId,
       activeShopId,
+      activeStudioLocationId,
       overviewParams.startDate,
       overviewParams.endDate,
       overviewParams.filterType,
@@ -830,7 +835,7 @@ const Dashboard = () => {
       });
       return parseAiInsightResponse(result?.message || '');
     },
-    enabled: !!activeTenantId && !!overview,
+    enabled: scopeReady && !!overview,
     staleTime: 10 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     retry: 1,

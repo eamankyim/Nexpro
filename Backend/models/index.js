@@ -489,6 +489,16 @@ StudioLocation.hasMany(Invoice, { foreignKey: 'studioLocationId', as: 'invoices'
 Invoice.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
 StudioLocation.hasMany(Lead, { foreignKey: 'studioLocationId', as: 'leads' });
 Lead.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+StudioLocation.hasMany(Expense, { foreignKey: 'studioLocationId', as: 'expenses' });
+Expense.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+StudioLocation.hasMany(CustomerFeedback, { foreignKey: 'studioLocationId', as: 'customerFeedback' });
+CustomerFeedback.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+StudioLocation.hasMany(UserTask, { foreignKey: 'studioLocationId', as: 'tasks' });
+UserTask.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+StudioLocation.hasMany(MaterialItem, { foreignKey: 'studioLocationId', as: 'materialItems' });
+MaterialItem.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
+StudioLocation.hasMany(Equipment, { foreignKey: 'studioLocationId', as: 'equipment' });
+Equipment.belongsTo(StudioLocation, { foreignKey: 'studioLocationId', as: 'studioLocation' });
 
 // Shop Management Relationships
 Tenant.hasMany(Shop, { foreignKey: 'tenantId', as: 'shops' });

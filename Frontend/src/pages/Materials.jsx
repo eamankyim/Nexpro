@@ -169,7 +169,7 @@ const Materials = () => {
   const { activeTenant, activeTenantId } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
-  const { scopeReady } = useWorkspaceScope();
+  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
@@ -300,14 +300,14 @@ const Materials = () => {
   }, []);
 
   useEffect(() => {
-    if (shopContext?.isShopWorkspace && !activeShopId) return;
+    if (!scopeReady) return;
     fetchItems();
-  }, [pagination.current, pagination.pageSize, filters.categoryId, filters.status, filters.lowStock, filters.outOfStock, debouncedSearch, activeShopId, shopContext?.isShopWorkspace]);
+  }, [scopeReady, pagination.current, pagination.pageSize, filters.categoryId, filters.status, filters.lowStock, filters.outOfStock, debouncedSearch, activeShopId, activeStudioLocationId, shopContext?.isShopWorkspace]);
 
   useEffect(() => {
     if (!scopeReady) return;
     fetchSummary();
-  }, [scopeReady, activeTenantId, activeShopId, shopContext?.isShopWorkspace]);
+  }, [scopeReady, activeTenantId, activeShopId, activeStudioLocationId, shopContext?.isShopWorkspace]);
 
   const fetchCategories = async () => {
     try {

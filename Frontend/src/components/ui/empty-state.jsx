@@ -32,6 +32,7 @@ import {
   Paperclip,
   Building,
   Shield,
+  Star,
 } from "lucide-react"
 
 const iconMap = {
@@ -63,6 +64,7 @@ const iconMap = {
   Paperclip,
   Building,
   Shield,
+  Star,
 }
 
 /**

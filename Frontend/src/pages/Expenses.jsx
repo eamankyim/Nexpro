@@ -154,7 +154,7 @@ const Expenses = () => {
   const { isAdmin, activeTenant, activeTenantId } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
-  const { scopeReady } = useWorkspaceScope();
+  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
@@ -315,7 +315,7 @@ const Expenses = () => {
     refetch: refetchExpenses,
     isFetching: expensesRefetching,
   } = useQuery({
-    queryKey: ['expenses', activeTenantId, activeShopId, pagination.current, pagination.pageSize, filters],
+    queryKey: ['expenses', activeTenantId, activeShopId, activeStudioLocationId, pagination.current, pagination.pageSize, filters],
     queryFn: async () => {
       const params = {
         page: pagination.current,
@@ -330,7 +330,7 @@ const Expenses = () => {
       const response = await expenseService.getAll(params);
       return response;
     },
-    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
+    enabled: scopeReady,
     staleTime: 60 * 1000,
     refetchOnWindowFocus: false,
   });
@@ -346,7 +346,7 @@ const Expenses = () => {
 
   useEffect(() => {
     setStats(null);
-  }, [activeTenantId, activeShopId]);
+  }, [activeTenantId, activeShopId, activeStudioLocationId]);
 
   useEffect(() => {
     if (!scopeReady) return;
@@ -355,7 +355,7 @@ const Expenses = () => {
     }
     fetchVendors();
     fetchStats();
-  }, [scopeReady, activeTenantId, activeShopId, isPrintingPress]);
+  }, [scopeReady, activeTenantId, activeShopId, activeStudioLocationId, isPrintingPress]);
 
   useEffect(() => {
     const total = expensesResponse?.count ?? expenses.length;

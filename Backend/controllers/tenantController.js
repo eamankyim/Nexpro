@@ -570,6 +570,7 @@ exports.completeOnboarding = async (req, res, next) => {
           phone: normalizedCompanyPhone,
           email: companyEmail || orgUpdate.email,
           address: companyAddress,
+          shopType: metadata.shopType || metadata.businessSubType || null,
           source: 'onboarding',
         });
         console.log('[tenant] completeOnboarding ensured default shop for tenantId=%s', tenantId);
@@ -579,7 +580,11 @@ exports.completeOnboarding = async (req, res, next) => {
     } else if (resolvedOnboardingType === 'studio') {
       try {
         const { ensureDefaultStudioLocation } = require('../utils/studioLocationUtils');
-        await ensureDefaultStudioLocation(tenantId, trimmedCompanyName);
+        await ensureDefaultStudioLocation(tenantId, {
+          name: trimmedCompanyName,
+          studioType: metadata.studioType || metadata.businessSubType || null,
+          source: 'onboarding',
+        });
         console.log('[tenant] completeOnboarding ensured default studio location for tenantId=%s', tenantId);
       } catch (studioErr) {
         console.error('[tenant] completeOnboarding default studio location failed (non-blocking):', studioErr.message);

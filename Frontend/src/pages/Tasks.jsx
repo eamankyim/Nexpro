@@ -6,6 +6,7 @@ import { DragDropContext, Draggable, Droppable } from 'react-beautiful-dnd';
 import { useAuth } from '../context/AuthContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { useDebounce } from '../hooks/useDebounce';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import userWorkspaceService from '../services/userWorkspaceService';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { showError, showSuccess } from '../utils/toast';
@@ -121,6 +122,7 @@ const initialForm = {
 const Tasks = () => {
   const { user } = useAuth();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const debouncedSearchValue = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const queryClient = useQueryClient();
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -142,6 +144,10 @@ const Tasks = () => {
   const [selectedTaskId, setSelectedTaskId] = useState(null);
   const [commentText, setCommentText] = useState('');
   const taskCardRefs = useRef({});
+  const taskListQueryKey = useMemo(
+    () => ['user-workspace', 'tasks', activeStudioLocationId],
+    [activeStudioLocationId]
+  );
 
   useEffect(() => {
     setPageSearchConfig({
@@ -152,35 +158,37 @@ const Tasks = () => {
   }, [setPageSearchConfig]);
 
   const { data: tasksData = [], isLoading: tasksLoading } = useQuery({
-    queryKey: ['user-workspace', 'tasks'],
+    queryKey: taskListQueryKey,
     queryFn: async () => {
       const res = await userWorkspaceService.getTasks();
       return Array.isArray(res?.data) ? res.data : [];
-    }
+    },
+    enabled: scopeReady,
   });
 
   const { data: membersData = [] } = useQuery({
-    queryKey: ['user-workspace', 'task-members'],
+    queryKey: ['user-workspace', 'task-members', activeStudioLocationId],
     queryFn: async () => {
       const res = await userWorkspaceService.getTaskMembers();
       return Array.isArray(res?.data) ? res.data : [];
-    }
+    },
+    enabled: scopeReady,
   });
 
   const { data: taskDetailResponse, isLoading: detailLoading } = useQuery({
-    queryKey: ['user-workspace', 'task-detail', selectedTaskId],
-    enabled: Boolean(selectedTaskId && openDetails),
+    queryKey: ['user-workspace', 'task-detail', selectedTaskId, activeStudioLocationId],
+    enabled: Boolean(selectedTaskId && openDetails && scopeReady),
     queryFn: () => userWorkspaceService.getTaskDetail(selectedTaskId),
   });
 
   const { data: taskActivityResponse, isLoading: activityLoading } = useQuery({
-    queryKey: ['user-workspace', 'task-activity', selectedTaskId],
-    enabled: Boolean(selectedTaskId && openDetails),
+    queryKey: ['user-workspace', 'task-activity', selectedTaskId, activeStudioLocationId],
+    enabled: Boolean(selectedTaskId && openDetails && scopeReady),
     queryFn: () => userWorkspaceService.getTaskActivity(selectedTaskId),
   });
   const { data: taskCommentsResponse, isLoading: commentsLoading } = useQuery({
-    queryKey: ['user-workspace', 'task-comments', selectedTaskId],
-    enabled: Boolean(selectedTaskId && openDetails),
+    queryKey: ['user-workspace', 'task-comments', selectedTaskId, activeStudioLocationId],
+    enabled: Boolean(selectedTaskId && openDetails && scopeReady),
     queryFn: () => userWorkspaceService.getTaskComments(selectedTaskId),
   });
 
@@ -235,9 +243,9 @@ const Tasks = () => {
   const quickStatusMutation = useMutation({
     mutationFn: ({ id, status }) => userWorkspaceService.updateTask(id, { status }),
     onMutate: async ({ id, status }) => {
-      await queryClient.cancelQueries({ queryKey: ['user-workspace', 'tasks'] });
-      const previousTasks = queryClient.getQueryData(['user-workspace', 'tasks']);
-      queryClient.setQueryData(['user-workspace', 'tasks'], (old) => {
+      await queryClient.cancelQueries({ queryKey: taskListQueryKey });
+      const previousTasks = queryClient.getQueryData(taskListQueryKey);
+      queryClient.setQueryData(taskListQueryKey, (old) => {
         if (!Array.isArray(old)) return old;
         return old.map((task) => (task.id === id ? { ...task, status } : task));
       });
@@ -502,7 +510,7 @@ const Tasks = () => {
   );
 
   return (
-    <div className="flex flex-col gap-2 px-0 py-1.5 sm:gap-4 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8">
+    <div className="space-y-4 md:space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
         <WelcomeSection
           welcomeMessage="Tasks"

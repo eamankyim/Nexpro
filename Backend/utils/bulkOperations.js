@@ -23,7 +23,7 @@ const DEFAULT_OPTIONS = {
  * @returns {Promise<Object>} - Result with success, errors, and created records
  */
 const bulkCreate = async (Model, records, options = {}) => {
-  const { maxBatchSize, returnCreated, continueOnError, tenantId, userId } = {
+  const { maxBatchSize, returnCreated, continueOnError, tenantId, userId, shopId, studioLocationId } = {
     ...DEFAULT_OPTIONS,
     ...options,
   };
@@ -56,6 +56,8 @@ const bulkCreate = async (Model, records, options = {}) => {
         const recordData = {
           ...records[i],
           ...(tenantId && { tenantId }),
+          ...(shopId && { shopId }),
+          ...(studioLocationId && { studioLocationId }),
           ...(userId && { createdBy: userId }),
         };
 

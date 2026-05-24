@@ -18,6 +18,11 @@ const StudioLocation = sequelize.define(
       type: DataTypes.STRING,
       allowNull: false,
     },
+    studioType: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+      comment: 'Studio flavor selected from onboarding business sub-types',
+    },
     code: {
       type: DataTypes.STRING,
       allowNull: true,

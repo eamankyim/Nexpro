@@ -272,7 +272,7 @@ export default function JobsScreen() {
           }
           ListEmptyComponent={
             <ListEmptyState
-              imageKey="TASKS"
+              imageKey="JOBS"
               title="No jobs yet"
               subtitle="Create your first job to get started"
               titleColor={textColor}

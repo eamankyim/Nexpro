@@ -12,6 +12,7 @@ import { useResponsive } from '../hooks/useResponsive';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
 import DashboardTable from '../components/DashboardTable';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import ViewToggle from '../components/ViewToggle';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import StatusChip from '../components/StatusChip';
@@ -57,6 +58,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { numberInputValue, handleNumberChange, handleIntegerChange, numberOrEmptySchema, integerOrEmptySchema } from '../utils/formUtils';
+import { EMPTY_STATES } from '../constants/microcopy';
 
 // Zod schemas
 const discountTierSchema = z.object({
@@ -484,6 +486,14 @@ const Pricing = () => {
   };
 
   const hasActiveFilters = filters.category !== 'all' || filters.isActive !== 'all';
+  const pricingEmptyState = getEmptyStateProps(
+    hasActiveFilters ? EMPTY_STATES.PRICING_FILTERED : EMPTY_STATES.PRICING_TEMPLATES,
+    hasActiveFilters
+      ? { primary: handleClearFilters }
+      : isManager
+        ? { primary: handleAdd }
+        : {}
+  );
 
   const isDesignService = category === 'Design Services';
   const isSquareFootPricing = pricingMethod === 'square_foot' || 
@@ -583,16 +593,7 @@ const Pricing = () => {
         columns={tableColumns}
         loading={loading}
         title={null}
-        emptyIcon={<Currency className="h-12 w-12 text-muted-foreground" />}
-        emptyDescription="No pricing templates yet. Create templates to quickly add items to quotes and jobs."
-        emptyAction={
-          isManager && (
-            <Button onClick={handleAdd}>
-              <Plus className="h-4 w-4 mr-2" />
-              Create Template
-            </Button>
-          )
-        }
+        emptyState={pricingEmptyState}
         pageSize={pagination.pageSize}
         onPageChange={(newPagination) => {
           setPagination(newPagination);

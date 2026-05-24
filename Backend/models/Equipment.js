@@ -15,6 +15,14 @@ const Equipment = sequelize.define('Equipment', {
       key: 'id'
     }
   },
+  studioLocationId: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'studio_locations',
+      key: 'id'
+    }
+  },
   shopId: {
     type: DataTypes.UUID,
     allowNull: true,

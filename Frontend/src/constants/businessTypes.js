@@ -211,6 +211,24 @@ export function findBusinessOptionById(id) {
 }
 
 /**
+ * Get business options for a core workflow type.
+ * @param {'shop'|'printing_press'|'pharmacy'} coreType
+ * @returns {BusinessOption[]}
+ */
+export function getBusinessOptionsByCoreType(coreType) {
+  return BUSINESS_OPTIONS.filter((opt) => opt.coreType === coreType);
+}
+
+/**
+ * Get the display label for a stored business sub-type id.
+ * @param {string|undefined|null} id
+ * @returns {string}
+ */
+export function getBusinessOptionLabel(id) {
+  return findBusinessOptionById(id)?.label || '';
+}
+
+/**
  * Get the core business type for a given business sub-type.
  * Falls back to 'shop' when the sub-type is unknown.
  * @param {string|undefined|null} id

@@ -26,6 +26,7 @@ import vendorService from '../services/vendorService';
 import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { showSuccess, showError } from '../utils/toast';
 import { EMPTY_STATES } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
@@ -118,6 +119,7 @@ const Equipment = () => {
   const { activeTenantId } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
@@ -228,16 +230,16 @@ const Equipment = () => {
       setRefreshing(false);
       setLoading(false);
     }
-  }, [pagination.current, pagination.pageSize, filters.categoryId, filters.status, debouncedSearch, activeShopId]);
+  }, [pagination.current, pagination.pageSize, filters.categoryId, filters.status, debouncedSearch, activeShopId, activeStudioLocationId]);
 
   useEffect(() => {
     fetchCategories();
   }, [fetchCategories]);
 
   useEffect(() => {
-    if (shopContext?.isShopWorkspace && !activeShopId) return;
+    if (!scopeReady) return;
     fetchItems();
-  }, [fetchItems, shopContext?.isShopWorkspace, activeShopId]);
+  }, [fetchItems, scopeReady, shopContext?.isShopWorkspace, activeShopId, activeStudioLocationId]);
 
   const loadVendors = useCallback(async () => {
     try {

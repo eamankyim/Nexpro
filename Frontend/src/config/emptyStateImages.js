@@ -40,9 +40,13 @@ const imageLoaders = {
     import('../assets/empty-states/tasks.webp').then((m) => m.default).catch(() =>
       import('../assets/empty-states/tasks.png').then((m) => m.default)
     ),
+  JOBS: () =>
+    import('../assets/empty-states/tasks.webp').then((m) => m.default).catch(() =>
+      import('../assets/empty-states/tasks.png').then((m) => m.default)
+    ),
   MATERIALS: () =>
-    import('../assets/empty-states/equipment.webp').then((m) => m.default).catch(() =>
-      import('../assets/empty-states/equipment.png').then((m) => m.default)
+    import('../assets/empty-states/materials.webp').then((m) => m.default).catch(() =>
+      import('../assets/empty-states/materials.png').then((m) => m.default)
     ),
   NOTIFICATIONS: () =>
     import('../assets/empty-states/notifications.webp').then((m) => m.default).catch(() =>
@@ -63,6 +67,14 @@ const imageLoaders = {
   EQUIPMENT: () =>
     import('../assets/empty-states/equipment.webp').then((m) => m.default).catch(() =>
       import('../assets/empty-states/equipment.png').then((m) => m.default)
+    ),
+  STUDIO_LOCATIONS: () =>
+    import('../assets/empty-states/vendors.webp').then((m) => m.default).catch(() =>
+      import('../assets/empty-states/vendors.png').then((m) => m.default)
+    ),
+  PRICING_TEMPLATES: () =>
+    import('../assets/empty-states/quotes.webp').then((m) => m.default).catch(() =>
+      import('../assets/empty-states/quotes.png').then((m) => m.default)
     ),
   PAYROLL: () =>
     import('../assets/empty-states/payroll.webp').then((m) => m.default).catch(() =>

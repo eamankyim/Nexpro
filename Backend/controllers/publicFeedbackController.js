@@ -1,4 +1,6 @@
 const { Tenant, Setting, CustomerFeedback } = require('../models');
+const { resolveBusinessType } = require('../config/businessTypes');
+const { ensureDefaultStudioLocation } = require('../utils/studioLocationUtils');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
 
 const MAX_COMMENT = 5000;
@@ -106,7 +108,7 @@ exports.submitPublicFeedback = async (req, res, next) => {
 
     const tenant = await Tenant.findOne({
       where: { slug: tenantSlug },
-      attributes: ['id', 'status']
+      attributes: ['id', 'name', 'status', 'businessType']
     });
 
     if (!tenant || tenant.status !== 'active') {
@@ -137,9 +139,14 @@ exports.submitPublicFeedback = async (req, res, next) => {
     }
 
     const metadata = category ? { category } : {};
+    const studioLocationId =
+      resolveBusinessType(tenant.businessType) === 'studio'
+        ? (await ensureDefaultStudioLocation(tenant.id, tenant.name || 'Main studio'))?.id || null
+        : null;
 
     const row = await CustomerFeedback.create({
       tenantId: tenant.id,
+      studioLocationId,
       rating,
       comment,
       contactName,

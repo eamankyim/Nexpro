@@ -20,6 +20,9 @@ const hasWorkspaceWideStudioAccess = (tenantRole) =>
 const ensureDefaultStudioLocation = async (tenantId, options = 'Main studio', transaction = null) => {
   const defaultName = typeof options === 'string' ? options : options?.name || 'Main studio';
   const metadata = typeof options === 'object' && options !== null ? options.metadata : {};
+  const studioType = typeof options === 'object' && options !== null
+    ? options.studioType || metadata?.studioType || null
+    : null;
   const source = typeof options === 'object' && options !== null ? options.source : null;
   const opts = transaction ? { transaction } : {};
 
@@ -27,7 +30,12 @@ const ensureDefaultStudioLocation = async (tenantId, options = 'Main studio', tr
     where: { tenantId, isDefault: true },
     ...opts,
   });
-  if (existingDefault) return existingDefault;
+  if (existingDefault) {
+    if (!existingDefault.studioType && studioType) {
+      await existingDefault.update({ studioType }, opts);
+    }
+    return existingDefault;
+  }
 
   const any = await StudioLocation.findOne({
     where: { tenantId },
@@ -35,13 +43,14 @@ const ensureDefaultStudioLocation = async (tenantId, options = 'Main studio', tr
     ...opts,
   });
   if (any) {
-    await any.update({ isDefault: true }, opts);
+    await any.update({ isDefault: true, ...(!any.studioType && studioType ? { studioType } : {}) }, opts);
     return any;
   }
 
   return StudioLocation.create({
     tenantId,
     name: defaultName,
+    studioType,
     isDefault: true,
     isActive: true,
     metadata: {
@@ -124,6 +133,35 @@ const applyStudioLocationFilter = (req, where = {}) => {
 };
 
 /**
+ * SQL fragment for raw dashboard/report queries.
+ * @param {object} req
+ * @param {string} [tableAlias]
+ * @returns {{ sql: string, replacements: object }}
+ */
+const getStudioLocationSqlFragment = (req, tableAlias = '') => {
+  const col = tableAlias ? `${tableAlias}."studioLocationId"` : '"studioLocationId"';
+  if (!req.studioLocationScoped) {
+    return { sql: '', replacements: {} };
+  }
+
+  if (req.studioLocationFilterId) {
+    return {
+      sql: ` AND ${col} = :studioLocationFilterId`,
+      replacements: { studioLocationFilterId: req.studioLocationFilterId },
+    };
+  }
+
+  if (!req.canAccessAllStudioLocations && req.allowedStudioLocationIds?.length) {
+    return {
+      sql: ` AND ${col} IN (:allowedStudioLocationIds)`,
+      replacements: { allowedStudioLocationIds: req.allowedStudioLocationIds },
+    };
+  }
+
+  return { sql: '', replacements: {} };
+};
+
+/**
  * Studio location id to set on create/update.
  * @param {object} req
  * @returns {string|null}
@@ -185,6 +223,7 @@ module.exports = {
   setAsOnlyDefaultStudioLocation,
   getUserStudioLocationIds,
   applyStudioLocationFilter,
+  getStudioLocationSqlFragment,
   getStudioLocationIdForWrite,
   attachStudioLocationToPayload,
   setUserStudioLocations,

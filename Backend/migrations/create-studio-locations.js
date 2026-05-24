@@ -18,6 +18,7 @@ const createStudioLocations = async () => {
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         "tenantId" UUID NOT NULL REFERENCES tenants(id) ON UPDATE CASCADE ON DELETE CASCADE,
         name VARCHAR(255) NOT NULL,
+        "studioType" VARCHAR(100),
         code VARCHAR(50),
         address TEXT,
         city VARCHAR(100),
@@ -101,7 +102,7 @@ const createStudioLocations = async () => {
 
     console.log('🌱 Backfilling default studio location per studio tenant...');
     const [tenants] = await sequelize.query(
-      `SELECT id, name, "businessType" FROM tenants WHERE status != 'deleted'`,
+      `SELECT id, name, "businessType", metadata FROM tenants WHERE status != 'deleted'`,
       { transaction }
     );
 
@@ -116,12 +117,16 @@ const createStudioLocations = async () => {
 
       const [inserted] = await sequelize.query(
         `
-        INSERT INTO studio_locations ("tenantId", name, "isDefault", "isActive", "createdAt", "updatedAt")
-        VALUES (:tenantId, :name, true, true, NOW(), NOW())
+        INSERT INTO studio_locations ("tenantId", name, "studioType", "isDefault", "isActive", "createdAt", "updatedAt")
+        VALUES (:tenantId, :name, :studioType, true, true, NOW(), NOW())
         RETURNING id;
       `,
         {
-          replacements: { tenantId: tenant.id, name: tenant.name || 'Main studio' },
+          replacements: {
+            tenantId: tenant.id,
+            name: tenant.name || 'Main studio',
+            studioType: tenant.metadata?.studioType || tenant.metadata?.businessSubType || null,
+          },
           transaction,
         }
       );

@@ -3,12 +3,21 @@ const { EquipmentCategory, Equipment, Vendor } = require('../models');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const {
   applyScopedFilters,
+  applyShopFilter,
   attachScopedToPayload,
   assertShopRecordAccess,
 } = require('../utils/shopUtils');
 
 const itemWhere = (req, extra = {}) =>
   applyScopedFilters(req, applyTenantFilter(req.tenantId, extra));
+const vendorWhere = (req, extra = {}) =>
+  applyShopFilter(req, applyTenantFilter(req.tenantId, extra));
+const bulkScopeOptions = (req) => ({
+  shopId: req.shopScoped ? (req.shopFilterId || req.defaultShopId || null) : null,
+  studioLocationId: req.studioLocationScoped
+    ? (req.studioLocationFilterId || req.defaultStudioLocationId || null)
+    : null,
+});
 const { getPagination } = require('../utils/paginationUtils');
 
 const buildItemInclude = () => [
@@ -57,7 +66,7 @@ exports.createEquipmentCategory = async (req, res, next) => {
 exports.updateEquipmentCategory = async (req, res, next) => {
   try {
     const category = await EquipmentCategory.findOne({
-      where: itemWhere(req, { id: req.params.id }),
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
     });
     if (!category) {
       return res.status(404).json({ success: false, message: 'Category not found' });
@@ -203,7 +212,7 @@ exports.createEquipmentItem = async (req, res, next) => {
     let validatedVendorId = vendorId || null;
     if (validatedVendorId) {
       const vendor = await Vendor.findOne({
-        where: itemWhere(req, { id: validatedVendorId })
+        where: vendorWhere(req, { id: validatedVendorId })
       });
       if (!vendor) {
         return res.status(400).json({ success: false, message: 'Vendor not found for this tenant' });
@@ -262,7 +271,7 @@ exports.updateEquipmentItem = async (req, res, next) => {
 
     if (payload.vendorId !== undefined && payload.vendorId !== null) {
       const vendor = await Vendor.findOne({
-        where: itemWhere(req, { id: payload.vendorId })
+        where: vendorWhere(req, { id: payload.vendorId })
       });
       if (!vendor) {
         return res.status(400).json({ success: false, message: 'Vendor not found for this tenant' });
@@ -330,6 +339,7 @@ exports.bulkCreateEquipment = async (req, res, next) => {
     const result = await bulkCreate(Equipment, equipment, {
       tenantId: req.tenantId,
       userId: req.user?.id,
+      ...bulkScopeOptions(req),
       continueOnError: true,
       maxBatchSize: 100,
     });
@@ -412,6 +422,7 @@ exports.importEquipment = async (req, res, next) => {
     const result = await bulkCreate(Equipment, equipmentList, {
       tenantId: req.tenantId,
       userId: req.user?.id,
+      ...bulkScopeOptions(req),
       continueOnError: true,
       maxBatchSize: 100,
     });

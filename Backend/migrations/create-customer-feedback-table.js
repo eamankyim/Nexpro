@@ -13,6 +13,7 @@ const createCustomerFeedbackTable = async () => {
       CREATE TABLE IF NOT EXISTS customer_feedback (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         "tenantId" UUID NOT NULL REFERENCES tenants(id) ON UPDATE CASCADE ON DELETE CASCADE,
+        "studioLocationId" UUID REFERENCES studio_locations(id) ON UPDATE CASCADE ON DELETE SET NULL,
         rating SMALLINT NOT NULL CHECK (rating >= 1 AND rating <= 5),
         comment TEXT,
         "contactName" VARCHAR(255),
@@ -28,10 +29,28 @@ const createCustomerFeedbackTable = async () => {
       { transaction }
     );
 
+    // Table may predate studioLocationId; CREATE TABLE IF NOT EXISTS does not add new columns
+    await sequelize.query(
+      `
+      ALTER TABLE customer_feedback
+      ADD COLUMN IF NOT EXISTS "studioLocationId" UUID
+      REFERENCES studio_locations(id) ON UPDATE CASCADE ON DELETE SET NULL;
+    `,
+      { transaction }
+    );
+
     await sequelize.query(
       `
       CREATE INDEX IF NOT EXISTS customer_feedback_tenant_created_idx
       ON customer_feedback ("tenantId", "createdAt" DESC);
+    `,
+      { transaction }
+    );
+
+    await sequelize.query(
+      `
+      CREATE INDEX IF NOT EXISTS customer_feedback_studio_location_idx
+      ON customer_feedback ("studioLocationId");
     `,
       { transaction }
     );

@@ -21,6 +21,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
+const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { bulkOperationLimiter, exportLimiter } = require('../middleware/rateLimiter');
 const { importFileUploader } = require('../middleware/upload');
 
@@ -29,6 +30,7 @@ const router = express.Router();
 router.use(protect);
 router.use(tenantContext);
 router.use(shopContext);
+router.use(studioLocationContext);
 
 router
   .route('/categories')

@@ -78,6 +78,7 @@ const resolveShopSeedData = async (tenantId, overrides = {}, transaction = null)
     postalCode: addrFields.postalCode,
     phone: overrides.phone ?? org.phone ?? meta.phone ?? businessInfo.phone ?? null,
     email: overrides.email ?? org.email ?? meta.email ?? businessInfo.email ?? null,
+    shopType: overrides.shopType ?? meta.shopType ?? meta.businessSubType ?? null,
     isDefault: true,
     isActive: true,
     metadata: {
@@ -145,6 +146,7 @@ const syncDefaultShopFromOrganization = async (tenantId, overrides = {}, transac
       postalCode: data.postalCode,
       phone: data.phone,
       email: data.email,
+      shopType: data.shopType,
     },
     opts
   );

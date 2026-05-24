@@ -170,6 +170,7 @@ export const EMPTY_STATES = {
   
   // Jobs
   JOBS: {
+    imageKey: 'JOBS',
     icon: 'Briefcase',
     title: 'No active jobs',
     description: 'Create a job to track orders and generate invoices automatically.',
@@ -389,7 +390,15 @@ export const EMPTY_STATES = {
   },
   
   // Pricing Templates
+  PRICING_TEMPLATES: {
+    imageKey: 'PRICING_TEMPLATES',
+    icon: 'DollarSign',
+    title: 'No pricing templates',
+    description: 'Create templates to quickly apply standard pricing to jobs.',
+    primaryAction: 'Create Template',
+  },
   PRICING: {
+    imageKey: 'PRICING_TEMPLATES',
     icon: 'DollarSign',
     title: 'No pricing templates',
     description: 'Create templates to quickly apply standard pricing to jobs.',
@@ -429,6 +438,18 @@ export const EMPTY_STATES = {
     description: 'Add shop locations to manage multiple branches.',
     primaryAction: 'Add Shop',
   },
+  STUDIO_LOCATIONS: {
+    imageKey: 'STUDIO_LOCATIONS',
+    icon: 'Building2',
+    title: 'No studios yet',
+    description: 'Add your first studio branch to separate customers and jobs by location.',
+    primaryAction: 'Add Studio',
+  },
+  STUDIO_LOCATIONS_FILTERED: {
+    icon: 'Building2',
+    title: 'No matching studios',
+    description: 'Try adjusting your search terms.',
+  },
   
   // Accounting
   ACCOUNTS: {
@@ -460,6 +481,17 @@ export const EMPTY_STATES = {
     title: 'No reports yet',
     description: 'Generate reports to analyze your business performance.',
     primaryAction: 'Create Report',
+  },
+  REVIEWS: {
+    imageKey: 'REVIEWS',
+    icon: 'Star',
+    title: 'No reviews yet',
+    description: 'Customer reviews will appear here when people submit feedback from your review link.',
+  },
+  REVIEWS_FILTERED: {
+    icon: 'Star',
+    title: 'No matching reviews',
+    description: 'Try adjusting your filters or search terms.',
   },
   
   // Notifications

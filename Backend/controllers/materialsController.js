@@ -12,12 +12,21 @@ const config = require('../config/config');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const {
   applyScopedFilters,
+  applyShopFilter,
   attachScopedToPayload,
   assertShopRecordAccess,
 } = require('../utils/shopUtils');
 
 const itemWhere = (req, extra = {}) =>
   applyScopedFilters(req, applyTenantFilter(req.tenantId, extra));
+const vendorWhere = (req, extra = {}) =>
+  applyShopFilter(req, applyTenantFilter(req.tenantId, extra));
+const bulkScopeOptions = (req) => ({
+  shopId: req.shopScoped ? (req.shopFilterId || req.defaultShopId || null) : null,
+  studioLocationId: req.studioLocationScoped
+    ? (req.studioLocationFilterId || req.defaultStudioLocationId || null)
+    : null,
+});
 const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
 
@@ -351,7 +360,7 @@ exports.createMaterialItem = async (req, res, next) => {
     let validatedVendorId = preferredVendorId || null;
     if (validatedVendorId) {
       const vendor = await Vendor.findOne({
-        where: itemWhere(req, { id: validatedVendorId })
+        where: vendorWhere(req, { id: validatedVendorId })
       });
       if (!vendor) {
         return res.status(400).json({ success: false, message: 'Vendor not found for this tenant' });
@@ -428,7 +437,7 @@ exports.updateMaterialItem = async (req, res, next) => {
 
     if (payload.preferredVendorId !== undefined && payload.preferredVendorId !== null) {
       const vendor = await Vendor.findOne({
-        where: itemWhere(req, { id: payload.preferredVendorId })
+        where: vendorWhere(req, { id: payload.preferredVendorId })
       });
       if (!vendor) {
         return res.status(400).json({ success: false, message: 'Vendor not found for this tenant' });
@@ -836,6 +845,7 @@ exports.bulkCreateMaterials = async (req, res, next) => {
     const result = await bulkCreate(MaterialItem, materials, {
       tenantId: req.tenantId,
       userId: req.user?.id,
+      ...bulkScopeOptions(req),
       continueOnError: true,
       maxBatchSize: 100,
     });
@@ -916,6 +926,7 @@ exports.importMaterials = async (req, res, next) => {
     const result = await bulkCreate(MaterialItem, materials, {
       tenantId: req.tenantId,
       userId: req.user?.id,
+      ...bulkScopeOptions(req),
       continueOnError: true,
       maxBatchSize: 100,
     });

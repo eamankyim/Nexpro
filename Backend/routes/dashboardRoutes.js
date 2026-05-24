@@ -9,17 +9,27 @@ const {
 const { protect } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
+const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { cacheMiddleware, generateCacheKey, getShopCacheSegment } = require('../middleware/cache');
 
 const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
+router.use(studioLocationContext);
 router.use(shopContext);
+
+const getStudioLocationCacheSegment = (req) => {
+  if (!req?.studioLocationScoped) return '';
+  if (req.studioLocationFilterId) return `:studio:${req.studioLocationFilterId}`;
+  if (req.canAccessAllStudioLocations) return ':studio:all';
+  return ':studio:assigned';
+};
 
 // Cache dashboard endpoints for 2 minutes (120 seconds)
 const dashboardCache = cacheMiddleware(120, (req) => {
-  return generateCacheKey(req.tenantId, req.path, req.query, getShopCacheSegment(req));
+  const scopeSegment = `${getShopCacheSegment(req)}${getStudioLocationCacheSegment(req)}`;
+  return generateCacheKey(req.tenantId, req.path, req.query, scopeSegment);
 });
 
 router.get('/overview', dashboardCache, getDashboardOverview);

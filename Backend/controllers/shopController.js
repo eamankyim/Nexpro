@@ -36,6 +36,10 @@ const prepareShopPayload = async (tenantId, payload) => {
   const next = { ...payload };
   delete next.managerName;
 
+  if (Object.prototype.hasOwnProperty.call(next, 'shopType')) {
+    next.shopType = next.shopType ? String(next.shopType).trim() : null;
+  }
+
   if (Object.prototype.hasOwnProperty.call(next, 'managerUserId')) {
     const check = await validateManagerUserId({
       tenantId,

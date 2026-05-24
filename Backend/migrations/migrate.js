@@ -56,14 +56,17 @@ const createStudioLocations = require('./create-studio-locations');
 const addPaystackSubaccountToTenants = require('./add-paystack-subaccount-to-tenants');
 const addSeedingFlagsToTenants = require('./add-seeding-flags-to-tenants');
 const addInvoiceSourceTypes = require('./add-invoice-source-types');
+const addQuoteToInvoiceSourceTypeEnum = require('./add-quote-to-invoice-source-type-enum');
 const addIsDefaultToShops = require('./add-isDefault-to-shops');
 const createUserShops = require('./create-user-shops');
 const addInviteShopStudioMetadata = require('./add-invite-shop-studio-metadata');
 const addShopIdToCustomers = require('./add-shop-id-to-customers');
 const addShopTypeToShops = require('./add-shop-type-to-shops');
+const addStudioTypeToStudioLocations = require('./add-studio-type-to-studio-locations');
 const addShopIdToExpenses = require('./add-shop-id-to-expenses');
 const addShopIdToRetailEntities = require('./add-shop-id-to-retail-entities');
 const addStudioLocationIdToLeads = require('./add-studio-location-id-to-leads');
+const addStudioLocationIdToOperationalModules = require('./add-studio-location-id-to-operational-modules');
 const addPaymentTokenToInvoices = require('./add-payment-token-to-invoices');
 const addAdminLeadIdToJobs = require('./add-admin-lead-id-to-jobs');
 const createSaleActivitiesTable = require('./create-sale-activities-table');
@@ -182,6 +185,9 @@ const migrate = async () => {
     // Invoice source types (saleId, prescriptionId, sourceType enum)
     await addInvoiceSourceTypes();
 
+    // Quote-sourced invoices (enum_invoices_sourceType + invoice_source_type_enum)
+    await addQuoteToInvoiceSourceTypeEnum();
+
     // Public invoice payment links (paymentToken)
     await addPaymentTokenToInvoices();
 
@@ -257,11 +263,14 @@ const migrate = async () => {
     // Recurring journals and prepaid expense schedules
     await createRecurringJournals({ closeConnection: false });
 
-    // End-customer feedback (public form submissions per tenant)
-    await createCustomerFeedbackTable();
-
     // Studio locations (multi-branch for studio workspaces)
     await createStudioLocations();
+
+    // End-customer feedback (public form submissions per tenant; needs studio_locations FK)
+    await createCustomerFeedbackTable();
+
+    // studioLocationId on expenses, tasks, materials, equipment (not customer_feedback)
+    await addStudioLocationIdToOperationalModules();
 
     // Main shop flag (multi-shop for retail workspaces)
     await addIsDefaultToShops();
@@ -275,6 +284,7 @@ const migrate = async () => {
     // Customers scoped to shops; per-shop retail type (supermarket, hardware, etc.)
     await addShopIdToCustomers();
     await addShopTypeToShops();
+    await addStudioTypeToStudioLocations();
     await addShopIdToExpenses();
     await addShopIdToRetailEntities();
 

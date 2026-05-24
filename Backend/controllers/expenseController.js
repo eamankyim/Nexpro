@@ -10,10 +10,15 @@ const {
   attachScopedToPayload,
   assertShopRecordAccess,
 } = require('../utils/shopUtils');
+const { applyStudioLocationFilter } = require('../utils/studioLocationUtils');
 
-/** Expense queries scoped by tenant + active shop when retail. */
+/** Expense queries scoped by tenant + active shop/studio location when applicable. */
 const expenseScopeWhere = (req, extra = {}) =>
-  applyShopReadFilter(req, applyTenantFilter(req.tenantId, extra));
+  applyShopReadFilter(req, applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, extra)));
+
+/** Job lookups scoped to the active studio location for studio tenants. */
+const jobScopeWhere = (req, extra = {}) =>
+  applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, extra));
 
 /** Load one expense with shop access checks. */
 const findScopedExpense = async (req, id, options = {}) => {
@@ -507,7 +512,7 @@ exports.createExpense = async (req, res, next) => {
 
       if (payload.jobId) {
         const job = await Job.findOne({
-          where: applyTenantFilter(req.tenantId, { id: payload.jobId }),
+          where: jobScopeWhere(req, { id: payload.jobId }),
           transaction
         });
         if (!job) {
@@ -536,7 +541,7 @@ exports.createExpense = async (req, res, next) => {
       );
 
       const expenseWithDetails = await Expense.findOne({
-        where: applyTenantFilter(req.tenantId, { id: expense.id }),
+        where: expenseScopeWhere(req, { id: expense.id }),
         include: [
           { model: Vendor, as: 'vendor' },
           { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
@@ -629,7 +634,7 @@ exports.createBulkExpenses = async (req, res, next) => {
 
     if (commonFields?.jobId) {
       const job = await Job.findOne({
-        where: applyTenantFilter(req.tenantId, { id: commonFields.jobId }),
+        where: jobScopeWhere(req, { id: commonFields.jobId }),
         transaction
       });
       if (!job) {
@@ -693,7 +698,7 @@ exports.createBulkExpenses = async (req, res, next) => {
       // Validate job if provided
       if (finalExpenseData.jobId) {
         const job = await Job.findOne({
-          where: applyTenantFilter(req.tenantId, { id: finalExpenseData.jobId }),
+          where: jobScopeWhere(req, { id: finalExpenseData.jobId }),
           transaction
         });
         if (!job) {
@@ -823,6 +828,7 @@ exports.updateExpense = async (req, res, next) => {
 
     const updatePayload = sanitizePayload(req.body);
     delete updatePayload.shopId;
+    delete updatePayload.studioLocationId;
 
     if (updatePayload.status === 'paid' && expense.approvalStatus !== 'approved') {
       return res.status(400).json({
@@ -850,7 +856,7 @@ exports.updateExpense = async (req, res, next) => {
 
     if (updatePayload.jobId) {
       const job = await Job.findOne({
-        where: applyTenantFilter(req.tenantId, { id: updatePayload.jobId })
+        where: jobScopeWhere(req, { id: updatePayload.jobId })
       });
       if (!job) {
         return res.status(400).json({
@@ -872,7 +878,7 @@ exports.updateExpense = async (req, res, next) => {
     await expense.update(updatePayload);
 
     const updatedExpense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: expense.id }),
+      where: expenseScopeWhere(req, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
@@ -1147,7 +1153,7 @@ exports.getExpensesByJob = async (req, res, next) => {
     const { page, limit, offset } = getPagination(req, { defaultPageSize: 10 });
 
     const job = await Job.findOne({
-      where: applyTenantFilter(req.tenantId, { id: jobId })
+      where: jobScopeWhere(req, { id: jobId })
     });
 
     if (!job) {
@@ -1158,7 +1164,7 @@ exports.getExpensesByJob = async (req, res, next) => {
     }
 
     const { count, rows } = await Expense.findAndCountAll({
-      where: applyTenantFilter(req.tenantId, { jobId }),
+      where: expenseScopeWhere(req, { jobId }),
       limit,
       offset,
       include: [
@@ -1170,7 +1176,7 @@ exports.getExpensesByJob = async (req, res, next) => {
 
     // Get total amount for this job
     const totalAmount =
-      (await Expense.sum('amount', { where: applyTenantFilter(req.tenantId, { jobId }) })) || 0;
+      (await Expense.sum('amount', { where: expenseScopeWhere(req, { jobId }) })) || 0;
 
     res.status(200).json({
       success: true,
@@ -1219,7 +1225,7 @@ exports.submitExpense = async (req, res, next) => {
     });
 
     const updatedExpense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: expense.id }),
+      where: expenseScopeWhere(req, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
@@ -1291,7 +1297,7 @@ exports.approveExpense = async (req, res, next) => {
     });
 
     const updatedExpense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: expense.id }),
+      where: expenseScopeWhere(req, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },
@@ -1374,7 +1380,7 @@ exports.rejectExpense = async (req, res, next) => {
     });
 
     const updatedExpense = await Expense.findOne({
-      where: applyTenantFilter(req.tenantId, { id: expense.id }),
+      where: expenseScopeWhere(req, { id: expense.id }),
       include: [
         { model: Vendor, as: 'vendor' },
         { model: Job, as: 'job', attributes: ['id', 'jobNumber', 'title'] },

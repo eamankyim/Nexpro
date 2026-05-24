@@ -22,6 +22,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
+const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { expenseReceiptUploader, checkStorageLimit } = require('../middleware/upload');
 const { exportLimiter } = require('../middleware/rateLimiter');
 
@@ -30,6 +31,7 @@ const router = express.Router();
 router.use(protect);
 router.use(tenantContext);
 router.use(shopContext);
+router.use(studioLocationContext);
 router.use((req, res, next) => {
   // Expense lists must reflect writes immediately; avoid browser 304s after create/update/archive.
   res.set('Cache-Control', 'no-store');

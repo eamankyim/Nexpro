@@ -21,6 +21,11 @@ import studioLocationService from '../services/studioLocationService';
 import userService from '../services/userService';
 import { resolveImageUrl } from '../utils/fileUtils';
 import {
+  CORE_BUSINESS_TYPES,
+  getBusinessOptionLabel,
+  getBusinessOptionsByCoreType,
+} from '@/constants/businessTypes';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -61,11 +66,14 @@ import { Switch } from '@/components/ui/switch';
 import DashboardTable from '../components/DashboardTable';
 import StatusChip from '../components/StatusChip';
 import DashboardStatsCard from '../components/DashboardStatsCard';
+import { getEmptyStateProps } from '../components/ui/empty-state';
 import { showSuccess, showError } from '../utils/toast';
 import { DEBOUNCE_DELAYS } from '../constants';
+import { EMPTY_STATES } from '../constants/microcopy';
 
 const locationSchema = z.object({
   name: z.string().min(1, 'Studio name is required'),
+  studioType: z.string().optional(),
   code: z.string().optional(),
   address: z.string().optional(),
   city: z.string().optional(),
@@ -81,7 +89,7 @@ const locationSchema = z.object({
 
 const StudioLocations = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const { isManager } = useAuth();
+  const { activeTenant, isManager } = useAuth();
   const { refreshLocations } = useStudioLocation();
   const { isMobile } = useResponsive();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
@@ -98,11 +106,16 @@ const StudioLocations = () => {
   const [logoFile, setLogoFile] = useState(null);
   const [logoPreview, setLogoPreview] = useState('');
   const logoInputRef = useRef(null);
+  const studioTypeOptions = useMemo(
+    () => getBusinessOptionsByCoreType(CORE_BUSINESS_TYPES.STUDIO),
+    []
+  );
 
   const form = useForm({
     resolver: zodResolver(locationSchema),
     defaultValues: {
       name: '',
+      studioType: '',
       code: '',
       address: '',
       city: '',
@@ -173,6 +186,7 @@ const StudioLocations = () => {
       setEditing(row);
       form.reset({
         name: row.name || '',
+        studioType: row.studioType || row.metadata?.studioType || '',
         code: row.code || '',
         address: row.address || '',
         city: row.city || '',
@@ -192,6 +206,11 @@ const StudioLocations = () => {
     [form]
   );
 
+  const getStudioTypeLabel = useCallback(
+    (studioType) => getBusinessOptionLabel(studioType) || studioType || '—',
+    []
+  );
+
   const columns = useMemo(
     () => [
       {
@@ -207,6 +226,15 @@ const StudioLocations = () => {
               {record?.code && <div className="text-xs text-gray-500">{record.code}</div>}
             </div>
           </div>
+        ),
+      },
+      {
+        key: 'studioType',
+        label: 'Business type',
+        render: (_, record) => (
+          <span className="text-sm text-muted-foreground">
+            {getStudioTypeLabel(record?.studioType || record?.metadata?.studioType)}
+          </span>
         ),
       },
       {
@@ -262,13 +290,14 @@ const StudioLocations = () => {
           ]
         : []),
     ],
-    [handleEdit, isManager]
+    [handleEdit, isManager, getStudioTypeLabel]
   );
 
   const handleCreate = useCallback(() => {
     setEditing(null);
     form.reset({
       name: '',
+      studioType: activeTenant?.metadata?.studioType || activeTenant?.metadata?.businessSubType || '',
       code: '',
       address: '',
       city: '',
@@ -284,7 +313,16 @@ const StudioLocations = () => {
     setLogoPreview('');
     setLogoFile(null);
     setIsModalOpen(true);
-  }, [form]);
+  }, [form, activeTenant?.metadata?.studioType, activeTenant?.metadata?.businessSubType]);
+
+  const locationsEmptyState = useMemo(
+    () =>
+      getEmptyStateProps(
+        debouncedSearch ? EMPTY_STATES.STUDIO_LOCATIONS_FILTERED : EMPTY_STATES.STUDIO_LOCATIONS,
+        isManager && !debouncedSearch ? { primary: handleCreate } : {}
+      ),
+    [debouncedSearch, handleCreate, isManager]
+  );
 
   useEffect(() => {
     if (searchParams.get('add') !== '1') return;
@@ -296,23 +334,39 @@ const StudioLocations = () => {
     }, { replace: true });
   }, [searchParams, setSearchParams, handleCreate]);
 
+  const applySavedLocationToList = useCallback((saved) => {
+    if (!saved?.id) return;
+    setLocations((prev) => {
+      const index = prev.findIndex((row) => row.id === saved.id);
+      if (index === -1) return [saved, ...prev];
+      return prev.map((row) => (row.id === saved.id ? { ...row, ...saved } : row));
+    });
+  }, []);
+
   const onSubmit = async (data) => {
     try {
       setIsSubmitting(true);
       const payload = {
         ...data,
+        name: data.name?.trim(),
+        studioType: data.studioType || null,
         managerUserId: data.managerUserId || null,
         email: data.email || null,
         phone: data.phone || null,
       };
       let savedId = editing?.id;
+      let savedLocation = null;
       if (editing) {
         const res = await studioLocationService.update(editing.id, payload);
-        savedId = res?.data?.id || res?.id || editing.id;
+        savedLocation = res?.data || res;
+        savedId = savedLocation?.id || editing.id;
+        applySavedLocationToList(savedLocation);
         showSuccess('Studio updated');
       } else {
         const res = await studioLocationService.create(payload);
-        savedId = res?.data?.id || res?.id;
+        savedLocation = res?.data || res;
+        savedId = savedLocation?.id;
+        applySavedLocationToList(savedLocation);
         showSuccess('Studio added');
       }
       if (logoFile && savedId) {
@@ -386,15 +440,7 @@ const StudioLocations = () => {
         data={locations}
         columns={columns}
         loading={loading}
-        emptyDescription="No studio locations yet. Add your first branch to separate customers and jobs."
-        emptyAction={
-          isManager ? (
-            <Button onClick={handleCreate}>
-              <Plus className="h-4 w-4 mr-2" />
-              Add studio
-            </Button>
-          ) : null
-        }
+        emptyState={locationsEmptyState}
         pageSize={pagination.pageSize}
         externalPagination={{ current: pagination.page, total: pagination.total }}
         onPageChange={(p) =>
@@ -411,7 +457,7 @@ const StudioLocations = () => {
           <DialogHeader>
             <DialogTitle>{editing ? 'Edit studio' : 'Add studio'}</DialogTitle>
             <DialogDescription>
-              Each studio has its own customers and jobs. Use the header switcher to work in a location.
+              Each studio has its own customers and jobs. Choose the business type that best matches this location.
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
@@ -426,6 +472,37 @@ const StudioLocations = () => {
                       <FormControl>
                         <Input placeholder="Accra Branch" {...field} />
                       </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="studioType"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Business type (optional)</FormLabel>
+                      <Select value={field.value || ''} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select what best matches this studio" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          {studioTypeOptions.map((option) => (
+                            <div key={option.id} className="px-1 py-0.5">
+                              <SelectItem value={option.id} className="!items-start !py-1.5">
+                                <span className="font-medium text-sm">{option.label}</span>
+                              </SelectItem>
+                              {option.description ? (
+                                <div className="pl-8 pr-2 pt-0.5 text-xs text-muted-foreground leading-snug">
+                                  {option.description}
+                                </div>
+                              ) : null}
+                            </div>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <FormMessage />
                     </FormItem>
                   )}

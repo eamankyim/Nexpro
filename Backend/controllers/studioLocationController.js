@@ -1,4 +1,5 @@
 const { Op } = require('sequelize');
+const { sequelize } = require('../config/database');
 const { StudioLocation, User, UserStudioLocation, UserTenant } = require('../models');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
@@ -21,9 +22,73 @@ const managerInclude = {
   required: false,
 };
 
+const WRITABLE_STUDIO_FIELDS = [
+  'name',
+  'code',
+  'address',
+  'city',
+  'state',
+  'country',
+  'postalCode',
+  'phone',
+  'email',
+  'managerUserId',
+  'logoUrl',
+  'isActive',
+  'isDefault',
+  'metadata',
+];
+
+let studioTypeColumnExists;
+
+/**
+ * Whether studio_locations has the studioType column (migration may not have run yet).
+ * @returns {Promise<boolean>}
+ */
+const hasStudioTypeColumn = async () => {
+  if (studioTypeColumnExists !== undefined) return studioTypeColumnExists;
+  try {
+    const table = await sequelize.getQueryInterface().describeTable('studio_locations');
+    studioTypeColumnExists = Object.prototype.hasOwnProperty.call(table, 'studioType');
+  } catch {
+    studioTypeColumnExists = false;
+  }
+  return studioTypeColumnExists;
+};
+
+/**
+ * Keep only attributes that exist on StudioLocation (avoids failed updates when migrations lag).
+ * @param {object} payload
+ * @returns {Promise<object>}
+ */
+const pickStudioLocationFields = async (payload) => {
+  const allowed = [...WRITABLE_STUDIO_FIELDS];
+  if (await hasStudioTypeColumn()) allowed.push('studioType');
+
+  const picked = {};
+  for (const key of allowed) {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      picked[key] = payload[key];
+    }
+  }
+  return picked;
+};
+
 const prepareStudioPayload = async (tenantId, payload) => {
-  const next = { ...payload };
-  delete next.managerName;
+  const next = await pickStudioLocationFields(payload);
+
+  if (Object.prototype.hasOwnProperty.call(next, 'name')) {
+    next.name = String(next.name ?? '').trim();
+    if (!next.name) {
+      const err = new Error('Studio name is required');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(next, 'studioType')) {
+    next.studioType = next.studioType ? String(next.studioType).trim() : null;
+  }
 
   if (Object.prototype.hasOwnProperty.call(next, 'managerUserId')) {
     const check = await validateManagerUserId({

@@ -10,10 +10,9 @@ import {
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Empty } from '@/components/ui/empty';
 import { EmptyState, getEmptyStateProps } from '@/components/ui/empty-state';
 import { EMPTY_STATES } from '../constants/microcopy';
-import { ChevronLeft, ChevronRight, Briefcase } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import TableSkeleton from './TableSkeleton';
 import { useResponsive } from '../hooks/useResponsive';
 import dayjs from 'dayjs';
@@ -91,9 +90,10 @@ const DashboardJobsTable = memo(({
                 className="w-full max-w-md py-6"
               />
             ) : (
-              <Empty
-                description="No jobs found"
-                image={<Briefcase className="h-12 w-12 text-muted-foreground" />}
+              <EmptyState
+                {...getEmptyStateProps(EMPTY_STATES.JOBS)}
+                size="sm"
+                className="w-full max-w-md py-6"
               />
             )}
           </div>

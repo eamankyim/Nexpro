@@ -123,7 +123,7 @@ function DashboardVirtualizedGrid({ scrollRef, paginatedData, columns, scrollRes
  * @param {Array} columns - Array of column definitions with { key, label, render }
  * @param {boolean} loading - Loading state
  * @param {string} title - Table title
- * @param {Object} emptyState - EmptyState config { icon, title, description, primaryAction, secondaryAction }
+ * @param {Object} emptyState - EmptyState config { icon, imageKey, title, description, primaryAction, secondaryAction }
  * @param {React.ReactNode} emptyIcon - (Legacy) Icon to show when empty
  * @param {string} emptyDescription - (Legacy) Description text when empty
  * @param {string} emptyTitle - (Legacy) Title text when empty
@@ -252,6 +252,7 @@ const DashboardTable = memo(({
                 className={cn(isMobile && "w-full max-w-md py-8")}
                 icon={emptyState.icon}
                 image={emptyState.image}
+                imageKey={emptyState.imageKey}
                 imageAlt={emptyState.imageAlt}
                 title={emptyState.title}
                 description={emptyState.description}

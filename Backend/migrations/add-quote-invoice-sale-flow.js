@@ -9,21 +9,17 @@ const { sequelize } = require('../config/database');
  * - productId on quote_items for product-based quote lines
  */
 const run = async () => {
-  // Ensure invoice source type enum exists and includes 'quote'
+  // Ensure invoice source type enum(s) exist and include 'quote' (Sequelize + migration type names)
+  const addQuoteToInvoiceSourceTypeEnum = require('./add-quote-to-invoice-source-type-enum');
   const [rows] = await sequelize.query(`
     SELECT 1 FROM pg_type WHERE typname = 'invoice_source_type_enum' LIMIT 1;
   `);
-  if (rows && rows.length > 0) {
-    try {
-      await sequelize.query(`ALTER TYPE invoice_source_type_enum ADD VALUE 'quote';`);
-    } catch (e) {
-      if (!/already exists/.test(e?.message || '')) throw e;
-    }
-  } else {
+  if (!rows || rows.length === 0) {
     await sequelize.query(`
       CREATE TYPE invoice_source_type_enum AS ENUM ('job', 'sale', 'prescription', 'quote');
     `);
   }
+  await addQuoteToInvoiceSourceTypeEnum();
 
   const transaction = await sequelize.transaction();
   try {

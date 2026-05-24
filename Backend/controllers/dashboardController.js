@@ -5,6 +5,7 @@ const config = require('../config/config');
 const { getPagination } = require('../utils/paginationUtils');
 const { getPreviousPeriodDates, calculateComparison } = require('../utils/periodComparison');
 const { applyShopFilter, getShopSqlFragment, getShopReadSqlFragment } = require('../utils/shopUtils');
+const { applyStudioLocationFilter, getStudioLocationSqlFragment } = require('../utils/studioLocationUtils');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { resolveBusinessType } = require('../config/businessTypes');
 
@@ -19,8 +20,18 @@ const logDashboardDebug = (...args) => {
 const dashboardCache = new Map();
 const CACHE_TTL_MS = 30 * 1000;
 
-function getCacheKey(tenantId, startDate, endDate, filterType, shopScope = '') {
-  return `${tenantId}:${shopScope || 'none'}:${startDate || 'default'}:${endDate || 'default'}:${filterType || 'none'}`;
+function getCacheKey(tenantId, startDate, endDate, filterType, scope = '') {
+  return `${tenantId}:${scope || 'none'}:${startDate || 'default'}:${endDate || 'default'}:${filterType || 'none'}`;
+}
+
+function getDashboardScopeKey(req) {
+  const shopScope = req.shopScoped
+    ? (req.shopFilterId || (req.canAccessAllShops ? 'all-shops' : 'assigned-shops'))
+    : 'no-shop';
+  const studioScope = req.studioLocationScoped
+    ? (req.studioLocationFilterId || (req.canAccessAllStudioLocations ? 'all-studios' : 'assigned-studios'))
+    : 'no-studio';
+  return `${shopScope}:${studioScope}`;
 }
 
 function getCachedDashboard(cacheKey) {
@@ -129,8 +140,7 @@ exports.getDashboardOverview = async (req, res, next) => {
   logDashboardDebug('Received overview request', { startDate, endDate, tenantId });
 
   // Check cache first
-  const shopScopeKey = req.shopFilterId || (req.canAccessAllShops ? 'all-shops' : 'assigned');
-  const cacheKey = getCacheKey(tenantId, startDate, endDate, filterType, shopScopeKey);
+  const cacheKey = getCacheKey(tenantId, startDate, endDate, filterType, getDashboardScopeKey(req));
   const cachedData = getCachedDashboard(cacheKey);
   if (cachedData) {
     return res.status(200).json({
@@ -200,10 +210,13 @@ exports.getDashboardOverview = async (req, res, next) => {
     if (hasDateFilter) recentSalesWhere.createdAt = dateFilter;
 
     const customerShopFrag = getShopSqlFragment(req);
+    const customerStudioFrag = getStudioLocationSqlFragment(req);
+    const jobStudioFrag = getStudioLocationSqlFragment(req);
+    const invoiceStudioFrag = getStudioLocationSqlFragment(req);
     const saleShopFrag = getShopSqlFragment(req);
     const expenseShopFrag = getShopReadSqlFragment(req);
     const customerCountSql = (baseWhere) =>
-      `(SELECT COUNT(*) FROM customers WHERE "tenantId" = :tenantId${customerShopFrag.sql} AND ${baseWhere})`;
+      `(SELECT COUNT(*) FROM customers WHERE "tenantId" = :tenantId${customerShopFrag.sql}${customerStudioFrag.sql} AND ${baseWhere})`;
 
     // Helper to safely run queries (catch missing tables / schema errors)
     const safeQuery = (p) => (p && typeof p.then === 'function' ? p.catch((err) => {
@@ -231,12 +244,13 @@ exports.getDashboardOverview = async (req, res, next) => {
         COUNT(CASE WHEN status = 'on_hold' AND "createdAt" BETWEEN :filterStart AND :filterEnd THEN 1 END) as "filteredOnHoldJobs",
         COUNT(CASE WHEN status = 'cancelled' AND "createdAt" BETWEEN :filterStart AND :filterEnd THEN 1 END) as "filteredCancelledJobs",
         COUNT(CASE WHEN status = 'completed' AND "createdAt" BETWEEN :filterStart AND :filterEnd THEN 1 END) as "filteredCompletedJobs"` : ''}
-      FROM jobs WHERE "tenantId" = :tenantId
+      FROM jobs WHERE "tenantId" = :tenantId${jobStudioFrag.sql}
     `, {
       replacements: { 
         tenantId, 
         monthStart: firstDayOfMonth, 
         monthEnd: lastDayOfMonth,
+        ...jobStudioFrag.replacements,
         ...(hasDateFilter ? { filterStart, filterEnd } : {})
       },
       type: sequelize.QueryTypes.SELECT
@@ -250,12 +264,13 @@ exports.getDashboardOverview = async (req, res, next) => {
         COALESCE(SUM(CASE WHEN status NOT IN ('paid', 'cancelled') AND balance > 0 THEN balance ELSE 0 END), 0) as "outstandingBalance"
         ${hasDateFilter ? `,COALESCE(SUM(CASE WHEN status != 'cancelled' AND "amountPaid" > 0 AND COALESCE("paidDate","updatedAt") BETWEEN :filterStart AND :filterEnd THEN "amountPaid" ELSE 0 END), 0) as "filteredRevenue"` : ''}
         ${prevPeriod ? `,COALESCE(SUM(CASE WHEN status != 'cancelled' AND "amountPaid" > 0 AND COALESCE("paidDate","updatedAt") BETWEEN :prevStart AND :prevEnd THEN "amountPaid" ELSE 0 END), 0) as "prevRevenue"` : ''}
-      FROM invoices WHERE "tenantId" = :tenantId
+      FROM invoices WHERE "tenantId" = :tenantId${invoiceStudioFrag.sql}
     `, {
       replacements: { 
         tenantId, 
         monthStart: firstDayOfMonth, 
         monthEnd: lastDayOfMonth,
+        ...invoiceStudioFrag.replacements,
         ...(hasDateFilter ? { filterStart, filterEnd } : {}),
         ...(prevPeriod ? { prevStart: prevPeriod.start, prevEnd: prevPeriod.end } : {})
       },
@@ -297,6 +312,7 @@ exports.getDashboardOverview = async (req, res, next) => {
         monthStart: firstDayOfMonth, 
         monthEnd: lastDayOfMonth,
         ...customerShopFrag.replacements,
+        ...customerStudioFrag.replacements,
         ...(hasDateFilter ? { filterStart, filterEnd } : {}),
         ...(prevPeriod ? { prevStart: prevPeriod.start, prevEnd: prevPeriod.end } : {})
       },
@@ -312,7 +328,7 @@ exports.getDashboardOverview = async (req, res, next) => {
       entityCountsQuery,
       // recentJobs (still needed as separate query with JOIN)
       safeQuery(Job.findAll({
-        where: { tenantId, status: 'in_progress' },
+        where: applyStudioLocationFilter(req, { tenantId, status: 'in_progress' }),
         attributes: ['id', 'title', 'status', 'dueDate', 'createdAt', 'jobNumber'],
         order: [['dueDate', 'ASC'], ['createdAt', 'DESC']],
         limit: 10,
@@ -751,7 +767,7 @@ exports.getRevenueByMonth = async (req, res, next) => {
         [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")')), 'month'],
         [sequelize.fn('SUM', sequelize.col('amountPaid')), 'totalRevenue']
       ],
-      where: {
+      where: applyStudioLocationFilter(req, {
         tenantId,
         status: { [Op.ne]: 'cancelled' },
         amountPaid: { [Op.gt]: 0 },
@@ -766,7 +782,7 @@ exports.getRevenueByMonth = async (req, res, next) => {
             }
           )
         ]
-      },
+      }),
       group: [sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")'))],
       order: [[sequelize.fn('EXTRACT', sequelize.literal('MONTH FROM COALESCE("paidDate","updatedAt")')), 'ASC']]
     });
@@ -840,11 +856,11 @@ exports.getTopCustomers = async (req, res, next) => {
         [sequelize.fn('SUM', sequelize.col('amountPaid')), 'totalPaid'],
         [sequelize.fn('COUNT', sequelize.col('Invoice.id')), 'invoiceCount']
       ],
-      where: {
+      where: applyStudioLocationFilter(req, {
         tenantId,
         status: { [Op.ne]: 'cancelled' },
         amountPaid: { [Op.gt]: 0 }
-      },
+      }),
       include: [{
         model: Customer,
         as: 'customer',
@@ -884,7 +900,7 @@ exports.getJobStatusDistribution = async (req, res, next) => {
         'status',
         [sequelize.fn('COUNT', sequelize.col('id')), 'count']
       ],
-      where: { tenantId },
+      where: applyStudioLocationFilter(req, { tenantId }),
       group: ['status']
     });
 

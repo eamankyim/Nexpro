@@ -15,6 +15,7 @@ import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useAuth } from '../context/AuthContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import feedbackService from '../services/feedbackService';
 import { showError } from '../utils/toast';
 import { Button } from '@/components/ui/button';
@@ -37,6 +38,8 @@ import {
 import { SEARCH_PLACEHOLDERS } from '../constants';
 import { cn } from '@/lib/utils';
 import { formatInteger } from '../utils/formatNumber';
+import { EmptyState, getEmptyStateProps } from '@/components/ui/empty-state';
+import { EMPTY_STATES } from '../constants/microcopy';
 
 dayjs.extend(relativeTime);
 
@@ -118,6 +121,7 @@ function getPaginationItems(current, total) {
 export default function CustomerFeedback() {
   const { activeTenant, hasFeature, isManager } = useAuth();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
+  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const tenantId = activeTenant?.id || '';
 
   const [rows, setRows] = useState([]);
@@ -145,7 +149,7 @@ export default function CustomerFeedback() {
   }, [setPageSearchConfig]);
 
   const fetchFeedback = useCallback(async () => {
-    if (!hasFeature('crm')) return;
+    if (!hasFeature('crm') || !scopeReady) return;
     setLoading(true);
     try {
       const res = await feedbackService.getCustomerFeedback({ page: 1, limit: 100 });
@@ -160,7 +164,7 @@ export default function CustomerFeedback() {
     } finally {
       setLoading(false);
     }
-  }, [hasFeature]);
+  }, [hasFeature, scopeReady, activeStudioLocationId]);
 
   useEffect(() => {
     fetchFeedback();
@@ -230,6 +234,11 @@ export default function CustomerFeedback() {
     const start = (safeListPage - 1) * pageSize;
     return processedRows.slice(start, start + pageSize);
   }, [processedRows, safeListPage, pageSize]);
+  const hasReviewFilters =
+    Boolean((searchValue || '').trim()) || ratingFilter !== 'all' || commentFilter !== 'all';
+  const reviewsEmptyState = getEmptyStateProps(
+    hasReviewFilters ? EMPTY_STATES.REVIEWS_FILTERED : EMPTY_STATES.REVIEWS
+  );
   const paginationItems = useMemo(
     () => getPaginationItems(safeListPage, listPages),
     [safeListPage, listPages]
@@ -508,9 +517,12 @@ export default function CustomerFeedback() {
               </div>
             )}
             {!loading && pagedRows.length === 0 && (
-              <div className="rounded-lg border border-dashed border-border py-12 text-center">
-                <Star className="mx-auto h-10 w-10 text-muted-foreground" />
-                <p className="mt-2 text-sm text-muted-foreground">No reviews match your filters.</p>
+              <div className="rounded-lg border border-dashed border-border py-8">
+                <EmptyState
+                  {...reviewsEmptyState}
+                  className="py-6"
+                  size="sm"
+                />
               </div>
             )}
             {!loading &&

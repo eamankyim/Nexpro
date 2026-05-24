@@ -33,7 +33,18 @@ const SHOP_TABLES = [
   'stock_counts',
 ];
 
-const STUDIO_TABLES = ['customers', 'jobs', 'quotes', 'invoices', 'leads'];
+const STUDIO_TABLES = [
+  'customers',
+  'jobs',
+  'quotes',
+  'invoices',
+  'leads',
+  'expenses',
+  'customer_feedback',
+  'user_tasks',
+  'materials_items',
+  'equipment',
+];
 const VALID_SCOPES = ['all', 'shop', 'studio'];
 const TENANT_EMAIL_ROLES = ['owner', 'admin'];
 const isApply = process.argv.includes('--apply');

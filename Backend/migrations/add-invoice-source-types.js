@@ -18,7 +18,7 @@ const addInvoiceSourceTypes = async () => {
       DO $$
       BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'invoice_source_type_enum') THEN
-          CREATE TYPE invoice_source_type_enum AS ENUM ('job', 'sale', 'prescription');
+          CREATE TYPE invoice_source_type_enum AS ENUM ('job', 'sale', 'prescription', 'quote');
         END IF;
       END
       $$;

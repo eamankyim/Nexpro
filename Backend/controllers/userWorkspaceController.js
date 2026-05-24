@@ -3,8 +3,14 @@ const { getTenantLogoUrl } = require('../utils/tenantLogo');
 const { Op } = require('sequelize');
 const emailService = require('../services/emailService');
 const emailTemplates = require('../services/emailTemplates');
+const {
+  applyStudioLocationFilter,
+  attachStudioLocationToPayload,
+} = require('../utils/studioLocationUtils');
 
 const ALLOWED_TASK_STATUSES = ['todo', 'in_progress', 'on_hold', 'completed'];
+const taskScopeWhere = (req, extra = {}) =>
+  applyStudioLocationFilter(req, { tenantId: req.tenantId, ...extra });
 
 const normalizeTaskMetadata = (value) => (value && typeof value === 'object' ? value : {});
 const normalizeTaskComments = (metadata) => (Array.isArray(metadata.comments) ? metadata.comments : []);
@@ -208,14 +214,13 @@ exports.getTasks = async (req, res, next) => {
       });
     }
 
-    const where = {
-      tenantId: req.tenantId,
+    const where = taskScopeWhere(req, {
       [Op.or]: [
         { isPrivate: false },
         { userId: req.user.id },
         { assigneeId: req.user.id }
       ]
-    };
+    });
 
     if (status && typeof status === 'string') {
       where.status = status;
@@ -276,7 +281,7 @@ exports.createTask = async (req, res, next) => {
       finalAssigneeId = assigneeId;
     }
 
-    const task = await UserTask.create({
+    const task = await UserTask.create(attachStudioLocationToPayload(req, {
       tenantId: req.tenantId,
       userId: req.user.id,
       title: title.trim(),
@@ -296,10 +301,10 @@ exports.createTask = async (req, res, next) => {
           })
         ]
       }
-    });
+    }));
 
     const createdTask = await UserTask.findOne({
-      where: { id: task.id, tenantId: req.tenantId },
+      where: taskScopeWhere(req, { id: task.id }),
       include: [
         { model: User, as: 'assignee', attributes: ['id', 'name', 'email', 'profilePicture'] },
         { model: User, as: 'user', attributes: ['id', 'name', 'email', 'profilePicture'] }
@@ -343,14 +348,13 @@ exports.updateTask = async (req, res, next) => {
     }
 
     const task = await UserTask.findOne({
-      where: {
+      where: taskScopeWhere(req, {
         id,
-        tenantId: req.tenantId,
         [Op.or]: [
           { userId: req.user.id },
           { assigneeId: req.user.id }
         ]
-      }
+      })
     });
 
     if (!task) {
@@ -432,7 +436,7 @@ exports.updateTask = async (req, res, next) => {
     await task.save();
 
     const updatedTask = await UserTask.findOne({
-      where: { id: task.id, tenantId: req.tenantId },
+      where: taskScopeWhere(req, { id: task.id }),
       include: [
         { model: User, as: 'assignee', attributes: ['id', 'name', 'email', 'profilePicture'] },
         { model: User, as: 'user', attributes: ['id', 'name', 'email', 'profilePicture'] }
@@ -524,11 +528,10 @@ exports.deleteTask = async (req, res, next) => {
     }
 
     const task = await UserTask.findOne({
-      where: {
+      where: taskScopeWhere(req, {
         id,
-        tenantId: req.tenantId,
         userId: req.user.id
-      }
+      })
     });
 
     if (!task) {
@@ -556,15 +559,14 @@ exports.getTaskById = async (req, res, next) => {
     }
 
     const task = await UserTask.findOne({
-      where: {
+      where: taskScopeWhere(req, {
         id,
-        tenantId: req.tenantId,
         [Op.or]: [
           { isPrivate: false },
           { userId: req.user.id },
           { assigneeId: req.user.id }
         ]
-      },
+      }),
       include: [
         { model: User, as: 'assignee', attributes: ['id', 'name', 'email', 'profilePicture'] },
         { model: User, as: 'user', attributes: ['id', 'name', 'email', 'profilePicture'] }
@@ -596,15 +598,14 @@ exports.getTaskComments = async (req, res, next) => {
     }
 
     const task = await UserTask.findOne({
-      where: {
+      where: taskScopeWhere(req, {
         id,
-        tenantId: req.tenantId,
         [Op.or]: [
           { isPrivate: false },
           { userId: req.user.id },
           { assigneeId: req.user.id }
         ]
-      }
+      })
     });
     if (!task) {
       return res.status(404).json({ success: false, message: 'Task not found' });
@@ -633,15 +634,14 @@ exports.getTaskActivity = async (req, res, next) => {
     }
 
     const task = await UserTask.findOne({
-      where: {
+      where: taskScopeWhere(req, {
         id,
-        tenantId: req.tenantId,
         [Op.or]: [
           { isPrivate: false },
           { userId: req.user.id },
           { assigneeId: req.user.id }
         ]
-      }
+      })
     });
     if (!task) {
       return res.status(404).json({ success: false, message: 'Task not found' });
@@ -680,15 +680,14 @@ exports.addTaskComment = async (req, res, next) => {
     }
 
     const task = await UserTask.findOne({
-      where: {
+      where: taskScopeWhere(req, {
         id,
-        tenantId: req.tenantId,
         [Op.or]: [
           { isPrivate: false },
           { userId: req.user.id },
           { assigneeId: req.user.id }
         ]
-      }
+      })
     });
     if (!task) {
       return res.status(404).json({ success: false, message: 'Task not found' });

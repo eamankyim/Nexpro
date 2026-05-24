@@ -30,7 +30,13 @@ const studioLocationContext = async (req, res, next) => {
 
     const defaultLocation = await ensureDefaultStudioLocation(
       req.tenantId,
-      req.tenant?.name || 'Main studio'
+      {
+        name: req.tenant?.name || 'Main studio',
+        studioType:
+          req.tenant?.metadata?.studioType ||
+          req.tenant?.metadata?.businessSubType ||
+          null,
+      }
     );
     req.defaultStudioLocationId = defaultLocation.id;
 

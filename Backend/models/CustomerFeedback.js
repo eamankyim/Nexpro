@@ -14,6 +14,11 @@ const CustomerFeedback = sequelize.define(
       allowNull: false,
       references: { model: 'tenants', key: 'id' }
     },
+    studioLocationId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: { model: 'studio_locations', key: 'id' }
+    },
     rating: {
       type: DataTypes.SMALLINT,
       allowNull: false,

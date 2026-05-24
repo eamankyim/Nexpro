@@ -51,7 +51,12 @@ import api from '../services/api';
 import shopService from '../services/shopService';
 import userService from '../services/userService';
 import { resolveImageUrl } from '../utils/fileUtils';
-import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, SHOP_TYPES, SHOP_TYPE_LABELS } from '../constants';
+import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS, SHOP_TYPE_LABELS } from '../constants';
+import {
+  CORE_BUSINESS_TYPES,
+  getBusinessOptionLabel,
+  getBusinessOptionsByCoreType,
+} from '@/constants/businessTypes';
 import {
   Select,
   SelectContent,
@@ -101,6 +106,10 @@ const Shops = () => {
   const [logoFile, setLogoFile] = useState(null);
   const [logoPreview, setLogoPreview] = useState('');
   const logoInputRef = useRef(null);
+  const shopTypeOptions = useMemo(
+    () => getBusinessOptionsByCoreType(CORE_BUSINESS_TYPES.SHOP),
+    []
+  );
 
   // Form
   const form = useForm({
@@ -186,6 +195,11 @@ const Shops = () => {
     return { total, active, inactive, cities };
   }, [shops, pagination.total]);
 
+  const getShopTypeLabel = useCallback(
+    (shopType) => getBusinessOptionLabel(shopType) || SHOP_TYPE_LABELS[shopType] || shopType || '—',
+    []
+  );
+
   // Handlers (must be defined before columns that reference them)
   const handleEdit = useCallback((shop) => {
     setEditingShop(shop);
@@ -240,7 +254,7 @@ const Shops = () => {
       label: 'Business type',
       render: (_, record) => (
         <span className="text-sm text-muted-foreground">
-          {SHOP_TYPE_LABELS[record?.shopType] || record?.shopType || '—'}
+          {getShopTypeLabel(record?.shopType)}
         </span>
       ),
     },
@@ -297,7 +311,7 @@ const Shops = () => {
         </DropdownMenu>
       ),
     },
-  ], [handleEdit]);
+  ], [handleEdit, getShopTypeLabel]);
   
   const handleCreate = useCallback(() => {
     setEditingShop(null);
@@ -309,7 +323,7 @@ const Shops = () => {
       state: '',
       country: 'Ghana',
       postalCode: '',
-      shopType: activeTenant?.metadata?.shopType || SHOP_TYPES.OTHER,
+      shopType: activeTenant?.metadata?.shopType || activeTenant?.metadata?.businessSubType || '',
       phone: '',
       email: '',
       managerUserId: '',
@@ -495,8 +509,8 @@ const Shops = () => {
             <DialogTitle>{editingShop ? 'Edit Shop' : 'Add New Shop'}</DialogTitle>
             <DialogDescription>
               {editingShop
-                ? 'Update this shop’s location details.'
-                : 'Add the shop’s name and address. Invite managers and staff from Team and choose which shops they can access.'}
+                ? 'Update this shop’s location details and business type.'
+                : 'Add the shop’s name, type, and address. Invite managers and staff from Team and choose which shops they can access.'}
             </DialogDescription>
           </DialogHeader>
           <DialogBody>
@@ -525,14 +539,21 @@ const Shops = () => {
                     <Select value={field.value || ''} onValueChange={field.onChange}>
                       <FormControl>
                         <SelectTrigger>
-                          <SelectValue placeholder="e.g. Supermarket, Hardware" />
+                          <SelectValue placeholder="Select what best matches this shop" />
                         </SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {Object.entries(SHOP_TYPE_LABELS).map(([value, label]) => (
-                          <SelectItem key={value} value={value}>
-                            {label}
-                          </SelectItem>
+                        {shopTypeOptions.map((option) => (
+                          <div key={option.id} className="px-1 py-0.5">
+                            <SelectItem value={option.id} className="!items-start !py-1.5">
+                              <span className="font-medium text-sm">{option.label}</span>
+                            </SelectItem>
+                            {option.description ? (
+                              <div className="pl-8 pr-2 pt-0.5 text-xs text-muted-foreground leading-snug">
+                                {option.description}
+                              </div>
+                            ) : null}
+                          </div>
                         ))}
                       </SelectContent>
                     </Select>
