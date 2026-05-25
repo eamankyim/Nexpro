@@ -74,6 +74,60 @@ const pickStudioLocationFields = async (payload) => {
   return picked;
 };
 
+/**
+ * Empty code must be NULL — partial unique index treats '' as a value and blocks duplicates.
+ * @param {string|null|undefined} code
+ * @returns {string|null}
+ */
+const normalizeStudioCode = (code) => {
+  if (code == null) return null;
+  const trimmed = String(code).trim();
+  return trimmed || null;
+};
+
+/**
+ * @param {string} tenantId
+ * @param {string|null} code
+ * @param {string} [excludeId]
+ */
+const assertUniqueStudioCode = async (tenantId, code, excludeId) => {
+  if (!code) return;
+
+  const where = applyTenantFilter(tenantId, { code });
+  if (excludeId) where.id = { [Op.ne]: excludeId };
+
+  const existing = await StudioLocation.findOne({
+    where,
+    attributes: ['id', 'name'],
+  });
+
+  if (existing) {
+    const err = new Error(
+      `Location code "${code}" is already used by "${existing.name}". Choose a different code or leave it blank.`
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+};
+
+const mapStudioUniqueConstraintError = (error) => {
+  if (error?.name !== 'SequelizeUniqueConstraintError') return null;
+
+  const constraint = String(
+    error.parent?.constraint || error.errors?.[0]?.path || ''
+  ).toLowerCase();
+
+  if (constraint.includes('code') || constraint.includes('tenant_code')) {
+    const err = new Error(
+      'Another studio location in this workspace already uses that code. Use a unique code or leave it blank.'
+    );
+    err.statusCode = 400;
+    return err;
+  }
+
+  return null;
+};
+
 const prepareStudioPayload = async (tenantId, payload) => {
   const next = await pickStudioLocationFields(payload);
 
@@ -84,6 +138,10 @@ const prepareStudioPayload = async (tenantId, payload) => {
       err.statusCode = 400;
       throw err;
     }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(next, 'code')) {
+    next.code = normalizeStudioCode(next.code);
   }
 
   if (Object.prototype.hasOwnProperty.call(next, 'studioType')) {
@@ -228,6 +286,8 @@ exports.createStudioLocation = async (req, res, next) => {
     if (!assertStudioTenant(req, res)) return;
 
     const payload = await prepareStudioPayload(req.tenantId, sanitizePayload(req.body));
+    await assertUniqueStudioCode(req.tenantId, payload.code);
+
     const isFirst =
       (await StudioLocation.count({ where: { tenantId: req.tenantId } })) === 0;
 
@@ -270,6 +330,10 @@ exports.createStudioLocation = async (req, res, next) => {
     if (error.statusCode === 400) {
       return res.status(400).json({ success: false, message: error.message });
     }
+    const mapped = mapStudioUniqueConstraintError(error);
+    if (mapped) {
+      return res.status(400).json({ success: false, message: mapped.message });
+    }
     next(error);
   }
 };
@@ -290,6 +354,7 @@ exports.updateStudioLocation = async (req, res, next) => {
     }
 
     const payload = await prepareStudioPayload(req.tenantId, sanitizePayload(req.body));
+    await assertUniqueStudioCode(req.tenantId, payload.code, location.id);
     await location.update(payload);
 
     if (payload.isDefault) {
@@ -314,6 +379,10 @@ exports.updateStudioLocation = async (req, res, next) => {
   } catch (error) {
     if (error.statusCode === 400) {
       return res.status(400).json({ success: false, message: error.message });
+    }
+    const mapped = mapStudioUniqueConstraintError(error);
+    if (mapped) {
+      return res.status(400).json({ success: false, message: mapped.message });
     }
     next(error);
   }

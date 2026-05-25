@@ -55,6 +55,8 @@ const errorHandler = (err, req, res, next) => {
         message = 'Email already exists';
       } else if (field.includes('phone') || constraint.includes('phone')) {
         message = 'Phone number already exists';
+      } else if (field.includes('code') || constraint.includes('code')) {
+        message = 'This code is already used by another location in your workspace';
       } else {
         message = `${field || 'This value'} already exists`;
       }

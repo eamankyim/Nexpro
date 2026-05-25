@@ -15,7 +15,6 @@ import { useTheme } from '../context/ThemeContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { useHintMode } from '../context/HintModeContext';
 import { showSuccess, showError, showLoading } from '../utils/toast';
-import { maskEmail } from '../utils/maskEmail';
 import { numberInputValue, handleIntegerChange, integerOrEmptySchema } from '../utils/formUtils';
 import inviteService from '../services/inviteService';
 import authService from '../services/authService';
@@ -307,15 +306,9 @@ const Settings = () => {
   const [organizationLogoPreviewVisible, setOrganizationLogoPreviewVisible] = useState(false);
   const [organizationLogoUploading, setOrganizationLogoUploading] = useState(false);
   const [paymentVerifyPassword, setPaymentVerifyPassword] = useState('');
-  const [paymentVerifyOtp, setPaymentVerifyOtp] = useState('');
-  const [paymentOtpSent, setPaymentOtpSent] = useState(false);
-  const [paymentOtpSending, setPaymentOtpSending] = useState(false);
   const [paymentVerifyModalOpen, setPaymentVerifyModalOpen] = useState(false);
   const [paymentVerificationDone, setPaymentVerificationDone] = useState(false);
-  const [paymentPasswordVerified, setPaymentPasswordVerified] = useState(false);
   const [paymentPasswordVerifying, setPaymentPasswordVerifying] = useState(false);
-  const [paymentVerifyOtpVerifying, setPaymentVerifyOtpVerifying] = useState(false);
-  const [showPaymentOtpEmailHint, setShowPaymentOtpEmailHint] = useState(false);
   const [bankSelectOpen, setBankSelectOpen] = useState(false);
   const [bankSearchQuery, setBankSearchQuery] = useState('');
   const [mtnCredForm, setMtnCredForm] = useState({
@@ -334,9 +327,6 @@ const Settings = () => {
   const [paystackTxFrom, setPaystackTxFrom] = useState(() => dayjs().subtract(30, 'day').format('YYYY-MM-DD'));
   const [paystackTxTo, setPaystackTxTo] = useState(() => dayjs().format('YYYY-MM-DD'));
   const [paystackTxPage, setPaystackTxPage] = useState(1);
-  const paymentOtpInputRefs = useRef([]);
-  /** When true, closing the payment verify dialog must not wipe OTP/password (needed for Link MoMo / Link bank submit). */
-  const skipResetPaymentVerifyOnCloseRef = useRef(false);
   /** Dismiss "Saving..." toast when mutation completes (success or error). */
   const savingToastDismissRef = useRef(null);
   const [posConfigEditing, setPosConfigEditing] = useState(false);
@@ -1149,8 +1139,7 @@ const Settings = () => {
       dismissSavingToast();
       showSuccess(response?.message || 'Payment collection updated');
       setPaymentVerifyPassword('');
-      setPaymentVerifyOtp('');
-      setPaymentOtpSent(false);
+      setPaymentVerificationDone(false);
       const data = response?.data ?? response;
       if (data && activeTenant?.id) {
         const payload = { success: true, data: { ...data, configured: true } };
@@ -1390,13 +1379,9 @@ const Settings = () => {
     setPaymentPasswordVerifying(true);
     try {
       await settingsService.verifyPaymentCollectionPassword(isGoogleUser ? undefined : pwd);
-      setPaymentVerifyOtp('');
-      setPaymentPasswordVerified(true);
-      setPaymentOtpSent(true);
-      showSuccess('Verification code sent to your email. Enter it below.');
-      settingsService.sendPaymentCollectionOtp(isGoogleUser ? undefined : pwd).catch((otpErr) => {
-        showError(otpErr, otpErr?.response?.data?.message || 'Failed to send verification code');
-      });
+      setPaymentVerificationDone(true);
+      setPaymentVerifyModalOpen(false);
+      showSuccess('Identity verified. You can link your payment account.');
     } catch (err) {
       showError(err, err?.response?.data?.message || (isGoogleUser ? 'Verification failed' : 'Invalid password'));
     } finally {
@@ -1406,10 +1391,8 @@ const Settings = () => {
 
   const onPaymentCollectionSubmit = async (values) => {
     const pwd = (paymentVerifyPassword || '').trim();
-    const otpRaw = (paymentVerifyOtp || '').trim();
-    const otp = otpRaw.replace(/\D/g, '');
-    if ((!isGoogleUser && !pwd) || !otp || otp.length !== 6) {
-      showError(null, isGoogleUser ? 'A 6-digit verification code is required' : 'Password and a 6-digit verification code are required');
+    if (!isGoogleUser && !pwd) {
+      showError(null, 'Password is required to link a payment account');
       return;
     }
     const settlementType = values.settlement_type || 'bank';
@@ -1424,7 +1407,6 @@ const Settings = () => {
         momo_provider: momoProvider,
         primary_contact_email: values.primary_contact_email?.trim() || undefined,
         ...(isGoogleUser ? {} : { password: pwd }),
-        otp,
       });
     } else {
       const bank = Array.isArray(paymentCollectionBanks) ? paymentCollectionBanks.find((b) => b.code === values.bank_code) : (paymentCollectionBanks?.data ?? []).find((b) => b.code === values.bank_code);
@@ -1436,7 +1418,6 @@ const Settings = () => {
         account_number: String(values.account_number).replace(/\s/g, ''),
         primary_contact_email: values.primary_contact_email?.trim() || undefined,
         ...(isGoogleUser ? {} : { password: pwd }),
-        otp,
       });
     }
   };
@@ -5267,165 +5248,52 @@ const Settings = () => {
           <>
             <Dialog
               open={paymentVerifyModalOpen}
-              onOpenChange={(open) => {
-                setPaymentVerifyModalOpen(open);
-                if (!open) {
-                  setShowPaymentOtpEmailHint(false);
-                  if (skipResetPaymentVerifyOnCloseRef.current) {
-                    skipResetPaymentVerifyOnCloseRef.current = false;
-                  } else {
-                    setPaymentPasswordVerified(false);
-                    setPaymentOtpSent(false);
-                    setPaymentVerifyPassword('');
-                    setPaymentVerifyOtp('');
-                  }
-                  setPaymentPasswordVerified(false);
-                }
-              }}
+              onOpenChange={setPaymentVerifyModalOpen}
             >
               <DialogContent className="sm:max-w-[26rem]">
                 <DialogDescription className="sr-only">Verify your identity to link bank or MoMo for receiving payments.</DialogDescription>
-                {!paymentPasswordVerified ? (
-                  <>
-                    <DialogHeader>
-                      <DialogTitle>Verify your identity</DialogTitle>
-                    </DialogHeader>
-                    <DialogBody className="space-y-4">
-                      <p className="text-sm text-muted-foreground">
-                        {isGoogleUser
-                          ? 'We will send a verification code to your email to continue.'
-                          : 'Verify your password to continue.'}
-                      </p>
-                      {!isGoogleUser && (
-                        <div className="space-y-2">
-                          <Label htmlFor="payment-verify-password-modal">Account password</Label>
-                          <Input
-                            id="payment-verify-password-modal"
-                            name="payment-verification-password"
-                            type="password"
-                            value={paymentVerifyPassword}
-                            onChange={(e) => setPaymentVerifyPassword(e.target.value)}
-                            placeholder="•••••••••"
-                            autoComplete="new-password"
-                            data-form-type="other"
-                            data-lpignore="true"
-                          />
-                        </div>
-                      )}
-                      <Button type="button" onClick={handleVerifyPaymentPassword} disabled={paymentPasswordVerifying || (!isGoogleUser && !paymentVerifyPassword.trim())} className="w-full mt-2">
-                        {paymentPasswordVerifying ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                        {isGoogleUser ? 'Send verification code' : 'Verify password'}
-                      </Button>
-                    </DialogBody>
-                  </>
-                ) : (
-                  <>
-                    <DialogHeader>
-                      <DialogTitle>Enter verification code</DialogTitle>
-                    </DialogHeader>
-                    <DialogBody className="space-y-4">
-                      <p className="text-sm text-muted-foreground">
-                        Verification code sent to your email. Enter the code below.
-                      </p>
-                      <div className="space-y-2">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <Label id="payment-otp-label">Verification code</Label>
-                          <Button
-                            type="button"
-                            variant="link"
-                            className="h-auto p-0 text-xs text-muted-foreground shrink-0"
-                            onClick={() => setShowPaymentOtpEmailHint((v) => !v)}
-                          >
-                            {showPaymentOtpEmailHint ? 'Hide email' : 'Which email?'}
-                          </Button>
-                        </div>
-                        {showPaymentOtpEmailHint && user?.email ? (
-                          <p className="text-xs text-muted-foreground" aria-live="polite">
-                            Code sent to {maskEmail(user.email)}
-                          </p>
-                        ) : null}
-                        <div
-                          className="flex gap-2 w-full"
-                          role="group"
-                          aria-labelledby="payment-otp-label"
-                        >
-                          {(() => {
-                            const raw = (paymentVerifyOtp || '').replace(/\D/g, '').slice(0, 6);
-                            const digits = Array(6).fill('').map((_, j) => raw[j] || '');
-                            return Array.from({ length: 6 }, (_, i) => (
-                              <div key={i} className="flex-1 min-w-0 aspect-square">
-                                <Input
-                                  ref={(el) => { paymentOtpInputRefs.current[i] = el; }}
-                                  type="text"
-                                  inputMode="numeric"
-                                  maxLength={1}
-                                  value={digits[i]}
-                                  autoComplete={i === 0 ? 'one-time-code' : 'off'}
-                                  className="w-full h-full text-center text-lg font-semibold tabular-nums p-0"
-                                onChange={(e) => {
-                                  const v = e.target.value.replace(/\D/g, '').slice(-1);
-                                  const next = [...digits];
-                                  next[i] = v;
-                                  setPaymentVerifyOtp(next.join(''));
-                                  if (v && i < 5) paymentOtpInputRefs.current[i + 1]?.focus();
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Backspace' && !digits[i] && i > 0) {
-                                    paymentOtpInputRefs.current[i - 1]?.focus();
-                                  }
-                                }}
-                                onPaste={(e) => {
-                                  e.preventDefault();
-                                  const pasted = (e.clipboardData?.getData('text') || '').replace(/\D/g, '').slice(0, 6);
-                                  const next = Array(6).fill('').map((_, j) => pasted[j] || '');
-                                  setPaymentVerifyOtp(next.join(''));
-                                  const focusIndex = Math.min(pasted.length, 5);
-                                  paymentOtpInputRefs.current[focusIndex]?.focus();
-                                }}
-                                />
-                              </div>
-                            ));
-                          })()}
-                        </div>
-                      </div>
-                    </DialogBody>
-                    {paymentOtpSent && (
-                      <DialogFooter className="justify-end">
-                        <Button
-                          type="button"
-                          onClick={async () => {
-                            const otp = (paymentVerifyOtp || '').replace(/\D/g, '');
-                            if (otp.length !== 6) return;
-                            setPaymentVerifyOtpVerifying(true);
-                            try {
-                              await settingsService.verifyPaymentCollectionOtp({
-                                ...(isGoogleUser ? {} : { password: paymentVerifyPassword.trim() }),
-                                otp
-                              });
-                              skipResetPaymentVerifyOnCloseRef.current = true;
-                              setPaymentVerifyModalOpen(false);
-                              setPaymentVerificationDone(true);
-                            } catch (err) {
-                              showError(err, 'Invalid verification code. Please try again.');
-                            } finally {
-                              setPaymentVerifyOtpVerifying(false);
-                            }
-                          }}
-                          disabled={(paymentVerifyOtp || '').replace(/\D/g, '').length !== 6 || paymentVerifyOtpVerifying}
-                        >
-                          {paymentVerifyOtpVerifying ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                          Verify
-                        </Button>
-                      </DialogFooter>
-                    )}
-                  </>
-                )}
+                <DialogHeader>
+                  <DialogTitle>Verify your identity</DialogTitle>
+                </DialogHeader>
+                <DialogBody className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    {isGoogleUser
+                      ? 'Continue with your signed-in account to link a payment destination.'
+                      : 'Verify your password to continue. No email code is required.'}
+                  </p>
+                  {!isGoogleUser && (
+                    <div className="space-y-2">
+                      <Label htmlFor="payment-verify-password-modal">Account password</Label>
+                      <Input
+                        id="payment-verify-password-modal"
+                        name="payment-verification-password"
+                        type="password"
+                        value={paymentVerifyPassword}
+                        onChange={(e) => setPaymentVerifyPassword(e.target.value)}
+                        placeholder="•••••••••"
+                        autoComplete="new-password"
+                        data-form-type="other"
+                        data-lpignore="true"
+                      />
+                    </div>
+                  )}
+                  <Button type="button" onClick={handleVerifyPaymentPassword} disabled={paymentPasswordVerifying || (!isGoogleUser && !paymentVerifyPassword.trim())} className="w-full mt-2">
+                    {paymentPasswordVerifying ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                    {isGoogleUser ? 'Continue' : 'Verify password'}
+                  </Button>
+                </DialogBody>
               </DialogContent>
             </Dialog>
             {!paymentAlreadyLinked && !paymentVerificationDone ? (
               <div className="space-y-4 py-4">
                 <p className="text-sm text-muted-foreground">To receive card and MoMo payments from customers, link a bank account or MoMo number. You will verify your identity in the next step.</p>
-                <Button type="button" onClick={() => setPaymentVerifyModalOpen(true)}>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setPaymentVerifyPassword('');
+                    setPaymentVerifyModalOpen(true);
+                  }}
+                >
                   <CreditCard className="h-4 w-4 mr-2" />
                   Link payment account
                 </Button>
@@ -5442,7 +5310,15 @@ const Settings = () => {
                 </Alert>
                 <p className="text-sm text-muted-foreground">
                   To update, verify your identity first.{' '}
-                  <Button type="button" variant="link" className="h-auto p-0 text-primary" onClick={() => setPaymentVerifyModalOpen(true)}>
+                  <Button
+                    type="button"
+                    variant="link"
+                    className="h-auto p-0 text-primary"
+                    onClick={() => {
+                      setPaymentVerifyPassword('');
+                      setPaymentVerifyModalOpen(true);
+                    }}
+                  >
                     Verify identity
                   </Button>
                 </p>
@@ -5635,9 +5511,7 @@ const Settings = () => {
                 type="submit"
                 disabled={
                   updatePaymentCollectionMutation.isPending ||
-                  (!isGoogleUser && !paymentVerifyPassword.trim()) ||
-                  !paymentOtpSent ||
-                  (paymentVerifyOtp || '').replace(/\D/g, '').length !== 6
+                  (!isGoogleUser && !paymentVerifyPassword.trim())
                 }
               >
                 {updatePaymentCollectionMutation.isPending ? (

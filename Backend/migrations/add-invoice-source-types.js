@@ -12,13 +12,19 @@ const addInvoiceSourceTypes = async () => {
     console.log('🔐 Ensuring pgcrypto extension is available...');
     await sequelize.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto";`, { transaction });
 
-    // Create source_type enum if it doesn't exist
+    // Create source_type enum if it doesn't exist; ensure quote on existing enum
     console.log('📝 Creating source_type enum...');
     await sequelize.query(`
       DO $$
       BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'invoice_source_type_enum') THEN
           CREATE TYPE invoice_source_type_enum AS ENUM ('job', 'sale', 'prescription', 'quote');
+        ELSIF NOT EXISTS (
+          SELECT 1 FROM pg_enum e
+          JOIN pg_type t ON e.enumtypid = t.oid
+          WHERE t.typname = 'invoice_source_type_enum' AND e.enumlabel = 'quote'
+        ) THEN
+          ALTER TYPE invoice_source_type_enum ADD VALUE 'quote';
         END IF;
       END
       $$;

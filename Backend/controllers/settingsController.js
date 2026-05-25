@@ -2065,12 +2065,9 @@ exports.verifyPaymentCollectionOtp = async (req, res, next) => {
 // @access  Private (admin, manager)
 exports.updatePaymentCollectionSettings = async (req, res, next) => {
   try {
-    const { password, otp, ...restBody } = req.body || {};
+    const { password, ...restBody } = req.body || {};
+    delete restBody.otp;
     console.log('[Payment Collection] PUT: start userId=', req.user?.id, 'tenantId=', req.tenantId, 'bodyKeys=', Object.keys(req.body || {}).filter(k => k !== 'password' && k !== 'otp'), 'settlement_type(raw)=', restBody?.settlement_type ?? restBody?.settlementType);
-    if (!otp || typeof otp !== 'string') {
-      console.log('[Payment Collection] PUT: rejected (missing or invalid otp)');
-      return res.status(400).json({ success: false, message: 'Verification code (OTP) is required' });
-    }
     const user = await User.findByPk(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
@@ -2083,42 +2080,12 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
       }
       const valid = await user.comparePassword(password);
       if (!valid) {
-        console.log('[Payment OTP] PUT: rejected (invalid password)');
+        console.log('[Payment Collection] PUT: rejected (invalid password)');
         return res.status(401).json({ success: false, message: 'Invalid password' });
       }
     } else {
-      console.log('[Payment OTP] PUT: password skipped for Google user userId=', req.user?.id);
+      console.log('[Payment Collection] PUT: password skipped for Google user userId=', req.user?.id);
     }
-    const rawOtpFromBody = req.body?.otp;
-    console.log('[Payment OTP] Verify attempt: raw body.otp type=', typeof rawOtpFromBody, 'value=', rawOtpFromBody, 'userId=', req.user?.id);
-
-    const stored = await getStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
-    if (!stored || typeof stored.otp !== 'string') {
-      console.log('[Payment OTP] Rejected: no stored OTP or invalid stored.otp for user', req.user?.id);
-      return res.status(400).json({ success: false, message: 'Verification code expired or not requested. Please request a new code.' });
-    }
-    if (Date.now() > stored.expiresAt) {
-      await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
-      console.log('[Payment OTP] Rejected: stored OTP expired for user', req.user?.id);
-      return res.status(400).json({ success: false, message: 'Verification code expired. Please request a new code.' });
-    }
-    const expectedOtp = String(stored.otp).replace(/\D/g, '').slice(0, 6);
-    const receivedOtp = String(otp || '').replace(/\D/g, '').slice(0, 6);
-    const match = receivedOtp.length === 6 && receivedOtp === expectedOtp;
-
-    console.log('[Payment OTP] Compare: receivedOtp=', receivedOtp, 'expectedOtp=', expectedOtp, 'receivedLen=', receivedOtp.length, 'expectedLen=', expectedOtp.length, 'match=', match);
-
-    if (expectedOtp.length !== 6) {
-      await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
-      console.log('[Payment OTP] Rejected: expectedOtp not 6 digits (stored.otp invalid)');
-      return res.status(400).json({ success: false, message: 'Invalid verification code' });
-    }
-    if (receivedOtp.length !== 6 || receivedOtp !== expectedOtp) {
-      console.log('[Payment OTP] Rejected: invalid code (length or mismatch)');
-      return res.status(400).json({ success: false, message: 'Invalid verification code' });
-    }
-    console.log('[Payment OTP] Accepted: OTP matched for user', req.user?.id);
-    // Do not delete OTP here — delete only after Paystack/link succeeds so user can retry if account details are wrong
 
     const tenant = await Tenant.findByPk(req.tenantId);
     if (!tenant) {
@@ -2322,7 +2289,7 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
     tenant.metadata = { ...(tenant.metadata || {}), paymentCollection: paymentCollectionBank };
     await tenant.save({ fields: ['metadata', 'paystackSubaccountCode'] });
     await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
-    console.log('[Payment OTP] PUT: success bank linked tenantId=', req.tenantId, 'subaccountCode=', subaccountCode ? `${subaccountCode.slice(0, 8)}...` : '?');
+    console.log('[Payment Collection] PUT: success bank linked tenantId=', req.tenantId, 'subaccountCode=', subaccountCode ? `${subaccountCode.slice(0, 8)}...` : '?');
 
     const emailService = require('../services/emailService');
     const { paystackBankLinkedEmail } = require('../services/emailTemplates');
@@ -2335,9 +2302,9 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
       );
       const emailResult = await emailService.sendPlatformMessage(toEmail, subject, html, text);
       if (emailResult?.success) {
-        console.log('[Payment OTP] PUT: confirmation email sent to', toEmail.substring(0, 6) + '***');
+        console.log('[Payment Collection] PUT: confirmation email sent to', toEmail.substring(0, 6) + '***');
       } else {
-        console.warn('[Payment OTP] PUT: failed to send confirmation email', emailResult?.error || '');
+        console.warn('[Payment Collection] PUT: failed to send confirmation email', emailResult?.error || '');
       }
     }
 

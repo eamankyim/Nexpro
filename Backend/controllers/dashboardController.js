@@ -215,6 +215,7 @@ exports.getDashboardOverview = async (req, res, next) => {
     const invoiceStudioFrag = getStudioLocationSqlFragment(req);
     const saleShopFrag = getShopSqlFragment(req);
     const expenseShopFrag = getShopReadSqlFragment(req);
+    const expenseStudioFrag = getStudioLocationSqlFragment(req);
     const customerCountSql = (baseWhere) =>
       `(SELECT COUNT(*) FROM customers WHERE "tenantId" = :tenantId${customerShopFrag.sql}${customerStudioFrag.sql} AND ${baseWhere})`;
 
@@ -285,13 +286,14 @@ exports.getDashboardOverview = async (req, res, next) => {
         ${hasDateFilter ? `,COALESCE(SUM(CASE WHEN "expenseDate" BETWEEN :filterStart AND :filterEnd THEN amount ELSE 0 END), 0) as "filteredExpenses"` : ''}
         ${prevPeriod ? `,COALESCE(SUM(CASE WHEN "expenseDate" BETWEEN :prevStart AND :prevEnd THEN amount ELSE 0 END), 0) as "prevExpenses"` : ''}
       FROM expenses 
-      WHERE "tenantId" = :tenantId AND "approvalStatus" = 'approved' AND "isArchived" = false${expenseShopFrag.sql}
+      WHERE "tenantId" = :tenantId AND "approvalStatus" = 'approved' AND "isArchived" = false${expenseShopFrag.sql}${expenseStudioFrag.sql}
     `, {
       replacements: { 
         tenantId, 
         monthStart: firstDayOfMonth, 
         monthEnd: lastDayOfMonth,
         ...expenseShopFrag.replacements,
+        ...expenseStudioFrag.replacements,
         ...(hasDateFilter ? { filterStart, filterEnd } : {}),
         ...(prevPeriod ? { prevStart: prevPeriod.start, prevEnd: prevPeriod.end } : {})
       },
@@ -817,10 +819,10 @@ exports.getExpensesByCategory = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
         [sequelize.fn('SUM', sequelize.col('amount')), 'totalAmount']
       ],
-      where: applyShopFilter(req, applyTenantFilter(tenantId, {
+      where: applyShopFilter(req, applyStudioLocationFilter(req, applyTenantFilter(tenantId, {
         approvalStatus: 'approved',
         isArchived: false,
-      })),
+      }))),
       group: ['category'],
       order: [[sequelize.fn('SUM', sequelize.col('amount')), 'DESC']]
     });

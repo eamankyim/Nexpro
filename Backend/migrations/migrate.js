@@ -57,6 +57,7 @@ const addPaystackSubaccountToTenants = require('./add-paystack-subaccount-to-ten
 const addSeedingFlagsToTenants = require('./add-seeding-flags-to-tenants');
 const addInvoiceSourceTypes = require('./add-invoice-source-types');
 const addQuoteToInvoiceSourceTypeEnum = require('./add-quote-to-invoice-source-type-enum');
+const normalizeStudioLocationEmptyCodes = require('./normalize-studio-location-empty-codes');
 const addIsDefaultToShops = require('./add-isDefault-to-shops');
 const createUserShops = require('./create-user-shops');
 const addInviteShopStudioMetadata = require('./add-invite-shop-studio-metadata');
@@ -265,6 +266,9 @@ const migrate = async () => {
 
     // Studio locations (multi-branch for studio workspaces)
     await createStudioLocations();
+
+    // Blank codes ('') break partial unique index; normalize before edits
+    await normalizeStudioLocationEmptyCodes();
 
     // End-customer feedback (public form submissions per tenant; needs studio_locations FK)
     await createCustomerFeedbackTable();
