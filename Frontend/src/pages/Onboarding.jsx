@@ -80,7 +80,12 @@ const businessTypes = [
 
 const Onboarding = () => {
   const navigate = useNavigate();
-  const { activeTenant, refreshAuthState, wasInvited, suppressAppGuidance } = useAuth();
+  const {
+    activeTenant,
+    refreshAuthState,
+    shouldRequireOnboarding,
+    loading: authLoading,
+  } = useAuth();
   const queryClient = useQueryClient();
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -89,11 +94,11 @@ const Onboarding = () => {
 
   // Check if onboarding is already completed
   useEffect(() => {
-    const onboardingCompleted = activeTenant?.metadata?.onboarding?.completedAt;
-    if (onboardingCompleted || wasInvited || suppressAppGuidance) {
+    if (authLoading) return;
+    if (!shouldRequireOnboarding) {
       navigate('/dashboard', { replace: true });
     }
-  }, [activeTenant, wasInvited, suppressAppGuidance, navigate]);
+  }, [authLoading, shouldRequireOnboarding, navigate]);
 
   const form = useForm({
     resolver: zodResolver(onboardingSchema),

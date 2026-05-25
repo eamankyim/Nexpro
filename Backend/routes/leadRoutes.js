@@ -16,12 +16,14 @@ const { tenantContext } = require('../middleware/tenant');
 const { exportLimiter } = require('../middleware/rateLimiter');
 
 const { studioLocationContext } = require('../middleware/studioLocationContext');
+const { shopContext } = require('../middleware/shopContext');
 
 const router = express.Router();
 
 router.use(protect);
 router.use(tenantContext);
 router.use(studioLocationContext);
+router.use(shopContext);
 
 router.get('/summary', getLeadSummary);
 router.get('/export', exportLimiter, authorize('admin', 'manager'), exportLeads);

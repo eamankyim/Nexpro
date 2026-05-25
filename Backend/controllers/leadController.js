@@ -11,6 +11,7 @@ const config = require('../config/config');
 const { getPagination } = require('../utils/paginationUtils');
 const activityLogger = require('../services/activityLogger');
 const taskAutomationService = require('../services/taskAutomationService');
+const { invalidateCustomerListCache } = require('../middleware/cache');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const {
   applyStudioLocationFilter,
@@ -332,13 +333,12 @@ exports.updateLead = async (req, res, next) => {
         };
 
         autoCreatedCustomer = await Customer.create(
-          { ...customerPayload, tenantId: req.tenantId },
+          attachScopedToPayload(req, { ...customerPayload, tenantId: req.tenantId }),
           { transaction }
         );
 
         // Set the convertedCustomerId
         sanitized.convertedCustomerId = autoCreatedCustomer.id;
-        sanitized.isActive = false;
 
         // Create activity for conversion
         await LeadActivity.create(
@@ -423,6 +423,9 @@ exports.updateLead = async (req, res, next) => {
     }
 
     await transaction.commit();
+    if (autoCreatedCustomer) {
+      invalidateCustomerListCache(req.tenantId);
+    }
 
     // Fetch updated lead with all includes including activities
     const updatedLead = await Lead.findOne({
@@ -628,8 +631,7 @@ exports.convertLead = async (req, res, next) => {
     await lead.update(
       {
         status: 'converted',
-        convertedCustomerId: customer.id,
-        isActive: false
+        convertedCustomerId: customer.id
       },
       { transaction }
     );
@@ -650,6 +652,7 @@ exports.convertLead = async (req, res, next) => {
     );
 
     await transaction.commit();
+    invalidateCustomerListCache(req.tenantId);
 
     const updatedLead = await Lead.findOne({
       where: applyTenantFilter(req.tenantId, { id: lead.id }),

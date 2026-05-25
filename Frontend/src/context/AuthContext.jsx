@@ -2,6 +2,10 @@ import { createContext, useContext, useState, useEffect, useMemo, useRef } from 
 import { useQueryClient } from '@tanstack/react-query';
 import authService from '../services/authService';
 import { shouldSuppressAppGuidance } from '../utils/appGuidanceEligibility';
+import {
+  isTeamMemberWorkspaceInvite,
+  shouldRequireTenantOnboarding,
+} from '../utils/tenantOnboarding';
 
 const AuthContext = createContext(null);
 
@@ -554,6 +558,22 @@ export const AuthProvider = ({ children }) => {
     [user, activeMembership, activeTenant]
   );
 
+  const shouldRequireOnboarding = useMemo(
+    () =>
+      shouldRequireTenantOnboarding({
+        user,
+        membership: activeMembership,
+        activeTenant,
+        suppressAppGuidance,
+      }),
+    [user, activeMembership, activeTenant, suppressAppGuidance]
+  );
+
+  const isTeamMemberInvite = useMemo(
+    () => isTeamMemberWorkspaceInvite(activeMembership, user),
+    [activeMembership, user]
+  );
+
   // Log core auth state whenever it changes (for redirect debugging)
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -598,6 +618,7 @@ export const AuthProvider = ({ children }) => {
       activeTenant,
       activeFeatureFlags,
       hasFeature,
+      activeMembership,
       tenantRole,
       setActiveTenant,
       refreshAuthState,
@@ -616,10 +637,12 @@ export const AuthProvider = ({ children }) => {
       isPlatformAdmin,
       isFirstLogin,
       wasInvited,
+      isTeamMemberInvite,
       joinedOnlyViaWorkspaceInvite,
       needsEmailVerification,
       shouldCompleteProfile,
       suppressAppGuidance,
+      shouldRequireOnboarding,
     }),
     [
       user,
@@ -628,6 +651,7 @@ export const AuthProvider = ({ children }) => {
       activeTenant,
       activeFeatureFlags,
       hasFeature,
+      activeMembership,
       tenantRole,
       setActiveTenant,
       refreshAuthState,
@@ -644,10 +668,12 @@ export const AuthProvider = ({ children }) => {
       isPlatformAdmin,
       isFirstLogin,
       wasInvited,
+      isTeamMemberInvite,
       joinedOnlyViaWorkspaceInvite,
       needsEmailVerification,
       shouldCompleteProfile,
       suppressAppGuidance,
+      shouldRequireOnboarding,
     ]
   );
 

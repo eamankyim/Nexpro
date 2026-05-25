@@ -4,7 +4,7 @@ const { Op } = require('sequelize');
 const config = require('../config/config');
 const { getPagination } = require('../utils/paginationUtils');
 const { getPreviousPeriodDates, calculateComparison } = require('../utils/periodComparison');
-const { applyShopFilter, getShopSqlFragment, getShopReadSqlFragment } = require('../utils/shopUtils');
+const { applyShopFilter, getShopSqlFragment } = require('../utils/shopUtils');
 const { applyStudioLocationFilter, getStudioLocationSqlFragment } = require('../utils/studioLocationUtils');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { resolveBusinessType } = require('../config/businessTypes');
@@ -214,7 +214,7 @@ exports.getDashboardOverview = async (req, res, next) => {
     const jobStudioFrag = getStudioLocationSqlFragment(req);
     const invoiceStudioFrag = getStudioLocationSqlFragment(req);
     const saleShopFrag = getShopSqlFragment(req);
-    const expenseShopFrag = getShopReadSqlFragment(req);
+    const expenseShopFrag = getShopSqlFragment(req);
     const expenseStudioFrag = getStudioLocationSqlFragment(req);
     const customerCountSql = (baseWhere) =>
       `(SELECT COUNT(*) FROM customers WHERE "tenantId" = :tenantId${customerShopFrag.sql}${customerStudioFrag.sql} AND ${baseWhere})`;

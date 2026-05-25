@@ -142,7 +142,7 @@ const Customers = () => {
   const [refreshingCustomers, setRefreshingCustomers] = useState(false);
   const [savingCustomerSource, setSavingCustomerSource] = useState(false);
   const [filters, setFilters] = useState({
-    isActive: 'true',
+    isActive: 'all',
     howDidYouHear: 'all',
     customerType: 'all', // 'all', 'new', 'returning'
   });
@@ -651,7 +651,7 @@ const Customers = () => {
 
   const handleClearFilters = () => {
     setFilters({
-      isActive: 'true',
+      isActive: 'all',
       howDidYouHear: 'all',
       customerType: 'all',
     });
@@ -659,7 +659,7 @@ const Customers = () => {
   };
 
   const hasActiveFilters =
-    filters.isActive !== 'true' ||
+    filters.isActive !== 'all' ||
     filters.howDidYouHear !== 'all' ||
     filters.customerType !== 'all' ||
     !!debouncedSearchText;

@@ -97,7 +97,15 @@ const Signup = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const token = searchParams.get('token');
   const navigate = useNavigate();
-  const { tenantSignup, register: registerWithAuth, googleAuth, logout, isAuthenticated, user, activeTenant, wasInvited, suppressAppGuidance } = useAuth();
+  const {
+    tenantSignup,
+    register: registerWithAuth,
+    googleAuth,
+    logout,
+    isAuthenticated,
+    user,
+    shouldRequireOnboarding,
+  } = useAuth();
   const { googleClientId } = usePublicConfig();
   const [registeredAsPlatformAdmin, setRegisteredAsPlatformAdmin] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -142,14 +150,13 @@ const Signup = () => {
   useEffect(() => {
     if (token) return;
     if (isAuthenticated && !isSubmitting && !showWelcomeScreen) {
-      const onboardingCompleted = activeTenant?.metadata?.onboarding?.completedAt;
-      if (onboardingCompleted || wasInvited || suppressAppGuidance) {
-        navigate('/dashboard', { replace: true });
-      } else {
+      if (shouldRequireOnboarding) {
         navigate('/onboarding', { replace: true });
+      } else {
+        navigate('/dashboard', { replace: true });
       }
     }
-  }, [token, isAuthenticated, activeTenant, navigate, isSubmitting, showWelcomeScreen, wasInvited, suppressAppGuidance]);
+  }, [token, isAuthenticated, navigate, isSubmitting, showWelcomeScreen, shouldRequireOnboarding]);
 
   const form = useForm({
     resolver: zodResolver(signupSchema),

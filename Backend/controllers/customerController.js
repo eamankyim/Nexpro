@@ -4,16 +4,18 @@ const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const {
   applyStudioLocationFilter,
-  attachStudioLocationToPayload,
 } = require('../utils/studioLocationUtils');
 const {
-  applyScopedFilters,
+  applyShopReadFilter,
   attachScopedToPayload,
   assertShopRecordAccess,
-  getShopSqlFragment,
+  getShopReadSqlFragment,
 } = require('../utils/shopUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateCustomerListCache } = require('../middleware/cache');
+
+const customerReadWhere = (req, extra = {}) =>
+  applyShopReadFilter(req, applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, extra)));
 
 // @desc    Get customer stats (counts for summary cards) – single query, no row fetch
 // @route   GET /api/customers/stats
@@ -30,7 +32,7 @@ exports.getCustomerStats = async (req, res, next) => {
       locationSql = ' AND "studioLocationId" IN (:studioLocationIds)';
       replacements.studioLocationIds = req.allowedStudioLocationIds;
     }
-    const shopFrag = getShopSqlFragment(req);
+    const shopFrag = getShopReadSqlFragment(req);
     locationSql += shopFrag.sql;
     Object.assign(replacements, shopFrag.replacements);
     const [result] = await sequelize.query(
@@ -64,16 +66,31 @@ exports.getCustomers = async (req, res, next) => {
   try {
     const { page, limit, offset } = getPagination(req);
     const search = req.query.search || '';
+    const isActive = req.query.isActive;
+    const howDidYouHear = req.query.howDidYouHear;
 
-    let where = applyScopedFilters(req, applyTenantFilter(req.tenantId, {}));
+    let where = customerReadWhere(req, {});
+    if (isActive !== undefined && isActive !== 'all') {
+      where.isActive = isActive === 'true';
+    }
+    if (howDidYouHear && howDidYouHear !== 'all') {
+      where.howDidYouHear = howDidYouHear;
+    }
     if (search) {
       const term = `%${search}%`;
-      where[Op.or] = [
-        { name: { [Op.iLike]: term } },
-        { company: { [Op.iLike]: term } },
-        { email: { [Op.iLike]: term } },
-        { phone: { [Op.iLike]: term } }
-      ];
+      where = {
+        [Op.and]: [
+          where,
+          {
+            [Op.or]: [
+              { name: { [Op.iLike]: term } },
+              { company: { [Op.iLike]: term } },
+              { email: { [Op.iLike]: term } },
+              { phone: { [Op.iLike]: term } }
+            ]
+          }
+        ]
+      };
     }
 
     const { count, rows } = await Customer.findAndCountAll({
@@ -120,7 +137,7 @@ exports.getCustomers = async (req, res, next) => {
 exports.getCustomer = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({
-      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
+      where: customerReadWhere(req, { id: req.params.id }),
       include: [
         {
           model: Job,
@@ -187,7 +204,7 @@ exports.createCustomer = async (req, res, next) => {
 exports.updateCustomer = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({
-      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
+      where: customerReadWhere(req, { id: req.params.id }),
     });
 
     if (!customer) {
@@ -229,7 +246,7 @@ exports.updateCustomer = async (req, res, next) => {
 exports.deleteCustomer = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({
-      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
+      where: customerReadWhere(req, { id: req.params.id }),
     });
 
     if (!customer) {
@@ -266,7 +283,7 @@ exports.deleteCustomer = async (req, res, next) => {
 exports.addCustomerActivity = async (req, res, next) => {
   try {
     const customer = await Customer.findOne({
-      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, { id: req.params.id })),
+      where: customerReadWhere(req, { id: req.params.id }),
     });
     if (!customer) {
       return res.status(404).json({ success: false, message: 'Customer not found' });
@@ -349,7 +366,7 @@ exports.findOrCreateCustomer = async (req, res, next) => {
     // Try to find existing customer by phone (normalized and raw for backwards compatibility)
     const rawTrimmed = phone.trim().replace(/[\s\-\(\)]/g, '');
     let customer = await Customer.findOne({
-      where: applyScopedFilters(req, applyTenantFilter(req.tenantId, {
+      where: customerReadWhere(req, {
         phone: {
           [Op.or]: [
             { [Op.eq]: normalizedPhone },
@@ -357,7 +374,7 @@ exports.findOrCreateCustomer = async (req, res, next) => {
             { [Op.eq]: phone.trim() }
           ]
         }
-      })),
+      }),
     });
 
     let created = false;

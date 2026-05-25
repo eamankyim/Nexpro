@@ -167,7 +167,7 @@ const Leads = () => {
     priority: 'all',
     source: 'all',
     assignedTo: '',
-    isActive: 'true'
+    isActive: 'all'
   });
   const [leadModalVisible, setLeadModalVisible] = useState(false);
   const [activityModalVisible, setActivityModalVisible] = useState(false);
@@ -1207,7 +1207,7 @@ const Leads = () => {
                   size="sm"
                   className="h-7 text-xs"
                   onClick={() => {
-                    setFilters((prev) => ({ ...prev, isActive: 'true' }));
+                    setFilters((prev) => ({ ...prev, isActive: 'all' }));
                   }}
                 >
                   Reset
@@ -1244,7 +1244,7 @@ const Leads = () => {
                     priority: 'all',
                     source: 'all',
                     assignedTo: 'all',
-                    isActive: 'true'
+                    isActive: 'all'
                   });
                 }}
               >

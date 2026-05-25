@@ -7,6 +7,7 @@ import { GoogleLogin } from '@react-oauth/google';
 import { Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { shouldSuppressAppGuidance } from '../utils/appGuidanceEligibility';
+import { shouldRequireTenantOnboarding } from '../utils/tenantOnboarding';
 import { usePublicConfig } from '../context/PublicConfigContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { showSuccess, showError } from '../utils/toast';
@@ -79,13 +80,15 @@ const Login = () => {
       const memberships = payload?.memberships || [];
       const defaultMembership =
         memberships.find((m) => m.isDefault) || memberships[0] || null;
-      const onboardingCompleted =
-        defaultMembership?.tenant?.metadata?.onboarding?.completedAt;
-      const isInvitedTenantUser = Boolean(defaultMembership?.invitedBy);
       const skipGuidance = shouldSuppressAppGuidance({
         user,
         activeMembership: defaultMembership,
         activeTenant: defaultMembership?.tenant,
+      });
+      const requiresOnboarding = shouldRequireTenantOnboarding({
+        user,
+        membership: defaultMembership,
+        suppressAppGuidance: skipGuidance,
       });
 
       if (user?.isPlatformAdmin) {
@@ -94,7 +97,7 @@ const Login = () => {
         navigate('/checkout', {
           state: { plan: planParam, billingPeriod: billingPeriodParam },
         });
-      } else if (!onboardingCompleted && !isInvitedTenantUser && !skipGuidance) {
+      } else if (requiresOnboarding) {
         navigate('/onboarding');
       } else {
         navigate('/dashboard');
@@ -126,13 +129,15 @@ const Login = () => {
         const memberships = payload?.memberships || [];
         const defaultMembership =
           memberships.find((m) => m.isDefault) || memberships[0] || null;
-        const onboardingCompleted =
-          defaultMembership?.tenant?.metadata?.onboarding?.completedAt;
-        const isInvitedTenantUser = Boolean(defaultMembership?.invitedBy);
         const skipGuidance = shouldSuppressAppGuidance({
           user,
           activeMembership: defaultMembership,
           activeTenant: defaultMembership?.tenant,
+        });
+        const requiresOnboarding = shouldRequireTenantOnboarding({
+          user,
+          membership: defaultMembership,
+          suppressAppGuidance: skipGuidance,
         });
 
         if (user?.isPlatformAdmin) {
@@ -141,7 +146,7 @@ const Login = () => {
           navigate('/checkout', {
             state: { plan: planParam, billingPeriod: billingPeriodParam },
           });
-        } else if (!onboardingCompleted && !isInvitedTenantUser && !skipGuidance) {
+        } else if (requiresOnboarding) {
           navigate('/onboarding');
         } else {
           navigate('/dashboard');
