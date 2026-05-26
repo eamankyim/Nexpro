@@ -19,6 +19,7 @@
     "reset": "node utils/resetForProduction.js",
     "generate-invoices": "node utils/generateMissingInvoices.js",
     "test-reports": "node scripts/test-report-date-filters.js",
+    "import:sulas-products": "node scripts/import-sulas-products.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
