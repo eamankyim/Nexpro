@@ -5,6 +5,7 @@ const {
   getTenantMembershipCacheKey,
   getTenantDefaultCacheKey
 } = require('./cache');
+const { normalizeTenantInstanceForRequest } = require('../utils/tenantClassification');
 
 const resolveTenantId = (req) => {
   const headerTenant =
@@ -109,7 +110,7 @@ const tenantContext = async (req, res, next) => {
     req.tenantId = tenantId;
     req.tenantMembership = membership;
     req.tenantRole = membership.role;
-    req.tenant = membership.tenant || (await membership.getTenant());
+    req.tenant = normalizeTenantInstanceForRequest(membership.tenant || (await membership.getTenant()));
 
     if (req.tenant?.status === 'suspended') {
       return res.status(403).json({

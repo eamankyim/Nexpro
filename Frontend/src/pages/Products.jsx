@@ -287,6 +287,7 @@ const productSchema = z.object({
   name: z.string().min(1, 'Product name is required'),
   sku: z.string().optional(),
   barcode: z.string().optional(),
+  alternateBarcode: z.string().optional(),
   description: z.string().optional(),
   categoryId: z.string().optional(),
   costPrice: numberOrEmpty,
@@ -331,6 +332,13 @@ const productSchema = z.object({
   // Toys
   ageRange: z.string().optional(),
   batteryRequired: z.boolean().optional(),
+}).refine((data) => {
+  const primaryBarcode = data.barcode?.trim();
+  const alternateBarcode = data.alternateBarcode?.trim();
+  return !primaryBarcode || !alternateBarcode || primaryBarcode !== alternateBarcode;
+}, {
+  message: 'Second barcode must be different from the primary barcode',
+  path: ['alternateBarcode'],
 });
 
 const stockAdjustSchema = z.object({
@@ -355,6 +363,51 @@ const parseDecimalInput = (v) => {
   const n = parseFloat(s);
   return Number.isNaN(n) ? undefined : n;
 };
+
+const getProductBarcodeAliases = (product) => {
+  if (!product) return [];
+
+  const primaryBarcode = product.barcode?.trim();
+  const aliases = [];
+  const seen = new Set();
+
+  const addAlias = (value, isActive = true) => {
+    if (!isActive || value === undefined || value === null) return;
+
+    String(value)
+      .split(',')
+      .map((candidate) => candidate.trim())
+      .filter(Boolean)
+      .forEach((candidate) => {
+        if (candidate !== primaryBarcode && !seen.has(candidate)) {
+          seen.add(candidate);
+          aliases.push(candidate);
+        }
+      });
+  };
+
+  addAlias(product.alternateBarcode);
+
+  if (Array.isArray(product.barcodeAliases)) {
+    product.barcodeAliases.forEach((item) => {
+      if (typeof item === 'string') {
+        addAlias(item);
+      } else {
+        addAlias(item?.barcode, item?.isActive !== false);
+      }
+    });
+  }
+
+  if (Array.isArray(product.barcodes)) {
+    product.barcodes.forEach((item) => {
+      addAlias(item?.barcode, item?.isActive !== false);
+    });
+  }
+
+  return aliases;
+};
+
+const getProductAlternateBarcode = (product) => getProductBarcodeAliases(product)[0] || '';
 
 const variantSchema = z.object({
   name: z.string().optional(),
@@ -521,6 +574,7 @@ const Products = () => {
       name: '',
       sku: '',
       barcode: '',
+      alternateBarcode: '',
       description: '',
       categoryId: '',
       costPrice: 0,
@@ -624,6 +678,7 @@ const Products = () => {
       name: v.name,
       sku: v.sku,
       barcode: v.barcode,
+      barcodeAliases: v.alternateBarcode ? [v.alternateBarcode] : undefined,
       description: v.description,
       imageUrl: v.imageUrl,
       costPrice: v.costPrice,
@@ -910,53 +965,69 @@ const Products = () => {
       .catch((error) => console.error('Failed to fetch product details:', error));
   };
 
-  const handleEditProduct = (product) => {
-    setEditingProduct(product);
+  const handleEditProduct = async (product) => {
+    let productForEdit = product;
+
+    if (product?.id && !Array.isArray(product.barcodes) && !Array.isArray(product.barcodeAliases)) {
+      try {
+        const response = await productService.getProductById(product.id);
+        const data = response?.data?.data ?? response?.data ?? response;
+        if (data?.id) {
+          productForEdit = data;
+          setSelectedProduct((prev) => (prev?.id === product.id ? data : prev));
+        }
+      } catch (error) {
+        console.error('Failed to fetch product details for edit:', error);
+      }
+    }
+
+    setEditingProduct(productForEdit);
     
     // Reset form with product data
     form.reset({
-      name: product.name || '',
-      sku: product.sku || '',
-      barcode: product.barcode || '',
-      description: product.description || '',
-      categoryId: product.categoryId ? String(product.categoryId) : '',
-      costPrice: parseFloat(product.costPrice) || 0,
-      sellingPrice: parseFloat(product.sellingPrice) || 0,
-      quantityOnHand: parseFloat(product.quantityOnHand) || 0,
-      reorderLevel: parseFloat(product.reorderLevel) || 0,
-      reorderQuantity: parseFloat(product.reorderQuantity) || 0,
-      unit: product.unit || 'pcs',
-      brand: product.brand || '',
-      supplier: product.supplier || '',
-      hasVariants: product.hasVariants || false,
-      isActive: product.isActive !== false,
-      trackStock: product.trackStock !== false,
-      imageUrl: product.imageUrl || '',
+      name: productForEdit.name || '',
+      sku: productForEdit.sku || '',
+      barcode: productForEdit.barcode || '',
+      alternateBarcode: getProductAlternateBarcode(productForEdit),
+      description: productForEdit.description || '',
+      categoryId: productForEdit.categoryId ? String(productForEdit.categoryId) : '',
+      costPrice: parseFloat(productForEdit.costPrice) || 0,
+      sellingPrice: parseFloat(productForEdit.sellingPrice) || 0,
+      quantityOnHand: parseFloat(productForEdit.quantityOnHand) || 0,
+      reorderLevel: parseFloat(productForEdit.reorderLevel) || 0,
+      reorderQuantity: parseFloat(productForEdit.reorderQuantity) || 0,
+      unit: productForEdit.unit || 'pcs',
+      brand: productForEdit.brand || '',
+      supplier: productForEdit.supplier || '',
+      hasVariants: productForEdit.hasVariants || false,
+      isActive: productForEdit.isActive !== false,
+      trackStock: productForEdit.trackStock !== false,
+      imageUrl: productForEdit.imageUrl || '',
       // Metadata fields
-      expiryDate: product.metadata?.expiryDate || '',
-      batchNumber: product.metadata?.batchNumber || '',
-      isPerishable: product.metadata?.isPerishable || false,
-      serialNumber: product.metadata?.serialNumber || '',
-      warrantyPeriod: product.metadata?.warrantyPeriod || 0,
-      specifications: product.metadata?.specifications || '',
-      dimensions: product.metadata?.dimensions || '',
-      weight: product.metadata?.weight || '',
-      material: product.metadata?.material || '',
-      partNumber: product.metadata?.partNumber || '',
-      compatibility: product.metadata?.compatibility || '',
-      vehicleModels: product.metadata?.vehicleModels || '',
-      isbn: product.metadata?.isbn || '',
-      author: product.metadata?.author || '',
-      publisher: product.metadata?.publisher || '',
-      assemblyRequired: product.metadata?.assemblyRequired || false,
-      allergens: product.metadata?.allergens || '',
-      optionalFoods: product.metadata?.optionalFoods || '',
-      sizes: product.metadata?.sizes || '',
-      colors: product.metadata?.colors || '',
-      models: product.metadata?.models || '',
-      size: product.metadata?.size || '',
-      ageRange: product.metadata?.ageRange || '',
-      batteryRequired: product.metadata?.batteryRequired || false,
+      expiryDate: productForEdit.metadata?.expiryDate || '',
+      batchNumber: productForEdit.metadata?.batchNumber || '',
+      isPerishable: productForEdit.metadata?.isPerishable || false,
+      serialNumber: productForEdit.metadata?.serialNumber || '',
+      warrantyPeriod: productForEdit.metadata?.warrantyPeriod || 0,
+      specifications: productForEdit.metadata?.specifications || '',
+      dimensions: productForEdit.metadata?.dimensions || '',
+      weight: productForEdit.metadata?.weight || '',
+      material: productForEdit.metadata?.material || '',
+      partNumber: productForEdit.metadata?.partNumber || '',
+      compatibility: productForEdit.metadata?.compatibility || '',
+      vehicleModels: productForEdit.metadata?.vehicleModels || '',
+      isbn: productForEdit.metadata?.isbn || '',
+      author: productForEdit.metadata?.author || '',
+      publisher: productForEdit.metadata?.publisher || '',
+      assemblyRequired: productForEdit.metadata?.assemblyRequired || false,
+      allergens: productForEdit.metadata?.allergens || '',
+      optionalFoods: productForEdit.metadata?.optionalFoods || '',
+      sizes: productForEdit.metadata?.sizes || '',
+      colors: productForEdit.metadata?.colors || '',
+      models: productForEdit.metadata?.models || '',
+      size: productForEdit.metadata?.size || '',
+      ageRange: productForEdit.metadata?.ageRange || '',
+      batteryRequired: productForEdit.metadata?.batteryRequired || false,
     });
     
     setFormOpen(true);
@@ -968,6 +1039,7 @@ const Products = () => {
       name: '',
       sku: '',
       barcode: '',
+      alternateBarcode: '',
       description: '',
       categoryId: '',
       costPrice: 0,
@@ -1193,10 +1265,14 @@ const Products = () => {
         }
       });
 
+      const primaryBarcode = values.barcode?.trim() || '';
+      const alternateBarcode = values.alternateBarcode?.trim() || '';
+
       const payload = {
         name: values.name,
         sku: values.sku || undefined,
-        barcode: values.barcode || undefined,
+        barcode: primaryBarcode || undefined,
+        barcodeAliases: alternateBarcode ? [alternateBarcode] : [],
         description: values.description || undefined,
         categoryId: values.categoryId || undefined,
         costPrice: values.costPrice === '' ? 0 : (Number(values.costPrice) ?? 0),
@@ -2706,6 +2782,19 @@ const Products = () => {
                   />
                   <FormField
                     control={form.control}
+                    name="alternateBarcode"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Second barcode (optional)</FormLabel>
+                        <FormControl>
+                          <Input placeholder="Scan or enter second barcode" className="h-10 min-h-[44px] md:min-h-[40px]" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
                     name="brand"
                     render={({ field }) => (
                       <FormItem>
@@ -3306,6 +3395,9 @@ const Products = () => {
                 </DescriptionItem>
                 <DescriptionItem label="Barcode">
                   {selectedProduct.barcode || '-'}
+                </DescriptionItem>
+                <DescriptionItem label="Second barcode">
+                  {getProductAlternateBarcode(selectedProduct) || '-'}
                 </DescriptionItem>
               </Descriptions>
             </DrawerSectionCard>

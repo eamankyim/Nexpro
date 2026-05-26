@@ -17,7 +17,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Checkbox } from '@/components/ui/checkbox';
 import { AlertCircle } from 'lucide-react';
+import {
+  PRIVACY_POLICY_URL,
+  TERMS_ACCEPTANCE_MESSAGE,
+  TERMS_PATH,
+  TERMS_VERSION,
+} from '../constants/legal';
 import { calculatePasswordStrength } from '../utils/passwordStrength';
 import africanWomanImage from '../assets/African focused woman.webp';
 import { AuthBrandMark } from '@/components/AppLogo';
@@ -62,9 +69,44 @@ const formatInviteRole = (role) => {
   return label;
 };
 
+const TermsAcceptanceField = ({ control, isMobile }) => (
+  <FormField
+    control={control}
+    name="acceptedTerms"
+    render={({ field }) => (
+      <FormItem>
+        <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-3">
+          <FormControl>
+            <Checkbox
+              checked={field.value}
+              onCheckedChange={(checked) => field.onChange(Boolean(checked))}
+              className="mt-0.5"
+            />
+          </FormControl>
+          <div className="space-y-1 leading-none">
+            <FormLabel className={`${isMobile ? 'text-xs' : 'text-sm'} font-normal leading-5 text-gray-700`}>
+              I have read and agree to the ABS{' '}
+              <Link to={TERMS_PATH} target="_blank" rel="noreferrer" className="font-medium text-brand hover:underline">
+                Terms and Conditions
+              </Link>{' '}
+              and{' '}
+              <a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer" className="font-medium text-brand hover:underline">
+                Privacy Policy
+              </a>
+              .
+            </FormLabel>
+            <FormMessage />
+          </div>
+        </div>
+      </FormItem>
+    )}
+  />
+);
+
 const signupSchema = z.object({
   name: z.string().min(2, 'Enter your full name'),
   email: z.string().email('Enter a valid email'),
+  acceptedTerms: z.boolean().refine((value) => value === true, TERMS_ACCEPTANCE_MESSAGE),
 });
 
 const passwordSchema = z.object({
@@ -80,6 +122,7 @@ const inviteStep2Schema = z.object({
   name: z.string().min(2, 'Enter your full name'),
   password: z.string().min(6, 'Use at least 6 characters'),
   confirmPassword: z.string().min(6, 'Confirm your password'),
+  acceptedTerms: z.boolean().refine((value) => value === true, TERMS_ACCEPTANCE_MESSAGE),
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ["confirmPassword"],
@@ -163,6 +206,7 @@ const Signup = () => {
     defaultValues: {
       name: '',
       email: '',
+      acceptedTerms: false,
     },
   });
 
@@ -180,6 +224,7 @@ const Signup = () => {
       name: '',
       password: '',
       confirmPassword: '',
+      acceptedTerms: false,
     },
   });
 
@@ -288,7 +333,7 @@ const Signup = () => {
       setCheckingEmail(false);
     }
 
-    setSignupData({ name: trimmedName, email: trimmedEmail });
+    setSignupData({ name: trimmedName, email: trimmedEmail, acceptedTerms: values.acceptedTerms });
     setCurrentStep(2);
   };
 
@@ -305,6 +350,8 @@ const Signup = () => {
         email: inviteData.email,
         password: values.password,
         inviteToken: token,
+        acceptedTerms: values.acceptedTerms,
+        termsVersion: TERMS_VERSION,
       };
       const apiStart = Date.now();
       const response = await registerWithAuth(registerData);
@@ -339,6 +386,8 @@ const Signup = () => {
         adminEmail: signupData.email,
         password: values.password,
         plan: 'trial',
+        acceptedTerms: signupData.acceptedTerms,
+        termsVersion: TERMS_VERSION,
       };
       const apiStart = Date.now();
       await tenantSignup(payload);
@@ -359,6 +408,13 @@ const Signup = () => {
     async (credentialResponse) => {
       const idToken = credentialResponse?.credential;
       if (!idToken) return;
+      if (!form.getValues('acceptedTerms')) {
+        form.setError('acceptedTerms', {
+          type: 'manual',
+          message: TERMS_ACCEPTANCE_MESSAGE,
+        });
+        return;
+      }
       overlayStartTimeRef.current = Date.now();
       setShowWelcomeScreen(true);
       setWelcomeStatus('loading');
@@ -369,6 +425,8 @@ const Signup = () => {
         await googleAuth(idToken, {
           signUp: true,
           companyName: 'My Business',
+          acceptedTerms: true,
+          termsVersion: TERMS_VERSION,
         });
         setRegisteredAsPlatformAdmin(false);
         setWelcomeStatus('success');
@@ -381,7 +439,7 @@ const Signup = () => {
         setIsSubmitting(false);
       }
     },
-    [googleAuth]
+    [form, googleAuth]
   );
 
   const handleGoogleSignupError = useCallback(() => {
@@ -678,6 +736,7 @@ const Signup = () => {
                         </FormItem>
                       )}
                     />
+                    <TermsAcceptanceField control={inviteStep2Form.control} isMobile={isMobile} />
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -752,6 +811,7 @@ const Signup = () => {
                           </FormItem>
                         )}
                       />
+                      <TermsAcceptanceField control={form.control} isMobile={isMobile} />
                       <Button
                         type="submit"
                         className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
@@ -892,25 +952,13 @@ const Signup = () => {
                 </Form>
               )}
 
-              {/* Legal: public signup step 1, or invite form (same page as signup) */}
-              {((currentStep === 1 && !token) ||
-                (token && inviteData && !isAuthenticated && !showWelcomeScreen)) && (
-                <>
-                  <p className="text-xs text-gray-500 mt-6 text-center">
-                    By continuing, you are agreeing to African Business Suite's{' '}
-                    <a href="#" className="text-brand hover:underline">Terms of Service</a>
-                    {' '}and{' '}
-                    <a href="#" className="text-brand hover:underline">Privacy Policy</a>.
-                  </p>
-                  {!token && !inviteData && (
-                    <p className="text-sm text-gray-600 mt-4 text-center">
-                      Already have an account?{' '}
-                      <Link to="/login" className="text-brand hover:underline font-medium">
-                        Sign in here
-                      </Link>
-                    </p>
-                  )}
-                </>
+              {currentStep === 1 && !token && !inviteData && (
+                <p className="text-sm text-gray-600 mt-4 text-center">
+                  Already have an account?{' '}
+                  <Link to="/login" className="text-brand hover:underline font-medium">
+                    Sign in here
+                  </Link>
+                </p>
               )}
             </div>
           </div>

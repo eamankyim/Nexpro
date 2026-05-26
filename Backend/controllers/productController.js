@@ -16,6 +16,130 @@ const {
   userCanAccessShopId,
 } = require('../utils/shopUtils');
 
+const normalizeBarcodeCandidates = (...sources) => {
+  const candidates = [];
+  const seen = new Set();
+
+  const add = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(add);
+      return;
+    }
+    if (value === undefined || value === null) return;
+    String(value)
+      .split(',')
+      .map((candidate) => candidate.trim())
+      .filter(Boolean)
+      .forEach((candidate) => {
+        if (!seen.has(candidate)) {
+          seen.add(candidate);
+          candidates.push(candidate);
+        }
+      });
+  };
+
+  sources.forEach(add);
+  return candidates;
+};
+
+const extractProductAliasBarcodes = (payload = {}) => {
+  const hasAliasPayload =
+    Object.prototype.hasOwnProperty.call(payload, 'barcodeAliases') ||
+    Object.prototype.hasOwnProperty.call(payload, 'alternateBarcode');
+  const aliases = normalizeBarcodeCandidates(payload.barcodeAliases, payload.alternateBarcode);
+  delete payload.barcodeAliases;
+  delete payload.alternateBarcode;
+  return { hasAliasPayload, aliases };
+};
+
+const syncProductAliasBarcodes = async ({ product, tenantId, aliases, transaction }) => {
+  const primaryBarcode = product.barcode ? String(product.barcode).trim() : '';
+  const aliasBarcodes = normalizeBarcodeCandidates(aliases).filter((barcode) => barcode !== primaryBarcode);
+
+  if (aliasBarcodes.length > 0) {
+    const conflictingProduct = await Product.findOne({
+      where: applyTenantFilter(tenantId, {
+        id: { [Op.ne]: product.id },
+        [Op.or]: [
+          { barcode: { [Op.in]: aliasBarcodes } },
+          { sku: { [Op.in]: aliasBarcodes } }
+        ]
+      }),
+      transaction
+    });
+    if (conflictingProduct) {
+      const error = new Error('Alternate barcode is already used by another product');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const conflictingAlias = await Barcode.findOne({
+      where: {
+        tenantId,
+        barcode: { [Op.in]: aliasBarcodes },
+        [Op.or]: [
+          { productId: { [Op.ne]: product.id } },
+          { productId: null },
+          { productVariantId: { [Op.ne]: null } }
+        ]
+      },
+      transaction
+    });
+    if (conflictingAlias) {
+      const error = new Error('Alternate barcode is already used by another product or variant');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  const productAliasWhere = {
+    tenantId,
+    productId: product.id,
+    productVariantId: null
+  };
+  if (aliasBarcodes.length === 0) {
+    await Barcode.destroy({ where: productAliasWhere, transaction });
+    return;
+  }
+
+  await Barcode.destroy({
+    where: {
+      ...productAliasWhere,
+      barcode: { [Op.notIn]: aliasBarcodes }
+    },
+    transaction
+  });
+
+  for (const barcode of aliasBarcodes) {
+    const [record, created] = await Barcode.findOrCreate({
+      where: { tenantId, barcode },
+      defaults: {
+        tenantId,
+        productId: product.id,
+        productVariantId: null,
+        barcode,
+        barcodeType: 'other',
+        isActive: true,
+        metadata: { source: 'product_form', role: 'alternate' }
+      },
+      transaction
+    });
+
+    if (!created) {
+      await record.update({
+        productId: product.id,
+        productVariantId: null,
+        isActive: true,
+        metadata: {
+          ...(record.metadata || {}),
+          source: 'product_form',
+          role: 'alternate'
+        }
+      }, { transaction });
+    }
+  }
+};
+
 async function maybeCreateExpenseFromProductCost({ req, product }) {
   const settingsRow = await Setting.findOne({
     where: {
@@ -418,14 +542,37 @@ exports.deleteProductCategory = async (req, res, next) => {
 // @route   POST /api/products
 // @access  Private
 exports.createProduct = async (req, res, next) => {
+  const transaction = await Product.sequelize.transaction();
+  let transactionFinished = false;
   try {
     const payload = sanitizePayload(
       attachShopToPayload(req, req.body)
     );
+    const { hasAliasPayload, aliases } = extractProductAliasBarcodes(payload);
     const product = await Product.create({
       ...payload,
       tenantId: req.tenantId
-    });
+    }, { transaction });
+
+    if (hasAliasPayload) {
+      await syncProductAliasBarcodes({
+        product,
+        tenantId: req.tenantId,
+        aliases,
+        transaction
+      });
+      await product.reload({
+        include: [
+          { model: Shop, as: 'shop', attributes: ['id', 'name'] },
+          { model: ProductCategory, as: 'category', attributes: ['id', 'name'] },
+          { model: Barcode, as: 'barcodes' }
+        ],
+        transaction
+      });
+    }
+
+    await transaction.commit();
+    transactionFinished = true;
 
     invalidateProductListCache(req.tenantId);
     try {
@@ -438,6 +585,9 @@ exports.createProduct = async (req, res, next) => {
       data: product
     });
   } catch (error) {
+    if (!transactionFinished) {
+      await transaction.rollback();
+    }
     next(error);
   }
 };
@@ -446,12 +596,17 @@ exports.createProduct = async (req, res, next) => {
 // @route   PUT /api/products/:id
 // @access  Private
 exports.updateProduct = async (req, res, next) => {
+  const transaction = await Product.sequelize.transaction();
+  let transactionFinished = false;
   try {
     const product = await Product.findOne({
-      where: applyTenantFilter(req.tenantId, { id: req.params.id })
+      where: applyTenantFilter(req.tenantId, { id: req.params.id }),
+      transaction
     });
 
     if (!product) {
+      await transaction.rollback();
+      transactionFinished = true;
       return res.status(404).json({
         success: false,
         message: 'Product not found'
@@ -468,7 +623,10 @@ exports.updateProduct = async (req, res, next) => {
     }
 
     const payload = sanitizePayload(req.body);
+    const { hasAliasPayload, aliases } = extractProductAliasBarcodes(payload);
     if (payload.shopId && !userCanAccessShopId(req, payload.shopId)) {
+      await transaction.rollback();
+      transactionFinished = true;
       return res.status(403).json({
         success: false,
         message: 'You do not have access to this shop',
@@ -478,15 +636,28 @@ exports.updateProduct = async (req, res, next) => {
     const newQuantity = parseFloat(payload.quantity || oldQuantity);
     const reorderLevel = parseFloat(product.reorderLevel || 0);
     
-    await product.update(payload);
+    await product.update(payload, { transaction });
+    if (hasAliasPayload) {
+      await syncProductAliasBarcodes({
+        product,
+        tenantId: req.tenantId,
+        aliases,
+        transaction
+      });
+    }
     invalidateProductListCache(req.tenantId);
 
     await product.reload({
       include: [
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
-        { model: ProductCategory, as: 'category', attributes: ['id', 'name'] }
-      ]
+        { model: ProductCategory, as: 'category', attributes: ['id', 'name'] },
+        { model: Barcode, as: 'barcodes' }
+      ],
+      transaction
     });
+
+    await transaction.commit();
+    transactionFinished = true;
 
     // Defer low stock alert so response is sent immediately
     if (reorderLevel > 0 && newQuantity <= reorderLevel && newQuantity < oldQuantity) {
@@ -555,6 +726,9 @@ exports.updateProduct = async (req, res, next) => {
       data: product
     });
   } catch (error) {
+    if (!transactionFinished) {
+      await transaction.rollback();
+    }
     next(error);
   }
 };
@@ -602,17 +776,44 @@ exports.deleteProduct = async (req, res, next) => {
 exports.getProductByBarcode = async (req, res, next) => {
   try {
     const { barcode } = req.params;
+    const barcodeCandidates = normalizeBarcodeCandidates(
+      barcode,
+      req.query.candidate,
+      req.query.candidates
+    );
+
+    if (barcodeCandidates.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Barcode is required'
+      });
+    }
+
+    let productWhere = applyTenantFilter(req.tenantId, {
+      [Op.or]: [
+        { barcode: { [Op.in]: barcodeCandidates } },
+        { sku: { [Op.in]: barcodeCandidates } }
+      ]
+    });
+
+    if (req.shopScoped) {
+      productWhere = applyShopReadFilter(req, productWhere);
+    }
     
     const product = await Product.findOne({
-      where: applyTenantFilter(req.tenantId, { barcode })
+      where: productWhere
     });
 
     if (!product) {
       // Try finding by barcode in Barcode table
       const barcodeRecord = await Barcode.findOne({
-        where: { barcode, tenantId: req.tenantId },
+        where: { barcode: { [Op.in]: barcodeCandidates }, tenantId: req.tenantId },
         include: [
-          { model: Product, as: 'product' },
+          {
+            model: Product,
+            as: 'product',
+            ...(req.shopScoped ? { where: applyShopReadFilter(req, {}) } : {})
+          },
           { model: ProductVariant, as: 'productVariant' }
         ]
       });

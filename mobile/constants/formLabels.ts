@@ -17,6 +17,7 @@ export const FORM_LABELS = {
     name: 'Product Name *',
     sku: 'SKU (optional)',
     barcode: 'Barcode (optional)',
+    alternateBarcode: 'Second barcode (optional)',
     sellingPrice: 'Selling Price *',
     costPrice: 'Cost Price (optional)',
     quantityOnHand: 'Quantity on Hand',

@@ -40,6 +40,7 @@ type ProductDetail = {
   name: string;
   sku?: string;
   barcode?: string;
+  barcodes?: Array<{ id?: string; barcode?: string; isActive?: boolean }>;
   sellingPrice: number;
   costPrice?: number;
   quantityOnHand?: number;
@@ -47,6 +48,17 @@ type ProductDetail = {
   imageUrl?: string | null;
   category?: { id: string; name: string };
   isActive?: boolean;
+};
+
+const getAlternateBarcode = (product?: ProductDetail | null) => {
+  if (!product?.barcodes?.length) return '';
+  const primaryBarcode = product.barcode?.trim();
+  return (
+    product.barcodes.find((item) => {
+      const barcode = item.barcode?.trim();
+      return barcode && item.isActive !== false && barcode !== primaryBarcode;
+    })?.barcode?.trim() || ''
+  );
 };
 
 export default function ProductDetailScreen() {
@@ -62,6 +74,7 @@ export default function ProductDetailScreen() {
     name: '',
     sku: '',
     barcode: '',
+    alternateBarcode: '',
     sellingPrice: '',
     costPrice: '',
     quantityOnHand: '',
@@ -81,6 +94,7 @@ export default function ProductDetailScreen() {
       name: product.name || '',
       sku: product.sku || '',
       barcode: product.barcode || '',
+      alternateBarcode: getAlternateBarcode(product),
       sellingPrice: product.sellingPrice?.toString() || '',
       costPrice: product.costPrice?.toString() || '',
       quantityOnHand: product.quantityOnHand?.toString() || '',
@@ -94,6 +108,7 @@ export default function ProductDetailScreen() {
         name: editForm.name.trim(),
         sku: editForm.sku.trim() || undefined,
         barcode: editForm.barcode.trim() || undefined,
+        barcodeAliases: editForm.alternateBarcode.trim() ? [editForm.alternateBarcode.trim()] : [],
         sellingPrice: parseFloat(editForm.sellingPrice),
         costPrice: editForm.costPrice ? parseFloat(editForm.costPrice) : undefined,
         quantityOnHand: editForm.quantityOnHand ? parseFloat(editForm.quantityOnHand) : undefined,
@@ -152,6 +167,12 @@ export default function ProductDetailScreen() {
       Alert.alert('Error', 'Selling price is required');
       return;
     }
+    const primaryBarcode = editForm.barcode.trim();
+    const alternateBarcode = editForm.alternateBarcode.trim();
+    if (primaryBarcode && alternateBarcode && primaryBarcode === alternateBarcode) {
+      Alert.alert('Error', 'Second barcode must be different from the primary barcode');
+      return;
+    }
     updateMutation.mutate();
   }, [editForm, updateMutation]);
 
@@ -179,6 +200,7 @@ export default function ProductDetailScreen() {
           ? '#f59e0b'
           : '#10b981';
   const outOfStock = isProductOutOfStock(product);
+  const alternateBarcode = getAlternateBarcode(product);
 
   return (
     <>
@@ -196,6 +218,7 @@ export default function ProductDetailScreen() {
             <DetailRow label="Name" value={product.name} />
             {product.sku ? <DetailRow label="SKU" value={product.sku} /> : null}
             {product.barcode ? <DetailRow label="Barcode" value={product.barcode} /> : null}
+            {alternateBarcode ? <DetailRow label="Second Barcode" value={alternateBarcode} /> : null}
             {product.costPrice != null ? (
               <DetailRow label="Cost Price" value={formatCurrency(product.costPrice)} />
             ) : null}
@@ -287,6 +310,16 @@ export default function ProductDetailScreen() {
             style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
             value={editForm.barcode}
             onChangeText={(t) => setEditForm((p) => ({ ...p, barcode: t }))}
+          />
+        </View>
+        <View style={styles.formGroup}>
+          <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.product.alternateBarcode}</Text>
+          <TextInput
+            style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+            value={editForm.alternateBarcode}
+            onChangeText={(t) => setEditForm((p) => ({ ...p, alternateBarcode: t }))}
+            autoCapitalize="none"
+            autoCorrect={false}
           />
         </View>
         <View style={styles.formGroup}>

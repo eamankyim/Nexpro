@@ -14,6 +14,7 @@ export type CreateProductPayload = {
   name: string;
   sku?: string;
   barcode?: string;
+  barcodeAliases?: string[];
   description?: string;
   sellingPrice: number;
   costPrice?: number;
@@ -26,6 +27,12 @@ export type CreateProductPayload = {
   imageUrl?: string;
   metadata?: Record<string, unknown>;
 };
+
+const isNotFoundError = (error: unknown) =>
+  typeof error === 'object' &&
+  error !== null &&
+  'response' in error &&
+  (error as { response?: { status?: number } }).response?.status === 404;
 
 export const productService = {
   getProducts: async (params: ProductParams = {}) => {
@@ -41,6 +48,24 @@ export const productService = {
     return res.data;
   },
 
+  getProductByBarcodeCandidates: async (barcodes: string[]) => {
+    const candidates = [...new Set(barcodes.map((barcode) => barcode.trim()).filter(Boolean))];
+    let lastNotFoundError: unknown;
+
+    for (const barcode of candidates) {
+      try {
+        return await productService.getProductByBarcode(barcode);
+      } catch (error) {
+        if (!isNotFoundError(error)) {
+          throw error;
+        }
+        lastNotFoundError = error;
+      }
+    }
+
+    throw lastNotFoundError ?? new Error('Product not found');
+  },
+
   getProductById: async (id: string) => {
     const res = await api.get(`/products/${id}`);
     // Backend returns: { success: true, data: {...} }
@@ -48,7 +73,7 @@ export const productService = {
   },
 
   createProduct: async (data: CreateProductPayload) => {
-    const { metadata, shopId, ...rest } = data;
+    const { metadata, shopId, barcodeAliases, ...rest } = data;
     const scoped = await withActiveShopScope({ ...rest, shopId });
     const res = await api.post('/products', {
       unit: 'pcs',
@@ -58,6 +83,7 @@ export const productService = {
       quantityOnHand: 0,
       reorderLevel: 0,
       ...scoped,
+      ...(barcodeAliases ? { barcodeAliases } : {}),
       ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
     });
     return res.data;
@@ -87,6 +113,7 @@ export const productService = {
     name?: string;
     sku?: string;
     barcode?: string;
+    barcodeAliases?: string[];
     sellingPrice?: number;
     costPrice?: number;
     quantityOnHand?: number;

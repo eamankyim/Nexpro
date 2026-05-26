@@ -48,7 +48,7 @@ import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useDebounce } from '../hooks/useDebounce';
-import { useResponsive } from '../hooks/useResponsive';
+import { useResponsive, useSafeAreaInsets } from '../hooks/useResponsive';
 import customerService from '../services/customerService';
 import settingsService from '../services/settingsService';
 import saleService from '../services/saleService';
@@ -348,6 +348,7 @@ const POS = () => {
   // Scan Mode state
   const [scanModeOpen, setScanModeOpen] = useState(false);
   const { isMobile: isMobileWidth } = useResponsive();
+  const safeAreaInsets = useSafeAreaInsets();
   const [isMobile, setIsMobile] = useState(isMobileWidth);
 
   const { data: activeProductsFromQuery, refetch: refetchActiveProducts, isLoading: productsLoading } = useQuery({
@@ -967,6 +968,14 @@ const POS = () => {
     await saleService.sendReceipt(saleId, options);
   }, []);
 
+  const mobileCheckoutBarPaddingBottom = useMemo(() => {
+    if (!isMobile) return undefined;
+    const safeBottom = Math.max(safeAreaInsets.bottom, 0);
+    // Extra space when safe-area is 0 so browser bottom UI does not cover actions
+    const chromeBuffer = safeBottom > 0 ? 12 : 48;
+    return `calc(0.75rem + ${safeBottom + chromeBuffer}px)`;
+  }, [isMobile, safeAreaInsets.bottom]);
+
   if (!isShop) {
     return (
       <div className="p-4 md:p-6 space-y-4 md:space-y-6">
@@ -1022,10 +1031,10 @@ const POS = () => {
   }
 
   return (
-    <div className="flex flex-col min-h-[calc(100dvh-4rem)] pt-3 pl-3 sm:pt-4 sm:pl-4 md:pt-6 md:pl-6 bg-muted/50">
+    <div className="flex flex-col h-full min-h-0 pt-3 pl-3 sm:pt-4 sm:pl-4 md:pt-6 md:pl-6 bg-muted/50">
       {/* Header */}
       <div
-        className={`mb-4 ${
+        className={`shrink-0 mb-4 ${
           isMobile ? 'flex flex-col gap-3' : 'flex items-center justify-between gap-2'
         }`}
       >
@@ -1211,29 +1220,32 @@ const POS = () => {
         onStayOpenAfterSaleChange={handlePaymentModalStayOpenChange}
       />
 
-      {/* Mobile cart bar */}
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background px-4 pt-2 pb-[calc(env(safe-area-inset-bottom,0px)+16px)] lg:hidden">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex flex-col">
+      {/* Mobile checkout bar — sticky in flex column (not fixed; avoids dialog/viewport clipping) */}
+      <div
+        className="lg:hidden shrink-0 z-20 border-t border-border bg-background px-4 pt-3 -ml-3 sm:-ml-4 md:ml-0 pr-4"
+        style={mobileCheckoutBarPaddingBottom ? { paddingBottom: mobileCheckoutBarPaddingBottom } : undefined}
+      >
+        <div className="flex items-center justify-between gap-3 max-w-full">
+          <div className="flex flex-col min-w-0">
             <span className="text-xs text-muted-foreground">
               {cartTotals.itemCount} item{cartTotals.itemCount !== 1 ? 's' : ''}
             </span>
-            <span className="text-lg font-semibold text-green-700">
+            <span className="text-lg font-semibold text-green-700 truncate">
               {formatAmount(cartTotals.total)}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <Button
               variant="outline"
               size="sm"
-              className="h-10"
+              className="h-11 min-h-[44px]"
               disabled={cart.length === 0}
               onClick={clearCart}
             >
               Clear
             </Button>
             <Button
-              className="h-10 bg-green-700 hover:bg-green-800"
+              className="h-11 min-h-[44px] bg-green-700 hover:bg-green-800"
               disabled={cart.length === 0}
               onClick={handleCheckout}
             >

@@ -2,11 +2,16 @@ const { getAssistantSupportGuide, getPageContextHint } = require('../utils/assis
 const { formatDecimal } = require('../utils/formatNumber');
 const { parseAiJsonResponse } = require('../utils/parseAiJsonResponse');
 const { buildReportAnalysisFallback } = require('../utils/reportAnalysisFallback');
+const { getTenantAnthropicApiKey } = require('./tenantAiSettingsService');
 
 let _anthropic = null;
 
-/** Lazy-init Anthropic client for Claude; null if ANTHROPIC_API_KEY is not set. */
-function getAnthropic() {
+/** Lazy-init system Anthropic client for Claude; tenant keys create isolated clients. */
+function getAnthropic(apiKey) {
+  if (apiKey) {
+    const { Anthropic } = require('@anthropic-ai/sdk');
+    return new Anthropic({ apiKey });
+  }
   if (_anthropic !== null) return _anthropic;
   let key = process.env.ANTHROPIC_API_KEY?.trim();
   if (!key) return null;
@@ -17,9 +22,10 @@ function getAnthropic() {
   return _anthropic;
 }
 
-/** Require Anthropic client; throws if ANTHROPIC_API_KEY is not set. All AI features use Claude. */
-function requireAnthropic() {
-  const client = getAnthropic();
+/** Require Anthropic client; tenant settings override the system env key when present. */
+async function requireAnthropic(options = {}) {
+  const tenantKey = await getTenantAnthropicApiKey(options.tenantId);
+  const client = getAnthropic(tenantKey);
   if (!client) {
     const err = new Error('AI is not configured. Set ANTHROPIC_API_KEY in .env to use AI features.');
     err.code = 'OPENAI_NOT_CONFIGURED';
@@ -208,7 +214,7 @@ Provide your analysis in a structured JSON format with the following keys:
 
 Be specific, actionable, and data-driven. Use the actual numbers from the report in your analysis. Respond with only valid JSON, no other text or markdown.`;
 
-    const anthropic = requireAnthropic();
+    const anthropic = await requireAnthropic({ tenantId: options.tenantId });
     const completion = await anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
       max_tokens: 2000,
@@ -285,7 +291,7 @@ Key metrics:
 
 Write in a professional, executive-friendly tone. Highlight key achievements, challenges, and strategic priorities.`;
 
-    const anthropic = requireAnthropic();
+    const anthropic = await requireAnthropic({ tenantId: options.tenantId });
     const completion = await anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
       max_tokens: 500,
@@ -347,7 +353,7 @@ Formatting rules:
 - Email/SMS drafts: first line \`Subject: ...\`, blank line, then body. Sign with business name and contact when available.
 - Keep replies concise. If data is missing, say what is missing instead of guessing.`;
 
-    const anthropic = requireAnthropic();
+    const anthropic = await requireAnthropic({ tenantId: options.tenantId });
     const claudeMessages = messages.map((m) => ({ role: m.role, content: m.content }));
     const claudeResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-5-20250929',
@@ -363,7 +369,7 @@ Formatting rules:
   }
 };
 
-const draftAutomationRule = async ({ instruction, businessType = 'printing_press', suggestionsContext = {} }) => {
+const draftAutomationRule = async ({ instruction, businessType = 'printing_press', suggestionsContext = {}, tenantId = null }) => {
   const allowedTriggers = ['invoice_due_in_days', 'invoice_overdue', 'low_stock_detected', 'quote_no_response', 'customer_inactive_days'];
   const allowedActions = ['create_task', 'send_email_platform', 'send_sms', 'send_whatsapp'];
   const system = `You draft automation rules for African Business Suite. Return only JSON. Never enable a rule or execute actions. Use only allowed trigger/action values.`;
@@ -388,7 +394,7 @@ Return JSON with this exact shape:
 
 For WhatsApp actions, use template messages only and set "category" to "transactional" unless the user clearly asks for marketing. Use placeholder values like "{{customerName}}", "{{invoiceNumber}}", "{{paymentLink}}" in parameters when appropriate.`;
 
-  const anthropic = requireAnthropic();
+  const anthropic = await requireAnthropic({ tenantId });
   const completion = await anthropic.messages.create({
     model: 'claude-sonnet-4-5-20250929',
     max_tokens: 1200,

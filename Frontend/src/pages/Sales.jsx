@@ -815,7 +815,7 @@ const Sales = () => {
         }}
       >
         <DialogContent
-          className="!left-0 !top-0 !translate-x-0 !translate-y-0 !w-[100vw] !h-[100vh] !max-w-[100vw] !max-h-[100vh] !min-h-0 !p-0 !gap-0 overflow-hidden flex flex-col rounded-none border-0"
+          className="!left-0 !top-0 !translate-x-0 !translate-y-0 !w-[100vw] !h-[100dvh] !max-w-[100vw] !max-h-[100dvh] !min-h-0 !p-0 !gap-0 overflow-hidden flex flex-col rounded-none border-0"
           aria-describedby={undefined}
         >
           <DialogTitle className="sr-only">Point of Sale</DialogTitle>

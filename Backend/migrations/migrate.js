@@ -46,6 +46,7 @@ const addStartDateToUserTasks = require('./add-startDate-to-user-tasks');
 const createTenantAccessAudits = require('./create-tenant-access-audits');
 const createAutomationsTables = require('./create-automations-tables');
 const normalizeTenantPlansToTrial = require('./normalize-tenant-plans-to-trial');
+const backfillTenantBusinessClassificationDefaults = require('./backfill-tenant-business-classification-defaults');
 const addDeliveryStatusToJobsAndSales = require('./add-delivery-status-to-jobs-and-sales');
 const addDeliveryRequiredToJobs = require('./add-delivery-required-to-jobs');
 const addSalesTenantSoldByCreatedIndex = require('./add-sales-tenant-soldby-created-index');
@@ -239,6 +240,9 @@ const migrate = async () => {
 
     // Normalize all tenant plan values to canonical trial
     await normalizeTenantPlansToTrial.up({ closeConnection: false });
+
+    // Default missing tenant business/shop/studio classification fields
+    await backfillTenantBusinessClassificationDefaults({ closeConnection: false });
 
     // First-party delivery tracking (jobs + sales)
     await addDeliveryStatusToJobsAndSales();

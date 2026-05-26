@@ -24,6 +24,11 @@ const { normalizeTaskAutomation } = require('../utils/taskAutomationConfig');
 const { getCustomerSourceOptions } = require('../config/customerSourceOptions');
 const { getLeadSourceOptions } = require('../config/leadSourceOptions');
 const { notifyDataDeletionRequested } = require('../services/platformAdminNotificationService');
+const {
+  DEFAULT_SHOP_TYPE,
+  normalizeTenantClassification,
+  normalizeTenantInstanceForRequest,
+} = require('../utils/tenantClassification');
 const { sequelize } = require('../config/database');
 const { Op } = require('sequelize');
 
@@ -162,7 +167,7 @@ const buildPublicUrl = (storagePath) => `/uploads/${storagePath.replace(/\\/g, '
 // @access  Private
 exports.getCustomerSources = async (req, res, next) => {
   try {
-    const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
+    const tenant = normalizeTenantInstanceForRequest(req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant()));
     const businessType = tenant?.businessType || 'shop';
     const metadata = tenant?.metadata || {};
     const options = getCustomerSourceOptions(businessType, metadata);
@@ -177,7 +182,7 @@ exports.getCustomerSources = async (req, res, next) => {
 // @access  Private
 exports.getLeadSources = async (req, res, next) => {
   try {
-    const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
+    const tenant = normalizeTenantInstanceForRequest(req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant()));
     const businessType = tenant?.businessType || 'shop';
     const metadata = tenant?.metadata || {};
     const options = getLeadSourceOptions(businessType, metadata);
@@ -380,37 +385,8 @@ exports.getOrganizationSettings = async (req, res, next) => {
     const organizationSettings = await getSettingValue(req.tenantId, 'organization', {});
     
     // Get tenant data (name, metadata with email, phone, website)
-    const tenant = await Tenant.findByPk(req.tenantId);
-    let tenantMetadata = tenant?.metadata || {};
-
-    // Lazy-migrate businessSubType for existing tenants
-    if (tenant && !tenantMetadata.businessSubType) {
-      let inferredSubType = tenantMetadata.shopType || null;
-
-      if (!inferredSubType) {
-        if (tenant.businessType === 'shop') {
-          inferredSubType = 'provision_store';
-        } else if (tenant.businessType === 'printing_press') {
-          inferredSubType = 'printing_press';
-        } else if (tenant.businessType === 'pharmacy') {
-          inferredSubType = 'community_pharmacy';
-        }
-      }
-
-      if (inferredSubType) {
-        tenantMetadata = {
-          ...tenantMetadata,
-          businessSubType: inferredSubType
-        };
-        tenant.metadata = tenantMetadata;
-        await tenant.save();
-        console.log(
-          '[settings] getOrganizationSettings inferred businessSubType=%s for tenantId=%s',
-          inferredSubType,
-          req.tenantId
-        );
-      }
-    }
+    const tenant = normalizeTenantClassification(await Tenant.findByPk(req.tenantId));
+    const tenantMetadata = tenant?.metadata || {};
     
     // Merge tenant data with organization settings
     // Priority: Settings model > Tenant model
@@ -439,8 +415,8 @@ exports.getOrganizationSettings = async (req, res, next) => {
       address: organizationSettings.address || {},
       tax: normalizeTaxConfig(organizationSettings.tax || {}),
       taskAutomation: normalizeTaskAutomation(organizationSettings.taskAutomation || {}),
-      businessType: tenant?.businessType || 'printing_press',
-      shopType: tenantMetadata.businessSubType || tenantMetadata.shopType || '',
+      businessType: tenant?.businessType || 'shop',
+      shopType: tenant?.businessType === 'shop' ? (tenantMetadata.shopType || DEFAULT_SHOP_TYPE) : '',
       appName: organizationSettings.appName || '',
       primaryColor: organizationSettings.primaryColor || ''
     };
@@ -464,7 +440,7 @@ exports.updateOrganizationSettings = async (req, res, next) => {
     const existing = await getSettingValue(req.tenantId, 'organization', {});
     console.log('🔵 [Backend] Existing Settings from DB:', JSON.stringify(existing, null, 2));
 
-    const tenant = await Tenant.findByPk(req.tenantId);
+    const tenant = normalizeTenantInstanceForRequest(await Tenant.findByPk(req.tenantId));
     const isEnterprise = tenant?.plan === 'enterprise';
     let incoming = sanitizePayload(req.body || {});
     if (!isEnterprise) {
@@ -690,8 +666,10 @@ exports.updateOrganizationSettings = async (req, res, next) => {
       address: (updated && updated.address) ? updated.address : {},
       tax: normalizeTaxConfig(updated?.tax || {}),
       taskAutomation: normalizeTaskAutomation(updated?.taskAutomation || {}),
-      businessType: tenant?.businessType || 'printing_press',
-      shopType: tenant?.metadata?.shopType || '',
+      businessType: tenant?.businessType || 'shop',
+      shopType: tenant?.businessType === 'shop'
+        ? (tenant?.metadata?.shopType || tenant?.metadata?.businessSubType || DEFAULT_SHOP_TYPE)
+        : '',
       appName: (updated && updated.hasOwnProperty('appName')) ? updated.appName : '',
       primaryColor: (updated && updated.hasOwnProperty('primaryColor')) ? updated.primaryColor : ''
     };
@@ -858,6 +836,70 @@ exports.updatePayrollSettings = async (req, res, next) => {
       sanitizePayload(req.body || {})
     );
     res.status(200).json({ success: true, data: updated });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get tenant AI settings (masked)
+// @route   GET /api/settings/ai
+// @access  Private
+exports.getAISettings = async (req, res, next) => {
+  try {
+    const { getTenantAiSettingsSummary } = require('../services/tenantAiSettingsService');
+    const summary = await getTenantAiSettingsSummary(req.tenantId);
+
+    res.status(200).json({
+      success: true,
+      data: summary
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Save tenant AI API key override
+// @route   PUT /api/settings/ai
+// @access  Private (admin, manager)
+exports.updateAISettings = async (req, res, next) => {
+  try {
+    const { saveTenantAiApiKey } = require('../services/tenantAiSettingsService');
+    const { apiKey } = sanitizePayload(req.body || {});
+    const summary = await saveTenantAiApiKey({
+      tenantId: req.tenantId,
+      apiKey,
+      userId: req.user?.id
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'AI API key saved for this workspace.',
+      data: summary
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message
+      });
+    }
+    next(error);
+  }
+};
+
+// @desc    Remove tenant AI API key override
+// @route   DELETE /api/settings/ai
+// @access  Private (admin, manager)
+exports.deleteAISettings = async (req, res, next) => {
+  try {
+    const { clearTenantAiApiKey } = require('../services/tenantAiSettingsService');
+    const summary = await clearTenantAiApiKey(req.tenantId);
+
+    res.status(200).json({
+      success: true,
+      message: 'Workspace AI key removed. AI features will use the system default when configured.',
+      data: summary
+    });
   } catch (error) {
     next(error);
   }

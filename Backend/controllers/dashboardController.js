@@ -8,6 +8,7 @@ const { applyShopFilter, getShopSqlFragment } = require('../utils/shopUtils');
 const { applyStudioLocationFilter, getStudioLocationSqlFragment } = require('../utils/studioLocationUtils');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { resolveBusinessType } = require('../config/businessTypes');
+const { normalizeTenantClassification } = require('../utils/tenantClassification');
 
 const logDashboardDebug = (...args) => {
   if (config.nodeEnv === 'development') {
@@ -71,7 +72,7 @@ exports.invalidateTenantCache = invalidateTenantCache;
  * Build a safe empty dashboard payload (for first-time users or when queries fail).
  * Ensures GET /dashboard/overview never returns 500 for "no data" or transient errors.
  */
-function buildEmptyOverviewPayload(tenantId, businessType = 'printing_press', startDate = null, endDate = null) {
+function buildEmptyOverviewPayload(tenantId, businessType = 'shop', startDate = null, endDate = null) {
   const now = new Date();
   const rangeStart = startDate ? new Date(startDate) : new Date(now.getFullYear(), now.getMonth(), 1);
   const rangeEnd = endDate ? new Date(endDate) : new Date(now.getFullYear(), now.getMonth() + 1, 0);
@@ -150,13 +151,13 @@ exports.getDashboardOverview = async (req, res, next) => {
     });
   }
 
-  let businessType = 'printing_press';
+  let businessType = 'shop';
   try {
     // Get tenant business type (non-throwing: use default on failure)
-    const tenant = await Tenant.findByPk(tenantId, {
-      attributes: ['id', 'businessType', 'name']
-    });
-    businessType = tenant?.businessType || 'printing_press';
+    const tenant = normalizeTenantClassification(await Tenant.findByPk(tenantId, {
+      attributes: ['id', 'businessType', 'name', 'metadata']
+    }));
+    businessType = tenant?.businessType || 'shop';
   } catch (err) {
     if (config.nodeEnv === 'development') console.warn('[Dashboard] Tenant lookup failed:', err?.message);
   }

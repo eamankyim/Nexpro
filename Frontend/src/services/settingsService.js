@@ -99,6 +99,21 @@ const getPOSConfig = async () => api.get('/settings/pos-config');
 
 const updatePOSConfig = async (payload) => api.put('/settings/pos-config', payload);
 
+const getAISettings = async () => {
+  const res = await api.get('/settings/ai');
+  return res?.data?.data ?? res?.data ?? res;
+};
+
+const updateAISettings = async (payload) => {
+  const res = await api.put('/settings/ai', payload);
+  return res?.data?.data ?? res?.data ?? res;
+};
+
+const deleteAISettings = async () => {
+  const res = await api.delete('/settings/ai');
+  return res?.data?.data ?? res?.data ?? res;
+};
+
 const getCustomerSources = async () => {
   const res = await api.get('/settings/customer-sources');
   return res?.data ?? [];
@@ -194,6 +209,9 @@ export default {
   verifySubscriptionPayment,
   getPOSConfig,
   updatePOSConfig,
+  getAISettings,
+  updateAISettings,
+  deleteAISettings,
   getCustomerSources,
   getLeadSources,
   getNotificationChannels,

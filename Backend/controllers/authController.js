@@ -16,6 +16,16 @@ const { seedDefaultCategories, seedDefaultEquipmentCategories } = require('../ut
 const { seedDefaultChartOfAccounts } = require('../utils/seedAccountingAccounts');
 const { resolveBusinessType } = require('../config/businessTypes');
 const { getTenantEffectiveEntitlements } = require('../utils/tenantEntitlements');
+const {
+  DEFAULT_SHOP_TYPE,
+  normalizeMembershipForResponse,
+  normalizeTenantClassification,
+} = require('../utils/tenantClassification');
+const {
+  TERMS_ACCEPTANCE_REQUIRED_MESSAGE,
+  buildTermsAcceptanceMetadata,
+  isTermsAccepted,
+} = require('../utils/legalTerms');
 
 /** User defaultScope omits emailVerifiedAt; auth responses must include it for verify-email UI. */
 const findUserForAuthResponse = (userId, options = {}) =>
@@ -75,6 +85,9 @@ const toPlainJsonSafe = (value) => {
   );
 };
 
+const normalizeMembershipsForResponse = (memberships = []) =>
+  (memberships || []).map((membership) => normalizeMembershipForResponse(membership));
+
 /**
  * @desc    Check if an email is already registered
  * @route   POST /api/auth/check-email
@@ -113,13 +126,20 @@ exports.checkEmailAvailability = async (req, res, next) => {
 // @access  Public
 exports.register = async (req, res, next) => {
   try {
-    const { name, email, password, role, inviteToken } = req.body;
+    const { name, email, password, role, inviteToken, acceptedTerms, termsVersion } = req.body;
 
     // Validate required fields
     if (!name || !email || !password) {
       return res.status(400).json({
         success: false,
         message: 'Please provide name, email, and password'
+      });
+    }
+
+    if (!isTermsAccepted(acceptedTerms)) {
+      return res.status(400).json({
+        success: false,
+        message: TERMS_ACCEPTANCE_REQUIRED_MESSAGE,
       });
     }
 
@@ -175,6 +195,10 @@ exports.register = async (req, res, next) => {
     }
 
     const normalizedInviteType = String(invite.inviteType || '').trim().toLowerCase();
+    const termsAcceptance = buildTermsAcceptanceMetadata(req, {
+      source: `invite_signup:${normalizedInviteType || 'tenant'}`,
+      termsVersion,
+    });
 
     // new_tenant invites use tenantId null — must run before the legacy rule that treats
     // any null tenantId as platform-admin signup.
@@ -185,7 +209,11 @@ exports.register = async (req, res, next) => {
       try {
         const slug = await generateUniqueSlug(trimmedCompanyName, transaction);
         const trialEndDate = dayjs().add(1, 'month').toDate();
-        const metadata = { signupSource: 'admin_invite' };
+        const metadata = {
+          signupSource: 'admin_invite',
+          shopType: DEFAULT_SHOP_TYPE,
+          termsAcceptance,
+        };
 
         const tenant = await Tenant.create(
           {
@@ -222,6 +250,9 @@ exports.register = async (req, res, next) => {
             invitedBy: invite.createdBy,
             invitedAt: invite.createdAt,
             joinedAt: new Date(),
+            metadata: {
+              termsAcceptance,
+            },
           },
           { transaction }
         );
@@ -267,7 +298,15 @@ exports.register = async (req, res, next) => {
         );
 
         await invite.update(
-          { used: true, usedAt: new Date(), usedBy: user.id },
+          {
+            used: true,
+            usedAt: new Date(),
+            usedBy: user.id,
+            metadata: {
+              ...(invite.metadata || {}),
+              termsAcceptance,
+            },
+          },
           { transaction }
         );
 
@@ -317,7 +356,7 @@ exports.register = async (req, res, next) => {
           data: {
             user,
             token,
-            memberships,
+            memberships: normalizeMembershipsForResponse(memberships),
             defaultTenantId: tenant.id,
           },
         });
@@ -356,7 +395,11 @@ exports.register = async (req, res, next) => {
       await invite.update({
         used: true,
         usedAt: new Date(),
-        usedBy: user.id
+        usedBy: user.id,
+        metadata: {
+          ...(invite.metadata || {}),
+          termsAcceptance,
+        },
       });
 
       const token = generateToken(user.id);
@@ -421,7 +464,10 @@ exports.register = async (req, res, next) => {
       isDefault: existingMembershipCount === 0,
       invitedBy: invite.createdBy,
       invitedAt: invite.createdAt,
-      joinedAt: new Date()
+      joinedAt: new Date(),
+      metadata: {
+        termsAcceptance,
+      },
     });
 
     const inviteLocationIds = invite.metadata?.studioLocationIds;
@@ -447,7 +493,11 @@ exports.register = async (req, res, next) => {
     await invite.update({
       used: true,
       usedAt: new Date(),
-      usedBy: user.id
+      usedBy: user.id,
+      metadata: {
+        ...(invite.metadata || {}),
+        termsAcceptance,
+      },
     });
 
     const token = generateToken(user.id);
@@ -493,7 +543,7 @@ exports.register = async (req, res, next) => {
       data: {
         user,
         token,
-        memberships,
+        memberships: normalizeMembershipsForResponse(memberships),
         defaultTenantId: memberships[0]?.tenantId || null
       }
     });
@@ -624,7 +674,7 @@ exports.login = async (req, res, next) => {
       data: {
         user: userForResponse,
         token,
-        memberships,
+        memberships: normalizeMembershipsForResponse(memberships),
         defaultTenantId: memberships[0]?.tenantId || null
       }
     });
@@ -652,7 +702,14 @@ exports.googleAuth = async (req, res, next) => {
       });
     }
 
-    const { idToken, signUp = false, businessType = 'shop', companyName } = req.body || {};
+    const {
+      idToken,
+      signUp = false,
+      businessType = 'shop',
+      companyName,
+      acceptedTerms,
+      termsVersion,
+    } = req.body || {};
     if (!idToken) {
       return res.status(400).json({
         success: false,
@@ -722,7 +779,7 @@ exports.googleAuth = async (req, res, next) => {
         data: {
           user: updatedUser.toJSON ? updatedUser.toJSON() : updatedUser,
           token,
-          memberships,
+          memberships: normalizeMembershipsForResponse(memberships),
           defaultTenantId: memberships[0]?.tenantId || null,
         },
       });
@@ -735,6 +792,13 @@ exports.googleAuth = async (req, res, next) => {
         message: 'No account found with this Google account. Sign up to create one.',
         email,
         name,
+      });
+    }
+
+    if (!isTermsAccepted(acceptedTerms)) {
+      return res.status(400).json({
+        success: false,
+        message: TERMS_ACCEPTANCE_REQUIRED_MESSAGE,
       });
     }
 
@@ -758,9 +822,16 @@ exports.googleAuth = async (req, res, next) => {
       finalBusinessType = resolveBusinessType(businessType);
       metadata = {
         signupSource: 'google_oauth',
+        termsAcceptance: buildTermsAcceptanceMetadata(req, {
+          source: 'google_oauth_signup',
+          termsVersion,
+        }),
       };
       if (['printing_press', 'mechanic', 'barber', 'salon'].includes(businessType)) {
         metadata.studioType = businessType;
+      }
+      if (finalBusinessType === 'shop' && !metadata.shopType) {
+        metadata.shopType = DEFAULT_SHOP_TYPE;
       }
 
       tenant = await Tenant.create(
@@ -800,6 +871,9 @@ exports.googleAuth = async (req, res, next) => {
           invitedBy: null,
           invitedAt: new Date(),
           joinedAt: new Date(),
+          metadata: {
+            termsAcceptance: metadata.termsAcceptance,
+          },
         },
         { transaction }
       );
@@ -895,7 +969,7 @@ exports.googleAuth = async (req, res, next) => {
       data: {
         user: user.toJSON ? user.toJSON() : user,
         token,
-        memberships,
+        memberships: normalizeMembershipsForResponse(memberships),
         defaultTenantId: memberships[0]?.tenantId || null,
       },
     });
@@ -969,10 +1043,10 @@ exports.getMe = async (req, res, next) => {
     for (const membership of memberships) {
       if (!membership?.tenant) continue;
       try {
-        const entitlements = await getTenantEffectiveEntitlements(membership.tenant, {
+        const tenantJson = normalizeTenantClassification(membership.tenant);
+        const entitlements = await getTenantEffectiveEntitlements(tenantJson, {
           logContext: `getMe:user=${req.user.id}`,
         });
-        const tenantJson = membership.tenant.toJSON ? membership.tenant.toJSON() : membership.tenant;
         tenantFeatureMap[String(membership.tenantId)] = {
           ...tenantJson,
           effectiveFeatureFlags: entitlements.effectiveFeatureFlags || {}
@@ -2096,7 +2170,7 @@ exports.sabitoSSO = async (req, res, next) => {
         data: {
           user,
           token,
-          memberships,
+          memberships: normalizeMembershipsForResponse(memberships),
           defaultTenantId: memberships[0]?.tenantId || null
         }
       });

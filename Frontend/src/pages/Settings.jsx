@@ -302,6 +302,8 @@ const Settings = () => {
   const [organizationLogoPreview, setOrganizationLogoPreview] = useState('');
   const [organizationEditing, setOrganizationEditing] = useState(false);
   const [emailEditing, setEmailEditing] = useState(false);
+  const [aiApiKey, setAiApiKey] = useState('');
+  const [showAiApiKey, setShowAiApiKey] = useState(false);
   const [showSmtpPassword, setShowSmtpPassword] = useState(false);
   const [organizationLogoPreviewVisible, setOrganizationLogoPreviewVisible] = useState(false);
   const [organizationLogoUploading, setOrganizationLogoUploading] = useState(false);
@@ -576,6 +578,15 @@ const Settings = () => {
     queryKey: ['settings', 'pos-config'],
     queryFn: settingsService.getPOSConfig,
     enabled: canManageOrganization
+  });
+
+  const {
+    data: aiSettingsData,
+    isLoading: loadingAISettings
+  } = useQuery({
+    queryKey: ['settings', 'ai', activeTenant?.id],
+    queryFn: settingsService.getAISettings,
+    enabled: canManageOrganization && !!activeTenant?.id
   });
 
   const {
@@ -1176,6 +1187,34 @@ const Settings = () => {
     },
   });
 
+  const updateAISettingsMutation = useMutation({
+    mutationFn: settingsService.updateAISettings,
+    onSuccess: () => {
+      dismissSavingToast();
+      showSuccess('AI API key saved');
+      setAiApiKey('');
+      setShowAiApiKey(false);
+      queryClient.invalidateQueries({ queryKey: ['settings', 'ai', activeTenant?.id] });
+    },
+    onError: (error) => {
+      dismissSavingToast();
+      showError(error, error?.response?.data?.message || 'Failed to save AI API key');
+    }
+  });
+
+  const deleteAISettingsMutation = useMutation({
+    mutationFn: settingsService.deleteAISettings,
+    onSuccess: () => {
+      showSuccess('AI API key removed');
+      setAiApiKey('');
+      setShowAiApiKey(false);
+      queryClient.invalidateQueries({ queryKey: ['settings', 'ai', activeTenant?.id] });
+    },
+    onError: (error) => {
+      showError(error, error?.response?.data?.message || 'Failed to remove AI API key');
+    }
+  });
+
   const onProfileSubmit = async (values) => {
     const payload = {
       name: values.name,
@@ -1438,6 +1477,20 @@ const Settings = () => {
     };
     savingToastDismissRef.current = showLoading('Saving...');
     updatePOSConfigMutation.mutate(payload);
+  };
+
+  const handleSaveAISettings = () => {
+    const trimmedKey = aiApiKey.trim();
+    if (!trimmedKey) {
+      showError(null, 'Enter your Anthropic API key');
+      return;
+    }
+    savingToastDismissRef.current = showLoading('Saving...');
+    updateAISettingsMutation.mutate({ apiKey: trimmedKey });
+  };
+
+  const handleRemoveAISettings = () => {
+    deleteAISettingsMutation.mutate();
   };
 
   /** Build config for email test from form values. Returns null and shows error if validation fails. */
@@ -4331,6 +4384,115 @@ const Settings = () => {
   const sendPaymentReminderEmail = notificationChannels.sendPaymentReminderEmail === true;
   const sendInvoicePaidConfirmationToCustomer = notificationChannels.sendInvoicePaidConfirmationToCustomer !== false;
 
+  const aiSettings = aiSettingsData || {};
+  const aiSourceText = aiSettings.source === 'tenant'
+    ? 'Workspace key'
+    : aiSettings.source === 'system'
+      ? 'System default'
+      : 'Not configured';
+
+  const aiSettingsTab = canManageOrganization ? (
+    <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
+      <CardHeader className="p-0 md:p-6 pb-2 md:pb-6">
+        <CardTitle className="text-base md:text-2xl flex items-center gap-2">
+          <Lightbulb className="h-5 w-5" />
+          AI Settings
+        </CardTitle>
+        <CardDescription className="text-xs md:text-sm mt-1">
+          Add a workspace Anthropic API key for AI assistant, smart report, and automation drafting. If no key is saved, ABS uses the system default when available.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0 md:p-6 pt-0 space-y-4">
+        {loadingAISettings ? (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <>
+            {aiSettings.encryptionConfigured === false ? (
+              <Alert variant="destructive">
+                <AlertTitle>Server encryption key required</AlertTitle>
+                <AlertDescription>
+                  Set <code className="text-xs">AI_CREDENTIALS_ENCRYPTION_KEY</code> to a 64-character hex value before saving workspace AI keys.
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            <Alert>
+              <AlertTitle>Active AI source: {aiSourceText}</AlertTitle>
+              <AlertDescription>
+                {aiSettings.apiKeyConfigured ? (
+                  <>This workspace key is saved as <strong>{aiSettings.apiKeyMasked || '••••'}</strong> and overrides the system default.</>
+                ) : aiSettings.systemConfigured ? (
+                  <>No workspace key is saved. AI features use the system default Anthropic key.</>
+                ) : (
+                  <>No workspace or system key is configured. AI features will stay unavailable until one is added.</>
+                )}
+              </AlertDescription>
+            </Alert>
+            <div className="space-y-2">
+              <Label htmlFor="ai-api-key">Anthropic API key</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="ai-api-key"
+                  name="ai-api-key"
+                  type={showAiApiKey ? 'text' : 'password'}
+                  autoComplete="off"
+                  value={aiApiKey}
+                  onChange={(e) => setAiApiKey(e.target.value)}
+                  placeholder={aiSettings.apiKeyConfigured ? 'Enter a new key to replace the saved key' : 'sk-ant-api03-...'}
+                  data-form-type="other"
+                  data-lpignore="true"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={() => setShowAiApiKey((value) => !value)}
+                  aria-label={showAiApiKey ? 'Hide AI API key' : 'Show AI API key'}
+                >
+                  {showAiApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The key is encrypted before storage and is never shown again after saving.
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleRemoveAISettings}
+                disabled={!aiSettings.apiKeyConfigured || deleteAISettingsMutation.isPending}
+              >
+                {deleteAISettingsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : <Trash2 className="h-4 w-4 mr-2" />}
+                Remove workspace key
+              </Button>
+              <Button
+                type="button"
+                onClick={handleSaveAISettings}
+                disabled={updateAISettingsMutation.isPending || aiSettings.encryptionConfigured === false}
+              >
+                {updateAISettingsMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                Save AI key
+              </Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </ShadcnCard>
+  ) : (
+    <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
+      <CardContent className="p-0 md:pt-6 md:px-6">
+        <Alert variant="destructive" className="py-2 px-3 md:py-4 md:px-4">
+          <AlertTitle>Access Restricted</AlertTitle>
+          <AlertDescription>
+            You need admin or manager permissions to configure AI settings.
+          </AlertDescription>
+        </Alert>
+      </CardContent>
+    </ShadcnCard>
+  );
+
   const configurationsTab = canManageOrganization ? (
     <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
       <CardHeader className="p-0 md:p-6 pb-2 md:pb-6">
@@ -5984,7 +6146,12 @@ const Settings = () => {
             {appearanceTab}
           </div>
         </TabsContent>
-        <TabsContent value="operations">{configurationsTab}</TabsContent>
+        <TabsContent value="operations">
+          <div className="space-y-4 md:space-y-6">
+            {aiSettingsTab}
+            {configurationsTab}
+          </div>
+        </TabsContent>
         <TabsContent value="billing">
           <div className="space-y-4 md:space-y-6">
             {subscriptionTab}

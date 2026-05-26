@@ -11,6 +11,9 @@ const {
   updateSubscriptionSettings,
   getPayrollSettings,
   updatePayrollSettings,
+  getAISettings,
+  updateAISettings,
+  deleteAISettings,
   getWhatsAppSettings,
   updateWhatsAppSettings,
   testWhatsAppConnection,
@@ -113,6 +116,12 @@ router
   .route('/payroll')
   .get(getPayrollSettings)
   .put(authorize('admin', 'manager'), updatePayrollSettings);
+
+router
+  .route('/ai')
+  .get(getAISettings)
+  .put(authorize('admin', 'manager'), updateAISettings)
+  .delete(authorize('admin', 'manager'), deleteAISettings);
 
 router
   .route('/whatsapp')

@@ -95,13 +95,17 @@ const BUSINESS_TYPE_FEATURES = {
 
 // Legacy: map old businessType values to new (for tenants not yet migrated)
 const LEGACY_TO_STUDIO = ['printing_press', 'mechanic', 'barber', 'salon'];
+const DEFAULT_BUSINESS_TYPE = 'shop';
+const DEFAULT_SHOP_TYPE = 'other';
 
 /** Shop types that hide Quotes (aligned with web/mobile QUOTES_HIDDEN_SHOP_TYPES). */
 const QUOTES_HIDDEN_SHOP_TYPES = ['restaurant'];
 
 const getTenantShopType = (tenant) => {
   const metadata = tenant?.metadata && typeof tenant.metadata === 'object' ? tenant.metadata : {};
-  return metadata.shopType || metadata.businessSubType || null;
+  const resolved = resolveBusinessType(tenant?.businessType || DEFAULT_BUSINESS_TYPE);
+  if (resolved !== 'shop') return null;
+  return metadata.shopType || metadata.businessSubType || DEFAULT_SHOP_TYPE;
 };
 
 /**
@@ -161,10 +165,10 @@ const applyFeatureGatesToFlags = (effectiveFeatureFlags, tenant) => {
  * @returns {string} 'shop' | 'studio' | 'pharmacy'
  */
 const resolveBusinessType = (businessType) => {
-  if (!businessType) return 'shop';
+  if (!businessType) return DEFAULT_BUSINESS_TYPE;
   if (LEGACY_TO_STUDIO.includes(businessType)) return 'studio';
   if (['shop', 'studio', 'pharmacy'].includes(businessType)) return businessType;
-  return 'shop';
+  return DEFAULT_BUSINESS_TYPE;
 };
 
 /**
@@ -200,6 +204,8 @@ const getBusinessTypeDisplayName = (businessType) => {
 
 module.exports = {
   BUSINESS_TYPE_FEATURES,
+  DEFAULT_BUSINESS_TYPE,
+  DEFAULT_SHOP_TYPE,
   QUOTES_HIDDEN_SHOP_TYPES,
   resolveBusinessType,
   getFeaturesForBusinessType,

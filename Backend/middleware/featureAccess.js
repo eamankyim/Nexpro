@@ -2,6 +2,7 @@ const { canAccessFeature, canAccessRoute, getFeatureByKey } = require('../config
 const { Tenant } = require('../models');
 const { filterFeaturesForTenant } = require('../config/businessTypes');
 const { getTenantEffectiveEntitlements, resolveTenantAccessState } = require('../utils/tenantEntitlements');
+const { normalizeTenantInstanceForRequest } = require('../utils/tenantClassification');
 
 /**
  * Middleware to check if tenant's plan includes a specific feature
@@ -19,7 +20,7 @@ const requireFeature = (featureKey) => {
       }
 
       // Get tenant and their plan
-      const tenant = await Tenant.findByPk(tenantId);
+      const tenant = normalizeTenantInstanceForRequest(await Tenant.findByPk(tenantId));
       
       if (!tenant) {
         return res.status(404).json({
@@ -71,7 +72,7 @@ const requireAnyFeature = (featureKeys) => {
         });
       }
 
-      const tenant = await Tenant.findByPk(tenantId);
+      const tenant = normalizeTenantInstanceForRequest(await Tenant.findByPk(tenantId));
 
       if (!tenant) {
         return res.status(404).json({
@@ -122,7 +123,7 @@ const checkRouteAccess = async (req, res, next) => {
       return next();
     }
 
-    const tenant = await Tenant.findByPk(tenantId);
+    const tenant = normalizeTenantInstanceForRequest(await Tenant.findByPk(tenantId));
     if (!tenant) {
       return next();
     }
@@ -171,7 +172,7 @@ const checkRouteAccess = async (req, res, next) => {
  * Helper to get tenant features for response
  */
 const getTenantFeatures = async (tenantId) => {
-  const tenant = await Tenant.findByPk(tenantId);
+  const tenant = normalizeTenantInstanceForRequest(await Tenant.findByPk(tenantId));
   if (!tenant) return [];
   const entitlements = await getTenantEffectiveEntitlements(tenant);
   return filterFeaturesForTenant(entitlements.enabledFeatures, tenant);

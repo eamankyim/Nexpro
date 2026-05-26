@@ -36,6 +36,7 @@ import { resolveImageUrl } from '@/utils/fileUtils';
 import { refreshAfterJobChange, QUERY_STALE } from '@/utils/queryInvalidation';
 import { OPEN_SCAN_CAMERA_EVENT } from '@/utils/scanTabEvents';
 import { getOutOfStockMessage, isProductOutOfStock } from '@/utils/productStock';
+import { deriveBarcodeSearchCandidates } from '@/utils/barcodeSearchCandidates';
 import { Image } from 'expo-image';
 
 type JobItemDraft = {
@@ -104,9 +105,13 @@ export default function ScanScreen() {
 
   // Debounce search query for unified search (name or barcode)
   const debouncedSearch = useDebounce(searchQuery, 500);
+  const barcodeSearchCandidates = useMemo(
+    () => deriveBarcodeSearchCandidates(debouncedSearch),
+    [debouncedSearch]
+  );
 
   // Check if search query looks like a barcode (numeric or alphanumeric, typically longer)
-  const isLikelyBarcode = /^[A-Z0-9]{6,}$/i.test(debouncedSearch.trim());
+  const isLikelyBarcode = barcodeSearchCandidates.some((candidate) => /^[A-Z0-9]{6,}$/i.test(candidate));
 
   // Fetch default product list (most frequent/popular products) when no search
   const { data: defaultProductsResponse, isLoading: loadingDefaultProducts } = useQuery({
@@ -139,15 +144,16 @@ export default function ScanScreen() {
   });
 
   const { data: barcodeResponse, isLoading: loadingBarcode, isError: barcodeError } = useQuery({
-    queryKey: ['product', 'barcode', activeTenantId, activeShopId, debouncedSearch],
-    queryFn: () => productService.getProductByBarcode(debouncedSearch),
+    queryKey: ['product', 'barcode', activeTenantId, activeShopId, barcodeSearchCandidates],
+    queryFn: () => productService.getProductByBarcodeCandidates(barcodeSearchCandidates),
     enabled:
       !!activeTenantId &&
       !!debouncedSearch &&
       debouncedSearch.length >= 2 &&
       !isStudio &&
       !scannedProduct &&
-      isLikelyBarcode,
+      isLikelyBarcode &&
+      barcodeSearchCandidates.length > 0,
     staleTime: 0,
     retry: false,
   });
@@ -225,6 +231,9 @@ export default function ScanScreen() {
 
 
   const handleScan = useCallback((scannedData: string) => {
+    const candidates = deriveBarcodeSearchCandidates(scannedData);
+    console.info('[Scan] Barcode candidates', { raw: scannedData, candidates });
+
     // Check if scanned data is a product QR code (JSON) or a regular barcode
     if (isProductQRCode(scannedData)) {
       const result = parseProductQRPayload(scannedData);

@@ -1712,7 +1712,8 @@ exports.generateAIAnalysis = async (req, res, next) => {
       period: options.period,
       startDate: options.startDate,
       endDate: options.endDate,
-      ...options
+      ...options,
+      tenantId: req.tenantId
     });
 
     res.status(200).json({
@@ -1744,7 +1745,7 @@ exports.generateAIAnalysis = async (req, res, next) => {
     if (error.code === 'invalid_api_key' || error.status === 401) {
       return res.status(503).json({
         success: false,
-        error: 'Invalid Anthropic API key. Check ANTHROPIC_API_KEY in Backend/.env and create a key at https://console.anthropic.com/.',
+        error: 'Invalid Anthropic API key. Check the workspace AI key or ANTHROPIC_API_KEY in Backend/.env.',
         code: 'OPENAI_INVALID_KEY'
       });
     }

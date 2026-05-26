@@ -725,6 +725,7 @@ exports.draftRule = async (req, res, next) => {
     const draft = await openaiService.draftAutomationRule({
       instruction,
       businessType: req.tenant?.businessType || 'printing_press',
+      tenantId: req.tenantId,
       suggestionsContext: { tenantName: req.tenant?.name || null }
     });
     res.status(200).json({ success: true, data: draft });

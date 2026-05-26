@@ -1,0 +1,2881 @@
+%PDF-1.3
+%ºß¬à
+3 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 4 0 R
+>>
+endobj
+4 0 obj
+<<
+/Length 4519
+>>
+stream
+0.200025 w
+0 G
+BT
+/F2 20 Tf
+23. TL
+0 g
+48. 793.8899999999999864 Td
+(Terms and Conditions) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 752.8899999999999864 Td
+(Effective Date: May 2026) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 732.3899999999999864 Td
+(Last Updated: May 2026) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 711.8899999999999864 Td
+(These Terms and Conditions \(“Terms”\) govern your access to and use of ABS and related websites, applications,) Tj
+T* (services, software, features, integrations, support, and infrastructure provided by iCreations / iCreations Digital) Tj
+T* (Group \(“ABS”, “we”, “us”, or “our”\).) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 664.3899999999999864 Td
+(By creating an account, accepting an invitation, accessing a workspace, purchasing a plan, using the platform, or) Tj
+T* (clicking “I agree”, you agree to be bound by these Terms. If you are using ABS on behalf of a business,) Tj
+T* (organisation, company, partnership, sole proprietorship, branch, shop, studio, pharmacy, or other entity, you) Tj
+T* (represent that you have authority to accept these Terms on its behalf.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 603.3899999999999864 Td
+(If you do not agree to these Terms, you must not access or use ABS.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 582.8899999999999864 Td
+(1. Definitions) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 553.9900000000000091 Td
+(For purposes of these Terms:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 533.4900000000000091 Td
+(“ABS” means the multi-tenant business management platform, including its web application, mobile access, APIs,) Tj
+T* (cloud services, AI features, integrations, support services, and related products.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 499.4900000000000091 Td
+(“Customer” or “Tenant” means the business, organisation, or individual that creates, owns, pays for, or controls a) Tj
+T* (workspace on ABS.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 465.4900000000000091 Td
+(“Workspace” means a tenant-specific account environment within ABS where business data, users, branches,) Tj
+T* (settings, subscriptions, reports, files, integrations, and configurations are managed.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 431.4900000000000091 Td
+(“Branch” means a physical or operational business location, shop, studio, pharmacy, outlet, department, or) Tj
+T* (business unit managed within a workspace.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 397.4900000000000091 Td
+(“User” means an individual who accesses ABS, including owners, administrators, employees, contractors, invited) Tj
+T* (team members, or other authorised persons.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 363.4900000000000091 Td
+(“Enterprise License” means a paid one-time enterprise software license that gives the Customer lifetime access) Tj
+T* (to the core ABS software for the selected workspace and plan tier, subject to these Terms, fair use, platform) Tj
+T* (availability, payment obligations, storage limits, and any required Cloud Infrastructure Plan from the second year) Tj
+T* (onward.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 302.4900000000000091 Td
+(“Cloud Infrastructure Plan” means the annual plan payable after the first year for cloud hosting, backups and) Tj
+T* (recovery, updates, security maintenance, AI infrastructure, WhatsApp integrations, technical support, and) Tj
+T* (included cloud storage.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 254.9900000000000091 Td
+(“Customer Data” means business data, records, files, uploads, documents, transaction information, inventory,) Tj
+T* (customer records, employee records, reports, invoices, expenses, payroll information, job or delivery data,) Tj
+T* (communications data, and other content submitted to ABS by or on behalf of a Customer or User.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 207.4900000000000091 Td
+(“Third-Party Services” means external services connected to or used with ABS, including payment processors,) Tj
+T* (WhatsApp providers, email services, SMS providers, AI model providers, hosting providers, accounting tools,) Tj
+T* (analytics tools, or other integrations.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 159.9900000000000091 Td
+(2. Acceptance of Terms) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 131.0900000000000318 Td
+(You accept these Terms when you:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 110.5900000000000318 Td
+(1. Create an ABS account;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 92.0900000000000318 Td
+(2. Sign up for a self-service plan;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 73.5900000000000318 Td
+(3. Accept an invitation to join a workspace;) Tj
+ET
+endstream
+endobj
+5 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 6 0 R
+>>
+endobj
+6 0 obj
+<<
+/Length 4566
+>>
+stream
+0.200025 w
+0 G
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 793.8899999999999864 Td
+(4. Access or use any ABS feature;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 775.3899999999999864 Td
+(5. Purchase, renew, or continue using an Enterprise License or Cloud Infrastructure Plan;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 756.8899999999999864 Td
+(6. Click or tick any checkbox confirming acceptance of these Terms.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 738.3899999999999864 Td
+(If you accept these Terms on behalf of a Customer, you confirm that you are authorised to bind that Customer. If) Tj
+T* (you are not authorised, you must not use ABS on behalf of that Customer.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 704.3899999999999864 Td
+(3. Eligibility and Authority) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 675.4900000000000091 Td
+(You may use ABS only if you are legally capable of entering into a binding agreement under applicable law. You) Tj
+T* (must provide accurate account, business, billing, and contact information.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 641.4900000000000091 Td
+(If you use ABS for a company, business, or organisation, you confirm that:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 620.9900000000000091 Td
+(1. You have authority to create or manage the workspace;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 602.4900000000000091 Td
+(2. You have authority to invite Users;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 583.9900000000000091 Td
+(3. You are responsible for activity under the workspace;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 565.4900000000000091 Td
+(4. You will ensure all Users comply with these Terms;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 546.9900000000000091 Td
+(5. You will not misrepresent your business identity, ownership, or authority.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 528.4900000000000091 Td
+(We may request verification of identity, business registration, ownership, tax information, payment authority, or) Tj
+T* (other relevant details where reasonably necessary.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 494.4900000000000091 Td
+(4. Account, Tenant, and Workspace) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 465.5900000000000318 Td
+(Each Customer may have one or more workspaces, depending on the plan and configuration approved by ABS.) Tj
+T* (A workspace may include branches, users, business settings, customer data, files, automations, integrations,) Tj
+T* (reports, and other platform features.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 418.0900000000000318 Td
+(The Customer is responsible for:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 397.5900000000000318 Td
+(1. Maintaining accurate workspace information;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 379.0900000000000318 Td
+(2. Managing Users and access permissions;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 360.5900000000000318 Td
+(3. Protecting login credentials;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 342.0900000000000318 Td
+(4. Reviewing activities performed by Users;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 323.5900000000000318 Td
+(5. Ensuring lawful use of Customer Data;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 305.0900000000000318 Td
+(6. Configuring integrations correctly;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 286.5900000000000318 Td
+(7. Ensuring business records are accurate and complete.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 268.0900000000000318 Td
+(ABS may rely on instructions from the workspace owner, billing contact, super administrator, or other authorised) Tj
+T* (administrator unless we have reason to believe those instructions are unauthorised or unlawful.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 234.0900000000000318 Td
+(5. Invited Tenants and Invited Users) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 205.1900000000000546 Td
+(A User may be invited to join an existing workspace by a workspace owner, administrator, employer, client, or) Tj
+T* (other authorised person. Invited Users must accept these Terms before accessing the workspace.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 171.1900000000000546 Td
+(Invited Users understand that:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 150.6900000000000546 Td
+(1. Their access is controlled by the Customer or workspace administrator;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 132.1900000000000546 Td
+(2. The Customer may view, manage, restrict, export, or delete their activity and business data within the) Tj
+T* (workspace;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 100.1900000000000546 Td
+(3. ABS may process their information as necessary to provide the service;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 81.6900000000000546 Td
+(4. Their access may be suspended or removed by the Customer or ABS;) Tj
+ET
+endstream
+endobj
+7 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 8 0 R
+>>
+endobj
+8 0 obj
+<<
+/Length 4368
+>>
+stream
+0.200025 w
+0 G
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 793.8899999999999864 Td
+(5. They must use ABS only for authorised business purposes.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 775.3899999999999864 Td
+(Recommended checkbox wording for invited tenant signup:) Tj
+ET
+BT
+/F3 10 Tf
+11.5 TL
+0 g
+60. 754.8899999999999864 Td
+(I have read and agree to the ABS Terms and Conditions and Privacy Policy. I understand that I am joining a) Tj
+T* (workspace owned or managed by the inviting business, and that my access and activity within that workspace) Tj
+T* (may be managed by its authorised administrators.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 704.3899999999999864 Td
+(6. Platform Features) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 675.4900000000000091 Td
+(ABS is a business management platform that may include, depending on your plan, configuration, and) Tj
+T* (availability:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 641.4900000000000091 Td
+(1. Mobile and desktop access;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 622.9900000000000091 Td
+(2. POS and sales management;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 604.4900000000000091 Td
+(3. Inventory and stock tracking;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 585.9900000000000091 Td
+(4. CRM, customers, and leads;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 567.4900000000000091 Td
+(5. Invoicing, receipts, and payment tracking;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 548.9900000000000091 Td
+(6. Accounting, expenses, and financial summaries;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 530.4900000000000091 Td
+(7. Payroll and employee management;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 511.9900000000000091 Td
+(8. AI reports, insights, and smart analytics;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 493.4900000000000091 Td
+(9. WhatsApp automation and messaging workflows;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 474.9900000000000091 Td
+(10. Email, SMS, and communication tools;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 456.4900000000000091 Td
+(11. Multi-role team access and permissions;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 437.9900000000000091 Td
+(12. Delivery, job, and order tracking;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 419.4900000000000091 Td
+(13. Shops, studios, pharmacies, branches, and multi-location management;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 400.9900000000000091 Td
+(14. Cloud storage, uploads, and document management;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 382.4900000000000091 Td
+(15. Integrations with third-party tools and service providers;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 363.9900000000000091 Td
+(16. Technical support, updates, maintenance, and security improvements.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 345.4900000000000091 Td
+(Some features may be provided as beta, experimental, limited, usage-based, region-specific,) Tj
+T* (integration-dependent, or subject to separate terms.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 311.4900000000000091 Td
+(7. Enterprise License, Pricing, and Lifetime Access) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 282.5900000000000318 Td
+(ABS may offer one-time Enterprise License plans. A one-time Enterprise License gives the Customer lifetime) Tj
+T* (access to the core ABS software for the selected workspace and plan tier, subject to these Terms.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 248.5900000000000318 Td
+(“Lifetime access” means access for the commercially reasonable lifetime of the ABS platform and the applicable) Tj
+T* (workspace, provided that:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 214.5900000000000318 Td
+(1. The Customer has fully paid the applicable one-time license fee;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 196.0900000000000318 Td
+(2. The Customer complies with these Terms;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 177.5900000000000318 Td
+(3. The Customer remains within the applicable user, branch, storage, and fair use limits;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 159.0900000000000318 Td
+(4. Required annual Cloud Infrastructure Plan fees are paid from the second year onward;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 140.5900000000000318 Td
+(5. The platform remains available and is not discontinued, replaced, suspended, or terminated in accordance) Tj
+T* (with these Terms;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 108.5900000000000318 Td
+(6. The Customer does not claim ownership of ABS source code, intellectual property, infrastructure,) Tj
+T* (algorithms, AI systems, designs, trademarks, or platform technology.) Tj
+ET
+endstream
+endobj
+9 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 10 0 R
+>>
+endobj
+10 0 obj
+<<
+/Length 4389
+>>
+stream
+0.200025 w
+0 G
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 793.8899999999999864 Td
+(The Enterprise License is a license to use ABS. It is not a sale of the ABS software, source code, intellectual) Tj
+T* (property, brand, architecture, databases, AI models, infrastructure, or proprietary technology.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 759.8899999999999864 Td
+(8. Enterprise Plan Tiers) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 730.9900000000000091 Td
+(Unless otherwise agreed in writing, the following Enterprise License plans apply.) Tj
+ET
+BT
+/F2 12 Tf
+13.7999999999999989 TL
+0 g
+48. 710.4900000000000091 Td
+(8.1 ABS Enterprise Starter) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 686.2899999999999636 Td
+(One-time license fee: GHS 10,000) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 665.7899999999999636 Td
+(Included: 1 User, 1 Branch, 20GB cloud storage, full enterprise features for the selected workspace.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 645.2899999999999636 Td
+(After the first year, the Customer must pay an annual Cloud Infrastructure Plan of GHS 600 per year, which) Tj
+T* (includes secure cloud hosting, backups and recovery, updates, security maintenance, AI infrastructure,) Tj
+T* (WhatsApp integrations, technical support, and 20GB storage.) Tj
+ET
+BT
+/F2 12 Tf
+13.7999999999999989 TL
+0 g
+48. 597.7899999999999636 Td
+(8.2 ABS Enterprise Business) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 573.5899999999999181 Td
+(One-time license fee: GHS 20,000) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 553.0899999999999181 Td
+(Included: Up to 5 Users, up to 5 Branches, 50GB cloud storage, full enterprise features for the selected) Tj
+T* (workspace.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 519.0899999999999181 Td
+(After the first year, the Customer must pay an annual Cloud Infrastructure Plan of GHS 1,200 per year, which) Tj
+T* (includes secure cloud hosting, backups and recovery, updates, security maintenance, AI infrastructure,) Tj
+T* (WhatsApp integrations, technical support, and 50GB storage.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 471.589999999999975 Td
+(The GHS 20,000 Business plan provides lifetime access to the core ABS software for the selected workspace) Tj
+T* (and Business tier, but it does not include unlimited cloud hosting, unlimited storage, unlimited support, unlimited) Tj
+T* (AI usage, unlimited WhatsApp usage, ownership of source code, or perpetual free maintenance. Continued use) Tj
+T* (of hosted cloud services after the first year requires payment of the annual Cloud Infrastructure Plan.) Tj
+ET
+BT
+/F2 12 Tf
+13.7999999999999989 TL
+0 g
+48. 410.589999999999975 Td
+(8.3 ABS Enterprise Pro) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 386.3899999999999864 Td
+(One-time license fee: GHS 30,000) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 365.8899999999999864 Td
+(Included: Up to 10 Users, up to 10 Branches, 100GB cloud storage, full enterprise features for the selected) Tj
+T* (workspace.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 331.8899999999999864 Td
+(After the first year, the Customer must pay an annual Cloud Infrastructure Plan of GHS 2,400 per year, which) Tj
+T* (includes secure cloud hosting, backups and recovery, updates, security maintenance, AI infrastructure,) Tj
+T* (WhatsApp integrations, priority technical support, and 100GB storage.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 284.3899999999999864 Td
+(9. Annual Cloud Infrastructure Plan) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 255.4900000000000091 Td
+(The first year of cloud infrastructure is included with the Enterprise License unless otherwise stated in writing.) Tj
+T* (From the second year onward, the applicable annual Cloud Infrastructure Plan must be paid to continue hosted) Tj
+T* (access to ABS cloud services.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 207.9900000000000091 Td
+(The Cloud Infrastructure Plan may include:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 187.4900000000000091 Td
+(1. Secure cloud hosting;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 168.9900000000000091 Td
+(2. Backups and recovery systems;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 150.4900000000000091 Td
+(3. Platform updates;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 131.9900000000000091 Td
+(4. Security maintenance;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 113.4900000000000091 Td
+(5. AI infrastructure;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 94.9900000000000091 Td
+(6. WhatsApp integration infrastructure;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 76.4900000000000091 Td
+(7. Technical support;) Tj
+ET
+endstream
+endobj
+11 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 12 0 R
+>>
+endobj
+12 0 obj
+<<
+/Length 4792
+>>
+stream
+0.200025 w
+0 G
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 793.8899999999999864 Td
+(8. Included cloud storage for the selected plan.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 775.3899999999999864 Td
+(Failure to pay the Cloud Infrastructure Plan may result in reduced functionality, suspension of hosted services,) Tj
+T* (restricted access, loss of integrations, or termination in accordance with these Terms.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 741.3899999999999864 Td
+(The Cloud Infrastructure Plan does not guarantee uninterrupted service, unlimited support, unlimited usage,) Tj
+T* (unlimited storage, or protection against all data loss or security incidents.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 707.3899999999999864 Td
+(10. Storage and Fair Use) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 678.4900000000000091 Td
+(Each plan includes a stated amount of cloud storage. Storage may include uploaded files, images, documents,) Tj
+T* (reports, attachments, exports, backups, generated content, logs, and other stored data.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 644.4900000000000091 Td
+(If a Customer exceeds the included storage limit, ABS may:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 623.9900000000000091 Td
+(1. Notify the Customer;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 605.4900000000000091 Td
+(2. Require cleanup or deletion of unnecessary files;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 586.9900000000000091 Td
+(3. Offer additional storage at applicable rates;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 568.4900000000000091 Td
+(4. Restrict further uploads;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 549.9900000000000091 Td
+(5. Reduce performance of storage-heavy features;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 531.4900000000000091 Td
+(6. Suspend storage-related functionality if the excess usage is not resolved.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 512.9900000000000091 Td
+(ABS may apply fair use limits to protect platform performance, security, and availability. Fair use limits may apply) Tj
+T* (to AI requests, WhatsApp automation, email or SMS activity, file uploads, API calls, reports, exports, background) Tj
+T* (jobs, branches, users, transactions, and integrations.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 465.4900000000000091 Td
+(You must not use ABS in a way that places unreasonable load on the platform, attempts to bypass usage limits,) Tj
+T* (resells access without permission, or interferes with other customers.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 431.4900000000000091 Td
+(11. Payment Terms) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 402.5900000000000318 Td
+(Fees must be paid in Ghana Cedis \(GHS\) or another currency accepted by ABS. Payment may be made through) Tj
+T* (approved payment channels, bank transfer, mobile money, card payment, invoice, or other methods we support.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 368.5900000000000318 Td
+(Unless otherwise stated:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 348.0900000000000318 Td
+(1. One-time Enterprise License fees are due before activation or full deployment;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 329.5900000000000318 Td
+(2. Annual Cloud Infrastructure Plan fees are due yearly in advance after the first year;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 311.0900000000000318 Td
+(3. Additional services, customisations, storage, integrations, training, migration, or support may attract) Tj
+T* (separate charges;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 279.0900000000000318 Td
+(4. Late payments may lead to suspension or restricted access;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 260.5900000000000318 Td
+(5. ABS may charge reasonable reactivation or recovery fees where applicable.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 242.0900000000000318 Td
+(You are responsible for ensuring payment details are accurate and authorised.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 221.5900000000000318 Td
+(12. Refunds) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 192.6900000000000546 Td
+(Unless required by law or expressly agreed in writing, one-time Enterprise License fees, setup fees,) Tj
+T* (implementation fees, training fees, migration fees, custom development fees, and annual Cloud Infrastructure) Tj
+T* (Plan fees are non-refundable once paid.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 145.1900000000000546 Td
+(ABS may, at its discretion, provide credits, partial refunds, service extensions, or alternative remedies in specific) Tj
+T* (cases. Any such remedy does not create a general obligation to provide refunds in other cases.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 111.1900000000000546 Td
+(13. Taxes) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 82.2900000000000773 Td
+(Fees may be exclusive of applicable taxes, levies, duties, withholding, bank charges, mobile money charges,) Tj
+T* (card processing fees, or government-imposed charges unless expressly stated otherwise.) Tj
+ET
+endstream
+endobj
+13 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 14 0 R
+>>
+endobj
+14 0 obj
+<<
+/Length 4147
+>>
+stream
+0.200025 w
+0 G
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 793.8899999999999864 Td
+(The Customer is responsible for all applicable taxes and charges relating to the purchase and use of ABS, except) Tj
+T* (taxes based on ABS’s own income.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 759.8899999999999864 Td
+(14. Users, Roles, and Permissions) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 730.9900000000000091 Td
+(ABS may allow Customers to create roles and permissions for owners, administrators, managers, employees,) Tj
+T* (accountants, cashiers, sales staff, delivery staff, and other Users.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 696.9900000000000091 Td
+(The Customer is responsible for:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 676.4900000000000091 Td
+(1. Assigning appropriate access levels;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 657.9900000000000091 Td
+(2. Removing access when Users leave the business;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 639.4900000000000091 Td
+(3. Reviewing sensitive permissions;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 620.9900000000000091 Td
+(4. Monitoring User activity;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 602.4900000000000091 Td
+(5. Preventing unauthorised access;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 583.9900000000000091 Td
+(6. Ensuring Users are trained to use the system properly.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 565.4900000000000091 Td
+(ABS is not responsible for losses caused by incorrect permissions, unauthorised internal activity, shared) Tj
+T* (passwords, weak passwords, compromised accounts, or failure to remove inactive Users.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 531.4900000000000091 Td
+(15. Customer Data Ownership) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 502.5900000000000318 Td
+(As between ABS and the Customer, the Customer owns Customer Data. ABS does not claim ownership of) Tj
+T* (Customer Data.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 468.5900000000000318 Td
+(The Customer grants ABS a limited right to host, process, transmit, store, back up, analyse, display, and use) Tj
+T* (Customer Data only as necessary to:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 434.5900000000000318 Td
+(1. Provide and improve ABS;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 416.0900000000000318 Td
+(2. Operate platform features;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 397.5900000000000318 Td
+(3. Generate reports and analytics;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 379.0900000000000318 Td
+(4. Support AI insights and automations;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 360.5900000000000318 Td
+(5. Provide customer support;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 342.0900000000000318 Td
+(6. Maintain security and backups;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 323.5900000000000318 Td
+(7. Comply with law;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 305.0900000000000318 Td
+(8. Enforce these Terms.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 286.5900000000000318 Td
+(The Customer is responsible for the legality, accuracy, quality, integrity, and rights relating to Customer Data.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 266.0900000000000318 Td
+(16. Privacy) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 237.1900000000000546 Td
+(Our collection and use of personal data is described in our Privacy Policy, available at: absghana/privacypolicy.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 216.6900000000000546 Td
+(By using ABS, you agree that ABS may process personal data in accordance with the Privacy Policy and) Tj
+T* (applicable data protection laws.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 182.6900000000000546 Td
+(Customers are responsible for providing legally required notices to their own customers, employees, vendors,) Tj
+T* (leads, and other data subjects where Customer Data includes personal information.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 148.6900000000000546 Td
+(17. Acceptable Use) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 119.7900000000000773 Td
+(You must not use ABS to:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 99.2900000000000773 Td
+(1. Violate any law, regulation, court order, or third-party right;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 80.7900000000000773 Td
+(2. Upload unlawful, fraudulent, harmful, defamatory, obscene, discriminatory, or abusive content;) Tj
+ET
+endstream
+endobj
+15 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 16 0 R
+>>
+endobj
+16 0 obj
+<<
+/Length 4841
+>>
+stream
+0.200025 w
+0 G
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 793.8899999999999864 Td
+(3. Send spam, unsolicited messages, scams, phishing, or deceptive communications;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 775.3899999999999864 Td
+(4. Misuse WhatsApp, email, SMS, or payment integrations;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 756.8899999999999864 Td
+(5. Upload malware, viruses, or harmful code;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 738.3899999999999864 Td
+(6. Attempt to gain unauthorised access to ABS or another workspace;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 719.8899999999999864 Td
+(7. Reverse engineer, copy, scrape, decompile, or attempt to extract source code, models, architecture, or) Tj
+T* (proprietary systems;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 687.8899999999999864 Td
+(8. Interfere with platform security, rate limits, monitoring, or infrastructure;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 669.3899999999999864 Td
+(9. Resell, sublicense, or commercially exploit ABS without written permission;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 650.8899999999999864 Td
+(10. Use ABS to process data you do not have permission to process;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 632.3899999999999864 Td
+(11. Use AI features to generate unlawful, misleading, discriminatory, or harmful content;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 613.8899999999999864 Td
+(12. Use ABS for illegal financial activity, money laundering, fraud, or unauthorised payment processing.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 595.3899999999999864 Td
+(ABS may investigate suspected misuse and may suspend or terminate access where necessary.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 574.8899999999999864 Td
+(18. AI Features and Disclaimers) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 545.9900000000000091 Td
+(ABS may provide AI-powered reports, insights, summaries, recommendations, forecasts, chat features,) Tj
+T* (document interpretation, business suggestions, automation assistance, and analytics.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 511.9900000000000091 Td
+(AI outputs may be inaccurate, incomplete, outdated, biased, or unsuitable for your specific business) Tj
+T* (circumstances. AI outputs are provided for assistance only and should not be treated as professional advice,) Tj
+T* (financial advice, legal advice, tax advice, accounting advice, medical advice, employment advice, or a substitute) Tj
+T* (for human judgment.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 450.9900000000000091 Td
+(You are responsible for reviewing AI outputs before relying on them or sharing them with others.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 430.4900000000000091 Td
+(ABS may use third-party AI providers or infrastructure to provide AI features. Where Customers provide their own) Tj
+T* (API keys for AI services, the Customer is responsible for:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 396.4900000000000091 Td
+(1. The third-party provider’s fees;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 377.9900000000000091 Td
+(2. API key security;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 359.4900000000000091 Td
+(3. Usage limits;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 340.9900000000000091 Td
+(4. Compliance with the provider’s terms;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 322.4900000000000091 Td
+(5. Outputs generated through that provider;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 303.9900000000000091 Td
+(6. Any suspension or failure of that provider’s service.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 285.4900000000000091 Td
+(ABS does not guarantee that AI features will always be available, accurate, or suitable for any particular purpose.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 264.9900000000000091 Td
+(19. WhatsApp, Email, SMS, and Payment Integrations) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 236.0900000000000318 Td
+(ABS may support integrations with WhatsApp, email, SMS, payment processors, banks, mobile money providers,) Tj
+T* (card processors, and related communication or financial services.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 202.0900000000000318 Td
+(These integrations may depend on third-party providers, network availability, approval processes, API limits,) Tj
+T* (message templates, business verification, payment settlement rules, and third-party terms.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 168.0900000000000318 Td
+(The Customer is responsible for:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 147.5900000000000318 Td
+(1. Obtaining required consents before sending messages;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 129.0900000000000318 Td
+(2. Complying with anti-spam, privacy, marketing, and communication laws;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 110.5900000000000318 Td
+(3. Ensuring message content is lawful and accurate;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 92.0900000000000318 Td
+(4. Maintaining payment account compliance;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 73.5900000000000318 Td
+(5. Verifying payment status and reconciliation;) Tj
+ET
+endstream
+endobj
+17 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 18 0 R
+>>
+endobj
+18 0 obj
+<<
+/Length 4360
+>>
+stream
+0.200025 w
+0 G
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 793.8899999999999864 Td
+(6. Handling failed, delayed, reversed, disputed, or fraudulent payments;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 775.3899999999999864 Td
+(7. Paying third-party fees where applicable.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 756.8899999999999864 Td
+(ABS is not responsible for third-party message delivery failures, payment delays, chargebacks, account) Tj
+T* (restrictions, provider outages, rejected templates, or policy enforcement by WhatsApp, email, SMS, or payment) Tj
+T* (providers.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 709.3899999999999864 Td
+(20. POS, Inventory, Accounting, Payroll, and Business Records) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 680.4900000000000091 Td
+(ABS may include tools for POS, inventory, invoicing, accounting, expenses, payroll, employee records, reports,) Tj
+T* (analytics, job tracking, delivery tracking, and branch management.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 646.4900000000000091 Td
+(These tools are provided to help Customers manage business operations. They do not replace professional) Tj
+T* (accounting, tax, legal, audit, payroll, employment, or financial advice.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 612.4900000000000091 Td
+(The Customer is responsible for:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 591.9900000000000091 Td
+(1. Entering accurate data;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 573.4900000000000091 Td
+(2. Verifying sales, expenses, stock levels, payroll, taxes, invoices, reports, and reconciliations;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 554.9900000000000091 Td
+(3. Maintaining legally required business records;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 536.4900000000000091 Td
+(4. Complying with tax, employment, accounting, and industry-specific obligations;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 517.9900000000000091 Td
+(5. Reviewing reports before making business decisions;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 499.4900000000000091 Td
+(6. Correcting errors in data entry, setup, permissions, or configuration.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 480.9900000000000091 Td
+(ABS is not responsible for losses caused by inaccurate records, incorrect settings, missing entries, user) Tj
+T* (mistakes, misclassification, stock discrepancies, payroll errors, tax errors, or reliance on unverified reports.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 446.9900000000000091 Td
+(21. Backups, Availability, Support, and Maintenance) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 418.0900000000000318 Td
+(ABS uses reasonable measures to provide secure hosting, backups, updates, maintenance, and support) Tj
+T* (according to the applicable plan. However, ABS does not guarantee uninterrupted, error-free, or always-available) Tj
+T* (service.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 370.5900000000000318 Td
+(The platform may be unavailable or degraded due to:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 350.0900000000000318 Td
+(1. Scheduled maintenance;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 331.5900000000000318 Td
+(2. Emergency maintenance;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 313.0900000000000318 Td
+(3. Internet or network failures;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 294.5900000000000318 Td
+(4. Third-party provider outages;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 276.0900000000000318 Td
+(5. Cloud infrastructure issues;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 257.5900000000000318 Td
+(6. Security incidents;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 239.0900000000000318 Td
+(7. Software bugs;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 220.5900000000000318 Td
+(8. Force majeure events;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 202.0900000000000318 Td
+(9. Customer misuse or configuration errors.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 183.5900000000000318 Td
+(ABS may update, modify, suspend, replace, or discontinue features for security, performance, compliance,) Tj
+T* (product improvement, or business reasons. We will use reasonable efforts to avoid unnecessary disruption.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 149.5900000000000318 Td
+(Support is provided according to the applicable plan and may be delivered through phone, email, WhatsApp,) Tj
+T* (chat, remote session, ticketing system, or other channels. Priority support applies only where expressly included) Tj
+T* (in the Customer’s plan.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 102.0900000000000318 Td
+(22. Security) Tj
+ET
+endstream
+endobj
+19 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 20 0 R
+>>
+endobj
+20 0 obj
+<<
+/Length 4245
+>>
+stream
+0.200025 w
+0 G
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 793.8899999999999864 Td
+(ABS uses reasonable technical and organisational measures designed to protect the platform and Customer) Tj
+T* (Data. However, no system is completely secure.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 759.8899999999999864 Td
+(Customers and Users are responsible for:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 739.3899999999999864 Td
+(1. Using strong passwords;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 720.8899999999999864 Td
+(2. Protecting login credentials;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 702.3899999999999864 Td
+(3. Enabling available security features;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 683.8899999999999864 Td
+(4. Restricting administrator access;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 665.3899999999999864 Td
+(5. Reviewing user roles;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 646.8899999999999864 Td
+(6. Keeping devices secure;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 628.3899999999999864 Td
+(7. Reporting suspected compromise promptly;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 609.8899999999999864 Td
+(8. Avoiding suspicious links, files, or integrations.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 591.3899999999999864 Td
+(ABS may take emergency security actions, including suspending accounts, disabling integrations, resetting) Tj
+T* (credentials, restricting access, or blocking activity where necessary to protect the platform, Customer Data,) Tj
+T* (Users, or third parties.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 543.8899999999999864 Td
+(23. Suspension and Termination) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 514.9900000000000091 Td
+(ABS may suspend or terminate access to ABS, a workspace, or specific features if:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 494.4900000000000091 Td
+(1. Fees are unpaid;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 475.9900000000000091 Td
+(2. The Customer or User breaches these Terms;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 457.4900000000000091 Td
+(3. Use creates security, legal, operational, or reputational risk;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 438.9900000000000091 Td
+(4. ABS suspects fraud, abuse, unauthorised access, or illegal activity;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 420.4900000000000091 Td
+(5. Required verification is not completed;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 401.9900000000000091 Td
+(6. Continued access may harm ABS, other Customers, Users, or third parties;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 383.4900000000000091 Td
+(7. A third-party provider requires suspension;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 364.9900000000000091 Td
+(8. The workspace is inactive for an extended period and required fees are unpaid.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 346.4900000000000091 Td
+(Where reasonable, ABS may provide notice and an opportunity to resolve the issue. However, ABS may act) Tj
+T* (immediately where necessary.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 312.4900000000000091 Td
+(Customers may stop using ABS at any time, but stopping use does not automatically cancel unpaid fees or entitle) Tj
+T* (the Customer to a refund.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 278.4900000000000091 Td
+(24. Data Export and Deletion) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 249.5900000000000318 Td
+(Customers may request export of Customer Data, subject to technical feasibility, account standing, data format) Tj
+T* (availability, applicable law, and identity verification.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 215.5900000000000318 Td
+(After termination or expiry, ABS may retain Customer Data for a limited period to allow export, comply with law,) Tj
+T* (resolve disputes, maintain backups, prevent fraud, or enforce agreements. After that period, ABS may delete or) Tj
+T* (anonymise Customer Data.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 168.0900000000000318 Td
+(Deletion from active systems may not immediately remove data from backups, logs, archives, or disaster) Tj
+T* (recovery systems, but such data will remain protected until deleted according to normal retention processes.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 134.0900000000000318 Td
+(The Customer is responsible for exporting needed records before cancellation, termination, or deletion.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 113.5900000000000318 Td
+(25. Intellectual Property) Tj
+ET
+endstream
+endobj
+21 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 22 0 R
+>>
+endobj
+22 0 obj
+<<
+/Length 4379
+>>
+stream
+0.200025 w
+0 G
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 793.8899999999999864 Td
+(ABS and its licensors own all rights, title, and interest in and to the ABS platform, including software, source) Tj
+T* (code, object code, architecture, workflows, designs, user interfaces, trademarks, logos, documentation,) Tj
+T* (templates, reports, algorithms, AI systems, models, infrastructure, databases, know-how, trade secrets, and) Tj
+T* (related intellectual property.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 732.8899999999999864 Td
+(These Terms do not transfer any ABS intellectual property to the Customer or User.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 712.3899999999999864 Td
+(Subject to these Terms and payment of applicable fees, ABS grants the Customer a limited, non-exclusive,) Tj
+T* (non-transferable, revocable license to access and use ABS for its internal business operations.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 678.3899999999999864 Td
+(You must not copy, modify, reproduce, distribute, sell, lease, sublicense, reverse engineer, create derivative) Tj
+T* (works from, or attempt to extract the source code or proprietary technology of ABS unless expressly permitted in) Tj
+T* (writing by ABS.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 630.8899999999999864 Td
+(26. Feedback) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 601.9900000000000091 Td
+(If you provide suggestions, ideas, requests, improvements, or feedback about ABS, you grant ABS the right to) Tj
+T* (use that feedback without restriction or compensation. This does not give ABS ownership of your Customer Data.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 567.9900000000000091 Td
+(27. Third-Party Services) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 539.0900000000000318 Td
+(ABS may rely on or integrate with Third-Party Services. Your use of Third-Party Services may be subject to) Tj
+T* (separate terms, privacy policies, fees, approvals, limits, and availability.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 505.0900000000000318 Td
+(ABS is not responsible for:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 484.5900000000000318 Td
+(1. Third-party outages;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 466.0900000000000318 Td
+(2. API changes;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 447.5900000000000318 Td
+(3. Provider restrictions;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 429.0900000000000318 Td
+(4. Data processing by third parties outside ABS’s control;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 410.5900000000000318 Td
+(5. Fees charged by third parties;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 392.0900000000000318 Td
+(6. Third-party security incidents;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 373.5900000000000318 Td
+(7. Changes to third-party terms;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 355.0900000000000318 Td
+(8. Losses caused by third-party services.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 336.5900000000000318 Td
+(ABS may change, replace, suspend, or remove integrations where necessary.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 316.0900000000000318 Td
+(28. Disclaimers) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 287.1900000000000546 Td
+(ABS is provided on an “as is” and “as available” basis to the maximum extent permitted by law.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 266.6900000000000546 Td
+(ABS does not guarantee that:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 246.1900000000000546 Td
+(1. The platform will be uninterrupted or error-free;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 227.6900000000000546 Td
+(2. All defects will be corrected immediately;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 209.1900000000000546 Td
+(3. AI outputs will be accurate or complete;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 190.6900000000000546 Td
+(4. Reports will be suitable for all business decisions;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 172.1900000000000546 Td
+(5. Integrations will always remain available;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 153.6900000000000546 Td
+(6. Messages will always be delivered;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 135.1900000000000546 Td
+(7. Payments will always be successful or instant;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 116.6900000000000546 Td
+(8. Data loss or security incidents will never occur;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 98.1900000000000546 Td
+(9. The platform will meet every Customer requirement.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 79.6900000000000546 Td
+(You are responsible for independent review and verification of business-critical information.) Tj
+ET
+endstream
+endobj
+23 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 24 0 R
+>>
+endobj
+24 0 obj
+<<
+/Length 4487
+>>
+stream
+0.200025 w
+0 G
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 793.8899999999999864 Td
+(29. Limitation of Liability) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 764.9900000000000091 Td
+(To the maximum extent permitted by law, ABS will not be liable for indirect, incidental, special, consequential,) Tj
+T* (exemplary, or punitive damages, including loss of profit, loss of revenue, loss of business opportunity, loss of) Tj
+T* (goodwill, loss of data, business interruption, or cost of substitute services.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 717.4900000000000091 Td
+(To the maximum extent permitted by law, ABS’s total liability arising out of or relating to these Terms or the use of) Tj
+T* (ABS will not exceed the amount paid by the Customer to ABS for the affected service during the twelve months) Tj
+T* (immediately before the event giving rise to the claim.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 669.9900000000000091 Td
+(Nothing in these Terms excludes liability that cannot be excluded under applicable law.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 649.4900000000000091 Td
+(30. Indemnity) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 620.5899999999999181 Td
+(You agree to indemnify and hold harmless ABS, its directors, employees, contractors, affiliates, agents, and) Tj
+T* (service providers from and against claims, losses, damages, liabilities, penalties, costs, and expenses arising) Tj
+T* (from:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 573.0899999999999181 Td
+(1. Your breach of these Terms;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 554.5899999999999181 Td
+(2. Your misuse of ABS;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 536.0899999999999181 Td
+(3. Your Customer Data;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 517.5899999999999181 Td
+(4. Your violation of law or third-party rights;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 499.089999999999975 Td
+(5. Your messages, automations, or communications;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 480.589999999999975 Td
+(6. Your payment, payroll, tax, accounting, or employment activities;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 462.089999999999975 Td
+(7. Your use of Third-Party Services;) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+60. 443.589999999999975 Td
+(8. Unauthorised activity caused by your Users, credentials, settings, or integrations.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 425.089999999999975 Td
+(31. Changes to Terms) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 396.1899999999999977 Td
+(ABS may update these Terms from time to time. We may notify Customers through the platform, email, website) Tj
+T* (notice, invoice notice, or other reasonable means.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 362.1899999999999977 Td
+(Updated Terms will take effect on the effective date stated in the updated version. Continued use of ABS after the) Tj
+T* (updated Terms take effect means you accept the changes.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 328.1899999999999409 Td
+(If a change materially affects your rights or obligations, we will use reasonable efforts to provide advance notice) Tj
+T* (where practical.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 294.1899999999999409 Td
+(32. Changes to Pricing and Plans) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 265.2899999999999636 Td
+(ABS may update pricing, plan names, limits, included features, Cloud Infrastructure Plan fees, storage fees,) Tj
+T* (support terms, and usage limits from time to time.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 231.2899999999999636 Td
+(Pricing changes will not retroactively change a fully paid one-time Enterprise License for the selected workspace) Tj
+T* (and tier. However, annual Cloud Infrastructure Plan fees, additional storage, support, third-party costs,) Tj
+T* (integrations, and optional add-ons may change for future renewal periods.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 183.7899999999999636 Td
+(Where possible, ABS will provide reasonable notice before renewal price changes take effect.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 163.2899999999999636 Td
+(33. Assignment) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 134.3899999999999864 Td
+(You may not assign or transfer your rights or obligations under these Terms without ABS’s prior written consent.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 113.8899999999999864 Td
+(ABS may assign or transfer these Terms in connection with a merger, acquisition, restructuring, sale of assets,) Tj
+T* (financing, change of control, or transfer of business operations.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 79.8899999999999864 Td
+(34. Force Majeure) Tj
+ET
+endstream
+endobj
+25 0 obj
+<</Type /Page
+/Parent 1 0 R
+/Resources 2 0 R
+/MediaBox [0 0 595.2799999999999727 841.8899999999999864]
+/Contents 26 0 R
+>>
+endobj
+26 0 obj
+<<
+/Length 2244
+>>
+stream
+0.200025 w
+0 G
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 793.8899999999999864 Td
+(ABS will not be responsible for delay or failure to perform due to events beyond its reasonable control, including) Tj
+T* (natural disasters, internet failures, power outages, labour disputes, government action, war, civil unrest,) Tj
+T* (cyberattacks, provider outages, payment network failures, telecommunications failures, or other force majeure) Tj
+T* (events.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 732.8899999999999864 Td
+(35. Governing Law and Dispute Resolution) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 703.9900000000000091 Td
+(These Terms are governed by the laws of the Republic of Ghana.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 683.4900000000000091 Td
+(The parties will first attempt to resolve disputes through good-faith discussions. If a dispute cannot be resolved) Tj
+T* (informally, it may be submitted to the competent courts of Ghana, unless the parties agree in writing to mediation) Tj
+T* (or arbitration.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 635.9900000000000091 Td
+(36. Notices) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 607.0899999999999181 Td
+(ABS may send notices by email, in-app notification, dashboard alert, invoice message, website notice, WhatsApp) Tj
+T* (message, or other contact details associated with the Customer’s account.) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 573.0899999999999181 Td
+(Customers are responsible for keeping contact details accurate and up to date.) Tj
+ET
+BT
+/F2 14 Tf
+16.0999999999999979 TL
+0 g
+48. 552.5899999999999181 Td
+(37. Contact Information) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 523.6900000000000546 Td
+(For questions about these Terms, please contact:) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 503.1899999999999977 Td
+(Company Legal Name: iCreations / iCreations Digital Group) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 482.6899999999999977 Td
+(Brand Name: ABS) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 462.1899999999999977 Td
+(Address: Dagadu Avenue, Accra Ghana) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 441.6899999999999977 Td
+(Email: Info@absghana.com) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 421.1899999999999977 Td
+(Phone: +233555155972) Tj
+ET
+BT
+/F1 10 Tf
+11.5 TL
+0 g
+48. 400.6899999999999977 Td
+(Website: www.absghana.com) Tj
+ET
+endstream
+endobj
+1 0 obj
+<</Type /Pages
+/Kids [3 0 R 5 0 R 7 0 R 9 0 R 11 0 R 13 0 R 15 0 R 17 0 R 19 0 R 21 0 R 23 0 R 25 0 R ]
+/Count 12
+>>
+endobj
+27 0 obj
+<<
+/Type /Font
+/BaseFont /Helvetica
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+28 0 obj
+<<
+/Type /Font
+/BaseFont /Helvetica-Bold
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+29 0 obj
+<<
+/Type /Font
+/BaseFont /Helvetica-Oblique
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+30 0 obj
+<<
+/Type /Font
+/BaseFont /Helvetica-BoldOblique
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+31 0 obj
+<<
+/Type /Font
+/BaseFont /Courier
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+32 0 obj
+<<
+/Type /Font
+/BaseFont /Courier-Bold
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+33 0 obj
+<<
+/Type /Font
+/BaseFont /Courier-Oblique
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+34 0 obj
+<<
+/Type /Font
+/BaseFont /Courier-BoldOblique
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+35 0 obj
+<<
+/Type /Font
+/BaseFont /Times-Roman
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+36 0 obj
+<<
+/Type /Font
+/BaseFont /Times-Bold
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+37 0 obj
+<<
+/Type /Font
+/BaseFont /Times-Italic
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+38 0 obj
+<<
+/Type /Font
+/BaseFont /Times-BoldItalic
+/Subtype /Type1
+/Encoding /WinAnsiEncoding
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+39 0 obj
+<<
+/Type /Font
+/BaseFont /ZapfDingbats
+/Subtype /Type1
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+40 0 obj
+<<
+/Type /Font
+/BaseFont /Symbol
+/Subtype /Type1
+/FirstChar 32
+/LastChar 255
+>>
+endobj
+2 0 obj
+<<
+/ProcSet [/PDF /Text /ImageB /ImageC /ImageI]
+/Font <<
+/F1 27 0 R
+/F2 28 0 R
+/F3 29 0 R
+/F4 30 0 R
+/F5 31 0 R
+/F6 32 0 R
+/F7 33 0 R
+/F8 34 0 R
+/F9 35 0 R
+/F10 36 0 R
+/F11 37 0 R
+/F12 38 0 R
+/F13 39 0 R
+/F14 40 0 R
+>>
+/XObject <<
+>>
+>>
+endobj
+41 0 obj
+<<
+/Producer (jsPDF 3.0.4)
+/CreationDate (D:20260526120448-00'00')
+>>
+endobj
+42 0 obj
+<<
+/Type /Catalog
+/Pages 1 0 R
+/OpenAction [3 0 R /FitH null]
+/PageLayout /OneColumn
+>>
+endobj
+xref
+0 43
+0000000000 65535 f 
+0000053646 00000 n 
+0000055543 00000 n 
+0000000015 00000 n 
+0000000152 00000 n 
+0000004723 00000 n 
+0000004860 00000 n 
+0000009478 00000 n 
+0000009615 00000 n 
+0000014035 00000 n 
+0000014173 00000 n 
+0000018615 00000 n 
+0000018754 00000 n 
+0000023599 00000 n 
+0000023738 00000 n 
+0000027938 00000 n 
+0000028077 00000 n 
+0000032971 00000 n 
+0000033110 00000 n 
+0000037523 00000 n 
+0000037662 00000 n 
+0000041960 00000 n 
+0000042099 00000 n 
+0000046531 00000 n 
+0000046670 00000 n 
+0000051210 00000 n 
+0000051349 00000 n 
+0000053778 00000 n 
+0000053904 00000 n 
+0000054035 00000 n 
+0000054169 00000 n 
+0000054307 00000 n 
+0000054431 00000 n 
+0000054560 00000 n 
+0000054692 00000 n 
+0000054828 00000 n 
+0000054956 00000 n 
+0000055083 00000 n 
+0000055212 00000 n 
+0000055345 00000 n 
+0000055447 00000 n 
+0000055796 00000 n 
+0000055882 00000 n 
+trailer
+<<
+/Size 43
+/Root 42 0 R
+/Info 41 0 R
+/ID [ <93618D2A917E92833C3CDF0C67826115> <93618D2A917E92833C3CDF0C67826115> ]
+>>
+startxref
+55986
+%%EOF

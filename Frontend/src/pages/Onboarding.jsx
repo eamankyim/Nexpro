@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -12,12 +12,19 @@ import { Input } from '@/components/ui/input';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from '@/components/ui/form';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import api from '../services/api';
 import { useQueryClient } from '@tanstack/react-query';
 import authService from '../services/authService';
 import dashboardService from '../services/dashboardService';
 import ReactCountryFlag from 'react-country-flag';
 import { BUSINESS_OPTIONS, BUSINESS_GROUPS, getCoreTypeForBusinessSubType } from '@/constants/businessTypes';
+import {
+  PRIVACY_POLICY_URL,
+  TERMS_ACCEPTANCE_MESSAGE,
+  TERMS_PATH,
+  TERMS_VERSION,
+} from '../constants/legal';
 
 const onboardingSchema = z.object({
   businessGroup: z.string().min(1, 'Select your business type'),
@@ -42,7 +49,8 @@ const onboardingSchema = z.object({
       }
     },
     { message: 'Enter a valid URL' }
-  ).optional().or(z.literal(''))
+  ).optional().or(z.literal('')),
+  acceptedTerms: z.boolean().optional()
 });
 
 const countryCodes = [
@@ -111,7 +119,8 @@ const Onboarding = () => {
       companyEmail: '',
       phoneCountryCode: '+233', // Default to Ghana, required field
       companyPhone: '',
-      companyWebsite: ''
+      companyWebsite: '',
+      acceptedTerms: false
     }
   });
   
@@ -257,6 +266,10 @@ const Onboarding = () => {
       }
       if (values.companyAddress) formData.append('companyAddress', values.companyAddress);
       if (values.companyLogo) formData.append('companyLogo', values.companyLogo);
+      if (requiresTermsAcceptance || values.acceptedTerms) {
+        formData.append('acceptedTerms', values.acceptedTerms ? 'true' : 'false');
+        formData.append('termsVersion', TERMS_VERSION);
+      }
 
       // Save onboarding data to backend
       await api.post('/tenants/onboarding', formData, {
@@ -364,6 +377,7 @@ const Onboarding = () => {
   };
 
   const steps = getSteps();
+  const requiresTermsAcceptance = !activeTenant?.metadata?.termsAcceptance?.acceptedAt;
   
   // Adjust current step if out of bounds
   useEffect(() => {
@@ -412,8 +426,13 @@ const Onboarding = () => {
     const hasErrors = stepFields.some(field => {
       return form.formState.errors[field] !== undefined;
     });
+
+    const hasAcceptedRequiredTerms =
+      currentStepData.id !== 'contactInfo' ||
+      !requiresTermsAcceptance ||
+      watchedValues.acceptedTerms === true;
     
-    return allRequiredFieldsFilled && !hasErrors;
+    return allRequiredFieldsFilled && !hasErrors && hasAcceptedRequiredTerms;
   };
 
   const getTimelineStepStatus = (stepId) => {
@@ -449,6 +468,13 @@ const Onboarding = () => {
       if (currentStep < steps.length - 1) {
         setCurrentStep(currentStep + 1);
       } else {
+        if (requiresTermsAcceptance && !form.getValues('acceptedTerms')) {
+          form.setError('acceptedTerms', {
+            type: 'manual',
+            message: TERMS_ACCEPTANCE_MESSAGE,
+          });
+          return;
+        }
         form.handleSubmit(onSubmit)();
       }
     }
@@ -1047,6 +1073,50 @@ const Onboarding = () => {
                         </FormItem>
                       )}
                     />
+
+                    {requiresTermsAcceptance && (
+                      <FormField
+                        control={form.control}
+                        name="acceptedTerms"
+                        render={({ field }) => (
+                          <FormItem>
+                            <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/40 p-3">
+                              <FormControl>
+                                <Checkbox
+                                  checked={field.value}
+                                  onCheckedChange={(checked) => field.onChange(Boolean(checked))}
+                                  className="mt-0.5"
+                                />
+                              </FormControl>
+                              <div className="space-y-1 leading-none">
+                                <FormLabel className="text-sm font-normal leading-5 text-gray-700">
+                                  I have read and agree to the ABS{' '}
+                                  <Link
+                                    to={TERMS_PATH}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-medium text-primary hover:underline"
+                                  >
+                                    Terms and Conditions
+                                  </Link>{' '}
+                                  and{' '}
+                                  <a
+                                    href={PRIVACY_POLICY_URL}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="font-medium text-primary hover:underline"
+                                  >
+                                    Privacy Policy
+                                  </a>
+                                  .
+                                </FormLabel>
+                                <FormMessage />
+                              </div>
+                            </div>
+                          </FormItem>
+                        )}
+                      />
+                    )}
                   </div>
                 )}
 
@@ -1056,7 +1126,7 @@ const Onboarding = () => {
             
             {/* Navigation Buttons - Outside Form */}
             <div className="flex justify-between pt-6 mt-auto gap-3">
-              {currentStep === 0 ? (
+              {currentStep === 0 && !requiresTermsAcceptance ? (
                 <Button
                   type="button"
                   variant="ghost"
@@ -1067,7 +1137,9 @@ const Onboarding = () => {
                   Skip for now
                 </Button>
               ) : (
-                <div className="hidden md:block" />
+                <div className="hidden md:block text-sm text-muted-foreground">
+                  {requiresTermsAcceptance ? 'Complete setup to continue' : null}
+                </div>
               )}
               <div
                 className={`flex gap-3 ${

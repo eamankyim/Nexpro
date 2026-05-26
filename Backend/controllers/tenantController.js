@@ -10,6 +10,15 @@ const { seedDefaultChartOfAccounts } = require('../utils/seedAccountingAccounts'
 const emailService = require('../services/emailService');
 const { emailVerification: emailVerificationTemplate } = require('../services/emailTemplates');
 const { notifyAccountCreated, notifyTenantOnboarded } = require('../services/platformAdminNotificationService');
+const {
+  TERMS_ACCEPTANCE_REQUIRED_MESSAGE,
+  buildTermsAcceptanceMetadata,
+  isTermsAccepted,
+} = require('../utils/legalTerms');
+const {
+  DEFAULT_SHOP_TYPE,
+  normalizeTenantClassification,
+} = require('../utils/tenantClassification');
 
 const generateToken = (userId) =>
   jwt.sign({ id: userId }, config.jwt.secret, {
@@ -57,6 +66,8 @@ exports.signupTenant = async (req, res, next) => {
     businessType, // NEW: business type ('printing_press', 'shop', 'pharmacy')
     shopType, // NEW: shop type (only if businessType is 'shop')
     businessInfo, // NEW: business information object
+    acceptedTerms,
+    termsVersion,
   } = req.body || {};
 
   try {
@@ -65,6 +76,13 @@ exports.signupTenant = async (req, res, next) => {
         success: false,
         message:
           'Account owner name, email, and password are required to create a business.',
+      });
+    }
+
+    if (!isTermsAccepted(acceptedTerms)) {
+      return res.status(400).json({
+        success: false,
+        message: TERMS_ACCEPTANCE_REQUIRED_MESSAGE,
       });
     }
 
@@ -119,6 +137,10 @@ exports.signupTenant = async (req, res, next) => {
         email: companyEmail || null,
         phone: normalizedCompanyPhone || null,
         signupSource: 'self_service',
+        termsAcceptance: buildTermsAcceptanceMetadata(req, {
+          source: 'self_service_signup',
+          termsVersion,
+        }),
       };
 
       // Add shopType to metadata if provided (only for shop business type)
@@ -144,6 +166,9 @@ exports.signupTenant = async (req, res, next) => {
       // If businessType is a legacy studio type, set studioType in metadata
       if (['printing_press', 'mechanic', 'barber', 'salon'].includes(businessType)) {
         metadata.studioType = businessType;
+      }
+      if (finalBusinessType === 'shop' && !metadata.shopType) {
+        metadata.shopType = metadata.businessSubType || DEFAULT_SHOP_TYPE;
       }
 
       const tenant = await Tenant.create(
@@ -181,6 +206,9 @@ exports.signupTenant = async (req, res, next) => {
           invitedBy: null,
           invitedAt: new Date(),
           joinedAt: new Date(),
+          metadata: {
+            termsAcceptance: metadata.termsAcceptance,
+          },
         },
         { transaction }
       );
@@ -423,6 +451,8 @@ exports.completeOnboarding = async (req, res, next) => {
     companyPhone,
     companyWebsite,
     companyAddress,
+    acceptedTerms,
+    termsVersion,
   } = req.body;
   const companyLogo = req.file;
   const tenantId = req.tenantId;
@@ -433,11 +463,23 @@ exports.completeOnboarding = async (req, res, next) => {
         success: false,
         message: 'Tenant ID is required'
       });
-    }    const tenant = await Tenant.findByPk(tenantId);
+    }
+
+    const tenant = await Tenant.findByPk(tenantId);
     if (!tenant) {
       return res.status(404).json({
         success: false,
         message: 'Tenant not found'
+      });
+    }
+
+    const existingTenantMetadata = tenant.metadata || {};
+    const existingTermsAcceptance = existingTenantMetadata.termsAcceptance;
+    const requiresTermsAcceptance = !existingTermsAcceptance?.acceptedAt;
+    if (requiresTermsAcceptance && !isTermsAccepted(acceptedTerms)) {
+      return res.status(400).json({
+        success: false,
+        message: TERMS_ACCEPTANCE_REQUIRED_MESSAGE,
       });
     }
 
@@ -480,7 +522,16 @@ exports.completeOnboarding = async (req, res, next) => {
 
     // Store onboarding data in metadata
     // Create a new metadata object to ensure Sequelize detects the change
-    const metadata = { ...(tenant.metadata || {}) };
+    const metadata = { ...existingTenantMetadata };
+    const termsAcceptance = isTermsAccepted(acceptedTerms)
+      ? buildTermsAcceptanceMetadata(req, {
+          source: 'tenant_onboarding',
+          termsVersion,
+        })
+      : existingTermsAcceptance;
+    if (termsAcceptance) {
+      metadata.termsAcceptance = termsAcceptance;
+    }
     metadata.onboarding = {
       industry,
       completedAt: new Date().toISOString()
@@ -557,6 +608,17 @@ exports.completeOnboarding = async (req, res, next) => {
     // Directly assign metadata and save to ensure JSONB changes are persisted
     tenant.metadata = metadata;
     await tenant.save();
+
+    if (termsAcceptance && req.user?.id) {
+      const membership = await UserTenant.findOne({ where: { userId: req.user.id, tenantId } });
+      if (membership) {
+        membership.metadata = {
+          ...(membership.metadata || {}),
+          termsAcceptance,
+        };
+        await membership.save();
+      }
+    }
     
     // Reload to get the latest data
     await tenant.reload();
@@ -636,6 +698,7 @@ exports.completeOnboarding = async (req, res, next) => {
       });
     });
 
+    const normalizedTenant = normalizeTenantClassification(tenant);
     return res.status(200).json({
       success: true,
       message: 'Onboarding completed successfully',
@@ -643,8 +706,8 @@ exports.completeOnboarding = async (req, res, next) => {
         tenant: {
           id: tenant.id,
           name: tenant.name,
-          businessType: tenant.businessType,
-          metadata: tenant.metadata
+          businessType: normalizedTenant.businessType,
+          metadata: normalizedTenant.metadata
         }
       }
     });

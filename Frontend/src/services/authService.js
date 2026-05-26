@@ -177,15 +177,17 @@ const authService = {
   /**
    * Google OAuth sign-in or sign-up.
    * @param {string} idToken - Google ID token from credentialResponse.credential
-   * @param {Object} options - Optional: { signUp: boolean, companyName: string }
+   * @param {Object} options - Optional: { signUp: boolean, companyName: string, acceptedTerms: boolean, termsVersion: string }
    * @returns {Promise<{ data }>} - Same shape as login (user, token, memberships, defaultTenantId)
    */
   googleAuth: async (idToken, options = {}) => {
-    const { signUp = false, companyName } = options;
+    const { signUp = false, companyName, acceptedTerms, termsVersion } = options;
     const response = await api.post('/auth/google', {
       idToken,
       signUp,
       ...(companyName && { companyName }),
+      ...(acceptedTerms !== undefined && { acceptedTerms }),
+      ...(termsVersion && { termsVersion }),
     });
     const payload = response?.data || response || {};
     persistAuthPayload(payload);

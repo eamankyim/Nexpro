@@ -539,6 +539,7 @@ exports.chat = async (req, res, next) => {
 
     const assistantMessage = await openaiService.chatWithContext(messages, context, {
       businessType,
+      tenantId: req.tenantId,
       pageContext: typeof pageContext === 'string' ? pageContext : undefined,
     });
 
@@ -558,7 +559,7 @@ exports.chat = async (req, res, next) => {
       return res.status(503).json({
         success: false,
         error:
-          'Invalid Anthropic API key. Check ANTHROPIC_API_KEY in Backend/.env and create a key at https://console.anthropic.com/.',
+          'Invalid Anthropic API key. Check the workspace AI key or ANTHROPIC_API_KEY in Backend/.env.',
         code: 'OPENAI_INVALID_KEY',
       });
     }

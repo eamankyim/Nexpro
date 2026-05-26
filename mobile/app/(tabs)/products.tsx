@@ -73,6 +73,7 @@ export default function ProductsScreen() {
     name: '',
     sku: '',
     barcode: '',
+    alternateBarcode: '',
     description: '',
     sellingPrice: '',
     costPrice: '',
@@ -117,6 +118,7 @@ export default function ProductsScreen() {
       name: '',
       sku: '',
       barcode: '',
+      alternateBarcode: '',
       description: '',
       sellingPrice: '',
       costPrice: '',
@@ -235,6 +237,12 @@ export default function ProductsScreen() {
       Alert.alert('Error', 'Selling price is required');
       return;
     }
+    const primaryBarcode = formData.barcode.trim();
+    const alternateBarcode = formData.alternateBarcode.trim();
+    if (primaryBarcode && alternateBarcode && primaryBarcode === alternateBarcode) {
+      Alert.alert('Error', 'Second barcode must be different from the primary barcode');
+      return;
+    }
 
     const metadata: Record<string, unknown> = {};
     if (isRestaurant) {
@@ -245,7 +253,8 @@ export default function ProductsScreen() {
     createProductMutation.mutate({
       name: formData.name.trim(),
       sku: formData.sku.trim() || undefined,
-      barcode: formData.barcode.trim() || undefined,
+      barcode: primaryBarcode || undefined,
+      barcodeAliases: alternateBarcode ? [alternateBarcode] : undefined,
       description: formData.description.trim() || undefined,
       sellingPrice: parseFloat(formData.sellingPrice),
       costPrice: formData.costPrice ? parseFloat(formData.costPrice) : undefined,
@@ -487,6 +496,18 @@ export default function ProductsScreen() {
                     placeholderTextColor={mutedColor}
                     value={formData.barcode}
                     onChangeText={(text) => setFormData({ ...formData, barcode: text })}
+                  />
+                </View>
+                <View style={styles.formGroup}>
+                  <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.product.alternateBarcode}</Text>
+                  <TextInput
+                    style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
+                    placeholder="Second barcode"
+                    placeholderTextColor={mutedColor}
+                    value={formData.alternateBarcode}
+                    onChangeText={(text) => setFormData({ ...formData, alternateBarcode: text })}
+                    autoCapitalize="none"
+                    autoCorrect={false}
                   />
                 </View>
                 {isRestaurant && (

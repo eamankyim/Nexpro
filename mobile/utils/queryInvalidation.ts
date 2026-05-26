@@ -86,8 +86,8 @@ export async function refreshAfterInventoryChange(queryClient: QueryClient) {
   await refreshRelatedQueries(queryClient, [
     ['products'],
     ['product'],
-    ['dashboard'],
   ]);
+  await markPrefixesStale(queryClient, [['dashboard']]);
 }
 
 /** Invoice payment / status */
