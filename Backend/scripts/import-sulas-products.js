@@ -6,7 +6,8 @@
  * - Dry run by default
  * - Requires --execute and --confirm-import for real writes
  * - Resolves tenant from user email membership
- * - Uses product code as barcode
+ * - Uses product code as barcode when available
+ * - Imports products without codes so barcodes can be added later in the UI
  *
  * Usage (from Backend/):
  *   # Preview only
@@ -122,13 +123,13 @@ function loadCatalogRows(filePath) {
   return rows;
 }
 
-function mergeByBarcode(rows) {
+function mergeCatalogRows(rows) {
   const byKey = new Map();
-  const skippedNoBarcode = [];
+  const noBarcodeRows = [];
 
   for (const row of rows) {
     if (!row.barcode) {
-      skippedNoBarcode.push(row);
+      noBarcodeRows.push({ ...row });
       continue;
     }
 
@@ -147,9 +148,9 @@ function mergeByBarcode(rows) {
   }
 
   return {
-    merged: Array.from(byKey.values()),
-    duplicateInputCount: rows.length - byKey.size - skippedNoBarcode.length,
-    skippedNoBarcode,
+    merged: [...Array.from(byKey.values()), ...noBarcodeRows],
+    duplicateInputCount: rows.length - byKey.size - noBarcodeRows.length,
+    noBarcodeRows,
   };
 }
 
@@ -232,20 +233,22 @@ async function main() {
   printSummary('Default shop', `${defaultShop.name} (${defaultShop.id})`);
 
   const rows = loadCatalogRows(sourcePath);
-  const { merged, duplicateInputCount, skippedNoBarcode } = mergeByBarcode(rows);
+  const { merged, duplicateInputCount, noBarcodeRows } = mergeCatalogRows(rows);
 
   const barcodes = merged.map((r) => r.barcode).filter(Boolean);
-  const existing = await Product.findAll({
-    where: {
-      tenantId,
-      [Op.or]: [
-        { barcode: { [Op.in]: barcodes } },
-        { sku: { [Op.in]: barcodes } },
-      ],
-    },
-    attributes: ['id', 'barcode', 'sku', 'name'],
-    raw: true,
-  });
+  const existing = barcodes.length
+    ? await Product.findAll({
+        where: {
+          tenantId,
+          [Op.or]: [
+            { barcode: { [Op.in]: barcodes } },
+            { sku: { [Op.in]: barcodes } },
+          ],
+        },
+        attributes: ['id', 'barcode', 'sku', 'name'],
+        raw: true,
+      })
+    : [];
 
   const existingByCode = new Map();
   for (const p of existing) {
@@ -256,7 +259,7 @@ async function main() {
   const toCreate = [];
   const skippedExisting = [];
   for (const row of merged) {
-    const hit = existingByCode.get(row.barcode);
+    const hit = row.barcode ? existingByCode.get(row.barcode) : null;
     if (hit) {
       skippedExisting.push({ row, product: hit });
       continue;
@@ -282,21 +285,22 @@ async function main() {
       metadata: {
         importSource: 'sulas-enterprise-products',
         importedByScript: 'scripts/import-sulas-products.js',
+        missingBarcode: !row.barcode,
       },
     });
   }
 
   console.log('\nPlan:');
   printSummary('Parsed rows', rows.length);
-  printSummary('Unique barcodes', merged.length);
+  printSummary('Products after merge', merged.length);
   printSummary('Duplicate rows merged', duplicateInputCount);
-  printSummary('Skipped no barcode', skippedNoBarcode.length);
+  printSummary('No barcode rows included', noBarcodeRows.length);
   printSummary('Already exists', skippedExisting.length);
   printSummary('Will create', toCreate.length);
 
-  if (skippedNoBarcode.length) {
-    console.log('\nExamples skipped (missing product code/barcode):');
-    skippedNoBarcode.slice(0, 10).forEach((r, idx) => {
+  if (noBarcodeRows.length) {
+    console.log('\nExamples included without product code/barcode:');
+    noBarcodeRows.slice(0, 10).forEach((r, idx) => {
       console.log(`${idx + 1}. ${r.name} (qty ${r.quantityOnHand})`);
     });
   }
