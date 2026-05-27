@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { ChevronDown, Loader2, Search } from 'lucide-react';
 import {
   Dialog,
   DialogBody,
@@ -8,8 +8,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
@@ -28,16 +30,16 @@ export default function StockTransferModal({
   onClose,
   onSuccess,
   initialProduct = null,
-  selectedProducts = [],
   bulkMode = 'single', // single | selected | all
   sourceShopId = null,
   availableShops = [],
   activeShopId = null,
 }) {
   const [sourceProduct, setSourceProduct] = useState(initialProduct);
-  const [sourceProductId, setSourceProductId] = useState(initialProduct?.id || '');
   const [productQuery, setProductQuery] = useState('');
   const [productOptions, setProductOptions] = useState([]);
+  const [selectedSourceProductIds, setSelectedSourceProductIds] = useState([]);
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const [destinationShopId, setDestinationShopId] = useState('');
   const [quantity, setQuantity] = useState('1');
@@ -50,9 +52,10 @@ export default function StockTransferModal({
     if (!open) return;
 
     setSourceProduct(initialProduct || null);
-    setSourceProductId(initialProduct?.id || '');
+    setSelectedSourceProductIds(initialProduct?.id ? [initialProduct.id] : []);
     setProductQuery('');
     setProductOptions([]);
+    setProductPickerOpen(false);
     setDestinationShopId('');
     setQuantity('1');
     setReason('');
@@ -60,55 +63,109 @@ export default function StockTransferModal({
     setSourceVariantId(EMPTY_VARIANT_VALUE);
   }, [open, initialProduct]);
 
-  const isBulkSelected = bulkMode === 'selected';
-  const isBulkAll = bulkMode === 'all';
-  const isBulkMode = isBulkSelected || isBulkAll;
+  const isBulkMode = bulkMode !== 'single';
+  const usesProductPicker = !initialProduct?.id || isBulkMode;
+  const usesBulkSubmission = usesProductPicker;
 
-  const fetchSourceProduct = useCallback(async (productId) => {
-    if (!productId) return;
-    try {
-      const response = await productService.getProductById(productId);
-      const product = response?.data || response;
-      setSourceProduct(product || null);
-    } catch (error) {
-      showError(error, 'Failed to load product details');
-    }
-  }, []);
-
-  const handleSearchProducts = useCallback(async () => {
-    const query = productQuery.trim();
-    if (!query) {
-      setProductOptions([]);
-      return;
-    }
+  const loadSourceProducts = useCallback(async () => {
+    const resolvedSourceShopId = sourceShopId || activeShopId || initialProduct?.shopId || null;
     setLoadingProducts(true);
     try {
-      const response = await productService.getProducts({ search: query, limit: 20 });
-      const list = Array.isArray(response?.data) ? response.data : [];
-      setProductOptions(list);
+      const pageSize = 100;
+      const allProducts = [];
+      let page = 1;
+      let totalPages = 1;
+
+      do {
+        const response = await productService.getProducts({
+          isActive: true,
+          page,
+          limit: pageSize,
+          ...(resolvedSourceShopId ? { shopId: resolvedSourceShopId } : {}),
+        });
+        const list = Array.isArray(response?.data)
+          ? response.data
+          : Array.isArray(response?.products)
+            ? response.products
+            : [];
+        allProducts.push(...list);
+        totalPages = Number(response?.pagination?.totalPages || totalPages);
+        if (list.length < pageSize && !response?.pagination?.totalPages) break;
+        page += 1;
+      } while (page <= totalPages);
+
+      setProductOptions(allProducts);
     } catch (error) {
-      showError(error, 'Failed to search products');
+      showError(error, 'Failed to load products');
       setProductOptions([]);
     } finally {
       setLoadingProducts(false);
     }
-  }, [productQuery]);
+  }, [activeShopId, initialProduct?.shopId, sourceShopId]);
+
+  useEffect(() => {
+    if (!open || !usesProductPicker) return;
+    loadSourceProducts();
+  }, [loadSourceProducts, open, usesProductPicker]);
+
+  const filteredProductOptions = useMemo(() => {
+    const query = productQuery.trim().toLowerCase();
+    if (!query) return productOptions;
+    return productOptions.filter((product) => {
+      const haystack = [
+        product.name,
+        product.sku,
+        product.barcode,
+        product.category?.name,
+        product.shop?.name,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [productOptions, productQuery]);
+
+  const eligibleProductOptions = useMemo(
+    () => productOptions.filter((product) => product.trackStock !== false),
+    [productOptions]
+  );
+
+  const selectedSourceProducts = useMemo(
+    () => productOptions.filter((product) => selectedSourceProductIds.includes(product.id)),
+    [productOptions, selectedSourceProductIds]
+  );
+
+  const toggleSourceProduct = useCallback((productId, checked) => {
+    setSelectedSourceProductIds((prev) => {
+      if (checked) return prev.includes(productId) ? prev : [...prev, productId];
+      return prev.filter((id) => id !== productId);
+    });
+  }, []);
+
+  const selectAllFilteredProducts = useCallback(() => {
+    const ids = filteredProductOptions
+      .filter((product) => product.trackStock !== false)
+      .map((product) => product.id);
+    setSelectedSourceProductIds((prev) => Array.from(new Set([...prev, ...ids])));
+  }, [filteredProductOptions]);
+
+  const deselectAllProducts = useCallback(() => {
+    setSelectedSourceProductIds([]);
+  }, []);
 
   const sourceVariants = useMemo(() => {
-    if (isBulkMode) return [];
+    if (usesBulkSubmission) return [];
     if (!Array.isArray(sourceProduct?.variants)) return [];
     return sourceProduct.variants.filter((variant) => variant?.isActive !== false);
-  }, [isBulkMode, sourceProduct]);
+  }, [sourceProduct, usesBulkSubmission]);
 
   const sourceStock = useMemo(() => {
-    if (isBulkMode) return 0;
+    if (usesBulkSubmission) return 0;
     if (!sourceProduct) return 0;
     if (sourceVariantId !== EMPTY_VARIANT_VALUE) {
       const variant = sourceVariants.find((v) => v.id === sourceVariantId);
       return Number.parseFloat(variant?.quantityOnHand || 0);
     }
     return Number.parseFloat(sourceProduct?.quantityOnHand || 0);
-  }, [isBulkMode, sourceProduct, sourceVariantId, sourceVariants]);
+  }, [sourceProduct, sourceVariantId, sourceVariants, usesBulkSubmission]);
 
   const destinationOptions = useMemo(() => {
     const resolvedSourceShopId = sourceShopId || sourceProduct?.shopId || activeShopId || null;
@@ -116,8 +173,12 @@ export default function StockTransferModal({
   }, [availableShops, sourceShopId, sourceProduct?.shopId, activeShopId]);
 
   const handleSubmit = useCallback(async () => {
-    if (!isBulkMode && !sourceProduct?.id) {
+    if (!usesBulkSubmission && !sourceProduct?.id) {
       showError('Select a source product first');
+      return;
+    }
+    if (usesBulkSubmission && selectedSourceProductIds.length === 0) {
+      showError('Select at least one source product');
       return;
     }
     if (!destinationShopId) {
@@ -130,21 +191,25 @@ export default function StockTransferModal({
       showError('Enter a valid quantity greater than zero');
       return;
     }
-    if (!isBulkMode && parsedQty > sourceStock) {
+    if (!usesBulkSubmission && parsedQty > sourceStock) {
       showError(`Transfer quantity cannot exceed source stock (${sourceStock})`);
       return;
     }
 
     setSubmitting(true);
     try {
-      if (isBulkMode) {
+      if (usesBulkSubmission) {
         const resolvedSourceShopId = sourceShopId || sourceProduct?.shopId || activeShopId;
+        if (!resolvedSourceShopId) {
+          showError('Select a source shop before transferring stock');
+          return;
+        }
         const payload = {
           sourceShopId: resolvedSourceShopId,
           destinationShopId,
           quantity: parsedQty,
-          mode: isBulkAll ? 'all' : 'selected',
-          productIds: isBulkSelected ? selectedProducts.map((product) => product.id) : undefined,
+          mode: 'selected',
+          productIds: selectedSourceProductIds,
           reason: reason.trim() || undefined,
           notes: notes.trim() || undefined,
         };
@@ -152,7 +217,7 @@ export default function StockTransferModal({
         const response = await productService.createBulkStockTransfer(payload);
         const summary = response?.data ?? response;
         showSuccess(
-          `Bulk transfer complete: ${summary?.transferredCount || 0} transferred, ${summary?.skippedCount || 0} skipped`
+          `Transfer complete: ${summary?.transferredCount || 0} transferred, ${summary?.skippedCount || 0} skipped`
         );
       } else {
         await productService.createStockTransfer({
@@ -183,10 +248,8 @@ export default function StockTransferModal({
     notes,
     activeShopId,
     sourceShopId,
-    isBulkMode,
-    isBulkAll,
-    isBulkSelected,
-    selectedProducts,
+    usesBulkSubmission,
+    selectedSourceProductIds,
     onSuccess,
     onClose,
   ]);
@@ -195,57 +258,116 @@ export default function StockTransferModal({
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose?.()}>
       <DialogContent className="sm:w-[var(--modal-w-sm)]">
         <DialogHeader>
-          <DialogTitle>{isBulkMode ? 'Bulk Transfer Stock' : 'Transfer Stock'}</DialogTitle>
+          <DialogTitle>Transfer Stock</DialogTitle>
         </DialogHeader>
         <DialogBody>
           <div className="space-y-4">
-            {!initialProduct?.id && !isBulkMode && (
+            {usesProductPicker && (
               <div className="space-y-2">
-                <Label>Source product</Label>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Search product name, SKU, or barcode"
-                    value={productQuery}
-                    onChange={(e) => setProductQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleSearchProducts())}
-                  />
-                  <Button type="button" variant="outline" onClick={handleSearchProducts} disabled={loadingProducts}>
-                    {loadingProducts ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Search'}
-                  </Button>
-                </div>
-                {!!productOptions.length && (
-                  <Select
-                    value={sourceProductId}
-                    onValueChange={(value) => {
-                      setSourceProductId(value);
-                      fetchSourceProduct(value);
-                    }}
+                <Label>Source products</Label>
+                <Popover open={productPickerOpen} onOpenChange={setProductPickerOpen}>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="outline" className="w-full justify-between">
+                      <span className="truncate">
+                        {selectedSourceProductIds.length
+                          ? `${selectedSourceProductIds.length} product(s) selected`
+                          : 'Select products to transfer'}
+                      </span>
+                      <ChevronDown className="ml-2 h-4 w-4 shrink-0" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-3rem)] p-0"
+                    align="start"
                   >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select source product" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {productOptions.map((product) => (
-                        <SelectItem key={product.id} value={product.id}>
-                          {product.name} ({product.shop?.name || 'No shop'})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
+                    <div className="border-b border-border p-3">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                          value={productQuery}
+                          onChange={(event) => setProductQuery(event.target.value)}
+                          placeholder="Search product name, SKU, or barcode"
+                          className="pl-9"
+                        />
+                      </div>
+                      <div className="mt-2 flex items-center justify-between gap-2">
+                        <p className="text-xs text-muted-foreground">
+                          {loadingProducts
+                            ? 'Loading products...'
+                            : `${filteredProductOptions.length} shown, ${selectedSourceProductIds.length} selected`}
+                        </p>
+                        <div className="flex gap-2">
+                          <Button type="button" size="sm" variant="ghost" onClick={selectAllFilteredProducts}>
+                            Select all
+                          </Button>
+                          <Button type="button" size="sm" variant="ghost" onClick={deselectAllProducts}>
+                            Deselect all
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto p-2">
+                      {loadingProducts ? (
+                        <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Loading products
+                        </div>
+                      ) : filteredProductOptions.length ? (
+                        filteredProductOptions.map((product) => {
+                          const disabled = product.trackStock === false;
+                          return (
+                            <label
+                              key={product.id}
+                              className={`flex cursor-pointer items-start gap-3 rounded-md px-2 py-2 text-sm hover:bg-muted ${disabled ? 'cursor-not-allowed opacity-60' : ''}`}
+                            >
+                              <Checkbox
+                                checked={selectedSourceProductIds.includes(product.id)}
+                                disabled={disabled}
+                                onCheckedChange={(checked) => toggleSourceProduct(product.id, Boolean(checked))}
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-medium">{product.name}</span>
+                                <span className="block truncate text-xs text-muted-foreground">
+                                  {product.sku ? `SKU: ${product.sku} · ` : ''}
+                                  Stock: {product.quantityOnHand || 0} {product.unit || 'pcs'}
+                                  {product.shop?.name ? ` · ${product.shop.name}` : ''}
+                                  {disabled ? ' · not stock-tracked' : ''}
+                                </span>
+                              </span>
+                            </label>
+                          );
+                        })
+                      ) : (
+                        <p className="py-8 text-center text-sm text-muted-foreground">
+                          No products found.
+                        </p>
+                      )}
+                    </div>
+                    <div className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
+                      Select one or more products. Use “Select all” here when transferring many products.
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                {!loadingProducts && eligibleProductOptions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No stock-tracked products are available in the source shop.</p>
+                ) : null}
               </div>
             )}
 
-            {isBulkMode ? (
+            {usesBulkSubmission ? (
               <div className="rounded-md border p-3 text-sm space-y-1">
                 <p className="font-medium">
-                  {isBulkAll
-                    ? 'All eligible products in source shop'
-                    : `${selectedProducts.length} selected product(s)`}
+                  {selectedSourceProductIds.length} selected product(s)
                 </p>
                 <p className="text-muted-foreground">
                   Shared quantity will be applied per product. If stock is lower, available quantity is transferred.
                 </p>
+                {selectedSourceProducts.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {selectedSourceProducts.slice(0, 3).map((product) => product.name).join(', ')}
+                    {selectedSourceProducts.length > 3 ? ` +${selectedSourceProducts.length - 3} more` : ''}
+                  </p>
+                )}
               </div>
             ) : sourceProduct?.id ? (
               <div className="rounded-md border p-3 text-sm">
@@ -256,7 +378,7 @@ export default function StockTransferModal({
               </div>
             ) : null}
 
-            {sourceVariants.length > 0 && !isBulkMode && (
+            {sourceVariants.length > 0 && !usesBulkSubmission && (
               <div className="space-y-2">
                 <Label>Variant (optional)</Label>
                 <Select value={sourceVariantId} onValueChange={setSourceVariantId}>
@@ -301,7 +423,7 @@ export default function StockTransferModal({
                 onChange={(e) => setQuantity(e.target.value)}
               />
               <p className="text-xs text-muted-foreground">
-                {isBulkMode
+                {usesBulkSubmission
                   ? 'Applied per product in this batch.'
                   : `Available in source: ${sourceStock} ${sourceProduct?.unit || 'pcs'}`}
               </p>
@@ -333,9 +455,9 @@ export default function StockTransferModal({
                 type="button"
                 onClick={handleSubmit}
                 loading={submitting}
-                disabled={(!sourceProduct?.id && !isBulkMode) || !destinationShopId}
+                disabled={(usesBulkSubmission ? selectedSourceProductIds.length === 0 : !sourceProduct?.id) || !destinationShopId}
               >
-                {isBulkMode ? 'Transfer Bulk' : 'Transfer'}
+                Transfer
               </Button>
             </div>
           </div>

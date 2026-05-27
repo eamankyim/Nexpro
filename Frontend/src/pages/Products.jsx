@@ -547,8 +547,6 @@ const Products = () => {
   const [productToReceive, setProductToReceive] = useState(null);
   const [stockTransferOpen, setStockTransferOpen] = useState(false);
   const [productToTransfer, setProductToTransfer] = useState(null);
-  const [stockTransferMode, setStockTransferMode] = useState('single');
-  const [selectedProductIds, setSelectedProductIds] = useState([]);
   const [qrGenerateOpen, setQrGenerateOpen] = useState(false);
   const [productForQR, setProductForQR] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
@@ -681,24 +679,7 @@ const Products = () => {
   }, []);
 
   const handleOpenStockTransfer = useCallback((product = null) => {
-    setStockTransferMode('single');
     setProductToTransfer(product);
-    setStockTransferOpen(true);
-  }, []);
-
-  const handleOpenBulkTransferSelected = useCallback(() => {
-    if (!selectedProductIds.length) {
-      showError('Select at least one product');
-      return;
-    }
-    setStockTransferMode('selected');
-    setProductToTransfer(null);
-    setStockTransferOpen(true);
-  }, [selectedProductIds]);
-
-  const handleOpenBulkTransferAll = useCallback(() => {
-    setStockTransferMode('all');
-    setProductToTransfer(null);
     setStockTransferOpen(true);
   }, []);
 
@@ -949,11 +930,6 @@ const Products = () => {
     pagination.pageSize,
     fetchProducts,
   ]);
-
-  useEffect(() => {
-    const visibleIds = new Set(products.map((product) => product.id));
-    setSelectedProductIds((prev) => prev.filter((id) => visibleIds.has(id)));
-  }, [products]);
 
   useEffect(() => {
     if (!scopeReady) return;
@@ -1484,44 +1460,7 @@ const Products = () => {
   // TABLE COLUMNS
   // =============================================
 
-  const allVisibleSelected = products.length > 0 && products.every((product) => selectedProductIds.includes(product.id));
-
-  const toggleSelectAllVisible = useCallback((checked) => {
-    if (checked) {
-      setSelectedProductIds(products.map((product) => product.id));
-    } else {
-      setSelectedProductIds([]);
-    }
-  }, [products]);
-
-  const toggleSelectProduct = useCallback((productId, checked) => {
-    setSelectedProductIds((prev) => {
-      if (checked) {
-        return prev.includes(productId) ? prev : [...prev, productId];
-      }
-      return prev.filter((id) => id !== productId);
-    });
-  }, []);
-
   const tableColumns = useMemo(() => [
-    {
-      key: '__select',
-      title: (
-        <Checkbox
-          checked={allVisibleSelected}
-          onCheckedChange={(checked) => toggleSelectAllVisible(Boolean(checked))}
-          aria-label="Select all visible products"
-        />
-      ),
-      width: '3rem',
-      render: (_, record) => (
-        <Checkbox
-          checked={selectedProductIds.includes(record.id)}
-          onCheckedChange={(checked) => toggleSelectProduct(record.id, Boolean(checked))}
-          aria-label={`Select ${record.name}`}
-        />
-      ),
-    },
     {
       key: 'name',
       title: 'Product',
@@ -1631,10 +1570,6 @@ const Products = () => {
       ),
     },
   ], [
-    allVisibleSelected,
-    selectedProductIds,
-    toggleSelectAllVisible,
-    toggleSelectProduct,
     isMobile,
     handleViewProduct,
   ]);
@@ -1647,7 +1582,6 @@ const Products = () => {
 
   const handlePageChange = (newPagination) => {
     setPagination(prev => ({ ...prev, ...newPagination }));
-    setSelectedProductIds([]);
   };
 
   const handleClearProductFilters = useCallback(() => {
@@ -1673,11 +1607,6 @@ const Products = () => {
       secondary: () => setImportModalOpen(true),
     });
   }, [hasActiveProductFilters, handleClearProductFilters, handleCreateProduct]);
-
-  const selectedProducts = useMemo(
-    () => products.filter((product) => selectedProductIds.includes(product.id)),
-    [products, selectedProductIds]
-  );
 
   // =============================================
   // RENDER HELPERS
@@ -2412,21 +2341,6 @@ const Products = () => {
             <TooltipContent>Move stock between shops in this workspace</TooltipContent>
           </Tooltip>
           {!isMobile && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  onClick={handleOpenBulkTransferAll}
-                  aria-label="Transfer all products in shop"
-                >
-                  <ArrowRightLeft className="h-4 w-4" />
-                  <span className="ml-2">Transfer all in shop</span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Transfer all eligible products in current shop</TooltipContent>
-            </Tooltip>
-          )}
-          {!isMobile && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -2554,23 +2468,6 @@ const Products = () => {
       )}
 
       {/* Products list — DashboardTable handles loading + empty state (table on desktop, cards on mobile) */}
-      {selectedProductIds.length > 0 && (
-        <div className="mb-3 flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2">
-          <p className="text-sm text-muted-foreground">
-            {selectedProductIds.length} product(s) selected
-          </p>
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => setSelectedProductIds([])}>
-              Clear
-            </Button>
-            <Button type="button" size="sm" onClick={handleOpenBulkTransferSelected}>
-              <ArrowRightLeft className="h-4 w-4 mr-2" />
-              Transfer selected
-            </Button>
-          </div>
-        </div>
-      )}
-
       <DashboardTable
         data={products}
         columns={tableColumns}
@@ -3276,18 +3173,14 @@ const Products = () => {
       <StockTransferModal
         open={stockTransferOpen}
         initialProduct={productToTransfer}
-        selectedProducts={selectedProducts}
-        bulkMode={stockTransferMode}
         sourceShopId={activeShopId}
         availableShops={shopContext?.shops || []}
         activeShopId={activeShopId}
         onClose={() => {
           setStockTransferOpen(false);
           setProductToTransfer(null);
-          setStockTransferMode('single');
         }}
         onSuccess={() => {
-          setSelectedProductIds([]);
           fetchProducts();
           fetchStats();
           if (selectedProduct) {
