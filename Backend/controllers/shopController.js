@@ -36,6 +36,28 @@ const prepareShopPayload = async (tenantId, payload) => {
   const next = { ...payload };
   delete next.managerName;
 
+  [
+    'code',
+    'address',
+    'city',
+    'state',
+    'postalCode',
+    'phone',
+    'email',
+    'logoUrl',
+  ].forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(next, field)) {
+      const value = next[field];
+      next[field] = typeof value === 'string' && value.trim() === '' ? null : value;
+    }
+  });
+
+  ['name', 'country'].forEach((field) => {
+    if (typeof next[field] === 'string') {
+      next[field] = next[field].trim();
+    }
+  });
+
   if (Object.prototype.hasOwnProperty.call(next, 'shopType')) {
     next.shopType = next.shopType ? String(next.shopType).trim() : null;
   }
@@ -184,6 +206,9 @@ exports.createShop = async (req, res, next) => {
     if (error.statusCode === 400) {
       return res.status(400).json({ success: false, message: error.message });
     }
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(400).json({ success: false, message: 'Shop code already exists' });
+    }
     next(error);
   }
 };
@@ -225,6 +250,9 @@ exports.updateShop = async (req, res, next) => {
   } catch (error) {
     if (error.statusCode === 400) {
       return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      return res.status(400).json({ success: false, message: 'Shop code already exists' });
     }
     next(error);
   }
