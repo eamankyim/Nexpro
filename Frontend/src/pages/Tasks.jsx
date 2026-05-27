@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useUnsavedChangesGuard } from '../hooks/useUnsavedChangesGuard';
+import UnsavedChangesDialog from '../components/UnsavedChangesDialog';
+import { shallowEqualObjects } from '../utils/formDirty';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Calendar, CheckCircle2, Clock3, Eye, Filter, MessageSquare, MoreVertical, PauseCircle, Plus, UserRound } from 'lucide-react';
 import { DragDropContext, Draggable, Droppable } from 'react-beautiful-dnd';
@@ -137,7 +140,9 @@ const Tasks = () => {
   const [openDetails, setOpenDetails] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [createForm, setCreateForm] = useState(initialForm);
+  const [createFormBaseline, setCreateFormBaseline] = useState(initialForm);
   const [form, setForm] = useState(initialForm);
+  const [detailsFormBaseline, setDetailsFormBaseline] = useState(initialForm);
   const [isDetailsEditing, setIsDetailsEditing] = useState(false);
   const [detailsTab, setDetailsTab] = useState('overview');
   const [highlightedTaskId, setHighlightedTaskId] = useState(null);
@@ -199,6 +204,7 @@ const Tasks = () => {
       if (selectedTaskId) {
         queryClient.invalidateQueries({ queryKey: ['user-workspace', 'task-detail', selectedTaskId] });
       }
+      setDetailsFormBaseline({ ...form });
       setIsDetailsEditing(false);
       showSuccess('Task saved');
     },
@@ -213,6 +219,7 @@ const Tasks = () => {
       queryClient.invalidateQueries({ queryKey: ['user-workspace', 'tasks'] });
       setOpenCreateModal(false);
       setCreateForm(initialForm);
+      setCreateFormBaseline(initialForm);
       showSuccess('Task created');
     },
     onError: (err) => {
@@ -279,59 +286,113 @@ const Tasks = () => {
     }
   });
 
+  const buildTaskFormState = useCallback((task) => ({
+    id: task.id,
+    title: task.title || '',
+    description: task.description || '',
+    status: task.status || 'todo',
+    priority: task.priority || 'medium',
+    startDate: task.startDate
+      ? String(task.startDate).slice(0, 10)
+      : (task.createdAt ? String(task.createdAt).slice(0, 10) : ''),
+    dueDate: task.dueDate ? String(task.dueDate).slice(0, 10) : '',
+    isPrivate: task.isPrivate === true,
+    assigneeId: task.assigneeId || '',
+  }), []);
+
   const openCreate = useCallback(() => {
-    setCreateForm({
+    const next = {
       ...initialForm,
       assigneeId: user?.id || '',
-      startDate: new Date().toISOString().slice(0, 10)
-    });
+      startDate: new Date().toISOString().slice(0, 10),
+    };
+    setCreateForm(next);
+    setCreateFormBaseline(next);
     setOpenCreateModal(true);
   }, [user?.id]);
 
   const openEdit = useCallback((task) => {
-    setForm({
-      id: task.id,
-      title: task.title || '',
-      description: task.description || '',
-      status: task.status || 'todo',
-      priority: task.priority || 'medium',
-      startDate: task.startDate
-        ? String(task.startDate).slice(0, 10)
-        : (task.createdAt ? String(task.createdAt).slice(0, 10) : ''),
-      dueDate: task.dueDate ? String(task.dueDate).slice(0, 10) : '',
-      isPrivate: task.isPrivate === true,
-      assigneeId: task.assigneeId || ''
-    });
+    const snapshot = buildTaskFormState(task);
+    setForm(snapshot);
+    setDetailsFormBaseline(snapshot);
     setSelectedTaskId(task.id);
     setIsDetailsEditing(true);
     setDetailsTab('overview');
     setOpenDetails(true);
-  }, []);
+  }, [buildTaskFormState]);
 
   const openTaskDetails = useCallback((taskId) => {
     setSelectedTaskId(taskId);
     const task = tasksData.find((t) => t.id === taskId);
     if (task) {
-      setForm({
-        id: task.id,
-        title: task.title || '',
-        description: task.description || '',
-        status: task.status || 'todo',
-        priority: task.priority || 'medium',
-        startDate: task.startDate
-          ? String(task.startDate).slice(0, 10)
-          : (task.createdAt ? String(task.createdAt).slice(0, 10) : ''),
-        dueDate: task.dueDate ? String(task.dueDate).slice(0, 10) : '',
-        isPrivate: task.isPrivate === true,
-        assigneeId: task.assigneeId || ''
-      });
+      const snapshot = buildTaskFormState(task);
+      setForm(snapshot);
+      setDetailsFormBaseline(snapshot);
     } else {
       setForm(initialForm);
+      setDetailsFormBaseline(initialForm);
     }
     setIsDetailsEditing(false);
     setDetailsTab('overview');
     setOpenDetails(true);
-  }, [tasksData]);
+  }, [tasksData, buildTaskFormState]);
+
+  const closeCreateModal = useCallback(() => {
+    setOpenCreateModal(false);
+    setCreateForm(initialForm);
+    setCreateFormBaseline(initialForm);
+  }, []);
+
+  const closeDetailsSheet = useCallback(() => {
+    setOpenDetails(false);
+    setSelectedTaskId(null);
+    setCommentText('');
+    setIsDetailsEditing(false);
+    setDetailsTab('overview');
+  }, []);
+
+  const isCreateFormDirty = useMemo(
+    () => !shallowEqualObjects(createForm, createFormBaseline),
+    [createForm, createFormBaseline]
+  );
+
+  const isDetailsFormDirty = useMemo(
+    () => isDetailsEditing && !shallowEqualObjects(form, detailsFormBaseline),
+    [isDetailsEditing, form, detailsFormBaseline]
+  );
+
+  const createGuard = useUnsavedChangesGuard({
+    isDirty: isCreateFormDirty,
+    onClose: closeCreateModal,
+  });
+
+  const detailsSheetGuard = useUnsavedChangesGuard({
+    isDirty: isDetailsFormDirty,
+    onClose: closeDetailsSheet,
+  });
+
+  const exitDetailsEditing = useCallback(() => {
+    setForm({ ...detailsFormBaseline });
+    setIsDetailsEditing(false);
+  }, [detailsFormBaseline]);
+
+  const editModeGuard = useUnsavedChangesGuard({
+    isDirty: isDetailsFormDirty,
+    onClose: exitDetailsEditing,
+  });
+
+  const startDetailsEditing = useCallback(() => {
+    setDetailsFormBaseline({ ...form });
+    setIsDetailsEditing(true);
+  }, [form]);
+
+  const handleToggleDetailsEdit = useCallback(() => {
+    if (isDetailsEditing) {
+      editModeGuard.requestClose();
+      return;
+    }
+    startDetailsEditing();
+  }, [isDetailsEditing, editModeGuard, startDetailsEditing]);
 
   const filteredTasks = useMemo(() => {
     const q = debouncedSearchValue.trim().toLowerCase();
@@ -830,7 +891,16 @@ const Tasks = () => {
         )}
       </div>
 
-      <Dialog open={openCreateModal} onOpenChange={setOpenCreateModal}>
+      <Dialog
+        open={openCreateModal}
+        onOpenChange={(open) => {
+          if (open) {
+            setOpenCreateModal(true);
+            return;
+          }
+          createGuard.requestClose();
+        }}
+      >
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Create task</DialogTitle>
@@ -958,7 +1028,7 @@ const Tasks = () => {
             </div>
           </DialogBody>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpenCreateModal(false)}>
+            <Button variant="outline" onClick={createGuard.requestClose}>
               Cancel
             </Button>
             <Button onClick={onCreateSubmit} disabled={createTaskMutation.isPending}>
@@ -967,17 +1037,16 @@ const Tasks = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <UnsavedChangesDialog {...createGuard.dialogProps} />
 
       <Sheet
         open={openDetails}
         onOpenChange={(open) => {
-          setOpenDetails(open);
-          if (!open) {
-            setSelectedTaskId(null);
-            setCommentText('');
-            setIsDetailsEditing(false);
-            setDetailsTab('overview');
+          if (open) {
+            setOpenDetails(true);
+            return;
           }
+          detailsSheetGuard.requestClose();
         }}
       >
         <SheetContent side="right" className="w-full sm:max-w-3xl h-full sm:h-[calc(100%-2rem)] flex flex-col sm:rounded-xl sm:mt-4 sm:mb-4 sm:mr-4 px-3 sm:px-6">
@@ -1278,7 +1347,7 @@ const Tasks = () => {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setIsDetailsEditing((prev) => !prev)}>
+                  <DropdownMenuItem onClick={handleToggleDetailsEdit}>
                     {isDetailsEditing ? 'Cancel edit' : 'Edit details'}
                   </DropdownMenuItem>
                   <DropdownMenuItem
@@ -1296,6 +1365,8 @@ const Tasks = () => {
           </div>
         </SheetContent>
       </Sheet>
+      <UnsavedChangesDialog {...detailsSheetGuard.dialogProps} />
+      <UnsavedChangesDialog {...editModeGuard.dialogProps} />
 
       <AlertDialog open={confirmDeleteOpen} onOpenChange={setConfirmDeleteOpen}>
         <AlertDialogContent>

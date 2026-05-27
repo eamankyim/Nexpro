@@ -1,7 +1,10 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2, Copy } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Loader2, Building2, CreditCard, Zap, Crown, Eye, EyeOff, UserPlus, Trash2, Copy, Shield } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import { Textarea } from '@/components/ui/textarea';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useResponsive } from '../../hooks/useResponsive';
 import adminService from '../../services/adminService';
@@ -86,6 +89,8 @@ const getPlanVariant = (plan) => {
 };
 
 const AdminTenants = () => {
+  const navigate = useNavigate();
+  const { startSupportAccess } = useAuth();
   const { isMobile } = useResponsive();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
@@ -127,6 +132,9 @@ const AdminTenants = () => {
     featureOverrides: {},
   });
   const [tenantDetailTab, setTenantDetailTab] = useState('overview');
+  const [supportAccessOpen, setSupportAccessOpen] = useState(false);
+  const [supportReason, setSupportReason] = useState('');
+  const [supportStarting, setSupportStarting] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmSlug, setDeleteConfirmSlug] = useState('');
   const [deletingTenant, setDeletingTenant] = useState(false);
@@ -469,6 +477,26 @@ const AdminTenants = () => {
     }
   };
 
+  const handleEnterSupportAccess = async () => {
+    if (!selectedTenant?.id || !supportReason.trim()) {
+      showError(null, 'Please enter a reason for support access');
+      return;
+    }
+    setSupportStarting(true);
+    try {
+      await startSupportAccess(selectedTenant.id, { reason: supportReason.trim() });
+      showSuccess('Support access started (read-only)');
+      setSupportAccessOpen(false);
+      setSupportReason('');
+      setDrawerVisible(false);
+      navigate('/dashboard');
+    } catch (error) {
+      handleApiError(error, { context: 'start support access' });
+    } finally {
+      setSupportStarting(false);
+    }
+  };
+
   const handleOverrideToggle = (featureKey, nextValue) => {
     setAccessForm((prev) => {
       const featureOverrides = { ...(prev.featureOverrides || {}) };
@@ -711,6 +739,45 @@ const AdminTenants = () => {
         />
       </div>
 
+      <Dialog
+        open={supportAccessOpen}
+        onOpenChange={(open) => {
+          setSupportAccessOpen(open);
+          if (!open) setSupportReason('');
+        }}
+      >
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Start support access</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            You will view <strong>{selectedTenant?.name}</strong> in read-only mode. All actions are audited.
+          </p>
+          <div className="space-y-2">
+            <Label htmlFor="support-reason">Reason (required)</Label>
+            <Textarea
+              id="support-reason"
+              rows={3}
+              placeholder="e.g. Ticket #12 — POS barcode scan not working"
+              value={supportReason}
+              onChange={(e) => setSupportReason(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSupportAccessOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleEnterSupportAccess}
+              disabled={supportStarting || !supportReason.trim()}
+            >
+              {supportStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Enter workspace'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={inviteModalOpen} onOpenChange={(open) => { setInviteModalOpen(open); if (!open) { setInviteEmail(''); setInviteName(''); setInviteEmailError(''); } }}>
         <DialogContent className="sm:max-w-[425px] p-0 gap-0 overflow-hidden">
           <DialogHeader className="px-6 pt-6 pb-0 space-y-1">
@@ -781,6 +848,26 @@ const AdminTenants = () => {
                 <TabsTrigger value="access">Access control</TabsTrigger>
               </TabsList>
               <TabsContent value="overview" className="mt-4 space-y-6 data-[state=inactive]:hidden">
+              {hasPermission('tenants.support_access') && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Support access</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2">
+                    <p className="text-sm text-muted-foreground">
+                      Open this tenant&apos;s workspace in read-only mode to troubleshoot without their password.
+                    </p>
+                    <Button
+                      variant="outline"
+                      onClick={() => setSupportAccessOpen(true)}
+                    >
+                      <Shield className="h-4 w-4 mr-2" />
+                      Enter workspace (read-only)
+                    </Button>
+                  </CardContent>
+                </Card>
+              )}
+
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">Control</CardTitle>

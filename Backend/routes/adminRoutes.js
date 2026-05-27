@@ -62,6 +62,17 @@ const {
   updateAdminCustomer,
   deleteAdminCustomer
 } = require('../controllers/adminCustomerController');
+const {
+  getSupportTickets,
+  getSupportTicket,
+  createSupportTicket,
+  updateSupportTicket,
+} = require('../controllers/adminSupportTicketController');
+const {
+  startSupportAccess,
+  endSupportAccess,
+  getActiveSupportAccess,
+} = require('../controllers/adminSupportAccessController');
 
 const router = express.Router();
 
@@ -238,6 +249,15 @@ router.get('/tenants/:id/access-audit', requirePlatformAdminPermission('tenants.
 router.patch('/tenants/:id/status', requirePlatformAdminPermission('tenants.manage_status'), updateTenantStatus);
 router.delete('/tenants/:id', requirePlatformAdminPermission('tenants.delete'), deleteTenant);
 router.patch('/tenants/:id/access', requirePlatformAdminPermission('tenants.update'), updateTenantAccess);
+
+router.get('/support-access/active', requirePlatformAdminPermission('tenants.support_access'), getActiveSupportAccess);
+router.post('/tenants/:id/support-access', requirePlatformAdminPermission('tenants.support_access'), startSupportAccess);
+router.post('/support-access/:sessionId/end', requirePlatformAdminPermission('tenants.support_access'), endSupportAccess);
+
+router.get('/support-tickets', requirePlatformAdminPermission('tickets.view'), getSupportTickets);
+router.get('/support-tickets/:id', requirePlatformAdminPermission('tickets.view'), getSupportTicket);
+router.post('/support-tickets', requirePlatformAdminPermission('tickets.manage'), createSupportTicket);
+router.patch('/support-tickets/:id', requirePlatformAdminPermission('tickets.manage'), updateSupportTicket);
 
 /**
  * @swagger

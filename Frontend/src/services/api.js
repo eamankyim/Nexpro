@@ -153,7 +153,26 @@ api.interceptors.request.use(
       return config;
     }
     
-    let tenantId = localStorage.getItem('activeTenantId');
+    const supportSessionRaw = localStorage.getItem('supportAccessSession');
+    let supportSession = null;
+    if (supportSessionRaw) {
+      try {
+        supportSession = JSON.parse(supportSessionRaw);
+      } catch {
+        supportSession = null;
+      }
+    }
+
+    let tenantId =
+      supportSession?.sessionId && supportSession?.tenantId
+        ? supportSession.tenantId
+        : localStorage.getItem('activeTenantId');
+
+    if (supportSession?.sessionId) {
+      config.headers['x-support-session-id'] = supportSession.sessionId;
+    } else {
+      delete config.headers['x-support-session-id'];
+    }
     
     // If no tenantId, try to get it from memberships
     if (!tenantId) {

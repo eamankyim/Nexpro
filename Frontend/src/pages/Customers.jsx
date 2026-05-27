@@ -370,6 +370,15 @@ const Customers = () => {
     setModalVisible(true);
   };
 
+  const discardCustomerModal = useCallback(() => {
+    setModalVisible(false);
+    setEditingCustomer(null);
+    form.reset();
+    setShowReferralName(false);
+    setShowCustomerSourceOtherInput(false);
+    setCustomerSourceOtherValue('');
+  }, [form]);
+
   const handleHowDidYouHearChange = (value) => {
     // Don't set form value here - it's already set by field.onChange
     if (value === '__OTHER__') {
@@ -823,26 +832,20 @@ const Customers = () => {
       <MobileFormDialog
         open={modalVisible}
         onOpenChange={setModalVisible}
+        isDirty={form.formState.isDirty}
+        onDiscard={discardCustomerModal}
         title={editingCustomer ? 'Edit Customer' : 'Add Customer'}
         description={editingCustomer ? 'Update customer information' : 'Add a new customer to your system'}
-        footer={
+        footer={({ requestClose }) => (
           <>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setModalVisible(false);
-                setShowCustomerSourceOtherInput(false);
-                setCustomerSourceOtherValue('');
-              }}
-            >
+            <Button type="button" variant="outline" onClick={requestClose}>
               Cancel
             </Button>
             <Button type="submit" form="customer-form" loading={form.formState.isSubmitting}>
               {editingCustomer ? 'Update' : 'Create'}
             </Button>
           </>
-        }
+        )}
       >
         <Form {...form}>
           <form id="customer-form" onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">

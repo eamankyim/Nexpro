@@ -1332,19 +1332,24 @@ const Leads = () => {
       {/* Update Status Dialog */}
       <MobileFormDialog
         open={updateStatusDialogOpen}
-        onOpenChange={(open) => !open && closeStatusModal()}
+        onOpenChange={setUpdateStatusDialogOpen}
+        isDirty={statusForm.formState.isDirty}
+        onDiscard={() => {
+          setLeadBeingUpdated(null);
+          statusForm.reset();
+        }}
         title={leadBeingUpdated ? `Update Status - ${leadBeingUpdated.name}` : 'Update Status'}
         description="Update the status of this lead and optionally add a comment."
-        footer={
+        footer={({ requestClose }) => (
           <>
-            <Button type="button" variant="outline" onClick={closeStatusModal}>
+            <Button type="button" variant="outline" onClick={requestClose}>
               Cancel
             </Button>
             <Button type="submit" form="status-form" loading={updatingStatus}>
               Update Status
             </Button>
           </>
-        }
+        )}
       >
         <Form {...statusForm}>
           <form id="status-form" onSubmit={statusForm.handleSubmit(handleStatusSubmit)} className="space-y-4">
@@ -1392,26 +1397,25 @@ const Leads = () => {
       <MobileFormDialog
         open={leadModalVisible}
         onOpenChange={setLeadModalVisible}
+        isDirty={leadForm.formState.isDirty}
+        onDiscard={() => {
+          setEditingLead(null);
+          leadForm.reset();
+          setShowLeadSourceOtherInput(false);
+          setLeadSourceOtherValue('');
+        }}
         title={editingLead ? `Edit Lead (${editingLead.name})` : 'New Lead'}
         description={editingLead ? 'Update lead information' : 'Add a new lead to your system'}
-        footer={
+        footer={({ requestClose }) => (
           <>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setLeadModalVisible(false);
-                setShowLeadSourceOtherInput(false);
-                setLeadSourceOtherValue('');
-              }}
-            >
+            <Button type="button" variant="outline" onClick={requestClose}>
               Cancel
             </Button>
             <Button type="submit" form="lead-form" loading={leadForm.formState.isSubmitting}>
               {editingLead ? 'Update Lead' : 'Create Lead'}
             </Button>
           </>
-        }
+        )}
       >
         <Form {...leadForm}>
           <form id="lead-form" onSubmit={leadForm.handleSubmit(onLeadSubmit)} className="space-y-4">
@@ -1663,22 +1667,20 @@ const Leads = () => {
       <MobileFormDialog
         open={activityModalVisible}
         onOpenChange={setActivityModalVisible}
+        isDirty={activityForm.formState.isDirty}
+        onDiscard={() => activityForm.reset()}
         title="Log Activity"
         description="Record an interaction with this lead"
-        footer={
+        footer={({ requestClose }) => (
           <>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setActivityModalVisible(false)}
-            >
+            <Button type="button" variant="outline" onClick={requestClose}>
               Cancel
             </Button>
             <Button type="submit" form="activity-form" loading={activityForm.formState.isSubmitting}>
               Save Activity
             </Button>
           </>
-        }
+        )}
       >
         <Form {...activityForm}>
           <form id="activity-form" onSubmit={activityForm.handleSubmit(onActivitySubmit)} className="space-y-4">

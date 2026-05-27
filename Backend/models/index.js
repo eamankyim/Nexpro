@@ -74,6 +74,8 @@ const UserTask = require('./UserTask');
 const UserChecklist = require('./UserChecklist');
 const UserChecklistItem = require('./UserChecklistItem');
 const TenantAccessAudit = require('./TenantAccessAudit');
+const SupportTicket = require('./SupportTicket');
+const SupportAccessSession = require('./SupportAccessSession');
 const AutomationRule = require('./AutomationRule');
 const AutomationRun = require('./AutomationRun');
 const WhatsAppMessageEvent = require('./WhatsAppMessageEvent');
@@ -627,6 +629,20 @@ TenantAccessAudit.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 User.hasMany(TenantAccessAudit, { foreignKey: 'actorUserId', as: 'tenantAccessAuditEntries' });
 TenantAccessAudit.belongsTo(User, { foreignKey: 'actorUserId', as: 'actor' });
 
+Tenant.hasMany(SupportTicket, { foreignKey: 'tenantId', as: 'supportTickets' });
+SupportTicket.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+User.hasMany(SupportTicket, { foreignKey: 'createdBy', as: 'supportTicketsCreated' });
+SupportTicket.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+User.hasMany(SupportTicket, { foreignKey: 'assignedTo', as: 'supportTicketsAssigned' });
+SupportTicket.belongsTo(User, { foreignKey: 'assignedTo', as: 'assignee' });
+
+Tenant.hasMany(SupportAccessSession, { foreignKey: 'tenantId', as: 'supportAccessSessions' });
+SupportAccessSession.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+User.hasMany(SupportAccessSession, { foreignKey: 'adminUserId', as: 'supportAccessSessions' });
+SupportAccessSession.belongsTo(User, { foreignKey: 'adminUserId', as: 'adminUser' });
+SupportAccessSession.belongsTo(SupportTicket, { foreignKey: 'supportTicketId', as: 'supportTicket' });
+SupportTicket.hasMany(SupportAccessSession, { foreignKey: 'supportTicketId', as: 'supportSessions' });
+
 Tenant.hasMany(AutomationRule, { foreignKey: 'tenantId', as: 'automationRules' });
 AutomationRule.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 AutomationRule.hasMany(AutomationRun, { foreignKey: 'ruleId', as: 'runs' });
@@ -717,6 +733,8 @@ module.exports = {
   UserChecklist,
   UserChecklistItem,
   TenantAccessAudit,
+  SupportTicket,
+  SupportAccessSession,
   AutomationRule,
   AutomationRun,
   WhatsAppMessageEvent,

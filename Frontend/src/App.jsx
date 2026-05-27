@@ -77,6 +77,7 @@ const AdminHealth = lazy(() => import('./pages/admin/AdminHealth'));
 const AdminSettings = lazy(() => import('./pages/admin/AdminSettings'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers'));
 const AdminCustomers = lazy(() => import('./pages/admin/AdminCustomers'));
+const AdminSupportTickets = lazy(() => import('./pages/admin/AdminSupportTickets'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const Deliveries = lazy(() => import('./pages/Deliveries'));
 
@@ -91,9 +92,9 @@ const PageLoader = () => (
 );
 
 const WorkspaceRoot = () => {
-  const { user } = useAuth();
+  const { user, isSupportAccessActive } = useAuth();
 
-  if (user?.isPlatformAdmin) {
+  if (user?.isPlatformAdmin && !isSupportAccessActive) {
     return <Navigate to="/admin" replace />;
   }
 
@@ -299,6 +300,7 @@ function AppContent() {
             <Route path="roles" element={<Navigate to="/admin/settings?tab=roles" replace />} />
             <Route path="reports" element={<AdminReports />} />
             <Route path="health" element={<AdminHealth />} />
+            <Route path="support-tickets" element={<AdminSupportTickets />} />
             <Route path="workspace" element={<Navigate to="/admin/tasks" replace />} />
             <Route path="tasks" element={<Tasks />} />
             <Route path="settings" element={<AdminSettings />} />

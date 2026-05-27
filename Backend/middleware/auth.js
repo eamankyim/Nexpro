@@ -60,6 +60,9 @@ const protect = async (req, res, next) => {
  * (owner/admin → admin; manager/staff use membership, not a stale users.role).
  */
 const getEffectiveRole = (req) => {
+  if (req.isSupportAccess) {
+    return 'staff';
+  }
   const tenantRole = req.tenantRole || null;
   if (tenantRole && ['owner', 'admin'].includes(tenantRole)) {
     return 'admin';

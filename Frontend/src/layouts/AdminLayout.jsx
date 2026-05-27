@@ -18,6 +18,7 @@ import {
   User,
   UserCircle,
   CheckSquare,
+  LifeBuoy,
 } from 'lucide-react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
@@ -67,6 +68,7 @@ const menuItems = [
   { path: '/admin/billing', icon: Currency, label: 'Billing' },
   { path: '/admin/reports', icon: FileSearch, label: 'Reports' },
   { path: '/admin/health', icon: AlertTriangle, label: 'System Health' },
+  { path: '/admin/support-tickets', icon: LifeBuoy, label: 'Support Tickets' },
   { path: '/admin/tasks', icon: CheckSquare, label: 'Tasks' },
   { path: '/admin/settings', icon: Settings, label: 'Settings' },
 ];
@@ -112,6 +114,7 @@ const AdminLayout = () => {
           '/admin/billing': 'billing.view',
           '/admin/reports': 'reports.view',
           '/admin/health': 'health.view',
+          '/admin/support-tickets': 'tickets.view',
           '/admin/tasks': 'settings.view',
           '/admin/settings': 'settings.view',
         };

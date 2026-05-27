@@ -226,6 +226,12 @@ const migrate = async () => {
     // Tenant access audit trail
     await createTenantAccessAudits.up();
 
+    const createSupportTicketsAndSessions = require('./create-support-tickets-and-sessions');
+    await createSupportTicketsAndSessions.up();
+
+    const addSupportPermissions = require('./add-support-permissions');
+    await addSupportPermissions();
+
     // Automations V1 tables
     await createAutomationsTables.up({ closeConnection: false });
 

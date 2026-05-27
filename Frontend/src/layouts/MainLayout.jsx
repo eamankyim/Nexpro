@@ -9,6 +9,7 @@ import { ShopProvider } from '../context/ShopContext';
 import NotificationWebSocketListener from '../components/NotificationWebSocketListener';
 import PaymentCollectionRequiredBanner from '../components/PaymentCollectionRequiredBanner';
 import ShopAccessBanner from '../components/ShopAccessBanner';
+import SupportAccessBanner from '../components/SupportAccessBanner';
 import { useResponsive, useSafeAreaInsets, BREAKPOINTS } from '../hooks/useResponsive';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -112,6 +113,7 @@ const MainLayout = () => {
           )}
         >
           <Header />
+          <SupportAccessBanner />
           {/* Global offline banner */}
           {!isOnline && (
             <div className="mx-4 sm:mx-4 lg:mx-6 mt-2 rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/30 dark:border-red-800 px-3 py-2.5 flex items-center gap-2 text-red-800 dark:text-red-200 text-sm">

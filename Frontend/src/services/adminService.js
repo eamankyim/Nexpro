@@ -16,6 +16,17 @@ const getAlerts = async () => api.get('/admin/alerts');
 const getTenantDetail = async (tenantId) => api.get(`/admin/tenants/${tenantId}`);
 const getTenantAccessAudit = async (tenantId) => api.get(`/admin/tenants/${tenantId}/access-audit`);
 
+const getSupportTickets = async (params = {}) => api.get('/admin/support-tickets', { params });
+const getSupportTicket = async (id) => api.get(`/admin/support-tickets/${id}`);
+const createSupportTicket = async (payload) => api.post('/admin/support-tickets', payload);
+const updateSupportTicket = async (id, payload) => api.patch(`/admin/support-tickets/${id}`, payload);
+
+const getActiveSupportAccess = async () => api.get('/admin/support-access/active');
+const startSupportAccess = async (tenantId, payload) =>
+  api.post(`/admin/tenants/${tenantId}/support-access`, payload);
+const endSupportAccess = async (sessionId) =>
+  api.post(`/admin/support-access/${sessionId}/end`);
+
 const updateTenantStatus = async (tenantId, action) =>
   api.patch(`/admin/tenants/${tenantId}/status`, { action });
 
@@ -174,6 +185,13 @@ export default {
   getAlerts,
   getTenantDetail,
   getTenantAccessAudit,
+  getSupportTickets,
+  getSupportTicket,
+  createSupportTicket,
+  updateSupportTicket,
+  getActiveSupportAccess,
+  startSupportAccess,
+  endSupportAccess,
   updateTenantStatus,
   deleteTenant,
   updateTenantAccess,

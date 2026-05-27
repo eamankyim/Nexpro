@@ -6,6 +6,11 @@ const {
   getTenantDefaultCacheKey
 } = require('./cache');
 const { normalizeTenantInstanceForRequest } = require('../utils/tenantClassification');
+const {
+  resolveSupportSessionId,
+  findActiveSupportSession,
+  buildSupportTenantContext,
+} = require('../utils/supportAccess');
 
 const resolveTenantId = (req) => {
   const headerTenant =
@@ -38,6 +43,46 @@ const tenantContext = async (req, res, next) => {
     }
 
     let tenantId = resolveTenantId(req);
+    const supportSessionId = resolveSupportSessionId(req);
+
+    if (supportSessionId && req.user?.isPlatformAdmin) {
+      const supportSession = await findActiveSupportSession(
+        supportSessionId,
+        req.user.id,
+        tenantId || undefined
+      );
+
+      if (!supportSession) {
+        return res.status(403).json({
+          success: false,
+          message: 'Support access session is invalid or expired',
+        });
+      }
+
+      const supportCtx = buildSupportTenantContext(supportSession);
+      const isReadMethod = ['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+      if (supportCtx.supportAccessMode === 'read_only' && !isReadMethod) {
+        return res.status(403).json({
+          success: false,
+          message: 'Support access is read-only. End support mode to make changes.',
+        });
+      }
+
+      req.tenantId = supportCtx.tenantId;
+      req.tenant = supportCtx.tenant;
+      req.tenantRole = supportCtx.tenantRole;
+      req.isSupportAccess = true;
+      req.supportAccessSession = supportCtx.supportAccessSession;
+      req.supportAccessMode = supportCtx.supportAccessMode;
+
+      res.locals.tenantId = supportCtx.tenantId;
+      res.locals.tenant = supportCtx.tenant;
+      res.locals.tenantRole = supportCtx.tenantRole;
+      res.locals.isSupportAccess = true;
+      res.locals.tenantAccessState = 'active';
+
+      return next();
+    }
 
     let membership;
 

@@ -1,6 +1,8 @@
 import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import authService from '../services/authService';
+import adminService from '../services/adminService';
+import supportAccessService from '../services/supportAccessService';
 import { shouldSuppressAppGuidance } from '../utils/appGuidanceEligibility';
 import {
   isTeamMemberWorkspaceInvite,
@@ -35,6 +37,8 @@ export const AuthProvider = ({ children }) => {
   const [memberships, setMemberships] = useState([]);
   const [activeTenantId, setActiveTenantId] = useState(() => readInitialActiveTenantId());
   const [loading, setLoading] = useState(true);
+  const [supportSession, setSupportSession] = useState(() => supportAccessService.getSession());
+  const [endingSupportAccess, setEndingSupportAccess] = useState(false);
   const queryClient = useQueryClient();
   /** Prevents repeated /auth/me loops when flags are missing; cleared on logout / successful hydrate. */
   const featureFlagsHydrateForTenantRef = useRef(null);
@@ -457,17 +461,102 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const activeMembership = useMemo(
-    () =>
-      memberships.find((membership) => authService.membershipTenantId(membership) === activeTenantId) ||
-      null,
-    [memberships, activeTenantId]
+  const isSupportAccessActive = useMemo(
+    () => Boolean(supportSession?.sessionId && supportAccessService.isActive()),
+    [supportSession]
   );
 
-  const activeTenant = useMemo(
-    () => activeMembership?.tenant || null,
-    [activeMembership]
+  const startSupportAccess = async (tenantId, { reason, supportTicketId, hours } = {}) => {
+    const response = await adminService.startSupportAccess(tenantId, {
+      reason,
+      supportTicketId,
+      hours,
+    });
+    const payload = response?.data || response;
+    const session = payload?.session;
+    const tenant = payload?.tenant;
+    if (!session?.id || !tenant?.id) {
+      throw new Error('Invalid support access response');
+    }
+    const stored = {
+      sessionId: session.id,
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+      tenant,
+      mode: session.mode,
+      expiresAt: session.expiresAt,
+      reason: session.reason,
+    };
+    supportAccessService.setSession(stored);
+    setSupportSession(stored);
+    authService.setActiveTenantId(tenant.id);
+    setActiveTenantId(tenant.id);
+    queryClient.clear();
+    return payload;
+  };
+
+  const endSupportAccess = async () => {
+    const sessionId = supportSession?.sessionId;
+    if (!sessionId) {
+      supportAccessService.clearSession();
+      setSupportSession(null);
+      return;
+    }
+    setEndingSupportAccess(true);
+    try {
+      await adminService.endSupportAccess(sessionId);
+    } finally {
+      supportAccessService.clearSession();
+      setSupportSession(null);
+      setEndingSupportAccess(false);
+      window.location.href = '/admin/tenants';
+    }
+  };
+
+  useEffect(() => {
+    if (!user?.isPlatformAdmin) return;
+    adminService
+      .getActiveSupportAccess()
+      .then((response) => {
+        const data = response?.data ?? response;
+        if (!data?.session?.id || !data?.tenant?.id) return;
+        const stored = {
+          sessionId: data.session.id,
+          tenantId: data.tenant.id,
+          tenantName: data.tenant.name,
+          tenant: data.tenant,
+          mode: data.session.mode,
+          expiresAt: data.session.expiresAt,
+          reason: data.session.reason,
+        };
+        supportAccessService.setSession(stored);
+        setSupportSession(stored);
+        authService.setActiveTenantId(data.tenant.id);
+        setActiveTenantId(data.tenant.id);
+      })
+      .catch(() => {
+        /* no active session */
+      });
+  }, [user?.id, user?.isPlatformAdmin]);
+
+  const resolvedActiveTenantId = isSupportAccessActive
+    ? supportSession?.tenantId
+    : activeTenantId;
+
+  const activeMembership = useMemo(
+    () =>
+      memberships.find(
+        (membership) => authService.membershipTenantId(membership) === resolvedActiveTenantId
+      ) || null,
+    [memberships, resolvedActiveTenantId]
   );
+
+  const activeTenant = useMemo(() => {
+    if (isSupportAccessActive && supportSession?.tenant) {
+      return supportSession.tenant;
+    }
+    return activeMembership?.tenant || null;
+  }, [isSupportAccessActive, supportSession, activeMembership]);
   const activeFeatureFlags = useMemo(
     () => (activeTenant?.effectiveFeatureFlags && typeof activeTenant.effectiveFeatureFlags === 'object'
       ? activeTenant.effectiveFeatureFlags
@@ -487,8 +576,8 @@ export const AuthProvider = ({ children }) => {
    * If the active membership's tenant is missing that payload (stale localStorage, old login shape), hydrate once.
    */
   useEffect(() => {
-    if (loading || !user || user.isPlatformAdmin || !activeTenantId) return;
-    const m = memberships.find((x) => authService.membershipTenantId(x) === activeTenantId);
+    if (loading || !user || user.isPlatformAdmin || isSupportAccessActive || !resolvedActiveTenantId) return;
+    const m = memberships.find((x) => authService.membershipTenantId(x) === resolvedActiveTenantId);
     const eff = m?.tenant?.effectiveFeatureFlags;
     const looksHydrated =
       eff != null &&
@@ -499,13 +588,13 @@ export const AuthProvider = ({ children }) => {
       featureFlagsHydrateForTenantRef.current = null;
       return;
     }
-    if (featureFlagsHydrateForTenantRef.current === activeTenantId) return;
-    featureFlagsHydrateForTenantRef.current = activeTenantId;
-    console.log('[TenantAccess] hydrate_missing_flags tenantId=%s → GET /auth/me', activeTenantId);
+    if (featureFlagsHydrateForTenantRef.current === resolvedActiveTenantId) return;
+    featureFlagsHydrateForTenantRef.current = resolvedActiveTenantId;
+    console.log('[TenantAccess] hydrate_missing_flags tenantId=%s → GET /auth/me', resolvedActiveTenantId);
     refreshAuthStateRef.current().catch(() => {
       /* Keep ref = tenantId so we do not retry in a loop; full page reload can retry. */
     });
-  }, [loading, user, activeTenantId, memberships]);
+  }, [loading, user, resolvedActiveTenantId, memberships, isSupportAccessActive]);
 
   const tenantRole = useMemo(
     () => activeMembership?.role || null,
@@ -614,7 +703,7 @@ export const AuthProvider = ({ children }) => {
       user,
       memberships,
       tenantMemberships: memberships,
-      activeTenantId,
+      activeTenantId: resolvedActiveTenantId,
       activeTenant,
       activeFeatureFlags,
       hasFeature,
@@ -643,11 +732,16 @@ export const AuthProvider = ({ children }) => {
       shouldCompleteProfile,
       suppressAppGuidance,
       shouldRequireOnboarding,
+      supportSession,
+      isSupportAccessActive,
+      startSupportAccess,
+      endSupportAccess,
+      endingSupportAccess,
     }),
     [
       user,
       memberships,
-      activeTenantId,
+      resolvedActiveTenantId,
       activeTenant,
       activeFeatureFlags,
       hasFeature,
@@ -674,6 +768,11 @@ export const AuthProvider = ({ children }) => {
       shouldCompleteProfile,
       suppressAppGuidance,
       shouldRequireOnboarding,
+      supportSession,
+      isSupportAccessActive,
+      startSupportAccess,
+      endSupportAccess,
+      endingSupportAccess,
     ]
   );
 

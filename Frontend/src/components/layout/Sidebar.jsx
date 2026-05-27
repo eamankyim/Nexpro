@@ -277,7 +277,8 @@ const getQuickActions = (businessType, shopType) => {
 export function Sidebar({ collapsed, onCollapse }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, isManager, activeTenant, user, hasFeature, isPlatformAdmin } = useAuth();
+  const { isAdmin, isManager, activeTenant, user, hasFeature, isPlatformAdmin, isSupportAccessActive } = useAuth();
+  const hidePlatformAdminNav = isPlatformAdmin && !isSupportAccessActive;
   const { appName, primaryColor } = useBranding();
   const { canInstall, promptInstall } = usePWAInstall();
   const [openKeys, setOpenKeys] = useState([]);
@@ -305,8 +306,8 @@ export function Sidebar({ collapsed, onCollapse }) {
     null;
 
   const menuItems = useMemo(
-    () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature, isPlatformAdmin),
-    [businessType, isAdmin, isManager, shopType, hasFeature, isPlatformAdmin]
+    () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature, hidePlatformAdminNav),
+    [businessType, isAdmin, isManager, shopType, hasFeature, hidePlatformAdminNav]
   );
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -667,7 +668,8 @@ export function MobileSidebar() {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, isManager, activeTenant, hasFeature, isPlatformAdmin } = useAuth();
+  const { isAdmin, isManager, activeTenant, hasFeature, isPlatformAdmin, isSupportAccessActive } = useAuth();
+  const hidePlatformAdminNav = isPlatformAdmin && !isSupportAccessActive;
   const { appName, primaryColor } = useBranding();
   const { canInstall, promptInstall } = usePWAInstall();
   const [openKeys, setOpenKeys] = useState([]);
@@ -691,8 +693,8 @@ export function MobileSidebar() {
   const businessType = activeTenant?.businessType || null;
   const shopType = activeTenant?.metadata?.shopType || null;
   const menuItems = useMemo(
-    () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature, isPlatformAdmin),
-    [businessType, isAdmin, isManager, shopType, hasFeature, isPlatformAdmin]
+    () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature, hidePlatformAdminNav),
+    [businessType, isAdmin, isManager, shopType, hasFeature, hidePlatformAdminNav]
   );
   const quickActions = useMemo(() => getQuickActions(businessType, shopType), [businessType, shopType]);
 
