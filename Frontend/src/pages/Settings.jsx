@@ -2187,6 +2187,13 @@ const Settings = () => {
     showError(null, 'Contact support for assistance.');
   }, [canManageOrganization, workspaceType, hasFeature, isStudioLike, navigate]);
   const trackingEntityLabel = isStudioLike ? 'Job' : 'Order';
+  const quoteWorkflowOnAccept = quoteWorkflowData?.onAccept || 'record_only';
+  const quoteWorkflowEnabled = isStudioLike
+    ? quoteWorkflowOnAccept === 'create_job_invoice_and_send'
+    : ['create_sale_invoice_and_send', 'create_job_invoice_and_send'].includes(quoteWorkflowOnAccept);
+  const configurationsDescription = isStudioLike
+    ? 'Customer notifications, quote and job workflows, public customer tracking link (share with clients), and checkout settings.'
+    : 'Customer notifications, quote-to-sale workflow, public order tracking link, inventory cost automation, and POS checkout settings.';
   const publicTrackingUrl = useMemo(() => {
     const slug = jobInvoiceData?.tenantSlug || activeTenant?.slug;
     if (!slug) return '';
@@ -4499,7 +4506,7 @@ const Settings = () => {
         <div>
           <CardTitle className="text-base md:text-2xl">Configurations</CardTitle>
           <CardDescription className="text-xs md:text-sm mt-1">
-            Customer notifications, quote and job workflows, public customer tracking link (share with clients), and POS checkout (receipts, print, checkout fields).
+            {configurationsDescription}
           </CardDescription>
         </div>
       </CardHeader>
@@ -4584,18 +4591,26 @@ const Settings = () => {
           </p>
           <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
             <div className="space-y-0.5">
-              <Label className="text-base">Auto-create job and invoice when customer accepts</Label>
+              <Label className="text-base">
+                {isStudioLike
+                  ? 'Auto-create job and invoice when customer accepts'
+                  : 'Auto-create sales invoice when customer accepts'}
+              </Label>
               <p className="text-xs text-muted-foreground">
-                If on: accepting the quote creates a job and invoice, and the invoice is sent to the customer automatically. If off: only the acceptance is recorded.
+                {isStudioLike
+                  ? 'If on: accepting the quote creates a job and invoice, and the invoice is sent to the customer automatically. If off: only the acceptance is recorded.'
+                  : 'If on: accepting the quote creates a sales invoice and sends it to the customer automatically. If off: only the acceptance is recorded.'}
               </p>
             </div>
             <Switch
-              checked={(quoteWorkflowData?.onAccept || 'record_only') === 'create_job_invoice_and_send'}
+              checked={quoteWorkflowEnabled}
               disabled={updateQuoteWorkflowMutation.isPending}
               onCheckedChange={(checked) => {
                 savingToastDismissRef.current = showLoading('Saving...');
                 updateQuoteWorkflowMutation.mutate({
-                  onAccept: checked ? 'create_job_invoice_and_send' : 'record_only'
+                  onAccept: checked
+                    ? (isStudioLike ? 'create_job_invoice_and_send' : 'create_sale_invoice_and_send')
+                    : 'record_only'
                 });
               }}
             />
@@ -4632,7 +4647,7 @@ const Settings = () => {
             <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
               <div className="space-y-0.5">
                 <Label className="text-base">
-                  {isStudioLike ? 'Customer job tracking page' : 'Public tracking page (order / job lookup)'}
+                  {isStudioLike ? 'Customer job tracking page' : 'Customer order tracking page'}
                 </Label>
                 <p className="text-xs text-muted-foreground">
                   {isStudioLike

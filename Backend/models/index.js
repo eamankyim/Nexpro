@@ -63,6 +63,7 @@ const ExpiryAlert = require('./ExpiryAlert');
 const FootTraffic = require('./FootTraffic');
 const StockCount = require('./StockCount');
 const StockCountItem = require('./StockCountItem');
+const StockTransfer = require('./StockTransfer');
 // Platform Admin Roles
 const PlatformAdminRole = require('./PlatformAdminRole');
 const PlatformAdminPermission = require('./PlatformAdminPermission');
@@ -623,6 +624,24 @@ Shop.hasMany(FootTraffic, { foreignKey: 'shopId', as: 'footTraffic' });
 FootTraffic.belongsTo(User, { foreignKey: 'recordedBy', as: 'recorder' });
 User.hasMany(FootTraffic, { foreignKey: 'recordedBy', as: 'recordedTraffic' });
 
+// Stock transfer relationships
+Tenant.hasMany(StockTransfer, { foreignKey: 'tenantId', as: 'stockTransfers' });
+StockTransfer.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(StockTransfer, { foreignKey: 'sourceShopId', as: 'stockTransfersOut' });
+StockTransfer.belongsTo(Shop, { foreignKey: 'sourceShopId', as: 'sourceShop' });
+Shop.hasMany(StockTransfer, { foreignKey: 'destinationShopId', as: 'stockTransfersIn' });
+StockTransfer.belongsTo(Shop, { foreignKey: 'destinationShopId', as: 'destinationShop' });
+Product.hasMany(StockTransfer, { foreignKey: 'sourceProductId', as: 'stockTransfersOut' });
+StockTransfer.belongsTo(Product, { foreignKey: 'sourceProductId', as: 'sourceProduct' });
+Product.hasMany(StockTransfer, { foreignKey: 'destinationProductId', as: 'stockTransfersIn' });
+StockTransfer.belongsTo(Product, { foreignKey: 'destinationProductId', as: 'destinationProduct' });
+ProductVariant.hasMany(StockTransfer, { foreignKey: 'sourceVariantId', as: 'stockTransfersOut' });
+StockTransfer.belongsTo(ProductVariant, { foreignKey: 'sourceVariantId', as: 'sourceVariant' });
+ProductVariant.hasMany(StockTransfer, { foreignKey: 'destinationVariantId', as: 'stockTransfersIn' });
+StockTransfer.belongsTo(ProductVariant, { foreignKey: 'destinationVariantId', as: 'destinationVariant' });
+User.hasMany(StockTransfer, { foreignKey: 'createdBy', as: 'stockTransfersCreated' });
+StockTransfer.belongsTo(User, { foreignKey: 'createdBy', as: 'creator' });
+
 // Tenant access audit relationships
 Tenant.hasMany(TenantAccessAudit, { foreignKey: 'tenantId', as: 'accessAuditLogs' });
 TenantAccessAudit.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -722,6 +741,7 @@ module.exports = {
   FootTraffic,
   StockCount,
   StockCountItem,
+  StockTransfer,
   // Platform Admin Roles
   PlatformAdminRole,
   PlatformAdminPermission,

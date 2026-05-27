@@ -796,7 +796,10 @@ async function runQuoteAcceptWorkflow(tenantId, quote, actorUserId) {
   const workflowSetting = await Setting.findOne({ where: { tenantId, key: 'quote-workflow' } });
   const onAccept = workflowSetting?.value?.onAccept || 'record_only';
 
-  if (onAccept !== 'create_job_invoice_and_send') {
+  const shouldRunShopWorkflow = isShop && ['create_sale_invoice_and_send', 'create_job_invoice_and_send'].includes(onAccept);
+  const shouldRunStudioWorkflow = !isShop && onAccept === 'create_job_invoice_and_send';
+
+  if (!shouldRunShopWorkflow && !shouldRunStudioWorkflow) {
     return { jobId, invoiceId, isShop };
   }
 

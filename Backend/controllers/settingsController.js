@@ -1395,17 +1395,25 @@ exports.updateCustomerNotificationPreferences = async (req, res, next) => {
 };
 
 const QUOTE_WORKFLOW_DEFAULTS = { onAccept: 'record_only' };
+const QUOTE_WORKFLOW_ON_ACCEPT_VALUES = [
+  'record_only',
+  'create_job_invoice_and_send',
+  'create_sale_invoice_and_send'
+];
 
-// @desc    Get quote workflow (when customer accepts quote: record only vs create job+invoice+send).
+// @desc    Get quote workflow (when customer accepts quote: record only vs create downstream document and send).
 // @route   GET /api/settings/quote-workflow
 // @access  Private
 exports.getQuoteWorkflow = async (req, res, next) => {
   try {
     const value = await getSettingValue(req.tenantId, 'quote-workflow', QUOTE_WORKFLOW_DEFAULTS);
+    const onAccept = QUOTE_WORKFLOW_ON_ACCEPT_VALUES.includes(value.onAccept)
+      ? value.onAccept
+      : 'record_only';
     res.status(200).json({
       success: true,
       data: {
-        onAccept: value.onAccept === 'create_job_invoice_and_send' ? 'create_job_invoice_and_send' : 'record_only'
+        onAccept
       }
     });
   } catch (error) {
@@ -1419,9 +1427,9 @@ exports.getQuoteWorkflow = async (req, res, next) => {
 exports.updateQuoteWorkflow = async (req, res, next) => {
   try {
     const { onAccept } = sanitizePayload(req.body);
-    const valid = ['record_only', 'create_job_invoice_and_send'].includes(onAccept);
+    const valid = QUOTE_WORKFLOW_ON_ACCEPT_VALUES.includes(onAccept);
     const value = valid ? { onAccept } : QUOTE_WORKFLOW_DEFAULTS;
-    await upsertSettingValue(req.tenantId, 'quote-workflow', value, 'When customer accepts quote: record only or create job+invoice+send');
+    await upsertSettingValue(req.tenantId, 'quote-workflow', value, 'When customer accepts quote: record only or create sales/job document and send');
     res.status(200).json({
       success: true,
       data: { onAccept: value.onAccept }

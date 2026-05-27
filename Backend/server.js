@@ -90,6 +90,7 @@ const studioLocationRoutes = require('./routes/studioLocationRoutes');
 const productRoutes = require('./routes/productRoutes');
 const saleRoutes = require('./routes/saleRoutes');
 const scanLogRoutes = require('./routes/scanLogRoutes');
+const stockTransferRoutes = require('./routes/stockTransferRoutes');
 // Pharmacy Management Routes
 const pharmacyRoutes = require('./routes/pharmacyRoutes');
 const drugRoutes = require('./routes/drugRoutes');
@@ -264,6 +265,7 @@ app.use('/api/studio-locations', studioLocationRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/scan-logs', scanLogRoutes);
+app.use('/api/stock-transfers', stockTransferRoutes);
 // Pharmacy Management Routes
 app.use('/api/pharmacies', pharmacyRoutes);
 app.use('/api/drugs', drugRoutes);

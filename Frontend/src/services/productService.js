@@ -421,6 +421,39 @@ const productService = {
     });
   },
 
+  /**
+   * Create a stock transfer between two shops.
+   * @param {Object} payload
+   * @returns {Promise<Object>}
+   */
+  createStockTransfer: async (payload) => {
+    return api.post('/stock-transfers', payload);
+  },
+
+  /**
+   * Create bulk stock transfers for selected/all products.
+   * @param {Object} payload
+   * @returns {Promise<Object>}
+   */
+  createBulkStockTransfer: async (payload) => {
+    return api.post('/stock-transfers/bulk', payload);
+  },
+
+  /**
+   * List stock transfers.
+   * @param {Object} [params]
+   * @returns {Promise<Object>}
+   */
+  getStockTransfers: async (params = {}) => {
+    const searchParams = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      searchParams.append(key, value);
+    });
+    const query = searchParams.toString();
+    return api.get(query ? `/stock-transfers?${query}` : '/stock-transfers');
+  },
+
   // =============================================
   // BULK PRICING OPERATIONS
   // =============================================

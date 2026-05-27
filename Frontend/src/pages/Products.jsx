@@ -40,6 +40,8 @@ import {
   Receipt,
   Upload,
   Download,
+  ArrowRightLeft,
+  MoreVertical,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useDebounce } from '../hooks/useDebounce';
@@ -75,6 +77,7 @@ import { getErrorMessage, showSuccess, showError } from '../utils/toast';
 import { EMPTY_STATES, FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 import ReceiveStockModal from '../components/ReceiveStockModal';
+import StockTransferModal from '../components/StockTransferModal';
 import ProductQRGenerateModal from '../components/ProductQRGenerateModal';
 import ViewToggle from '../components/ViewToggle';
 import { Button } from '@/components/ui/button';
@@ -130,6 +133,13 @@ import {
 } from '@/components/ui/sheet';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   SEARCH_PLACEHOLDERS,
@@ -535,6 +545,10 @@ const Products = () => {
   const [categoryFilterSearchTerm, setCategoryFilterSearchTerm] = useState('');
   const [receiveStockOpen, setReceiveStockOpen] = useState(false);
   const [productToReceive, setProductToReceive] = useState(null);
+  const [stockTransferOpen, setStockTransferOpen] = useState(false);
+  const [productToTransfer, setProductToTransfer] = useState(null);
+  const [stockTransferMode, setStockTransferMode] = useState('single');
+  const [selectedProductIds, setSelectedProductIds] = useState([]);
   const [qrGenerateOpen, setQrGenerateOpen] = useState(false);
   const [productForQR, setProductForQR] = useState(null);
   const [imagePreviewUrl, setImagePreviewUrl] = useState(null);
@@ -664,6 +678,28 @@ const Products = () => {
   const handleOpenReceiveStock = useCallback((product = null) => {
     setProductToReceive(product);
     setReceiveStockOpen(true);
+  }, []);
+
+  const handleOpenStockTransfer = useCallback((product = null) => {
+    setStockTransferMode('single');
+    setProductToTransfer(product);
+    setStockTransferOpen(true);
+  }, []);
+
+  const handleOpenBulkTransferSelected = useCallback(() => {
+    if (!selectedProductIds.length) {
+      showError('Select at least one product');
+      return;
+    }
+    setStockTransferMode('selected');
+    setProductToTransfer(null);
+    setStockTransferOpen(true);
+  }, [selectedProductIds]);
+
+  const handleOpenBulkTransferAll = useCallback(() => {
+    setStockTransferMode('all');
+    setProductToTransfer(null);
+    setStockTransferOpen(true);
   }, []);
 
   const handleOpenQRGenerateFromForm = useCallback(() => {
@@ -913,6 +949,11 @@ const Products = () => {
     pagination.pageSize,
     fetchProducts,
   ]);
+
+  useEffect(() => {
+    const visibleIds = new Set(products.map((product) => product.id));
+    setSelectedProductIds((prev) => prev.filter((id) => visibleIds.has(id)));
+  }, [products]);
 
   useEffect(() => {
     if (!scopeReady) return;
@@ -1443,7 +1484,44 @@ const Products = () => {
   // TABLE COLUMNS
   // =============================================
 
+  const allVisibleSelected = products.length > 0 && products.every((product) => selectedProductIds.includes(product.id));
+
+  const toggleSelectAllVisible = useCallback((checked) => {
+    if (checked) {
+      setSelectedProductIds(products.map((product) => product.id));
+    } else {
+      setSelectedProductIds([]);
+    }
+  }, [products]);
+
+  const toggleSelectProduct = useCallback((productId, checked) => {
+    setSelectedProductIds((prev) => {
+      if (checked) {
+        return prev.includes(productId) ? prev : [...prev, productId];
+      }
+      return prev.filter((id) => id !== productId);
+    });
+  }, []);
+
   const tableColumns = useMemo(() => [
+    {
+      key: '__select',
+      title: (
+        <Checkbox
+          checked={allVisibleSelected}
+          onCheckedChange={(checked) => toggleSelectAllVisible(Boolean(checked))}
+          aria-label="Select all visible products"
+        />
+      ),
+      width: '3rem',
+      render: (_, record) => (
+        <Checkbox
+          checked={selectedProductIds.includes(record.id)}
+          onCheckedChange={(checked) => toggleSelectProduct(record.id, Boolean(checked))}
+          aria-label={`Select ${record.name}`}
+        />
+      ),
+    },
     {
       key: 'name',
       title: 'Product',
@@ -1552,7 +1630,14 @@ const Products = () => {
         />
       ),
     },
-  ], [isMobile, handleViewProduct]);
+  ], [
+    allVisibleSelected,
+    selectedProductIds,
+    toggleSelectAllVisible,
+    toggleSelectProduct,
+    isMobile,
+    handleViewProduct,
+  ]);
 
   const handleRefresh = () => {
     fetchProducts();
@@ -1562,6 +1647,7 @@ const Products = () => {
 
   const handlePageChange = (newPagination) => {
     setPagination(prev => ({ ...prev, ...newPagination }));
+    setSelectedProductIds([]);
   };
 
   const handleClearProductFilters = useCallback(() => {
@@ -1587,6 +1673,11 @@ const Products = () => {
       secondary: () => setImportModalOpen(true),
     });
   }, [hasActiveProductFilters, handleClearProductFilters, handleCreateProduct]);
+
+  const selectedProducts = useMemo(
+    () => products.filter((product) => selectedProductIds.includes(product.id)),
+    [products, selectedProductIds]
+  );
 
   // =============================================
   // RENDER HELPERS
@@ -2306,6 +2397,35 @@ const Products = () => {
             </TooltipTrigger>
             <TooltipContent>Record new stock received (scan QR or search product)</TooltipContent>
           </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size={isMobile ? 'icon' : 'default'}
+                onClick={() => handleOpenStockTransfer()}
+                aria-label="Transfer stock"
+              >
+                <ArrowRightLeft className="h-4 w-4" />
+                {!isMobile && <span className="ml-2">Transfer stock</span>}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Move stock between shops in this workspace</TooltipContent>
+          </Tooltip>
+          {!isMobile && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  onClick={handleOpenBulkTransferAll}
+                  aria-label="Transfer all products in shop"
+                >
+                  <ArrowRightLeft className="h-4 w-4" />
+                  <span className="ml-2">Transfer all in shop</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Transfer all eligible products in current shop</TooltipContent>
+            </Tooltip>
+          )}
           {!isMobile && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -2434,6 +2554,23 @@ const Products = () => {
       )}
 
       {/* Products list — DashboardTable handles loading + empty state (table on desktop, cards on mobile) */}
+      {selectedProductIds.length > 0 && (
+        <div className="mb-3 flex items-center justify-between rounded-lg border border-border bg-muted/30 px-3 py-2">
+          <p className="text-sm text-muted-foreground">
+            {selectedProductIds.length} product(s) selected
+          </p>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => setSelectedProductIds([])}>
+              Clear
+            </Button>
+            <Button type="button" size="sm" onClick={handleOpenBulkTransferSelected}>
+              <ArrowRightLeft className="h-4 w-4 mr-2" />
+              Transfer selected
+            </Button>
+          </div>
+        </div>
+      )}
+
       <DashboardTable
         data={products}
         columns={tableColumns}
@@ -3136,6 +3273,32 @@ const Products = () => {
         }}
       />
 
+      <StockTransferModal
+        open={stockTransferOpen}
+        initialProduct={productToTransfer}
+        selectedProducts={selectedProducts}
+        bulkMode={stockTransferMode}
+        sourceShopId={activeShopId}
+        availableShops={shopContext?.shops || []}
+        activeShopId={activeShopId}
+        onClose={() => {
+          setStockTransferOpen(false);
+          setProductToTransfer(null);
+          setStockTransferMode('single');
+        }}
+        onSuccess={() => {
+          setSelectedProductIds([]);
+          fetchProducts();
+          fetchStats();
+          if (selectedProduct) {
+            productService.getProductById(selectedProduct.id).then((r) => {
+              const p = r?.data ?? r;
+              if (p?.id) setSelectedProduct(p);
+            });
+          }
+        }}
+      />
+
       <ProductQRGenerateModal
         open={qrGenerateOpen}
         onClose={() => {
@@ -3298,81 +3461,72 @@ const Products = () => {
             </div>
 
             {/* Quick Actions */}
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleDuplicateProduct(selectedProduct)}
-              >
-                <Copy className="h-4 w-4 mr-2" />
-                Duplicate
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setDrawerOpen(false);
-                  handleEditProduct(selectedProduct);
-                }}
-              >
-                <Pencil className="h-4 w-4 mr-2" />
-                Edit
-              </Button>
-              {selectedProduct.trackStock !== false && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleOpenReceiveStock(selectedProduct)}
-                  >
-                    <Download className="h-4 w-4 mr-2" />
-                    Receive Stock
+            <div className="flex justify-end">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm">
+                    <MoreVertical className="h-4 w-4 mr-2" />
+                    More options
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleAdjustStockClick(selectedProduct)}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  <DropdownMenuItem onSelect={() => handleDuplicateProduct(selectedProduct)}>
+                    <Copy className="h-4 w-4 mr-2" />
+                    Duplicate
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => {
+                      setDrawerOpen(false);
+                      handleEditProduct(selectedProduct);
+                    }}
                   >
-                    <Package className="h-4 w-4 mr-2" />
-                    Adjust Stock
-                  </Button>
-                </>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleWhatsAppShare(selectedProduct)}
-              >
-                <Share2 className="h-4 w-4 mr-2" />
-                Share
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleOpenQRGenerate(selectedProduct)}
-              >
-                <QrCode className="h-4 w-4 mr-2" />
-                Generate QR
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => handleOpenVariantForm()}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add Variant
-              </Button>
-              {isAdmin && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-destructive border-destructive/30 hover:bg-destructive/10"
-                  onClick={() => handleDeleteClick(selectedProduct)}
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete
-                </Button>
-              )}
+                    <Pencil className="h-4 w-4 mr-2" />
+                    Edit
+                  </DropdownMenuItem>
+                  {selectedProduct.trackStock !== false && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => handleOpenReceiveStock(selectedProduct)}>
+                        <Download className="h-4 w-4 mr-2" />
+                        Receive Stock
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => handleAdjustStockClick(selectedProduct)}>
+                        <Package className="h-4 w-4 mr-2" />
+                        Adjust Stock
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => handleOpenStockTransfer(selectedProduct)}>
+                        <ArrowRightLeft className="h-4 w-4 mr-2" />
+                        Transfer Stock
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => handleWhatsAppShare(selectedProduct)}>
+                    <Share2 className="h-4 w-4 mr-2" />
+                    Share
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => handleOpenQRGenerate(selectedProduct)}>
+                    <QrCode className="h-4 w-4 mr-2" />
+                    Generate QR
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => handleOpenVariantForm()}>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Add Variant
+                  </DropdownMenuItem>
+                  {isAdmin && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="text-destructive focus:text-destructive"
+                        onSelect={() => handleDeleteClick(selectedProduct)}
+                      >
+                        <Trash2 className="h-4 w-4 mr-2" />
+                        Delete
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
 
             <DrawerSectionCard title="Product info">

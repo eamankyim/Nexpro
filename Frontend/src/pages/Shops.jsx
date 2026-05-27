@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Store, Plus, MoreHorizontal, Edit, Trash2, MapPin, RefreshCw } from 'lucide-react';
+import { Store, Plus, Edit, Trash2, MapPin, RefreshCw, Eye } from 'lucide-react';
 
 import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -35,15 +36,11 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
 import { Switch } from '@/components/ui/switch';
 import DashboardTable from '../components/DashboardTable';
+import DetailsDrawer from '../components/DetailsDrawer';
+import DrawerSectionCard from '../components/DrawerSectionCard';
 import StatusChip from '../components/StatusChip';
 import DashboardStatsCard from '../components/DashboardStatsCard';
 import { showSuccess, showError } from '../utils/toast';
@@ -100,6 +97,7 @@ const Shops = () => {
   });
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingShop, setEditingShop] = useState(null);
+  const [viewingShop, setViewingShop] = useState(null);
   const [deleteShop, setDeleteShop] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [teamMembers, setTeamMembers] = useState([]);
@@ -289,29 +287,13 @@ const Shops = () => {
       key: 'actions',
       label: 'Actions',
       render: (_, record) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => handleEdit(record)}>
-              <Edit className="h-4 w-4 mr-2" />
-              Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem 
-              onClick={() => setDeleteShop(record)}
-              className="text-red-600"
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <SecondaryButton size="sm" onClick={() => setViewingShop(record)}>
+          <Eye className="h-4 w-4" />
+          <span className="ml-2">View</span>
+        </SecondaryButton>
       ),
     },
-  ], [handleEdit, getShopTypeLabel]);
+  ], [getShopTypeLabel]);
   
   const handleCreate = useCallback(() => {
     setEditingShop(null);
@@ -501,6 +483,113 @@ const Shops = () => {
         externalPagination={{ current: pagination.page, total: pagination.total }}
         onPageChange={handlePageChange}
       />
+
+      {/* View Shop Details */}
+      <DetailsDrawer
+        open={!!viewingShop}
+        onClose={() => setViewingShop(null)}
+        title={viewingShop?.name || 'Shop Details'}
+        description="Review this shop’s location, manager, and operating status."
+        width={520}
+        primaryAction={viewingShop ? {
+          label: 'Edit shop',
+          icon: <Edit className="h-4 w-4 mr-2" />,
+          onClick: () => {
+            const shop = viewingShop;
+            setViewingShop(null);
+            handleEdit(shop);
+          },
+        } : null}
+        moreMenuItems={viewingShop ? [
+          {
+            label: 'Delete shop',
+            icon: <Trash2 className="h-4 w-4 mr-2" />,
+            destructive: true,
+            onClick: () => {
+              setDeleteShop(viewingShop);
+              setViewingShop(null);
+            },
+          },
+        ] : []}
+      >
+        {viewingShop ? (
+          <div className="space-y-6">
+            <div className="flex items-start gap-3 rounded-lg border border-border p-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-green-100">
+                {viewingShop.logoUrl ? (
+                  <img
+                    src={resolveImageUrl(viewingShop.logoUrl)}
+                    alt={`${viewingShop.name || 'Shop'} logo`}
+                    className="h-8 w-8 rounded-full object-contain"
+                  />
+                ) : (
+                  <Store className="h-5 w-5 text-green-700" />
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="font-semibold">{viewingShop.name || '—'}</h3>
+                  {viewingShop.isDefault ? (
+                    <Badge variant="outline" className="border-[#166534] text-[#166534]">
+                      Main shop
+                    </Badge>
+                  ) : null}
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {getShopTypeLabel(viewingShop.shopType)}
+                </p>
+              </div>
+              <StatusChip status={viewingShop.isActive ? 'active_flag' : 'inactive_flag'} />
+            </div>
+
+            <DrawerSectionCard title="Contact and manager">
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <div>
+                  <p className="text-muted-foreground">Code</p>
+                  <p className="font-medium">{viewingShop.code || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Manager</p>
+                  <p className="font-medium">{viewingShop.manager?.name || viewingShop.manager?.email || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Phone</p>
+                  <p className="font-medium">{viewingShop.phone || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Business email</p>
+                  <p className="font-medium break-all">{viewingShop.email || '—'}</p>
+                </div>
+              </div>
+            </DrawerSectionCard>
+
+            <DrawerSectionCard title="Location">
+              <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                <div>
+                  <p className="text-muted-foreground">City</p>
+                  <p className="font-medium">{viewingShop.city || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">State/Region</p>
+                  <p className="font-medium">{viewingShop.state || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Country</p>
+                  <p className="font-medium">{viewingShop.country || '—'}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Postal code</p>
+                  <p className="font-medium">{viewingShop.postalCode || '—'}</p>
+                </div>
+                <div className="sm:col-span-2">
+                  <p className="text-muted-foreground">Address</p>
+                  <p className="font-medium">{viewingShop.address || '—'}</p>
+                </div>
+              </div>
+            </DrawerSectionCard>
+          </div>
+        ) : null}
+      </DetailsDrawer>
       
       {/* Create/Edit Modal */}
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
@@ -563,7 +652,7 @@ const Shops = () => {
               />
 
               <div className="rounded-lg border border-border p-4 space-y-3">
-                <FormLabel>Shop logo (optional)</FormLabel>
+                <Label>Shop logo (optional)</Label>
                 <p className="text-sm text-muted-foreground">
                   Shown on invoices and receipts for this shop. Leave empty to use workspace branding.
                 </p>

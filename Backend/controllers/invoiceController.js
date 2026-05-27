@@ -67,6 +67,33 @@ const invoiceBranchIncludes = () => [
   },
 ];
 
+const invoiceResponseIncludes = () => [
+  {
+    model: Customer,
+    as: 'customer',
+  },
+  {
+    model: Job,
+    as: 'job',
+    required: false,
+  },
+  ...(Sale
+    ? [{
+        model: Sale,
+        as: 'sale',
+        required: false,
+      }]
+    : []),
+  ...(Prescription
+    ? [{
+        model: Prescription,
+        as: 'prescription',
+        required: false,
+      }]
+    : []),
+  ...invoiceBranchIncludes(),
+];
+
 /**
  * @param {import('../models').Invoice} invoice
  * @returns {Promise<object>}
@@ -98,6 +125,13 @@ const resolveInvoiceOrganization = async (invoice) => {
 const companyFromInvoice = async (invoice) => {
   const org = await resolveInvoiceOrganization(invoice);
   return organizationToEmailCompany(org);
+};
+
+const invoiceToResponsePayload = async (invoice) => {
+  if (!invoice) return null;
+  const payload = typeof invoice.toJSON === 'function' ? invoice.toJSON() : { ...invoice };
+  payload.organization = await resolveInvoiceOrganization(invoice);
+  return payload;
 };
 
 // Helper function to generate invoice number
@@ -282,6 +316,7 @@ exports.getInvoices = async (req, res, next) => {
         required: false
       });
     }
+    include.push(...invoiceBranchIncludes());
 
     // Include Prescription if model is available (for pharmacy business type)
     if (Prescription) {
@@ -307,6 +342,8 @@ exports.getInvoices = async (req, res, next) => {
       include
     });
 
+    const data = await Promise.all(rows.map((invoice) => invoiceToResponsePayload(invoice)));
+
     res.status(200).json({
       success: true,
       count,
@@ -315,7 +352,7 @@ exports.getInvoices = async (req, res, next) => {
         limit,
         totalPages: Math.ceil(count / limit)
       },
-      data: rows
+      data
     });
   } catch (error) {
     next(error);
@@ -428,9 +465,7 @@ exports.getInvoice = async (req, res, next) => {
       }
     }
 
-    const organization = await resolveInvoiceOrganization(invoice);
-    const payload = invoice.toJSON();
-    payload.organization = organization;
+    const payload = await invoiceToResponsePayload(invoice);
 
     res.status(200).json({
       success: true,
@@ -654,16 +689,7 @@ exports.createInvoice = async (req, res, next) => {
     // Fetch the created invoice with relationships
     const createdInvoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),
-      include: [
-        {
-          model: Customer,
-          as: 'customer'
-        },
-        {
-          model: Job,
-          as: 'job'
-        }
-      ]
+      include: invoiceResponseIncludes()
     });
 
     // Update customer balance
@@ -729,7 +755,7 @@ exports.createInvoice = async (req, res, next) => {
     invalidateInvoiceListCache(req.tenantId);
     res.status(201).json({
       success: true,
-      data: createdInvoice
+      data: await invoiceToResponsePayload(createdInvoice)
     });
   } catch (error) {
     next(error);
@@ -767,16 +793,7 @@ exports.updateInvoice = async (req, res, next) => {
 
     const updatedInvoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),
-      include: [
-        {
-          model: Customer,
-          as: 'customer'
-        },
-        {
-          model: Job,
-          as: 'job'
-        }
-      ]
+      include: invoiceResponseIncludes()
     });
 
     // Log activity if status changed to 'sent'
@@ -792,7 +809,7 @@ exports.updateInvoice = async (req, res, next) => {
     invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
-      data: updatedInvoice
+      data: await invoiceToResponsePayload(updatedInvoice)
     });
   } catch (error) {
     next(error);
@@ -960,16 +977,7 @@ exports.recordPayment = async (req, res, next) => {
 
     const updatedInvoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),
-      include: [
-        {
-          model: Customer,
-          as: 'customer'
-        },
-        {
-          model: Job,
-          as: 'job'
-        }
-      ]
+      include: invoiceResponseIncludes()
     });
 
     // Update sale status if invoice is linked to a sale and payment covers the full amount
@@ -1085,7 +1093,7 @@ exports.recordPayment = async (req, res, next) => {
     invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
-      data: updatedInvoice
+      data: await invoiceToResponsePayload(updatedInvoice)
     });
   } catch (error) {
     next(error);
@@ -1118,22 +1126,13 @@ exports.markInvoicePaid = async (req, res, next) => {
     if (invoice.status === 'paid') {
       const hydratedInvoice = await Invoice.findOne({
         where: applyTenantFilter(req.tenantId, { id: invoice.id }),
-        include: [
-          {
-            model: Customer,
-            as: 'customer'
-          },
-          {
-            model: Job,
-            as: 'job'
-          }
-        ]
+        include: invoiceResponseIncludes()
       });
 
       return res.status(200).json({
         success: true,
         message: 'Invoice is already marked as paid',
-        data: hydratedInvoice
+        data: await invoiceToResponsePayload(hydratedInvoice)
       });
     }
 
@@ -1168,16 +1167,7 @@ exports.markInvoicePaid = async (req, res, next) => {
 
     const updatedInvoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),
-      include: [
-        {
-          model: Customer,
-          as: 'customer'
-        },
-        {
-          model: Job,
-          as: 'job'
-        }
-      ]
+      include: invoiceResponseIncludes()
     });
 
     if (outstanding > 0 && manualPayment) {
@@ -1217,7 +1207,7 @@ exports.markInvoicePaid = async (req, res, next) => {
     res.status(200).json({
       success: true,
       message: 'Invoice marked as paid successfully',
-      data: updatedInvoice
+      data: await invoiceToResponsePayload(updatedInvoice)
     });
   } catch (error) {
     next(error);
@@ -1255,26 +1245,7 @@ exports.sendInvoice = async (req, res, next) => {
 
     const updatedInvoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),
-      include: [
-        {
-          model: Customer,
-          as: 'customer'
-        },
-        {
-          model: Job,
-          as: 'job'
-        },
-        {
-          model: require('../models').Sale,
-          as: 'sale',
-          required: false
-        },
-        {
-          model: require('../models').Prescription,
-          as: 'prescription',
-          required: false
-        }
-      ]
+      include: invoiceResponseIncludes()
     });
 
     // Generate payment link
@@ -1407,7 +1378,7 @@ exports.sendInvoice = async (req, res, next) => {
       message: emailSent
         ? 'Invoice sent successfully via email and marked as sent'
         : 'Invoice marked as sent (email not sent: ' + (emailError || 'unknown error') + ')',
-      data: updatedInvoice,
+      data: await invoiceToResponsePayload(updatedInvoice),
       paymentLink,
       emailSent,
       emailError: emailSent ? null : emailError,
@@ -2061,12 +2032,7 @@ async function recordPublicInvoicePaymentCore(invoice, {
 
   const updatedInvoice = await Invoice.findOne({
     where: { id: invoice.id },
-    include: [
-      {
-        model: Customer,
-        as: 'customer'
-      }
-    ]
+    include: invoiceResponseIncludes()
   });
 
   try {
@@ -2101,7 +2067,7 @@ async function recordPublicInvoicePaymentCore(invoice, {
   invalidateAfterMutation(invoice.tenantId);
   invalidateInvoiceListCache(invoice.tenantId);
 
-  return { updatedInvoice, payment };
+  return { updatedInvoice: await invoiceToResponsePayload(updatedInvoice), payment };
 }
 
 // @desc    Process payment via public link
@@ -2755,23 +2721,14 @@ exports.cancelInvoice = async (req, res, next) => {
 
     const updatedInvoice = await Invoice.findOne({
       where: applyTenantFilter(req.tenantId, { id: invoice.id }),
-      include: [
-        {
-          model: Customer,
-          as: 'customer'
-        },
-        {
-          model: Job,
-          as: 'job'
-        }
-      ]
+      include: invoiceResponseIncludes()
     });
 
     invalidateAfterMutation(req.tenantId);
     invalidateInvoiceListCache(req.tenantId);
     res.status(200).json({
       success: true,
-      data: updatedInvoice
+      data: await invoiceToResponsePayload(updatedInvoice)
     });
   } catch (error) {
     next(error);

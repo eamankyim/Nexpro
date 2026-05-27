@@ -72,7 +72,9 @@ export function usePaymentSettings(queryOptions = {}) {
     () =>
       Boolean(
         (notificationChannelsData != null && notificationChannelsData.autoSendInvoiceToCustomer !== false) ||
-        (quoteWorkflowData?.onAccept || 'record_only') === 'create_job_invoice_and_send'
+        ['create_job_invoice_and_send', 'create_sale_invoice_and_send'].includes(
+          quoteWorkflowData?.onAccept || 'record_only'
+        )
       ),
     [notificationChannelsData, quoteWorkflowData]
   );

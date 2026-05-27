@@ -89,6 +89,11 @@ const AdminSupportTickets = () => {
     },
   });
 
+  const defaultTenantId = useMemo(() => {
+    const firstTenant = tenants.find((tenant) => tenant?.id);
+    return firstTenant?.id || '';
+  }, [tenants]);
+
   useEffect(() => {
     setPageSearchConfig({
       scope: 'admin-support-tickets',
@@ -105,6 +110,14 @@ const AdminSupportTickets = () => {
       if (res?.success) setPlatformAdmins(res.data || []);
     }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!formOpen || editingTicket || !defaultTenantId) return;
+    if (form.getValues('tenantId')) return;
+    form.setValue('tenantId', defaultTenantId, {
+      shouldValidate: true,
+    });
+  }, [defaultTenantId, editingTicket, form, formOpen]);
 
   const fetchTickets = useCallback(async (page = 1, pageSize = 20) => {
     setLoading(true);
@@ -152,7 +165,7 @@ const AdminSupportTickets = () => {
     form.reset({
       title: '',
       description: '',
-      tenantId: '',
+      tenantId: defaultTenantId,
       status: 'open',
       priority: 'medium',
       category: '',
@@ -178,11 +191,15 @@ const AdminSupportTickets = () => {
   const onSubmit = async (values) => {
     setSubmitting(true);
     try {
+      const payload = {
+        ...values,
+        tenantId: values.tenantId || form.getValues('tenantId') || defaultTenantId,
+      };
       if (editingTicket?.id) {
-        await adminService.updateSupportTicket(editingTicket.id, values);
+        await adminService.updateSupportTicket(editingTicket.id, payload);
         showSuccess('Ticket updated');
       } else {
-        await adminService.createSupportTicket(values);
+        await adminService.createSupportTicket(payload);
         showSuccess('Ticket created');
       }
       setFormOpen(false);
@@ -320,7 +337,17 @@ const AdminSupportTickets = () => {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Tenant</FormLabel>
-                    <Select value={field.value} onValueChange={field.onChange} disabled={!!editingTicket}>
+                    <Select
+                      value={field.value || ''}
+                      onValueChange={(value) => {
+                        form.setValue('tenantId', value, {
+                          shouldDirty: true,
+                          shouldTouch: true,
+                          shouldValidate: true,
+                        });
+                      }}
+                      disabled={!!editingTicket}
+                    >
                       <FormControl>
                         <SelectTrigger>
                           <SelectValue placeholder="Select tenant" />
