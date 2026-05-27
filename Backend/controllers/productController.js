@@ -210,12 +210,25 @@ exports.getProducts = async (req, res, next) => {
       where.isActive = isActive === 'true' || isActive === true;
     }
     if (search) {
-      where[Op.or] = [
+      const searchCondition = {
+        [Op.or]: [
         { name: { [Op.iLike]: `%${search}%` } },
         { sku: { [Op.iLike]: `%${search}%` } },
         { barcode: { [Op.iLike]: `%${search}%` } },
         { brand: { [Op.iLike]: `%${search}%` } }
-      ];
+        ],
+      };
+
+      where[Op.and] = Array.isArray(where[Op.and])
+        ? [...where[Op.and]]
+        : (where[Op.and] ? [where[Op.and]] : []);
+
+      if (where[Op.or]) {
+        where[Op.and].push({ [Op.or]: where[Op.or] });
+        delete where[Op.or];
+      }
+
+      where[Op.and].push(searchCondition);
     }
 
     const { count, rows } = await Product.findAndCountAll({
@@ -241,6 +254,71 @@ exports.getProducts = async (req, res, next) => {
         totalPages: Math.ceil(count / limit)
       },
       data: rows
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get product catalog statistics
+// @route   GET /api/products/stats
+// @access  Private
+exports.getProductStats = async (req, res, next) => {
+  try {
+    const shopId = req.query.shopId;
+
+    let where = applyTenantFilter(req.tenantId, {});
+    if (req.shopScoped) {
+      where = applyShopReadFilter(req, where);
+    } else if (shopId) {
+      where.shopId = shopId;
+    }
+
+    const trackingWhere = {
+      ...where,
+      trackStock: { [Op.ne]: false },
+    };
+
+    const [total, lowStock, outOfStock, valueRows] = await Promise.all([
+      Product.count({ where }),
+      Product.count({
+        where: {
+          ...trackingWhere,
+          quantityOnHand: { [Op.gt]: 0 },
+          [Op.and]: [
+            Product.sequelize.where(
+              Product.sequelize.col('quantityOnHand'),
+              Op.lte,
+              Product.sequelize.col('reorderLevel')
+            ),
+          ],
+        },
+      }),
+      Product.count({
+        where: {
+          ...trackingWhere,
+          quantityOnHand: { [Op.lte]: 0 },
+        },
+      }),
+      Product.findAll({
+        where,
+        attributes: ['costPrice', 'quantityOnHand'],
+        raw: true,
+      }),
+    ]);
+
+    const totalValue = valueRows.reduce((sum, product) => {
+      return sum + (parseFloat(product.costPrice || 0) * parseFloat(product.quantityOnHand || 0));
+    }, 0);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        total,
+        lowStock,
+        outOfStock,
+        totalValue,
+      },
     });
   } catch (error) {
     next(error);

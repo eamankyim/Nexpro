@@ -36,6 +36,23 @@ const productService = {
   },
 
   /**
+   * Get aggregate product catalog stats for the active tenant/shop.
+   * @param {Object} params - Query parameters
+   * @param {string} [params.shopId] - Optional shop filter
+   * @returns {Promise<Object>} - { total, lowStock, outOfStock, totalValue }
+   */
+  getProductStats: async (params = {}) => {
+    const scopedParams = withActiveShopScope(params);
+    const searchParams = new URLSearchParams();
+    Object.entries(scopedParams).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      searchParams.append(key, value);
+    });
+    const query = searchParams.toString();
+    return api.get(query ? `/products/stats?${query}` : '/products/stats');
+  },
+
+  /**
    * Get a single product by ID
    * @param {string} id - Product ID
    * @returns {Promise<Object>} - Product object

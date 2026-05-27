@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   getProducts,
+  getProductStats,
   getProduct,
   getProductSales,
   createProduct,
@@ -40,6 +41,9 @@ router.use(shopContext);
 router.route('/')
   .get(cacheMiddleware(90, generateProductListKey), getProducts)
   .post(authorize('admin', 'manager', 'staff'), createProduct);
+
+router.route('/stats')
+  .get(getProductStats);
 
 // Export endpoint - must be before /:id to avoid conflict
 router.route('/export')

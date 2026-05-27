@@ -381,12 +381,7 @@ exports.getInvoice = async (req, res, next) => {
         model: Job,
         as: 'job',
         attributes: ['id', 'jobNumber', 'title', 'description', 'status', 'createdBy'],
-        include: [
-          {
-            model: JobItem,
-            as: 'items'
-          }
-        ]
+        required: false
       }
     ];
     if (Sale) {
@@ -409,6 +404,14 @@ exports.getInvoice = async (req, res, next) => {
         success: false,
         message: 'Invoice not found'
       });
+    }
+
+    if (invoice.jobId && invoice.job) {
+      const jobItems = await JobItem.findAll({
+        where: { jobId: invoice.jobId },
+        order: [['createdAt', 'ASC']],
+      });
+      invoice.job.setDataValue('items', jobItems);
     }
 
     // Staff may only view invoices from their sales or their jobs (prescription invoices allowed)

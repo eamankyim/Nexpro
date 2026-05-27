@@ -454,7 +454,7 @@ const Products = () => {
   const { scopeReady } = useWorkspaceScope();
   const activeShopName = shopContext?.activeShop?.name ?? null;
   const { isMobile } = useResponsive();
-  const { setPageSearchConfig } = useSmartSearch();
+  const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const shopType = useActiveShopType();
@@ -497,7 +497,6 @@ const Products = () => {
   });
 
   // Filters
-  const [searchText, setSearchText] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [stockFilter, setStockFilter] = useState('all');
   const [isFilterVisible, setIsFilterVisible] = useState(false);
@@ -562,7 +561,7 @@ const Products = () => {
   });
 
   // Debounced search
-  const debouncedSearch = useDebounce(searchText, DEBOUNCE_DELAYS.SEARCH);
+  const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
 
   // =============================================
   // FORMS
@@ -864,24 +863,16 @@ const Products = () => {
   const fetchStats = useCallback(async () => {
     setStatsLoading(true);
     try {
-      // Fetch all products for stats calculation
-      const response = await productService.getProducts({ limit: 100 });
+      const response = await productService.getProductStats();
       const body = response && typeof response === 'object' ? response : {};
-      const allProducts = Array.isArray(body.data) ? body.data : (Array.isArray(body.products) ? body.products : []);
+      const data = body.data && typeof body.data === 'object' ? body.data : body;
 
-      const total = allProducts.length;
-      const trackingProducts = allProducts.filter(p => p.trackStock !== false);
-      const lowStock = trackingProducts.filter(p => {
-        const qty = parseFloat(p.quantityOnHand || 0);
-        const reorder = parseFloat(p.reorderLevel || 0);
-        return qty > 0 && qty <= reorder;
-      }).length;
-      const outOfStock = trackingProducts.filter(p => parseFloat(p.quantityOnHand || 0) <= 0).length;
-      const totalValue = allProducts.reduce((sum, p) => {
-        return sum + (parseFloat(p.costPrice || 0) * parseFloat(p.quantityOnHand || 0));
-      }, 0);
-
-      setStats({ total, lowStock, outOfStock, totalValue });
+      setStats({
+        total: Number(data.total || 0),
+        lowStock: Number(data.lowStock || 0),
+        outOfStock: Number(data.outOfStock || 0),
+        totalValue: Number(data.totalValue || 0),
+      });
     } catch (error) {
       console.error('Failed to fetch stats:', error);
     } finally {
@@ -932,11 +923,15 @@ const Products = () => {
   // Set up smart search
   useEffect(() => {
     setPageSearchConfig({
+      scope: 'products',
       placeholder: SEARCH_PLACEHOLDERS.PRODUCTS,
-      onSearch: setSearchText,
     });
     return () => setPageSearchConfig(null);
   }, [setPageSearchConfig]);
+
+  useEffect(() => {
+    setPagination((prev) => ({ ...prev, current: 1 }));
+  }, [searchValue, categoryFilter, stockFilter]);
 
   // Open form when add=1 query param is present (e.g., from dashboard "Add Product" button)
   useEffect(() => {
@@ -1570,11 +1565,11 @@ const Products = () => {
   };
 
   const handleClearProductFilters = useCallback(() => {
-    setSearchText('');
+    setSearchValue('');
     setCategoryFilter('all');
     setStockFilter('all');
     setPagination((prev) => ({ ...prev, current: 1 }));
-  }, []);
+  }, [setSearchValue]);
 
   const hasActiveProductFilters = useMemo(
     () => !!debouncedSearch || categoryFilter !== 'all' || stockFilter !== 'all',
@@ -2382,8 +2377,8 @@ const Products = () => {
                 <Label className="mb-2 block">Search</Label>
                 <Input
                   placeholder="Search products..."
-                  value={searchText}
-                  onChange={(e) => setSearchText(e.target.value)}
+                  value={searchValue}
+                  onChange={(e) => setSearchValue(e.target.value)}
                 />
               </div>
               <div>
