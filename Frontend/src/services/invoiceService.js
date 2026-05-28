@@ -43,6 +43,10 @@ const invoiceService = {
     return await api.post(`/invoices/${id}/mark-paid`);
   },
 
+  markAsPaid: async (id) => {
+    return await api.post(`/invoices/${id}/mark-paid`);
+  },
+
   getStats: async (params = {}) => {
     const queryString = buildScopedQueryString(params);
     return await api.get(queryString ? `/invoices/stats/summary?${queryString}` : '/invoices/stats/summary');
