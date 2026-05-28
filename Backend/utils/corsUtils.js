@@ -79,6 +79,7 @@ const ALLOWED_CORS_HEADERS = [
   'Authorization',
   'X-Requested-With',
   'x-tenant-id',
+  'x-support-session-id',
   'x-studio-location-id',
   'x-shop-id',
   'Accept',
