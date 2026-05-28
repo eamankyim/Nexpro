@@ -47,6 +47,7 @@ export function ShopProvider({ children }) {
 
   useEffect(() => {
     if (!isShopWorkspace || !activeTenantId) {
+      localStorage.removeItem(STORAGE_KEY);
       setActiveShopIdState(null);
       return;
     }
@@ -110,6 +111,7 @@ export function ShopProvider({ children }) {
       localStorage.setItem(STORAGE_KEY, shopId);
       setActiveShopIdState(shopId);
       queryClient.invalidateQueries();
+      queryClient.refetchQueries({ type: 'active' });
     },
     [queryClient]
   );

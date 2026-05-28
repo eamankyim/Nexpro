@@ -29,6 +29,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
+const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { cacheMiddleware, generateReportCacheKey } = require('../middleware/cache');
 
 const router = express.Router();
@@ -36,6 +37,7 @@ const router = express.Router();
 router.use(protect);
 router.use(tenantContext);
 router.use(shopContext);
+router.use(studioLocationContext);
 router.use(authorize('admin', 'manager'));
 
 // Cache report endpoints for 5 minutes (300 seconds)
@@ -43,6 +45,7 @@ const reportCache = cacheMiddleware(300, (req) => {
   return generateReportCacheKey(req.tenantId, req.path.replace('/api/reports/', ''), {
     ...req.query,
     shopScope: req.shopFilterId || (req.shopScoped ? 'assigned' : 'all'),
+    studioScope: req.studioLocationFilterId || (req.studioLocationScoped ? 'assigned' : 'all'),
   });
 });
 

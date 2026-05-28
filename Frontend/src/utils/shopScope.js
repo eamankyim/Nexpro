@@ -1,6 +1,7 @@
 /** @typedef {Record<string, unknown>} ShopScopeParams */
 
 export const ACTIVE_SHOP_STORAGE_KEY = 'activeShopId';
+export const ACTIVE_STUDIO_LOCATION_STORAGE_KEY = 'activeStudioLocationId';
 
 /**
  * Active shop id from localStorage (set by ShopContext).
@@ -11,6 +12,11 @@ export function getActiveShopIdForScope() {
   return localStorage.getItem(ACTIVE_SHOP_STORAGE_KEY);
 }
 
+export function getActiveStudioLocationIdForScope() {
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(ACTIVE_STUDIO_LOCATION_STORAGE_KEY);
+}
+
 /**
  * Attach active shop to list/query params when not already set.
  * @param {ShopScopeParams} [params]
@@ -18,8 +24,12 @@ export function getActiveShopIdForScope() {
  */
 export function withActiveShopScope(params = {}) {
   const activeShopId = getActiveShopIdForScope();
-  if (!activeShopId || params.shopId) return params;
-  return { ...params, shopId: activeShopId };
+  const activeStudioLocationId = getActiveStudioLocationIdForScope();
+  return {
+    ...params,
+    ...(activeShopId && !params.shopId ? { shopId: activeShopId } : {}),
+    ...(activeStudioLocationId && !params.studioLocationId ? { studioLocationId: activeStudioLocationId } : {}),
+  };
 }
 
 /**
@@ -31,6 +41,10 @@ export function appendShopScopeToSearchParams(searchParams) {
   const activeShopId = getActiveShopIdForScope();
   if (activeShopId && !searchParams.has('shopId')) {
     searchParams.append('shopId', activeShopId);
+  }
+  const activeStudioLocationId = getActiveStudioLocationIdForScope();
+  if (activeStudioLocationId && !searchParams.has('studioLocationId')) {
+    searchParams.append('studioLocationId', activeStudioLocationId);
   }
   return searchParams;
 }

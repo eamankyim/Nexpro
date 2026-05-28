@@ -113,7 +113,7 @@ const Invoices = () => {
   const { isAdmin, isManager, activeTenant, activeTenantId } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
-  const { scopeReady } = useWorkspaceScope();
+  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { isMobile } = useResponsive();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isPrintingPress = businessType === 'printing_press';
@@ -192,7 +192,7 @@ const Invoices = () => {
     } finally {
       setLoading(false);
     }
-  }, [pagination.current, pagination.pageSize, filters, activeShopId, debouncedSearch]);
+  }, [pagination.current, pagination.pageSize, filters, activeShopId, activeStudioLocationId, debouncedSearch]);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -201,13 +201,13 @@ const Invoices = () => {
     } catch (error) {
       console.error('Failed to load invoice stats:', error);
     }
-  }, [activeShopId]);
+  }, [activeShopId, activeStudioLocationId]);
 
   useEffect(() => {
     if (!scopeReady) return;
     fetchInvoices();
     fetchStats();
-  }, [scopeReady, activeTenantId, activeShopId, fetchInvoices, fetchStats, refreshTrigger, shopContext?.isShopWorkspace]);
+  }, [scopeReady, activeTenantId, activeShopId, activeStudioLocationId, fetchInvoices, fetchStats, refreshTrigger, shopContext?.isShopWorkspace]);
 
   useEffect(() => {
     setPageSearchConfig({ scope: 'invoices', placeholder: SEARCH_PLACEHOLDERS.INVOICES });

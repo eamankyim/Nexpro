@@ -19,6 +19,7 @@ import settingsService from '../services/settingsService';
 import { mergeBranchOrganization } from '../utils/branchOrganization';
 import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -119,6 +120,7 @@ const Customers = () => {
   const { isManager, isAdmin, user, activeTenant, activeTenantId } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const activeShopName = shopContext?.activeShop?.name ?? null;
   const queryClient = useQueryClient();
   const businessType = activeTenant?.businessType || 'printing_press';
@@ -191,15 +193,15 @@ const Customers = () => {
     isLoading: loading,
     refetch: refetchCustomers,
   } = useQuery({
-    queryKey: ['customers', activeTenantId, activeShopId, customersQueryParams],
+    queryKey: ['customers', activeTenantId, activeShopId, activeStudioLocationId, customersQueryParams],
     queryFn: () => customerService.getAll(customersQueryParams),
-    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
+    enabled: scopeReady,
   });
 
   const { data: statsResponse } = useQuery({
-    queryKey: ['customers', 'stats', activeTenantId, activeShopId],
+    queryKey: ['customers', 'stats', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => customerService.getStats(),
-    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
+    enabled: scopeReady,
   });
 
   const createMutation = useMutation({

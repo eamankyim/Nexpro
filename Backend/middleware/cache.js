@@ -92,6 +92,21 @@ const getShopCacheSegment = (req) => {
 };
 
 /**
+ * Studio segment for cache keys (must differ per active studio location or lists bleed across studios).
+ * @param {object} req - Express request (after studioLocationContext middleware)
+ * @returns {string}
+ */
+const getStudioLocationCacheSegment = (req) => {
+  if (!req?.studioLocationScoped) return '';
+  if (req.studioLocationFilterId) return `:studio:${req.studioLocationFilterId}`;
+  if (req.canAccessAllStudioLocations) return ':studio:all';
+  return ':studio:assigned';
+};
+
+const getWorkspaceScopeCacheSegment = (req) =>
+  `${getShopCacheSegment(req)}${getStudioLocationCacheSegment(req)}`;
+
+/**
  * Cache key for product list (per tenant + shop + query)
  * @param {object} req - Express request
  * @returns {string} Cache key
@@ -102,7 +117,7 @@ const generateProductListKey = (req) => {
     .sort()
     .map(k => `${k}=${req.query[k]}`)
     .join('&');
-  return `products:list:${tenantId}${getShopCacheSegment(req)}:${params}`;
+  return `products:list:${tenantId}${getWorkspaceScopeCacheSegment(req)}:${params}`;
 };
 
 /** Generic list cache key (prefix e.g. customers, sales, invoices) */
@@ -112,7 +127,7 @@ const generateListKey = (prefix) => (req) => {
     .sort()
     .map(k => `${k}=${req.query[k]}`)
     .join('&');
-  return `${prefix}:list:${tenantId}${getShopCacheSegment(req)}:${params}`;
+  return `${prefix}:list:${tenantId}${getWorkspaceScopeCacheSegment(req)}:${params}`;
 };
 
 const generateCustomerListKey = generateListKey('customers');

@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import WelcomeSection from '../components/WelcomeSection';
 import TableSkeleton from '../components/TableSkeleton';
 import { showSuccess, showError, handleApiError } from '../utils/toast';
@@ -72,6 +73,7 @@ function DeliveryStatusSelect({ row, loading, onChange }) {
 export default function Deliveries() {
   const { user, activeTenant } = useAuth();
   const queryClient = useQueryClient();
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const { isMobile } = useResponsive();
   const [scope, setScope] = useState('active');
@@ -97,21 +99,21 @@ export default function Deliveries() {
   }, [setPageSearchConfig, isStudioLike]);
 
   const activeQueueQuery = useQuery({
-    queryKey: ['deliveries-queue', 'active', tenantId],
+    queryKey: ['deliveries-queue', 'active', tenantId, activeShopId, activeStudioLocationId],
     queryFn: async () => {
       const res = await deliveryService.getQueue('active');
       return res?.data ?? res;
     },
-    enabled: Boolean(tenantId) && scope === 'active' && !isActiveTerminalFilter
+    enabled: scopeReady && scope === 'active' && !isActiveTerminalFilter
   });
 
   const doneQueueQuery = useQuery({
-    queryKey: ['deliveries-queue', 'done', tenantId],
+    queryKey: ['deliveries-queue', 'done', tenantId, activeShopId, activeStudioLocationId],
     queryFn: async () => {
       const res = await deliveryService.getQueue('done');
       return res?.data ?? res;
     },
-    enabled: Boolean(tenantId) && (scope === 'done' || isActiveTerminalFilter)
+    enabled: scopeReady && (scope === 'done' || isActiveTerminalFilter)
   });
 
   const queueRes = scope === 'done' || isActiveTerminalFilter ? doneQueueQuery.data : activeQueueQuery.data;

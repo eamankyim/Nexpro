@@ -46,6 +46,7 @@ export function StudioLocationProvider({ children }) {
 
   useEffect(() => {
     if (!isStudioWorkspace || !activeTenantId) {
+      localStorage.removeItem(STORAGE_KEY);
       setActiveStudioLocationIdState(null);
       return;
     }
@@ -89,6 +90,7 @@ export function StudioLocationProvider({ children }) {
         setActiveStudioLocationIdState(locationId);
       }
       queryClient.invalidateQueries();
+      queryClient.refetchQueries({ type: 'active' });
     },
     [queryClient]
   );

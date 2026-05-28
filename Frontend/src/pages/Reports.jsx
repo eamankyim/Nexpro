@@ -69,6 +69,7 @@ import {
 import reportService from '../services/reportService';
 import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useResponsive } from '../hooks/useResponsive';
 import { SEARCH_PLACEHOLDERS } from '../constants';
 import { STUDIO_LIKE_TYPES } from '../constants/studioLikeTypes';
@@ -241,6 +242,7 @@ function ReportsInner() {
   const { activeTenant, user } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { isMobile } = useResponsive();
   const rc = useRechartsModule();
 
@@ -473,15 +475,16 @@ function ReportsInner() {
   }, [savedReports, searchValue, showSmartReportList]);
 
   useEffect(() => {
+    if (!scopeReady) return;
     if (!isSmartReport && !isCompliance) {
       fetchOverviewStats();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateRange, groupBy, isSmartReport, isCompliance, dateFilter, activeShopId]);
+  }, [scopeReady, dateRange, groupBy, isSmartReport, isCompliance, dateFilter, activeShopId, activeStudioLocationId]);
 
   // Fetch compliance report when on Compliance view and statement type or date changes
   useEffect(() => {
-    if (!isCompliance || !dateRange?.[0] || !dateRange?.[1]) return;
+    if (!scopeReady || !isCompliance || !dateRange?.[0] || !dateRange?.[1]) return;
     const startDate = dateRange[0].format('YYYY-MM-DD');
     const endDate = dateRange[1].format('YYYY-MM-DD');
     let cancelled = false;
@@ -538,7 +541,7 @@ function ReportsInner() {
     };
     fetchCompliance();
     return () => { cancelled = true; };
-  }, [isCompliance, complianceStatementType, dateRange, activeShopId]);
+  }, [scopeReady, isCompliance, complianceStatementType, dateRange, activeShopId, activeStudioLocationId]);
 
   const handleFilterChange = (filterType) => {
     setDateFilter(filterType);

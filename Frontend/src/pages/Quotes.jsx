@@ -6,6 +6,7 @@ import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 import { useAuth } from '../context/AuthContext';
 import { useShopOptional } from '../context/ShopContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import {
   Plus,
@@ -185,6 +186,7 @@ const Quotes = () => {
   const { activeTenantId } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { isMobile } = useResponsive();
   const [quotes, setQuotes] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -283,9 +285,9 @@ const Quotes = () => {
   });
 
   const { data: customersQueryData, refetch: refetchCustomers } = useQuery({
-    queryKey: ['customers', 'quotes-picker', activeTenantId, activeShopId],
+    queryKey: ['customers', 'quotes-picker', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => customerService.getAll({ limit: 200, page: 1 }),
-    enabled: !!activeTenantId,
+    enabled: scopeReady,
     staleTime: 2 * 60 * 1000,
   });
 
@@ -413,9 +415,9 @@ const Quotes = () => {
   }, [searchValue]);
 
   useEffect(() => {
-    if (shopContext?.isShopWorkspace && !activeShopId) return;
+    if (!scopeReady) return;
     fetchQuotes();
-  }, [pagination.current, pagination.pageSize, filters, debouncedSearch, activeShopId, shopContext?.isShopWorkspace]);
+  }, [scopeReady, pagination.current, pagination.pageSize, filters, debouncedSearch, activeShopId, activeStudioLocationId, shopContext?.isShopWorkspace]);
 
   const fetchQuotes = async (isRefresh = false) => {
     if (isRefresh) setRefreshingQuotes(true);
