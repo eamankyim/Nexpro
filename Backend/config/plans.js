@@ -1,4 +1,4 @@
-/** Single source of truth: prices from Paystack (see config/paystackPlans.js) */
+/** Marketing copy defaults; live prices from Paystack via subscriptionPlanCatalogService */
 const { PLAN_DEFINITIONS } = require('./paystackPlans');
 
 const pesewasToGhs = (p) => (p == null ? null : p / 100);

@@ -1,7 +1,7 @@
 const { Op } = require('sequelize');
 const { Tenant, Setting, SubscriptionPayment } = require('../models');
 const { normalizeTenantInstanceForRequest } = require('../utils/tenantClassification');
-const { PLAN_DEFINITIONS } = require('../config/paystackPlans');
+const { getFallbackAmountPesewas } = require('../config/paystackPlans');
 
 const PAID_PLANS = new Set(['starter', 'professional', 'enterprise']);
 const DEFAULT_GRACE_DAYS = Number(process.env.SUBSCRIPTION_GRACE_DAYS || 7);
@@ -234,7 +234,7 @@ async function recordSubscriptionPaymentAndActivate(params) {
   const amount =
     params.amount != null
       ? Number(params.amount)
-      : PLAN_DEFINITIONS[plan]?.[billingPeriod === 'yearly' ? 'yearly' : 'monthly'] || 0;
+      : getFallbackAmountPesewas(plan, billingPeriod) || 0;
 
   const payment = await SubscriptionPayment.create({
     tenantId,
@@ -344,7 +344,11 @@ async function applySubscriptionFromPaystackTransaction(paymentData, source = 'v
     amount: paymentData?.amount,
     provider: 'paystack',
     providerReference: reference,
-    metadata: { source, channel: paymentData?.channel || null },
+    metadata: {
+      source,
+      channel: paymentData?.channel || null,
+      paystackPlanCode: metadata.paystackPlanCode || null,
+    },
   });
 }
 

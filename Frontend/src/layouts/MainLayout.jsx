@@ -68,7 +68,7 @@ const MainLayout = () => {
 
   const isBillingExemptRoute = useMemo(() => {
     const path = location.pathname;
-    if (path === '/checkout' || path === '/profile') return true;
+    if (path === '/checkout' || path === '/plans' || path === '/profile') return true;
     if (path.startsWith('/settings')) return true;
     return false;
   }, [location.pathname]);

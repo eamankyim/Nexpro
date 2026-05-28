@@ -33,6 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogBody,
   DialogFooter,
 } from '@/components/ui/dialog';
 import {
@@ -1466,15 +1467,16 @@ const AdminSettings = () => {
       </Dialog>
 
       <Dialog open={planModalVisible} onOpenChange={setPlanModalVisible}>
-        <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-3xl [--modal-w:min(92vw,48rem)]">
           <DialogHeader>
             <DialogTitle>{editingPlan ? 'Edit Subscription Plan' : 'Create Subscription Plan'}</DialogTitle>
-            <DialogDescription className="sr-only">
+            <DialogDescription>
               {editingPlan ? 'Update plan details and features.' : 'Create a new subscription plan.'}
             </DialogDescription>
           </DialogHeader>
           <Form {...planForm}>
-            <form onSubmit={handlePlanSubmit} className="space-y-4">
+            <form onSubmit={handlePlanSubmit} className="flex flex-col flex-1 min-h-0">
+              <DialogBody className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <FormField
                   control={planForm.control}
@@ -1911,10 +1913,15 @@ const AdminSettings = () => {
                   )}
                 />
               </div>
+              </DialogBody>
 
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={() => setPlanModalVisible(false)}>Cancel</Button>
-                <Button type="submit" className="bg-brand hover:bg-brand-dark">Save</Button>
+                <Button type="button" variant="outline" onClick={() => setPlanModalVisible(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit" className="bg-brand text-white hover:bg-brand-dark hover:text-white">
+                  Save
+                </Button>
               </DialogFooter>
             </form>
           </Form>

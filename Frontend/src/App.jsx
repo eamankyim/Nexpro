@@ -55,6 +55,7 @@ const Leads = lazy(() => import('./pages/Leads'));
 const Users = lazy(() => import('./pages/Users'));
 const Profile = lazy(() => import('./pages/Profile'));
 const Settings = lazy(() => import('./pages/Settings'));
+const Plans = lazy(() => import('./pages/Plans'));
 const Employees = lazy(() => import('./pages/Employees'));
 const Payroll = lazy(() => import('./pages/Payroll'));
 const Accounting = lazy(() => import('./pages/Accounting'));
@@ -275,6 +276,7 @@ function AppContent() {
             <Route path="users" element={<FeatureRoute featureKey="roleManagement"><RequireWorkspaceManager><Users /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="profile" element={<Profile />} />
             <Route path="settings" element={<RequireWorkspaceManager><Settings /></RequireWorkspaceManager>} />
+            <Route path="plans" element={<RequireWorkspaceManager><Plans /></RequireWorkspaceManager>} />
             <Route path="checkout" element={<RequireWorkspaceManager><Checkout /></RequireWorkspaceManager>} />
           </Route>
 

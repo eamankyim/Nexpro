@@ -4,11 +4,7 @@ import {
   CreditCard,
   CheckCircle,
   ArrowLeft,
-  Loader2,
-  Zap,
-  Crown,
-  Building2,
-  Check
+  Loader2
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -18,7 +14,7 @@ import { API_BASE_URL } from '../services/api';
 import { showSuccess, showError } from '../utils/toast';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 const planNames = {
@@ -28,29 +24,26 @@ const planNames = {
 };
 
 const DEFAULT_MONTHLY = { starter: 129, professional: 250, enterprise: null };
-const DEFAULT_YEARLY_TOTAL = { starter: 99 * 12, professional: 199 * 12, enterprise: null };
-const DEFAULT_YEARLY_PER_MONTH = { starter: 99, professional: 199 };
-
-const PLANS = [
-  { id: 'starter', name: 'Starter', icon: Zap, monthly: 129, yearlyPerMonth: 99 },
-  { id: 'professional', name: 'Professional', icon: Crown, monthly: 250, yearlyPerMonth: 199, popular: true },
-  { id: 'enterprise', name: 'Enterprise', icon: Building2, contactSales: true },
-];
+const DEFAULT_YEARLY_TOTAL = { starter: 1188, professional: 2388, enterprise: null };
+const DEFAULT_YEARLY_PER_MONTH = {
+  starter: Math.round((1188 / 12) * 100) / 100,
+  professional: Math.round((2388 / 12) * 100) / 100,
+};
 
 const Checkout = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const { activeTenant, user, refreshAuthState, needsEmailVerification } = useAuth();
+  const { user, refreshAuthState, needsEmailVerification } = useAuth();
   const [verifying, setVerifying] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [verified, setVerified] = useState(false);
   const verifyStartedRef = useRef(false);
 
-  const initialData = location.state || { plan: 'starter', billingPeriod: 'monthly' };
-  const [selectedPlan, setSelectedPlan] = useState(initialData.plan || 'starter');
-  const [billingPeriod, setBillingPeriod] = useState(initialData.billingPeriod || 'monthly');
+  const initialData = location.state || {};
+  const plan = initialData.plan;
+  const billingPeriod = initialData.billingPeriod || 'monthly';
   const [planPricing, setPlanPricing] = useState({
     monthly: { ...DEFAULT_MONTHLY },
     yearlyTotal: { ...DEFAULT_YEARLY_TOTAL },
@@ -85,14 +78,23 @@ const Checkout = () => {
     };
   }, []);
 
-  const plan = selectedPlan;
   const finalPrice =
     billingPeriod === 'yearly' && plan !== 'enterprise'
       ? planPricing.yearlyTotal[plan]
       : planPricing.monthly[plan];
+  const yearlyPerMonth = planPricing.yearlyPerMonth[plan];
   const isEnterprise = plan === 'enterprise';
 
   const reference = searchParams.get('reference');
+  const hasValidSelection =
+    ['starter', 'professional'].includes(plan) &&
+    ['monthly', 'yearly'].includes(billingPeriod);
+
+  useEffect(() => {
+    if (!reference && !hasValidSelection) {
+      navigate('/plans', { replace: true });
+    }
+  }, [reference, hasValidSelection, navigate]);
 
   const verifyMutation = useMutation({
     mutationFn: (ref) => settingsService.verifySubscriptionPayment(ref),
@@ -150,6 +152,14 @@ const Checkout = () => {
     if (!plan || !billingPeriod || isEnterprise) return;
     payMutation.mutate({ plan, billingPeriod });
   }, [plan, billingPeriod, isEnterprise, payMutation]);
+
+  if (!reference && !hasValidSelection) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-brand" />
+      </div>
+    );
+  }
 
   if (!reference && user && needsEmailVerification) {
     return (
@@ -223,77 +233,8 @@ const Checkout = () => {
 
       <h1 className="text-2xl md:text-3xl font-bold mb-2">Checkout</h1>
       <p className="text-muted-foreground mb-6 text-sm md:text-base">
-        Choose your plan and complete your subscription upgrade
+        Review your selected plan and complete your subscription upgrade.
       </p>
-
-      {/* Plan Selection */}
-      <Card className="border border-gray-200 mb-8">
-        <CardHeader>
-          <CardTitle>Choose Your Plan</CardTitle>
-          <CardDescription>Select a plan before completing your purchase</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">Billing</span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setBillingPeriod('monthly')}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium ${
-                  billingPeriod === 'monthly' ? 'bg-brand text-white' : 'bg-muted text-foreground hover:bg-muted/80'
-                }`}
-              >
-                Monthly
-              </button>
-              <button
-                type="button"
-                onClick={() => setBillingPeriod('yearly')}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium ${
-                  billingPeriod === 'yearly' ? 'bg-brand text-white' : 'bg-muted text-foreground hover:bg-muted/80'
-                }`}
-              >
-                Yearly
-              </button>
-              {billingPeriod === 'yearly' && (
-                <span className="text-xs text-green-600 font-medium">Save up to 23%</span>
-              )}
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {PLANS.map((p) => {
-              const Icon = p.icon;
-              const isSelected = plan === p.id;
-              const priceDisplay = p.contactSales
-                ? "Let's talk"
-                : billingPeriod === 'yearly'
-                  ? `₵ ${planPricing.yearlyPerMonth[p.id]}/mo`
-                  : `₵ ${planPricing.monthly[p.id]}/mo`;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => setSelectedPlan(p.id)}
-                  className={`text-left p-4 rounded-lg transition-all ${
-                    isSelected ? 'border border-brand bg-brand-5' : 'border border-gray-200 hover:border-gray-300'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <Icon className="h-5 w-5 text-brand" />
-                      <span className="font-semibold">{p.name}</span>
-                    </div>
-                    {isSelected && <Check className="h-5 w-5 text-brand" />}
-                  </div>
-                  <div className="text-lg font-bold">{priceDisplay}</div>
-                  {p.popular && (
-                    <span className="inline-block mt-2 text-xs font-medium text-brand">Most Popular</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-[40%_60%] gap-6">
         <Card className="border border-gray-200">
@@ -313,7 +254,7 @@ const Checkout = () => {
               {billingPeriod === 'yearly' && !isEnterprise && (
                 <div className="flex justify-between text-green-600">
                   <span>Discount:</span>
-                  <span>{plan === 'starter' ? '₵ 99/mo' : '₵ 199/mo'}</span>
+                  <span>₵ {yearlyPerMonth}/mo</span>
                 </div>
               )}
             </div>
@@ -334,7 +275,7 @@ const Checkout = () => {
               {!isEnterprise && (
                 <p className="text-sm text-muted-foreground">
                   {billingPeriod === 'yearly'
-                    ? `Billed annually (₵ ${plan === 'starter' ? 99 : 199}/month)`
+                    ? `Billed annually (₵ ${yearlyPerMonth}/month)`
                     : 'Billed monthly'}
                 </p>
               )}

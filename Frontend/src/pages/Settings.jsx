@@ -9,14 +9,13 @@ import settingsService from '../services/settingsService';
 import whatsappService from '../services/whatsappService';
 import smsService from '../services/smsService';
 import emailService from '../services/emailService';
-import { Camera, User, Mail, UserCog, Loader2, Eye, EyeOff, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard, ChevronDown, Bell } from 'lucide-react';
+import { Camera, User, Mail, UserCog, Loader2, Eye, EyeOff, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard, ChevronDown, Bell, CalendarDays } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useResponsive } from '../hooks/useResponsive';
 import { useHintMode } from '../context/HintModeContext';
 import { showSuccess, showError, showLoading } from '../utils/toast';
-import { numberInputValue, handleIntegerChange, integerOrEmptySchema } from '../utils/formUtils';
-import { formatStorageAmount, formatStoragePercentage } from '../utils/storageFormat';
+import { integerOrEmptySchema } from '../utils/formUtils';
 import inviteService from '../services/inviteService';
 import authService from '../services/authService';
 import PhoneNumberInput from '../components/PhoneNumberInput';
@@ -37,7 +36,6 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
-import { DatePicker } from '@/components/ui/date-picker';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -334,8 +332,7 @@ const Settings = () => {
   const savingToastDismissRef = useRef(null);
   const [posConfigEditing, setPosConfigEditing] = useState(false);
   const [seatUsage, setSeatUsage] = useState(null);
-  const [storageUsage, setStorageUsage] = useState(null);
-  const [loadingUsage, setLoadingUsage] = useState(true);
+  const [loadingUsage, setLoadingUsage] = useState(false);
   const [whatsappTemplateLearnMoreOpen, setWhatsappTemplateLearnMoreOpen] = useState(false);
   const [notificationPrefsDraft, setNotificationPrefsDraft] = useState(null);
   const { user, updateUser, activeTenant, refreshAuthState, needsEmailVerification, isManager, wasInvited, hasFeature, suppressAppGuidance } = useAuth();
@@ -542,7 +539,9 @@ const Settings = () => {
     isLoading: loadingSubscription
   } = useQuery({
     queryKey: ['settings', 'subscription'],
-    queryFn: settingsService.getSubscription
+    queryFn: settingsService.getSubscription,
+    enabled: activeTab === 'billing',
+    staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
   });
 
   const { data: subscriptionPaymentsData } = useQuery({
@@ -557,7 +556,7 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'whatsapp'],
     queryFn: whatsappService.getSettings,
-    enabled: canManageOrganization
+    enabled: canManageOrganization && activeTab === 'messaging'
   });
 
   const {
@@ -566,7 +565,7 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'sms'],
     queryFn: smsService.getSettings,
-    enabled: canManageOrganization
+    enabled: canManageOrganization && activeTab === 'messaging'
   });
 
   const {
@@ -575,7 +574,7 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'email'],
     queryFn: emailService.getSettings,
-    enabled: canManageOrganization
+    enabled: canManageOrganization && activeTab === 'messaging'
   });
 
   const {
@@ -584,7 +583,7 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'pos-config'],
     queryFn: settingsService.getPOSConfig,
-    enabled: canManageOrganization
+    enabled: canManageOrganization && activeTab === 'operations'
   });
 
   const {
@@ -593,7 +592,7 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'ai', activeTenant?.id],
     queryFn: settingsService.getAISettings,
-    enabled: canManageOrganization && !!activeTenant?.id
+    enabled: canManageOrganization && !!activeTenant?.id && activeTab === 'operations'
   });
 
   const {
@@ -602,7 +601,7 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'payment-collection', activeTenant?.id],
     queryFn: settingsService.getPaymentCollectionSettings,
-    enabled: canManageOrganization && !!activeTenant?.id,
+    enabled: canManageOrganization && !!activeTenant?.id && activeTab === 'billing',
     staleTime: QUERY_CACHE.STALE_TIME_VOLATILE,
     refetchOnMount: 'always'
   });
@@ -615,7 +614,7 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'payment-collection-banks', activeTenant?.id],
     queryFn: settingsService.getPaymentCollectionBanks,
-    enabled: canManageOrganization && !!activeTenant?.id
+    enabled: canManageOrganization && !!activeTenant?.id && activeTab === 'billing'
   });
 
   useEffect(() => {
@@ -654,13 +653,13 @@ const Settings = () => {
   const { data: notificationChannelsData } = useQuery({
     queryKey: ['settings', 'notification-channels'],
     queryFn: settingsService.getNotificationChannels,
-    enabled: canManageOrganization
+    enabled: canManageOrganization && activeTab === 'messaging'
   });
 
   const { data: quoteWorkflowData } = useQuery({
     queryKey: ['settings', 'quote-workflow'],
     queryFn: settingsService.getQuoteWorkflow,
-    enabled: canManageOrganization
+    enabled: canManageOrganization && activeTab === 'operations'
   });
 
   const updateQuoteWorkflowMutation = useMutation({
@@ -679,7 +678,7 @@ const Settings = () => {
   const { data: jobInvoiceData } = useQuery({
     queryKey: ['settings', 'job-invoice'],
     queryFn: settingsService.getJobInvoice,
-    enabled: canManageOrganization
+    enabled: canManageOrganization && activeTab === 'operations'
   });
 
   const updateJobInvoiceMutation = useMutation({
@@ -890,30 +889,30 @@ const Settings = () => {
     }
   }, [organizationData, organizationForm]);
 
-  // Fetch usage data (seat + storage) when workspace is known
+  // Fetch only the seat count needed by the billing summary, and only when visible.
   useEffect(() => {
-    if (!activeTenant?.id) return;
+    if (!activeTenant?.id || activeTab !== 'billing') return;
+    let cancelled = false;
     const fetchUsage = async () => {
       try {
         setLoadingUsage(true);
-        const [seatResponse, storageResponse] = await Promise.all([
-          inviteService.getSeatUsage(),
-          inviteService.getStorageUsage(),
-        ]);
-        if (seatResponse?.success) {
+        const seatResponse = await inviteService.getSeatUsage();
+        if (!cancelled && seatResponse?.success) {
           setSeatUsage(seatResponse.data);
-        }
-        if (storageResponse?.success) {
-          setStorageUsage(storageResponse.data);
         }
       } catch (error) {
         console.error('Failed to fetch usage data:', error);
       } finally {
-        setLoadingUsage(false);
+        if (!cancelled) {
+          setLoadingUsage(false);
+        }
       }
     };
     fetchUsage();
-  }, [activeTenant?.id]);
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTenant?.id, activeTab]);
 
   useEffect(() => {
     if (profileData?.data) {
@@ -1057,20 +1056,6 @@ const Settings = () => {
     onError: (error) => {
       dismissSavingToast();
       showError(error, 'Failed to update organization settings. Please try again.');
-    }
-  });
-
-  const updateSubscriptionMutation = useMutation({
-    mutationFn: settingsService.updateSubscription,
-    onSuccess: () => {
-      dismissSavingToast();
-      showSuccess('Subscription settings saved successfully');
-      queryClient.invalidateQueries({ queryKey: ['settings', 'subscription'] });
-    },
-    onError: (error) => {
-      dismissSavingToast();
-      const errMsg = error?.response?.data?.message || 'Failed to update subscription settings';
-      showError(error, 'Failed to update profile. Please try again.');
     }
   });
 
@@ -1288,19 +1273,6 @@ const Settings = () => {
 
     savingToastDismissRef.current = showLoading('Saving...');
     updateOrganizationMutation.mutate(payload);
-  };
-
-  const onSubscriptionSubmit = async (values) => {
-    const payload = {
-      plan: values.plan,
-      status: values.status,
-      seats: values.seats,
-      currentPeriodEnd: values.currentPeriodEnd ? values.currentPeriodEnd.toISOString() : null,
-      notes: values.notes || ''
-    };
-
-    savingToastDismissRef.current = showLoading('Saving...');
-    updateSubscriptionMutation.mutate(payload);
   };
 
   const onWhatsAppSubmit = async (values) => {
@@ -1610,79 +1582,7 @@ const Settings = () => {
     }
   };
 
-  const subscriptionHistory = subscriptionData?.data?.history || [];
-  const subscriptionPayments = subscriptionPaymentsData?.data?.payments || [];
   const subscriptionBilling = subscriptionData?.data?.billing || subscriptionPaymentsData?.data?.billing;
-
-  const subscriptionSummary = useMemo(() => {
-    if (!subscriptionData?.data) return null;
-    const subscription = subscriptionData.data;
-    const isTrialPlan = subscription.plan === 'trial';
-    const statusColor = subscription.status === 'active' ? 'text-green-600' : subscription.status === 'trialing' ? 'text-yellow-600' : 'text-red-600';
-    return (
-      <div className="mb-2 md:mb-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2 md:gap-4">
-          <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
-            <CardContent className="pt-2 md:pt-6 px-0 md:px-6 pb-2 md:pb-6">
-              <h4 className="text-sm md:text-lg font-semibold mb-1 md:mb-2">
-                {subscription.plan?.toUpperCase() || 'FREE'}
-              </h4>
-              <p className={statusColor}>
-                {subscriptionBilling?.billingStatus
-                  ? subscriptionBilling.billingStatus.toUpperCase()
-                  : subscription.status?.toUpperCase()}
-              </p>
-              {subscriptionBilling?.billingStatus === 'grace' && subscriptionBilling.graceEndsAt && (
-                <p className="text-xs text-amber-700 mt-1">
-                  Grace ends {dayjs(subscriptionBilling.graceEndsAt).format('MMM DD, YYYY')}
-                </p>
-              )}
-              {subscription.currentPeriodEnd && (
-                <div className="mt-2 md:mt-3">
-                  <p className="text-xs md:text-sm text-muted-foreground">Renews</p>
-                  <div className="text-sm md:text-base font-medium">
-                    {dayjs(subscription.currentPeriodEnd).format('MMM DD, YYYY')}
-                  </div>
-                </div>
-              )}
-              {isTrialPlan && (
-                <div className="mt-2 md:mt-4">
-                  <Button
-                    className="w-full"
-                    onClick={() => {
-                      navigate('/checkout', {
-                        state: {
-                          plan: 'professional',
-                          billingPeriod: 'monthly',
-                          price: 199
-                        }
-                      });
-                    }}
-                    style={{
-                      background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
-                      border: 'none',
-                      fontWeight: 500,
-                      color: 'white'
-                    }}
-                  >
-                    Upgrade to Pro
-                  </Button>
-                </div>
-              )}
-            </CardContent>
-          </ShadcnCard>
-          <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
-            <CardContent className="pt-2 md:pt-6 px-0 md:px-6 pb-2 md:pb-6">
-              <p className="text-xs text-muted-foreground">Notes</p>
-              <div className="mt-1 md:mt-3">
-                <p className="text-xs md:text-sm">{subscription.notes || '—'}</p>
-              </div>
-            </CardContent>
-          </ShadcnCard>
-        </div>
-      </div>
-    );
-  }, [subscriptionData, navigate]);
 
   const { theme, setTheme } = useTheme();
   const { hintMode, setHintMode } = useHintMode();
@@ -3138,344 +3038,102 @@ const Settings = () => {
     </ShadcnCard>
   );
 
+  const currentSubscription = subscriptionData?.data || activeTenant || {};
+  const displayPlan = currentSubscription.plan || planValue || 'trial';
+  const displayStatus = currentSubscription.status || statusValue || 'active';
+  const displaySeats = currentSubscription.seats || subscriptionForm.getValues('seats') || 5;
+  const displayCurrentPeriodEnd = currentSubscription.currentPeriodEnd || subscriptionForm.getValues('currentPeriodEnd');
+  const isTrialSubscription = displayPlan === 'trial' || displayStatus === 'trialing';
+  const subscriptionPlanLabel = displayPlan
+    ? displayPlan.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+    : 'Free';
+  const subscriptionStatus = subscriptionBilling?.billingStatus === 'past_due'
+    ? 'past_due'
+    : subscriptionBilling?.billingStatus === 'grace'
+      ? 'grace'
+      : displayStatus;
+  const currentPeriodEndDate = displayCurrentPeriodEnd
+    ? dayjs(displayCurrentPeriodEnd)
+    : isTrialSubscription
+      ? dayjs().add(30, 'days')
+      : null;
+  const teamSeatsLabel = loadingUsage
+    ? 'Loading...'
+    : seatUsage?.isUnlimited
+      ? 'Unlimited'
+      : `${seatUsage?.limit || displaySeats} seats`;
+
   const subscriptionTab = (
-    <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
-      <CardHeader className="p-0 md:p-6 pb-2 md:pb-6">
-        <CardTitle className="text-base md:text-2xl">Subscription & Billing</CardTitle>
+    <ShadcnCard className="border bg-card shadow-none">
+      <CardHeader className="p-5 md:p-6 pb-4">
+        <CardTitle className="text-lg md:text-xl">Subscription & Billing</CardTitle>
       </CardHeader>
-      <CardContent className="p-0 md:p-6 pt-2 md:pt-0 space-y-3 md:space-y-4">
-        {/* Subscription Status */}
-        {subscriptionData?.data && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <h4 className="text-base font-semibold">
-                  PLAN {subscriptionData.data.plan?.toUpperCase() || 'FREE'}
-                </h4>
-                {subscriptionData.data.status !== 'trialing' && (
-                  <span className={`text-sm ${subscriptionData.data.status === 'active' ? 'text-green-600' : 'text-red-600'}`}>
-                    {subscriptionData.data.status?.toUpperCase()}
-                  </span>
-                )}
-              </div>
-              {subscriptionData.data.currentPeriodEnd && (
-                <p className="text-sm text-muted-foreground">
-                  Renews: {dayjs(subscriptionData.data.currentPeriodEnd).format('MMM DD, YYYY')}
-                </p>
-              )}
-              {subscriptionData.data.plan === 'trial' && (
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    navigate('/checkout', {
-                      state: {
-                        plan: 'professional',
-                        billingPeriod: 'monthly',
-                        price: 199
-                      }
-                    });
-                  }}
-                  style={{
-                    background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
-                    border: 'none',
-                    fontWeight: 500,
-                    color: 'white'
-                  }}
-                >
-                  Upgrade to Pro
-                </Button>
-              )}
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground mb-1">Notes</p>
-              <p className="text-sm">{subscriptionData.data.notes || '—'}</p>
-            </div>
-          </div>
-        )}
-
-        <Separator className="my-3 md:!-mx-6" />
-
-        {/* Usage Information - Minimal */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold">Team Seats</h4>
-            {loadingUsage ? (
-              <div className="flex items-center gap-2 py-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm text-muted-foreground">Loading...</span>
-              </div>
-            ) : seatUsage ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Active Users</span>
-                  <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{seatUsage.current}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Total Seats</span>
-                  <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{seatUsage.isUnlimited ? 'Unlimited' : `${seatUsage.limit} seats`}</span>
-                </div>
-                {!seatUsage.isUnlimited && (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Available</span>
-                      <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{seatUsage.remaining} seats</span>
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Seat Usage</span>
-                        <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{seatUsage.current} of {seatUsage.limit} ({seatUsage.percentageUsed}%)</span>
-                      </div>
-                      <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-                        <div
-                          className="h-full transition-all"
-                          style={{
-                            width: `${seatUsage.percentageUsed}%`,
-                            backgroundColor: seatUsage.isAtLimit ? '#ef4444' : seatUsage.isNearLimit ? '#eab308' : '#22c55e'
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : null}
-          </div>
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold">Storage Usage</h4>
-            {loadingUsage ? (
-              <div className="flex items-center gap-2 py-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm text-muted-foreground">Loading...</span>
-              </div>
-            ) : storageUsage ? (
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Used</span>
-                  <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>
-                    {formatStorageAmount({ mb: storageUsage.currentMB, gb: storageUsage.currentGB })}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Total Limit</span>
-                  <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{storageUsage.isUnlimited ? 'Unlimited' : `${storageUsage.limitGB} GB`}</span>
-                </div>
-                {!storageUsage.isUnlimited && (
-                  <>
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Available</span>
-                      <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>
-                        {formatStorageAmount({ mb: storageUsage.remainingMB, gb: storageUsage.remainingGB, unit: 'gb', decimals: 3 })}
-                      </span>
-                    </div>
-                    <div className="space-y-1">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Storage Usage</span>
-                        <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>
-                          {formatStorageAmount({ mb: storageUsage.currentMB, gb: storageUsage.currentGB })} of {storageUsage.limitGB} GB ({formatStoragePercentage(storageUsage.percentageUsed, storageUsage.currentMB)})
-                        </span>
-                      </div>
-                      <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-                        <div
-                          className="h-full transition-all"
-                          style={{
-                            width: `${storageUsage.percentageUsed}%`,
-                            backgroundColor: storageUsage.isAtLimit ? '#ef4444' : storageUsage.isNearLimit ? '#eab308' : '#22c55e'
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <Separator className="my-3 md:!-mx-6" />
-
-        {/* Subscription Management */}
-        {loadingSubscription ? (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-6 w-6 animate-spin" />
-          </div>
-        ) : (
-          <Form {...subscriptionForm}>
-            <form onSubmit={subscriptionForm.handleSubmit(onSubscriptionSubmit)} className="space-y-3 md:space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
-                  <FormField
-                    control={subscriptionForm.control}
-                    name="plan"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Plan</FormLabel>
-                        <FormControl>
-                          <Input placeholder="trial / starter / professional / enterprise" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={subscriptionForm.control}
-                    name="status"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Status</FormLabel>
-                        <FormControl>
-                          <Input placeholder="active / paused / cancelled" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={subscriptionForm.control}
-                    name="seats"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Seats</FormLabel>
-                        <FormControl>
-                          <Input 
-                            type="number" 
-                            min={1} 
-                            {...field}
-                            value={numberInputValue(field.value)}
-                            onChange={(e) => handleIntegerChange(e, field.onChange)}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-                  <FormField
-                    control={subscriptionForm.control}
-                    name="currentPeriodEnd"
-                    render={({ field }) => {
-                      const isTrial = planValue === 'trial' || statusValue === 'trialing';
-                      return (
-                        <FormItem>
-                          <FormLabel>
-                            Current Period Ends
-                            {isTrial && (
-                              <span className="text-xs text-muted-foreground ml-2">
-                                (Auto-calculated as 30 days from today for trial plans)
-                              </span>
-                            )}
-                          </FormLabel>
-                          <FormControl>
-                            {isTrial ? (
-                              <Input
-                                value={field.value ? dayjs(field.value).format('MMMM DD, YYYY') : ''}
-                                disabled
-                                className="bg-muted cursor-not-allowed"
-                              />
-                            ) : (
-                              <DatePicker
-                                date={field.value}
-                                onDateChange={(date) => field.onChange(date)}
-                              />
-                            )}
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      );
-                    }}
-                  />
-                </div>
-
-                <FormField
-                  control={subscriptionForm.control}
-                  name="notes"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Internal Notes</FormLabel>
-                      <FormControl>
-                        <Textarea rows={4} placeholder="Add billing notes or context here" {...field} />
-                      </FormControl>
-                      <FormMessage />
-                    </FormItem>
-                  )}
+      <CardContent className="p-5 md:p-6 pt-0 space-y-5">
+        <div className="border-t pt-5">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-[1fr_1fr_1.35fr] md:divide-x">
+            <div className="space-y-3 md:pr-8">
+              <p className="text-sm font-medium text-muted-foreground">Plan</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <h4 className="text-xl font-semibold tracking-tight">{subscriptionPlanLabel}</h4>
+                <StatusChip
+                  status={subscriptionStatus}
+                  className={['active', 'trialing'].includes(subscriptionStatus)
+                    ? 'border-green-100 bg-green-50 text-green-700'
+                    : undefined}
                 />
-
-                {subscriptionPayments.length > 0 && (
-                  <>
-                    <Separator className="my-6">
-                      <span className="text-sm font-medium">Payment history</span>
-                    </Separator>
-                    <div className="space-y-2">
-                      {subscriptionPayments.map((payment) => (
-                        <div key={payment.id} className="p-3 border rounded-lg text-sm">
-                          <div className="flex flex-wrap justify-between gap-2">
-                            <span className="font-medium capitalize">
-                              {payment.plan} · {payment.billingPeriod}
-                            </span>
-                            <span>
-                              ₵{(Number(payment.amount) / 100).toFixed(2)} · {payment.provider}
-                            </span>
-                          </div>
-                          <p className="text-muted-foreground text-xs mt-1">
-                            {dayjs(payment.periodStart).format('MMM D, YYYY')} –{' '}
-                            {dayjs(payment.periodEnd).format('MMM D, YYYY')}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </>
+                {loadingSubscription && (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                 )}
-
-                {subscriptionHistory.length > 0 && (
-                  <>
-                    <Separator className="my-6">
-                      <span className="text-sm font-medium">Billing events</span>
-                    </Separator>
-                    {subscriptionHistory.map((entry, index) => (
-                      <div key={index} className="mb-3 p-4 border rounded-lg">
-                        <div className="flex flex-col gap-1">
-                          <p className="font-semibold">{entry.description || 'Subscription change'}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {entry.date ? dayjs(entry.date).format('MMM DD, YYYY HH:mm') : '—'}
-                          </p>
-                          {entry.amount && (
-                            <p>Amount: ₵ {parseFloat(entry.amount).toFixed(2)}</p>
-                          )}
-                          {entry.metadata && (
-                            <p className="text-sm text-muted-foreground">Details: {JSON.stringify(entry.metadata)}</p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                )}
-
-              <div className="flex gap-2 justify-end">
+              </div>
+              <p className="text-sm text-muted-foreground">
+                {currentPeriodEndDate
+                  ? `${isTrialSubscription ? 'Trial ends' : 'Renews'} on ${currentPeriodEndDate.format('MMMM D, YYYY')}`
+                  : 'No renewal date set'}
+              </p>
+              {isTrialSubscription && (
                 <Button
                   type="button"
-                  variant="secondary"
-                  onClick={() => {
-                    subscriptionForm.reset();
-                    if (subscriptionData?.data) {
-                      const currentPeriodEnd = subscriptionData.data.currentPeriodEnd
-                        ? dayjs(subscriptionData.data.currentPeriodEnd).toDate()
-                        : null;
-                      subscriptionForm.reset({
-                        ...subscriptionData.data,
-                        currentPeriodEnd
-                      });
-                    }
-                  }}
+                  variant="outline"
+                  className="border-green-700 text-green-700 hover:bg-green-700 hover:text-white"
+                  onClick={() => navigate('/plans')}
                 >
-                  Reset
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Upgrade plan
                 </Button>
-                <Button type="submit" loading={updateSubscriptionMutation.isLoading}>
-                  Save
-                </Button>
+              )}
+            </div>
+
+            <div className="space-y-3 md:px-8">
+              <p className="text-sm font-medium text-muted-foreground">Team Seats</p>
+              <p className="text-xl font-semibold tracking-tight">{teamSeatsLabel}</p>
+              <Button
+                type="button"
+                variant="link"
+                className="h-auto p-0 font-semibold text-green-700 hover:text-green-800"
+                onClick={() => navigate('/users')}
+              >
+                Manage seats
+              </Button>
+            </div>
+
+            <div className="flex items-start justify-between gap-4 md:pl-8">
+              <div className="space-y-3">
+                <p className="text-sm font-medium text-muted-foreground">Current Period Ends</p>
+                <p className="text-xl font-semibold tracking-tight">
+                  {currentPeriodEndDate ? currentPeriodEndDate.format('MMMM D, YYYY') : 'Not set'}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {isTrialSubscription
+                    ? 'Auto-calculated (30 days for trial plans)'
+                    : 'Based on your current billing period'}
+                </p>
               </div>
-            </form>
-          </Form>
-        )}
+              <div className="rounded-lg bg-green-50 p-3 text-green-700">
+                <CalendarDays className="h-5 w-5" />
+              </div>
+            </div>
+          </div>
+        </div>
       </CardContent>
     </ShadcnCard>
   );

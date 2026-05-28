@@ -1,35 +1,42 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Check, Zap, Crown, Building2 } from 'lucide-react';
+import { ArrowLeft, Check, Zap, Crown, Building2, Loader2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { API_BASE_URL } from '../services/api';
 
-const PLANS = [
+const PLAN_ICONS = {
+  starter: Zap,
+  professional: Crown,
+  enterprise: Building2,
+};
+
+/** Minimal fallback when public pricing API is unavailable */
+const FALLBACK_PLANS = [
   {
     id: 'starter',
     name: 'Starter',
     description: 'Perfect for small businesses getting started.',
-    icon: Zap,
     monthlyPrice: 129,
-    yearlyPricePerMonth: 99,
+    yearlyTotal: 1188,
     features: [
       'Up to 3 users',
       'Dashboard & analytics',
       'Customer & vendor management',
       'Invoices & payments',
       'Basic reporting',
-      'Email support'
+      'Email support',
     ],
-    popular: false
+    popular: false,
+    contactSales: false,
   },
   {
     id: 'professional',
     name: 'Professional',
     description: 'Complete business management for growing teams.',
-    icon: Crown,
     monthlyPrice: 250,
-    yearlyPricePerMonth: 199,
+    yearlyTotal: 2388,
     features: [
       'Up to 10 users',
       'Everything in Starter',
@@ -37,54 +44,135 @@ const PLANS = [
       'Inventory tracking',
       'Advanced reports & analytics',
       'Payroll & accounting',
-      'Priority support'
+      'Priority support',
     ],
-    popular: true
+    popular: true,
+    contactSales: false,
   },
   {
     id: 'enterprise',
     name: 'Enterprise',
     description: 'Tailored for large-scale operations.',
-    icon: Building2,
     monthlyPrice: null,
-    yearlyPricePerMonth: null,
+    yearlyTotal: null,
     features: [
       'Unlimited seats',
       'Dedicated success manager',
       'Custom workflow configuration',
-      '24/7 priority support'
+      '24/7 priority support',
     ],
     popular: false,
-    contactSales: true
-  }
+    contactSales: true,
+  },
 ];
+
+/**
+ * Normalize marketing API rows into plan cards grouped by id.
+ * @param {Array} apiRows
+ */
+const normalizeMarketingPlans = (apiRows, enterprisePricing) => {
+  if (!Array.isArray(apiRows) || apiRows.length === 0) return null;
+
+  const byId = new Map();
+  for (const row of apiRows) {
+    const id = (row.id || '').toLowerCase();
+    if (!id) continue;
+    if (!byId.has(id)) {
+      byId.set(id, {
+        id,
+        name: row.name?.replace(/\s*\((?:monthly|yearly|annually)\)/gi, '').trim() || id,
+        description: row.description || '',
+        monthlyPrice: null,
+        yearlyTotal: null,
+        features: row.highlights?.length ? row.highlights : row.perks || [],
+        popular: Boolean(row.popular),
+        contactSales: id === 'enterprise' || row.priceMeta?.amount == null,
+      });
+    }
+    const plan = byId.get(id);
+    const amount = row.priceMeta?.amount;
+    if (amount == null) continue;
+    if (row.interval === 'monthly') plan.monthlyPrice = amount;
+    if (row.interval === 'annually' || row.interval === 'yearly') plan.yearlyTotal = amount;
+  }
+
+  const order = ['starter', 'professional', 'enterprise'];
+  if (enterprisePricing && !byId.has('enterprise')) {
+    byId.set('enterprise', {
+      id: 'enterprise',
+      name: enterprisePricing.name || 'Enterprise',
+      description: enterprisePricing.description || 'Tailored for large-scale operations.',
+      monthlyPrice: null,
+      yearlyTotal: null,
+      features: Array.isArray(enterprisePricing.tiers)
+        ? enterprisePricing.tiers.map(
+            (tier) => `${tier.name}: GHS ${tier.licenseFeeGhs.toLocaleString()} license + GHS ${tier.cloudPlanAnnualGhs.toLocaleString()}/year cloud`
+          )
+        : ['Manual contract and billing', 'Cloud renewal due after year 1'],
+      popular: false,
+      contactSales: true,
+    });
+  }
+  const plans = order.map((id) => byId.get(id)).filter(Boolean);
+  return plans.length ? plans : null;
+};
 
 const Plans = () => {
   const navigate = useNavigate();
   const [billingPeriod, setBillingPeriod] = useState('monthly');
+  const [plans, setPlans] = useState(FALLBACK_PLANS);
+  const [loading, setLoading] = useState(true);
 
-  const handleSelectPlan = (plan) => {
-    if (plan.contactSales) {
-      window.open('mailto:contact@nexpro.com?subject=Enterprise%20Plan%20Inquiry', '_blank');
-      return;
-    }
-    navigate('/checkout', {
-      state: {
-        plan: plan.id,
-        billingPeriod,
-        price: billingPeriod === 'yearly' ? plan.yearlyPricePerMonth * 12 : plan.monthlyPrice
-      }
+  useEffect(() => {
+    let cancelled = false;
+    const base = API_BASE_URL ? `${API_BASE_URL}/api` : '/api';
+    fetch(`${base}/public/pricing?channel=marketing`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled || !json?.success) return;
+        const normalized = normalizeMarketingPlans(json.data, json.enterprise);
+        if (normalized?.length) setPlans(normalized);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const yearlyPerMonthByPlan = useMemo(() => {
+    const map = {};
+    plans.forEach((p) => {
+      if (p.yearlyTotal != null) map[p.id] = Math.round((p.yearlyTotal / 12) * 100) / 100;
     });
-  };
+    return map;
+  }, [plans]);
+
+  const handleSelectPlan = useCallback(
+    (plan) => {
+      if (plan.contactSales) {
+        window.open('mailto:contact@nexpro.com?subject=Enterprise%20Plan%20Inquiry', '_blank');
+        return;
+      }
+      const isYearly = billingPeriod === 'yearly';
+      const price = isYearly ? plan.yearlyTotal : plan.monthlyPrice;
+      navigate('/checkout', {
+        state: {
+          plan: plan.id,
+          billingPeriod,
+          price,
+        },
+      });
+    },
+    [billingPeriod, navigate]
+  );
 
   return (
     <div className="min-h-screen bg-muted/50">
       <div className="max-w-6xl mx-auto px-4 py-8 sm:py-12">
-        <Button
-          variant="ghost"
-          onClick={() => navigate(-1)}
-          className="mb-6"
-        >
+        <Button variant="ghost" onClick={() => navigate(-1)} className="mb-6">
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back
         </Button>
@@ -109,7 +197,7 @@ const Plans = () => {
               className="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-gray-200 transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
             >
               <span
-                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white ring-0 transition duration-200 ease-in-out ${
                   billingPeriod === 'yearly' ? 'translate-x-5' : 'translate-x-1'
                 }`}
               />
@@ -123,82 +211,88 @@ const Plans = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {PLANS.map((plan) => {
-            const Icon = plan.icon;
-            const isYearly = billingPeriod === 'yearly';
-            const price = plan.contactSales
-              ? null
-              : isYearly
-                ? plan.yearlyPricePerMonth * 12
-                : plan.monthlyPrice;
-            const priceDisplay = plan.contactSales
-              ? "Let's talk"
-              : isYearly
-                ? `₵ ${plan.yearlyPricePerMonth}/mo`
-                : `₵ ${plan.monthlyPrice}/mo`;
+        {loading ? (
+          <div className="flex justify-center py-16">
+            <Loader2 className="h-8 w-8 animate-spin text-brand" />
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {plans.map((plan) => {
+              const Icon = PLAN_ICONS[plan.id] || Zap;
+              const isYearly = billingPeriod === 'yearly';
+              const yearlyPerMonth = yearlyPerMonthByPlan[plan.id];
+              const priceDisplay = plan.contactSales
+                ? "Let's talk"
+                : isYearly && yearlyPerMonth != null
+                  ? `₵ ${yearlyPerMonth}/mo`
+                  : plan.monthlyPrice != null
+                    ? `₵ ${plan.monthlyPrice}/mo`
+                    : "Let's talk";
 
-            return (
-              <Card
-                key={plan.id}
-                className={`relative flex flex-col ${
-                  plan.popular ? 'border-brand border-2' : 'border-gray-200'
-                }`}
-              >
-                {plan.popular && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <span className="bg-brand text-white px-3 py-0.5 rounded-full text-xs font-semibold">
-                      Most Popular
-                    </span>
-                  </div>
-                )}
-                <CardHeader>
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="p-2 rounded-lg bg-brand-10">
-                      <Icon className="h-5 w-5 text-brand" />
-                    </div>
-                    <CardTitle className="text-xl">{plan.name}</CardTitle>
-                  </div>
-                  <CardDescription>{plan.description}</CardDescription>
-                </CardHeader>
-                <CardContent className="flex-1">
-                  <div className="mb-6">
-                    <span className="text-2xl font-bold">{priceDisplay}</span>
-                    {!plan.contactSales && (
-                      <span className="text-sm text-muted-foreground ml-1">
-                        {isYearly ? 'billed annually' : 'billed monthly'}
+              return (
+                <Card
+                  key={plan.id}
+                  className={`relative flex flex-col ${
+                    plan.popular ? 'border-brand border-2' : 'border-gray-200'
+                  }`}
+                >
+                  {plan.popular && (
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                      <span className="bg-brand text-white px-3 py-0.5 rounded-full text-xs font-semibold">
+                        Most Popular
                       </span>
-                    )}
-                  </div>
-                  <ul className="space-y-3">
-                    {plan.features.map((feature, idx) => (
-                      <li key={idx} className="flex items-start gap-2 text-sm">
-                        <Check className="h-4 w-4 text-brand flex-shrink-0 mt-0.5" />
-                        <span>{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </CardContent>
-                <CardFooter>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        className="w-full"
-                        variant={plan.popular ? 'default' : 'outline'}
-                        onClick={() => handleSelectPlan(plan)}
-                      >
-                        {plan.contactSales ? 'Contact Sales' : `Choose ${plan.name}`}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {plan.contactSales ? 'Contact sales for custom pricing' : `Select ${plan.name} plan`}
-                    </TooltipContent>
-                  </Tooltip>
-                </CardFooter>
-              </Card>
-            );
-          })}
-        </div>
+                    </div>
+                  )}
+                  <CardHeader>
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="p-2 rounded-lg bg-brand-10">
+                        <Icon className="h-5 w-5 text-brand" />
+                      </div>
+                      <CardTitle className="text-xl">{plan.name}</CardTitle>
+                    </div>
+                    <CardDescription>{plan.description}</CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex-1">
+                    <div className="mb-6">
+                      <span className="text-2xl font-bold">{priceDisplay}</span>
+                      {!plan.contactSales && (
+                        <span className="text-sm text-muted-foreground ml-1">
+                          {isYearly ? 'billed annually' : 'billed monthly'}
+                        </span>
+                      )}
+                    </div>
+                    <ul className="space-y-3">
+                      {plan.features.map((feature, idx) => (
+                        <li key={idx} className="flex items-start gap-2 text-sm">
+                          <Check className="h-4 w-4 text-brand flex-shrink-0 mt-0.5" />
+                          <span>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                  <CardFooter>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          className="w-full"
+                          variant={plan.popular ? 'default' : 'outline'}
+                          onClick={() => handleSelectPlan(plan)}
+                        >
+                          {plan.contactSales ? 'Contact Sales' : `Choose ${plan.name}`}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {plan.contactSales
+                          ? 'Contact sales for custom pricing'
+                          : `Select ${plan.name} plan`}
+                      </TooltipContent>
+                    </Tooltip>
+                  </CardFooter>
+                </Card>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

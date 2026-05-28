@@ -40,7 +40,8 @@ const {
   deleteTenantData,
   deleteOrphanUsersWithoutTenants,
 } = require('../utils/deleteTenantData');
-const { ENTERPRISE_TIER_IDS } = require('../config/enterpriseTiers');
+const { ENTERPRISE_TIER_IDS, getEnterpriseTier } = require('../config/enterpriseTiers');
+const { buildEnterprisePaymentMetadata } = require('../services/subscriptionPlanCatalogService');
 const { getSeatUsageSummary } = require('../utils/seatLimitHelper');
 const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
 
@@ -1009,22 +1010,45 @@ exports.createTenantSubscriptionPayment = async (req, res, next) => {
       }
     }
 
+    let paymentMetadata = {
+      source: 'admin_manual',
+      enterpriseTier: plan === 'enterprise' ? String(enterpriseTier).toLowerCase() : null,
+    };
+    let periodEnd = req.body?.periodEnd;
+    let amount = req.body?.amount;
+
+    if (plan === 'enterprise') {
+      const tierKey = String(enterpriseTier).toLowerCase();
+      const existingMeta =
+        tenant.metadata?.entitlements?.enterpriseBilling || {};
+      const enterpriseMeta = buildEnterprisePaymentMetadata({
+        enterpriseTier: tierKey,
+        paymentType: req.body?.paymentType || 'enterprise_license',
+        existingCloudNextDueAt: existingMeta.cloudNextDueAt,
+        existingCloudRenewalStartsAt: existingMeta.cloudRenewalStartsAt,
+      });
+      paymentMetadata = { ...paymentMetadata, ...enterpriseMeta };
+      if (periodEnd == null && enterpriseMeta.periodEnd) {
+        periodEnd = enterpriseMeta.periodEnd;
+      }
+      if (amount == null && enterpriseMeta.suggestedAmountGhs != null) {
+        amount = enterpriseMeta.suggestedAmountGhs;
+      }
+    }
+
     const activation = await recordSubscriptionPaymentAndActivate({
       tenantId: tenant.id,
       plan,
-      billingPeriod,
-      amount: req.body?.amount,
+      billingPeriod: plan === 'enterprise' ? 'yearly' : billingPeriod,
+      amount,
       currency: req.body?.currency || 'GHS',
       provider: 'manual',
       providerReference: req.body?.providerReference || null,
       recordedBy: req.user?.id || null,
       notes: req.body?.notes || null,
       periodStart: req.body?.periodStart,
-      periodEnd: req.body?.periodEnd,
-      metadata: {
-        source: 'admin_manual',
-        enterpriseTier: plan === 'enterprise' ? String(enterpriseTier).toLowerCase() : null,
-      },
+      periodEnd,
+      metadata: paymentMetadata,
     });
 
     if (plan === 'enterprise') {
@@ -1032,7 +1056,17 @@ exports.createTenantSubscriptionPayment = async (req, res, next) => {
       const entitlements = metadata.entitlements && typeof metadata.entitlements === 'object'
         ? { ...metadata.entitlements }
         : {};
+      const tier = getEnterpriseTier(enterpriseTier);
       entitlements.enterpriseTier = String(enterpriseTier).toLowerCase();
+      entitlements.enterpriseBilling = {
+        enterpriseTier: tier?.id || String(enterpriseTier).toLowerCase(),
+        licenseFeeGhs: paymentMetadata.licenseFeeGhs ?? tier?.licenseFeeGhs ?? null,
+        cloudPlanAnnualGhs: paymentMetadata.cloudPlanAnnualGhs ?? tier?.cloudPlanAnnualGhs ?? null,
+        cloudRenewalStartsAt: paymentMetadata.cloudRenewalStartsAt || null,
+        cloudNextDueAt: paymentMetadata.cloudNextDueAt || null,
+        lastPaymentType: paymentMetadata.paymentType || 'enterprise_license',
+        updatedAt: new Date().toISOString(),
+      };
       entitlements.updatedAt = new Date().toISOString();
       entitlements.updatedBy = req.user?.id || null;
       metadata.entitlements = entitlements;
