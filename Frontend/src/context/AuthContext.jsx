@@ -627,8 +627,8 @@ export const AuthProvider = ({ children }) => {
 
   /** In-app verify-email banner, checkout gate, etc. Invited joiners are treated as already validated. */
   const needsEmailVerification = useMemo(
-    () => Boolean(user && !user.emailVerifiedAt && !joinedOnlyViaWorkspaceInvite),
-    [user, joinedOnlyViaWorkspaceInvite]
+    () => Boolean(user && !isSupportAccessActive && !user.emailVerifiedAt && !joinedOnlyViaWorkspaceInvite),
+    [user, isSupportAccessActive, joinedOnlyViaWorkspaceInvite]
   );
 
   /**

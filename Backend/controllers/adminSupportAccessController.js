@@ -35,6 +35,7 @@ const buildSessionResponse = async (session) => {
           status: tenant.status,
           plan: tenant.plan,
           businessType: tenant.businessType,
+          metadata: tenant.metadata,
           effectiveFeatureFlags: accessControl?.effectiveFeatureFlags || {},
         }
       : null,

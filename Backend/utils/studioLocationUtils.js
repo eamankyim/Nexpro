@@ -2,7 +2,7 @@ const { Op } = require('sequelize');
 const { resolveBusinessType } = require('../config/businessTypes');
 const { StudioLocation, UserStudioLocation } = require('../models');
 
-const WORKSPACE_WIDE_ROLES = ['owner', 'admin'];
+const WORKSPACE_WIDE_ROLES = ['owner', 'admin', 'support'];
 
 const isStudioTenant = (tenant) => resolveBusinessType(tenant?.businessType) === 'studio';
 

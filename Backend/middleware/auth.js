@@ -61,7 +61,7 @@ const protect = async (req, res, next) => {
  */
 const getEffectiveRole = (req) => {
   if (req.isSupportAccess) {
-    return 'staff';
+    return 'admin';
   }
   const tenantRole = req.tenantRole || null;
   if (tenantRole && ['owner', 'admin'].includes(tenantRole)) {

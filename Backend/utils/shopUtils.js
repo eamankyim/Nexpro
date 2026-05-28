@@ -2,7 +2,7 @@ const { Op } = require('sequelize');
 const { resolveBusinessType } = require('../config/businessTypes');
 const { Shop, Tenant, Setting, UserShop } = require('../models');
 
-const WORKSPACE_WIDE_ROLES = ['owner', 'admin'];
+const WORKSPACE_WIDE_ROLES = ['owner', 'admin', 'support'];
 
 const isShopTenant = (tenant) => resolveBusinessType(tenant?.businessType) === 'shop';
 
