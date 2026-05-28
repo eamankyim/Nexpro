@@ -1,4 +1,5 @@
 import { api } from './api';
+import { buildScopedQueryString } from '@/utils/shopScope';
 
 type InventoryParams = {
   page?: number;
@@ -11,12 +12,7 @@ type InventoryParams = {
 
 export const inventoryService = {
   getItems: async (params: InventoryParams = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === '') return;
-      searchParams.append(key, String(value));
-    });
-    const query = searchParams.toString();
+    const query = await buildScopedQueryString(params);
     const res = await api.get(query ? `/inventory/items?${query}` : '/inventory/items');
     return res.data;
   },
@@ -27,12 +23,14 @@ export const inventoryService = {
   },
 
   createItem: async (data: object) => {
-    const res = await api.post('/inventory/items', data);
+    const query = await buildScopedQueryString({});
+    const res = await api.post(query ? `/inventory/items?${query}` : '/inventory/items', data);
     return res.data;
   },
 
   updateItem: async (id: string, data: object) => {
-    const res = await api.put(`/inventory/items/${id}`, data);
+    const query = await buildScopedQueryString({});
+    const res = await api.put(query ? `/inventory/items/${id}?${query}` : `/inventory/items/${id}`, data);
     return res.data;
   },
 

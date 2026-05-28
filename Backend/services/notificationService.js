@@ -715,7 +715,7 @@ const notifyNewOrder = async ({ sale, triggeredBy = null }) => {
     const { UserTenant } = require('../models');
     const { Op } = require('sequelize');
     const memberUsers = await UserTenant.findAll({
-      where: { tenantId, role: { [Op.in]: ['admin', 'manager', 'staff'] } },
+      where: { tenantId, role: { [Op.in]: ['admin', 'manager', 'staff', 'driver'] } },
       attributes: ['userId']
     });
     memberUsers.forEach((ut) => { if (ut.userId) recipientSet.add(ut.userId); });
@@ -770,7 +770,7 @@ const notifyOrderStatusChanged = async ({ sale, oldStatus, newStatus, triggeredB
     const memberUsers = await UserTenant.findAll({
       where: {
         tenantId,
-        role: { [Op.in]: ['admin', 'manager', 'staff'] }
+        role: { [Op.in]: ['admin', 'manager', 'staff', 'driver'] }
       },
       attributes: ['userId']
     });

@@ -14,7 +14,7 @@ router.use(studioLocationContext);
 router.use(shopContext);
 router.use(requireFeature('deliveries'));
 
-router.get('/queue', authorize('admin', 'manager', 'staff'), getDeliveryQueue);
-router.patch('/status', authorize('admin', 'manager', 'staff'), patchDeliveryStatuses);
+router.get('/queue', authorize('admin', 'manager', 'staff', 'driver'), getDeliveryQueue);
+router.patch('/status', authorize('admin', 'manager', 'staff', 'driver'), patchDeliveryStatuses);
 
 module.exports = router;

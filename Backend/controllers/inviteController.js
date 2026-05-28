@@ -14,6 +14,8 @@ const {
   resolveInviteTargetDisplay,
 } = require('../utils/inviteDisplayName');
 
+const ALLOWED_INVITE_ROLES = ['admin', 'manager', 'staff', 'driver'];
+
 // Generate a random 32-character token
 const generateToken = () => {
   return crypto.randomBytes(16).toString('hex');
@@ -61,6 +63,13 @@ exports.generateInvite = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         message: 'Email and role are required'
+      });
+    }
+
+    if (!ALLOWED_INVITE_ROLES.includes(role)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid role. Expected one of: ${ALLOWED_INVITE_ROLES.join(', ')}`,
       });
     }
 

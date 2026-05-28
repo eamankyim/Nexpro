@@ -27,6 +27,7 @@ import { customDropdownService } from '@/services/customDropdownService';
 import { settingsService } from '@/services/settings';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAuth } from '@/context/AuthContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -61,6 +62,7 @@ type LeadRow = {
 export default function LeadsScreen() {
   const router = useRouter();
   const { activeTenantId, hasFeature } = useAuth();
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
 
@@ -74,7 +76,7 @@ export default function LeadsScreen() {
   const debouncedSearch = useDebounce(searchValue, 400);
 
   const { data, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['leads', activeTenantId, debouncedSearch, status],
+    queryKey: ['leads', activeTenantId, activeShopId, activeStudioLocationId, debouncedSearch, status],
     queryFn: async () =>
       leadService.getAll({
         page: 1,
@@ -82,7 +84,7 @@ export default function LeadsScreen() {
         search: debouncedSearch || undefined,
         status: status === 'all' ? undefined : status,
       }),
-    enabled: !!activeTenantId && hasFeature('leadPipeline'),
+    enabled: !!activeTenantId && hasFeature('leadPipeline') && scopeReady,
   });
 
   const { data: leadSourceOptionsApi = [] } = useQuery({

@@ -153,6 +153,7 @@ export const LEAD_PRIORITIES = {
 export const USER_ROLES = {
   ADMIN: 'admin',
   MANAGER: 'manager',
+  DRIVER: 'driver',
   EMPLOYEE: 'employee',
 };
 
@@ -372,6 +373,7 @@ export const PRIORITY_CHIP_CLASSES = {
 export const ROLE_CHIP_CLASSES = {
   admin: 'border-transparent bg-red-100 text-red-800 border-red-300',
   manager: 'border-transparent bg-primary text-primary-foreground',
+  driver: 'border-transparent bg-amber-100 text-amber-800 border-amber-300',
   employee: CHIP_GRAY,
   staff: CHIP_GRAY,
 };

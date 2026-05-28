@@ -38,7 +38,7 @@ const InviteToken = sequelize.define('InviteToken', {
     }
   },
   role: {
-    type: DataTypes.ENUM('admin', 'manager', 'staff'),
+    type: DataTypes.ENUM('admin', 'manager', 'staff', 'driver'),
     defaultValue: 'staff',
     allowNull: false
   },

@@ -4,6 +4,8 @@ const { getPagination } = require('../utils/paginationUtils');
 const { invalidateUserCache } = require('../middleware/cache');
 const { validateSeatLimit } = require('../utils/seatLimitHelper');
 
+const ALLOWED_USER_ROLES = ['admin', 'manager', 'staff', 'driver'];
+
 // @desc    Get all users for the current tenant
 // @route   GET /api/users
 // @access  Private — workspace manager or admin
@@ -145,6 +147,13 @@ exports.createUser = async (req, res, next) => {
     }
 
     const { password, ...userData } = req.body;
+    const requestedRole = userData.role || 'staff';
+    if (!ALLOWED_USER_ROLES.includes(requestedRole)) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid role. Expected one of: ${ALLOWED_USER_ROLES.join(', ')}`,
+      });
+    }
     
     // Create user
     const user = await User.create({
@@ -156,7 +165,7 @@ exports.createUser = async (req, res, next) => {
     await UserTenant.create({
       userId: user.id,
       tenantId: req.tenantId,
-      role: userData.role || 'staff',
+      role: requestedRole,
       status: 'active',
       isDefault: true,
       joinedAt: new Date()
@@ -209,6 +218,17 @@ exports.updateUser = async (req, res, next) => {
 
     // Don't allow updating password through this route
     const { password, ...updateData } = req.body;
+    if (Object.prototype.hasOwnProperty.call(updateData, 'role')) {
+      const requestedRole = updateData.role || 'staff';
+      if (!ALLOWED_USER_ROLES.includes(requestedRole)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid role. Expected one of: ${ALLOWED_USER_ROLES.join(', ')}`,
+        });
+      }
+      updateData.role = requestedRole;
+      await membership.update({ role: requestedRole });
+    }
 
     await user.update(updateData);
 

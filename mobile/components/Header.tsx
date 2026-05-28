@@ -29,7 +29,7 @@ export function Header() {
   const router = useRouter();
   const pathname = usePathname();
   const insets = useSafeAreaInsets();
-  const { user, activeTenantId } = useAuth();
+  const { user, activeTenantId, isDriver } = useAuth();
   const { colors, headerBg, borderColor, inputBg, textColor, mutedColor } = useScreenColors();
   const { pageConfig, searchValue, setSearchValue } = useSmartSearch();
 
@@ -41,7 +41,7 @@ export function Header() {
   const { data: notificationSummary } = useQuery({
     queryKey: ['notifications', 'summary', activeTenantId],
     queryFn: () => notificationService.getSummary(),
-    enabled: !!activeTenantId,
+    enabled: !!activeTenantId && !isDriver,
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
     refetchIntervalInBackground: false,
@@ -101,29 +101,31 @@ export function Header() {
             <HeaderScopeTitle embedded />
           </View>
         </View>
-        <View style={styles.topRowRight}>
-          <Pressable
-            onPress={handleChatPress}
-            style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
-            hitSlop={8}
-          >
-            <AppIcon name="comments" size={22} color={colors.text} />
-          </Pressable>
-          <Pressable
-            onPress={handleNotificationPress}
-            style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
-            hitSlop={8}
-          >
-            <AppIcon name="bell" size={22} color={colors.text} />
-            {unreadCount > 0 && (
-              <View style={styles.notificationBadge}>
-                <Text style={styles.notificationBadgeText}>
-                  {unreadCount > 99 ? '99+' : unreadCount}
-                </Text>
-              </View>
-            )}
-          </Pressable>
-        </View>
+        {!isDriver && (
+          <View style={styles.topRowRight}>
+            <Pressable
+              onPress={handleChatPress}
+              style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
+              hitSlop={8}
+            >
+              <AppIcon name="comments" size={22} color={colors.text} />
+            </Pressable>
+            <Pressable
+              onPress={handleNotificationPress}
+              style={({ pressed }) => [styles.iconButton, pressed && styles.iconButtonPressed]}
+              hitSlop={8}
+            >
+              <AppIcon name="bell" size={22} color={colors.text} />
+              {unreadCount > 0 && (
+                <View style={styles.notificationBadge}>
+                  <Text style={styles.notificationBadgeText}>
+                    {unreadCount > 99 ? '99+' : unreadCount}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+          </View>
+        )}
       </View>
 
       <OfflineQueueBanner />

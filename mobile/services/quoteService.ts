@@ -1,4 +1,5 @@
 import { api } from './api';
+import { buildScopedQueryString } from '@/utils/shopScope';
 
 type QuoteParams = {
   page?: number;
@@ -10,12 +11,7 @@ type QuoteParams = {
 
 export const quoteService = {
   getQuotes: async (params: QuoteParams = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === '') return;
-      searchParams.append(key, String(value));
-    });
-    const query = searchParams.toString();
+    const query = await buildScopedQueryString(params);
     const res = await api.get(query ? `/quotes?${query}` : '/quotes');
     return res.data;
   },
@@ -26,12 +22,14 @@ export const quoteService = {
   },
 
   createQuote: async (data: object) => {
-    const res = await api.post('/quotes', data);
+    const query = await buildScopedQueryString({});
+    const res = await api.post(query ? `/quotes?${query}` : '/quotes', data);
     return res.data;
   },
 
   updateQuote: async (id: string, data: object) => {
-    const res = await api.put(`/quotes/${id}`, data);
+    const query = await buildScopedQueryString({});
+    const res = await api.put(query ? `/quotes/${id}?${query}` : `/quotes/${id}`, data);
     return res.data;
   },
 

@@ -79,6 +79,9 @@ const seedDefaultEquipmentCategories = require('./seed-default-equipment-categor
 const addCommunicationConsentAndWhatsAppEvents = require('./add-communication-consent-and-whatsapp-events');
 const addCustomerDateOfBirth = require('./add-customer-date-of-birth');
 const createMarketingCampaigns = require('./create-marketing-campaigns');
+const addDriverRoleToUserAndInviteEnums = require('./add-driver-role-to-user-and-invite-enums');
+const addDeliveryAssignmentFields = require('./add-delivery-assignment-fields');
+const backfillJobInvoiceStudioLocations = require('./backfill-job-invoice-studio-locations');
 
 const migrate = async () => {
   try {
@@ -96,6 +99,9 @@ const migrate = async () => {
 
     // Add new user fields if they don't exist
     await addUserFields();
+    
+    // Ensure user/invite role enums include driver
+    await addDriverRoleToUserAndInviteEnums({ closeConnection: false });
     
     // Update vendor price list imageUrl to TEXT
     await updateVendorPriceListImageUrl();
@@ -252,6 +258,7 @@ const migrate = async () => {
 
     // First-party delivery tracking (jobs + sales)
     await addDeliveryStatusToJobsAndSales();
+    await addDeliveryAssignmentFields({ closeConnection: false });
 
     // Sale activity log (notes, status changes, payments on sales)
     await createSaleActivitiesTable();
@@ -285,6 +292,7 @@ const migrate = async () => {
 
     // studioLocationId on expenses, tasks, materials, equipment (not customer_feedback)
     await addStudioLocationIdToOperationalModules();
+    await backfillJobInvoiceStudioLocations({ closeConnection: false });
 
     // Main shop flag (multi-shop for retail workspaces)
     await addIsDefaultToShops();

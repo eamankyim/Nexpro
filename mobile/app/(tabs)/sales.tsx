@@ -13,7 +13,7 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { useAuth } from '@/context/AuthContext';
-import { useShopOptional } from '@/context/ShopContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -74,8 +74,7 @@ type SalesListResponse = {
 export default function SalesScreen() {
   const router = useRouter();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
-  const shopContext = useShopOptional();
-  const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -99,7 +98,7 @@ export default function SalesScreen() {
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ['sales', 'infinite', activeTenantId, activeShopId, statusFilter],
+    queryKey: ['sales', 'infinite', activeTenantId, activeShopId, activeStudioLocationId, statusFilter],
     queryFn: async ({ pageParam }) => {
       const params: { page?: number; limit?: number; status?: string } = {
         page: pageParam,
@@ -114,7 +113,7 @@ export default function SalesScreen() {
       const totalPages = Number(lastPage?.pagination?.totalPages || 1);
       return page < totalPages ? page + 1 : undefined;
     },
-    enabled: !!activeTenantId && (isShop || isPharmacy) && hasFeature('paymentsExpenses') && (!shopContext?.isShopWorkspace || !!activeShopId),
+    enabled: !!activeTenantId && (isShop || isPharmacy) && hasFeature('paymentsExpenses') && scopeReady,
     staleTime: QUERY_STALE.TRANSACTIONAL,
     gcTime: 60 * 60 * 1000,
     retry: 2,

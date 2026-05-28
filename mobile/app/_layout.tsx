@@ -4,7 +4,7 @@ import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client
 import { createAsyncStoragePersister } from '@tanstack/query-async-storage-persister';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
@@ -14,7 +14,7 @@ import { refreshAfterSale } from '@/utils/queryInvalidation';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
-import { AuthProvider } from '@/context/AuthContext';
+import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { ShopProvider } from '@/context/ShopContext';
 import { StudioLocationProvider } from '@/context/StudioLocationContext';
 import { CartProvider } from '@/context/CartContext';
@@ -70,9 +70,11 @@ const asyncStoragePersister = createAsyncStoragePersister({
 
 function OfflineSyncOnActive() {
   const queryClient = useQueryClient();
+  const { isDriver } = useAuth();
   const appState = useRef<AppStateStatus>(AppState.currentState);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
+      if (isDriver) return;
       if (appState.current === 'background' && nextState === 'active') {
         offlineQueueService
           .syncPendingSales()
@@ -84,7 +86,7 @@ function OfflineSyncOnActive() {
       appState.current = nextState;
     });
     return () => sub.remove();
-  }, [queryClient]);
+  }, [queryClient, isDriver]);
   return null;
 }
 
@@ -142,6 +144,9 @@ export default function RootLayout() {
 }
 
 function RootLayoutNav() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const { isDriver, user } = useAuth();
   const { resolvedTheme } = useTheme();
   const isDark = resolvedTheme === 'dark';
   const headerTint = Colors[resolvedTheme ?? 'light'].tint;
@@ -158,6 +163,23 @@ function RootLayoutNav() {
       color: isDark ? '#fff' : '#000',
     },
   };
+
+  useEffect(() => {
+    if (!user || !isDriver) return;
+    const allowed =
+      pathname === '/' ||
+      pathname === '/index' ||
+      pathname === '/account' ||
+      pathname === '/profile' ||
+      pathname === '/(tabs)' ||
+      pathname === '/deliveries' ||
+      pathname === '/more' ||
+      pathname.endsWith('/deliveries') ||
+      pathname.endsWith('/more');
+    if (!allowed) {
+      router.replace('/(tabs)/deliveries');
+    }
+  }, [isDriver, pathname, router, user]);
 
   return (
     <NavigationThemeProvider value={resolvedTheme === 'dark' ? DarkTheme : DefaultTheme}>

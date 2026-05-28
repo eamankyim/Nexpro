@@ -25,7 +25,7 @@ import { matchesSearchQuery } from '@/utils/matchesSearchQuery';
 import { flatListStyleForEmpty } from '@/utils/listEmptyLayout';
 import { expenseService } from '@/services/expenseService';
 import { useAuth } from '@/context/AuthContext';
-import { useShopOptional } from '@/context/ShopContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -74,8 +74,7 @@ type ExpenseStatsResponse = {
 export default function ExpensesScreen() {
   const router = useRouter();
   const { activeTenantId, hasFeature } = useAuth();
-  const shopContext = useShopOptional();
-  const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
 
@@ -104,20 +103,20 @@ export default function ExpensesScreen() {
   });
 
   const { data: statsResponse } = useQuery({
-    queryKey: ['expenses', 'stats', activeTenantId, activeShopId],
+    queryKey: ['expenses', 'stats', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => expenseService.getStats(),
-    enabled: !!activeTenantId && hasFeature('expenses') && (!shopContext?.isShopWorkspace || !!activeShopId),
+    enabled: !!activeTenantId && hasFeature('expenses') && scopeReady,
     staleTime: QUERY_STALE.TRANSACTIONAL,
   });
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['expenses', activeTenantId, activeShopId],
+    queryKey: ['expenses', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () =>
       expenseService.getExpenses({
         page: 1,
         limit: 20,
       }),
-    enabled: !!activeTenantId && hasFeature('expenses') && (!shopContext?.isShopWorkspace || !!activeShopId),
+    enabled: !!activeTenantId && hasFeature('expenses') && scopeReady,
     staleTime: QUERY_STALE.TRANSACTIONAL,
     gcTime: 60 * 60 * 1000,
   });

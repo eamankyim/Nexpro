@@ -1,4 +1,5 @@
 import { api } from './api';
+import { buildScopedQueryString } from '@/utils/shopScope';
 
 type MaterialsParams = {
   page?: number;
@@ -17,12 +18,7 @@ export const materialsService = {
   },
 
   getItems: async (params: MaterialsParams = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === '') return;
-      searchParams.append(key, String(value));
-    });
-    const query = searchParams.toString();
+    const query = await buildScopedQueryString(params);
     const res = await api.get(query ? `/materials/items?${query}` : '/materials/items');
     return res.data;
   },
@@ -33,12 +29,14 @@ export const materialsService = {
   },
 
   createItem: async (data: object) => {
-    const res = await api.post('/materials/items', data);
+    const query = await buildScopedQueryString({});
+    const res = await api.post(query ? `/materials/items?${query}` : '/materials/items', data);
     return res.data;
   },
 
   updateItem: async (id: string, data: object) => {
-    const res = await api.put(`/materials/items/${id}`, data);
+    const query = await buildScopedQueryString({});
+    const res = await api.put(query ? `/materials/items/${id}?${query}` : `/materials/items/${id}`, data);
     return res.data;
   },
 

@@ -14,6 +14,7 @@ import { useAuth } from '@/context/AuthContext';
 import { STORAGE_KEYS, resolveBusinessType } from '@/constants';
 import { shopService } from '@/services/shopService';
 import { setApiShopContext } from '@/services/api';
+import { refreshAfterWorkspaceScopeChange } from '@/utils/queryInvalidation';
 
 type Shop = { id: string; name: string; isDefault?: boolean };
 
@@ -108,7 +109,7 @@ export function ShopProvider({ children }: { children: ReactNode }) {
         await AsyncStorage.setItem(STORAGE_KEYS.ACTIVE_SHOP_ID, shopId);
         setApiShopContext(shopId);
         setActiveShopIdState(shopId);
-        queryClient.invalidateQueries();
+        await refreshAfterWorkspaceScopeChange(queryClient);
       })();
     },
     [queryClient]

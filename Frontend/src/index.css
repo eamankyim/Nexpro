@@ -157,6 +157,132 @@
   }
 }
 
+/* Branded full-screen app loader */
+.app-loader-root {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: hsl(var(--background));
+}
+
+.app-loader-backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 32%, color-mix(in srgb, var(--color-primary) 12%, transparent) 0%, transparent 62%),
+    radial-gradient(circle at 15% 85%, color-mix(in srgb, var(--color-primary) 8%, transparent) 0%, transparent 50%);
+}
+
+.app-loader-content {
+  position: relative;
+  z-index: 1;
+  width: min(88vw, 18rem);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.app-loader-ring {
+  width: 6rem;
+  height: 6rem;
+  border-radius: 9999px;
+  background: conic-gradient(
+    from 90deg,
+    color-mix(in srgb, var(--color-primary) 75%, transparent),
+    transparent 35%,
+    color-mix(in srgb, var(--color-primary) 45%, transparent),
+    transparent 72%,
+    color-mix(in srgb, var(--color-primary) 90%, transparent)
+  );
+  animation: app-loader-spin 1.7s linear infinite;
+}
+
+.app-loader-logo-shell {
+  position: absolute;
+  top: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4.5rem;
+  height: 4.5rem;
+  border-radius: 1.1rem;
+  border: 1px solid color-mix(in srgb, var(--color-primary) 35%, transparent);
+  background: color-mix(in srgb, hsl(var(--background)) 92%, var(--color-primary) 8%);
+  display: grid;
+  place-items: center;
+}
+
+.app-loader-logo {
+  width: 3.7rem;
+  height: 3.7rem;
+  border-radius: 0.9rem;
+  object-fit: cover;
+  animation: app-loader-breathe 1.8s ease-in-out infinite;
+}
+
+.app-loader-label {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  letter-spacing: 0.01em;
+}
+
+.app-loader-progress {
+  position: relative;
+  width: 9.25rem;
+  height: 0.2rem;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+}
+
+.app-loader-progress-glint {
+  position: absolute;
+  inset: 0;
+  width: 38%;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--color-primary) 88%, white 12%);
+  animation: app-loader-slide 1.35s ease-in-out infinite;
+}
+
+@keyframes app-loader-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes app-loader-breathe {
+  0%,
+  100% {
+    transform: scale(0.98);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+}
+
+@keyframes app-loader-slide {
+  0% {
+    transform: translateX(-130%);
+  }
+  100% {
+    transform: translateX(360%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loader-ring,
+  .app-loader-logo,
+  .app-loader-progress-glint {
+    animation: none;
+  }
+}
+
 * {
   margin: 0;
   padding: 0;

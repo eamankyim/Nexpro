@@ -33,6 +33,19 @@ const resolveTenantId = (req) => {
   return null;
 };
 
+const isDriverAllowedEndpoint = (req) => {
+  const baseUrl = String(req.baseUrl || '');
+  const path = String(req.path || '');
+  const method = String(req.method || 'GET').toUpperCase();
+
+  if (baseUrl === '/api/deliveries') return true;
+  if (method === 'GET' && baseUrl === '/api/studio-locations' && path === '/access') return true;
+  if (method === 'GET' && baseUrl === '/api/shops' && path === '/access') return true;
+  if (method === 'GET' && baseUrl === '/api/settings' && path === '/organization') return true;
+  if (baseUrl === '/api/settings' && (path === '/profile' || path === '/profile/avatar')) return true;
+  return false;
+};
+
 const tenantContext = async (req, res, next) => {
   try {
     if (!req.user) {
@@ -191,6 +204,13 @@ const tenantContext = async (req, res, next) => {
     res.locals.tenant = req.tenant;
     res.locals.tenantRole = req.tenantRole;
     res.locals.tenantAccessState = accessState;
+
+    if (req.tenantRole === 'driver' && !isDriverAllowedEndpoint(req)) {
+      return res.status(403).json({
+        success: false,
+        message: 'Driver accounts can only access delivery workspace endpoints.',
+      });
+    }
 
     next();
   } catch (error) {

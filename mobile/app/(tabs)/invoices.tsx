@@ -22,6 +22,7 @@ import { getApiErrorMessage, parseApiListResponse } from '@/utils/parseApiListRe
 import { formatStatusLabel } from '@/utils/formatLabels';
 import { invoiceService } from '@/services/invoiceService';
 import { useAuth } from '@/context/AuthContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -62,6 +63,7 @@ type Invoice = {
 export default function InvoicesScreen() {
   const router = useRouter();
   const { activeTenantId, hasFeature } = useAuth();
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -71,7 +73,7 @@ export default function InvoicesScreen() {
   const debouncedSearch = useDebounce(searchValue, 400);
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['invoices', activeTenantId, statusFilter, debouncedSearch],
+    queryKey: ['invoices', activeTenantId, activeShopId, activeStudioLocationId, statusFilter, debouncedSearch],
     queryFn: async () => {
       const params: { page?: number; limit?: number; status?: string; search?: string } = {
         page: 1,
@@ -81,7 +83,7 @@ export default function InvoicesScreen() {
       if (statusFilter !== 'all') params.status = statusFilter;
       return invoiceService.getInvoices(params);
     },
-    enabled: !!activeTenantId && hasFeature('invoices'),
+    enabled: !!activeTenantId && hasFeature('invoices') && scopeReady,
     staleTime: 2 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     retry: 2,

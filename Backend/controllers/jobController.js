@@ -340,6 +340,7 @@ const autoCreateInvoice = async (jobId, tenantId) => {
           jobId,
           customerId: job.customerId,
           tenantId,
+          studioLocationId: job.studioLocationId || null,
           sourceType: 'job', // Set source type for business type filtering
           invoiceDate: new Date(),
           dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
@@ -410,6 +411,7 @@ const autoCreateInvoice = async (jobId, tenantId) => {
       jobId,
       customerId: job.customerId,
       tenantId,
+      studioLocationId: job.studioLocationId || null,
       sourceType: 'job', // Set source type for business type filtering
       invoiceDate: new Date(),
       dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // Default 30 days

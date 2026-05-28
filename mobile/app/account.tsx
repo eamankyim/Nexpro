@@ -29,7 +29,7 @@ type MenuItem = {
 
 export default function AccountScreen() {
   const router = useRouter();
-  const { user, logout } = useAuth();
+  const { user, logout, isDriver } = useAuth();
   const { bg, cardBg, borderColor, textColor, mutedColor, colors } = useScreenColors();
 
   const handleLogout = useCallback(() => {
@@ -69,24 +69,29 @@ export default function AccountScreen() {
     );
   }, [logout, router]);
 
-  const menuItems: MenuItem[] = [
-    { id: 'profile', label: 'Profile', icon: 'user', route: '/profile' },
-    { id: 'settings', label: 'Settings', icon: 'cog', route: '/settings' },
-    { id: 'privacy', label: 'Privacy Policy', icon: 'info-circle', route: '/privacy-policy' },
-    { id: 'data-deletion', label: 'Delete account/data', icon: 'trash', route: '/data-deletion', destructive: true },
-    ...(__DEV__
-      ? [
-          {
-            id: 'reset-onboarding-test',
-            label: 'Reset onboarding test session',
-            icon: 'refresh' as AppIconName,
-            destructive: true,
-            onPress: handleResetOnboardingTestSession,
-          },
-        ]
-      : []),
-    { id: 'logout', label: 'Log out', icon: 'sign-out', destructive: true, onPress: handleLogout },
-  ];
+  const menuItems: MenuItem[] = isDriver
+    ? [
+        { id: 'profile', label: 'Profile', icon: 'user', route: '/profile' },
+        { id: 'logout', label: 'Log out', icon: 'sign-out', destructive: true, onPress: handleLogout },
+      ]
+    : [
+        { id: 'profile', label: 'Profile', icon: 'user', route: '/profile' },
+        { id: 'settings', label: 'Settings', icon: 'cog', route: '/settings' },
+        { id: 'privacy', label: 'Privacy Policy', icon: 'info-circle', route: '/privacy-policy' },
+        { id: 'data-deletion', label: 'Delete account/data', icon: 'trash', route: '/data-deletion', destructive: true },
+        ...(__DEV__
+          ? [
+              {
+                id: 'reset-onboarding-test',
+                label: 'Reset onboarding test session',
+                icon: 'refresh' as AppIconName,
+                destructive: true,
+                onPress: handleResetOnboardingTestSession,
+              },
+            ]
+          : []),
+        { id: 'logout', label: 'Log out', icon: 'sign-out', destructive: true, onPress: handleLogout },
+      ];
 
   const handleMenuPress = useCallback(
     (item: MenuItem) => {

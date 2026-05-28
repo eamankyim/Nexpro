@@ -723,6 +723,7 @@ export const AuthProvider = ({ children }) => {
       isAuthenticated: !!user,
       isAdmin: ['owner', 'admin'].includes(effectiveRole),
       isManager: ['owner', 'admin', 'manager'].includes(effectiveRole || ''),
+      isDriver: effectiveRole === 'driver',
       isPlatformAdmin,
       isFirstLogin,
       wasInvited,

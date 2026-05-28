@@ -23,7 +23,7 @@ type MenuItem = {
 
 export default function MoreScreen() {
   const router = useRouter();
-  const { activeTenant, hasFeature, user } = useAuth();
+  const { activeTenant, hasFeature, user, isDriver } = useAuth();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, resolvedTheme } = useScreenColors();
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isShop = resolvedType === 'shop';
@@ -33,6 +33,15 @@ export default function MoreScreen() {
   const isRestaurant = shopType === SHOP_TYPES.RESTAURANT;
 
   const menuItems = useMemo(() => {
+    if (isDriver) {
+      const driverItems: MenuItem[] = [
+        { id: 'deliveries', label: 'My Deliveries', icon: 'truck', route: '/(tabs)/deliveries' },
+        { id: 'profile', label: 'Profile', icon: 'user', route: '/profile' },
+        { id: 'account', label: 'Account & logout', icon: 'sign-out', route: '/account' },
+      ];
+      return driverItems;
+    }
+
     const items: MenuItem[] = [];
     const bt = activeTenant?.businessType;
     const quotesOk =
@@ -75,7 +84,7 @@ export default function MoreScreen() {
     items.push({ id: 'settings', label: 'Settings', icon: 'cog', route: '/settings' });
 
     return items;
-  }, [isShop, isPharmacy, isStudio, isRestaurant, hasFeature, activeTenant?.businessType, shopType, user?.isPlatformAdmin]);
+  }, [isDriver, isShop, isPharmacy, isStudio, isRestaurant, hasFeature, activeTenant?.businessType, shopType, user?.isPlatformAdmin]);
 
 
   return (

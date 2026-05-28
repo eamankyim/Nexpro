@@ -25,7 +25,7 @@ import { customDropdownService } from '@/services/customDropdownService';
 import { settingsService } from '@/services/settings';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAuth } from '@/context/AuthContext';
-import { useShopOptional } from '@/context/ShopContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -78,8 +78,7 @@ export default function CustomersScreen() {
   const params = useLocalSearchParams<{ search?: string; add?: string }>();
   const router = useRouter();
   const { activeTenantId, hasFeature } = useAuth();
-  const shopContext = useShopOptional();
-  const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
 
@@ -97,22 +96,22 @@ export default function CustomersScreen() {
   const debouncedSearch = useDebounce(searchValue, 400);
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['customers', activeTenantId, activeShopId, debouncedSearch],
+    queryKey: ['customers', activeTenantId, activeShopId, activeStudioLocationId, debouncedSearch],
     queryFn: () =>
       customerService.getCustomers({
         page: 1,
         limit: 20,
         search: debouncedSearch || undefined,
       }),
-    enabled: !!activeTenantId && hasFeature('crm') && (!shopContext?.isShopWorkspace || !!activeShopId),
+    enabled: !!activeTenantId && hasFeature('crm') && scopeReady,
     staleTime: QUERY_STALE.LIST,
     gcTime: 2 * 60 * 60 * 1000,
   });
 
   const { data: statsResponse } = useQuery({
-    queryKey: ['customers', 'stats', activeTenantId, activeShopId],
+    queryKey: ['customers', 'stats', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => customerService.getStats(),
-    enabled: !!activeTenantId && hasFeature('crm') && (!shopContext?.isShopWorkspace || !!activeShopId),
+    enabled: !!activeTenantId && hasFeature('crm') && scopeReady,
     staleTime: QUERY_STALE.TRANSACTIONAL,
     gcTime: 2 * 60 * 60 * 1000,
   });

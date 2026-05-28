@@ -20,6 +20,7 @@ type User = {
 } | null;
 type Membership = {
   tenantId: string;
+  role?: string | null;
   tenant?: {
     id: string;
     name?: string;
@@ -60,6 +61,10 @@ type AuthContextType = {
   wasInvited: boolean;
   /** Skip forced onboarding for tenured or very active users */
   suppressAppGuidance: boolean;
+  tenantRole: string | null;
+  isDriver: boolean;
+  isAdmin: boolean;
+  isManager: boolean;
   /** Plan/feature gating — same semantics as web: flag must be exactly true */
   hasFeature: (featureKey: string) => boolean;
   login: (email: string, password: string) => Promise<void>;
@@ -83,6 +88,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const activeMembership =
     memberships.find((m) => membershipTenantId(m) === activeTenantId) ?? null;
   const activeTenant = activeMembership?.tenant ?? null;
+  const tenantRole = activeMembership?.role ?? null;
+  const isDriver = tenantRole === 'driver';
+  const isAdmin = ['owner', 'admin'].includes(tenantRole || '');
+  const isManager = ['owner', 'admin', 'manager'].includes(tenantRole || '');
 
   const activeFeatureFlags = useMemo(() => {
     const eff = activeTenant?.effectiveFeatureFlags;
@@ -375,6 +384,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sessionSyncing,
     wasInvited,
     suppressAppGuidance,
+    tenantRole,
+    isDriver,
+    isAdmin,
+    isManager,
     hasFeature,
     login,
     logout,

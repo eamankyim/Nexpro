@@ -15,6 +15,7 @@ import AdminLayout from './layouts/AdminLayout';
 import ErrorBoundary from './components/ErrorBoundary';
 import RequireWorkspaceManager from './components/RequireWorkspaceManager';
 import TableSkeleton from './components/TableSkeleton';
+import AppLoader from './components/AppLoader';
 import PWAInstallBanner from './components/PWAInstallBanner';
 import PWAUpdatePrompt from './components/PWAUpdatePrompt';
 import { useSwipeBack } from './hooks/useSwipeBack';
@@ -81,24 +82,24 @@ const AdminSupportTickets = lazy(() => import('./pages/admin/AdminSupportTickets
 const Tasks = lazy(() => import('./pages/Tasks'));
 const Deliveries = lazy(() => import('./pages/Deliveries'));
 
-// Loading fallback component
-const PageLoader = () => (
-  <div className="flex items-center justify-center min-h-screen">
-    <div className="text-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand mx-auto mb-4"></div>
-      <p className="text-gray-600">Loading...</p>
-    </div>
-  </div>
-);
-
 const WorkspaceRoot = () => {
-  const { user, isSupportAccessActive } = useAuth();
+  const { user, isSupportAccessActive, isDriver } = useAuth();
+  const location = useLocation();
 
   if (user?.isPlatformAdmin && !isSupportAccessActive) {
     return <Navigate to="/admin" replace />;
   }
 
+  if (isDriver && location.pathname !== '/deliveries' && location.pathname !== '/profile') {
+    return <Navigate to="/deliveries" replace />;
+  }
+
   return <MainLayout />;
+};
+
+const WorkspaceIndexRedirect = () => {
+  const { isDriver } = useAuth();
+  return <Navigate to={isDriver ? '/deliveries' : '/dashboard'} replace />;
 };
 
 const FeatureRoute = ({ featureKey, children, fallback = '/dashboard' }) => {
@@ -116,10 +117,7 @@ const CampaignEditRedirect = () => {
 
 /** Backend Sabito SSO redirects here with ?token=JWT&success=true — must not hit * → /dashboard (strips query). */
 const SsoCallbackScreen = () => (
-  <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-background p-6">
-    <div className="h-10 w-10 animate-spin rounded-full border-2 border-brand border-t-transparent" />
-    <p className="text-sm text-muted-foreground">Signing you in…</p>
-  </div>
+  <AppLoader label="Signing you in..." />
 );
 
 // SSO Handler Component
@@ -127,11 +125,10 @@ const SSOHandler = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { pathname } = useLocation();
   const { sabitoSSO, loginWithToken } = useAuth();
+  const sabitoToken = searchParams.get('sabitoToken');
+  const nexproToken = searchParams.get('token');
 
   useEffect(() => {
-    const sabitoToken = searchParams.get('sabitoToken');
-    const nexproToken = searchParams.get('token'); // JWT from GET /sso → /sso-callback only
-
     if (sabitoToken) {
       // Remove token from URL
       searchParams.delete('sabitoToken');
@@ -171,6 +168,10 @@ const SSOHandler = () => {
     }
   }, [pathname, searchParams, sabitoSSO, loginWithToken, setSearchParams]);
 
+  if (sabitoToken || (pathname === '/sso-callback' && nexproToken && searchParams.get('success') === 'true')) {
+    return <SsoCallbackScreen />;
+  }
+
   return null;
 };
 
@@ -196,7 +197,7 @@ function AppContent() {
       <SSOHandler />
       <Suspense fallback={null}>
         <TourProvider>
-        <Suspense fallback={<PageLoader />}>
+        <Suspense fallback={<AppLoader />}>
           <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
@@ -227,7 +228,7 @@ function AppContent() {
               </PrivateRoute>
             }
           >
-            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route index element={<WorkspaceIndexRedirect />} />
             <Route path="dashboard" element={<Dashboard />} />
             <Route path="workspace" element={<Navigate to="/dashboard" replace />} />
             <Route path="tasks" element={<Tasks />} />

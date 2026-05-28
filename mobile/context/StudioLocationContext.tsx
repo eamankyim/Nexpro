@@ -14,6 +14,7 @@ import { useAuth } from '@/context/AuthContext';
 import { STORAGE_KEYS, resolveBusinessType } from '@/constants';
 import { studioLocationService } from '@/services/studioLocationService';
 import { setApiStudioLocationContext } from '@/services/api';
+import { refreshAfterWorkspaceScopeChange } from '@/utils/queryInvalidation';
 
 type StudioLocation = { id: string; name: string; isDefault?: boolean };
 
@@ -110,7 +111,7 @@ export function StudioLocationProvider({ children }: { children: ReactNode }) {
           setApiStudioLocationContext(locationId);
           setActiveStudioLocationIdState(locationId);
         }
-        queryClient.invalidateQueries();
+        await refreshAfterWorkspaceScopeChange(queryClient);
       })();
     },
     [queryClient]

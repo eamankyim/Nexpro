@@ -67,7 +67,7 @@ const getEffectiveRole = (req) => {
   if (tenantRole && ['owner', 'admin'].includes(tenantRole)) {
     return 'admin';
   }
-  if (tenantRole && ['manager', 'staff'].includes(tenantRole)) {
+  if (tenantRole && ['manager', 'staff', 'driver'].includes(tenantRole)) {
     return tenantRole;
   }
   return req.user?.role || null;

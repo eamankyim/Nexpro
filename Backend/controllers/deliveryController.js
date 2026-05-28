@@ -1,11 +1,12 @@
 const { Op } = require('sequelize');
-const { Job, Sale, Customer, SaleActivity } = require('../models');
+const { Job, Sale, Customer, SaleActivity, User, UserTenant } = require('../models');
 const { sequelize } = require('../config/database');
 const { applyTenantFilter } = require('../utils/tenantUtils');
 const { applyShopFilter } = require('../utils/shopUtils');
 const { applyStudioLocationFilter } = require('../utils/studioLocationUtils');
 const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { invalidateSaleListCache } = require('../middleware/cache');
+const { getEffectiveRole } = require('../middleware/auth');
 
 const DELIVERY_LABELS = {
   ready_for_delivery: 'Ready for delivery',
@@ -15,6 +16,7 @@ const DELIVERY_LABELS = {
 };
 
 const MAX_BULK_UPDATES = 40;
+const DRIVER_ROLE = 'driver';
 
 const ACTIVE_DELIVERY_OR_NULL = {
   [Op.or]: [
@@ -22,6 +24,66 @@ const ACTIVE_DELIVERY_OR_NULL = {
     { deliveryStatus: 'ready_for_delivery' },
     { deliveryStatus: 'out_for_delivery' }
   ]
+};
+
+const DRIVER_ACTIVE_DELIVERY_ONLY = {
+  [Op.or]: [{ deliveryStatus: 'ready_for_delivery' }, { deliveryStatus: 'out_for_delivery' }],
+};
+
+const DRIVER_ALLOWED_NEXT_STATUSES = {
+  ready_for_delivery: ['out_for_delivery'],
+  out_for_delivery: ['delivered'],
+};
+
+const isDriverRequest = (req) => getEffectiveRole(req) === DRIVER_ROLE;
+
+const canAssignDriver = (req) => ['admin', 'manager'].includes(getEffectiveRole(req));
+
+const normalizeAssignedDriver = (value) => {
+  if (value == null || value === '') return null;
+  return String(value);
+};
+
+const assertAssignedDriverIsValid = async (tenantId, userId) => {
+  if (!userId) return { ok: true };
+  const membership = await UserTenant.findOne({
+    where: {
+      tenantId,
+      userId,
+      role: DRIVER_ROLE,
+      status: 'active',
+    },
+    include: [
+      {
+        model: User,
+        as: 'user',
+        attributes: ['id', 'isActive'],
+        required: true,
+      },
+    ],
+  });
+  if (!membership || membership.user?.isActive === false) {
+    return { ok: false, message: 'deliveryAssignedTo must be an active driver in this workspace' };
+  }
+  return { ok: true };
+};
+
+const enforceDriverStatusTransition = ({ currentStatus, nextStatus }) => {
+  if (!nextStatus) {
+    return { ok: false, message: 'Drivers cannot clear delivery status' };
+  }
+  if (nextStatus === 'returned') {
+    return { ok: false, message: 'Drivers cannot mark deliveries as returned' };
+  }
+  const from = currentStatus || 'ready_for_delivery';
+  const allowed = DRIVER_ALLOWED_NEXT_STATUSES[from] || [];
+  if (!allowed.includes(nextStatus)) {
+    return {
+      ok: false,
+      message: `Driver status transition not allowed (${from} -> ${nextStatus})`,
+    };
+  }
+  return { ok: true };
 };
 
 function formatAddressSummary(customer) {
@@ -43,6 +105,10 @@ function formatJobRow(job) {
     addressSummary: formatAddressSummary(c),
     completedAt: j.completionDate || j.updatedAt,
     deliveryStatus: j.deliveryStatus || null,
+    deliveryAssignedTo: j.deliveryAssignedTo || null,
+    deliveryAssignedAt: j.deliveryAssignedAt || null,
+    deliveredBy: j.deliveredBy || null,
+    deliveredAt: j.deliveredAt || null,
     total: null
   };
 }
@@ -60,6 +126,10 @@ function formatSaleRow(sale) {
     addressSummary: formatAddressSummary(c),
     completedAt: s.updatedAt,
     deliveryStatus: s.deliveryStatus || null,
+    deliveryAssignedTo: s.deliveryAssignedTo || null,
+    deliveryAssignedAt: s.deliveryAssignedAt || null,
+    deliveredBy: s.deliveredBy || null,
+    deliveredAt: s.deliveredAt || null,
     total: s.total != null ? Number(s.total) : null
   };
 }
@@ -81,6 +151,7 @@ exports.getDeliveryQueue = async (req, res, next) => {
   try {
     const tenantId = req.tenantId;
     const scope = req.query.scope === 'done' ? 'done' : 'active';
+    const isDriver = isDriverRequest(req);
 
     const customerInclude = {
       model: Customer,
@@ -91,11 +162,13 @@ exports.getDeliveryQueue = async (req, res, next) => {
     if (scope === 'active') {
       const jobWhere = applyJobScope(req, applyTenantFilter(tenantId, {
         status: 'completed',
-        ...ACTIVE_DELIVERY_OR_NULL
+        ...(isDriver ? DRIVER_ACTIVE_DELIVERY_ONLY : ACTIVE_DELIVERY_OR_NULL),
+        ...(isDriver ? { deliveryAssignedTo: req.user.id } : {}),
       }));
       const saleWhere = applySaleScope(req, applyTenantFilter(tenantId, {
         status: 'completed',
-        ...ACTIVE_DELIVERY_OR_NULL
+        ...(isDriver ? DRIVER_ACTIVE_DELIVERY_ONLY : ACTIVE_DELIVERY_OR_NULL),
+        ...(isDriver ? { deliveryAssignedTo: req.user.id } : {}),
       }));
 
       const [jobs, sales] = await Promise.all([
@@ -127,12 +200,14 @@ exports.getDeliveryQueue = async (req, res, next) => {
     const jobWhere = applyJobScope(req, applyTenantFilter(tenantId, {
       status: 'completed',
       deliveryStatus: terminal,
-      updatedAt: { [Op.gte]: ninetyDaysAgo }
+      updatedAt: { [Op.gte]: ninetyDaysAgo },
+      ...(isDriver ? { deliveredBy: req.user.id } : {}),
     }));
     const saleWhere = applySaleScope(req, applyTenantFilter(tenantId, {
       status: 'completed',
       deliveryStatus: terminal,
-      updatedAt: { [Op.gte]: ninetyDaysAgo }
+      updatedAt: { [Op.gte]: ninetyDaysAgo },
+      ...(isDriver ? { deliveredBy: req.user.id } : {}),
     }));
 
     const [jobs, sales] = await Promise.all([
@@ -158,10 +233,25 @@ exports.getDeliveryQueue = async (req, res, next) => {
   }
 };
 
-async function updateJobDeliveryStatus(req, { tenantId, jobId, deliveryStatus }) {
+async function updateJobDeliveryStatus(
+  req,
+  { tenantId, jobId, deliveryStatus, deliveryAssignedTo, hasAssignedDriverField, userId }
+) {
+  const isDriver = isDriverRequest(req);
+  const normalizedAssignedDriver = normalizeAssignedDriver(deliveryAssignedTo);
   const parsed = parseDeliveryStatusInput(deliveryStatus);
-  if (parsed === undefined) {
+  if (parsed === undefined && deliveryStatus !== undefined) {
     return { ok: false, message: 'Invalid deliveryStatus' };
+  }
+  if (isDriver && hasAssignedDriverField) {
+    return { ok: false, message: 'Drivers cannot assign deliveries' };
+  }
+  if (!isDriver && hasAssignedDriverField) {
+    if (!canAssignDriver(req)) return { ok: false, message: 'Only managers/admins can assign drivers' };
+  }
+  if (!isDriver && hasAssignedDriverField && normalizedAssignedDriver) {
+    const validAssignee = await assertAssignedDriverIsValid(tenantId, normalizedAssignedDriver);
+    if (!validAssignee.ok) return { ok: false, message: validAssignee.message };
   }
 
   const job = await Job.findOne({
@@ -173,18 +263,58 @@ async function updateJobDeliveryStatus(req, { tenantId, jobId, deliveryStatus })
   if (job.status !== 'completed') {
     return { ok: false, message: 'Only completed jobs can use delivery status here' };
   }
+  if (isDriver && job.deliveryAssignedTo !== userId) {
+    return { ok: false, message: 'This delivery is not assigned to you' };
+  }
 
-  await job.update({
-    deliveryStatus: parsed,
-    ...(parsed ? { deliveryRequired: true } : {})
-  });
+  if (isDriver) {
+    const guard = enforceDriverStatusTransition({
+      currentStatus: job.deliveryStatus || null,
+      nextStatus: parsed,
+    });
+    if (!guard.ok) return { ok: false, message: guard.message };
+  }
+
+  const updates = {};
+  if (deliveryStatus !== undefined) {
+    updates.deliveryStatus = parsed;
+    if (parsed) updates.deliveryRequired = true;
+    if (parsed === 'delivered' || parsed === 'returned') {
+      updates.deliveredBy = userId || null;
+      updates.deliveredAt = new Date();
+    } else {
+      updates.deliveredBy = null;
+      updates.deliveredAt = null;
+    }
+  }
+  if (hasAssignedDriverField) {
+    updates.deliveryAssignedTo = normalizedAssignedDriver;
+    updates.deliveryAssignedAt = new Date();
+  }
+
+  await job.update(updates);
   return { ok: true };
 }
 
-async function updateSaleDeliveryStatus(req, { tenantId, saleId, deliveryStatus, userId }) {
+async function updateSaleDeliveryStatus(
+  req,
+  { tenantId, saleId, deliveryStatus, deliveryAssignedTo, hasAssignedDriverField, userId }
+) {
+  const isDriver = isDriverRequest(req);
+  const normalizedAssignedDriver = normalizeAssignedDriver(deliveryAssignedTo);
   const parsed = parseDeliveryStatusInput(deliveryStatus);
-  if (parsed === undefined) {
+  if (parsed === undefined && deliveryStatus !== undefined) {
     return { ok: false, message: 'Invalid deliveryStatus' };
+  }
+  if (isDriver && hasAssignedDriverField) {
+    return { ok: false, message: 'Drivers cannot assign deliveries' };
+  }
+  if (!isDriver && hasAssignedDriverField) {
+    if (!canAssignDriver(req)) return { ok: false, message: 'Only managers/admins can assign drivers' };
+  }
+  if (!isDriver && hasAssignedDriverField && normalizedAssignedDriver) {
+    const validAssignee = await assertAssignedDriverIsValid(tenantId, normalizedAssignedDriver);
+    if (!validAssignee.ok) return { ok: false, message: validAssignee.message };
   }
 
   const transaction = await sequelize.transaction();
@@ -203,35 +333,89 @@ async function updateSaleDeliveryStatus(req, { tenantId, saleId, deliveryStatus,
       await transaction.rollback();
       return { ok: false, message: 'Only completed sales can use delivery status here' };
     }
+    if (isDriver && sale.deliveryAssignedTo !== userId) {
+      await transaction.rollback();
+      return { ok: false, message: 'This delivery is not assigned to you' };
+    }
 
     const previousDeliveryStatus = sale.deliveryStatus || null;
-    if (String(previousDeliveryStatus || '') === String(parsed || '')) {
+    if (isDriver) {
+      const guard = enforceDriverStatusTransition({
+        currentStatus: previousDeliveryStatus,
+        nextStatus: parsed,
+      });
+      if (!guard.ok) {
+        await transaction.rollback();
+        return { ok: false, message: guard.message };
+      }
+    }
+
+    if (
+      String(previousDeliveryStatus || '') === String(parsed || '') &&
+      (!hasAssignedDriverField || String(sale.deliveryAssignedTo || '') === String(normalizedAssignedDriver || ''))
+    ) {
       await transaction.commit();
       return { ok: true, unchanged: true };
     }
 
-    await sale.update({ deliveryStatus: parsed }, { transaction });
+    const saleUpdates = {};
+    if (deliveryStatus !== undefined) {
+      saleUpdates.deliveryStatus = parsed;
+      if (parsed === 'delivered' || parsed === 'returned') {
+        saleUpdates.deliveredBy = userId || null;
+        saleUpdates.deliveredAt = new Date();
+      } else {
+        saleUpdates.deliveredBy = null;
+        saleUpdates.deliveredAt = null;
+      }
+    }
+    if (hasAssignedDriverField) {
+      saleUpdates.deliveryAssignedTo = normalizedAssignedDriver;
+      saleUpdates.deliveryAssignedAt = new Date();
+    }
+
+    await sale.update(saleUpdates, { transaction });
 
     const oldL = previousDeliveryStatus
       ? DELIVERY_LABELS[previousDeliveryStatus] || previousDeliveryStatus
       : 'Not set';
     const newL = parsed ? DELIVERY_LABELS[parsed] || parsed : 'Not set';
-    await SaleActivity.create(
-      {
-        saleId: sale.id,
-        tenantId,
-        type: 'note',
-        subject: 'Delivery status updated',
-        notes: `Delivery status changed from ${oldL} to ${newL}`,
-        createdBy: userId || null,
-        metadata: {
-          deliveryStatusChange: true,
-          oldDeliveryStatus: previousDeliveryStatus,
-          newDeliveryStatus: parsed
-        }
-      },
-      { transaction }
-    );
+    if (deliveryStatus !== undefined) {
+      await SaleActivity.create(
+        {
+          saleId: sale.id,
+          tenantId,
+          type: 'note',
+          subject: 'Delivery status updated',
+          notes: `Delivery status changed from ${oldL} to ${newL}`,
+          createdBy: userId || null,
+          metadata: {
+            deliveryStatusChange: true,
+            oldDeliveryStatus: previousDeliveryStatus,
+            newDeliveryStatus: parsed
+          }
+        },
+        { transaction }
+      );
+    }
+
+    if (hasAssignedDriverField) {
+      await SaleActivity.create(
+        {
+          saleId: sale.id,
+          tenantId,
+          type: 'note',
+          subject: 'Delivery reassigned',
+          notes: `Delivery assigned to user ${normalizedAssignedDriver}`,
+          createdBy: userId || null,
+          metadata: {
+            deliveryAssignmentChange: true,
+            deliveryAssignedTo: normalizedAssignedDriver,
+          },
+        },
+        { transaction }
+      );
+    }
 
     await transaction.commit();
     return { ok: true };
@@ -280,8 +464,16 @@ exports.patchDeliveryStatuses = async (req, res, next) => {
         });
         continue;
       }
-      if (!Object.prototype.hasOwnProperty.call(item || {}, 'deliveryStatus')) {
-        results.push({ entityType, id, ok: false, message: 'deliveryStatus is required (null to clear)' });
+      if (
+        !Object.prototype.hasOwnProperty.call(item || {}, 'deliveryStatus') &&
+        !Object.prototype.hasOwnProperty.call(item || {}, 'deliveryAssignedTo')
+      ) {
+        results.push({
+          entityType,
+          id,
+          ok: false,
+          message: 'Provide deliveryStatus and/or deliveryAssignedTo',
+        });
         continue;
       }
 
@@ -291,13 +483,18 @@ exports.patchDeliveryStatuses = async (req, res, next) => {
           r = await updateJobDeliveryStatus(req, {
             tenantId,
             jobId: id,
-            deliveryStatus: item.deliveryStatus
+            deliveryStatus: item.deliveryStatus,
+            deliveryAssignedTo: item.deliveryAssignedTo,
+            hasAssignedDriverField: Object.prototype.hasOwnProperty.call(item || {}, 'deliveryAssignedTo'),
+            userId
           });
         } else {
           r = await updateSaleDeliveryStatus(req, {
             tenantId,
             saleId: id,
             deliveryStatus: item.deliveryStatus,
+            deliveryAssignedTo: item.deliveryAssignedTo,
+            hasAssignedDriverField: Object.prototype.hasOwnProperty.call(item || {}, 'deliveryAssignedTo'),
             userId
           });
           if (r.ok) saleTouched = true;

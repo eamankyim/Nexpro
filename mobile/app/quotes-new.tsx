@@ -16,6 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { useAuth } from '@/context/AuthContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { StackPageHeader } from '@/components/StackPageHeader';
 import { FormInput, FormLabel } from '@/components/FormField';
@@ -49,6 +50,7 @@ type ProductOption = {
 export default function NewQuoteScreen() {
   const router = useRouter();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
@@ -89,9 +91,9 @@ export default function NewQuoteScreen() {
     data: productsResponse,
     isLoading: loadingProducts,
   } = useQuery({
-    queryKey: ['products', 'quotes-new', activeTenantId],
+    queryKey: ['products', 'quotes-new', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => productService.getProducts({ limit: 100, isActive: true }),
-    enabled: !!activeTenantId && quotesFeatureOk && isRetailLike && hasFeature('products'),
+    enabled: !!activeTenantId && quotesFeatureOk && isRetailLike && hasFeature('products') && scopeReady,
     staleTime: 5 * 60 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
   });

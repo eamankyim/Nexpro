@@ -1,4 +1,5 @@
 import { api } from './api';
+import { buildScopedQueryString } from '@/utils/shopScope';
 
 type JobParams = {
   page?: number;
@@ -9,12 +10,7 @@ type JobParams = {
 
 export const jobService = {
   getJobs: async (params: JobParams = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === '') return;
-      searchParams.append(key, String(value));
-    });
-    const query = searchParams.toString();
+    const query = await buildScopedQueryString(params);
     const res = await api.get(query ? `/jobs?${query}` : '/jobs');
     // Backend returns: { success: true, count: N, pagination: {...}, data: [...] }
     return res.data;
@@ -45,13 +41,15 @@ export const jobService = {
       unitPrice: number;
     }>;
   }) => {
-    const res = await api.post('/jobs', data);
+    const query = await buildScopedQueryString({});
+    const res = await api.post(query ? `/jobs?${query}` : '/jobs', data);
     // Backend returns: { success: true, data: {...} }
     return res.data;
   },
 
   updateJob: async (id: string, data: object) => {
-    const res = await api.put(`/jobs/${id}`, data);
+    const query = await buildScopedQueryString({});
+    const res = await api.put(query ? `/jobs/${id}?${query}` : `/jobs/${id}`, data);
     // Backend returns: { success: true, data: {...} }
     return res.data;
   },

@@ -151,6 +151,30 @@ const Job = sequelize.define('Job', {
     type: DataTypes.STRING(32),
     allowNull: true
   },
+  deliveryAssignedTo: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'users',
+      key: 'id',
+    },
+  },
+  deliveryAssignedAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
+  deliveredBy: {
+    type: DataTypes.UUID,
+    allowNull: true,
+    references: {
+      model: 'users',
+      key: 'id',
+    },
+  },
+  deliveredAt: {
+    type: DataTypes.DATE,
+    allowNull: true,
+  },
   /** When true, job is treated as needing physical delivery; stages are managed on Deliveries. */
   deliveryRequired: {
     type: DataTypes.BOOLEAN,

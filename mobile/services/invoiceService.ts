@@ -1,4 +1,5 @@
 import { api } from './api';
+import { buildScopedQueryString } from '@/utils/shopScope';
 
 type InvoiceParams = {
   page?: number;
@@ -12,12 +13,7 @@ type InvoiceParams = {
 
 export const invoiceService = {
   getInvoices: async (params: InvoiceParams = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === '') return;
-      searchParams.append(key, String(value));
-    });
-    const query = searchParams.toString();
+    const query = await buildScopedQueryString(params);
     const res = await api.get(query ? `/invoices?${query}` : '/invoices');
     return res.data;
   },
@@ -28,12 +24,14 @@ export const invoiceService = {
   },
 
   createInvoice: async (data: object) => {
-    const res = await api.post('/invoices', data);
+    const query = await buildScopedQueryString({});
+    const res = await api.post(query ? `/invoices?${query}` : '/invoices', data);
     return res.data;
   },
 
   updateInvoice: async (id: string, data: object) => {
-    const res = await api.put(`/invoices/${id}`, data);
+    const query = await buildScopedQueryString({});
+    const res = await api.put(query ? `/invoices/${id}?${query}` : `/invoices/${id}`, data);
     return res.data;
   },
 

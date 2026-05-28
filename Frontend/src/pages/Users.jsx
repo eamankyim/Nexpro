@@ -52,7 +52,7 @@ const profileSchema = z.object({
 
 const inviteSchema = z.object({
   email: z.string().email('Enter a valid email'),
-  role: z.enum(['admin', 'manager', 'staff']),
+  role: z.enum(['admin', 'manager', 'staff', 'driver']),
   studioLocationIds: z.array(z.string()).optional(),
   shopIds: z.array(z.string()).optional(),
 });
@@ -73,6 +73,7 @@ import {
   Filter,
   RefreshCw,
   Shield,
+  Truck,
   Loader2
 } from 'lucide-react';
 import dayjs from 'dayjs';
@@ -362,6 +363,7 @@ const Users = () => {
     const adminUsers = users.filter((u) => u.role === 'admin').length;
     const managerUsers = users.filter((u) => u.role === 'manager').length;
     const staffUsers = users.filter((u) => u.role === 'staff').length;
+    const driverUsers = users.filter((u) => u.role === 'driver').length;
 
     return {
       totals: {
@@ -369,6 +371,7 @@ const Users = () => {
         adminUsers,
         managerUsers,
         staffUsers,
+        driverUsers,
       },
     };
   }, [users, pagination.total]);
@@ -622,6 +625,7 @@ const Users = () => {
           admin: <Crown className="h-3 w-3 mr-1" />,
           manager: <Settings className="h-3 w-3 mr-1" />,
           staff: <User className="h-3 w-3 mr-1" />,
+          driver: <Truck className="h-3 w-3 mr-1" />,
           employee: <User className="h-3 w-3 mr-1" />
         };
         return (
@@ -678,7 +682,8 @@ const Users = () => {
   const roleOptions = [
     { value: 'admin', label: 'Admin', icon: <Crown className="h-4 w-4" /> },
     { value: 'manager', label: 'Manager', icon: <Settings className="h-4 w-4" /> },
-    { value: 'staff', label: 'Staff', icon: <User className="h-4 w-4" /> }
+    { value: 'staff', label: 'Staff', icon: <User className="h-4 w-4" /> },
+    { value: 'driver', label: 'Driver', icon: <Truck className="h-4 w-4" /> },
   ];
 
   const statusOptions = [
@@ -768,7 +773,7 @@ const Users = () => {
       </div>
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <DashboardStatsCard
           tooltip="Total number of users in your workspace"
           title="Total Users"
@@ -800,6 +805,14 @@ const Users = () => {
           icon={Shield}
           iconBgColor="rgba(132, 204, 22, 0.1)"
           iconColor="#84cc16"
+        />
+        <DashboardStatsCard
+          tooltip="Users with driver role"
+          title="Drivers"
+          value={calculatedStats?.totals?.driverUsers || 0}
+          icon={Truck}
+          iconBgColor="rgba(245, 158, 11, 0.1)"
+          iconColor="#d97706"
         />
       </div>
 
@@ -1084,7 +1097,12 @@ const Users = () => {
             label: 'Role', 
             value: viewingUser.role,
             render: (role) => {
-              const icons = { admin: <Crown className="h-3 w-3 mr-1" />, manager: <Settings className="h-3 w-3 mr-1" />, staff: <User className="h-3 w-3 mr-1" /> };
+              const icons = {
+                admin: <Crown className="h-3 w-3 mr-1" />,
+                manager: <Settings className="h-3 w-3 mr-1" />,
+                staff: <User className="h-3 w-3 mr-1" />,
+                driver: <Truck className="h-3 w-3 mr-1" />,
+              };
               return (
                 <Badge variant="secondary" className="gap-1">
                   {icons[role]}
@@ -1290,7 +1308,7 @@ const Users = () => {
                       <FormItem>
                         <FormLabel>Studio locations</FormLabel>
                         <p className="text-sm text-muted-foreground mb-2">
-                          Staff and managers only see data for the studios you select.
+                          Staff, drivers, and managers only see data for the studios you select.
                         </p>
                         <div className="space-y-2 border rounded-lg p-3 max-h-40 overflow-y-auto">
                           {(studioLocationCtx?.locations || []).map((loc) => {
@@ -1326,7 +1344,7 @@ const Users = () => {
                       <FormItem>
                         <FormLabel>Shops</FormLabel>
                         <p className="text-sm text-muted-foreground mb-2">
-                          Staff and managers only see data for the shops you select.
+                          Staff, drivers, and managers only see data for the shops you select.
                         </p>
                         {loadingInviteShops ? (
                           <p className="text-sm text-muted-foreground flex items-center gap-2">

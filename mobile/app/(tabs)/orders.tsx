@@ -21,6 +21,7 @@ import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
 import { useDebounce } from '@/hooks/useDebounce';
 import { matchesSearchQuery } from '@/utils/matchesSearchQuery';
 import { useAuth } from '@/context/AuthContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -208,6 +209,7 @@ const KITCHEN_COLUMNS = [
 
 export default function OrdersScreen() {
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
 
@@ -239,9 +241,9 @@ export default function OrdersScreen() {
   }, [isRestaurant, statusFilter, today]);
 
   const { data: response, isLoading, isError, error, refetch, isRefetching } = useQuery({
-    queryKey: ['orders', activeTenantId, statusFilter, today],
+    queryKey: ['orders', activeTenantId, activeShopId, activeStudioLocationId, statusFilter, today],
     queryFn: fetchOrders,
-    enabled: !!activeTenantId && isRestaurant && hasFeature('orders'),
+    enabled: !!activeTenantId && isRestaurant && hasFeature('orders') && scopeReady,
     staleTime: 5000, // 5 sec - keep relatively fresh
     refetchInterval: POLL_INTERVAL_MS,
   });

@@ -21,11 +21,13 @@ import {
   PackagePlus,
   PackageCheck,
   UserPlus,
+  UserCircle,
   Pill,
   ChefHat,
   Download,
   Workflow,
-  Star
+  Star,
+  Truck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
@@ -129,7 +131,21 @@ const filterNavItems = (items, { isAdmin, isManager }) =>
     })
     .filter((item) => !item.children || item.children.length > 0);
 
-const getMenuItems = (businessType, isAdmin, isManager, shopType, hasFeature = () => true, isPlatformAdmin = false) => {
+const getMenuItems = (
+  businessType,
+  isAdmin,
+  isManager,
+  isDriver,
+  shopType,
+  hasFeature = () => true,
+  isPlatformAdmin = false
+) => {
+  if (isDriver) {
+    return [
+      { key: '/deliveries', icon: Truck, label: 'Deliveries', tooltip: MENU_HINTS['/deliveries'] },
+      { key: '/profile', icon: UserCircle, label: 'Profile', tooltip: MENU_HINTS['/profile'] },
+    ];
+  }
   // Standalone (most important): Dashboard, Sales, Products, Jobs (printing_press), Customers, Invoices, Expenses
   const baseItems = [
     { key: '/dashboard', icon: LayoutDashboard, label: 'Dashboard', tooltip: MENU_HINTS['/dashboard'] },
@@ -278,7 +294,7 @@ const getQuickActions = (businessType, shopType) => {
 export function Sidebar({ collapsed, onCollapse }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, isManager, activeTenant, user, hasFeature, isPlatformAdmin, isSupportAccessActive } = useAuth();
+  const { isAdmin, isManager, isDriver, activeTenant, user, hasFeature, isPlatformAdmin, isSupportAccessActive } = useAuth();
   const hidePlatformAdminNav = isPlatformAdmin && !isSupportAccessActive;
   const { appName, primaryColor } = useBranding();
   const { canInstall, promptInstall } = usePWAInstall();
@@ -311,8 +327,8 @@ export function Sidebar({ collapsed, onCollapse }) {
     null;
 
   const menuItems = useMemo(
-    () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature, hidePlatformAdminNav),
-    [businessType, isAdmin, isManager, shopType, hasFeature, hidePlatformAdminNav]
+    () => getMenuItems(businessType, isAdmin, isManager, isDriver, shopType, hasFeature, hidePlatformAdminNav),
+    [businessType, isAdmin, isManager, isDriver, shopType, hasFeature, hidePlatformAdminNav]
   );
   useEffect(() => {
     if (!import.meta.env.DEV) return;
@@ -673,7 +689,7 @@ export function MobileSidebar() {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { isAdmin, isManager, activeTenant, hasFeature, isPlatformAdmin, isSupportAccessActive } = useAuth();
+  const { isAdmin, isManager, isDriver, activeTenant, hasFeature, isPlatformAdmin, isSupportAccessActive } = useAuth();
   const hidePlatformAdminNav = isPlatformAdmin && !isSupportAccessActive;
   const { appName, primaryColor } = useBranding();
   const { canInstall, promptInstall } = usePWAInstall();
@@ -702,8 +718,8 @@ export function MobileSidebar() {
     : activeTenant?.businessType || null;
   const shopType = activeTenant?.metadata?.shopType || null;
   const menuItems = useMemo(
-    () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature, hidePlatformAdminNav),
-    [businessType, isAdmin, isManager, shopType, hasFeature, hidePlatformAdminNav]
+    () => getMenuItems(businessType, isAdmin, isManager, isDriver, shopType, hasFeature, hidePlatformAdminNav),
+    [businessType, isAdmin, isManager, isDriver, shopType, hasFeature, hidePlatformAdminNav]
   );
   const quickActions = useMemo(() => getQuickActions(businessType, shopType), [businessType, shopType]);
 

@@ -1,5 +1,5 @@
-import React, { useMemo } from 'react';
-import { Tabs, usePathname } from 'expo-router';
+import React, { useEffect, useMemo } from 'react';
+import { Tabs, usePathname, useRouter } from 'expo-router';
 import { DeviceEventEmitter, View, Pressable, StyleSheet, Text } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 
@@ -41,10 +41,11 @@ function CenterTabButton() {
 }
 
 export default function TabLayout() {
+  const router = useRouter();
   const pathname = usePathname();
   const { resolvedTheme } = useTheme();
   const colors = Colors[resolvedTheme ?? 'light'];
-  const { activeTenant, hasFeature } = useAuth();
+  const { activeTenant, hasFeature, isDriver } = useAuth();
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isShop = resolvedType === 'shop';
   const isPharmacy = resolvedType === 'pharmacy';
@@ -53,6 +54,14 @@ export default function TabLayout() {
   const showInvoicesInTab = (isRetailLike || isStudio) && hasFeature('invoices');
   const centerTabTitle = isStudio ? 'Add Job' : 'Scan';
   const isScanRoute = pathname === '/scan' || pathname.endsWith('/scan');
+
+  useEffect(() => {
+    if (!isDriver) return;
+    const allowed = pathname === '/deliveries' || pathname.endsWith('/deliveries') || pathname === '/more' || pathname.endsWith('/more');
+    if (!allowed) {
+      router.replace('/(tabs)/deliveries');
+    }
+  }, [isDriver, pathname, router]);
 
   const screenOptions = useMemo(
     () => ({
@@ -75,12 +84,13 @@ export default function TabLayout() {
         options={{
           title: 'Dashboard',
           tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
+          ...(isDriver ? { href: null } : {}),
         }}
       />
       <Tabs.Screen
         name="customers"
         options={
-          hasFeature('crm')
+          !isDriver && hasFeature('crm')
             ? {
                 title: 'Customers',
                 tabBarIcon: ({ color }: { color: string }) => <TabBarIcon name="users" color={color} />,
@@ -92,6 +102,7 @@ export default function TabLayout() {
         name="scan"
         options={{
           title: centerTabTitle,
+          ...(isDriver ? { href: null } : {}),
           tabBarButton: (props) => (
             <Pressable
               onPress={(event) => {
@@ -116,7 +127,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="invoices"
         options={
-          showInvoicesInTab
+          !isDriver && showInvoicesInTab
             ? {
                 title: 'Invoice',
                 tabBarIcon: ({ color }: { color: string }) => <TabBarIcon name="file-text" color={color} />,
@@ -127,8 +138,8 @@ export default function TabLayout() {
       <Tabs.Screen
         name="more"
         options={{
-          title: 'More',
-          tabBarIcon: ({ color }) => <TabBarIcon name="bars" color={color} />,
+          title: isDriver ? 'Account' : 'More',
+          tabBarIcon: ({ color }) => <TabBarIcon name={isDriver ? 'user' : 'bars'} color={color} />,
         }}
       />
 
@@ -144,7 +155,17 @@ export default function TabLayout() {
       <Tabs.Screen name="sales" options={{ href: null }} />
       <Tabs.Screen name="leads" options={{ href: null }} />
       <Tabs.Screen name="tasks" options={{ href: null }} />
-      <Tabs.Screen name="deliveries" options={{ href: null }} />
+      <Tabs.Screen
+        name="deliveries"
+        options={
+          isDriver
+            ? {
+                title: 'Deliveries',
+                tabBarIcon: ({ color }: { color: string }) => <TabBarIcon name="truck" color={color} />,
+              }
+            : { href: null }
+        }
+      />
     </Tabs>
     </SmartSearchProvider>
   );

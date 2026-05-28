@@ -25,6 +25,7 @@ import { useDebounce } from '@/hooks/useDebounce';
 import { flatListStyleForEmpty, showListFilters } from '@/utils/listEmptyLayout';
 import { materialsService } from '@/services/materialsService';
 import { useAuth } from '@/context/AuthContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -83,6 +84,7 @@ export default function MaterialsScreen() {
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -110,7 +112,7 @@ export default function MaterialsScreen() {
   );
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['materials', 'items', activeTenantId, statusFilter, debouncedSearch],
+    queryKey: ['materials', 'items', activeTenantId, activeShopId, activeStudioLocationId, statusFilter, debouncedSearch],
     queryFn: () => {
       const params: {
         page?: number;
@@ -128,7 +130,7 @@ export default function MaterialsScreen() {
       if (statusFilter === 'out') params.outOfStock = true;
       return materialsService.getItems(params);
     },
-    enabled: !!activeTenantId && hasFeature('materials'),
+    enabled: !!activeTenantId && hasFeature('materials') && scopeReady,
     staleTime: QUERY_STALE.LIST,
     gcTime: 2 * 60 * 60 * 1000,
   });

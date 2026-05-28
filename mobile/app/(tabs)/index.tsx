@@ -17,7 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { useAuth } from '@/context/AuthContext';
-import { useShopOptional } from '@/context/ShopContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { dashboardService } from '@/services/dashboardService';
 import { assistantService } from '@/services/assistantService';
 import { authService } from '@/services/auth';
@@ -255,8 +255,7 @@ function getDueDateBadge(
 export default function DashboardScreen() {
   const router = useRouter();
   const { user, activeTenant, activeTenantId, wasInvited, suppressAppGuidance, refreshAuth, hasFeature } = useAuth();
-  const shopContext = useShopOptional();
-  const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg, resolvedTheme } = useScreenColors();
 
   const [filterType, setFilterType] = useState<FilterType>('month');
@@ -286,10 +285,19 @@ export default function DashboardScreen() {
   }, [refreshAuth]);
 
   const { data: overviewResponse, isLoading, isError, error, refetch, isRefetching } = useQuery({
-    queryKey: ['dashboard', 'overview', activeTenantId, activeShopId, dateRange.start, dateRange.end, filterType],
+    queryKey: [
+      'dashboard',
+      'overview',
+      activeTenantId,
+      activeShopId,
+      activeStudioLocationId,
+      dateRange.start,
+      dateRange.end,
+      filterType,
+    ],
     queryFn: () =>
       dashboardService.getOverview(dateRange.start, dateRange.end, filterType),
-    enabled: !!activeTenantId && (!shopContext?.isShopWorkspace || !!activeShopId),
+    enabled: !!activeTenantId && scopeReady,
     // Dashboard data can be stale for 2 minutes (frequent updates but not real-time critical)
     staleTime: QUERY_STALE.TRANSACTIONAL,
     // Keep in cache for 1 hour
@@ -312,7 +320,7 @@ export default function DashboardScreen() {
   const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
 
   const { data: kitchenOrdersResponse } = useQuery({
-    queryKey: ['orders', 'dashboard-count', activeTenantId, activeShopId, todayIso],
+    queryKey: ['orders', 'dashboard-count', activeTenantId, activeShopId, activeStudioLocationId, todayIso],
     queryFn: () =>
       saleService.getOrders({
         activeOrders: true,
@@ -320,7 +328,7 @@ export default function DashboardScreen() {
         endDate: todayIso,
         limit: 100,
       }),
-    enabled: !!activeTenantId && isRestaurant && hasFeature('orders'),
+    enabled: !!activeTenantId && isRestaurant && hasFeature('orders') && scopeReady,
     staleTime: 30 * 1000,
     refetchInterval: 30 * 1000,
   });
@@ -415,6 +423,7 @@ export default function DashboardScreen() {
       'v2',
       activeTenantId,
       activeShopId,
+      activeStudioLocationId,
       filterType,
       revenue,
       expenses,

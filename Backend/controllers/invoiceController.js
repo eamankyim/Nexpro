@@ -1472,6 +1472,7 @@ async function createInvoiceFromJobInternal(tenantId, jobId, userId = null) {
     jobId,
     customerId: job.customerId,
     tenantId,
+    studioLocationId: job.studioLocationId || null,
     sourceType: 'job',
     invoiceDate: new Date(),
     dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),

@@ -20,6 +20,7 @@ import { useDebounce } from '@/hooks/useDebounce';
 import { flatListStyleForEmpty, listContentStyleWhenEmpty, showListFilters } from '@/utils/listEmptyLayout';
 import { quoteService } from '@/services/quoteService';
 import { useAuth } from '@/context/AuthContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { BRAND_GREEN } from '@/constants/brand';
@@ -61,6 +62,7 @@ type Quote = {
 export default function QuotesScreen() {
   const router = useRouter();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor } = useScreenColors();
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -75,7 +77,7 @@ export default function QuotesScreen() {
     hasFeature('quoteAutomation') && isQuotesEnabledForTenant(businessType, shopType);
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['quotes', activeTenantId, statusFilter, debouncedSearch],
+    queryKey: ['quotes', activeTenantId, activeShopId, activeStudioLocationId, statusFilter, debouncedSearch],
     queryFn: async () => {
       const params: { page?: number; limit?: number; status?: string; search?: string } = {
         page: 1,
@@ -89,7 +91,7 @@ export default function QuotesScreen() {
     gcTime: 60 * 60 * 1000,
     retry: 2,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
-    enabled: !!activeTenantId && quotesFeatureOk,
+    enabled: !!activeTenantId && quotesFeatureOk && scopeReady,
   });
 
   const quotes = useMemo(() => parseApiListResponse<Quote>(response), [response]);

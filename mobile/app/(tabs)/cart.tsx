@@ -19,8 +19,7 @@ import { FormSheetModal } from '@/components/FormSheetModal';
 import { FORM_LABELS } from '@/constants/formLabels';
 import { useCart } from '@/context/CartContext';
 import { useAuth } from '@/context/AuthContext';
-import { useShopOptional } from '@/context/ShopContext';
-import { useStudioLocationOptional } from '@/context/StudioLocationContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { customerService } from '@/services/customerService';
 import { saleService } from '@/services/saleService';
@@ -83,9 +82,8 @@ export default function CartScreen() {
   const { items, removeItem, updateQuantity, clearCart, getTotal, getSubtotal, getItemCount } =
     useCart();
   const { activeTenantId, activeTenant, hasFeature } = useAuth();
-  const shopContext = useShopOptional();
-  const studioContext = useStudioLocationOptional();
-  const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeShopId, activeShop, activeStudioLocationId, activeStudioLocation, scopeReady } =
+    useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
 
@@ -108,13 +106,13 @@ export default function CartScreen() {
   const isRetailLike = resolvedType === 'shop' || resolvedType === 'pharmacy';
 
   const { data: customersResponse } = useQuery({
-    queryKey: ['customers', 'list', activeTenantId, activeShopId],
+    queryKey: ['customers', 'list', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => customerService.getCustomers({ limit: 50 }),
     enabled:
       !!activeTenantId &&
       isRetailLike &&
       customerModalVisible &&
-      (!shopContext?.isShopWorkspace || !!activeShopId),
+      scopeReady,
     staleTime: 5 * 60 * 1000,
     gcTime: 2 * 60 * 60 * 1000,
   });
@@ -222,8 +220,8 @@ export default function CartScreen() {
                 await Share.share({
                   message: formatSaleReceiptText({
                     ...receiptSale,
-                    shop: receiptSale?.shop ?? shopContext?.activeShop ?? undefined,
-                    studioLocation: receiptSale?.studioLocation ?? studioContext?.activeLocation ?? undefined,
+                    shop: receiptSale?.shop ?? activeShop ?? undefined,
+                    studioLocation: receiptSale?.studioLocation ?? activeStudioLocation ?? undefined,
                     tenantName: activeTenant?.name,
                   }),
                   title: `Receipt ${receiptSale?.saleNumber || ''}`.trim(),

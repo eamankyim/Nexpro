@@ -14,6 +14,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { ListEmptyState, EmptyStateActionButton, ListActionButton } from '@/components/ListEmptyState';
 import { useAuth } from '@/context/AuthContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -72,6 +73,7 @@ export default function JobsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ openJobId?: string }>();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
 
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
@@ -81,7 +83,7 @@ export default function JobsScreen() {
   const debouncedSearch = useDebounce(searchValue, 400);
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['jobs', activeTenantId, debouncedSearch],
+    queryKey: ['jobs', activeTenantId, activeShopId, activeStudioLocationId, debouncedSearch],
     queryFn: async () => {
       const params: { page?: number; limit?: number; search?: string } = {
         page: 1,
@@ -90,7 +92,7 @@ export default function JobsScreen() {
       };
       return jobService.getJobs(params);
     },
-    enabled: !!activeTenantId && isStudio && hasFeature('jobAutomation'),
+    enabled: !!activeTenantId && isStudio && hasFeature('jobAutomation') && scopeReady,
     staleTime: 2 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     retry: 2,

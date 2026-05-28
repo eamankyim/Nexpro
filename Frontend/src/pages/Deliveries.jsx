@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw, Loader2, Inbox } from 'lucide-react';
 import dayjs from 'dayjs';
 import deliveryService from '../services/deliveryService';
+import userService from '../services/userService';
 import { useAuth } from '../context/AuthContext';
 import { useSmartSearch } from '../context/SmartSearchContext';
 import { useDebounce } from '../hooks/useDebounce';
@@ -47,8 +48,15 @@ function rowKey(row) {
   return `${row.entityType}:${row.id}`;
 }
 
-function DeliveryStatusSelect({ row, loading, onChange }) {
+function DeliveryStatusSelect({ row, loading, onChange, isDriver = false }) {
   const value = row.deliveryStatus || '__none__';
+  const statusOptions = isDriver
+    ? row.deliveryStatus === 'ready_for_delivery'
+      ? ['out_for_delivery']
+      : row.deliveryStatus === 'out_for_delivery'
+        ? ['delivered']
+        : []
+    : DELIVERY_STATUS_ORDER;
   return (
     <Select
       value={value}
@@ -59,8 +67,8 @@ function DeliveryStatusSelect({ row, loading, onChange }) {
         <SelectValue placeholder="Delivery" />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__">Not set</SelectItem>
-        {DELIVERY_STATUS_ORDER.map((key) => (
+        {!isDriver && <SelectItem value="__none__">Not set</SelectItem>}
+        {statusOptions.map((key) => (
           <SelectItem key={key} value={key}>
             {DELIVERY_STATUS_LABELS[key]}
           </SelectItem>
@@ -71,7 +79,7 @@ function DeliveryStatusSelect({ row, loading, onChange }) {
 }
 
 export default function Deliveries() {
-  const { user, activeTenant } = useAuth();
+  const { user, activeTenant, isAdmin, isManager, isDriver } = useAuth();
   const queryClient = useQueryClient();
   const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { searchValue, setPageSearchConfig } = useSmartSearch();
@@ -126,6 +134,20 @@ export default function Deliveries() {
   }, [queryClient]);
 
   const rows = queueRes?.rows ?? [];
+
+  const { data: driverUsers = [] } = useQuery({
+    queryKey: ['delivery-drivers', tenantId],
+    queryFn: async () => {
+      const response = await userService.getAll({ role: 'driver', isActive: 'true', page: 1, limit: 100 });
+      const list = Array.isArray(response?.data)
+        ? response.data
+        : Array.isArray(response?.data?.data)
+          ? response.data.data
+          : [];
+      return list;
+    },
+    enabled: Boolean(tenantId) && !isDriver && (isAdmin || isManager),
+  });
 
   /** Studio-like workspaces: jobs only. Shop / pharmacy / other: sales (orders) only. */
   const tenantScopedRows = useMemo(() => {
@@ -242,6 +264,19 @@ export default function Deliveries() {
     mutation.mutate(updates);
   }, [selectedRows, mutation]);
 
+  const handleAssignDriver = useCallback(
+    (row, driverId) => {
+      mutation.mutate([
+        {
+          entityType: row.entityType,
+          id: row.id,
+          deliveryAssignedTo: driverId === '__none__' ? null : driverId,
+        },
+      ]);
+    },
+    [mutation]
+  );
+
   const clearSelection = useCallback(() => setSelected(new Set()), []);
 
   const welcomeMessage = useMemo(() => {
@@ -331,24 +366,24 @@ export default function Deliveries() {
               {scope === 'active' ? (
                 <>
                   <SelectItem value="all">All in queue</SelectItem>
-                  <SelectItem value="not_set">Not set yet</SelectItem>
+                  {!isDriver && <SelectItem value="not_set">Not set yet</SelectItem>}
                   <SelectItem value="ready_for_delivery">{DELIVERY_STATUS_LABELS.ready_for_delivery}</SelectItem>
                   <SelectItem value="out_for_delivery">{DELIVERY_STATUS_LABELS.out_for_delivery}</SelectItem>
-                  <SelectItem value="delivered">{DELIVERY_STATUS_LABELS.delivered}</SelectItem>
-                  <SelectItem value="returned">{DELIVERY_STATUS_LABELS.returned}</SelectItem>
+                  {!isDriver && <SelectItem value="delivered">{DELIVERY_STATUS_LABELS.delivered}</SelectItem>}
+                  {!isDriver && <SelectItem value="returned">{DELIVERY_STATUS_LABELS.returned}</SelectItem>}
                 </>
               ) : (
                 <>
                   <SelectItem value="all">All done</SelectItem>
                   <SelectItem value="delivered">{DELIVERY_STATUS_LABELS.delivered}</SelectItem>
-                  <SelectItem value="returned">{DELIVERY_STATUS_LABELS.returned}</SelectItem>
+                  {!isDriver && <SelectItem value="returned">{DELIVERY_STATUS_LABELS.returned}</SelectItem>}
                 </>
               )}
             </SelectContent>
           </Select>
         </div>
 
-        {scope === 'active' && someSelected && (
+        {!isDriver && scope === 'active' && someSelected && (
           <>
             <Button type="button" variant="outline" size="sm" onClick={clearSelection} className="h-9 shrink-0 border border-border">
               Clear selection
@@ -399,7 +434,7 @@ export default function Deliveries() {
             return (
               <Card key={k} className="border border-border">
                 <CardContent className="p-4 space-y-3">
-                  {scope === 'active' && (
+                  {!isDriver && scope === 'active' && (
                     <div className="flex items-center gap-2">
                       <Checkbox
                         checked={checked}
@@ -433,7 +468,26 @@ export default function Deliveries() {
                     row={row}
                     loading={updatingKey === k || mutation.isPending}
                     onChange={handleStatusChange}
+                    isDriver={isDriver}
                   />
+                  {!isDriver && (isAdmin || isManager) && scope === 'active' && (
+                    <Select
+                      value={row.deliveryAssignedTo || '__none__'}
+                      onValueChange={(v) => handleAssignDriver(row, v)}
+                    >
+                      <SelectTrigger className="h-9 w-full max-w-[220px] border border-border mt-2" aria-label="Assigned driver">
+                        <SelectValue placeholder="Assign driver" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">Unassigned</SelectItem>
+                        {driverUsers.map((driver) => (
+                          <SelectItem key={driver.id} value={driver.id}>
+                            {driver.name || driver.email}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </CardContent>
               </Card>
             );
@@ -444,7 +498,7 @@ export default function Deliveries() {
           <Table>
             <TableHeader>
               <TableRow className="border-b border-border hover:bg-transparent">
-                {scope === 'active' && (
+                {!isDriver && scope === 'active' && (
                   <TableHead className="w-10">
                     <Checkbox
                       checked={allVisibleSelected}
@@ -459,6 +513,9 @@ export default function Deliveries() {
                 <TableHead>Phone</TableHead>
                 <TableHead>Completed</TableHead>
                 <TableHead className="min-w-[200px]">Delivery</TableHead>
+                    {!isDriver && (isAdmin || isManager) && scope === 'active' && (
+                      <TableHead className="min-w-[220px]">Driver</TableHead>
+                    )}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -467,7 +524,7 @@ export default function Deliveries() {
                 const checked = selected.has(k);
                 return (
                   <TableRow key={k} className="border-b border-border">
-                    {scope === 'active' && (
+                    {!isDriver && scope === 'active' && (
                       <TableCell>
                         <Checkbox
                           checked={checked}
@@ -500,8 +557,29 @@ export default function Deliveries() {
                         row={row}
                         loading={updatingKey === k || mutation.isPending}
                         onChange={handleStatusChange}
+                        isDriver={isDriver}
                       />
                     </TableCell>
+                    {!isDriver && (isAdmin || isManager) && scope === 'active' && (
+                      <TableCell>
+                        <Select
+                          value={row.deliveryAssignedTo || '__none__'}
+                          onValueChange={(v) => handleAssignDriver(row, v)}
+                        >
+                          <SelectTrigger className="h-9 w-full max-w-[220px] border border-border" aria-label="Assigned driver">
+                            <SelectValue placeholder="Assign driver" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Unassigned</SelectItem>
+                            {driverUsers.map((driver) => (
+                              <SelectItem key={driver.id} value={driver.id}>
+                                {driver.name || driver.email}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                    )}
                   </TableRow>
                 );
               })}

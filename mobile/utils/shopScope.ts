@@ -7,6 +7,10 @@ export async function getActiveShopIdForScope(): Promise<string | null> {
   return AsyncStorage.getItem(STORAGE_KEYS.ACTIVE_SHOP_ID);
 }
 
+export async function getActiveStudioLocationIdForScope(): Promise<string | null> {
+  return AsyncStorage.getItem(STORAGE_KEYS.ACTIVE_STUDIO_LOCATION_ID);
+}
+
 export async function withActiveShopScope(
   params: ShopScopeParams = {}
 ): Promise<ShopScopeParams> {
@@ -15,8 +19,25 @@ export async function withActiveShopScope(
   return { ...params, shopId: activeShopId };
 }
 
+export async function withActiveWorkspaceScope(
+  params: ShopScopeParams = {}
+): Promise<ShopScopeParams> {
+  const [activeShopId, activeStudioLocationId] = await Promise.all([
+    getActiveShopIdForScope(),
+    getActiveStudioLocationIdForScope(),
+  ]);
+
+  return {
+    ...params,
+    ...(activeShopId && !params.shopId ? { shopId: activeShopId } : {}),
+    ...(activeStudioLocationId && !params.studioLocationId
+      ? { studioLocationId: activeStudioLocationId }
+      : {}),
+  };
+}
+
 export async function buildScopedQueryString(params: ShopScopeParams = {}): Promise<string> {
-  const scoped = await withActiveShopScope(params);
+  const scoped = await withActiveWorkspaceScope(params);
   const searchParams = new URLSearchParams();
   Object.entries(scoped).forEach(([key, value]) => {
     if (value === undefined || value === null || value === '') return;

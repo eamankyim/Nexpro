@@ -147,3 +147,46 @@ export async function refreshAfterTaskChange(queryClient: QueryClient) {
 export async function refreshAfterOrderChange(queryClient: QueryClient) {
   await refreshRelatedQueries(queryClient, [['orders'], ['sales'], ['dashboard']]);
 }
+
+/** List/query prefixes tied to shop or studio branch scope */
+const SCOPED_WORKSPACE_PREFIXES: QueryKeyPrefix[] = [
+  ['customers'],
+  ['customer'],
+  ['sales'],
+  ['sale'],
+  ['products'],
+  ['product'],
+  ['expenses'],
+  ['expense'],
+  ['dashboard'],
+  ['orders'],
+  ['jobs'],
+  ['job'],
+  ['quotes'],
+  ['quote'],
+  ['invoices'],
+  ['invoice'],
+  ['materials'],
+  ['material'],
+  ['leads'],
+  ['lead'],
+  ['deliveries-queue'],
+];
+
+/**
+ * Mark branch-scoped list data stale (shop/studio switch).
+ */
+export async function invalidateScopedWorkspaceData(queryClient: QueryClient) {
+  await invalidatePrefixes(queryClient, SCOPED_WORKSPACE_PREFIXES);
+}
+
+/**
+ * After shop or studio branch change: invalidate scoped lists and refetch mounted screens.
+ * Matches web ShopContext / StudioLocationContext behavior.
+ */
+export async function refreshAfterWorkspaceScopeChange(queryClient: QueryClient) {
+  await invalidateScopedWorkspaceData(queryClient);
+  await refetchActivePrefixes(queryClient, SCOPED_WORKSPACE_PREFIXES);
+  await queryClient.invalidateQueries({ queryKey: ['shops'] });
+  await queryClient.invalidateQueries({ queryKey: ['studio-locations'] });
+}

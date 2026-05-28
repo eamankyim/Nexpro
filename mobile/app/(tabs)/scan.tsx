@@ -17,7 +17,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AppIcon, type AppIconName } from '@/components/AppIcon';
 import { ListEmptyState, EmptyStateActionButton } from '@/components/ListEmptyState';
 import { useAuth } from '@/context/AuthContext';
-import { useShopOptional } from '@/context/ShopContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { useCart } from '@/context/CartContext';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { productService } from '@/services/productService';
@@ -57,8 +57,7 @@ export default function ScanScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
-  const shopContext = useShopOptional();
-  const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { items: cartItems, getItemCount, addItem, removeItem } = useCart();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const cartItemCount = getItemCount();
@@ -77,9 +76,9 @@ export default function ScanScreen() {
   const businessType = activeTenant?.businessType ?? 'printing_press';
   const isStudio = resolveBusinessType(businessType) === 'studio';
   const productQueriesEnabled =
-    !!activeTenantId && !isStudio && hasFeature('products') && (!shopContext?.isShopWorkspace || !!activeShopId);
+    !!activeTenantId && !isStudio && hasFeature('products') && scopeReady;
   const studioCustomerQueryEnabled =
-    !!activeTenantId && isStudio && hasFeature('crm');
+    !!activeTenantId && isStudio && hasFeature('crm') && scopeReady;
 
   const [searchQuery, setSearchQuery] = useState('');
   const [scannerVisible, setScannerVisible] = useState(false);
@@ -115,7 +114,7 @@ export default function ScanScreen() {
 
   // Fetch default product list (most frequent/popular products) when no search
   const { data: defaultProductsResponse, isLoading: loadingDefaultProducts } = useQuery({
-    queryKey: ['products', 'default', activeTenantId, activeShopId],
+    queryKey: ['products', 'default', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () =>
       productService.getProducts({
         limit: 30,
@@ -127,7 +126,7 @@ export default function ScanScreen() {
   });
 
   const { data: productsResponse, isLoading: loadingProducts } = useQuery({
-    queryKey: ['products', 'search', activeTenantId, activeShopId, debouncedSearch],
+    queryKey: ['products', 'search', activeTenantId, activeShopId, activeStudioLocationId, debouncedSearch],
     queryFn: () =>
       productService.getProducts({
         search: debouncedSearch || undefined,
@@ -144,13 +143,12 @@ export default function ScanScreen() {
   });
 
   const { data: barcodeResponse, isLoading: loadingBarcode, isError: barcodeError } = useQuery({
-    queryKey: ['product', 'barcode', activeTenantId, activeShopId, barcodeSearchCandidates],
+    queryKey: ['product', 'barcode', activeTenantId, activeShopId, activeStudioLocationId, barcodeSearchCandidates],
     queryFn: () => productService.getProductByBarcodeCandidates(barcodeSearchCandidates),
     enabled:
-      !!activeTenantId &&
+      productQueriesEnabled &&
       !!debouncedSearch &&
       debouncedSearch.length >= 2 &&
-      !isStudio &&
       !scannedProduct &&
       isLikelyBarcode &&
       barcodeSearchCandidates.length > 0,
@@ -159,7 +157,7 @@ export default function ScanScreen() {
   });
 
   const { data: customersResponse } = useQuery({
-    queryKey: ['customers', 'list', activeTenantId, activeShopId],
+    queryKey: ['customers', 'list', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => customerService.getCustomers({ limit: 50 }),
     enabled: studioCustomerQueryEnabled,
     // Customer list for dropdowns can be stale for 5 minutes

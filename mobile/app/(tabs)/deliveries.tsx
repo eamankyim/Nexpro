@@ -19,8 +19,9 @@ import { SEARCH_PLACEHOLDERS } from '@/constants/searchPlaceholders';
 import { useSmartSearch } from '@/context/SmartSearchContext';
 import { useRegisterPageSearch } from '@/hooks/useRegisterPageSearch';
 import { flatListStyleForEmpty, listContentStyleWhenEmpty, showListFilters } from '@/utils/listEmptyLayout';
-import { deliveryService } from '@/services/deliveryService';
+import { deliveryService, type DeliveryQueueRow } from '@/services/deliveryService';
 import { useAuth } from '@/context/AuthContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -37,28 +38,18 @@ import {
   getDeliveryStatusDisplayLabel,
 } from '@/utils/deliveryStatus';
 
-type QueueRow = {
-  entityType: 'job' | 'sale';
-  id: string;
-  reference?: string;
-  title?: string | null;
-  customerName?: string | null;
-  customerPhone?: string | null;
-  addressSummary?: string | null;
-  deliveryStatus?: string | null;
-  completedAt?: string;
-  total?: number | null;
-};
-
 export default function DeliveriesScreen() {
-  const { activeTenantId, activeTenant, hasFeature } = useAuth();
+  const { activeTenantId, activeTenant, hasFeature, isDriver } = useAuth();
+  const { activeShopId, activeStudioLocationId, scopeReady } = useWorkspaceScope();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, resolvedTheme } = useScreenColors();
   const queryClient = useQueryClient();
+  const [scope, setScope] = useState<'active' | 'done'>('active');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [pickerRow, setPickerRow] = useState<QueueRow | null>(null);
+  const [pickerRow, setPickerRow] = useState<DeliveryQueueRow | null>(null);
 
   const isStudioLike = resolveBusinessType(activeTenant?.businessType) === 'studio';
-  const isTerminalFilter = statusFilter === 'delivered' || statusFilter === 'returned';
+  const isTerminalFilter = isDriver ? scope === 'done' : statusFilter === 'delivered' || statusFilter === 'returned';
+  const deliveriesEnabled = hasFeature('deliveries') || isDriver;
 
   const { searchValue } = useSmartSearch();
   useRegisterPageSearch({
@@ -68,15 +59,15 @@ export default function DeliveriesScreen() {
   const debouncedSearch = useDebounce(searchValue, 400);
 
   const activeQuery = useQuery({
-    queryKey: ['deliveries-queue', 'active', activeTenantId],
+    queryKey: ['deliveries-queue', 'active', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => deliveryService.getQueue('active'),
-    enabled: !!activeTenantId && !isTerminalFilter && hasFeature('deliveries'),
+    enabled: !!activeTenantId && scopeReady && !isTerminalFilter && deliveriesEnabled,
   });
 
   const doneQuery = useQuery({
-    queryKey: ['deliveries-queue', 'done', activeTenantId],
+    queryKey: ['deliveries-queue', 'done', activeTenantId, activeShopId, activeStudioLocationId],
     queryFn: () => deliveryService.getQueue('done'),
-    enabled: !!activeTenantId && isTerminalFilter && hasFeature('deliveries'),
+    enabled: !!activeTenantId && scopeReady && isTerminalFilter && deliveriesEnabled,
   });
 
   const queueRes = isTerminalFilter ? doneQuery.data : activeQuery.data;
@@ -88,13 +79,27 @@ export default function DeliveriesScreen() {
     queryClient.invalidateQueries({ queryKey: ['deliveries-queue'] });
   }, [queryClient]);
 
-  const rows: QueueRow[] = useMemo(() => {
+  const rows: DeliveryQueueRow[] = useMemo(() => {
     const raw = queueRes?.data?.rows;
     if (!Array.isArray(raw)) return [];
     return isStudioLike ? raw.filter((r) => r.entityType === 'job') : raw.filter((r) => r.entityType === 'sale');
   }, [queueRes, isStudioLike]);
 
   const statusFilteredRows = useMemo(() => {
+    if (isDriver) {
+      if (scope === 'done') {
+        if (statusFilter === 'delivered') return rows.filter((r) => r.deliveryStatus === 'delivered');
+        return rows;
+      }
+      if (statusFilter === 'ready_for_delivery') {
+        return rows.filter((r) => r.deliveryStatus === 'ready_for_delivery');
+      }
+      if (statusFilter === 'out_for_delivery') {
+        return rows.filter((r) => r.deliveryStatus === 'out_for_delivery');
+      }
+      return rows;
+    }
+
     if (isTerminalFilter) {
       if (statusFilter === 'delivered') {
         return rows.filter((r) => r.deliveryStatus === 'delivered');
@@ -113,7 +118,7 @@ export default function DeliveriesScreen() {
       return rows.filter((r) => r.deliveryStatus === 'out_for_delivery');
     }
     return rows;
-  }, [rows, statusFilter, isTerminalFilter]);
+  }, [rows, statusFilter, isTerminalFilter, isDriver, scope]);
 
   const filtered = useMemo(() => {
     const q = debouncedSearch.trim().toLowerCase();
@@ -153,12 +158,18 @@ export default function DeliveriesScreen() {
   });
 
   const deliveryFilterOptions = useMemo(
-    () =>
-      DELIVERY_ACTIVE_FILTERS.map((f) => ({
+    () => {
+      const filters = isDriver
+        ? scope === 'done'
+          ? (['all', 'delivered'] as const)
+          : (['all', 'ready_for_delivery', 'out_for_delivery'] as const)
+        : DELIVERY_ACTIVE_FILTERS;
+      return filters.map((f) => ({
         value: f,
-        label: getDeliveryQueueFilterLabel('active', f),
-      })),
-    []
+        label: getDeliveryQueueFilterLabel(isDriver && scope === 'done' ? 'done' : 'active', f),
+      }));
+    },
+    [isDriver, scope]
   );
 
   const loadErrorMessage = useMemo(
@@ -166,12 +177,14 @@ export default function DeliveriesScreen() {
     [queryError]
   );
 
-  const renderRow = ({ item }: { item: QueueRow }) => {
+  const renderRow = ({ item }: { item: DeliveryQueueRow }) => {
     const label = getDeliveryStatusDisplayLabel(item.deliveryStatus);
     const statusColors = getDeliveryStatusColors(item.deliveryStatus);
     const unset = !item.deliveryStatus;
     const pillText = unset && resolvedTheme === 'dark' ? mutedColor : statusColors.text;
     const pillBorder = unset && resolvedTheme === 'dark' ? borderColor : statusColors.border;
+    const canStart = isDriver && item.deliveryStatus === 'ready_for_delivery';
+    const canComplete = isDriver && item.deliveryStatus === 'out_for_delivery';
 
     return (
       <View style={[styles.card, { backgroundColor: cardBg, borderColor }]}>
@@ -206,22 +219,82 @@ export default function DeliveriesScreen() {
             {item.addressSummary}
           </Text>
         ) : null}
-        <Pressable
-          onPress={() => setPickerRow(item)}
-          style={({ pressed }) => [
-            styles.statusSelect,
-            {
-              borderColor: pillBorder,
-              backgroundColor: unset ? cardBg : statusColors.bg,
-              opacity: pressed ? 0.88 : 1,
-            },
-          ]}
-        >
-          <Text style={[styles.statusSelectText, { color: pillText }]} numberOfLines={1}>
-            {label}
-          </Text>
-          <AppIcon name="chevron-down" size={16} color={pillText} />
-        </Pressable>
+        {!isDriver ? (
+          <Pressable
+            onPress={() => setPickerRow(item)}
+            style={({ pressed }) => [
+              styles.statusSelect,
+              {
+                borderColor: pillBorder,
+                backgroundColor: unset ? cardBg : statusColors.bg,
+                opacity: pressed ? 0.88 : 1,
+              },
+            ]}
+          >
+            <Text style={[styles.statusSelectText, { color: pillText }]} numberOfLines={1}>
+              {label}
+            </Text>
+            <AppIcon name="chevron-down" size={16} color={pillText} />
+          </Pressable>
+        ) : canStart || canComplete ? (
+          <>
+            <View
+              style={[
+                styles.statusSelect,
+                {
+                  borderColor: pillBorder,
+                  backgroundColor: unset ? cardBg : statusColors.bg,
+                },
+              ]}
+            >
+              <Text style={[styles.statusSelectText, { color: pillText }]} numberOfLines={1}>
+                {label}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => {
+                patchMutation.mutate([
+                  {
+                    entityType: item.entityType,
+                    id: item.id,
+                    deliveryStatus: canStart ? 'out_for_delivery' : 'delivered',
+                  },
+                ]);
+              }}
+              disabled={patchMutation.isPending}
+              style={({ pressed }) => [
+                styles.primaryAction,
+                { backgroundColor: colors.tint },
+                (pressed || patchMutation.isPending) && styles.actionPressed,
+              ]}
+            >
+              {patchMutation.isPending ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <AppIcon name={canStart ? 'truck' : 'check'} size={16} color="#fff" />
+                  <Text style={styles.primaryActionText}>
+                    {canStart ? 'Start delivery' : 'Mark delivered'}
+                  </Text>
+                </>
+              )}
+            </Pressable>
+          </>
+        ) : (
+          <View
+            style={[
+              styles.statusSelect,
+              {
+                borderColor: pillBorder,
+                backgroundColor: unset ? cardBg : statusColors.bg,
+              },
+            ]}
+          >
+            <Text style={[styles.statusSelectText, { color: pillText }]} numberOfLines={1}>
+              {label}
+            </Text>
+          </View>
+        )}
       </View>
     );
   };
@@ -236,16 +309,62 @@ export default function DeliveriesScreen() {
     ? 'Try another term in the search box at the top of the page.'
     : filtersExcludeAll
       ? 'Change the delivery status filter above.'
-      : isStudioLike
+      : isDriver
+        ? scope === 'active'
+          ? 'Assigned deliveries that are ready or already out for delivery will appear here.'
+          : 'Deliveries you completed recently will appear here.'
+        : isStudioLike
         ? 'When jobs are completed, they appear here so you can set delivery status.'
         : 'When sales are completed, they appear here so you can set delivery status.';
 
-  if (!hasFeature('deliveries')) {
+  if (!deliveriesEnabled) {
     return <FeatureAccessDenied message="Deliveries are not enabled for this workspace." />;
   }
 
   return (
     <ScreenShell style={styles.container}>
+      {isDriver ? (
+        <View style={[styles.driverHero, { backgroundColor: cardBg, borderColor }]}>
+          <View style={styles.driverHeroIcon}>
+            <AppIcon name="truck" size={22} color={colors.tint} />
+          </View>
+          <View style={styles.driverHeroCopy}>
+            <Text style={[styles.driverHeroTitle, { color: textColor }]}>My deliveries</Text>
+            <Text style={[styles.driverHeroSubtitle, { color: mutedColor }]}>
+              Start assigned deliveries, mark them delivered, and review completed work.
+            </Text>
+          </View>
+        </View>
+      ) : null}
+
+      {isDriver ? (
+        <View style={[styles.scopeTabs, { backgroundColor: cardBg, borderColor }]}>
+          {[
+            { value: 'active' as const, label: 'My Deliveries' },
+            { value: 'done' as const, label: 'Completed' },
+          ].map((tab) => {
+            const selected = scope === tab.value;
+            return (
+              <Pressable
+                key={tab.value}
+                onPress={() => {
+                  setScope(tab.value);
+                  setStatusFilter('all');
+                }}
+                style={[
+                  styles.scopeTab,
+                  selected && { backgroundColor: colors.tint },
+                ]}
+              >
+                <Text style={[styles.scopeTabText, { color: selected ? '#fff' : textColor }]}>
+                  {tab.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+
       {showListFilters(isLoading, isError, rows.length, hasActiveFilter) && (
         <FilterChipRow
           options={deliveryFilterOptions}
@@ -281,6 +400,7 @@ export default function DeliveriesScreen() {
         />
       )}
 
+      {!isDriver && (
       <Modal visible={!!pickerRow} transparent animationType="fade">
         <Pressable style={styles.modalBackdrop} onPress={() => setPickerRow(null)}>
           <View style={[styles.modalCard, { backgroundColor: cardBg, borderColor }]}>
@@ -325,12 +445,53 @@ export default function DeliveriesScreen() {
           </View>
         </Pressable>
       </Modal>
+      )}
     </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  driverHero: {
+    marginHorizontal: 12,
+    marginTop: 12,
+    marginBottom: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  driverHeroIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(22, 101, 52, 0.1)',
+  },
+  driverHeroCopy: { flex: 1 },
+  driverHeroTitle: { fontSize: 18, fontWeight: '800' },
+  driverHeroSubtitle: { fontSize: 13, lineHeight: 18, marginTop: 2 },
+  scopeTabs: {
+    marginHorizontal: 12,
+    marginBottom: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    padding: 4,
+    flexDirection: 'row',
+    gap: 4,
+  },
+  scopeTab: {
+    flex: 1,
+    minHeight: 40,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  scopeTabText: { fontSize: 13, fontWeight: '700' },
   filterRow: { paddingHorizontal: 12, paddingTop: 8 },
   filterLabel: { fontSize: 12, fontWeight: '600' },
   chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, borderWidth: 1 },
@@ -359,6 +520,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   statusSelectText: { fontSize: 14, fontWeight: '600', flex: 1 },
+  primaryAction: {
+    minHeight: 44,
+    borderRadius: 10,
+    marginTop: 10,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  primaryActionText: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  actionPressed: { opacity: 0.85 },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', padding: 20 },
   modalCard: { borderRadius: 12, borderWidth: 1, overflow: 'hidden' },
   modalTitle: { fontSize: 18, fontWeight: '700', padding: 14 },

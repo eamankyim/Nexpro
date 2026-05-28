@@ -22,7 +22,7 @@ import { FORM_LABELS } from '@/constants/formLabels';
 import { productService } from '@/services/productService';
 import { useDebounce } from '@/hooks/useDebounce';
 import { useAuth } from '@/context/AuthContext';
-import { useShopOptional } from '@/context/ShopContext';
+import { useWorkspaceScope } from '@/hooks/useWorkspaceScope';
 import { FeatureAccessDenied } from '@/components/FeatureAccessDenied';
 import { useScreenColors } from '@/hooks/useScreenColors';
 import { ScreenShell } from '@/components/ScreenShell';
@@ -59,8 +59,7 @@ export default function ProductsScreen() {
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const queryClient = useQueryClient();
   const { activeTenant, activeTenantId, hasFeature } = useAuth();
-  const shopContext = useShopOptional();
-  const activeShopId = shopContext?.activeShopId ?? null;
+  const { activeShopId, activeStudioLocationId, isShopWorkspace, scopeReady } = useWorkspaceScope();
   const resolvedType = resolveBusinessType(activeTenant?.businessType);
   const isShop = resolvedType === 'shop';
   const isPharmacy = resolvedType === 'pharmacy';
@@ -93,7 +92,7 @@ export default function ProductsScreen() {
   const debouncedSearch = useDebounce(searchValue, 400);
 
   const { data: response, isLoading, refetch, isRefetching, error, isError } = useQuery({
-    queryKey: ['products', activeTenantId, activeShopId, debouncedSearch],
+    queryKey: ['products', activeTenantId, activeShopId, activeStudioLocationId, debouncedSearch],
     queryFn: () =>
       productService.getProducts({
         page: 1,
@@ -101,11 +100,7 @@ export default function ProductsScreen() {
         search: debouncedSearch || undefined,
         isActive: true,
       }),
-    enabled:
-      !!activeTenantId &&
-      isRetailLike &&
-      hasFeature('products') &&
-      (!shopContext?.isShopWorkspace || !!activeShopId),
+    enabled: !!activeTenantId && isRetailLike && hasFeature('products') && scopeReady,
     staleTime: QUERY_STALE.LIST,
     gcTime: 2 * 60 * 60 * 1000,
   });
@@ -281,7 +276,7 @@ export default function ProductsScreen() {
     );
   }
 
-  const awaitingShop = shopContext?.isShopWorkspace && !activeShopId;
+  const awaitingShop = isShopWorkspace && !scopeReady;
 
   const addFormImageUri = useMemo(() => {
     if (imagePreviewUri) return imagePreviewUri;

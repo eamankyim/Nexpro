@@ -12,7 +12,7 @@ import {
 } from '@/utils/introOnboarding';
 
 export default function Index() {
-  const { user, loading, sessionSyncing, activeTenant, wasInvited, suppressAppGuidance } = useAuth();
+  const { user, loading, sessionSyncing, activeTenant, wasInvited, suppressAppGuidance, isDriver } = useAuth();
 
   useEffect(() => {
     if (loading || sessionSyncing) {
@@ -26,6 +26,12 @@ export default function Index() {
       if (!user) {
         logger.info('Index', 'No user, redirecting to login');
         router.replace('/login');
+        return;
+      }
+
+      if (isDriver) {
+        logger.info('Index', 'Driver user, redirecting to deliveries');
+        router.replace('/(tabs)/deliveries');
         return;
       }
 
@@ -64,7 +70,7 @@ export default function Index() {
     return () => {
       cancelled = true;
     };
-  }, [user, loading, sessionSyncing, activeTenant, wasInvited, suppressAppGuidance]);
+  }, [user, loading, sessionSyncing, activeTenant, wasInvited, suppressAppGuidance, isDriver]);
 
   return (
     <View style={styles.container}>

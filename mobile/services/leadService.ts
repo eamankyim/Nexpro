@@ -1,4 +1,5 @@
 import { api } from './api';
+import { buildScopedQueryString } from '@/utils/shopScope';
 
 export type LeadListParams = {
   page?: number;
@@ -13,12 +14,10 @@ export type LeadListParams = {
 
 export const leadService = {
   getAll: async (params: LeadListParams = {}) => {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value === undefined || value === null || value === '' || value === 'all') return;
-      searchParams.append(key, String(value));
-    });
-    const query = searchParams.toString();
+    const filteredParams = Object.fromEntries(
+      Object.entries(params).filter(([, value]) => value !== 'all')
+    );
+    const query = await buildScopedQueryString(filteredParams);
     const res = await api.get(query ? `/leads?${query}` : '/leads');
     return res.data;
   },
@@ -29,12 +28,14 @@ export const leadService = {
   },
 
   create: async (payload: Record<string, unknown>) => {
-    const res = await api.post('/leads', payload);
+    const query = await buildScopedQueryString({});
+    const res = await api.post(query ? `/leads?${query}` : '/leads', payload);
     return res.data;
   },
 
   update: async (id: string, payload: Record<string, unknown>) => {
-    const res = await api.put(`/leads/${id}`, payload);
+    const query = await buildScopedQueryString({});
+    const res = await api.put(query ? `/leads/${id}?${query}` : `/leads/${id}`, payload);
     return res.data;
   },
 
