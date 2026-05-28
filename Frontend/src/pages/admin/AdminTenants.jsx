@@ -148,6 +148,7 @@ const AdminTenants = () => {
   const [manualPaymentForm, setManualPaymentForm] = useState({
     plan: 'starter',
     billingPeriod: 'monthly',
+    enterpriseTier: 'business',
     notes: '',
   });
 
@@ -402,7 +403,11 @@ const AdminTenants = () => {
     if (!selectedTenant?.id) return;
     setManualPaymentSaving(true);
     try {
-      await adminService.createTenantSubscriptionPayment(selectedTenant.id, manualPaymentForm);
+      const normalizedPlan = normalizePlanId(manualPaymentForm.plan);
+      await adminService.createTenantSubscriptionPayment(selectedTenant.id, {
+        ...manualPaymentForm,
+        enterpriseTier: normalizedPlan === 'enterprise' ? manualPaymentForm.enterpriseTier : null,
+      });
       showSuccess('Subscription payment recorded');
       await fetchTenantSubscriptionPayments(selectedTenant.id);
       await fetchTenantDetail(selectedTenant.id);
@@ -1147,7 +1152,13 @@ const AdminTenants = () => {
                           <Select
                             value={manualPaymentForm.plan}
                             onValueChange={(value) =>
-                              setManualPaymentForm((prev) => ({ ...prev, plan: value }))
+                              setManualPaymentForm((prev) => ({
+                                ...prev,
+                                plan: value,
+                                enterpriseTier: normalizePlanId(value) === 'enterprise'
+                                  ? prev.enterpriseTier || 'business'
+                                  : prev.enterpriseTier,
+                              }))
                             }
                           >
                             <SelectTrigger>
@@ -1178,6 +1189,31 @@ const AdminTenants = () => {
                           </Select>
                         </div>
                       </div>
+                      {normalizePlanId(manualPaymentForm.plan) === 'enterprise' && (
+                        <div className="space-y-1.5">
+                          <Label>Enterprise tier</Label>
+                          <Select
+                            value={manualPaymentForm.enterpriseTier || 'business'}
+                            onValueChange={(value) =>
+                              setManualPaymentForm((prev) => ({ ...prev, enterpriseTier: value }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select enterprise tier" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ENTERPRISE_TIER_OPTIONS.map((tier) => (
+                                <SelectItem key={tier.id} value={tier.id}>
+                                  {tier.name} ({tier.seatLimit} users, {tier.storageLimitGB} GB)
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">
+                            This also sets the tenant&apos;s Enterprise limits after payment is recorded.
+                          </p>
+                        </div>
+                      )}
                       <div className="space-y-1.5">
                         <Label htmlFor="manual-payment-notes">Notes (optional)</Label>
                         <Input

@@ -724,6 +724,7 @@ module.exports = {
   Tenant,
   UserTenant,
   SubscriptionPlan,
+  SubscriptionPayment,
   CustomDropdownOption,
   SabitoTenantMapping,
   // Shop Management

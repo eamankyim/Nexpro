@@ -985,18 +985,28 @@ exports.getTenantSubscriptionPayments = async (req, res, next) => {
 
 exports.createTenantSubscriptionPayment = async (req, res, next) => {
   try {
-    const tenant = await Tenant.findByPk(req.params.id, { attributes: ['id'] });
+    const tenant = await Tenant.findByPk(req.params.id);
     if (!tenant) {
       return res.status(404).json({ success: false, message: 'Tenant not found' });
     }
 
     const plan = normalizePlan(req.body?.plan);
     const billingPeriod = normalizeBillingPeriod(req.body?.billingPeriod);
+    const enterpriseTier = req.body?.enterpriseTier;
     if (!PAID_PLANS.has(plan)) {
       return res.status(400).json({
         success: false,
         message: 'plan must be starter, professional, or enterprise',
       });
+    }
+    if (plan === 'enterprise') {
+      const tierKey = String(enterpriseTier || '').toLowerCase();
+      if (!ENTERPRISE_TIER_IDS.includes(tierKey)) {
+        return res.status(400).json({
+          success: false,
+          message: `enterpriseTier must be one of: ${ENTERPRISE_TIER_IDS.join(', ')}`,
+        });
+      }
     }
 
     const activation = await recordSubscriptionPaymentAndActivate({
@@ -1011,8 +1021,23 @@ exports.createTenantSubscriptionPayment = async (req, res, next) => {
       notes: req.body?.notes || null,
       periodStart: req.body?.periodStart,
       periodEnd: req.body?.periodEnd,
-      metadata: { source: 'admin_manual' },
+      metadata: {
+        source: 'admin_manual',
+        enterpriseTier: plan === 'enterprise' ? String(enterpriseTier).toLowerCase() : null,
+      },
     });
+
+    if (plan === 'enterprise') {
+      const metadata = tenant.metadata && typeof tenant.metadata === 'object' ? { ...tenant.metadata } : {};
+      const entitlements = metadata.entitlements && typeof metadata.entitlements === 'object'
+        ? { ...metadata.entitlements }
+        : {};
+      entitlements.enterpriseTier = String(enterpriseTier).toLowerCase();
+      entitlements.updatedAt = new Date().toISOString();
+      entitlements.updatedBy = req.user?.id || null;
+      metadata.entitlements = entitlements;
+      await tenant.update({ metadata });
+    }
 
     const billing = toBillingPayload(await resolveBillingStatus(tenant.id));
 
