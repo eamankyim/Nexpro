@@ -8,11 +8,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { useDebounce } from '../../hooks/useDebounce';
 import { useResponsive } from '../../hooks/useResponsive';
 import adminService from '../../services/adminService';
+import { ENTERPRISE_TIER_OPTIONS } from '../../constants/enterpriseTiers';
 import StatusChip from '../../components/StatusChip';
 import { useSmartSearch } from '../../context/SmartSearchContext';
 import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
 import { SEARCH_PLACEHOLDERS, DEBOUNCE_DELAYS } from '../../constants';
 import { formatInteger } from '../../utils/formatNumber';
+import { formatStorageAmount, formatStoragePercentage } from '../../utils/storageFormat';
 import { showSuccess, showError, handleApiError } from '../../utils/toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -130,6 +132,7 @@ const AdminTenants = () => {
     accessState: 'active',
     note: '',
     featureOverrides: {},
+    enterpriseTier: 'business',
   });
   const [tenantDetailTab, setTenantDetailTab] = useState('overview');
   const [supportAccessOpen, setSupportAccessOpen] = useState(false);
@@ -252,6 +255,7 @@ const AdminTenants = () => {
           accessState: tenantData.accessControl?.accessState || 'active',
           note: tenantData.accessControl?.note || '',
           featureOverrides: tenantData.accessControl?.featureOverrides || {},
+          enterpriseTier: tenantData.metadata?.entitlements?.enterpriseTier || 'business',
         });
         setDrawerVisible(true);
       }
@@ -464,6 +468,8 @@ const AdminTenants = () => {
         accessState: accessForm.accessState,
         featureOverrides: accessForm.featureOverrides || {},
         note: accessForm.note || '',
+        enterpriseTier:
+          normalizePlanId(accessForm.plan) === 'enterprise' ? accessForm.enterpriseTier : null,
       };
       await adminService.updateTenantAccess(selectedTenant.id, payload);
       showSuccess('Tenant access updated');
@@ -933,6 +939,46 @@ const AdminTenants = () => {
               </div>
 
               <div>
+                <h4 className="font-semibold text-foreground mb-2">Usage &amp; limits</h4>
+                <Descriptions column={1}>
+                  <DescriptionItem label="Team seats">
+                    {selectedTenant.seatUsage ? (
+                      <span>
+                        {selectedTenant.seatUsage.current}
+                        {selectedTenant.seatUsage.isUnlimited
+                          ? ' / unlimited'
+                          : ` / ${selectedTenant.seatUsage.limit}`}
+                        {selectedTenant.seatUsage.isAtLimit && (
+                          <Badge variant="destructive" className="ml-2">At limit</Badge>
+                        )}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </DescriptionItem>
+                  <DescriptionItem label="Storage">
+                    {selectedTenant.storageUsage ? (
+                      <span>
+                        {selectedTenant.storageUsage.isUnlimited
+                          ? `${formatStorageAmount({ mb: selectedTenant.storageUsage.currentMB, gb: selectedTenant.storageUsage.currentGB })} (unlimited plan)`
+                          : `${formatStorageAmount({ mb: selectedTenant.storageUsage.currentMB, gb: selectedTenant.storageUsage.currentGB })} / ${selectedTenant.storageUsage.limitGB} GB (${formatStoragePercentage(selectedTenant.storageUsage.percentageUsed, selectedTenant.storageUsage.currentMB)} used)`}
+                        {selectedTenant.storageUsage.isAtLimit && (
+                          <Badge variant="destructive" className="ml-2">At limit</Badge>
+                        )}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
+                  </DescriptionItem>
+                  {normalizePlanId(selectedTenant.plan) === 'enterprise' && (
+                    <DescriptionItem label="Enterprise tier">
+                      {selectedTenant.metadata?.entitlements?.enterpriseTier || '—'}
+                    </DescriptionItem>
+                  )}
+                </Descriptions>
+              </div>
+
+              <div>
                 <h4 className="font-semibold text-foreground mb-2">Metadata</h4>
                 <Descriptions column={1}>
                   <DescriptionItem label="Website">{selectedTenant.metadata?.website || '—'}</DescriptionItem>
@@ -1039,6 +1085,32 @@ const AdminTenants = () => {
                         </SelectContent>
                       </Select>
                     </div>
+
+                    {normalizePlanId(accessForm.plan) === 'enterprise' && (
+                      <div className="space-y-1.5">
+                        <Label>Enterprise tier</Label>
+                        <Select
+                          value={accessForm.enterpriseTier || 'business'}
+                          onValueChange={(value) =>
+                            setAccessForm((prev) => ({ ...prev, enterpriseTier: value }))
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select enterprise tier" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ENTERPRISE_TIER_OPTIONS.map((tier) => (
+                              <SelectItem key={tier.id} value={tier.id}>
+                                {tier.name} ({tier.seatLimit} users, {tier.storageLimitGB} GB)
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Sets seat and storage limits per ABS Enterprise Terms for this workspace.
+                        </p>
+                      </div>
+                    )}
 
                     <div className="space-y-1.5">
                       <Label>Access mode</Label>

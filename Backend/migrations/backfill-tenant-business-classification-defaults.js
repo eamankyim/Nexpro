@@ -35,6 +35,49 @@ const hasArg = (arg) => process.argv.includes(arg);
 
 const quoteSqlList = (values) => values.map((value) => sequelize.escape(value)).join(', ');
 
+/**
+ * Resolve PostgreSQL enum type for tenants.businessType (varies by environment).
+ * Sequelize may create enum_tenants_businessType; older migrations use business_type_enum.
+ */
+const getTenantBusinessTypeUdtName = async () => {
+  const [row] = await sequelize.query(
+    `
+    SELECT udt_name AS "udtName"
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'tenants'
+      AND column_name = 'businessType';
+    `,
+    { type: QueryTypes.SELECT }
+  );
+  return row?.udtName || null;
+};
+
+const ensureEnumValue = async (typeName, value) => {
+  if (!typeName || typeName === 'varchar' || typeName === 'text') {
+    return;
+  }
+  try {
+    await sequelize.query(`
+      ALTER TYPE "${typeName}" ADD VALUE IF NOT EXISTS '${value}';
+    `);
+  } catch (error) {
+    console.warn(
+      `[tenant-classification-backfill] Could not add enum value ${value} on ${typeName}:`,
+      error?.message || error
+    );
+  }
+};
+
+/** Cast string literal to tenants.businessType column type (enum or text). */
+const castBusinessType = (udtName, value) => {
+  const safe = String(value).replace(/'/g, "''");
+  if (!udtName || udtName === 'varchar' || udtName === 'text') {
+    return `'${safe}'`;
+  }
+  return `'${safe}'::"${udtName}"`;
+};
+
 const countRows = async () => {
   const [counts] = await sequelize.query(
     `
@@ -62,12 +105,13 @@ const backfillTenantBusinessClassificationDefaults = async (options = {}) => {
   console.log(`🏷️  Backfilling tenant business classification defaults (${dryRun ? 'dry run' : 'apply'})...`);
 
   try {
-    try {
-      await sequelize.query(`
-        ALTER TYPE "enum_tenants_businessType" ADD VALUE IF NOT EXISTS 'studio';
-      `);
-    } catch (error) {
-      console.warn('[tenant-classification-backfill] Could not ensure studio enum value:', error?.message || error);
+    const businessTypeUdt = await getTenantBusinessTypeUdtName();
+    console.log('[tenant-classification-backfill] tenants.businessType udt:', businessTypeUdt || '(non-enum)');
+
+    if (businessTypeUdt) {
+      for (const val of ['studio', 'pharmacy', 'mechanic', 'barber', 'salon']) {
+        await ensureEnumValue(businessTypeUdt, val);
+      }
     }
 
     const before = await countRows();
@@ -78,6 +122,10 @@ const backfillTenantBusinessClassificationDefaults = async (options = {}) => {
     }
 
     await sequelize.transaction(async (transaction) => {
+      const studioVal = castBusinessType(businessTypeUdt, 'studio');
+      const pharmacyVal = castBusinessType(businessTypeUdt, 'pharmacy');
+      const shopVal = castBusinessType(businessTypeUdt, 'shop');
+
       await sequelize.query(
         `
         UPDATE tenants
@@ -95,7 +143,7 @@ const backfillTenantBusinessClassificationDefaults = async (options = {}) => {
                 THEN jsonb_set(COALESCE(metadata, '{}'::jsonb), '{studioType}', to_jsonb("businessType"::text), true)
               ELSE metadata
             END,
-            "businessType" = 'studio'::"enum_tenants_businessType"
+            "businessType" = ${studioVal}
         WHERE "businessType"::text IN (${quoteSqlList(LEGACY_STUDIO_TYPES)});
         `,
         { transaction }
@@ -107,10 +155,10 @@ const backfillTenantBusinessClassificationDefaults = async (options = {}) => {
         SET "businessType" = CASE
           WHEN NULLIF(metadata->>'studioType', '') IS NOT NULL
             OR NULLIF(metadata->>'businessSubType', '') IN (${quoteSqlList(STUDIO_SUB_TYPES)})
-            THEN 'studio'::"enum_tenants_businessType"
+            THEN ${studioVal}
           WHEN NULLIF(metadata->>'businessSubType', '') IN (${quoteSqlList(PHARMACY_SUB_TYPES)})
-            THEN 'pharmacy'::"enum_tenants_businessType"
-          ELSE 'shop'::"enum_tenants_businessType"
+            THEN ${pharmacyVal}
+          ELSE ${shopVal}
         END
         WHERE "businessType" IS NULL;
         `,

@@ -1,4 +1,5 @@
 const { Tenant, SubscriptionPlan, Job } = require('../models');
+const { resolveEnterpriseLimits } = require('../config/enterpriseTiers');
 const fs = require('fs').promises;
 const path = require('path');
 
@@ -102,11 +103,21 @@ async function getTenantStorageLimit(tenantId) {
   });
 
   if (plan) {
+    if (tenant.plan === 'enterprise') {
+      const enterprise = resolveEnterpriseLimits(tenant, plan);
+      return {
+        limitMB: enterprise.storageLimitMB,
+        price100GB: plan.storagePrice100GB,
+        planName: enterprise.tierName || plan.name,
+        enterpriseTier: enterprise.tierId,
+        source: enterprise.source,
+      };
+    }
     return {
       limitMB: plan.storageLimitMB,
       price100GB: plan.storagePrice100GB,
       planName: plan.name,
-      source: 'database'
+      source: 'database',
     };
   }
 
@@ -115,7 +126,7 @@ async function getTenantStorageLimit(tenantId) {
     trial: { limitMB: 1024, price100GB: null },           // 1 GB
     starter: { limitMB: 10240, price100GB: 15 },          // 10 GB
     professional: { limitMB: 51200, price100GB: 12 },      // 50 GB
-    enterprise: { limitMB: null, price100GB: null },     // Unlimited
+    enterprise: { limitMB: 51200, price100GB: null },   // Business tier default when no DB row
     launch: { limitMB: 10240, price100GB: 15 },          // legacy → same as starter
     scale: { limitMB: 51200, price100GB: 12 }            // legacy → same as professional
   };

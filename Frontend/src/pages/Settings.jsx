@@ -16,6 +16,7 @@ import { useResponsive } from '../hooks/useResponsive';
 import { useHintMode } from '../context/HintModeContext';
 import { showSuccess, showError, showLoading } from '../utils/toast';
 import { numberInputValue, handleIntegerChange, integerOrEmptySchema } from '../utils/formUtils';
+import { formatStorageAmount, formatStoragePercentage } from '../utils/storageFormat';
 import inviteService from '../services/inviteService';
 import authService from '../services/authService';
 import PhoneNumberInput from '../components/PhoneNumberInput';
@@ -3235,7 +3236,9 @@ const Settings = () => {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Used</span>
-                  <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{parseFloat(storageUsage.currentGB || 0).toFixed(2)} GB</span>
+                  <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>
+                    {formatStorageAmount({ mb: storageUsage.currentMB, gb: storageUsage.currentGB })}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Total Limit</span>
@@ -3245,12 +3248,16 @@ const Settings = () => {
                   <>
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Available</span>
-                      <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{parseFloat(storageUsage.remainingGB || 0).toFixed(2)} GB</span>
+                      <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>
+                        {formatStorageAmount({ mb: storageUsage.remainingMB, gb: storageUsage.remainingGB, unit: 'gb', decimals: 3 })}
+                      </span>
                     </div>
                     <div className="space-y-1">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground" style={{ fontSize: '14px' }}>Storage Usage</span>
-                        <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>{storageUsage.currentGB} GB of {storageUsage.limitGB} GB ({storageUsage.percentageUsed}%)</span>
+                        <span className="font-bold text-foreground" style={{ fontSize: '14px' }}>
+                          {formatStorageAmount({ mb: storageUsage.currentMB, gb: storageUsage.currentGB })} of {storageUsage.limitGB} GB ({formatStoragePercentage(storageUsage.percentageUsed, storageUsage.currentMB)})
+                        </span>
                       </div>
                       <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
                         <div

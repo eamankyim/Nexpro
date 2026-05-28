@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { Upload as UploadIcon, Pencil, Trash2, Plus, RefreshCw, Loader2, Copy, XCircle } from 'lucide-react';
 import { showSuccess, showError } from '../../utils/toast';
 import { useResponsive } from '../../hooks/useResponsive';
@@ -50,6 +50,11 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { numberInputValue, handleIntegerChange } from '../../utils/formUtils';
+import {
+  ENTERPRISE_TIER_OPTIONS,
+  applyEnterpriseTierToLimits,
+  getEnterpriseTier,
+} from '../../constants/enterpriseTiers';
 import {
   Form,
   FormControl,
@@ -658,6 +663,7 @@ const AdminSettings = () => {
       seatLimit: '', seatPricePerAdditional: '', storageLimitMB: '', storagePrice100GB: '',
       highlights: '', marketingEnabled: true, marketingPerks: '', marketingPopular: false,
       marketingBadgeLabel: '', onboardingEnabled: true, onboardingSubtitle: '', onboardingIsDefault: false,
+      selectedEnterpriseTier: 'business',
     });
     setPlanModalVisible(true);
   };
@@ -687,11 +693,23 @@ const AdminSettings = () => {
       onboardingSubtitle: plan.onboarding?.subtitle,
       onboardingIsDefault: plan.onboarding?.isDefault,
       isActive: plan.isActive,
+      selectedEnterpriseTier: plan.metadata?.selectedEnterpriseTier || 'business',
       ...featureFlags,
     };
     planForm.reset(values);
     setPlanModalVisible(true);
   };
+
+  const watchedPlanId = useWatch({ control: planForm.control, name: 'planId' });
+  const watchedEnterpriseTier = useWatch({ control: planForm.control, name: 'selectedEnterpriseTier' });
+  const isEnterprisePlanForm = String(watchedPlanId || '').toLowerCase() === 'enterprise';
+
+  const handleEnterpriseTierChange = useCallback((tierId) => {
+    planForm.setValue('selectedEnterpriseTier', tierId);
+    const limits = applyEnterpriseTierToLimits(tierId);
+    planForm.setValue('seatLimit', limits.seatLimit);
+    planForm.setValue('storageLimitMB', limits.storageLimitMB);
+  }, [planForm]);
 
   const toggleModule = (moduleKey, checked) => {
     const module = modules.find(m => m.key === moduleKey);
@@ -766,6 +784,21 @@ const AdminSettings = () => {
         },
         isActive: values.isActive !== false,
       };
+
+      if (String(values.planId || '').toLowerCase() === 'enterprise') {
+        const tierId = values.selectedEnterpriseTier || 'business';
+        const tier = getEnterpriseTier(tierId);
+        planData.metadata = {
+          ...(editingPlan?.metadata || {}),
+          selectedEnterpriseTier: tierId,
+          enterpriseTiers: ENTERPRISE_TIER_OPTIONS.map((t) => t.id),
+          termsLabel: 'ABS Terms and Conditions for Enterprise',
+        };
+        if (tier) {
+          planData.seatLimit = tier.seatLimit;
+          planData.storageLimitMB = tier.storageLimitMB;
+        }
+      }
 
       if (editingPlan) {
         await adminService.updateSubscriptionPlan(editingPlan.id, planData);
@@ -1573,6 +1606,52 @@ const AdminSettings = () => {
                   </FormItem>
                 )}
               />
+
+              {isEnterprisePlanForm && (
+                <div className="rounded-lg border border-border p-4 space-y-3 bg-muted/30">
+                  <p className="font-semibold">Enterprise terms &amp; tier</p>
+                  <p className="text-sm text-muted-foreground">
+                    Default limits for the Enterprise plan template (ABS Terms — section 8). Per-tenant tier is set under Tenants → Access.
+                  </p>
+                  <FormField
+                    control={planForm.control}
+                    name="selectedEnterpriseTier"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Enterprise tier</FormLabel>
+                        <Select
+                          value={field.value || 'business'}
+                          onValueChange={(value) => {
+                            field.onChange(value);
+                            handleEnterpriseTierChange(value);
+                          }}
+                        >
+                          <FormControl>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select tier" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            {ENTERPRISE_TIER_OPTIONS.map((tier) => (
+                              <SelectItem key={tier.id} value={tier.id}>
+                                {tier.name} — GHS {tier.licenseFeeGhs.toLocaleString()} ({tier.seatLimit} users, {tier.storageLimitGB} GB)
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {getEnterpriseTier(watchedEnterpriseTier) && (
+                          <FormDescription>
+                            Cloud plan from year 2: GHS{' '}
+                            {getEnterpriseTier(watchedEnterpriseTier).cloudPlanAnnualGhs.toLocaleString()}/year ·{' '}
+                            {getEnterpriseTier(watchedEnterpriseTier).branchLimit} branches max
+                          </FormDescription>
+                        )}
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              )}
 
               <p className="font-semibold mt-4">Seat Limits</p>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

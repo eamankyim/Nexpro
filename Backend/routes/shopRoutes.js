@@ -14,6 +14,7 @@ const {
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
+const { checkStorageLimit } = require('../middleware/upload');
 
 const branchLogoUploader = multer({
   storage: multer.memoryStorage(),
@@ -44,6 +45,7 @@ router.route('/')
 router.post(
   '/:id/logo',
   authorize('admin', 'manager'),
+  checkStorageLimit,
   branchLogoUploader.single('file'),
   uploadShopLogo
 );

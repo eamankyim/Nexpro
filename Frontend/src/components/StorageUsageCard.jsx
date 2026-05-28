@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import DashboardStatsCard from './DashboardStatsCard';
+import { formatStorageAmount, formatStoragePercentage } from '../utils/storageFormat';
 
 /**
  * Reusable component to display storage usage and limits
@@ -62,8 +63,10 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
   }
 
   const {
+    currentMB,
     currentGB,
     limitGB,
+    remainingMB,
     remainingGB,
     percentageUsed,
     isUnlimited,
@@ -73,6 +76,10 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
     planName,
     price100GB
   } = storageUsage;
+  const usedLabel = formatStorageAmount({ mb: currentMB, gb: currentGB });
+  const limitLabel = `${limitGB} GB`;
+  const remainingLabel = formatStorageAmount({ mb: remainingMB, gb: remainingGB, unit: 'gb', decimals: 3 });
+  const percentageLabel = formatStoragePercentage(percentageUsed, currentMB);
 
   // Determine progress bar color
   const getProgressColor = () => {
@@ -117,20 +124,17 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
             <div className="grid grid-cols-3 gap-4 mb-6">
               <DashboardStatsCard
                 title="Used"
-                value={parseFloat(currentGB || 0).toFixed(2)}
-                suffix=" GB"
+                value={usedLabel}
                 prefix={<Database className="h-4 w-4 inline mr-1" />}
                 className={isAtLimit ? 'text-red-600' : 'text-green-600'}
               />
               <DashboardStatsCard
                 title="Total Limit"
-                value={limitGB}
-                suffix=" GB"
+                value={limitLabel}
               />
               <DashboardStatsCard
                 title="Available"
-                value={parseFloat(remainingGB || 0).toFixed(2)}
-                suffix=" GB"
+                value={remainingLabel}
                 className={parseFloat(remainingGB || 0) > 0 ? 'text-green-600' : 'text-red-600'}
               />
             </div>
@@ -139,7 +143,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
               <div className="flex justify-between mb-2 text-sm">
                 <span>Storage Usage</span>
                 <span>
-                  <strong>{currentGB} GB</strong> of <strong>{limitGB} GB</strong> ({percentageUsed}%)
+                  <strong>{usedLabel}</strong> of <strong>{limitLabel}</strong> ({percentageLabel})
                 </span>
               </div>
               <div className="relative h-4 w-full overflow-hidden rounded-full bg-secondary">
@@ -159,12 +163,12 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
                 <AlertDescription>
                   {price100GB ? (
                     <span>
-                      You've used {currentGB} GB of your {limitGB} GB limit. 
+                      You've used {usedLabel} of your {limitLabel} limit. 
                       Add more storage for <strong>₵ {price100GB} per 100GB</strong> or upgrade your plan.
                     </span>
                   ) : (
                     <span>
-                      You've used {currentGB} GB of your {limitGB} GB limit. 
+                      You've used {usedLabel} of your {limitLabel} limit. 
                       Please upgrade your plan for more storage.
                     </span>
                   )}
@@ -184,7 +188,7 @@ function StorageUsageCard({ style, showUpgradeButton = true }) {
               <Alert className="mb-4">
                 <AlertTitle>Storage Running Low</AlertTitle>
                 <AlertDescription>
-                  Only {remainingGB} GB remaining ({100 - (parseFloat(percentageUsed) || 0)}% available). Consider upgrading soon.
+                  Only {remainingLabel} remaining ({100 - (parseFloat(percentageUsed) || 0)}% available). Consider upgrading soon.
                 </AlertDescription>
               </Alert>
             )}

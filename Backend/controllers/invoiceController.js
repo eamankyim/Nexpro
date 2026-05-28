@@ -45,25 +45,25 @@ const {
   organizationToEmailCompany,
 } = require('../utils/documentOrganizationUtils');
 
-const branchManagerInclude = {
+const branchManagerInclude = () => ({
   model: User,
   as: 'manager',
   attributes: ['id', 'name', 'email'],
   required: false,
-};
+});
 
 const invoiceBranchIncludes = () => [
   {
     model: Shop,
     as: 'shop',
     required: false,
-    include: [branchManagerInclude],
+    include: [branchManagerInclude()],
   },
   {
     model: StudioLocation,
     as: 'studioLocation',
     required: false,
-    include: [branchManagerInclude],
+    include: [branchManagerInclude()],
   },
 ];
 
@@ -103,11 +103,11 @@ const resolveInvoiceOrganization = async (invoice) => {
   let studioLocation = invoice.studioLocation || null;
 
   if (!shop && invoice.shopId) {
-    shop = await Shop.findByPk(invoice.shopId, { include: [branchManagerInclude] });
+    shop = await Shop.findByPk(invoice.shopId, { include: [branchManagerInclude()] });
   }
   if (!studioLocation && invoice.studioLocationId) {
     studioLocation = await StudioLocation.findByPk(invoice.studioLocationId, {
-      include: [branchManagerInclude],
+      include: [branchManagerInclude()],
     });
   }
 

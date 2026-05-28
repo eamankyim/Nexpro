@@ -29,7 +29,7 @@ const { tenantContext } = require('../middleware/tenant');
 const { shopContext } = require('../middleware/shopContext');
 const { cacheMiddleware, generateProductListKey } = require('../middleware/cache');
 const { bulkOperationLimiter, exportLimiter } = require('../middleware/rateLimiter');
-const { productImageUploader, importFileUploader } = require('../middleware/upload');
+const { productImageUploader, importFileUploader, checkStorageLimit } = require('../middleware/upload');
 
 const router = express.Router();
 
@@ -66,7 +66,12 @@ router.route('/barcode/:barcode')
   .get(getProductByBarcode);
 
 router.route('/upload-image')
-  .post(authorize('admin', 'manager', 'staff'), productImageUploader.single('file'), uploadProductImage);
+  .post(
+    authorize('admin', 'manager', 'staff'),
+    checkStorageLimit,
+    productImageUploader.single('file'),
+    uploadProductImage
+  );
 
 router.route('/categories')
   .get(getProductCategories)

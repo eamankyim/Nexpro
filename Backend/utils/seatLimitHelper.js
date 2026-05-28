@@ -1,5 +1,6 @@
 const { Tenant, UserTenant, SubscriptionPlan } = require('../models');
 const { DEFAULT_PLAN_SEAT_LIMITS } = require('../config/features');
+const { resolveEnterpriseLimits } = require('../config/enterpriseTiers');
 
 /**
  * Get current seat usage for a tenant
@@ -31,11 +32,21 @@ async function getTenantSeatLimit(tenantId) {
   });
 
   if (plan) {
+    if (tenant.plan === 'enterprise') {
+      const enterprise = resolveEnterpriseLimits(tenant, plan);
+      return {
+        limit: enterprise.seatLimit,
+        pricePerAdditional: plan.seatPricePerAdditional,
+        planName: enterprise.tierName || plan.name,
+        enterpriseTier: enterprise.tierId,
+        source: enterprise.source,
+      };
+    }
     return {
       limit: plan.seatLimit,
       pricePerAdditional: plan.seatPricePerAdditional,
       planName: plan.name,
-      source: 'database'
+      source: 'database',
     };
   }
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDebounce } from '../hooks/useDebounce';
 import { useResponsive } from '../hooks/useResponsive';
 import { useSmartSearch } from '../context/SmartSearchContext';
@@ -63,6 +64,7 @@ import {
   Settings,
   Upload as UploadIcon,
   Unlock,
+  Rocket,
   Mail,
   Phone,
   Calendar,
@@ -78,6 +80,7 @@ import userService from '../services/userService';
 import inviteService from '../services/inviteService';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import SeatUsageCard from '../components/SeatUsageCard';
 import { useStudioLocationOptional } from '../context/StudioLocationContext';
 import { useShopOptional } from '../context/ShopContext';
 import shopService from '../services/shopService';
@@ -117,6 +120,7 @@ import StatusChip from '../components/StatusChip';
 import { resolveImageUrl } from '../utils/fileUtils';
 
 const Users = () => {
+  const navigate = useNavigate();
   const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
   const { isMobile } = useResponsive();
@@ -139,6 +143,9 @@ const Users = () => {
   const [viewingUser, setViewingUser] = useState(null);
   const [profileModalVisible, setProfileModalVisible] = useState(false);
   const [inviteModalVisible, setInviteModalVisible] = useState(false);
+  const [seatLimitDialogOpen, setSeatLimitDialogOpen] = useState(false);
+  const [seatUsage, setSeatUsage] = useState(null);
+  const [seatUsageLoading, setSeatUsageLoading] = useState(false);
   const [pendingInvites, setPendingInvites] = useState([]);
   const [loadingInvites, setLoadingInvites] = useState(false);
   const [revokingInviteId, setRevokingInviteId] = useState(null);
@@ -366,13 +373,41 @@ const Users = () => {
     };
   }, [users, pagination.total]);
 
-  const handleInviteUser = () => {
+  const fetchSeatUsage = useCallback(async () => {
+    if (!activeTenantId || !isManager) return;
+    try {
+      setSeatUsageLoading(true);
+      const response = await inviteService.getSeatUsage();
+      if (response?.success) {
+        setSeatUsage(response.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch seat usage:', error);
+    } finally {
+      setSeatUsageLoading(false);
+    }
+  }, [activeTenantId, isManager]);
+
+  useEffect(() => {
+    void fetchSeatUsage();
+  }, [fetchSeatUsage]);
+
+  const handleUpgradePlan = useCallback(() => {
+    setSeatLimitDialogOpen(false);
+    navigate('/settings?tab=subscription');
+  }, [navigate]);
+
+  const handleInviteUser = useCallback(() => {
+    if (seatUsage && !seatUsage.isUnlimited && !seatUsage.canAddMore) {
+      setSeatLimitDialogOpen(true);
+      return;
+    }
     inviteForm.reset({
       email: '',
       role: 'staff',
     });
     setInviteModalVisible(true);
-  };
+  }, [seatUsage, inviteForm]);
 
   const getInviteUrl = (token) => {
     return `${window.location.origin}/signup?token=${token}`;
@@ -450,12 +485,13 @@ const Users = () => {
       await userService.delete(id);
       showSuccess('User deleted successfully');
       await fetchUsers();
+      void fetchSeatUsage();
     } catch (error) {
       handleApiError(error, { context: 'delete user' });
     } finally {
       setDeletingUser(false);
     }
-  }, []);
+  }, [fetchSeatUsage]);
 
   const handleToggleStatus = useCallback(async (id) => {
     try {
@@ -463,12 +499,13 @@ const Users = () => {
       await userService.toggleStatus(id);
       showSuccess('User status updated successfully');
       await fetchUsers();
+      void fetchSeatUsage();
     } catch (error) {
       handleApiError(error, { context: 'update user status' });
     } finally {
       setTogglingStatus(null);
     }
-  }, []);
+  }, [fetchSeatUsage]);
 
   const onProfileSubmit = async (values) => {
     try {
@@ -490,8 +527,15 @@ const Users = () => {
       setInviteModalVisible(false);
       inviteForm.reset({ email: '', role: 'staff', studioLocationIds: [], shopIds: [] });
       await fetchPendingInvites();
+      void fetchSeatUsage();
       void pollInviteEmailStatusUntilSettled(invitedEmail);
     } catch (error) {
+      if (error?.response?.data?.code === 'SEAT_LIMIT_EXCEEDED') {
+        setInviteModalVisible(false);
+        setSeatLimitDialogOpen(true);
+        void fetchSeatUsage();
+        return;
+      }
       if (error?.response?.data?.code === 'EMAIL_VERIFICATION_REQUIRED') {
         showError(error?.response?.data?.message || 'Verify your email to invite team members.');
         return;
@@ -1132,6 +1176,48 @@ const Users = () => {
             : []),
         ] : []}
       />
+
+      {isManager && (
+        <SeatUsageCard
+          size="wide"
+          seatUsage={seatUsage}
+          loading={seatUsageLoading}
+          onUpgradePlan={handleUpgradePlan}
+        />
+      )}
+
+      <AlertDialog open={seatLimitDialogOpen} onOpenChange={setSeatLimitDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Seat limit reached</AlertDialogTitle>
+            <AlertDialogDescription>
+              {seatUsage?.planName ? (
+                <>
+                  Your <strong>{seatUsage.planName}</strong> plan includes{' '}
+                  <strong>
+                    {seatUsage.limit} seat{seatUsage.limit === 1 ? '' : 's'}
+                  </strong>
+                  . You have <strong>{seatUsage.current}</strong> active user
+                  {seatUsage.current === 1 ? '' : 's'}, so you cannot invite more team members until you
+                  upgrade your plan.
+                </>
+              ) : (
+                <>
+                  You have reached your plan&apos;s seat limit. Upgrade your plan to invite more team
+                  members.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleUpgradePlan}>
+              <Rocket className="h-4 w-4 mr-2" />
+              Upgrade Plan
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Invite User Dialog */}
       <Dialog open={inviteModalVisible} onOpenChange={(open) => {

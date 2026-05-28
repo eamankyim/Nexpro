@@ -16,6 +16,7 @@ const { tenantContext } = require('../middleware/tenant');
 const { studioLocationContext } = require('../middleware/studioLocationContext');
 const { exportLimiter } = require('../middleware/rateLimiter');
 const multer = require('multer');
+const { checkStorageLimit } = require('../middleware/upload');
 
 const router = express.Router();
 
@@ -47,6 +48,7 @@ const jobAttachmentUploader = multer({
 router.post(
   '/:id/attachments',
   authorize('admin', 'manager', 'staff'),
+  checkStorageLimit,
   jobAttachmentUploader.single('file'),
   uploadJobAttachment
 );

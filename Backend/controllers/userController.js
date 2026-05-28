@@ -2,6 +2,7 @@ const { User, UserTenant } = require('../models');
 const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateUserCache } = require('../middleware/cache');
+const { validateSeatLimit } = require('../utils/seatLimitHelper');
 
 // @desc    Get all users for the current tenant
 // @route   GET /api/users
@@ -126,6 +127,21 @@ exports.createUser = async (req, res, next) => {
         success: false,
         message: 'Tenant context is required'
       });
+    }
+
+    try {
+      await validateSeatLimit(req.tenantId);
+    } catch (error) {
+      if (error.code === 'SEAT_LIMIT_EXCEEDED') {
+        return res.status(403).json({
+          success: false,
+          message: error.message,
+          code: 'SEAT_LIMIT_EXCEEDED',
+          details: error.details,
+          upgradeRequired: true,
+        });
+      }
+      throw error;
     }
 
     const { password, ...userData } = req.body;

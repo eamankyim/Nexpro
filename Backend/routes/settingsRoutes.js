@@ -47,7 +47,7 @@ const {
 } = require('../controllers/settingsController');
 const { protect, authorize } = require('../middleware/auth');
 const { tenantContext } = require('../middleware/tenant');
-const { createUploader } = require('../middleware/upload');
+const { createUploader, checkStorageLimit } = require('../middleware/upload');
 
 const router = express.Router();
 
@@ -92,7 +92,7 @@ router
   .get(getProfile)
   .put(updateProfile);
 
-router.post('/profile/avatar', profileUploader.single('file'), uploadProfilePicture);
+router.post('/profile/avatar', checkStorageLimit, profileUploader.single('file'), uploadProfilePicture);
 router.post('/data-deletion-request', requestDataDeletion);
 
 router
@@ -103,6 +103,7 @@ router
 router.post(
   '/organization/logo',
   authorize('admin', 'manager'),
+  checkStorageLimit,
   organizationUploader.single('file'),
   uploadOrganizationLogo
 );

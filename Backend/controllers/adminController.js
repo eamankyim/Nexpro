@@ -31,6 +31,9 @@ const {
   deleteTenantData,
   deleteOrphanUsersWithoutTenants,
 } = require('../utils/deleteTenantData');
+const { ENTERPRISE_TIER_IDS } = require('../config/enterpriseTiers');
+const { getSeatUsageSummary } = require('../utils/seatLimitHelper');
+const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
 
 const PLAN_PRICING = {
   trial: 0,
@@ -748,6 +751,19 @@ exports.getTenantById = async (req, res, next) => {
       logContext: 'admin_tenant_detail',
     });
 
+    try {
+      tenantData.seatUsage = await getSeatUsageSummary(tenant.id);
+    } catch (seatErr) {
+      console.warn('[admin] seat usage summary failed:', seatErr?.message);
+      tenantData.seatUsage = null;
+    }
+    try {
+      tenantData.storageUsage = await getStorageUsageSummary(tenant.id);
+    } catch (storageErr) {
+      console.warn('[admin] storage usage summary failed:', storageErr?.message);
+      tenantData.storageUsage = null;
+    }
+
     res.status(200).json({
       success: true,
       data: tenantData
@@ -759,7 +775,7 @@ exports.getTenantById = async (req, res, next) => {
 
 exports.updateTenantAccess = async (req, res, next) => {
   try {
-    const { plan, accessState, featureOverrides, note } = req.body || {};
+    const { plan, accessState, featureOverrides, note, enterpriseTier } = req.body || {};
     const tenant = await Tenant.findByPk(req.params.id);
 
     if (!tenant) {
@@ -773,7 +789,8 @@ exports.updateTenantAccess = async (req, res, next) => {
       plan: tenant.plan,
       accessState: tenant?.metadata?.entitlements?.accessState || null,
       featureOverrides: tenant?.metadata?.entitlements?.featureOverrides || {},
-      note: tenant?.metadata?.entitlements?.note || ''
+      enterpriseTier: tenant?.metadata?.entitlements?.enterpriseTier || null,
+      note: tenant?.metadata?.entitlements?.note || '',
     };
 
     if (plan != null) {
@@ -822,6 +839,26 @@ exports.updateTenantAccess = async (req, res, next) => {
       entitlements.note = String(note).trim().slice(0, 500);
     }
 
+    const effectivePlan = tenant.plan;
+    if (enterpriseTier !== undefined) {
+      if (enterpriseTier === null || enterpriseTier === '') {
+        delete entitlements.enterpriseTier;
+      } else if (effectivePlan === 'enterprise') {
+        const tierKey = String(enterpriseTier).toLowerCase();
+        if (!ENTERPRISE_TIER_IDS.includes(tierKey)) {
+          return res.status(400).json({
+            success: false,
+            message: `Invalid enterprise tier. Expected one of: ${ENTERPRISE_TIER_IDS.join(', ')}`,
+          });
+        }
+        entitlements.enterpriseTier = tierKey;
+      } else {
+        delete entitlements.enterpriseTier;
+      }
+    } else if (effectivePlan !== 'enterprise') {
+      delete entitlements.enterpriseTier;
+    }
+
     entitlements.updatedAt = new Date().toISOString();
     entitlements.updatedBy = req.user?.id || null;
 
@@ -857,7 +894,8 @@ exports.updateTenantAccess = async (req, res, next) => {
       plan: tenant.plan,
       accessState: metadata?.entitlements?.accessState || null,
       featureOverrides: metadata?.entitlements?.featureOverrides || {},
-      note: metadata?.entitlements?.note || ''
+      enterpriseTier: metadata?.entitlements?.enterpriseTier || null,
+      note: metadata?.entitlements?.note || '',
     };
 
     await TenantAccessAudit.create({

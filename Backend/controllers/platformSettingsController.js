@@ -187,7 +187,11 @@ exports.createSubscriptionPlan = async (req, res, next) => {
       marketing,
       onboarding,
       isActive,
-      metadata
+      metadata,
+      seatLimit,
+      seatPricePerAdditional,
+      storageLimitMB,
+      storagePrice100GB,
     } = req.body;
 
     // Check if planId already exists
@@ -209,7 +213,18 @@ exports.createSubscriptionPlan = async (req, res, next) => {
       marketing: marketing || {},
       onboarding: onboarding || {},
       isActive: isActive !== undefined ? isActive : true,
-      metadata: metadata || {}
+      metadata: metadata || {},
+      seatLimit: seatLimit !== undefined && seatLimit !== '' ? Number(seatLimit) : null,
+      seatPricePerAdditional:
+        seatPricePerAdditional !== undefined && seatPricePerAdditional !== ''
+          ? Number(seatPricePerAdditional)
+          : null,
+      storageLimitMB:
+        storageLimitMB !== undefined && storageLimitMB !== '' ? Number(storageLimitMB) : null,
+      storagePrice100GB:
+        storagePrice100GB !== undefined && storagePrice100GB !== ''
+          ? Number(storagePrice100GB)
+          : null,
     });
 
     res.status(201).json({
@@ -248,7 +263,11 @@ exports.updateSubscriptionPlan = async (req, res, next) => {
       marketing,
       onboarding,
       isActive,
-      metadata
+      metadata,
+      seatLimit,
+      seatPricePerAdditional,
+      storageLimitMB,
+      storagePrice100GB,
     } = req.body;
 
     // If planId is being changed, check for duplicates
@@ -268,11 +287,35 @@ exports.updateSubscriptionPlan = async (req, res, next) => {
       name: name || plan.name,
       description: description !== undefined ? description : plan.description,
       price: price || plan.price,
-      highlights: highlights || plan.highlights,
+      highlights: highlights !== undefined ? highlights : plan.highlights,
       marketing: marketing || plan.marketing,
       onboarding: onboarding || plan.onboarding,
       isActive: isActive !== undefined ? isActive : plan.isActive,
-      metadata: metadata || plan.metadata
+      metadata: metadata !== undefined ? metadata : plan.metadata,
+      seatLimit:
+        seatLimit !== undefined
+          ? seatLimit === '' || seatLimit === null
+            ? null
+            : Number(seatLimit)
+          : plan.seatLimit,
+      seatPricePerAdditional:
+        seatPricePerAdditional !== undefined
+          ? seatPricePerAdditional === '' || seatPricePerAdditional === null
+            ? null
+            : Number(seatPricePerAdditional)
+          : plan.seatPricePerAdditional,
+      storageLimitMB:
+        storageLimitMB !== undefined
+          ? storageLimitMB === '' || storageLimitMB === null
+            ? null
+            : Number(storageLimitMB)
+          : plan.storageLimitMB,
+      storagePrice100GB:
+        storagePrice100GB !== undefined
+          ? storagePrice100GB === '' || storagePrice100GB === null
+            ? null
+            : Number(storagePrice100GB)
+          : plan.storagePrice100GB,
     });
 
     res.status(200).json({
