@@ -21,6 +21,7 @@ export function useWorkspaceScope() {
 
   const activeShopId = shop?.activeShopId ?? null;
   const activeStudioLocationId = studio?.activeStudioLocationId ?? null;
+  const activeStudioLocation = studio?.activeLocation ?? null;
   const isShopWorkspace = !!shop?.isShopWorkspace;
   const isStudioWorkspace = !!studio?.isStudioWorkspace;
 
@@ -35,6 +36,7 @@ export function useWorkspaceScope() {
     activeTenantId,
     activeShopId,
     activeStudioLocationId,
+    activeStudioLocation,
     isShopWorkspace,
     isStudioWorkspace,
     scopeReady,

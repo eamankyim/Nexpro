@@ -1,16 +1,18 @@
 import api from './api';
+import { buildScopedQueryString } from '../utils/shopScope';
 
 const jobService = {
   // Get job item categories (studio-type specific)
   getCategories: async () => {
-    const res = await api.get('/jobs/categories');
+    const queryString = buildScopedQueryString({});
+    const res = await api.get(queryString ? `/jobs/categories?${queryString}` : '/jobs/categories');
     return res ?? { data: [], materialTypes: [] };
   },
 
   // Get all jobs
   getAll: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    return await api.get(`/jobs?${queryString}`);
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/jobs?${queryString}` : '/jobs');
   },
 
   // Get single job

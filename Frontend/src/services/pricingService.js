@@ -1,10 +1,11 @@
 import api from './api';
+import { buildScopedQueryString } from '../utils/shopScope';
 
 const pricingService = {
   // Get all pricing templates
   getAll: async (params = {}) => {
-    const queryString = new URLSearchParams(params).toString();
-    return await api.get(`/pricing?${queryString}`);
+    const queryString = buildScopedQueryString(params);
+    return await api.get(queryString ? `/pricing?${queryString}` : '/pricing');
   },
 
   // Get single pricing template

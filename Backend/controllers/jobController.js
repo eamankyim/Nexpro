@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const { Job, Customer, User, Payment, Expense, JobItem, Invoice, Quote, JobStatusHistory, Setting } = require('../models');
+const { Job, Customer, User, Payment, Expense, JobItem, Invoice, Quote, JobStatusHistory, Setting, StudioLocation } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { getPagination } = require('../utils/paginationUtils');
@@ -513,8 +513,25 @@ exports.getJobCategories = async (req, res, next) => {
   try {
     const tenant = req.tenant || (req.tenantMembership && await req.tenantMembership.getTenant());
     const businessType = tenant?.businessType || 'printing_press';
-    const metadata = tenant?.metadata || {};
-    const studioType = metadata?.studioType || businessType;
+    const metadata = { ...(tenant?.metadata || {}) };
+    let studioType = metadata?.studioType || businessType;
+
+    if (req.studioLocationFilterId) {
+      const location = await StudioLocation.findOne({
+        where: {
+          id: req.studioLocationFilterId,
+          tenantId: req.tenantId,
+          isActive: true,
+        },
+        attributes: ['id', 'studioType'],
+      });
+      if (location?.studioType) {
+        studioType = location.studioType;
+        metadata.studioType = location.studioType;
+        delete metadata.businessSubType;
+      }
+    }
+
     const categories = getJobItemCategories(businessType, metadata);
     const materialTypes = ['printing_press', 'mechanic', 'barber', 'salon'].includes(studioType)
       ? getMaterialTypesForStudioType(studioType)

@@ -8,6 +8,7 @@ import pricingService from '../services/pricingService';
 import jobService from '../services/jobService';
 import customDropdownService from '../services/customDropdownService';
 import { useAuth } from '../context/AuthContext';
+import { useWorkspaceScope } from '../hooks/useWorkspaceScope';
 import { useResponsive } from '../hooks/useResponsive';
 import ActionColumn from '../components/ActionColumn';
 import DetailsDrawer from '../components/DetailsDrawer';
@@ -117,7 +118,7 @@ const Pricing = () => {
   const [filters, setFilters] = useState({ category: 'all', isActive: 'all' });
   const [tableViewMode, setTableViewMode] = useState('table');
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
-  const { isManager, isAdmin, activeTenantId } = useAuth();
+  const { isManager, isAdmin, activeTenant, activeTenantId } = useAuth();
   const { isMobile } = useResponsive();
   const [drawerVisible, setDrawerVisible] = useState(false);
   const [viewingTemplate, setViewingTemplate] = useState(null);
@@ -128,6 +129,11 @@ const Pricing = () => {
   const [refreshingTemplates, setRefreshingTemplates] = useState(false);
   const [savingCategory, setSavingCategory] = useState(false);
   const [deletingTemplate, setDeletingTemplate] = useState(null);
+  const { scopeReady, activeShopId, activeStudioLocationId, activeStudioLocation } = useWorkspaceScope();
+  const effectiveStudioType =
+    activeStudioLocation?.studioType ||
+    activeTenant?.metadata?.studioType ||
+    activeTenant?.businessType;
 
   const form = useForm({
     resolver: zodResolver(pricingTemplateSchema),
@@ -193,7 +199,7 @@ const Pricing = () => {
         setLoading(false);
       }
     }
-  }, [filters, pagination.current, pagination.pageSize]);
+  }, [filters, pagination.current, pagination.pageSize, activeShopId, activeStudioLocationId]);
 
   // Apply client-side filtering
   const filteredTemplates = useMemo(() => {
@@ -227,8 +233,9 @@ const Pricing = () => {
   }, [templates]);
 
   useEffect(() => {
+    if (!scopeReady) return;
     fetchTemplates();
-  }, [fetchTemplates, refreshTrigger]);
+  }, [scopeReady, fetchTemplates, refreshTrigger]);
 
   useEffect(() => {
     const loadCustomCategories = async () => {
@@ -243,9 +250,9 @@ const Pricing = () => {
   }, []);
 
   const { data: jobItemCategoriesApi = [] } = useQuery({
-    queryKey: ['jobs', 'categories', activeTenantId],
+    queryKey: ['jobs', 'categories', activeTenantId, activeStudioLocationId, effectiveStudioType],
     queryFn: () => jobService.getCategories(),
-    enabled: !!activeTenantId,
+    enabled: scopeReady,
     staleTime: 5 * 60 * 1000,
   });
 

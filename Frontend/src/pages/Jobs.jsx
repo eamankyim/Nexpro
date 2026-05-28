@@ -197,6 +197,7 @@ const Jobs = () => {
     scopeReady,
     activeShopId,
     activeStudioLocationId,
+    activeStudioLocation,
     isStudioWorkspace,
   } = useWorkspaceScope();
   const { isMobile } = useResponsive();
@@ -220,7 +221,14 @@ const Jobs = () => {
   const [jobDetailsLoading, setJobDetailsLoading] = useState(false);
   const [jobToDelete, setJobToDelete] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
-  const isSoftwareTenant = activeTenant?.metadata?.businessSubType === 'software_it_services';
+  const effectiveStudioType =
+    activeStudioLocation?.studioType ||
+    activeTenant?.metadata?.studioType ||
+    activeTenant?.businessType;
+  const effectiveBusinessSubType =
+    activeStudioLocation?.studioType ||
+    activeTenant?.metadata?.businessSubType;
+  const isSoftwareTenant = effectiveBusinessSubType === 'software_it_services';
   
   const form = useForm({
     resolver: zodResolver(jobSchema),
@@ -476,11 +484,12 @@ const Jobs = () => {
   });
 
   const { data: pricingTemplates = [], isLoading: templatesLoading } = useQuery({
-    queryKey: ['pricingTemplates', 'active'],
+    queryKey: ['pricingTemplates', 'active', activeTenantId, activeShopId, activeStudioLocationId, effectiveStudioType],
     queryFn: async () => {
       const response = await pricingService.getAll({ limit: 100, isActive: 'true' });
       return response.data || [];
     },
+    enabled: scopeReady,
     staleTime: 5 * 60 * 1000, // 5 minutes
     cacheTime: 10 * 60 * 1000, // 10 minutes
   });
@@ -515,9 +524,9 @@ const Jobs = () => {
   });
 
   const { data: jobItemCategoriesApi = [] } = useQuery({
-    queryKey: ['jobs', 'categories', activeTenantId],
+    queryKey: ['jobs', 'categories', activeTenantId, activeStudioLocationId, effectiveStudioType],
     queryFn: () => jobService.getCategories(),
-    enabled: !!activeTenantId,
+    enabled: scopeReady,
     staleTime: 5 * 60 * 1000,
   });
 
@@ -861,13 +870,13 @@ useEffect(() => {
       },
     });
     queryClient.prefetchQuery({
-      queryKey: ['pricingTemplates', 'active'],
+      queryKey: ['pricingTemplates', 'active', activeTenantId, activeShopId, activeStudioLocationId, effectiveStudioType],
       queryFn: async () => {
         const response = await pricingService.getAll({ limit: 100, isActive: 'true' });
         return response.data || [];
       },
     });
-  }, [queryClient, form, activeTenantId, activeShopId, activeStudioLocationId]);
+  }, [queryClient, form, activeTenantId, activeShopId, activeStudioLocationId, effectiveStudioType]);
 
   // Update job title and description based on job type and customer
   // Defined early to avoid temporal dead zone (used in handleEdit)
@@ -911,7 +920,7 @@ useEffect(() => {
           },
         }),
         queryClient.prefetchQuery({
-          queryKey: ['pricingTemplates', 'active'],
+          queryKey: ['pricingTemplates', 'active', activeTenantId, activeShopId, activeStudioLocationId, effectiveStudioType],
           queryFn: async () => {
             const response = await pricingService.getAll({ limit: 100, isActive: 'true' });
             return response.data || [];
@@ -1005,7 +1014,17 @@ useEffect(() => {
       console.error('Error loading job:', error);
       setEditingJobId(null);
     }
-  }, [queryClient, navigate, customersData, pricingTemplates, handleCustomerChange]);
+  }, [
+    queryClient,
+    navigate,
+    customersData,
+    pricingTemplates,
+    handleCustomerChange,
+    activeTenantId,
+    activeShopId,
+    activeStudioLocationId,
+    effectiveStudioType,
+  ]);
 
 
   // Load custom customer sources and regions on mount (categories already loaded via React Query)

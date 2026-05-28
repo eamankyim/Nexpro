@@ -33,6 +33,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAuth } from '@/context/AuthContext';
 import { useBranding } from '@/context/BrandingContext';
+import { useStudioLocationOptional } from '@/context/StudioLocationContext';
 import { useScopedWorkspaceName } from '@/hooks/useScopedWorkspaceName';
 import SidebarScopeSwitcher from '@/components/SidebarScopeSwitcher';
 import AppLogo from '@/components/AppLogo';
@@ -281,6 +282,7 @@ export function Sidebar({ collapsed, onCollapse }) {
   const hidePlatformAdminNav = isPlatformAdmin && !isSupportAccessActive;
   const { appName, primaryColor } = useBranding();
   const { canInstall, promptInstall } = usePWAInstall();
+  const studio = useStudioLocationOptional();
   const [openKeys, setOpenKeys] = useState([]);
 
   const { data: organizationData } = useQuery({
@@ -299,7 +301,10 @@ export function Sidebar({ collapsed, onCollapse }) {
     (activeTenant?.businessType === 'shop' && hasFeature('shopsModule')) ||
     (STUDIO_LIKE_TYPES.includes(activeTenant?.businessType) && hasFeature('studioLocationsModule'));
 
-  const businessType = activeTenant?.businessType || null;
+  const activeStudioType = studio?.activeLocation?.studioType || null;
+  const businessType = STUDIO_LIKE_TYPES.includes(activeStudioType)
+    ? activeStudioType
+    : activeTenant?.businessType || null;
   const shopType =
     activeTenant?.metadata?.businessSubType ||
     activeTenant?.metadata?.shopType ||
@@ -672,6 +677,7 @@ export function MobileSidebar() {
   const hidePlatformAdminNav = isPlatformAdmin && !isSupportAccessActive;
   const { appName, primaryColor } = useBranding();
   const { canInstall, promptInstall } = usePWAInstall();
+  const studio = useStudioLocationOptional();
   const [openKeys, setOpenKeys] = useState([]);
 
   const { data: organizationData } = useQuery({
@@ -690,7 +696,10 @@ export function MobileSidebar() {
     (activeTenant?.businessType === 'shop' && hasFeature('shopsModule')) ||
     (STUDIO_LIKE_TYPES.includes(activeTenant?.businessType) && hasFeature('studioLocationsModule'));
 
-  const businessType = activeTenant?.businessType || null;
+  const activeStudioType = studio?.activeLocation?.studioType || null;
+  const businessType = STUDIO_LIKE_TYPES.includes(activeStudioType)
+    ? activeStudioType
+    : activeTenant?.businessType || null;
   const shopType = activeTenant?.metadata?.shopType || null;
   const menuItems = useMemo(
     () => getMenuItems(businessType, isAdmin, isManager, shopType, hasFeature, hidePlatformAdminNav),
