@@ -16,6 +16,8 @@ const createSubscriptionPaymentsTable = async ({ closeConnection = true } = {}) 
     console.log('create-subscription-payments-table...');
     if (isDirect) await testConnection();
 
+    await sequelize.query(`CREATE EXTENSION IF NOT EXISTS "pgcrypto";`);
+
     await sequelize.query(`
       CREATE TABLE IF NOT EXISTS ${quoteIdent('subscription_payments')} (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -39,6 +39,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -56,6 +57,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Skeleton } from '@/components/ui/skeleton';
 
 dayjs.extend(relativeTime);
 
@@ -802,10 +804,10 @@ const AdminTenants = () => {
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Start support access</DialogTitle>
+            <DialogDescription>
+              You will view {selectedTenant?.name || 'this tenant'} in read-only mode. All actions are audited.
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            You will view <strong>{selectedTenant?.name}</strong> in read-only mode. All actions are audited.
-          </p>
           <div className="space-y-2">
             <Label htmlFor="support-reason">Reason (required)</Label>
             <Textarea
@@ -835,9 +837,9 @@ const AdminTenants = () => {
         <DialogContent className="sm:max-w-[425px] p-0 gap-0 overflow-hidden">
           <DialogHeader className="px-6 pt-6 pb-0 space-y-1">
             <DialogTitle>Invite tenant</DialogTitle>
-            <p className="text-sm text-muted-foreground">
+            <DialogDescription>
               Send an invite link so they can create their workspace.
-            </p>
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleInviteTenant} noValidate className="px-6 pt-4 pb-0">
             <div className="space-y-4">
