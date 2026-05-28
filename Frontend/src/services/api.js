@@ -263,6 +263,15 @@ api.interceptors.response.use(
     // Don't redirect on 401 for tour status - avoids reload loop when token expired and tour refetches
     const isTourEndpoint = error.config?.url?.includes('/tours/status');
 
+    const billingLocked =
+      error.response?.status === 403 &&
+      error.response?.data?.errorCode === 'SUBSCRIPTION_LOCKED';
+    if (billingLocked && typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('subscription-locked', { detail: error.response.data })
+      );
+    }
+
     if (error.response?.status === 401 && !isAuthEndpoint && !isTourEndpoint) {
       const existingToken = localStorage.getItem('token');
       // Only redirect when we actually had a session token.

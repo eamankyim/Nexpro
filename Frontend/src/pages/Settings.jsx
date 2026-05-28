@@ -545,6 +545,12 @@ const Settings = () => {
     queryFn: settingsService.getSubscription
   });
 
+  const { data: subscriptionPaymentsData } = useQuery({
+    queryKey: ['subscription', 'payments'],
+    queryFn: settingsService.getSubscriptionPayments,
+    enabled: activeTab === 'billing',
+  });
+
   const {
     data: whatsappData,
     isLoading: loadingWhatsApp
@@ -1605,6 +1611,8 @@ const Settings = () => {
   };
 
   const subscriptionHistory = subscriptionData?.data?.history || [];
+  const subscriptionPayments = subscriptionPaymentsData?.data?.payments || [];
+  const subscriptionBilling = subscriptionData?.data?.billing || subscriptionPaymentsData?.data?.billing;
 
   const subscriptionSummary = useMemo(() => {
     if (!subscriptionData?.data) return null;
@@ -1620,8 +1628,15 @@ const Settings = () => {
                 {subscription.plan?.toUpperCase() || 'FREE'}
               </h4>
               <p className={statusColor}>
-                {subscription.status?.toUpperCase()}
+                {subscriptionBilling?.billingStatus
+                  ? subscriptionBilling.billingStatus.toUpperCase()
+                  : subscription.status?.toUpperCase()}
               </p>
+              {subscriptionBilling?.billingStatus === 'grace' && subscriptionBilling.graceEndsAt && (
+                <p className="text-xs text-amber-700 mt-1">
+                  Grace ends {dayjs(subscriptionBilling.graceEndsAt).format('MMM DD, YYYY')}
+                </p>
+              )}
               {subscription.currentPeriodEnd && (
                 <div className="mt-2 md:mt-3">
                   <p className="text-xs md:text-sm text-muted-foreground">Renews</p>
@@ -3385,10 +3400,36 @@ const Settings = () => {
                   )}
                 />
 
+                {subscriptionPayments.length > 0 && (
+                  <>
+                    <Separator className="my-6">
+                      <span className="text-sm font-medium">Payment history</span>
+                    </Separator>
+                    <div className="space-y-2">
+                      {subscriptionPayments.map((payment) => (
+                        <div key={payment.id} className="p-3 border rounded-lg text-sm">
+                          <div className="flex flex-wrap justify-between gap-2">
+                            <span className="font-medium capitalize">
+                              {payment.plan} · {payment.billingPeriod}
+                            </span>
+                            <span>
+                              ₵{(Number(payment.amount) / 100).toFixed(2)} · {payment.provider}
+                            </span>
+                          </div>
+                          <p className="text-muted-foreground text-xs mt-1">
+                            {dayjs(payment.periodStart).format('MMM D, YYYY')} –{' '}
+                            {dayjs(payment.periodEnd).format('MMM D, YYYY')}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
                 {subscriptionHistory.length > 0 && (
                   <>
                     <Separator className="my-6">
-                      <span className="text-sm font-medium">Billing History</span>
+                      <span className="text-sm font-medium">Billing events</span>
                     </Separator>
                     {subscriptionHistory.map((entry, index) => (
                       <div key={index} className="mb-3 p-4 border rounded-lg">

@@ -768,6 +768,7 @@ exports.uploadOrganizationLogo = async (req, res, next) => {
 
 exports.getSubscriptionSettings = async (req, res, next) => {
   try {
+    const { resolveBillingStatus, toBillingPayload } = require('../services/subscriptionBillingService');
     const subscription = await getSettingValue(req.tenantId, 'subscription', {
       plan: 'trial',
       seats: 5,
@@ -776,7 +777,7 @@ exports.getSubscriptionSettings = async (req, res, next) => {
       paymentMethod: null,
       history: []
     });
-    const tenant = await Tenant.findByPk(req.tenantId, { attributes: ['plan'] });
+    const tenant = await Tenant.findByPk(req.tenantId, { attributes: ['plan', 'trialEndsAt', 'status', 'metadata'] });
     const tenantPlanRaw = tenant?.plan;
     const tenantPlanNorm = tenantPlanRaw != null ? normalizeSubscriptionPlanId(tenantPlanRaw) : '';
     const effectivePlan =
@@ -789,10 +790,12 @@ exports.getSubscriptionSettings = async (req, res, next) => {
           ? 'trialing'
           : subscription.status || 'trialing'
         : 'active';
+    const billing = toBillingPayload(await resolveBillingStatus(tenant || req.tenantId));
     const data = {
       ...subscription,
       plan: effectivePlan,
       status: effectiveStatus,
+      billing,
     };
     res.status(200).json({ success: true, data });
   } catch (error) {
@@ -802,11 +805,36 @@ exports.getSubscriptionSettings = async (req, res, next) => {
 
 exports.updateSubscriptionSettings = async (req, res, next) => {
   try {
-    const updated = await upsertSettingValue(
-      req.tenantId,
-      'subscription',
-      sanitizePayload(req.body || {})
-    );
+    const body = req.body || {};
+    const protectedKeys = [
+      'plan',
+      'status',
+      'currentPeriodEnd',
+      'seats',
+      'billingPeriod',
+      'history',
+      'lastPaymentReference',
+      'paymentMethod',
+    ];
+    const attempted = protectedKeys.filter((key) => body[key] !== undefined);
+    if (attempted.length > 0) {
+      return res.status(403).json({
+        success: false,
+        message:
+          'Subscription plan and billing period can only be changed via checkout or platform admin.',
+      });
+    }
+
+    const current = await getSettingValue(req.tenantId, 'subscription', {});
+    const patch = {};
+    if (body.notes !== undefined) {
+      patch.notes = String(body.notes).trim().slice(0, 500);
+    }
+
+    const updated = await upsertSettingValue(req.tenantId, 'subscription', {
+      ...sanitizePayload(current),
+      ...patch,
+    });
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
     next(error);

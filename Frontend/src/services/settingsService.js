@@ -64,6 +64,11 @@ const initializeSubscriptionPayment = async (payload) =>
 const verifySubscriptionPayment = async (reference) =>
   api.get(`/subscription/verify/${encodeURIComponent(reference)}`);
 
+const getSubscriptionStatus = async () => api.get('/subscription/status');
+
+const getSubscriptionPayments = async (params = {}) =>
+  api.get('/subscription/payments', { params });
+
 const getNotificationChannels = async () => {
   const res = await api.get('/settings/notification-channels');
   const raw = res?.data?.data ?? res?.data ?? res;
@@ -207,6 +212,8 @@ export default {
   updateSubscription,
   initializeSubscriptionPayment,
   verifySubscriptionPayment,
+  getSubscriptionStatus,
+  getSubscriptionPayments,
   getPOSConfig,
   updatePOSConfig,
   getAISettings,

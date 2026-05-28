@@ -141,6 +141,15 @@ const AdminTenants = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteConfirmSlug, setDeleteConfirmSlug] = useState('');
   const [deletingTenant, setDeletingTenant] = useState(false);
+  const [subscriptionPayments, setSubscriptionPayments] = useState([]);
+  const [tenantBillingStatus, setTenantBillingStatus] = useState(null);
+  const [paymentsLoading, setPaymentsLoading] = useState(false);
+  const [manualPaymentSaving, setManualPaymentSaving] = useState(false);
+  const [manualPaymentForm, setManualPaymentForm] = useState({
+    plan: 'starter',
+    billingPeriod: 'monthly',
+    notes: '',
+  });
 
   const canDeleteTenants = hasPermission('tenants.delete');
 
@@ -266,6 +275,22 @@ const AdminTenants = () => {
     }
   }, []);
 
+  const fetchTenantSubscriptionPayments = useCallback(async (tenantId) => {
+    if (!tenantId) return;
+    setPaymentsLoading(true);
+    try {
+      const response = await adminService.getTenantSubscriptionPayments(tenantId);
+      if (response?.success) {
+        setSubscriptionPayments(response.data?.payments || []);
+        setTenantBillingStatus(response.data?.billing || null);
+      }
+    } catch (error) {
+      handleApiError(error, { context: 'fetch subscription payments' });
+    } finally {
+      setPaymentsLoading(false);
+    }
+  }, []);
+
   const fetchTenantAccessAudit = useCallback(async (tenantId) => {
     setAccessAuditLoading(true);
     try {
@@ -370,7 +395,24 @@ const AdminTenants = () => {
     setDrawerVisible(true);
     fetchTenantDetail(record.id);
     fetchTenantAccessAudit(record.id);
-  }, [fetchTenantDetail, fetchTenantAccessAudit]);
+    fetchTenantSubscriptionPayments(record.id);
+  }, [fetchTenantDetail, fetchTenantAccessAudit, fetchTenantSubscriptionPayments]);
+
+  const handleRecordManualPayment = async () => {
+    if (!selectedTenant?.id) return;
+    setManualPaymentSaving(true);
+    try {
+      await adminService.createTenantSubscriptionPayment(selectedTenant.id, manualPaymentForm);
+      showSuccess('Subscription payment recorded');
+      await fetchTenantSubscriptionPayments(selectedTenant.id);
+      await fetchTenantDetail(selectedTenant.id);
+      await fetchTenants(pagination.current, pagination.pageSize);
+    } catch (error) {
+      handleApiError(error, { context: 'record manual subscription payment' });
+    } finally {
+      setManualPaymentSaving(false);
+    }
+  };
 
   const handleInviteTenant = async (e) => {
     e?.preventDefault?.();
@@ -852,6 +894,7 @@ const AdminTenants = () => {
                 <TabsTrigger value="overview">Overview</TabsTrigger>
                 <TabsTrigger value="members">Members</TabsTrigger>
                 <TabsTrigger value="access">Access control</TabsTrigger>
+                <TabsTrigger value="billing">Billing</TabsTrigger>
               </TabsList>
               <TabsContent value="overview" className="mt-4 space-y-6 data-[state=inactive]:hidden">
               {hasPermission('tenants.support_access') && (
@@ -1056,6 +1099,133 @@ const AdminTenants = () => {
                       </div>
                     ) : (
                       <Empty description="No members found" />
+                    )}
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="billing" className="mt-4 space-y-4 data-[state=inactive]:hidden">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Billing status</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-2 text-sm">
+                    {paymentsLoading ? (
+                      <Skeleton className="h-8 w-full" />
+                    ) : (
+                      <>
+                        <p>
+                          Status:{' '}
+                          <Badge variant="outline">
+                            {tenantBillingStatus?.billingStatus || 'unknown'}
+                          </Badge>
+                        </p>
+                        {tenantBillingStatus?.graceEndsAt && (
+                          <p className="text-muted-foreground">
+                            Grace ends {dayjs(tenantBillingStatus.graceEndsAt).format('MMM D, YYYY')}
+                          </p>
+                        )}
+                        {tenantBillingStatus?.trialEndsAt && (
+                          <p className="text-muted-foreground">
+                            Trial ends {dayjs(tenantBillingStatus.trialEndsAt).format('MMM D, YYYY')}
+                          </p>
+                        )}
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {hasPermission('billing.manage') && (
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-base">Record manual payment</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-1.5">
+                          <Label>Plan</Label>
+                          <Select
+                            value={manualPaymentForm.plan}
+                            onValueChange={(value) =>
+                              setManualPaymentForm((prev) => ({ ...prev, plan: value }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="starter">Starter</SelectItem>
+                              <SelectItem value="professional">Professional</SelectItem>
+                              <SelectItem value="enterprise">Enterprise</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Billing period</Label>
+                          <Select
+                            value={manualPaymentForm.billingPeriod}
+                            onValueChange={(value) =>
+                              setManualPaymentForm((prev) => ({ ...prev, billingPeriod: value }))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="monthly">Monthly</SelectItem>
+                              <SelectItem value="yearly">Yearly</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="manual-payment-notes">Notes (optional)</Label>
+                        <Input
+                          id="manual-payment-notes"
+                          value={manualPaymentForm.notes}
+                          onChange={(e) =>
+                            setManualPaymentForm((prev) => ({ ...prev, notes: e.target.value }))
+                          }
+                          placeholder="Bank transfer reference, invoice #, etc."
+                        />
+                      </div>
+                      <div className="flex justify-end">
+                        <Button onClick={handleRecordManualPayment} loading={manualPaymentSaving}>
+                          Record payment
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-base">Payment ledger</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {paymentsLoading ? (
+                      <Skeleton className="h-24 w-full" />
+                    ) : subscriptionPayments.length === 0 ? (
+                      <Empty description="No subscription payments recorded" />
+                    ) : (
+                      <div className="space-y-2">
+                        {subscriptionPayments.map((payment) => (
+                          <div key={payment.id} className="border rounded-md p-3 text-sm">
+                            <div className="flex justify-between gap-2 flex-wrap">
+                              <span className="font-medium capitalize">
+                                {payment.plan} · {payment.billingPeriod}
+                              </span>
+                              <span>
+                                ₵{(Number(payment.amount) / 100).toFixed(2)} · {payment.provider}
+                              </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {dayjs(payment.periodStart).format('MMM D, YYYY')} –{' '}
+                              {dayjs(payment.periodEnd).format('MMM D, YYYY')}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </CardContent>
                 </Card>

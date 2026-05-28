@@ -541,10 +541,17 @@ exports.handlePaystackWebhook = async (req, res) => {
             refInvoiceId
           );
         }
-      } else if (metadata.tenant_id && metadata.plan) {
-        // Subscription payment
-        await applySubscriptionFromTransaction(tx, 'webhook');
-        console.log('[Paystack Webhook] Subscription updated for tenant:', metadata.tenant_id);
+      } else if (
+        String(metadata.type || '').toLowerCase() === 'subscription' &&
+        (metadata.tenantId || metadata.tenant_id) &&
+        metadata.plan
+      ) {
+        const activation = await applySubscriptionFromTransaction(tx, 'webhook');
+        console.log(
+          '[Paystack Webhook] Subscription updated for tenant:',
+          metadata.tenantId || metadata.tenant_id,
+          activation ? 'ok' : 'skipped'
+        );
       }
     } else if (event === 'subscription.create') {
       const sub = data;

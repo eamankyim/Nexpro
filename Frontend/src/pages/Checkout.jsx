@@ -14,6 +14,7 @@ import { useAuth } from '../context/AuthContext';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import settingsService from '../services/settingsService';
 import authService from '../services/authService';
+import { API_BASE_URL } from '../services/api';
 import { showSuccess, showError } from '../utils/toast';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
@@ -26,22 +27,14 @@ const planNames = {
   enterprise: 'Enterprise'
 };
 
-const monthlyPrice = {
-  starter: 129,
-  professional: 250,
-  enterprise: null
-};
-
-const yearlyPrice = {
-  starter: 99 * 12,
-  professional: 199 * 12,
-  enterprise: null
-};
+const DEFAULT_MONTHLY = { starter: 129, professional: 250, enterprise: null };
+const DEFAULT_YEARLY_TOTAL = { starter: 99 * 12, professional: 199 * 12, enterprise: null };
+const DEFAULT_YEARLY_PER_MONTH = { starter: 99, professional: 199 };
 
 const PLANS = [
   { id: 'starter', name: 'Starter', icon: Zap, monthly: 129, yearlyPerMonth: 99 },
   { id: 'professional', name: 'Professional', icon: Crown, monthly: 250, yearlyPerMonth: 199, popular: true },
-  { id: 'enterprise', name: 'Enterprise', icon: Building2, contactSales: true }
+  { id: 'enterprise', name: 'Enterprise', icon: Building2, contactSales: true },
 ];
 
 const Checkout = () => {
@@ -58,11 +51,45 @@ const Checkout = () => {
   const initialData = location.state || { plan: 'starter', billingPeriod: 'monthly' };
   const [selectedPlan, setSelectedPlan] = useState(initialData.plan || 'starter');
   const [billingPeriod, setBillingPeriod] = useState(initialData.billingPeriod || 'monthly');
+  const [planPricing, setPlanPricing] = useState({
+    monthly: { ...DEFAULT_MONTHLY },
+    yearlyTotal: { ...DEFAULT_YEARLY_TOTAL },
+    yearlyPerMonth: { ...DEFAULT_YEARLY_PER_MONTH },
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const base = API_BASE_URL ? `${API_BASE_URL}/api` : '/api';
+    fetch(`${base}/public/pricing?channel=marketing`)
+      .then((res) => res.json())
+      .then((json) => {
+        if (cancelled || !json?.success || !Array.isArray(json.data)) return;
+        const monthly = { ...DEFAULT_MONTHLY };
+        const yearlyTotal = { ...DEFAULT_YEARLY_TOTAL };
+        const yearlyPerMonth = { ...DEFAULT_YEARLY_PER_MONTH };
+        json.data.forEach((row) => {
+          const id = row.id;
+          const amount = row.priceMeta?.amount;
+          if (amount == null || !['starter', 'professional'].includes(id)) return;
+          if (row.interval === 'monthly') monthly[id] = amount;
+          if (row.interval === 'annually') {
+            yearlyTotal[id] = amount;
+            yearlyPerMonth[id] = Math.round((amount / 12) * 100) / 100;
+          }
+        });
+        setPlanPricing({ monthly, yearlyTotal, yearlyPerMonth });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const plan = selectedPlan;
-  const finalPrice = billingPeriod === 'yearly' && plan !== 'enterprise'
-    ? (plan === 'starter' ? 99 * 12 : 199 * 12)
-    : monthlyPrice[plan];
+  const finalPrice =
+    billingPeriod === 'yearly' && plan !== 'enterprise'
+      ? planPricing.yearlyTotal[plan]
+      : planPricing.monthly[plan];
   const isEnterprise = plan === 'enterprise';
 
   const reference = searchParams.get('reference');
@@ -73,6 +100,8 @@ const Checkout = () => {
       setVerified(true);
       showSuccess('Payment successful! Your subscription is now active.');
       queryClient.invalidateQueries({ queryKey: ['settings', 'subscription'] });
+      queryClient.invalidateQueries({ queryKey: ['subscription', 'status'] });
+      queryClient.invalidateQueries({ queryKey: ['subscription', 'payments'] });
       setTimeout(() => navigate('/settings?tab=subscription'), 2000);
     },
     onError: (error) => {
@@ -237,8 +266,8 @@ const Checkout = () => {
               const priceDisplay = p.contactSales
                 ? "Let's talk"
                 : billingPeriod === 'yearly'
-                  ? `₵ ${p.yearlyPerMonth}/mo`
-                  : `₵ ${p.monthly}/mo`;
+                  ? `₵ ${planPricing.yearlyPerMonth[p.id]}/mo`
+                  : `₵ ${planPricing.monthly[p.id]}/mo`;
               return (
                 <button
                   key={p.id}

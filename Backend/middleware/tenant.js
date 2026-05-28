@@ -11,6 +11,7 @@ const {
   findActiveSupportSession,
   buildSupportTenantContext,
 } = require('../utils/supportAccess');
+const { enforceBillingAccess } = require('./billingEnforcement');
 
 const resolveTenantId = (req) => {
   const headerTenant =
@@ -212,7 +213,7 @@ const tenantContext = async (req, res, next) => {
       });
     }
 
-    next();
+    return enforceBillingAccess(req, res, next);
   } catch (error) {
     next(error);
   }

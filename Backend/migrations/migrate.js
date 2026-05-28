@@ -45,7 +45,6 @@ const addMetadataToUserTasks = require('./add-metadata-to-user-tasks');
 const addStartDateToUserTasks = require('./add-startDate-to-user-tasks');
 const createTenantAccessAudits = require('./create-tenant-access-audits');
 const createAutomationsTables = require('./create-automations-tables');
-const normalizeTenantPlansToTrial = require('./normalize-tenant-plans-to-trial');
 const backfillTenantBusinessClassificationDefaults = require('./backfill-tenant-business-classification-defaults');
 const addDeliveryStatusToJobsAndSales = require('./add-delivery-status-to-jobs-and-sales');
 const addDeliveryRequiredToJobs = require('./add-delivery-required-to-jobs');
@@ -82,6 +81,8 @@ const createMarketingCampaigns = require('./create-marketing-campaigns');
 const addDriverRoleToUserAndInviteEnums = require('./add-driver-role-to-user-and-invite-enums');
 const addDeliveryAssignmentFields = require('./add-delivery-assignment-fields');
 const backfillJobInvoiceStudioLocations = require('./backfill-job-invoice-studio-locations');
+const createSubscriptionPaymentsTable = require('./create-subscription-payments-table');
+const createSubscriptionPlansTable = require('./create-subscription-plans-table');
 
 const migrate = async () => {
   try {
@@ -250,9 +251,6 @@ const migrate = async () => {
     // Persisted marketing campaigns and broadcast history
     await createMarketingCampaigns.up({ closeConnection: false });
 
-    // Normalize all tenant plan values to canonical trial
-    await normalizeTenantPlansToTrial.up({ closeConnection: false });
-
     // Default missing tenant business/shop/studio classification fields
     await backfillTenantBusinessClassificationDefaults({ closeConnection: false });
 
@@ -321,6 +319,10 @@ const migrate = async () => {
 
     // Category/account/equipment seeding status flags
     await addSeedingFlagsToTenants.up();
+
+    // SaaS subscription plan catalog + payment ledger
+    await createSubscriptionPlansTable.up();
+    await createSubscriptionPaymentsTable({ closeConnection: false });
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

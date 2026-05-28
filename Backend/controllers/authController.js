@@ -1047,9 +1047,12 @@ exports.getMe = async (req, res, next) => {
         const entitlements = await getTenantEffectiveEntitlements(tenantJson, {
           logContext: `getMe:user=${req.user.id}`,
         });
+        const { resolveBillingStatus, toBillingPayload } = require('../services/subscriptionBillingService');
+        const billing = toBillingPayload(await resolveBillingStatus(tenantJson));
         tenantFeatureMap[String(membership.tenantId)] = {
           ...tenantJson,
-          effectiveFeatureFlags: entitlements.effectiveFeatureFlags || {}
+          effectiveFeatureFlags: entitlements.effectiveFeatureFlags || {},
+          billingStatus: billing,
         };
       } catch (error) {
         console.warn('[getMe] Failed to resolve feature flags for tenant %s: %s', membership.tenantId, error?.message || error);

@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { createContext, useContext, useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import settingsService from '../services/settingsService';
 import authService from '../services/authService';
 import adminService from '../services/adminService';
 import supportAccessService from '../services/supportAccessService';
@@ -568,6 +569,34 @@ export const AuthProvider = ({ children }) => {
     [activeFeatureFlags]
   );
 
+  const {
+    data: billingStatusLive,
+    refetch: refreshBillingStatus,
+  } = useQuery({
+    queryKey: ['subscription', 'status', resolvedActiveTenantId],
+    queryFn: async () => {
+      const res = await settingsService.getSubscriptionStatus();
+      return res?.data ?? res;
+    },
+    enabled: Boolean(
+      resolvedActiveTenantId && user && !user.isPlatformAdmin && !isSupportAccessActive
+    ),
+    staleTime: 60_000,
+  });
+
+  const billingStatus = useMemo(
+    () => billingStatusLive || activeTenant?.billingStatus || null,
+    [billingStatusLive, activeTenant?.billingStatus]
+  );
+
+  useEffect(() => {
+    const onLocked = () => {
+      refreshBillingStatus();
+    };
+    window.addEventListener('subscription-locked', onLocked);
+    return () => window.removeEventListener('subscription-locked', onLocked);
+  }, [refreshBillingStatus]);
+
   const refreshAuthStateRef = useRef(refreshAuthState);
   refreshAuthStateRef.current = refreshAuthState;
 
@@ -738,6 +767,8 @@ export const AuthProvider = ({ children }) => {
       startSupportAccess,
       endSupportAccess,
       endingSupportAccess,
+      billingStatus,
+      refreshBillingStatus,
     }),
     [
       user,
@@ -774,6 +805,8 @@ export const AuthProvider = ({ children }) => {
       startSupportAccess,
       endSupportAccess,
       endingSupportAccess,
+      billingStatus,
+      refreshBillingStatus,
     ]
   );
 

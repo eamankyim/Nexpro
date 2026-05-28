@@ -1,0 +1,78 @@
+jest.mock('../../../models', () => ({
+  SubscriptionPayment: { findOne: jest.fn().mockResolvedValue(null), create: jest.fn() },
+  Setting: { findOne: jest.fn().mockResolvedValue(null), findOrCreate: jest.fn() },
+  Tenant: {
+    scope: () => ({
+      findByPk: jest.fn(),
+    }),
+    findByPk: jest.fn(),
+  },
+}));
+
+const {
+  resolveBillingStatus,
+  normalizePlan,
+  addPeriod,
+  DEFAULT_GRACE_DAYS,
+} = require('../../../services/subscriptionBillingService');
+
+const baseTenant = (overrides = {}) => ({
+  id: 'tenant-1',
+  plan: 'trial',
+  status: 'active',
+  trialEndsAt: new Date('2030-01-15'),
+  metadata: { entitlements: {} },
+  ...overrides,
+});
+
+describe('subscriptionBillingService', () => {
+  describe('normalizePlan', () => {
+    it('lowercases plan ids', () => {
+      expect(normalizePlan(' Starter ')).toBe('starter');
+    });
+  });
+
+  describe('addPeriod', () => {
+    it('adds one month for monthly billing', () => {
+      const start = new Date('2026-01-01');
+      const end = addPeriod(start, 'monthly');
+      expect(end.getMonth()).toBe(1);
+    });
+  });
+
+  describe('resolveBillingStatus', () => {
+    it('returns trialing when trial has not ended', async () => {
+      const billing = await resolveBillingStatus(baseTenant(), {
+        at: new Date('2026-01-01'),
+        subscriptionSetting: {},
+      });
+      expect(billing.billingStatus).toBe('trialing');
+      expect(billing.canAccessApp).toBe(true);
+    });
+
+    it('returns manual_override when billingOverride is unlocked', async () => {
+      const billing = await resolveBillingStatus(
+        baseTenant({
+          trialEndsAt: new Date('2020-01-01'),
+          metadata: { entitlements: { billingOverride: 'unlocked' } },
+        }),
+        { at: new Date('2026-01-01'), subscriptionSetting: {} }
+      );
+      expect(billing.billingStatus).toBe('manual_override');
+      expect(billing.canAccessApp).toBe(true);
+    });
+
+    it('returns locked after trial and grace', async () => {
+      const trialEndsAt = new Date('2026-01-01');
+      const at = new Date(trialEndsAt);
+      at.setDate(at.getDate() + DEFAULT_GRACE_DAYS + 1);
+      const billing = await resolveBillingStatus(baseTenant({ trialEndsAt }), {
+        at,
+        subscriptionSetting: {},
+      });
+      expect(billing.billingStatus).toBe('locked');
+      expect(billing.canAccessApp).toBe(false);
+      expect(billing.lockReason).toBe('trial_expired');
+    });
+  });
+});

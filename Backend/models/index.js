@@ -42,6 +42,7 @@ const AccountBalance = require('./AccountBalance');
 const RecurringJournal = require('./RecurringJournal');
 const RecurringJournalRun = require('./RecurringJournalRun');
 const SubscriptionPlan = require('./SubscriptionPlan');
+const SubscriptionPayment = require('./SubscriptionPayment');
 const CustomDropdownOption = require('./CustomDropdownOption');
 const SabitoTenantMapping = require('./SabitoTenantMapping');
 // Shop Management Models
@@ -109,6 +110,9 @@ JobStatusHistory.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
 Tenant.hasMany(Invoice, { foreignKey: 'tenantId', as: 'invoices' });
 Invoice.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+
+Tenant.hasMany(SubscriptionPayment, { foreignKey: 'tenantId', as: 'subscriptionPayments' });
+SubscriptionPayment.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
 
 Tenant.hasMany(Payment, { foreignKey: 'tenantId', as: 'payments' });
 Payment.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });

@@ -15,9 +15,18 @@ const {
   Job,
   InviteToken,
   SubscriptionPlan,
+  SubscriptionPayment,
   TenantAccessAudit,
   Setting
 } = require('../models');
+const {
+  resolveBillingStatus,
+  recordSubscriptionPaymentAndActivate,
+  toBillingPayload,
+  normalizePlan,
+  normalizeBillingPeriod,
+  PAID_PLANS,
+} = require('../services/subscriptionBillingService');
 const emailService = require('../services/emailService');
 const { inviteTenantEmail } = require('../services/emailTemplates');
 const { getFrontendBaseUrl } = require('../utils/frontendUrl');
@@ -839,6 +848,30 @@ exports.updateTenantAccess = async (req, res, next) => {
       entitlements.note = String(note).trim().slice(0, 500);
     }
 
+    const { billingOverride, billingGraceDays } = req.body || {};
+    if (billingOverride !== undefined) {
+      if (billingOverride === null || billingOverride === '') {
+        delete entitlements.billingOverride;
+      } else if (['unlocked', 'locked'].includes(String(billingOverride))) {
+        entitlements.billingOverride = String(billingOverride);
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: 'billingOverride must be unlocked, locked, or null',
+        });
+      }
+    }
+    if (billingGraceDays !== undefined) {
+      const days = Number(billingGraceDays);
+      if (!Number.isFinite(days) || days < 0 || days > 90) {
+        return res.status(400).json({
+          success: false,
+          message: 'billingGraceDays must be between 0 and 90',
+        });
+      }
+      entitlements.billingGraceDays = days;
+    }
+
     const effectivePlan = tenant.plan;
     if (enterpriseTier !== undefined) {
       if (enterpriseTier === null || enterpriseTier === '') {
@@ -911,6 +944,7 @@ exports.updateTenantAccess = async (req, res, next) => {
     const accessControl = await getTenantEffectiveEntitlements(freshTenant, {
       logContext: 'admin_update_tenant_access',
     });
+    const billing = toBillingPayload(await resolveBillingStatus(freshTenant));
 
     res.status(200).json({
       success: true,
@@ -918,10 +952,85 @@ exports.updateTenantAccess = async (req, res, next) => {
         id: tenant.id,
         plan: tenant.plan,
         metadata: tenant.metadata,
-        accessControl
+        accessControl,
+        billing,
       }
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+exports.getTenantSubscriptionPayments = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id, { attributes: ['id', 'name', 'plan'] });
+    if (!tenant) {
+      return res.status(404).json({ success: false, message: 'Tenant not found' });
+    }
+    const limit = Math.min(Number(req.query.limit) || 50, 100);
+    const payments = await SubscriptionPayment.findAll({
+      where: { tenantId: tenant.id },
+      order: [['createdAt', 'DESC']],
+      limit,
+    });
+    const billing = toBillingPayload(await resolveBillingStatus(tenant.id));
+    return res.status(200).json({
+      success: true,
+      data: { payments, billing },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.createTenantSubscriptionPayment = async (req, res, next) => {
+  try {
+    const tenant = await Tenant.findByPk(req.params.id, { attributes: ['id'] });
+    if (!tenant) {
+      return res.status(404).json({ success: false, message: 'Tenant not found' });
+    }
+
+    const plan = normalizePlan(req.body?.plan);
+    const billingPeriod = normalizeBillingPeriod(req.body?.billingPeriod);
+    if (!PAID_PLANS.has(plan)) {
+      return res.status(400).json({
+        success: false,
+        message: 'plan must be starter, professional, or enterprise',
+      });
+    }
+
+    const activation = await recordSubscriptionPaymentAndActivate({
+      tenantId: tenant.id,
+      plan,
+      billingPeriod,
+      amount: req.body?.amount,
+      currency: req.body?.currency || 'GHS',
+      provider: 'manual',
+      providerReference: req.body?.providerReference || null,
+      recordedBy: req.user?.id || null,
+      notes: req.body?.notes || null,
+      periodStart: req.body?.periodStart,
+      periodEnd: req.body?.periodEnd,
+      metadata: { source: 'admin_manual' },
+    });
+
+    const billing = toBillingPayload(await resolveBillingStatus(tenant.id));
+
+    return res.status(201).json({
+      success: true,
+      message: activation.alreadyRecorded
+        ? 'Payment already recorded for this reference'
+        : 'Subscription payment recorded',
+      data: {
+        payment: activation.payment,
+        alreadyRecorded: activation.alreadyRecorded,
+        billing,
+      },
+    });
+  } catch (error) {
+    if (error.statusCode === 400) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
     next(error);
   }
 };

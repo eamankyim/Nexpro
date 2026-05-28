@@ -8,6 +8,8 @@ import { StudioLocationProvider } from '../context/StudioLocationContext';
 import { ShopProvider } from '../context/ShopContext';
 import NotificationWebSocketListener from '../components/NotificationWebSocketListener';
 import PaymentCollectionRequiredBanner from '../components/PaymentCollectionRequiredBanner';
+import BillingGraceBanner from '../components/BillingGraceBanner';
+import BillingLockedScreen from '../components/BillingLockedScreen';
 import ShopAccessBanner from '../components/ShopAccessBanner';
 import SupportAccessBanner from '../components/SupportAccessBanner';
 import { useResponsive, useSafeAreaInsets, BREAKPOINTS } from '../hooks/useResponsive';
@@ -24,7 +26,14 @@ const MainLayout = () => {
   const location = useLocation();
   const safeAreaInsets = useSafeAreaInsets();
   const { isMobile: isBelowTablet } = useResponsive({ mobileBreakpoint: BREAKPOINTS.TABLET });
-  const { user, activeTenantId, refreshAuthState, needsEmailVerification } = useAuth();
+  const {
+    user,
+    activeTenantId,
+    refreshAuthState,
+    needsEmailVerification,
+    billingStatus,
+    isSupportAccessActive,
+  } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const wasBelowTabletRef = useRef(isBelowTablet);
@@ -56,6 +65,19 @@ const MainLayout = () => {
   } = useDismissibleDashboardBanner('payment-collection-required', dashboardBannerScopeId);
   const showVerifyEmailInLayout =
     showVerifyEmailBanner && !(isDashboardRoute && verifyEmailDismissedOnDashboard);
+
+  const isBillingExemptRoute = useMemo(() => {
+    const path = location.pathname;
+    if (path === '/checkout' || path === '/profile') return true;
+    if (path.startsWith('/settings')) return true;
+    return false;
+  }, [location.pathname]);
+
+  const showBillingLock =
+    !isSupportAccessActive &&
+    billingStatus?.canAccessApp === false &&
+    billingStatus?.billingStatus === 'locked' &&
+    !isBillingExemptRoute;
 
   // When banner would show, refetch /auth/me once so we get latest emailVerifiedAt (e.g. user verified via link or script)
   const hasRefetchedForVerifyBanner = useRef(false);
@@ -165,6 +187,7 @@ const MainLayout = () => {
             onDismiss={dismissPaymentCollectionDashboard}
           />
           <ShopAccessBanner />
+          <BillingGraceBanner billing={billingStatus} />
           <main
             className="w-full bg-muted/50 py-4 sm:py-6"
             style={{
@@ -175,7 +198,7 @@ const MainLayout = () => {
             }}
           >
             <div className="min-h-[calc(100dvh-8rem)] px-4 sm:px-4 lg:px-6">
-              <Outlet />
+              {showBillingLock ? <BillingLockedScreen billing={billingStatus} /> : <Outlet />}
             </div>
           </main>
         </div>

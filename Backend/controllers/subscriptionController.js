@@ -1,23 +1,19 @@
 const crypto = require('crypto');
-const { Setting, Tenant } = require('../models');
 const paystackService = require('../services/paystackService');
 const { PLAN_DEFINITIONS } = require('../config/paystackPlans');
-
-const normalizePlan = (plan = '') => String(plan).trim().toLowerCase();
-const normalizeBillingPeriod = (value = '') =>
-  String(value).trim().toLowerCase() === 'yearly' ? 'yearly' : 'monthly';
+const {
+  normalizePlan,
+  normalizeBillingPeriod,
+  resolveBillingStatus,
+  applySubscriptionFromPaystackTransaction,
+  getActivePaymentForTenant,
+} = require('../services/subscriptionBillingService');
+const { SubscriptionPayment } = require('../models');
 
 const getPlanAmount = (plan, billingPeriod) => {
   const definition = PLAN_DEFINITIONS[plan];
   if (!definition || definition.contactSales) return null;
   return billingPeriod === 'yearly' ? definition.yearly : definition.monthly;
-};
-
-const getCurrentPeriodEnd = (billingPeriod) => {
-  const dt = new Date();
-  if (billingPeriod === 'yearly') dt.setFullYear(dt.getFullYear() + 1);
-  else dt.setMonth(dt.getMonth() + 1);
-  return dt;
 };
 
 // @desc    Initialize subscription payment
@@ -62,9 +58,9 @@ exports.initializeSubscriptionPayment = async (req, res, next) => {
         tenantId,
         userId: user.id,
         plan,
-        billingPeriod
+        billingPeriod,
       },
-      channels: ['card']
+      channels: ['card'],
     });
 
     if (!result?.status || !result?.data?.authorization_url) {
@@ -76,8 +72,8 @@ exports.initializeSubscriptionPayment = async (req, res, next) => {
       data: {
         authorization_url: result.data.authorization_url,
         access_code: result.data.access_code,
-        reference: result.data.reference || reference
-      }
+        reference: result.data.reference || reference,
+      },
     });
   } catch (error) {
     next(error);
@@ -108,7 +104,7 @@ exports.verifySubscriptionPayment = async (req, res, next) => {
     if (!result?.status || paymentData?.status !== 'success') {
       return res.status(400).json({
         success: false,
-        message: result?.message || 'Payment verification failed'
+        message: result?.message || 'Payment verification failed',
       });
     }
 
@@ -117,56 +113,79 @@ exports.verifySubscriptionPayment = async (req, res, next) => {
       return res.status(403).json({ success: false, message: 'Payment does not belong to this tenant' });
     }
 
-    const plan = normalizePlan(metadata?.plan || 'starter');
-    const billingPeriod = normalizeBillingPeriod(metadata?.billingPeriod || 'monthly');
-    const currentPeriodEnd = getCurrentPeriodEnd(billingPeriod);
+    const activation = await applySubscriptionFromPaystackTransaction(paymentData, 'verify');
+    if (!activation) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment was successful but could not be applied as a subscription',
+      });
+    }
 
-    const [setting] = await Setting.findOrCreate({
-      where: { tenantId, key: 'subscription' },
-      defaults: {
-        tenantId,
-        key: 'subscription',
-        value: {},
-        description: 'Subscription and billing information'
-      }
-    });
-
-    const prev = setting.value || {};
-    const history = Array.isArray(prev.history) ? prev.history : [];
-    history.unshift({
-      at: new Date().toISOString(),
-      event: 'payment_verified',
-      reference,
-      amount: paymentData?.amount,
-      plan,
-      billingPeriod,
-      channel: paymentData?.channel || null
-    });
-
-    const nextValue = {
-      ...prev,
-      plan,
-      status: 'active',
-      billingPeriod,
-      currentPeriodEnd: currentPeriodEnd.toISOString(),
-      lastPaymentReference: reference,
-      paymentMethod: paymentData?.channel || prev.paymentMethod || null,
-      history: history.slice(0, 100)
-    };
-
-    await setting.update({ value: nextValue });
-    await Tenant.update({ plan, status: 'active' }, { where: { id: tenantId } });
+    const billing = await resolveBillingStatus(req.tenant);
 
     return res.status(200).json({
       success: true,
-      message: 'Payment verified successfully',
+      message: activation.alreadyRecorded
+        ? 'Payment already recorded for this subscription'
+        : 'Payment verified successfully',
       data: {
         reference,
         status: paymentData?.status,
-        plan,
-        billingPeriod,
-        currentPeriodEnd: nextValue.currentPeriodEnd
-      }
+        plan: activation.payment.plan,
+        billingPeriod: activation.payment.billingPeriod,
+        currentPeriodEnd: activation.payment.periodEnd,
+        alreadyRecorded: activation.alreadyRecorded,
+        billing,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Used by Paystack webhook (charge.success).
+ * @param {object} paymentData
+ * @param {string} [source]
+ */
+exports.applySubscriptionFromTransaction = async (paymentData, source = 'webhook') => {
+  return applySubscriptionFromPaystackTransaction(paymentData, source);
+};
+
+// @desc    Billing status for active tenant
+// @route   GET /api/subscription/status
+// @access  Private
+exports.getSubscriptionStatus = async (req, res, next) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ success: false, message: 'Tenant context is required' });
+    }
+    const billing = await resolveBillingStatus(req.tenant);
+    return res.status(200).json({ success: true, data: billing });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Payment history for active tenant
+// @route   GET /api/subscription/payments
+// @access  Private (admin/manager)
+exports.getSubscriptionPayments = async (req, res, next) => {
+  try {
+    if (!req.tenantId) {
+      return res.status(400).json({ success: false, message: 'Tenant context is required' });
+    }
+    const limit = Math.min(Number(req.query.limit) || 20, 100);
+    const payments = await SubscriptionPayment.findAll({
+      where: { tenantId: req.tenantId },
+      order: [['createdAt', 'DESC']],
+      limit,
+    });
+    const activePayment = await getActivePaymentForTenant(req.tenantId);
+    const billing = await resolveBillingStatus(req.tenant);
+    return res.status(200).json({
+      success: true,
+      data: { payments, activePayment, billing },
     });
   } catch (error) {
     next(error);

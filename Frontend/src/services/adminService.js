@@ -44,6 +44,12 @@ const getBillingSummary = async () => api.get('/admin/billing/summary');
 
 const getBillingTenants = async () => api.get('/admin/billing/tenants');
 
+const getTenantSubscriptionPayments = async (tenantId, params = {}) =>
+  api.get(`/admin/tenants/${tenantId}/subscription-payments`, { params });
+
+const createTenantSubscriptionPayment = async (tenantId, payload) =>
+  api.post(`/admin/tenants/${tenantId}/subscription-payments`, payload);
+
 const getPlatformSettings = async () => api.get('/platform-settings');
 
 const updatePlatformSettings = async (payload) =>
@@ -198,6 +204,8 @@ export default {
   updateTenantBranding,
   getBillingSummary,
   getBillingTenants,
+  getTenantSubscriptionPayments,
+  createTenantSubscriptionPayment,
   getPlatformSettings,
   updatePlatformSettings,
   getSystemHealth,

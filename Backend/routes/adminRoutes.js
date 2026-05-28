@@ -13,6 +13,8 @@ const {
   getTenantById,
   getTenantAccessAudit,
   updateTenantAccess,
+  getTenantSubscriptionPayments,
+  createTenantSubscriptionPayment,
   getTenantVendors,
   getTenantJobs,
   updateTenantStatus,
@@ -249,6 +251,16 @@ router.get('/tenants/:id/access-audit', requirePlatformAdminPermission('tenants.
 router.patch('/tenants/:id/status', requirePlatformAdminPermission('tenants.manage_status'), updateTenantStatus);
 router.delete('/tenants/:id', requirePlatformAdminPermission('tenants.delete'), deleteTenant);
 router.patch('/tenants/:id/access', requirePlatformAdminPermission('tenants.update'), updateTenantAccess);
+router.get(
+  '/tenants/:id/subscription-payments',
+  requirePlatformAdminPermission('billing.view'),
+  getTenantSubscriptionPayments
+);
+router.post(
+  '/tenants/:id/subscription-payments',
+  requirePlatformAdminPermission('billing.manage'),
+  createTenantSubscriptionPayment
+);
 
 router.get('/support-access/active', requirePlatformAdminPermission('tenants.support_access'), getActiveSupportAccess);
 router.post('/tenants/:id/support-access', requirePlatformAdminPermission('tenants.support_access'), startSupportAccess);
