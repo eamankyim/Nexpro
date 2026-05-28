@@ -73,7 +73,10 @@ exports.getSupportTicket = async (req, res, next) => {
 
 exports.createSupportTicket = async (req, res, next) => {
   try {
-    const payload = sanitizePayload(req.body);
+    const payload = {
+      ...sanitizePayload(req.body),
+      tenantId: req.body?.tenantId,
+    };
     if (!payload.title?.trim()) {
       return res.status(400).json({ success: false, message: 'Title is required' });
     }

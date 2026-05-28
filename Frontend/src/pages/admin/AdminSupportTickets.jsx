@@ -340,11 +340,8 @@ const AdminSupportTickets = () => {
                     <Select
                       value={field.value || ''}
                       onValueChange={(value) => {
-                        form.setValue('tenantId', value, {
-                          shouldDirty: true,
-                          shouldTouch: true,
-                          shouldValidate: true,
-                        });
+                        field.onChange(value);
+                        form.trigger('tenantId');
                       }}
                       disabled={!!editingTicket}
                     >
