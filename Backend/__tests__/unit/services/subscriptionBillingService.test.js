@@ -62,6 +62,32 @@ describe('subscriptionBillingService', () => {
       expect(billing.canAccessApp).toBe(true);
     });
 
+    it('keeps enterprise active without ledger payment', async () => {
+      const billing = await resolveBillingStatus(
+        baseTenant({
+          plan: 'enterprise',
+          trialEndsAt: new Date('2020-01-01'),
+        }),
+        { at: new Date('2026-01-01'), subscriptionSetting: {} }
+      );
+      expect(billing.billingStatus).toBe('active');
+      expect(billing.canAccessApp).toBe(true);
+      expect(billing.plan).toBe('enterprise');
+    });
+
+    it('locks enterprise when billingOverride is locked', async () => {
+      const billing = await resolveBillingStatus(
+        baseTenant({
+          plan: 'enterprise',
+          metadata: { entitlements: { billingOverride: 'locked' } },
+        }),
+        { at: new Date('2026-01-01'), subscriptionSetting: {} }
+      );
+      expect(billing.billingStatus).toBe('locked');
+      expect(billing.canAccessApp).toBe(false);
+      expect(billing.lockReason).toBe('platform_locked');
+    });
+
     it('returns locked after trial and grace', async () => {
       const trialEndsAt = new Date('2026-01-01');
       const at = new Date(trialEndsAt);

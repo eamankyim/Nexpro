@@ -144,6 +144,34 @@ async function resolveBillingStatus(tenantOrId, options = {}) {
     };
   }
 
+  // Enterprise is contract / platform-managed — not gated on self-serve Paystack ledger rows.
+  if (plan === 'enterprise') {
+    if (entitlements.billingOverride === 'locked') {
+      return {
+        billingStatus: 'locked',
+        lockReason: 'platform_locked',
+        canAccessApp: false,
+        trialEndsAt,
+        currentPeriodEnd,
+        graceEndsAt: null,
+        daysRemaining: 0,
+        plan: 'enterprise',
+        activePayment: null,
+      };
+    }
+    return {
+      billingStatus: 'active',
+      lockReason: null,
+      canAccessApp: true,
+      trialEndsAt,
+      currentPeriodEnd,
+      graceEndsAt: null,
+      daysRemaining: null,
+      plan: 'enterprise',
+      activePayment: null,
+    };
+  }
+
   const isTrialPlan = plan === 'trial' || !PAID_PLANS.has(plan);
   if (isTrialPlan && trialEndsAt && at < trialEndsAt) {
     return {

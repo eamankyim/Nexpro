@@ -27,7 +27,11 @@
     "test:unit": "jest __tests__/unit",
     "test:integration": "jest __tests__/integration",
     "verify:invoice-discount": "node scripts/verify-invoice-discount.js",
-    "adjust:invoice-payment": "node scripts/adjust-invoice-payment.js"
+    "adjust:invoice-payment": "node scripts/adjust-invoice-payment.js",
+    "load:k6": "k6 run ./load-tests/backend-load-test.js",
+    "load:k6:100": "PROFILE=100 k6 run ./load-tests/backend-load-test.js",
+    "load:k6:200": "PROFILE=200 k6 run ./load-tests/backend-load-test.js",
+    "load:k6:300": "PROFILE=300 k6 run ./load-tests/backend-load-test.js"
   },
   "keywords": [
     "printing",

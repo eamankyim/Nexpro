@@ -874,6 +874,9 @@ exports.updateTenantAccess = async (req, res, next) => {
     }
 
     const effectivePlan = tenant.plan;
+    if (effectivePlan === 'enterprise' && entitlements.billingOverride !== 'locked') {
+      entitlements.billingOverride = 'unlocked';
+    }
     if (enterpriseTier !== undefined) {
       if (enterpriseTier === null || enterpriseTier === '') {
         delete entitlements.enterpriseTier;

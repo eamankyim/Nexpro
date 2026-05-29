@@ -11,14 +11,20 @@ const BRAND_GREEN = '#166534';
  * Full-workspace block when billing is locked (managers can reach plans, checkout, and settings).
  */
 const BillingLockedScreen = ({ billing }) => {
+  const isEnterprise = billing?.plan === 'enterprise';
   const trialEnded = billing?.lockReason === 'trial_expired';
   const graceEnded = billing?.graceEndsAt ? dayjs().isAfter(dayjs(billing.graceEndsAt)) : true;
+  const platformLocked = billing?.lockReason === 'platform_locked';
 
-  const description = trialEnded
-    ? 'Your free trial has ended and the grace period is over. Renew your subscription to continue using all features.'
-    : graceEnded
-      ? 'Your workspace subscription is not active. Renew your subscription to continue using all features.'
-      : 'Renew your subscription to continue using all features.';
+  const description = platformLocked
+    ? 'Workspace access has been restricted by your administrator. Contact support to restore access.'
+    : isEnterprise
+      ? 'Your Enterprise workspace needs billing attention. Contact your account manager or support to restore access.'
+      : trialEnded
+        ? 'Your free trial has ended and the grace period is over. Renew your subscription to continue using all features.'
+        : graceEnded
+          ? 'Your workspace subscription is not active. Renew your subscription to continue using all features.'
+          : 'Renew your subscription to continue using all features.';
 
   return (
     <div className="min-h-[60vh] flex items-center justify-center p-4 bg-muted/30">
