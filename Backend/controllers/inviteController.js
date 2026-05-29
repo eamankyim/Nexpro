@@ -28,9 +28,10 @@ exports.generateInvite = async (req, res, next) => {
   try {
     const { email, role, name, expiresInDays, studioLocationIds, shopIds } = req.body;
     const inviteRequestId = `inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const requestedEmailMasked = emailService.maskEmail(email);
     console.log('[Invite] Generating invite for:', {
       inviteRequestId,
-      email,
+      email: requestedEmailMasked,
       role,
       name,
       expiresInDays,
@@ -59,7 +60,7 @@ exports.generateInvite = async (req, res, next) => {
 
     // Validate required fields
     if (!email || !role) {
-      console.log('[Invite] Missing required fields:', { email, role });
+      console.log('[Invite] Missing required fields:', { email: requestedEmailMasked, role });
       return res.status(400).json({
         success: false,
         message: 'Email and role are required'
@@ -79,7 +80,7 @@ exports.generateInvite = async (req, res, next) => {
       where: { email: normalizedEmail }
     });
     if (existingUser) {
-      console.log('[Invite] User already exists:', email);
+      console.log('[Invite] User already exists:', emailService.maskEmail(email));
       return res.status(400).json({
         success: false,
         message: 'User with this email already exists'
@@ -98,7 +99,7 @@ exports.generateInvite = async (req, res, next) => {
     });
 
     if (existingInvite) {
-      console.log('[Invite] Active invite already exists:', email);
+      console.log('[Invite] Active invite already exists:', emailService.maskEmail(email));
       const frontendUrl = getFrontendBaseUrl(req);
       const existingInviteUrl = `${frontendUrl}/signup?token=${existingInvite.token}`;
       return res.status(400).json({
@@ -203,7 +204,7 @@ exports.generateInvite = async (req, res, next) => {
                 label,
                 attempt,
                 maxAttempts,
-                error: result?.error || 'unknown_error',
+                error: emailService.maskEmailsInText(result?.error || 'unknown_error'),
               });
             } catch (err) {
               lastResult = { success: false, error: err?.message || 'unknown_error' };
@@ -213,7 +214,7 @@ exports.generateInvite = async (req, res, next) => {
                 label,
                 attempt,
                 maxAttempts,
-                error: err?.message,
+                error: emailService.maskEmailsInText(err?.message),
               });
             }
             if (attempt < maxAttempts) {
@@ -224,15 +225,17 @@ exports.generateInvite = async (req, res, next) => {
         };
 
         const platformConfig = emailService.getPlatformConfig?.();
+        const platformDiag = platformConfig ? emailService.getConfigDiagnostic(platformConfig) : null;
         console.log('[Invite Email] Dispatch started', {
           inviteRequestId,
           inviteId: invite.id,
           inviteType: 'workspace_user',
-          to: normalizedEmail,
+          to: emailService.maskEmail(normalizedEmail),
           inviterUserId: req.user?.id,
           tenantId: req.tenantId,
           provider: platformConfig?.provider || 'unknown',
-          fromEmail: platformConfig?.fromEmail || null,
+          fromEmail: platformDiag?.effectiveFromMasked || '(empty)',
+          fromMatchesSmtpUser: platformDiag?.fromMatchesSmtpUser || 'n/a',
           frontendUrl,
         });
         const inviter = await User.findByPk(req.user.id, { attributes: ['name', 'email'] });
@@ -254,14 +257,26 @@ exports.generateInvite = async (req, res, next) => {
         let usedProvider = platformConfig?.provider || 'unknown';
 
         if (tenantEmailConfig?.enabled) {
+          const tenantDiag = emailService.getConfigDiagnostic(tenantEmailConfig);
           console.log('[Invite Email] Sending via tenant email config', {
             inviteRequestId,
             inviteId: invite.id,
             tenantId: req.tenantId,
             provider: tenantEmailConfig.provider || 'smtp',
+            fromEmail: tenantDiag.effectiveFromMasked,
+            smtpUser: tenantDiag.smtpUserMasked,
+            fromMatchesSmtpUser: tenantDiag.fromMatchesSmtpUser,
           });
           result = await sendWithRetry(
-            () => emailService.sendMessage(req.tenantId, normalizedEmail, subject, html, text),
+            () => emailService.sendMessage(req.tenantId, normalizedEmail, subject, html, text, [], null, {
+              context: {
+                requestId: req.id || req.headers?.['x-request-id'],
+                inviteRequestId,
+                inviteId: invite.id,
+                userId: req.user?.id,
+                source: 'tenant_invite_email',
+              },
+            }),
             'tenant_email'
           );
           usedProvider = tenantEmailConfig.provider || 'smtp';
@@ -281,6 +296,7 @@ exports.generateInvite = async (req, res, next) => {
             inviteRequestId,
             inviteId: invite.id,
             tenantId: req.tenantId,
+            platformProvider: platformConfig?.provider || 'unknown',
           });
           result = await sendWithRetry(
             () => emailService.sendPlatformMessage(
@@ -289,7 +305,17 @@ exports.generateInvite = async (req, res, next) => {
               html,
               text,
               [],
-              { categories: ['transactional', 'signup'] }
+              {
+                categories: ['transactional', 'signup'],
+                context: {
+                  requestId: req.id || req.headers?.['x-request-id'],
+                  inviteRequestId,
+                  inviteId: invite.id,
+                  tenantId: req.tenantId,
+                  userId: req.user?.id,
+                  source: 'platform_invite_fallback',
+                },
+              }
             ),
             'platform_email'
           );
@@ -316,7 +342,7 @@ exports.generateInvite = async (req, res, next) => {
         console.log('[Invite Email] Dispatch success', {
           inviteRequestId,
           inviteId: invite.id,
-          to: normalizedEmail,
+          to: emailService.maskEmail(normalizedEmail),
           messageId: result?.messageId || null,
           provider: usedProvider,
         });
@@ -337,9 +363,8 @@ exports.generateInvite = async (req, res, next) => {
         console.error('[Invite Email] Dispatch failed', {
           inviteRequestId,
           inviteId: invite.id,
-          to: normalizedEmail,
-          error: err?.message,
-          stack: err?.stack,
+          to: emailService.maskEmail(normalizedEmail),
+          error: emailService.maskEmailsInText(err?.message),
         });
       }
     });

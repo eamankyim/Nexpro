@@ -485,7 +485,11 @@ async function maybeAutoSendInvoiceOnJobCreation(tenantId, invoice, userId) {
   }
   try {
     const { sendInvoiceToCustomer } = require('./invoiceController');
-    await sendInvoiceToCustomer(tenantId, invoice, { forceCustomerChannels: true });
+    await sendInvoiceToCustomer(tenantId, invoice, {
+      forceCustomerChannels: true,
+      userId: userId || null,
+      deliverySource: 'job_creation_auto_send'
+    });
     const sentInvoice = await Invoice.findOne({
       where: applyTenantFilter(tenantId, { id: invoice.id }),
       include: [

@@ -316,7 +316,7 @@ exports.inviteTenant = async (req, res, next) => {
       inviteRequestId,
       inviteId: invite.id,
       inviteType: 'new_tenant',
-      email: normalizedEmail,
+      email: emailService.maskEmail(normalizedEmail),
       createdBy: req.user?.id,
       expiresAt: invite.expiresAt,
     });
@@ -328,13 +328,15 @@ exports.inviteTenant = async (req, res, next) => {
     setImmediate(async () => {
       try {
         const platformConfig = emailService.getPlatformConfig?.();
+        const platformDiag = platformConfig ? emailService.getConfigDiagnostic(platformConfig) : null;
         console.log('[Admin Invite Email] Dispatch started', {
           inviteRequestId,
           inviteId: invite.id,
-          to: normalizedEmail,
+          to: emailService.maskEmail(normalizedEmail),
           inviterUserId: req.user?.id,
           provider: platformConfig?.provider || 'unknown',
-          fromEmail: platformConfig?.fromEmail || null,
+          fromEmail: platformDiag?.effectiveFromMasked || '(empty)',
+          fromMatchesSmtpUser: platformDiag?.fromMatchesSmtpUser || 'n/a',
           frontendUrl,
         });
         const { subject, html, text } = inviteTenantEmail(normalizedEmail, inviteUrl, inviterName);
@@ -344,7 +346,16 @@ exports.inviteTenant = async (req, res, next) => {
           html,
           text,
           [],
-          { categories: ['transactional', 'signup'] }
+          {
+            categories: ['transactional', 'signup'],
+            context: {
+              requestId: req.id || req.headers?.['x-request-id'],
+              inviteRequestId,
+              inviteId: invite.id,
+              userId: req.user?.id,
+              source: 'platform_admin_tenant_invite',
+            },
+          }
         );
         if (!result?.success) {
           throw new Error(result?.error || 'Invite email send failed');
@@ -352,7 +363,7 @@ exports.inviteTenant = async (req, res, next) => {
         console.log('[Admin Invite Email] Dispatch success', {
           inviteRequestId,
           inviteId: invite.id,
-          to: normalizedEmail,
+          to: emailService.maskEmail(normalizedEmail),
           messageId: result?.messageId || null,
           provider: platformConfig?.provider || 'unknown',
         });
@@ -360,9 +371,8 @@ exports.inviteTenant = async (req, res, next) => {
         console.error('[Admin Invite Email] Dispatch failed', {
           inviteRequestId,
           inviteId: invite.id,
-          to: normalizedEmail,
-          error: err?.message,
-          stack: err?.stack,
+          to: emailService.maskEmail(normalizedEmail),
+          error: emailService.maskEmailsInText(err?.message),
         });
       }
     });

@@ -8,6 +8,78 @@ class EmailService {
     this.maxEmailsPerDay = 1000;
   }
 
+  maskEmail(email) {
+    if (!email) return '(empty)';
+    const value = String(email).trim();
+    const [local, domain] = value.split('@');
+    if (!local || !domain) return value ? '***' : '(empty)';
+    const maskedLocal = local.length <= 2 ? `${local[0] || ''}***` : `${local.slice(0, 2)}***${local.slice(-1)}`;
+    const [domainName, ...domainRest] = domain.split('.');
+    const maskedDomain =
+      domainName && domainRest.length
+        ? `${domainName[0] || ''}***.${domainRest.join('.')}`
+        : '***';
+    return `${maskedLocal}@${maskedDomain}`;
+  }
+
+  maskEmailsInText(text) {
+    if (!text) return '';
+    return String(text).replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, (match) => this.maskEmail(match));
+  }
+
+  summarizeProviderError(error) {
+    if (!error) {
+      return {
+        code: 'n/a',
+        responseCode: 'n/a',
+        command: 'n/a',
+        message: 'unknown_error',
+        response: ''
+      };
+    }
+    const responseBody =
+      error.response?.body?.errors || error.response?.body?.message || error.response?.body || error.response;
+    const response = responseBody ? JSON.stringify(responseBody).slice(0, 500) : '';
+    return {
+      code: error.code || 'n/a',
+      responseCode: error.responseCode || error.statusCode || error.code || 'n/a',
+      command: error.command || 'n/a',
+      message: this.maskEmailsInText(error.message || 'Failed to send email message'),
+      response: this.maskEmailsInText(response)
+    };
+  }
+
+  formatContext(context = {}) {
+    const parts = [];
+    ['requestId', 'tenantId', 'userId', 'inviteId', 'inviteRequestId', 'source', 'mode'].forEach((key) => {
+      if (context[key] !== undefined && context[key] !== null && context[key] !== '') {
+        parts.push(`${key}=${context[key]}`);
+      }
+    });
+    return parts.length ? ` ${parts.join(' ')}` : '';
+  }
+
+  getConfigDiagnostic(config = {}) {
+    const provider = (config.provider || 'smtp').toString();
+    const fromEmail = config.fromEmail || '';
+    const smtpUser = config.smtpUser || '';
+    const effectiveFrom = fromEmail || smtpUser || config.sesAccessKeyId || '';
+    return {
+      provider,
+      host: config.smtpHost || config.sesHost || (provider === 'sendgrid' ? 'smtp.sendgrid.net' : 'n/a'),
+      port: config.smtpPort || (provider === 'smtp' || provider === 'mailjet' ? 587 : 'n/a'),
+      smtpUserSet: !!String(smtpUser || '').trim(),
+      smtpPasswordSet: !!String(config.smtpPassword || '').trim(),
+      sendgridSet: !!String(config.sendgridApiKey || '').trim(),
+      sesAccessKeySet: !!String(config.sesAccessKeyId || '').trim(),
+      sesSecretSet: !!String(config.sesSecretAccessKey || '').trim(),
+      fromEmailMasked: this.maskEmail(fromEmail),
+      smtpUserMasked: this.maskEmail(smtpUser),
+      effectiveFromMasked: this.maskEmail(effectiveFrom),
+      fromMatchesSmtpUser: !!fromEmail && !!smtpUser ? String(fromEmail).trim().toLowerCase() === String(smtpUser).trim().toLowerCase() : 'n/a'
+    };
+  }
+
   /**
    * Get platform email configuration from environment (for system emails: password reset, welcome, etc.).
    * Platform pays for these; businesses do not configure this.
@@ -84,27 +156,33 @@ class EmailService {
    */
   async sendPlatformMessage(to, subject, html, text = null, attachments = [], options = {}) {
     const logPrefix = '[Email]';
-    const toMask = to ? `${to.substring(0, 6)}***` : '?';
+    const context = options.context || {};
+    const contextText = this.formatContext({ ...context, source: context.source || 'platform_env' });
+    const toMask = this.maskEmail(to);
     const subjectShort = subject ? subject.substring(0, 50) : '';
 
     try {
       const config = this.getPlatformConfig();
       if (!config) {
-        console.warn(`${logPrefix} SKIP platform to=${toMask} subject="${subjectShort}" reason=platform_not_configured`);
+        console.warn(`${logPrefix}[platform_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=platform_not_configured`);
         return { success: false, error: 'Platform email not configured' };
       }
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(to)) {
-        console.warn(`${logPrefix} SKIP platform to=${to} subject="${subjectShort}" reason=invalid_recipient`);
+        console.warn(`${logPrefix}[platform_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=invalid_recipient`);
         return { success: false, error: 'Invalid email address format' };
       }
       const fromEmail = config.fromEmail || config.smtpUser;
       if (!fromEmail) {
-        console.warn(`${logPrefix} SKIP platform to=${toMask} subject="${subjectShort}" reason=sender_not_configured`);
+        console.warn(`${logPrefix}[platform_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=sender_not_configured`);
         return { success: false, error: 'Platform sender email not configured' };
       }
 
-      console.log(`${logPrefix} Sending platform email to=${toMask} subject="${subjectShort}"`);
+      const diag = this.getConfigDiagnostic(config);
+      console.log(
+        `${logPrefix}[platform_send_start]${contextText} to=${toMask} subject="${subjectShort}" ` +
+          `provider=${diag.provider} from=${diag.effectiveFromMasked} fromMatchesSmtpUser=${diag.fromMatchesSmtpUser}`
+      );
 
       // SendGrid: use HTTP API (port 443) instead of SMTP to avoid firewall/port 587 issues
       if (config.provider === 'sendgrid' && config.sendgridApiKey) {
@@ -120,7 +198,10 @@ class EmailService {
         };
         const [res] = await sgMail.send(msg);
         const messageId = res?.headers?.['x-message-id'];
-        console.log(`${logPrefix} SENT platform to=${toMask} subject="${subjectShort}" messageId=${messageId || 'n/a'}`);
+        console.log(
+          `${logPrefix}[platform_send_success]${contextText} to=${toMask} subject="${subjectShort}" ` +
+            `provider=sendgrid responseCode=${res?.statusCode || 'n/a'} messageId=${messageId || 'n/a'}`
+        );
         return { success: true, messageId: messageId || res?.messageId, data: res };
       }
 
@@ -134,10 +215,17 @@ class EmailService {
         attachments
       };
       const info = await transporter.sendMail(mailOptions);
-      console.log(`${logPrefix} SENT platform to=${toMask} subject="${subjectShort}" messageId=${info.messageId || 'n/a'}`);
+      console.log(
+        `${logPrefix}[platform_send_success]${contextText} to=${toMask} subject="${subjectShort}" ` +
+          `provider=${config.provider || 'smtp'} responseCode=${info.responseCode || 'n/a'} response="${this.maskEmailsInText(info.response || '').slice(0, 200)}" messageId=${info.messageId || 'n/a'}`
+      );
       return { success: true, messageId: info.messageId, data: info };
     } catch (error) {
-      console.error(`${logPrefix} FAILED platform to=${toMask} subject="${subjectShort}" error=${error.message} code=${error.code || 'n/a'}`);
+      const err = this.summarizeProviderError(error);
+      console.error(
+        `${logPrefix}[platform_send_failure]${contextText} to=${toMask} subject="${subjectShort}" ` +
+          `code=${err.code} responseCode=${err.responseCode} command=${err.command} message="${err.message}" response="${err.response}"`
+      );
       return { success: false, error: error.message || 'Failed to send email' };
     }
   }
@@ -159,13 +247,16 @@ class EmailService {
     const outboundReady = enabled && (hasHost || hasSg || hasSes);
     const smtpUserSet = !!(v.smtpUser && String(v.smtpUser).trim());
     const smtpPasswordSet = !!(v.smtpPassword && String(v.smtpPassword).trim());
-    const fromEmail = (v.fromEmail && String(v.fromEmail).trim()) || '(empty)';
-    const fromName = (v.fromName && String(v.fromName).trim()) || '(empty)';
+    const fromEmail = (v.fromEmail && String(v.fromEmail).trim()) || '';
+    const fromNameSet = !!(v.fromName && String(v.fromName).trim());
+    const fromMatchesSmtpUser = fromEmail && v.smtpUser
+      ? fromEmail.toLowerCase() === String(v.smtpUser).trim().toLowerCase()
+      : 'n/a';
     return (
       `tenantId=${tenantId} enabled=${enabled} provider=${provider} ` +
       `outboundReady=${outboundReady} smtpHostSet=${hasHost} smtpUserSet=${smtpUserSet} ` +
       `smtpPasswordSet=${smtpPasswordSet} sendgridSet=${hasSg} sesSet=${hasSes} ` +
-      `fromEmail=${fromEmail} fromName=${fromName}`
+      `fromEmail=${this.maskEmail(fromEmail)} fromNameSet=${fromNameSet} fromMatchesSmtpUser=${fromMatchesSmtpUser}`
     );
   }
 
@@ -181,9 +272,11 @@ class EmailService {
       });
 
       if (!setting || !setting.value?.enabled) {
+        console.log(`[Email][tenant_config_resolved] tenantId=${tenantId} configured=${!!setting} enabled=${!!setting?.value?.enabled}`);
         return null;
       }
 
+      console.log(`[Email][tenant_config_resolved] ${this.formatTenantEmailAudit(tenantId, setting.value)}`);
       return setting.value;
     } catch (error) {
       console.error('[Email] Error getting config:', error);
@@ -368,7 +461,7 @@ class EmailService {
         const html = job.html;
         const text =
           job.text != null ? job.text : html ? String(html).replace(/<[^>]*>/g, '') : '';
-        const toMask = to ? `${String(to).substring(0, 6)}***` : '?';
+        const toMask = this.maskEmail(to);
 
         if (!to || !emailRegex.test(String(to).trim())) {
           results.push({ success: false, error: 'Invalid email address format' });
@@ -392,13 +485,16 @@ class EmailService {
               attachments: job.attachments || [],
             });
             console.log(
-              `${logPrefix} SENT tenant tenantId=${tenantId} to=${toMask} subject="${(subject || '').substring(0, 50)}" messageId=${info.messageId || 'n/a'}`
+              `${logPrefix}[tenant_bulk_send_success] tenantId=${tenantId} to=${toMask} subject="${(subject || '').substring(0, 50)}" ` +
+                `responseCode=${info.responseCode || 'n/a'} messageId=${info.messageId || 'n/a'}`
             );
             results.push({ success: true, messageId: info.messageId });
             settled = true;
           } catch (err) {
+            const errInfo = this.summarizeProviderError(err);
             console.error(
-              `${logPrefix} FAILED bulk tenantId=${tenantId} to=${toMask} attempt=${attempt + 1} error=${err.message}`
+              `${logPrefix}[tenant_bulk_send_failure] tenantId=${tenantId} to=${toMask} attempt=${attempt + 1} ` +
+                `code=${errInfo.code} responseCode=${errInfo.responseCode} command=${errInfo.command} message="${errInfo.message}" response="${errInfo.response}"`
             );
             if (attempt === 0 && isRetryableTransportError(err)) {
               await recreateTransporter();
@@ -431,15 +527,17 @@ class EmailService {
    * @param {string} from - Sender email address (optional, uses config default)
    * @returns {Promise<Object>} - API response
    */
-  async sendMessage(tenantId, to, subject, html, text = null, attachments = [], from = null) {
+  async sendMessage(tenantId, to, subject, html, text = null, attachments = [], from = null, options = {}) {
     const logPrefix = '[Email]';
-    const toMask = to ? `${to.substring(0, 6)}***` : '?';
+    const context = options.context || {};
+    const contextText = this.formatContext({ ...context, tenantId, source: context.source || 'tenant_config' });
+    const toMask = this.maskEmail(to);
     const subjectShort = subject ? subject.substring(0, 50) : '';
 
     try {
       const config = await this.getConfig(tenantId);
       if (!config) {
-        console.warn(`${logPrefix} SKIP tenant tenantId=${tenantId} to=${toMask} subject="${subjectShort}" reason=email_not_configured`);
+        console.warn(`${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=email_not_configured`);
         return {
           success: false,
           error: 'Email not configured for this tenant'
@@ -448,7 +546,7 @@ class EmailService {
 
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(to)) {
-        console.warn(`${logPrefix} SKIP tenant tenantId=${tenantId} to=${to} subject="${subjectShort}" reason=invalid_recipient`);
+        console.warn(`${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=invalid_recipient`);
         return {
           success: false,
           error: 'Invalid email address format'
@@ -456,7 +554,7 @@ class EmailService {
       }
 
       if (!this.checkRateLimit(tenantId)) {
-        console.warn(`${logPrefix} SKIP tenant tenantId=${tenantId} to=${toMask} subject="${subjectShort}" reason=rate_limit_exceeded`);
+        console.warn(`${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=rate_limit_exceeded`);
         return {
           success: false,
           error: 'Rate limit exceeded (1000 emails per day)'
@@ -467,7 +565,7 @@ class EmailService {
       const fromEmail = from || config.fromEmail || config.smtpUser;
 
       if (!fromEmail) {
-        console.warn(`${logPrefix} SKIP tenant tenantId=${tenantId} to=${toMask} subject="${subjectShort}" reason=sender_not_configured`);
+        console.warn(`${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=sender_not_configured`);
         try {
           transporter.close();
         } catch (_) {
@@ -479,10 +577,10 @@ class EmailService {
         };
       }
 
-      const fn = (config.fromName && String(config.fromName).trim()) || '(none)';
+      const diag = this.getConfigDiagnostic(config);
       console.log(
-        `${logPrefix} Sending tenant email tenantId=${tenantId} to=${toMask} subject="${subjectShort}" ` +
-          `fromEmail=${fromEmail} fromName=${fn}`
+        `${logPrefix}[tenant_send_start]${contextText} to=${toMask} subject="${subjectShort}" provider=${diag.provider} ` +
+          `from=${this.maskEmail(fromEmail)} smtpUser=${diag.smtpUserMasked} fromMatchesSmtpUser=${diag.fromMatchesSmtpUser}`
       );
       const mailOptions = {
         from: config.fromName ? `${config.fromName} <${fromEmail}>` : fromEmail,
@@ -495,7 +593,10 @@ class EmailService {
 
       try {
         const info = await transporter.sendMail(mailOptions);
-        console.log(`${logPrefix} SENT tenant tenantId=${tenantId} to=${toMask} subject="${subjectShort}" messageId=${info.messageId || 'n/a'}`);
+        console.log(
+          `${logPrefix}[tenant_send_success]${contextText} to=${toMask} subject="${subjectShort}" ` +
+            `provider=${config.provider || 'smtp'} responseCode=${info.responseCode || 'n/a'} response="${this.maskEmailsInText(info.response || '').slice(0, 200)}" messageId=${info.messageId || 'n/a'}`
+        );
         return {
           success: true,
           messageId: info.messageId,
@@ -510,8 +611,11 @@ class EmailService {
       }
 
     } catch (error) {
-      const rawMessage = error.message || 'Failed to send email message';
-      console.error(`${logPrefix} FAILED tenant tenantId=${tenantId} to=${toMask} subject="${subjectShort}" error=${rawMessage}`);
+      const err = this.summarizeProviderError(error);
+      console.error(
+        `${logPrefix}[tenant_send_failure]${contextText} to=${toMask} subject="${subjectShort}" ` +
+          `code=${err.code} responseCode=${err.responseCode} command=${err.command} message="${err.message}" response="${err.response}"`
+      );
       return {
         success: false,
         error: this.formatTenantSmtpError(error)
@@ -524,18 +628,25 @@ class EmailService {
    * @param {Object} config - Email configuration to test
    * @returns {Promise<Object>} - Test result
    */
-  async testConnection(config) {
+  async testConnection(config, options = {}) {
     const provider = config.provider || 'smtp';
     const logPrefix = '[Email Test]';
+    const context = options.context || {};
+    const mode = context.mode || 'verify';
+    const contextText = this.formatContext({ ...context, mode });
     try {
-      console.log(`${logPrefix} Starting: provider=${provider}`);
+      const diag = this.getConfigDiagnostic(config);
+      console.log(
+        `${logPrefix}[connection_verify_start]${contextText} provider=${provider} host=${diag.host} port=${diag.port} ` +
+          `smtpUser=${diag.smtpUserMasked} from=${diag.fromEmailMasked} fromMatchesSmtpUser=${diag.fromMatchesSmtpUser}`
+      );
 
       // Validate required fields based on provider
       switch (provider) {
         case 'smtp':
           if (!config.smtpHost || !config.smtpUser || !config.smtpPassword) {
             const missing = []; if (!config.smtpHost) missing.push('smtpHost'); if (!config.smtpUser) missing.push('smtpUser'); if (!config.smtpPassword) missing.push('smtpPassword');
-            console.log(`${logPrefix} Validation failed: missing ${missing.join(', ')}`);
+            console.log(`${logPrefix}[connection_verify_skip]${contextText} provider=${provider} reason=missing_fields fields=${missing.join(',')}`);
             return {
               success: false,
               error: 'SMTP Host, User, and Password are required'
@@ -545,7 +656,7 @@ class EmailService {
 
         case 'sendgrid':
           if (!config.sendgridApiKey) {
-            console.log(`${logPrefix} Validation failed: SendGrid API Key missing`);
+            console.log(`${logPrefix}[connection_verify_skip]${contextText} provider=${provider} reason=missing_sendgrid_api_key`);
             return {
               success: false,
               error: 'SendGrid API Key is required'
@@ -555,7 +666,7 @@ class EmailService {
 
         case 'ses':
           if (!config.sesAccessKeyId || !config.sesSecretAccessKey) {
-            console.log(`${logPrefix} Validation failed: SES credentials missing`);
+            console.log(`${logPrefix}[connection_verify_skip]${contextText} provider=${provider} reason=missing_ses_credentials`);
             return {
               success: false,
               error: 'AWS SES Access Key ID and Secret Access Key are required'
@@ -565,7 +676,7 @@ class EmailService {
 
         case 'mailjet':
           if (!config.smtpUser || !config.smtpPassword) {
-            console.log(`${logPrefix} Validation failed: Mailjet credentials missing`);
+            console.log(`${logPrefix}[connection_verify_skip]${contextText} provider=${provider} reason=missing_mailjet_credentials`);
             return {
               success: false,
               error: 'Mailjet API Key and Secret Key are required'
@@ -574,19 +685,18 @@ class EmailService {
           break;
 
         default:
-          console.log(`${logPrefix} Unsupported provider: ${provider}`);
+          console.log(`${logPrefix}[connection_verify_skip]${contextText} provider=${provider} reason=unsupported_provider`);
           return {
             success: false,
             error: `Unsupported email provider: ${provider}`
           };
       }
 
-      console.log(`${logPrefix} Validation passed. Creating transporter: host=${config.smtpHost || config.sesHost || 'n/a'}, user=${config.smtpUser || config.sesAccessKeyId || 'n/a'}`);
+      console.log(`${logPrefix}[connection_verify_transport]${contextText} provider=${provider} host=${diag.host} user=${diag.smtpUserMasked}`);
       const transporter = await this.createTransporter(config);
       try {
-        console.log(`${logPrefix} Calling transporter.verify()...`);
         await transporter.verify();
-        console.log(`${logPrefix} transporter.verify() succeeded`);
+        console.log(`${logPrefix}[connection_verify_success]${contextText} provider=${provider}`);
         return {
           success: true,
           message: 'Email connection verified successfully'
@@ -599,11 +709,12 @@ class EmailService {
         }
       }
     } catch (error) {
+      const err = this.summarizeProviderError(error);
       const code = error.code || '';
-      const response = error.response ? String(error.response).slice(0, 300) : '';
-      const command = error.command || '';
-      console.error(`${logPrefix} Error: message=${error.message} code=${code} command=${command} response=${response}`);
-      if (error.stack) console.error(`${logPrefix} Stack:`, error.stack);
+      console.error(
+        `${logPrefix}[connection_verify_failure]${contextText} provider=${provider} ` +
+          `code=${err.code} responseCode=${err.responseCode} command=${err.command} message="${err.message}" response="${err.response}"`
+      );
       let userMessage = error.message || 'Failed to verify email connection';
       if (code === 'ETIMEDOUT' || (code === 'ECONNREFUSED') || (error.message && error.message.includes('Greeting never received'))) {
         userMessage = 'Could not reach the mail server (connection timed out or blocked). If you\'re on a local network, outbound SMTP is often blocked—try from a deployed server, or use port 465 (SSL) if your provider supports it.';

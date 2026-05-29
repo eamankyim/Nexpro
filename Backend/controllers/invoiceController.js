@@ -134,6 +134,56 @@ const invoiceToResponsePayload = async (invoice) => {
   return payload;
 };
 
+const maskEmailForLogs = (email) => {
+  if (!email || typeof email !== 'string') return null;
+  const [localPart, domainPart] = email.trim().split('@');
+  if (!localPart || !domainPart) return 'invalid-email';
+  const visibleLocal = localPart.slice(0, Math.min(2, localPart.length));
+  const [domainName, ...domainRest] = domainPart.split('.');
+  const visibleDomain = domainName ? domainName.slice(0, 1) : '';
+  const suffix = domainRest.length ? `.${domainRest.join('.')}` : '';
+  return `${visibleLocal}***@${visibleDomain}***${suffix}`;
+};
+
+const buildInvoiceDeliveryLogContext = ({
+  tenantId,
+  userId = null,
+  invoice,
+  customer,
+  prefsSetting,
+  forceCustomerChannels = false,
+  deliverySource = 'unknown'
+}) => {
+  const prefValue = prefsSetting?.value?.autoSendInvoiceToCustomer;
+  return {
+    tenantId,
+    userId,
+    invoiceId: invoice?.id || null,
+    invoiceNumber: invoice?.invoiceNumber || null,
+    sourceType: invoice?.sourceType || null,
+    saleId: invoice?.saleId || null,
+    jobId: invoice?.jobId || null,
+    quoteId: invoice?.quoteId || null,
+    customerId: customer?.id || invoice?.customerId || null,
+    hasCustomer: !!customer,
+    hasCustomerEmail: !!customer?.email,
+    customerEmail: maskEmailForLogs(customer?.email),
+    autoSendInvoiceToCustomer: prefValue !== false,
+    autoSendInvoiceToCustomerRaw: typeof prefValue === 'boolean' ? prefValue : null,
+    forceCustomerChannels,
+    deliverySource
+  };
+};
+
+const logInvoiceDelivery = (event, context, extra = {}, level = 'log') => {
+  const logger = typeof console[level] === 'function' ? console[level] : console.log;
+  logger('[InvoiceDelivery]', {
+    event,
+    ...context,
+    ...extra
+  });
+};
+
 // Helper function to generate invoice number
 const generateInvoiceNumber = async (tenantId) => {
   const date = new Date();
@@ -1254,6 +1304,18 @@ exports.sendInvoice = async (req, res, next) => {
 
     const prefsSetting = await Setting.findOne({ where: { tenantId: req.tenantId, key: 'customer-notification-preferences' } });
     const autoSendInvoice = (prefsSetting?.value?.autoSendInvoiceToCustomer !== false);
+    const deliveryLogContext = buildInvoiceDeliveryLogContext({
+      tenantId: req.tenantId,
+      userId: req.user?.id || null,
+      invoice: updatedInvoice,
+      customer: updatedInvoice.customer,
+      prefsSetting,
+      deliverySource: 'manual_invoice_send'
+    });
+    logInvoiceDelivery('invoice_send_decision', deliveryLogContext, {
+      decision: autoSendInvoice ? 'send_customer_channels' : 'skip_customer_channels',
+      reason: autoSendInvoice ? 'auto_send_enabled' : 'auto_send_disabled'
+    });
 
     // Send WhatsApp notification if enabled, customer has phone, and auto-send is on
     if (autoSendInvoice) {
@@ -1323,6 +1385,9 @@ exports.sendInvoice = async (req, res, next) => {
         );
         
         // Send the email
+        logInvoiceDelivery('invoice_email_attempt', deliveryLogContext, {
+          providerPath: 'emailService.sendMessage'
+        });
         const emailResult = await emailService.sendMessage(
           req.tenantId,
           updatedInvoice.customer.email,
@@ -1333,19 +1398,35 @@ exports.sendInvoice = async (req, res, next) => {
         
         if (emailResult.success) {
           emailSent = true;
-          console.log('[Invoice] Email sent successfully to:', updatedInvoice.customer.email);
+          logInvoiceDelivery('invoice_email_success', deliveryLogContext, {
+            providerPath: 'emailService.sendMessage',
+            messageId: emailResult.messageId || null
+          });
         } else {
           emailError = emailResult.error;
-          console.log('[Invoice] Email not sent:', emailResult.error);
+          logInvoiceDelivery('invoice_email_failed', deliveryLogContext, {
+            providerPath: 'emailService.sendMessage',
+            error: emailResult.error || 'unknown error'
+          }, 'warn');
         }
       } else {
         emailError = 'Customer email address not available';
-        console.log('[Invoice] No customer email available');
+        logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
+          reason: updatedInvoice.customer ? 'missing_customer_email' : 'missing_customer'
+        }, 'warn');
       }
     } catch (error) {
       emailError = error.message;
-      console.error('[Invoice] Email sending error:', error);
+      logInvoiceDelivery('invoice_email_failed', deliveryLogContext, {
+        providerPath: 'emailService.sendMessage',
+        error: error.message
+      }, 'error');
     }
+    } else {
+      emailError = 'Auto-send invoice to customer is disabled';
+      logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
+        reason: 'auto_send_disabled'
+      });
     }
 
     // Send SMS notification if enabled and customer has phone (and auto-send is on)
@@ -1688,10 +1769,10 @@ async function createSaleFromQuoteInvoiceInternal(tenantId, invoice, userId = nu
  * Send invoice to customer via configured channels (internal use). Marks invoice as sent and sends email/WhatsApp/SMS.
  * @param {string} tenantId - Tenant ID
  * @param {Object} invoice - Invoice with customer loaded
- * @param {{ forceCustomerChannels?: boolean }} [options] - If forceCustomerChannels, notify customer even when global auto-send invoice pref is off (e.g. job-creation auto-send).
+ * @param {{ forceCustomerChannels?: boolean, userId?: string|null, deliverySource?: string }} [options] - If forceCustomerChannels, notify customer even when global auto-send invoice pref is off (e.g. job-creation auto-send).
  */
 async function sendInvoiceToCustomer(tenantId, invoice, options = {}) {
-  const { forceCustomerChannels = false } = options || {};
+  const { forceCustomerChannels = false, userId = null, deliverySource = 'internal_invoice_send' } = options || {};
   if (!invoice.paymentToken) {
     const crypto = require('crypto');
     await invoice.update({ paymentToken: crypto.randomBytes(32).toString('hex') });
@@ -1707,6 +1788,19 @@ async function sendInvoiceToCustomer(tenantId, invoice, options = {}) {
   const prefsSetting = await Setting.findOne({ where: { tenantId, key: 'customer-notification-preferences' } });
   const prefAllows = prefsSetting?.value?.autoSendInvoiceToCustomer !== false;
   const autoSend = forceCustomerChannels || prefAllows;
+  const deliveryLogContext = buildInvoiceDeliveryLogContext({
+    tenantId,
+    userId,
+    invoice: updatedInvoice,
+    customer: updatedInvoice?.customer,
+    prefsSetting,
+    forceCustomerChannels,
+    deliverySource
+  });
+  logInvoiceDelivery('invoice_send_decision', deliveryLogContext, {
+    decision: autoSend ? 'send_customer_channels' : 'skip_customer_channels',
+    reason: autoSend ? (forceCustomerChannels && !prefAllows ? 'forced_customer_channels' : 'auto_send_enabled') : 'auto_send_disabled'
+  });
 
   if (autoSend && updatedInvoice.customer) {
     try {
@@ -1730,10 +1824,31 @@ async function sendInvoiceToCustomer(tenantId, invoice, options = {}) {
       if (updatedInvoice.customer.email) {
         const invoiceForEmail = { ...updatedInvoice.toJSON(), items: updatedInvoice.items || [] };
         const { subject, html, text } = emailTemplates.invoiceNotification(invoiceForEmail, updatedInvoice.customer, paymentLink, company);
-        await emailService.sendMessage(tenantId, updatedInvoice.customer.email, subject, html, text);
+        logInvoiceDelivery('invoice_email_attempt', deliveryLogContext, {
+          providerPath: 'emailService.sendMessage'
+        });
+        const emailResult = await emailService.sendMessage(tenantId, updatedInvoice.customer.email, subject, html, text);
+        if (emailResult?.success === false) {
+          logInvoiceDelivery('invoice_email_failed', deliveryLogContext, {
+            providerPath: 'emailService.sendMessage',
+            error: emailResult.error || 'unknown error'
+          }, 'warn');
+        } else {
+          logInvoiceDelivery('invoice_email_success', deliveryLogContext, {
+            providerPath: 'emailService.sendMessage',
+            messageId: emailResult?.messageId || null
+          });
+        }
+      } else {
+        logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
+          reason: 'missing_customer_email'
+        }, 'warn');
       }
     } catch (e) {
-      console.error('[Invoice] sendInvoiceToCustomer email:', e?.message);
+      logInvoiceDelivery('invoice_email_failed', deliveryLogContext, {
+        providerPath: 'emailService.sendMessage',
+        error: e?.message || 'unknown error'
+      }, 'error');
     }
     try {
       const smsService = require('../services/smsService');
@@ -1751,6 +1866,10 @@ async function sendInvoiceToCustomer(tenantId, invoice, options = {}) {
     } catch (e) {
       console.error('[Invoice] sendInvoiceToCustomer SMS:', e?.message);
     }
+  } else {
+    logInvoiceDelivery('invoice_email_skipped', deliveryLogContext, {
+      reason: autoSend ? 'missing_customer' : 'auto_send_disabled'
+    }, autoSend ? 'warn' : 'log');
   }
 }
 

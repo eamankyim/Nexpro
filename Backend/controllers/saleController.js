@@ -25,6 +25,17 @@ const {
 const paystackCheckLastBySaleId = new Map();
 const PAYSTACK_CHECK_THROTTLE_MS = 4000;
 
+const maskEmailForLogs = (email) => {
+  if (!email || typeof email !== 'string') return null;
+  const [localPart, domainPart] = email.trim().split('@');
+  if (!localPart || !domainPart) return 'invalid-email';
+  const visibleLocal = localPart.slice(0, Math.min(2, localPart.length));
+  const [domainName, ...domainRest] = domainPart.split('.');
+  const visibleDomain = domainName ? domainName.slice(0, 1) : '';
+  const suffix = domainRest.length ? `.${domainRest.join('.')}` : '';
+  return `${visibleLocal}***@${visibleDomain}***${suffix}`;
+};
+
 const createSaleTimer = (tenantId) => {
   const requestId = `sale_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const startedAt = Date.now();
@@ -254,6 +265,28 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
     }
 
     console.log(`[AutoInvoice] ✅ Invoice created successfully: ${invoice.invoiceNumber} (ID: ${invoice.id}), status: ${invoiceStatus}`);
+    try {
+      const prefsSetting = await Setting.findOne({ where: { tenantId, key: 'customer-notification-preferences' } });
+      const prefValue = prefsSetting?.value?.autoSendInvoiceToCustomer;
+      console.log('[AutoInvoiceDelivery]', {
+        event: 'sale_invoice_created',
+        tenantId,
+        saleId,
+        saleNumber: sale.saleNumber || null,
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        sourceType: invoice.sourceType,
+        customerId: sale.customerId || null,
+        hasCustomerEmail: !!sale.customer?.email,
+        customerEmail: maskEmailForLogs(sale.customer?.email),
+        autoSendInvoiceToCustomer: prefValue !== false,
+        autoSendInvoiceToCustomerRaw: typeof prefValue === 'boolean' ? prefValue : null,
+        decision: 'not_attempted',
+        reason: 'sale_auto_invoice_creation_does_not_send_customer_channels'
+      });
+    } catch (logError) {
+      console.warn('[AutoInvoiceDelivery] Failed to log sale invoice delivery decision:', logError?.message);
+    }
     return invoice;
   } catch (error) {
     console.error('Error auto-creating invoice from sale:', error);

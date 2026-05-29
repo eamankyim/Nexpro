@@ -1584,7 +1584,16 @@ exports.updateEmailSettings = async (req, res, next) => {
           smtpPort: smtpPort || existing.smtpPort || 587,
           smtpUser: finalSmtpUser,
           smtpPassword: finalSmtpPassword,
-          smtpRejectUnauthorized: smtpRejectUnauthorized !== undefined ? smtpRejectUnauthorized : existing.smtpRejectUnauthorized !== false
+          smtpRejectUnauthorized: smtpRejectUnauthorized !== undefined ? smtpRejectUnauthorized : existing.smtpRejectUnauthorized !== false,
+          fromEmail: fromEmail || existing.fromEmail || ''
+        }, {
+          context: {
+            requestId: req.id || req.headers?.['x-request-id'],
+            tenantId: req.tenantId,
+            userId: req.user?.id,
+            source: 'settings_email_save_validation',
+            mode: 'verify',
+          },
         });
         
         if (!testResult.success) {
@@ -1608,7 +1617,16 @@ exports.updateEmailSettings = async (req, res, next) => {
         const emailService = require('../services/emailService');
         const testResult = await emailService.testConnection({
           provider: 'sendgrid',
-          sendgridApiKey: finalSendgridApiKey
+          sendgridApiKey: finalSendgridApiKey,
+          fromEmail: fromEmail || existing.fromEmail || ''
+        }, {
+          context: {
+            requestId: req.id || req.headers?.['x-request-id'],
+            tenantId: req.tenantId,
+            userId: req.user?.id,
+            source: 'settings_email_save_validation',
+            mode: 'verify',
+          },
         });
         
         if (!testResult.success) {
@@ -1636,7 +1654,16 @@ exports.updateEmailSettings = async (req, res, next) => {
           sesAccessKeyId: finalSesAccessKeyId,
           sesSecretAccessKey: finalSesSecretAccessKey,
           sesRegion: sesRegion || existing.sesRegion || 'us-east-1',
-          sesHost: sesHost || existing.sesHost
+          sesHost: sesHost || existing.sesHost,
+          fromEmail: fromEmail || existing.fromEmail || ''
+        }, {
+          context: {
+            requestId: req.id || req.headers?.['x-request-id'],
+            tenantId: req.tenantId,
+            userId: req.user?.id,
+            source: 'settings_email_save_validation',
+            mode: 'verify',
+          },
         });
         
         if (!testResult.success) {
@@ -1803,7 +1830,21 @@ exports.testEmailConnection = async (req, res, next) => {
   try {
     const config = sanitizePayload(req.body);
     const provider = config.provider || 'smtp';
-    console.log('[Email Test] Request: provider=%s, smtpHost=%s, smtpUser=%s, hasPassword=%s', provider, config.smtpHost || 'n/a', config.smtpUser || 'n/a', !!config.smtpPassword);
+    const emailService = require('../services/emailService');
+    const diag = emailService.getConfigDiagnostic(config);
+    console.log('[Email Test][request_body_received]', {
+      requestId: req.id || req.headers?.['x-request-id'],
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      provider,
+      smtpHost: config.smtpHost || 'n/a',
+      smtpUser: diag.smtpUserMasked,
+      fromEmail: diag.fromEmailMasked,
+      fromMatchesSmtpUser: diag.fromMatchesSmtpUser,
+      hasPassword: !!config.smtpPassword,
+      hasSendgridApiKey: !!config.sendgridApiKey,
+      hasSesSecret: !!config.sesSecretAccessKey,
+    });
 
     if (!config.provider) {
       console.log('[Email Test] Rejected: provider missing');
@@ -1813,8 +1854,15 @@ exports.testEmailConnection = async (req, res, next) => {
       });
     }
 
-    const emailService = require('../services/emailService');
-    const result = await emailService.testConnection(config);
+    const result = await emailService.testConnection(config, {
+      context: {
+        requestId: req.id || req.headers?.['x-request-id'],
+        tenantId: req.tenantId,
+        userId: req.user?.id,
+        source: 'settings_email_request_body_test',
+        mode: 'verify',
+      },
+    });
 
     if (result.success) {
       console.log('[Email Test] Success: provider=%s', provider);
@@ -1824,7 +1872,7 @@ exports.testEmailConnection = async (req, res, next) => {
         data: result.data
       });
     } else {
-      console.log('[Email Test] Failed: provider=%s, error=%s', provider, result.error);
+      console.log('[Email Test] Failed: provider=%s, error=%s', provider, emailService.maskEmailsInText(result.error));
       res.status(400).json({
         success: false,
         message: 'Connection failed',
@@ -1832,7 +1880,18 @@ exports.testEmailConnection = async (req, res, next) => {
       });
     }
   } catch (error) {
-    console.error('[Email Test] Exception:', error.message, error.code || '', error.response ? String(error.response).slice(0, 200) : '');
+    const emailService = require('../services/emailService');
+    const err = emailService.summarizeProviderError(error);
+    console.error('[Email Test][request_body_exception]', {
+      requestId: req.id || req.headers?.['x-request-id'],
+      tenantId: req.tenantId,
+      userId: req.user?.id,
+      code: err.code,
+      responseCode: err.responseCode,
+      command: err.command,
+      message: err.message,
+      response: err.response,
+    });
     next(error);
   }
 };

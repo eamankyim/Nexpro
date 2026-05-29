@@ -809,7 +809,10 @@ async function runQuoteAcceptWorkflow(tenantId, quote, actorUserId) {
       const invoice = await createInvoiceFromQuoteInternal(tenantId, quote.id, actorUserId || quote.createdBy || null);
       if (invoice) {
         invoiceId = invoice.id;
-        await sendInvoiceToCustomer(tenantId, invoice);
+        await sendInvoiceToCustomer(tenantId, invoice, {
+          userId: actorUserId || quote.createdBy || null,
+          deliverySource: 'quote_accept_shop_workflow'
+        });
       }
     } else {
       const jobResult = await convertQuoteToJobInternal(tenantId, quote.id, actorUserId || null);
@@ -818,7 +821,10 @@ async function runQuoteAcceptWorkflow(tenantId, quote, actorUserId) {
         const invoice = await createInvoiceFromJobInternal(tenantId, jobResult.job.id, actorUserId || quote.createdBy || null);
         if (invoice) {
           invoiceId = invoice.id;
-          await sendInvoiceToCustomer(tenantId, invoice);
+          await sendInvoiceToCustomer(tenantId, invoice, {
+            userId: actorUserId || quote.createdBy || null,
+            deliverySource: 'quote_accept_job_workflow'
+          });
         }
       }
     }
@@ -1327,7 +1333,10 @@ exports.convertQuoteToJob = async (req, res, next) => {
         const { createInvoiceFromJobInternal, sendInvoiceToCustomer } = require('./invoiceController');
         createdInvoice = await createInvoiceFromJobInternal(req.tenantId, jobWithDetails.id, req.user?.id || null);
         if (createdInvoice) {
-          await sendInvoiceToCustomer(req.tenantId, createdInvoice);
+          await sendInvoiceToCustomer(req.tenantId, createdInvoice, {
+            userId: req.user?.id || null,
+            deliverySource: 'quote_to_job_workflow'
+          });
         }
       }
     } catch (invoiceErr) {
