@@ -240,14 +240,20 @@ class EmailService {
   formatTenantEmailAudit(tenantId, value) {
     const v = value && typeof value === 'object' ? value : {};
     const enabled = v.enabled === true;
-    const provider = (v.provider || 'smtp').toString();
+    const provider = (v.provider || 'smtp').toString().toLowerCase();
     const hasHost = !!(v.smtpHost && String(v.smtpHost).trim());
     const hasSg = !!(v.sendgridApiKey && String(v.sendgridApiKey).trim());
     const hasSes = !!(v.sesAccessKeyId && String(v.sesAccessKeyId).trim());
-    const outboundReady = enabled && (hasHost || hasSg || hasSes);
+    const hasSesSecret = !!(v.sesSecretAccessKey && String(v.sesSecretAccessKey).trim());
     const smtpUserSet = !!(v.smtpUser && String(v.smtpUser).trim());
     const smtpPasswordSet = !!(v.smtpPassword && String(v.smtpPassword).trim());
     const fromEmail = (v.fromEmail && String(v.fromEmail).trim()) || '';
+    const outboundReady = enabled && (
+      (provider === 'smtp' && hasHost && smtpUserSet && smtpPasswordSet) ||
+      (provider === 'sendgrid' && hasSg && !!fromEmail) ||
+      (provider === 'ses' && hasSes && hasSesSecret && !!fromEmail) ||
+      (provider === 'mailjet' && smtpUserSet && smtpPasswordSet && !!fromEmail)
+    );
     const fromNameSet = !!(v.fromName && String(v.fromName).trim());
     const fromMatchesSmtpUser = fromEmail && v.smtpUser
       ? fromEmail.toLowerCase() === String(v.smtpUser).trim().toLowerCase()
@@ -260,6 +266,123 @@ class EmailService {
     );
   }
 
+  validateTenantEmailConfig(value = {}) {
+    const config = value && typeof value === 'object' ? value : {};
+    const provider = (config.provider || 'smtp').toString().toLowerCase();
+    const missingFields = [];
+    const requireField = (field) => {
+      if (!String(config[field] || '').trim()) missingFields.push(field);
+    };
+
+    if (config.enabled !== true) {
+      return {
+        ok: false,
+        provider,
+        reason: 'email_disabled',
+        missingFields,
+        error: 'Workspace email is disabled. Turn on Settings > Email before sending tenant emails.',
+      };
+    }
+
+    switch (provider) {
+      case 'smtp':
+        requireField('smtpHost');
+        requireField('smtpUser');
+        requireField('smtpPassword');
+        break;
+      case 'sendgrid':
+        requireField('sendgridApiKey');
+        requireField('fromEmail');
+        break;
+      case 'ses':
+        requireField('sesAccessKeyId');
+        requireField('sesSecretAccessKey');
+        requireField('fromEmail');
+        break;
+      case 'mailjet':
+        requireField('smtpUser');
+        requireField('smtpPassword');
+        requireField('fromEmail');
+        break;
+      default:
+        return {
+          ok: false,
+          provider,
+          reason: 'unsupported_provider',
+          missingFields,
+          error: `Unsupported tenant email provider: ${provider}`,
+        };
+    }
+
+    if (missingFields.length) {
+      return {
+        ok: false,
+        provider,
+        reason: 'missing_fields',
+        missingFields,
+        error: `Workspace email settings are incomplete for ${provider}. Update Settings > Email and provide: ${missingFields.join(', ')}.`,
+      };
+    }
+
+    return {
+      ok: true,
+      provider,
+      reason: 'ready',
+      missingFields,
+      error: null,
+    };
+  }
+
+  async resolveTenantEmailConfig(tenantId) {
+    const setting = await Setting.findOne({
+      where: { tenantId, key: 'email' }
+    });
+
+    if (!setting) {
+      const error = 'Workspace email is not configured. Enable Settings > Email and save email provider credentials before sending tenant emails.';
+      console.warn(
+        `[Email][tenant_config_unavailable] tenantId=${tenantId} source=tenant_config configured=false enabled=false ` +
+          `outboundReady=false reason=email_not_configured`
+      );
+      return {
+        ok: false,
+        config: null,
+        configured: false,
+        enabled: false,
+        provider: 'unknown',
+        reason: 'email_not_configured',
+        error,
+      };
+    }
+
+    const config = setting.value || {};
+    const validation = this.validateTenantEmailConfig(config);
+    const audit = this.formatTenantEmailAudit(tenantId, config);
+
+    if (!validation.ok) {
+      console.warn(
+        `[Email][tenant_config_unavailable] source=tenant_config ${audit} ` +
+          `reason=${validation.reason} missingFields=${validation.missingFields.join(',') || 'none'}`
+      );
+      return {
+        ok: false,
+        config,
+        configured: true,
+        enabled: config.enabled === true,
+        ...validation,
+      };
+    }
+
+    console.log(`[Email][tenant_config_resolved] source=tenant_config ${audit} reason=ready`);
+    return {
+      ok: true,
+      config,
+      configured: true,
+      enabled: true,
+      ...validation,
+    };
+  }
+
   /**
    * Get Email configuration for a tenant (for business-to-customer emails: invoices, receipts). Business configures and pays.
    * @param {string} tenantId - Tenant ID
@@ -267,17 +390,8 @@ class EmailService {
    */
   async getConfig(tenantId) {
     try {
-      const setting = await Setting.findOne({
-        where: { tenantId, key: 'email' }
-      });
-
-      if (!setting || !setting.value?.enabled) {
-        console.log(`[Email][tenant_config_resolved] tenantId=${tenantId} configured=${!!setting} enabled=${!!setting?.value?.enabled}`);
-        return null;
-      }
-
-      console.log(`[Email][tenant_config_resolved] ${this.formatTenantEmailAudit(tenantId, setting.value)}`);
-      return setting.value;
+      const resolved = await this.resolveTenantEmailConfig(tenantId);
+      return resolved.ok ? resolved.config : null;
     } catch (error) {
       console.error('[Email] Error getting config:', error);
       return null;
@@ -535,14 +649,18 @@ class EmailService {
     const subjectShort = subject ? subject.substring(0, 50) : '';
 
     try {
-      const config = await this.getConfig(tenantId);
-      if (!config) {
-        console.warn(`${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=email_not_configured`);
+      const resolvedConfig = await this.resolveTenantEmailConfig(tenantId);
+      if (!resolvedConfig.ok) {
+        console.warn(
+          `${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" ` +
+            `source=tenant_config reason=${resolvedConfig.reason} provider=${resolvedConfig.provider || 'unknown'}`
+        );
         return {
           success: false,
-          error: 'Email not configured for this tenant'
+          error: resolvedConfig.error
         };
       }
+      const config = resolvedConfig.config;
 
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(to)) {
@@ -561,22 +679,17 @@ class EmailService {
         };
       }
 
-      const transporter = await this.createTransporter(config);
       const fromEmail = from || config.fromEmail || config.smtpUser;
 
       if (!fromEmail) {
         console.warn(`${logPrefix}[tenant_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=sender_not_configured`);
-        try {
-          transporter.close();
-        } catch (_) {
-          /* ignore */
-        }
         return {
           success: false,
           error: 'Sender email address not configured'
         };
       }
 
+      const transporter = await this.createTransporter(config);
       const diag = this.getConfigDiagnostic(config);
       console.log(
         `${logPrefix}[tenant_send_start]${contextText} to=${toMask} subject="${subjectShort}" provider=${diag.provider} ` +

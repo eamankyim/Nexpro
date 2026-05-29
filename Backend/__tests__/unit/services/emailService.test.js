@@ -63,6 +63,72 @@ describe('emailService diagnostics', () => {
     expect(JSON.stringify(diag)).not.toContain('mj_api_key_123');
   });
 
+  it('fails tenant sends without falling back when workspace email is missing', async () => {
+    Setting.findOne.mockResolvedValue(null);
+
+    const result = await emailService.sendMessage(
+      'tenant-1',
+      'invitee@example.com',
+      'Invite',
+      '<p>Invite</p>',
+      'Invite',
+      [],
+      null,
+      { context: { inviteId: 'invite-1', source: 'tenant_invite_email' } }
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Workspace email is not configured');
+    expect(nodemailer.createTransport).not.toHaveBeenCalled();
+  });
+
+  it('fails tenant sends when workspace email is disabled', async () => {
+    Setting.findOne.mockResolvedValue({
+      value: {
+        enabled: false,
+        provider: 'smtp',
+        smtpHost: 'smtp.example.com',
+        smtpUser: 'sender@example.com',
+        smtpPassword: 'secret',
+      },
+    });
+
+    const result = await emailService.sendMessage(
+      'tenant-1',
+      'invitee@example.com',
+      'Invite',
+      '<p>Invite</p>',
+      'Invite'
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Workspace email is disabled');
+    expect(nodemailer.createTransport).not.toHaveBeenCalled();
+  });
+
+  it('fails tenant SendGrid sends with actionable missing field details', async () => {
+    Setting.findOne.mockResolvedValue({
+      value: {
+        enabled: true,
+        provider: 'sendgrid',
+      },
+    });
+
+    const result = await emailService.sendMessage(
+      'tenant-1',
+      'invitee@example.com',
+      'Invite',
+      '<p>Invite</p>',
+      'Invite'
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('Workspace email settings are incomplete for sendgrid');
+    expect(result.error).toContain('sendgridApiKey');
+    expect(result.error).toContain('fromEmail');
+    expect(nodemailer.createTransport).not.toHaveBeenCalled();
+  });
+
   it('logs provider response details without full email addresses on tenant send failure', async () => {
     Setting.findOne.mockResolvedValue({
       value: {
