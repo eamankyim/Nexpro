@@ -66,6 +66,7 @@ exports.initializeSubscriptionPayment = async (req, res, next) => {
         billingPeriod,
         paystackPlanCode: pricing.planCode || null,
         amountPesewas: pricing.amountPesewas,
+        featureKeys: pricing.featureKeys || [],
       },
       channels: ['card'],
     };

@@ -1,5 +1,12 @@
 const { Setting, SubscriptionPlan } = require('../models');
-const { FEATURE_CATALOG, FEATURE_CATEGORIES, DEFAULT_PLAN_SEAT_LIMITS, PLAN_SEAT_PRICING, getFeaturesByCategory } = require('../config/features');
+const {
+  FEATURE_CATALOG,
+  FEATURE_CATEGORIES,
+  DEFAULT_PLAN_SEAT_LIMITS,
+  PLAN_SEAT_PRICING,
+  getFeatureFlagsForPlan,
+  getFeaturesByCategory,
+} = require('../config/features');
 
 /** Canonical billing tiers; feature matrix UI always shows these columns even if a row was never seeded. */
 const CANONICAL_PLAN_IDS = ['trial', 'starter', 'professional', 'enterprise'];
@@ -475,10 +482,11 @@ exports.getFeaturePlanMatrix = async (req, res, next) => {
     const featureKeys = FEATURE_CATALOG.map((f) => f.key);
     const matrix = {};
     for (const plan of plans) {
-      const flags = plan?.marketing?.featureFlags && typeof plan.marketing.featureFlags === 'object'
-        ? plan.marketing.featureFlags
-        : {};
       const pid = String(plan.planId || '').toLowerCase();
+      const canonicalFlags = getFeatureFlagsForPlan(pid);
+      const flags = plan?.marketing?.featureFlags && typeof plan.marketing.featureFlags === 'object'
+        ? { ...canonicalFlags, ...plan.marketing.featureFlags }
+        : canonicalFlags;
       matrix[pid] = featureKeys.reduce((acc, key) => {
         acc[key] = flags[key] === true;
         return acc;
@@ -487,8 +495,9 @@ exports.getFeaturePlanMatrix = async (req, res, next) => {
 
     for (const canonicalId of CANONICAL_PLAN_IDS) {
       if (!matrix[canonicalId]) {
+        const flags = getFeatureFlagsForPlan(canonicalId);
         matrix[canonicalId] = featureKeys.reduce((acc, key) => {
-          acc[key] = false;
+          acc[key] = flags[key] === true;
           return acc;
         }, {});
       }

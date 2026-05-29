@@ -1,5 +1,6 @@
 /** Marketing copy defaults; live prices from Paystack via subscriptionPlanCatalogService */
 const { PLAN_DEFINITIONS } = require('./paystackPlans');
+const { getFeatureFlagsForPlan } = require('./features');
 
 const pesewasToGhs = (p) => (p == null ? null : p / 100);
 
@@ -20,7 +21,7 @@ const plans = [
     marketing: {
       enabled: false,
       perks: [],
-      featureFlags: {},
+      featureFlags: getFeatureFlagsForPlan('trial'),
       popular: false,
       priceDisplay: 'GHS 0',
       billing: '1-month full access',
@@ -64,17 +65,7 @@ const plans = [
         'Auto-generated invoices',
         'Email support'
       ],
-      featureFlags: {
-        crm: true,
-        quoteAutomation: true,
-        jobAutomation: true,
-        paymentsExpenses: true,
-        materials: false,
-        reports: true,
-        notifications: false,
-        leadPipeline: true,
-        roleManagement: true
-      },
+      featureFlags: getFeatureFlagsForPlan('starter'),
       popular: false,
       priceDisplay: `GHS ${pesewasToGhs(PLAN_DEFINITIONS.starter?.monthly ?? 12900)}`,
       billing: 'per month, billed annually',
@@ -119,17 +110,7 @@ const plans = [
         'Automated reminders & notifications',
         'Priority support'
       ],
-      featureFlags: {
-        crm: true,
-        quoteAutomation: true,
-        jobAutomation: true,
-        paymentsExpenses: true,
-        materials: true,
-        reports: true,
-        notifications: true,
-        leadPipeline: true,
-        roleManagement: true
-      },
+      featureFlags: getFeatureFlagsForPlan('professional'),
       popular: true,
       priceDisplay: `GHS ${pesewasToGhs(PLAN_DEFINITIONS.professional?.monthly ?? 25000)}`,
       billing: 'per month, billed annually',
@@ -174,17 +155,7 @@ const plans = [
         'Custom workflow configuration',
         '24/7 priority support'
       ],
-      featureFlags: {
-        crm: true,
-        quoteAutomation: true,
-        jobAutomation: true,
-        paymentsExpenses: true,
-        materials: true,
-        reports: true,
-        notifications: true,
-        leadPipeline: true,
-        roleManagement: true
-      },
+      featureFlags: getFeatureFlagsForPlan('enterprise'),
       popular: false,
       priceDisplay: "Let's talk",
       billing: 'Custom contract, onboarding & integrations',

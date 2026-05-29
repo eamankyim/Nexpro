@@ -265,16 +265,24 @@ exports.generateInvite = async (req, res, next) => {
             'tenant_email'
           );
           usedProvider = tenantEmailConfig.provider || 'smtp';
+          if (!result?.success) {
+            const tenantError = result?.error || 'Invite email send failed';
+            await InviteToken.update(
+              {
+                emailStatus: 'failed',
+                emailLastError: String(tenantError).slice(0, 5000),
+              },
+              { where: { id: invite.id } }
+            );
+            throw new Error(tenantError);
+          }
         } else {
           console.log('[Invite Email] Tenant email config not enabled. Using platform sender.', {
             inviteRequestId,
             inviteId: invite.id,
             tenantId: req.tenantId,
           });
-        }
-
-        if (!result?.success) {
-          const fallbackResult = await sendWithRetry(
+          result = await sendWithRetry(
             () => emailService.sendPlatformMessage(
               normalizedEmail,
               subject,
@@ -285,18 +293,18 @@ exports.generateInvite = async (req, res, next) => {
             ),
             'platform_email'
           );
-          if (!fallbackResult?.success) {
+          usedProvider = platformConfig?.provider || 'unknown';
+          if (!result?.success) {
+            const platformError = result?.error || 'Invite email send failed';
             await InviteToken.update(
               {
                 emailStatus: 'failed',
-                emailLastError: String(fallbackResult?.error || result?.error || 'Invite email send failed').slice(0, 5000),
+                emailLastError: String(platformError).slice(0, 5000),
               },
               { where: { id: invite.id } }
             );
-            throw new Error(fallbackResult?.error || result?.error || 'Invite email send failed');
+            throw new Error(platformError);
           }
-          result = fallbackResult;
-          usedProvider = platformConfig?.provider || 'unknown';
         }
         await InviteToken.update(
           {

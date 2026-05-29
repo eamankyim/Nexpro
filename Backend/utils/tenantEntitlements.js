@@ -1,5 +1,5 @@
 const { SubscriptionPlan } = require('../models');
-const { getFeaturesForPlan } = require('../config/features');
+const { getFeatureFlagsForPlan } = require('../config/features');
 const { applyFeatureGatesToFlags } = require('../config/businessTypes');
 
 const ACCESS_STATES = ['active', 'read_only', 'restricted', 'suspended'];
@@ -23,14 +23,11 @@ const normalizeFeatureOverrides = (overrides) => {
 };
 
 const buildBaseFeatureFlags = (tenantPlan, dbPlan) => {
+  const canonicalFlags = getFeatureFlagsForPlan(tenantPlan);
   if (dbPlan?.marketing?.featureFlags && typeof dbPlan.marketing.featureFlags === 'object') {
-    return { ...dbPlan.marketing.featureFlags };
+    return { ...canonicalFlags, ...dbPlan.marketing.featureFlags };
   }
-  const fallback = getFeaturesForPlan(tenantPlan) || [];
-  return fallback.reduce((acc, featureKey) => {
-    acc[featureKey] = true;
-    return acc;
-  }, {});
+  return canonicalFlags;
 };
 
 const computeEffectiveFeatureFlags = (baseFeatureFlags, featureOverrides) => ({

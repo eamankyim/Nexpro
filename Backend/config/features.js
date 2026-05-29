@@ -434,22 +434,82 @@ const STORAGE_PRICING = {
   launch: 15, scale: 12 // legacy aliases
 };
 
+const PLAN_FEATURE_KEYS = {
+  trial: FEATURE_CATALOG.map((feature) => feature.key),
+  starter: [
+    'crm',
+    'vendors',
+    'marketing',
+    'quoteAutomation',
+    'pricingTemplates',
+    'jobAutomation',
+    'tasks',
+    'paymentsExpenses',
+    'orders',
+    'deliveries',
+    'products',
+    'invoices',
+    'expenses',
+    'materials',
+    'reports',
+    'leadPipeline',
+    'roleManagement',
+    'accounting',
+    'payroll',
+  ],
+  professional: [
+    'crm',
+    'vendors',
+    'marketing',
+    'quoteAutomation',
+    'pricingTemplates',
+    'jobAutomation',
+    'tasks',
+    'paymentsExpenses',
+    'orders',
+    'deliveries',
+    'products',
+    'invoices',
+    'expenses',
+    'studioLocationsModule',
+    'shopsModule',
+    'pharmacyOps',
+    'materials',
+    'reports',
+    'notifications',
+    'leadPipeline',
+    'roleManagement',
+    'accounting',
+    'payroll',
+    'advancedReporting',
+    'automations',
+  ],
+  enterprise: FEATURE_CATALOG.map((feature) => feature.key),
+};
+
+PLAN_FEATURE_KEYS.launch = PLAN_FEATURE_KEYS.starter;
+PLAN_FEATURE_KEYS.scale = PLAN_FEATURE_KEYS.professional;
+
+const featureKeys = () => FEATURE_CATALOG.map((feature) => feature.key);
+
+const buildFeatureFlags = (enabledFeatureKeys = []) => {
+  const enabled = new Set(enabledFeatureKeys);
+  return featureKeys().reduce((acc, key) => {
+    acc[key] = enabled.has(key);
+    return acc;
+  }, {});
+};
+
 // Helper functions
 const getFeatureByKey = (key) => {
   return FEATURE_CATALOG.find(f => f.key === key);
 };
 
 const getFeaturesForPlan = (planId) => {
-  const planFeatures = {
-    trial: ['crm', 'quoteAutomation', 'jobAutomation', 'paymentsExpenses', 'deliveries', 'invoices', 'expenses', 'reports', 'leadPipeline', 'roleManagement'],
-    starter: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],
-    professional: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting', 'automations', 'shopsModule', 'pharmacyOps', 'studioLocationsModule'],
-    enterprise: FEATURE_CATALOG.map(f => f.key),
-    launch: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'leadPipeline', 'roleManagement', 'accounting', 'payroll'],
-    scale: ['crm', 'vendors', 'marketing', 'quoteAutomation', 'pricingTemplates', 'jobAutomation', 'tasks', 'paymentsExpenses', 'orders', 'deliveries', 'products', 'invoices', 'expenses', 'materials', 'reports', 'notifications', 'leadPipeline', 'roleManagement', 'accounting', 'payroll', 'advancedReporting', 'automations', 'shopsModule', 'pharmacyOps', 'studioLocationsModule']
-  };
-  return planFeatures[planId] || [];
+  return PLAN_FEATURE_KEYS[planId] || [];
 };
+
+const getFeatureFlagsForPlan = (planId) => buildFeatureFlags(getFeaturesForPlan(planId));
 
 const getFeaturesByCategory = () => {
   const grouped = {};
@@ -516,8 +576,11 @@ module.exports = {
   PLAN_SEAT_PRICING,
   DEFAULT_STORAGE_LIMITS,
   STORAGE_PRICING,
+  PLAN_FEATURE_KEYS,
+  buildFeatureFlags,
   getFeatureByKey,
   getFeaturesForPlan,
+  getFeatureFlagsForPlan,
   getFeaturesByCategory,
   canAccessFeature,
   canAccessRoute,

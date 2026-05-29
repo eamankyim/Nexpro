@@ -790,7 +790,7 @@ exports.getSubscriptionSettings = async (req, res, next) => {
           ? 'trialing'
           : subscription.status || 'trialing'
         : 'active';
-    const billing = toBillingPayload(await resolveBillingStatus(tenant || req.tenantId));
+    const billing = toBillingPayload(await resolveBillingStatus(req.tenantId));
     const data = {
       ...subscription,
       plan: effectivePlan,

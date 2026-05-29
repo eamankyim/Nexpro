@@ -100,5 +100,23 @@ describe('subscriptionBillingService', () => {
       expect(billing.canAccessApp).toBe(false);
       expect(billing.lockReason).toBe('trial_expired');
     });
+
+    it('returns unknown when tenant object has no id (avoids undefined tenantId queries)', async () => {
+      const { Setting, SubscriptionPayment } = require('../../../models');
+      Setting.findOne.mockClear();
+      SubscriptionPayment.findOne.mockClear();
+
+      const billing = await resolveBillingStatus({
+        plan: 'trial',
+        trialEndsAt: new Date('2030-01-01'),
+        status: 'active',
+        metadata: {},
+      });
+
+      expect(billing.billingStatus).toBe('unknown');
+      expect(billing.lockReason).toBe('tenant_not_found');
+      expect(Setting.findOne).not.toHaveBeenCalled();
+      expect(SubscriptionPayment.findOne).not.toHaveBeenCalled();
+    });
   });
 });

@@ -5,6 +5,7 @@
 const paystackService = require('./paystackService');
 const { SubscriptionPlan } = require('../models');
 const { plans: configPlans } = require('../config/plans');
+const { getFeatureFlagsForPlan, getFeaturesForPlan } = require('../config/features');
 const { ENTERPRISE_TIERS } = require('../config/enterpriseTiers');
 const { setPlanCode, getPlanCode } = require('../config/paystackPlans');
 const {
@@ -218,6 +219,8 @@ async function syncCanonicalPlansToDatabase(options = {}) {
 
       const metadata = {
         paystackVariants: variants,
+        featureFlags: getFeatureFlagsForPlan(planId),
+        featureKeys: getFeaturesForPlan(planId),
         paystackSyncedAt: new Date().toISOString(),
       };
 
@@ -239,8 +242,14 @@ async function syncCanonicalPlansToDatabase(options = {}) {
 
       if (!created) {
         const prevMeta = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+        const marketing = {
+          ...(configPlan.marketing || {}),
+          ...(row.marketing || {}),
+          featureFlags: getFeatureFlagsForPlan(planId),
+        };
         await row.update({
           price,
+          marketing,
           metadata: { ...prevMeta, ...metadata },
           name: row.name || configPlan.name,
           description: row.description || configPlan.description,
@@ -298,6 +307,8 @@ async function resolvePaidPlanPricing(plan, billingPeriod) {
     planCode,
     currency: 'GHS',
     displayName: spec.name,
+    featureFlags: getFeatureFlagsForPlan(planId),
+    featureKeys: getFeaturesForPlan(planId),
   };
 }
 

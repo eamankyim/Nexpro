@@ -69,6 +69,14 @@ async function resolveBillingStatus(tenantOrId, options = {}) {
     typeof tenantOrId === 'string'
       ? await Tenant.scope('withOptionalColumns').findByPk(tenantOrId)
       : tenantOrId;
+  if (tenant && typeof tenantOrId === 'object' && !tenant.id) {
+    const pk = tenant.get?.('id') ?? tenant.dataValues?.id;
+    if (pk) {
+      tenant.id = pk;
+    } else {
+      tenant = null;
+    }
+  }
   if (!tenant) {
     return {
       billingStatus: 'unknown',
@@ -376,6 +384,7 @@ async function applySubscriptionFromPaystackTransaction(paymentData, source = 'v
       source,
       channel: paymentData?.channel || null,
       paystackPlanCode: metadata.paystackPlanCode || null,
+      featureKeys: Array.isArray(metadata.featureKeys) ? metadata.featureKeys : [],
     },
   });
 }
