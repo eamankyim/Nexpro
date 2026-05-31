@@ -1,4 +1,4 @@
-const { Sale, SaleItem, Product, ProductVariant, Customer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting } = require('../models');
+const { Sale, SaleItem, Product, ProductVariant, Barcode, Customer, Shop, Invoice, User, SaleActivity, Tenant, Payment, Setting } = require('../models');
 const { createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { createSaleCogsJournal, createSaleRevenueJournal } = require('../services/saleAccountingService');
 const { Op } = require('sequelize');
@@ -24,6 +24,23 @@ const {
 /** Throttle check-Paystack calls per sale (avoid hitting Paystack every poll) */
 const paystackCheckLastBySaleId = new Map();
 const PAYSTACK_CHECK_THROTTLE_MS = 4000;
+
+const productBarcodeInclude = [
+  { model: Barcode, as: 'barcodes', where: { isActive: true }, required: false }
+];
+
+const getSaleItemProductCode = (item) => {
+  const alias = item?.metadata?.productCode
+    || item?.productCode
+    || item?.product?.productCode
+    || item?.variant?.productCode
+    || item?.product?.barcodeAliases?.[0]
+    || item?.variant?.barcodeAliases?.[0]
+    || item?.product?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode
+    || item?.variant?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode;
+
+  return String(alias || '').trim();
+};
 
 const maskEmailForLogs = (email) => {
   if (!email || typeof email !== 'string') return null;
@@ -203,6 +220,7 @@ const autoCreateInvoiceFromSale = async (saleId, tenantId) => {
         return {
           description: item.name || 'Sale item',
           category: 'Sale',
+          productCode: item.metadata?.productCode || null,
           quantity: item.quantity,
           unitPrice: unitPriceNet,
           discountAmount: 0,
@@ -308,8 +326,8 @@ const fetchSaleWithReceiptRelations = (saleId) => Sale.findByPk(saleId, {
       model: SaleItem,
       as: 'items',
       include: [
-        { model: Product, as: 'product' },
-        { model: ProductVariant, as: 'variant' }
+        { model: Product, as: 'product', include: productBarcodeInclude },
+        { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
       ]
     }
   ]
@@ -371,6 +389,8 @@ const buildLightweightSaleResponse = (sale, items = []) => {
         productVariantId: plainItem.productVariantId || null,
         name: plainItem.name,
         sku: plainItem.sku,
+        productCode: plainItem.metadata?.productCode || null,
+        metadata: plainItem.metadata || {},
         quantity: plainItem.quantity,
         unitPrice: plainItem.unitPrice,
         discount: plainItem.discount,
@@ -684,8 +704,8 @@ exports.getSale = async (req, res, next) => {
           model: SaleItem,
           as: 'items',
           include: [
-            { model: Product, as: 'product' },
-            { model: ProductVariant, as: 'variant' }
+            { model: Product, as: 'product', include: productBarcodeInclude },
+            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
           ]
         }
       ]
@@ -828,7 +848,10 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
       discount: item.discount || 0,
       tax: lr.tax,
       subtotal: lineSub,
-      total: lineItemTotal
+      total: lineItemTotal,
+      metadata: {
+        productCode: item.productCode || null
+      }
     };
   });
 
@@ -1235,8 +1258,8 @@ exports.updateSale = async (req, res, next) => {
           model: SaleItem,
           as: 'items',
           include: [
-            { model: Product, as: 'product' },
-            { model: ProductVariant, as: 'variant' }
+            { model: Product, as: 'product', include: productBarcodeInclude },
+            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
           ]
         }
       ]
@@ -1400,8 +1423,8 @@ exports.recordPayment = async (req, res, next) => {
           model: SaleItem,
           as: 'items',
           include: [
-            { model: Product, as: 'product' },
-            { model: ProductVariant, as: 'variant' }
+            { model: Product, as: 'product', include: productBarcodeInclude },
+            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
           ]
         }
       ]
@@ -1591,8 +1614,8 @@ exports.printReceipt = async (req, res, next) => {
           model: SaleItem,
           as: 'items',
           include: [
-            { model: Product, as: 'product' },
-            { model: ProductVariant, as: 'variant' }
+            { model: Product, as: 'product', include: productBarcodeInclude },
+            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
           ]
         },
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'phone', 'email'] },
@@ -1678,8 +1701,8 @@ exports.updateOrderStatus = async (req, res, next) => {
           model: SaleItem,
           as: 'items',
           include: [
-            { model: Product, as: 'product' },
-            { model: ProductVariant, as: 'variant' }
+            { model: Product, as: 'product', include: productBarcodeInclude },
+            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
           ]
         }
       ]
@@ -1787,8 +1810,8 @@ exports.sendReceipt = async (req, res, next) => {
           model: SaleItem,
           as: 'items',
           include: [
-            { model: Product, as: 'product' },
-            { model: ProductVariant, as: 'variant' }
+            { model: Product, as: 'product', include: productBarcodeInclude },
+            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
           ]
         },
         { model: Customer, as: 'customer' },
@@ -1889,7 +1912,10 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
   const sale = await Sale.findOne({
     where: { tenantId, id: saleId },
     include: [
-      { model: SaleItem, as: 'items', include: [{ model: Product, as: 'product' }, { model: ProductVariant, as: 'variant' }] },
+      { model: SaleItem, as: 'items', include: [
+        { model: Product, as: 'product', include: productBarcodeInclude },
+        { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
+      ] },
       { model: Customer, as: 'customer' },
       { model: Shop, as: 'shop' },
       { model: Tenant, as: 'tenant', attributes: ['id', 'name'] }
@@ -1986,7 +2012,9 @@ function buildReceiptMessage(sale, tenantId) {
       : quantity * unitPrice;
     const qty = Number.isInteger(quantity) ? String(quantity) : quantity.toFixed(2).replace(/\.?0+$/, '');
     const name = String(item.name || item.product?.name || 'Item').trim();
+    const productCode = getSaleItemProductCode(item);
     receipt.push(name);
+    if (productCode) receipt.push(`   Product Code: ${productCode}`);
     receipt.push(row(`   ${qty} x ${money(unitPrice)}`, money(lineTotal)));
   });
 
@@ -2088,6 +2116,17 @@ async function sendEmailReceipt(tenantId, email, sale, textMessage) {
       studioLocation: sale.studioLocation || null,
     });
     const company = organizationToEmailCompany(organization);
+    const logoHost = (() => {
+      const logoUrl = company.logoUrl || company.logo || '';
+      if (!logoUrl) return 'none';
+      if (/^data:image\//i.test(logoUrl)) return 'data-url';
+      try {
+        return new URL(logoUrl).host || 'invalid';
+      } catch (_err) {
+        return 'invalid';
+      }
+    })();
+    console.log(`[Receipt Email] hasLogo=${Boolean(company.logoUrl || company.logo)} logoHost=${logoHost}`);
     const closing = textMessage && String(textMessage).trim() ? String(textMessage).trim() : '';
     const { subject, html, text } = emailTemplates.saleReceiptEmail(sale, company, closing);
 

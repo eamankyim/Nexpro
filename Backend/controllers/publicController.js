@@ -1,9 +1,17 @@
 const { Lead, Job, Sale, Customer, Setting, Tenant, JobStatusHistory, Shop, StudioLocation } = require('../models');
 const { Op } = require('sequelize');
+const emailService = require('../services/emailService');
 const { formatToE164, normalizePhoneNumber } = require('../utils/phoneUtils');
 const { resolveBusinessType } = require('../config/businessTypes');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
 const { resolveDocumentOrganization } = require('../utils/documentOrganizationUtils');
+
+const FEATURE_REQUEST_RECIPIENT_EMAIL = (
+  process.env.FEATURE_REQUEST_EMAIL || 'info@absghana.com'
+).trim().toLowerCase();
+const SALES_AGENT_APPLICATION_RECIPIENT_EMAIL = (
+  process.env.SALES_AGENT_APPLICATION_EMAIL || process.env.FEATURE_REQUEST_EMAIL || 'info@absghana.com'
+).trim().toLowerCase();
 
 const JOB_INVOICE_TRACK_DEFAULTS = {
   customerJobTrackingEnabled: false
@@ -81,6 +89,19 @@ function buildSafeCustomer(customer) {
   };
 }
 
+const escapeHtml = (value) =>
+  String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const toDisplay = (value, fallback = 'N/A') => {
+  const normalized = String(value ?? '').trim();
+  return normalized || fallback;
+};
+
 /**
  * Submit a demo booking from the marketing site. Creates an admin lead (control center)
  * so platform admins can see and follow up. No auth required.
@@ -138,6 +159,264 @@ exports.submitDemoBooking = async (req, res, next) => {
       },
       createdBy: null
     });
+
+    res.status(201).json({
+      success: true,
+      data: { id: lead.id }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Submit a feature request / idea from the marketing site.
+ * POST /api/public/feature-request
+ * Body: { name, email, problem }
+ */
+exports.submitFeatureRequest = async (req, res, next) => {
+  try {
+    const { name, email, problem } = req.body || {};
+
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    const trimmedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const trimmedProblem = typeof problem === 'string' ? problem.trim() : '';
+
+    if (!trimmedName || trimmedName.length < 2) {
+      return res.status(400).json({
+        success: false,
+        error: 'Name must be at least 2 characters',
+        errorCode: 'VALIDATION_ERROR'
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid email is required',
+        errorCode: 'VALIDATION_ERROR'
+      });
+    }
+
+    if (!trimmedProblem || trimmedProblem.length < 10) {
+      return res.status(400).json({
+        success: false,
+        error: 'Please describe your problem or feature need (at least 10 characters)',
+        errorCode: 'VALIDATION_ERROR'
+      });
+    }
+
+    const lead = await Lead.create({
+      tenantId: null,
+      name: trimmedName,
+      email: trimmedEmail,
+      phone: null,
+      source: 'website_feature_request',
+      status: 'new',
+      priority: 'medium',
+      notes: trimmedProblem,
+      metadata: {
+        source: 'website_feature_request',
+        recipientEmail: FEATURE_REQUEST_RECIPIENT_EMAIL
+      },
+      createdBy: null
+    });
+
+    const subject = `New ABS website idea from ${trimmedName}`;
+    const html = `
+      <h2>New feature request / idea</h2>
+      <p>A visitor submitted an idea from the ABS marketing site.</p>
+      <ul>
+        <li><strong>Name:</strong> ${escapeHtml(toDisplay(trimmedName))}</li>
+        <li><strong>Email:</strong> ${escapeHtml(toDisplay(trimmedEmail))}</li>
+        <li><strong>Lead ID:</strong> ${escapeHtml(toDisplay(lead.id))}</li>
+      </ul>
+      <h3>Idea / problem</h3>
+      <p>${escapeHtml(trimmedProblem).replace(/\n/g, '<br>')}</p>
+    `.trim();
+    const text = [
+      'New feature request / idea',
+      '',
+      `Name: ${toDisplay(trimmedName)}`,
+      `Email: ${toDisplay(trimmedEmail)}`,
+      `Lead ID: ${toDisplay(lead.id)}`,
+      '',
+      'Idea / problem:',
+      trimmedProblem
+    ].join('\n');
+
+    const emailResult = await emailService.sendPlatformMessage(
+      FEATURE_REQUEST_RECIPIENT_EMAIL,
+      subject,
+      html,
+      text,
+      [],
+      {
+        categories: ['website', 'feature-request'],
+        context: {
+          requestId: req.id || req.headers?.['x-request-id'],
+          source: 'website_feature_request',
+        },
+      }
+    );
+
+    if (!emailResult?.success) {
+      console.error('[FeatureRequest] Email delivery failed', {
+        leadId: lead.id,
+        recipient: emailService.maskEmail(FEATURE_REQUEST_RECIPIENT_EMAIL),
+        error: emailResult?.error || 'Unknown error',
+      });
+      return res.status(502).json({
+        success: false,
+        error: 'We could not send your request right now. Please try again.',
+        errorCode: 'EMAIL_DELIVERY_FAILED'
+      });
+    }
+
+    res.status(201).json({
+      success: true,
+      data: { id: lead.id }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Submit a sales agent application from the marketing site.
+ * POST /api/public/sales-agent-application
+ * Body: { name, phone, email, cityRegion, experience?, whyJoin? }
+ */
+exports.submitSalesAgentApplication = async (req, res, next) => {
+  try {
+    const { name, phone, email, cityRegion, experience, whyJoin } = req.body || {};
+
+    const trimmedName = typeof name === 'string' ? name.trim() : '';
+    const trimmedPhone = typeof phone === 'string' ? phone.trim() : '';
+    const trimmedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const trimmedCityRegion = typeof cityRegion === 'string' ? cityRegion.trim() : '';
+    const trimmedExperience = typeof experience === 'string' ? experience.trim() : '';
+    const trimmedWhyJoin = typeof whyJoin === 'string' ? whyJoin.trim() : '';
+
+    if (!trimmedName || trimmedName.length < 2) {
+      return res.status(400).json({
+        success: false,
+        error: 'Name must be at least 2 characters',
+        errorCode: 'VALIDATION_ERROR'
+      });
+    }
+
+    if (!trimmedPhone || trimmedPhone.length < 6) {
+      return res.status(400).json({
+        success: false,
+        error: 'Phone or WhatsApp number is required (at least 6 characters)',
+        errorCode: 'VALIDATION_ERROR'
+      });
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid email is required',
+        errorCode: 'VALIDATION_ERROR'
+      });
+    }
+
+    if (!trimmedCityRegion || trimmedCityRegion.length < 2) {
+      return res.status(400).json({
+        success: false,
+        error: 'City or region is required',
+        errorCode: 'VALIDATION_ERROR'
+      });
+    }
+
+    const notes = [
+      `City/Region: ${trimmedCityRegion}`,
+      trimmedExperience ? `Experience: ${trimmedExperience}` : null,
+      trimmedWhyJoin ? `Why they want to join: ${trimmedWhyJoin}` : null
+    ].filter(Boolean).join('\n\n');
+
+    const lead = await Lead.create({
+      tenantId: null,
+      name: trimmedName,
+      email: trimmedEmail,
+      phone: trimmedPhone,
+      source: 'website_sales_agent_application',
+      status: 'new',
+      priority: 'medium',
+      notes,
+      tags: ['sales-agent'],
+      metadata: {
+        source: 'website_sales_agent_application',
+        cityRegion: trimmedCityRegion,
+        experience: trimmedExperience || null,
+        whyJoin: trimmedWhyJoin || null,
+        recipientEmail: SALES_AGENT_APPLICATION_RECIPIENT_EMAIL
+      },
+      createdBy: null
+    });
+
+    const subject = `New ABS Ghana sales agent application from ${trimmedName}`;
+    const html = `
+      <h2>New ABS Ghana sales agent application</h2>
+      <p>A visitor applied to help shops, studios, and pharmacies go digital with ABS Ghana.</p>
+      <ul>
+        <li><strong>Name:</strong> ${escapeHtml(toDisplay(trimmedName))}</li>
+        <li><strong>Phone / WhatsApp:</strong> ${escapeHtml(toDisplay(trimmedPhone))}</li>
+        <li><strong>Email:</strong> ${escapeHtml(toDisplay(trimmedEmail))}</li>
+        <li><strong>City / Region:</strong> ${escapeHtml(toDisplay(trimmedCityRegion))}</li>
+        <li><strong>Lead ID:</strong> ${escapeHtml(toDisplay(lead.id))}</li>
+      </ul>
+      <h3>Experience</h3>
+      <p>${escapeHtml(toDisplay(trimmedExperience, 'Not provided')).replace(/\n/g, '<br>')}</p>
+      <h3>Why they want to join</h3>
+      <p>${escapeHtml(toDisplay(trimmedWhyJoin, 'Not provided')).replace(/\n/g, '<br>')}</p>
+    `.trim();
+    const text = [
+      'New ABS Ghana sales agent application',
+      '',
+      `Name: ${toDisplay(trimmedName)}`,
+      `Phone / WhatsApp: ${toDisplay(trimmedPhone)}`,
+      `Email: ${toDisplay(trimmedEmail)}`,
+      `City / Region: ${toDisplay(trimmedCityRegion)}`,
+      `Lead ID: ${toDisplay(lead.id)}`,
+      '',
+      'Experience:',
+      toDisplay(trimmedExperience, 'Not provided'),
+      '',
+      'Why they want to join:',
+      toDisplay(trimmedWhyJoin, 'Not provided')
+    ].join('\n');
+
+    const emailResult = await emailService.sendPlatformMessage(
+      SALES_AGENT_APPLICATION_RECIPIENT_EMAIL,
+      subject,
+      html,
+      text,
+      [],
+      {
+        categories: ['website', 'sales-agent-application'],
+        context: {
+          requestId: req.id || req.headers?.['x-request-id'],
+          source: 'website_sales_agent_application',
+        },
+      }
+    );
+
+    if (!emailResult?.success) {
+      console.error('[SalesAgentApplication] Email delivery failed', {
+        leadId: lead.id,
+        recipient: emailService.maskEmail(SALES_AGENT_APPLICATION_RECIPIENT_EMAIL),
+        error: emailResult?.error || 'Unknown error',
+      });
+      return res.status(502).json({
+        success: false,
+        error: 'We could not send your application right now. Please try again.',
+        errorCode: 'EMAIL_DELIVERY_FAILED'
+      });
+    }
 
     res.status(201).json({
       success: true,

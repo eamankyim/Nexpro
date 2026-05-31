@@ -636,49 +636,58 @@ export function Sidebar({ collapsed, onCollapse }) {
             </div>
           )}
         </nav>
-        <div className="flex-shrink-0 p-3 border-t border-border space-y-2" data-tour="sidebar-collapse">
-          {canInstall && (
+        <div className="flex-shrink-0 p-3 border-t border-border" data-tour="sidebar-collapse">
+          <div
+            className={cn(
+              "w-full",
+              canInstall && !collapsed ? "flex min-w-0 items-center gap-2" : "space-y-2"
+            )}
+          >
+            {canInstall && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    onClick={promptInstall}
+                    className={cn(
+                      "hover:bg-muted text-foreground gap-3",
+                      !collapsed && "min-w-0 flex-1 justify-start",
+                      collapsed && "justify-center !p-2 w-10 h-10 mx-auto"
+                    )}
+                  >
+                    <Download className="h-5 w-5 flex-shrink-0 text-green-600" />
+                    {!collapsed && <span className="truncate">Install App</span>}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right" className={tooltipContentClass}>
+                  Install ABS on your device
+                </TooltipContent>
+              </Tooltip>
+            )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
-                  onClick={promptInstall}
+                  size="icon"
+                  onClick={() => onCollapse?.(!collapsed)}
                   className={cn(
-                    "w-full hover:bg-muted text-foreground justify-start gap-3",
-                    collapsed && "justify-center !p-2 w-10 h-10 mx-auto"
+                    "hover:bg-muted text-foreground",
+                    canInstall && !collapsed ? "h-10 w-10 flex-shrink-0" : "w-full",
+                    collapsed && "w-10 mx-auto"
                   )}
                 >
-                  <Download className="h-5 w-5 flex-shrink-0 text-green-600" />
-                  {!collapsed && <span>Install App</span>}
+                  {collapsed ? (
+                    <ChevronRight className="h-5 w-5" />
+                  ) : (
+                    <ChevronLeft className="h-5 w-5" />
+                  )}
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right" className={tooltipContentClass}>
-                Install ABS on your device
+                {collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               </TooltipContent>
             </Tooltip>
-          )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => onCollapse?.(!collapsed)}
-                className={cn(
-                  "w-full hover:bg-muted text-foreground",
-                  collapsed && "w-10 mx-auto"
-                )}
-              >
-                {collapsed ? (
-                  <ChevronRight className="h-5 w-5" />
-                ) : (
-                  <ChevronLeft className="h-5 w-5" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className={tooltipContentClass}>
-              {collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            </TooltipContent>
-          </Tooltip>
+          </div>
         </div>
       </TooltipProvider>
     </aside>

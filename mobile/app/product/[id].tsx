@@ -148,6 +148,7 @@ export default function ProductDetailScreen() {
       imageUrl: product.imageUrl ?? undefined,
       sku: product.sku ?? undefined,
       barcode: product.barcode ?? undefined,
+      productCode: getAlternateBarcode(product) || undefined,
       trackStock: product.trackStock,
       quantityOnHand: product.quantityOnHand,
     });
@@ -170,7 +171,7 @@ export default function ProductDetailScreen() {
     const primaryBarcode = editForm.barcode.trim();
     const alternateBarcode = editForm.alternateBarcode.trim();
     if (primaryBarcode && alternateBarcode && primaryBarcode === alternateBarcode) {
-      Alert.alert('Error', 'Second barcode must be different from the primary barcode');
+      Alert.alert('Error', 'Product code must be different from the primary barcode');
       return;
     }
     updateMutation.mutate();
@@ -218,7 +219,7 @@ export default function ProductDetailScreen() {
             <DetailRow label="Name" value={product.name} />
             {product.sku ? <DetailRow label="SKU" value={product.sku} /> : null}
             {product.barcode ? <DetailRow label="Barcode" value={product.barcode} /> : null}
-            {alternateBarcode ? <DetailRow label="Second Barcode" value={alternateBarcode} /> : null}
+            {alternateBarcode ? <DetailRow label="Product Code" value={alternateBarcode} /> : null}
             {product.costPrice != null ? (
               <DetailRow label="Cost Price" value={formatCurrency(product.costPrice)} />
             ) : null}

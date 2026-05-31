@@ -211,7 +211,7 @@ export default function SignupScreen() {
             <>
               <ConfettiBurst />
               <View style={styles.welcomeLoadingContent}>
-                <Text style={styles.welcomeLine1}>Welcome to African Business Suite</Text>
+                <Text style={styles.welcomeLine1}>Welcome to ABS Ghana</Text>
                 <Text style={styles.welcomeLine2}>
                   The one platform you will ever need to transform your business.
                 </Text>

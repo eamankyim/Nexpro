@@ -30,6 +30,19 @@ const getPrintStyles = (printConfig) => {
   return { isThermal, showLogo, titleSize, bodySize, tableSize, grayscale, pageWidth, contentWidth, fontSize };
 };
 
+const getItemProductCode = (item) => {
+  const alias = item?.metadata?.productCode
+    || item?.productCode
+    || item?.product?.productCode
+    || item?.variant?.productCode
+    || item?.product?.barcodeAliases?.[0]
+    || item?.variant?.barcodeAliases?.[0]
+    || item?.product?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode
+    || item?.variant?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode;
+
+  return String(alias || '').trim();
+};
+
 const PrintableReceipt = ({
   sale,
   documentTitle = 'RECEIPT',
@@ -477,9 +490,11 @@ const PrintableReceipt = ({
                   const qty = item.quantity || 1;
                   const total = parseFloat(item.total || 0).toFixed(2);
                   const unitPrice = parseFloat(item.unitPrice || 0).toFixed(2);
+                  const productCode = getItemProductCode(item);
                   return (
                     <div key={item.id || index} className="thermal-item-list">
                       <span className="thermal-item-name">{item.name || item.product?.name || 'Item'}</span>
+                      {productCode && <span className="thermal-item-name">Product Code: {productCode}</span>}
                       <span className="thermal-item-amount">₵ {total}</span>
                     </div>
                   );
@@ -622,11 +637,13 @@ const PrintableReceipt = ({
               const qty = item.quantity || 1;
               const total = parseFloat(item.total || 0).toFixed(2);
               const unitPrice = parseFloat(item.unitPrice || 0).toFixed(2);
+              const productCode = getItemProductCode(item);
               return (
                 <div key={item.id || index} className="receipt-item-row">
                   <div className="receipt-item-name" style={{ fontWeight: 500 }}>{item.name || item.product?.name || 'Item'}</div>
                   <div className="receipt-item-price">₵ {total}</div>
                   <div className="receipt-item-detail">{qty} × ₵ {unitPrice}</div>
+                  {productCode && <div className="receipt-item-detail">Product Code: {productCode}</div>}
                 </div>
               );
             })

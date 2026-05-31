@@ -3,8 +3,16 @@ import { io } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import { API_BASE_URL } from '../services/api';
 
-/** Production WebSocket base URL when app is on ABS / African Business Suite production domains */
+/** Production WebSocket base URL when app is on ABS Ghana / African Business Suite production domains */
 const ABS_WS_URL = 'https://api.africanbusinesssuite.com';
+const ABS_PRODUCTION_HOSTS = new Set([
+  'myapp.africanbusinesssuite.com',
+  'africanbusinesssuite.com',
+  'www.africanbusinesssuite.com',
+  'myapp.absghana.com',
+  'absghana.com',
+  'www.absghana.com',
+]);
 
 const getWsUrl = () => {
   const explicit = import.meta.env.VITE_WS_URL?.trim();
@@ -18,17 +26,12 @@ const getWsUrl = () => {
   }
   if (typeof window !== 'undefined') {
     const { hostname } = window.location;
-    if (hostname === 'myapp.africanbusinesssuite.com' || hostname === 'africanbusinesssuite.com') return ABS_WS_URL;
+    if (ABS_PRODUCTION_HOSTS.has(hostname)) return ABS_WS_URL;
   }
   return 'http://localhost:5001';
 };
 
 const WS_URL = getWsUrl();
-
-const ABS_PRODUCTION_HOSTS = new Set([
-  'myapp.africanbusinesssuite.com',
-  'africanbusinesssuite.com',
-]);
 
 /** When 'false' or '0', skip Socket.IO. When 'true' or '1', force on. On ABS production hosts, off unless explicitly enabled (API on Vercel has no socket.io). */
 const isWsEnabled = () => {

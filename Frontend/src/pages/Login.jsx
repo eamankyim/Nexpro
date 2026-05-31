@@ -48,13 +48,6 @@ const Login = () => {
   const validPeriods = ['monthly', 'yearly'];
   const hasCheckoutParams = validPlans.includes(planParam) && validPeriods.includes(billingPeriodParam);
   const { isMobile } = useResponsive();
-  const whatsappContactUrl =
-    (import.meta.env.VITE_WHATSAPP_CONTACT_URL || '').trim() ||
-    'https://wa.me/233555155972?text=' +
-      encodeURIComponent(
-        "Hi, I don't have an ABS account yet. Please help me create one for my business."
-      );
-
   const form = useForm({
     resolver: zodResolver(loginSchema),
     defaultValues: {
@@ -307,23 +300,15 @@ const Login = () => {
               )}
 
               <div className={`text-center ${isMobile ? 'mt-4' : 'mt-6'}`}>
-                {/* For now always show Contact administrator; signup route /signup and Signup.jsx remain for invite links */}
                 <p className={`${isMobile ? 'text-xs' : 'text-sm'} text-muted-foreground`}>
                   Don&apos;t have an account?{' '}
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <a
-                        href={whatsappContactUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-brand hover:underline font-medium"
-                      >
-                        Contact administrator
-                      </a>
+                      <Link to="/signup" className="text-brand hover:underline font-medium">
+                        Create an account
+                      </Link>
                     </TooltipTrigger>
-                    <TooltipContent>
-                      We&apos;ll help you set up an account.
-                    </TooltipContent>
+                    <TooltipContent>Start your business workspace.</TooltipContent>
                   </Tooltip>
                 </p>
               </div>

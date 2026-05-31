@@ -185,6 +185,38 @@ export default {
 };
 ```
 
+### Production / EAS
+
+This app is linked to EAS project ID `8dff9445-6979-427f-b84e-aae48f077d82` with bundle/package ID `com.absghana.app`.
+
+For production builds, set:
+
+```env
+EXPO_PUBLIC_API_URL=https://api.africanbusinesssuite.com
+```
+
+Then run from `mobile/`:
+
+```bash
+npm run build:ios
+npm run build:android
+```
+
+### EAS Upload Size and EPIPE Troubleshooting
+
+Run EAS builds from `mobile/`, not the repository root:
+
+```bash
+cd /Users/us/Desktop/Development/Nexpro/mobile
+npm run build:ios
+```
+
+The mobile project has its own `.easignore` so EAS does not upload local dependencies, generated Expo output, logs, native build folders, or local credentials. The repository root also has a defensive `.easignore` to keep accidental root-level uploads from including `Backend/`, `Frontend/`, `marketing-site/`, `e2e/`, `docs/`, `.git/`, or nested `node_modules/`.
+
+If upload fails with `write EPIPE`, the connection to EAS/Google Cloud Storage was interrupted while streaming the archive. Retry on a stable WiFi connection, disable VPN/proxy if possible, and keep the archive small by checking that `.easignore` is present before rebuilding.
+
+You need active Apple Developer and Google Play accounts before submitting builds to the stores.
+
 ---
 
 ## Step 6: Backend CORS for Mobile

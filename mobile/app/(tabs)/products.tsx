@@ -235,7 +235,7 @@ export default function ProductsScreen() {
     const primaryBarcode = formData.barcode.trim();
     const alternateBarcode = formData.alternateBarcode.trim();
     if (primaryBarcode && alternateBarcode && primaryBarcode === alternateBarcode) {
-      Alert.alert('Error', 'Second barcode must be different from the primary barcode');
+      Alert.alert('Error', 'Product code must be different from the primary barcode');
       return;
     }
 
@@ -497,7 +497,7 @@ export default function ProductsScreen() {
                   <Text style={[styles.formLabel, { color: textColor }]}>{FORM_LABELS.product.alternateBarcode}</Text>
                   <TextInput
                     style={[styles.formInput, { color: textColor, borderColor, backgroundColor: inputBg }]}
-                    placeholder="Second barcode"
+                    placeholder="Product code"
                     placeholderTextColor={mutedColor}
                     value={formData.alternateBarcode}
                     onChangeText={(text) => setFormData({ ...formData, alternateBarcode: text })}

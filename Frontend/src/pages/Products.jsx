@@ -347,7 +347,7 @@ const productSchema = z.object({
   const alternateBarcode = data.alternateBarcode?.trim();
   return !primaryBarcode || !alternateBarcode || primaryBarcode !== alternateBarcode;
 }, {
-  message: 'Second barcode must be different from the primary barcode',
+  message: 'Product code must be different from the primary barcode',
   path: ['alternateBarcode'],
 });
 
@@ -1500,6 +1500,12 @@ const Products = () => {
           </div>
         </div>
       ),
+    },
+    {
+      key: 'productCode',
+      title: 'Product Code',
+      render: (_, record) => getProductAlternateBarcode(record) || '-',
+      hidden: isMobile,
     },
     {
       key: 'category',
@@ -2814,9 +2820,9 @@ const Products = () => {
                     name="alternateBarcode"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Second barcode (optional)</FormLabel>
+                        <FormLabel>Product Code (optional)</FormLabel>
                         <FormControl>
-                          <Input placeholder="Scan or enter second barcode" className="h-10 min-h-[44px] md:min-h-[40px]" {...field} />
+                          <Input placeholder="Scan or enter product code" className="h-10 min-h-[44px] md:min-h-[40px]" {...field} />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -3438,7 +3444,13 @@ const Products = () => {
                 <DescriptionItem label="Barcode">
                   {selectedProduct.barcode || '-'}
                 </DescriptionItem>
-                <DescriptionItem label="Second barcode">
+                <DescriptionItem label="Product Code">
+                  {selectedProduct.supplier || '-'}
+                </DescriptionItem>
+                <DescriptionItem label="Barcode">
+                  {selectedProduct.barcode || '-'}
+                </DescriptionItem>
+                <DescriptionItem label="Product Code">
                   {getProductAlternateBarcode(selectedProduct) || '-'}
                 </DescriptionItem>
               </Descriptions>

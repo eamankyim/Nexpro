@@ -14,7 +14,7 @@ const sections = [
   {
     title: 'How we use information',
     body:
-      'We use this information to provide business management features, keep your workspace secure, sync your data across devices, send account and business notifications, and improve African Business Suite.',
+      'We use this information to provide business management features, keep your workspace secure, sync your data across devices, send account and business notifications, and improve ABS Ghana (African Business Suite).',
   },
   {
     title: 'Photos, files, and camera',
@@ -34,7 +34,7 @@ const sections = [
   {
     title: 'Contact',
     body:
-      'For privacy questions or deletion requests, contact support through the app or email the African Business Suite support team.',
+      'For privacy questions or deletion requests, contact support through the app or email the ABS Ghana (African Business Suite) support team.',
   },
 ];
 
@@ -46,7 +46,7 @@ export default function PrivacyPolicyScreen() {
       <StackPageHeader title="Privacy Policy" subtitle="Last updated: May 20, 2026" />
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <Text style={[styles.intro, { color: mutedColor }]}>
-          This policy explains how African Business Suite collects, uses, and protects information in the mobile app.
+          This policy explains how ABS Ghana (African Business Suite) collects, uses, and protects information in the mobile app.
         </Text>
         {sections.map((section) => (
           <View key={section.title} style={styles.section}>

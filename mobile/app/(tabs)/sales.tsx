@@ -357,6 +357,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 12,
     paddingHorizontal: 16,
+    marginTop: 12,
     marginBottom: 16,
   },
   statCard: {

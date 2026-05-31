@@ -13,6 +13,8 @@ const DEFAULT_ORIGINS = [
   'https://myapp.africanbusinesssuite.com',
   'https://africanbusinesssuite.com',
   'https://www.africanbusinesssuite.com',
+  'https://absghana.com',
+  'https://www.absghana.com',
 ];
 
 /**

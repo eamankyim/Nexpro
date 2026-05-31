@@ -9,7 +9,14 @@ const {
   pollMobileMoneyForPublicInvoice
 } = require('../controllers/invoiceController');
 const { getQuoteByViewToken, respondToQuoteByToken } = require('../controllers/quoteController');
-const { submitDemoBooking, getJobTrackByToken, lookupPublicTracking, getPublicTrackBranding } = require('../controllers/publicController');
+const {
+  submitDemoBooking,
+  submitFeatureRequest,
+  submitSalesAgentApplication,
+  getJobTrackByToken,
+  lookupPublicTracking,
+  getPublicTrackBranding
+} = require('../controllers/publicController');
 const {
   getPublicFeedbackBranding,
   submitPublicFeedback
@@ -26,6 +33,8 @@ router.get('/pricing', getPublicPlans);
 
 // Demo booking from marketing site → creates admin lead (control center)
 router.post('/demo-booking', submitDemoBooking);
+router.post('/feature-request', publicFeedbackSubmitLimiter, submitFeatureRequest);
+router.post('/sales-agent-application', publicFeedbackSubmitLimiter, submitSalesAgentApplication);
 
 // Public invoice routes (no authentication required)
 router.get('/invoices/:token', getInvoiceByToken);

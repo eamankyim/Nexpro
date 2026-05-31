@@ -43,7 +43,7 @@ const Checkout = () => {
 
   const initialData = location.state || {};
   const plan = initialData.plan;
-  const billingPeriod = initialData.billingPeriod || 'monthly';
+  const billingPeriod = initialData.billingPeriod || 'yearly';
   const [planPricing, setPlanPricing] = useState({
     monthly: { ...DEFAULT_MONTHLY },
     yearlyTotal: { ...DEFAULT_YEARLY_TOTAL },

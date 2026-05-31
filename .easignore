@@ -1,0 +1,61 @@
+# This repo contains several apps. EAS builds should be run from mobile/,
+# but keep repo-root uploads small if the command is launched from here.
+
+# VCS and editor metadata
+.git/
+.github/
+.cursor/
+.vscode/
+.idea/
+
+# Non-mobile workspaces
+Backend/
+Frontend/
+marketing-site/
+e2e/
+docs/
+
+# Dependencies anywhere in the monorepo
+node_modules/
+**/node_modules/
+
+# Generated outputs and caches
+.expo/
+**/.expo/
+dist/
+**/dist/
+build/
+**/build/
+web-build/
+**/web-build/
+coverage/
+**/coverage/
+.nyc_output/
+**/.nyc_output/
+.next/
+**/.next/
+.vercel/
+**/.vercel/
+.cache/
+**/.cache/
+tmp/
+temp/
+
+# Logs and local files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+Thumbs.db
+
+# Local environment and credentials
+.env
+.env.local
+.env.*.local
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision

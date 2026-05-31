@@ -71,6 +71,15 @@ const generateCartItemId = () => {
   return `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 };
 
+const getProductCode = (product) => {
+  const alias = product?.productCode
+    || product?.alternateBarcode
+    || product?.barcodeAliases?.[0]
+    || product?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode;
+
+  return String(alias || '').trim();
+};
+
 const isProductOutOfStock = (product) => {
   if (!product || product.trackStock === false) return false;
   const qty = Number(product.quantityOnHand);
@@ -475,6 +484,7 @@ const POS = () => {
         productVariantId: null,
         name: product.name,
         sku: product.sku,
+        productCode: getProductCode(product),
         unitPrice: product.sellingPrice,
         quantity: 1,
         discount: 0,
@@ -502,6 +512,7 @@ const POS = () => {
               productVariantId: null,
               name: product.name,
               sku: product.sku,
+              productCode: getProductCode(product),
               unitPrice: product.sellingPrice,
               quantity: 1,
               discount: 0,
@@ -642,6 +653,7 @@ const POS = () => {
           productVariantId: item.productVariantId,
           name: item.name,
           sku: item.sku,
+          productCode: item.productCode,
           quantity: item.quantity,
           unitPrice: item.unitPrice,
           discount: item.discount || 0,
@@ -749,6 +761,7 @@ const POS = () => {
             productVariantId: item.productVariantId,
             name: item.name,
             sku: item.sku,
+            productCode: item.productCode,
             quantity: item.quantity,
             unitPrice: item.unitPrice,
             discount: item.discount || 0,

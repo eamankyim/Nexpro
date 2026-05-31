@@ -14,6 +14,7 @@ type CartItem = {
   imageUrl?: string;
   sku?: string;
   barcode?: string;
+  productCode?: string;
 };
 
 type CartContextType = {
@@ -27,6 +28,10 @@ type CartContextType = {
     imageUrl?: string;
     sku?: string;
     barcode?: string;
+    productCode?: string;
+    alternateBarcode?: string;
+    barcodeAliases?: string[];
+    barcodes?: Array<{ barcode?: string; isActive?: boolean }>;
     trackStock?: boolean;
     quantityOnHand?: number | null;
   }) => boolean;
@@ -106,6 +111,10 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       imageUrl?: string;
       sku?: string;
       barcode?: string;
+      productCode?: string;
+      alternateBarcode?: string;
+      barcodeAliases?: string[];
+      barcodes?: Array<{ barcode?: string; isActive?: boolean }>;
       trackStock?: boolean;
       quantityOnHand?: number | null;
     }): boolean => {
@@ -120,6 +129,11 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
             item.id === existingItem.id ? { ...item, quantity: item.quantity + 1 } : item
           );
         }
+        const productCode = product.productCode
+          || product.alternateBarcode
+          || product.barcodeAliases?.[0]
+          || product.barcodes?.find((barcode) => barcode?.isActive !== false)?.barcode
+          || '';
         const newItem: CartItem = {
           id: `cart_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           productId: product.id,
@@ -130,6 +144,7 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
           imageUrl: product.imageUrl,
           sku: product.sku,
           barcode: product.barcode,
+          productCode,
         };
         return [...prev, newItem];
       });

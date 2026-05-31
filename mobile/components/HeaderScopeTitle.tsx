@@ -30,14 +30,12 @@ export function HeaderScopeTitle({ embedded = true }: HeaderScopeTitleProps) {
   const scopedName = useScopedWorkspaceName('ABS');
 
   const showWorkspaceScope = shouldShowWorkspaceScopeInHeader(pathname);
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
   const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
   const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
-  const rowBg = resolvedTheme === 'dark' ? '#27272a' : '#f3f4f6';
 
   const rowStyle = embedded
-    ? [styles.row, styles.embeddedRow, { borderColor, backgroundColor: rowBg }]
-    : [styles.row, { borderColor, backgroundColor: rowBg }];
+    ? [styles.row, styles.embeddedRow]
+    : styles.row;
 
   const hasScopePicker =
     (shop?.isShopWorkspace && (shop.shops.length > 0 || shop.loadingShops)) ||
@@ -73,13 +71,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 12,
+    paddingHorizontal: 0,
     paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
     marginBottom: 10,
     alignSelf: 'flex-start',
     maxWidth: '100%',
+    minHeight: 44,
   },
   embeddedRow: {
     marginBottom: 0,

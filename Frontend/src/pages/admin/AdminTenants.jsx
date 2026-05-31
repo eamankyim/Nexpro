@@ -22,6 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Empty } from '@/components/ui/empty';
 import { Descriptions, DescriptionItem } from '@/components/ui/descriptions';
+import { Switch } from '@/components/ui/switch';
 import DashboardTable from '../../components/DashboardTable';
 import {
   Sheet,
@@ -38,6 +39,7 @@ import {
 } from '@/components/ui/select';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -801,25 +803,58 @@ const AdminTenants = () => {
           if (!open) setSupportReason('');
         }}
       >
-        <DialogContent className="sm:max-w-[425px]">
-          <DialogHeader>
-            <DialogTitle>Start support access</DialogTitle>
-            <DialogDescription>
-              You will view {selectedTenant?.name || 'this tenant'} in read-only mode. All actions are audited.
-            </DialogDescription>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader className="pr-12">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700">
+                <Shield className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <DialogTitle>Start support access</DialogTitle>
+                <DialogDescription>
+                  View {selectedTenant?.name || 'this tenant'} in read-only mode to troubleshoot without their password.
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="support-reason">Reason (required)</Label>
-            <Textarea
-              id="support-reason"
-              rows={3}
-              placeholder="e.g. Ticket #12 — POS barcode scan not working"
-              value={supportReason}
-              onChange={(e) => setSupportReason(e.target.value)}
-            />
-          </div>
+          <DialogBody className="space-y-4">
+            <div className="rounded-lg border border-border bg-muted/30 p-4">
+              <div className="flex items-start gap-3">
+                <Badge variant="outline" className="shrink-0 border-emerald-200 bg-background text-emerald-700">
+                  Read-only
+                </Badge>
+                <p className="text-sm text-muted-foreground">
+                  Changes are blocked during support mode, and every access session is audited.
+                </p>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="space-y-1">
+                <Label htmlFor="support-reason">Reason (required)</Label>
+                <p className="text-sm text-muted-foreground">
+                  Add the ticket number or customer issue so the audit trail is clear.
+                </p>
+              </div>
+              <Textarea
+                id="support-reason"
+                rows={5}
+                placeholder="e.g. Ticket #12 - POS barcode scan not working"
+                value={supportReason}
+                onChange={(e) => setSupportReason(e.target.value)}
+                aria-required="true"
+                aria-describedby="support-reason-help"
+                className="min-h-[132px] resize-none"
+              />
+              <p
+                id="support-reason-help"
+                className={supportReason.trim() ? 'text-sm text-muted-foreground' : 'text-sm text-destructive'}
+              >
+                {supportReason.trim() ? 'This reason will be attached to the support access audit log.' : 'Enter a reason to continue.'}
+              </p>
+            </div>
+          </DialogBody>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setSupportAccessOpen(false)}>
+            <Button type="button" variant="outline" onClick={() => setSupportAccessOpen(false)} disabled={supportStarting}>
               Cancel
             </Button>
             <Button
@@ -827,7 +862,14 @@ const AdminTenants = () => {
               onClick={handleEnterSupportAccess}
               disabled={supportStarting || !supportReason.trim()}
             >
-              {supportStarting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Enter workspace'}
+              {supportStarting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Starting...
+                </>
+              ) : (
+                'Enter workspace'
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -899,7 +941,6 @@ const AdminTenants = () => {
             <Tabs value={tenantDetailTab} onValueChange={setTenantDetailTab} className="mt-4 flex flex-col flex-1 min-h-0">
               <TabsList className="grid w-full grid-cols-3 shrink-0">
                 <TabsTrigger value="overview">Overview</TabsTrigger>
-                <TabsTrigger value="members">Members</TabsTrigger>
                 <TabsTrigger value="access">Access control</TabsTrigger>
                 <TabsTrigger value="billing">Billing</TabsTrigger>
               </TabsList>
@@ -1028,6 +1069,32 @@ const AdminTenants = () => {
                 </Descriptions>
               </div>
 
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Members</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {Array.isArray(selectedTenant.memberships) && selectedTenant.memberships.length > 0 ? (
+                    <div className="space-y-3">
+                      {selectedTenant.memberships.map((membership) => (
+                        <div key={membership.id || membership.user?.id} className="flex justify-between items-start gap-2 py-2 border-b border-border last:border-0">
+                          <div>
+                            <p className="font-medium text-foreground">{membership.user?.name || membership.user?.email}</p>
+                            <p className="text-sm text-muted-foreground">{membership.user?.email}</p>
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Last login: {membership.user?.lastLogin ? dayjs(membership.user.lastLogin).fromNow() : 'Never'}
+                            </p>
+                          </div>
+                          <Badge variant="outline">{membership.role}</Badge>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <Empty description="No members found" />
+                  )}
+                </CardContent>
+              </Card>
+
               <div>
                 <h4 className="font-semibold text-foreground mb-2">Metadata</h4>
                 <Descriptions column={1}>
@@ -1081,34 +1148,6 @@ const AdminTenants = () => {
                   )}
                 </CardContent>
               </Card>
-              </TabsContent>
-
-              <TabsContent value="members" className="mt-4 data-[state=inactive]:hidden">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-base">Members</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {Array.isArray(selectedTenant.memberships) && selectedTenant.memberships.length > 0 ? (
-                      <div className="space-y-3">
-                        {selectedTenant.memberships.map((membership) => (
-                          <div key={membership.id || membership.user?.id} className="flex justify-between items-start gap-2 py-2 border-b border-border last:border-0">
-                            <div>
-                              <p className="font-medium text-foreground">{membership.user?.name || membership.user?.email}</p>
-                              <p className="text-sm text-muted-foreground">{membership.user?.email}</p>
-                              <p className="text-xs text-muted-foreground mt-1">
-                                Last login: {membership.user?.lastLogin ? dayjs(membership.user.lastLogin).fromNow() : 'Never'}
-                              </p>
-                            </div>
-                            <Badge variant="outline">{membership.role}</Badge>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <Empty description="No members found" />
-                    )}
-                  </CardContent>
-                </Card>
               </TabsContent>
 
               <TabsContent value="billing" className="mt-4 space-y-4 data-[state=inactive]:hidden">
@@ -1341,34 +1380,45 @@ const AdminTenants = () => {
                     <div className="space-y-2">
                       <Label>Feature overrides (optional)</Label>
                       <p className="text-xs text-muted-foreground">
-                        Force-enable or force-disable features for this tenant. Leave unchanged to follow the plan.
+                        Turn on override to force a feature on or off. Turn override off to follow the plan.
                       </p>
                       <div className="space-y-2 max-h-56 overflow-y-auto border rounded-md p-3">
                         {featureCatalog.map((feature) => {
                           const current = accessForm.featureOverrides?.[feature.key];
+                          const isOverridden = current !== undefined;
                           return (
-                            <div key={feature.key} className="flex items-start justify-between gap-3 border-b border-border last:border-0 pb-2 last:pb-0">
+                            <div key={feature.key} className="flex flex-col gap-3 border-b border-border last:border-0 pb-3 last:pb-0 sm:flex-row sm:items-start sm:justify-between">
                               <div className="min-w-0">
-                                <p className="text-sm font-medium text-foreground">{feature.name}</p>
-                                <p className="text-xs text-muted-foreground break-all">{feature.key}</p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="text-sm font-medium text-foreground">{feature.name}</p>
+                                  <Badge variant={isOverridden ? (current ? 'default' : 'destructive') : 'outline'}>
+                                    {isOverridden ? (current ? 'Allowed' : 'Denied') : 'Inherited'}
+                                  </Badge>
+                                </div>
+                                <p className="mt-1 text-xs text-muted-foreground break-all">{feature.key}</p>
                               </div>
-                              <div className="flex items-center gap-2 shrink-0">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant={current === true ? 'default' : 'outline'}
-                                  onClick={() => handleOverrideToggle(feature.key, current === true ? null : true)}
-                                >
-                                  Allow
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant={current === false ? 'destructive' : 'outline'}
-                                  onClick={() => handleOverrideToggle(feature.key, current === false ? null : false)}
-                                >
-                                  Deny
-                                </Button>
+                              <div className="flex flex-col gap-2 shrink-0 sm:items-end">
+                                <div className="flex items-center justify-between gap-3 sm:justify-end">
+                                  <span className="text-xs font-medium text-muted-foreground">Override plan</span>
+                                  <Switch
+                                    checked={isOverridden}
+                                    onCheckedChange={(checked) =>
+                                      handleOverrideToggle(feature.key, checked ? true : null)
+                                    }
+                                    aria-label={`${feature.name} override plan`}
+                                  />
+                                </div>
+                                <div className="flex items-center justify-between gap-3 sm:justify-end">
+                                  <span className={isOverridden ? 'text-xs font-medium text-foreground' : 'text-xs font-medium text-muted-foreground'}>
+                                    Feature enabled
+                                  </span>
+                                  <Switch
+                                    checked={current === true}
+                                    disabled={!isOverridden}
+                                    onCheckedChange={(checked) => handleOverrideToggle(feature.key, checked)}
+                                    aria-label={`${feature.name} feature enabled`}
+                                  />
+                                </div>
                               </div>
                             </div>
                           );

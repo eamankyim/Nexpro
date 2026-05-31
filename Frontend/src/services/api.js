@@ -1,7 +1,15 @@
 import axios from 'axios';
 
-/** Production API URL when app is served from ABS / African Business Suite production domains */
+/** Production API URL when app is served from ABS Ghana / African Business Suite production domains */
 const ABS_API_URL = 'https://api.africanbusinesssuite.com';
+const ABS_PRODUCTION_HOSTS = new Set([
+  'myapp.africanbusinesssuite.com',
+  'africanbusinesssuite.com',
+  'www.africanbusinesssuite.com',
+  'myapp.absghana.com',
+  'absghana.com',
+  'www.absghana.com',
+]);
 
 const deriveApiBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
@@ -26,8 +34,8 @@ const deriveApiBaseUrl = () => {
   // In production, use appropriate API URL
   if (typeof window !== 'undefined') {
     const { hostname } = window.location;
-    // ABS production: app at myapp.africanbusinesssuite.com or africanbusinesssuite.com → API at api.africanbusinesssuite.com
-    if (hostname === 'myapp.africanbusinesssuite.com' || hostname === 'africanbusinesssuite.com') {
+    // ABS Ghana / African Business Suite production domains use the shared API.
+    if (ABS_PRODUCTION_HOSTS.has(hostname)) {
       if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
         console.log(`[API] Using base URL: ${ABS_API_URL}`);
       }

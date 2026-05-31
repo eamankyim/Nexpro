@@ -68,7 +68,7 @@ const syncProductAliasBarcodes = async ({ product, tenantId, aliases, transactio
       transaction
     });
     if (conflictingProduct) {
-      const error = new Error('Alternate barcode is already used by another product');
+      const error = new Error('Product code is already used by another product');
       error.statusCode = 400;
       throw error;
     }
@@ -86,7 +86,7 @@ const syncProductAliasBarcodes = async ({ product, tenantId, aliases, transactio
       transaction
     });
     if (conflictingAlias) {
-      const error = new Error('Alternate barcode is already used by another product or variant');
+      const error = new Error('Product code is already used by another product or variant');
       error.statusCode = 400;
       throw error;
     }

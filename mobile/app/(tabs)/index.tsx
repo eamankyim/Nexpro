@@ -360,7 +360,6 @@ export default function DashboardScreen() {
   const quickActions = useMemo(() => {
     const actions: QuickAction[] = [];
     if (isShop || isPharmacy) {
-      actions.push({ label: 'New sale', icon: 'shopping-cart', route: '/(tabs)/scan', color: colors.tint });
       if (isRestaurant && hasFeature('orders')) {
         actions.push({ label: 'Kitchen orders', icon: 'cutlery', route: '/(tabs)/orders', color: '#ea580c' });
       } else {
@@ -368,7 +367,6 @@ export default function DashboardScreen() {
       }
     }
     if (isStudio) {
-      actions.push({ label: 'New job', icon: 'plus', route: '/(tabs)/scan', color: colors.tint });
       actions.push({ label: 'Add customer', icon: 'user-plus', route: '/(tabs)/customers?add=1', color: colors.tint });
       if (canCreateQuote) {
         actions.push({ label: 'New quote', icon: 'file-text-o', route: '/(tabs)/quotes', color: '#2563eb' });

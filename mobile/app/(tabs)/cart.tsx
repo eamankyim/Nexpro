@@ -287,6 +287,8 @@ export default function CartScreen() {
       return {
         productId: item.productId,
         name: item.name,
+        sku: item.sku,
+        productCode: item.productCode,
         quantity: item.quantity,
         unitPrice,
         totalPrice: unitPrice * item.quantity - (item.discount || 0),

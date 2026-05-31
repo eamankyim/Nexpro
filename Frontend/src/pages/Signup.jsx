@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useNavigate, useSearchParams, Link } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -137,9 +137,10 @@ const Signup = () => {
   const [passwordStrength, setPasswordStrength] = useState({ strength: 'weak', feedback: '' });
   const [currentStep, setCurrentStep] = useState(1); // 1 = name/email, 2 = password
   const [signupData, setSignupData] = useState({ name: '', email: '' });
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams] = useSearchParams();
   const token = searchParams.get('token');
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     tenantSignup,
     register: registerWithAuth,
@@ -149,7 +150,7 @@ const Signup = () => {
     user,
     shouldRequireOnboarding,
   } = useAuth();
-  const { googleClientId } = usePublicConfig();
+  const { googleClientId, configLoaded } = usePublicConfig();
   const [registeredAsPlatformAdmin, setRegisteredAsPlatformAdmin] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
@@ -209,6 +210,20 @@ const Signup = () => {
       acceptedTerms: false,
     },
   });
+
+  const cameFromGoogleSignin = Boolean(location.state?.fromGoogle);
+  const googleSignupName = typeof location.state?.name === 'string' ? location.state.name : '';
+  const googleSignupEmail = typeof location.state?.email === 'string' ? location.state.email : '';
+
+  useEffect(() => {
+    if (token || !cameFromGoogleSignin) return;
+    if (googleSignupName) {
+      form.setValue('name', googleSignupName, { shouldValidate: true });
+    }
+    if (googleSignupEmail) {
+      form.setValue('email', googleSignupEmail, { shouldValidate: true });
+    }
+  }, [cameFromGoogleSignin, form, googleSignupEmail, googleSignupName, token]);
 
   const passwordForm = useForm({
     resolver: zodResolver(passwordSchema),
@@ -504,7 +519,7 @@ const Signup = () => {
                   animation: signupWelcomeLineInOut 2.6s ease-in-out 2.6s forwards;
                 }
               `}</style>
-              <h2 className="signup-welcome-line-1 text-2xl sm:text-3xl md:text-4xl font-semibold">Welcome to African Business Suite</h2>
+              <h2 className="signup-welcome-line-1 text-2xl sm:text-3xl md:text-4xl font-semibold">Welcome to ABS Ghana</h2>
               <h2 className="signup-welcome-line-2 text-xl sm:text-2xl md:text-4xl font-semibold text-white text-pretty px-1">The one platform you will ever need to transform your business.</h2>
             </div>
           )}
@@ -575,7 +590,7 @@ const Signup = () => {
               
               {/* Heading */}
               <h2 className={`${isMobile ? 'text-2xl mb-1' : 'text-3xl mb-2'} font-bold text-foreground`}>
-                {token && inviteData ? 'Join African Business Suite' : 'Sign up'}
+                {token && inviteData ? 'Join African Business Suite' : 'Create your ABS Ghana account'}
               </h2>
               {token && inviteData && isAuthenticated && !showWelcomeScreen && (
                 <Alert className="mb-6 border-border bg-muted/50">
@@ -597,7 +612,9 @@ const Signup = () => {
                 </Alert>
               )}
               {!token && !inviteData && (
-                <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-gray-600`}>One place for your business.</p>
+                <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-gray-600`}>
+                  Start your African Business Suite workspace with Google or email.
+                </p>
               )}
               {token && inviteData && (
                 <p className={`${isMobile ? 'text-sm mb-6' : 'mb-8'} text-gray-600`}>
@@ -812,14 +829,7 @@ const Signup = () => {
                         )}
                       />
                       <TermsAcceptanceField control={form.control} isMobile={isMobile} />
-                      <Button
-                        type="submit"
-                        className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
-                        disabled={loading || checkingEmail}
-                      >
-                        Continue
-                      </Button>
-                      {googleClientId && (
+                      {(googleClientId || !configLoaded) && (
                         <>
                           <div className={`relative ${isMobile ? 'my-4' : 'my-6'}`}>
                             <div className="absolute inset-0 flex items-center">
@@ -829,22 +839,34 @@ const Signup = () => {
                               <span className="bg-card px-2 text-muted-foreground">Or</span>
                             </div>
                           </div>
-                          <div className="flex justify-center w-full">
-                            <GoogleLogin
-                              onSuccess={handleGoogleSignupSuccess}
-                              onError={handleGoogleSignupError}
-                              useOneTap={false}
-                              theme="outline"
-                              size="large"
-                              type="standard"
-                              text="signup_with"
-                              shape="rectangular"
-                              // Google button has a fixed pixel width range; choose near-card width
-                              width={isMobile ? '340' : '360'}
-                            />
-                          </div>
+                          {googleClientId ? (
+                            <div className="flex justify-center w-full min-h-[44px]" data-google-configured="true">
+                              <GoogleLogin
+                                onSuccess={handleGoogleSignupSuccess}
+                                onError={handleGoogleSignupError}
+                                useOneTap={false}
+                                theme="outline"
+                                size="large"
+                                type="standard"
+                                text="signup_with"
+                                shape="rectangular"
+                                width={isMobile ? 320 : 360}
+                              />
+                            </div>
+                          ) : (
+                            <div className="flex justify-center min-h-[44px] items-center text-muted-foreground text-sm">
+                              Loading sign-up options...
+                            </div>
+                          )}
                         </>
                       )}
+                      <Button
+                        type="submit"
+                        className={`w-full ${isMobile ? 'h-[44px]' : 'h-12'} bg-brand hover:bg-brand-dark text-white ${isMobile ? 'rounded-md' : 'rounded-lg'} font-medium transition-all duration-200 ${isMobile ? '' : 'hover:scale-[1.02]'}`}
+                        disabled={loading || checkingEmail}
+                      >
+                        Continue
+                      </Button>
                     </form>
                   </Form>
                 </>

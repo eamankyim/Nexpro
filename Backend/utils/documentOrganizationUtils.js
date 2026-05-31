@@ -1,6 +1,61 @@
 const { Setting, Tenant } = require('../models');
 const { getTenantLogoUrl } = require('./tenantLogo');
 
+const PUBLIC_ASSET_BASE_ENV_KEYS = [
+  'API_PUBLIC_URL',
+  'API_BASE_URL',
+  'BACKEND_URL',
+  'SERVER_URL',
+  'FRONTEND_URL',
+];
+
+const normalizeBaseUrl = (raw) => {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  try {
+    const parsed = new URL(value);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch (_err) {
+    return value.replace(/\/+$/, '');
+  }
+};
+
+const getPublicAssetBaseUrl = () => {
+  for (const key of PUBLIC_ASSET_BASE_ENV_KEYS) {
+    const base = normalizeBaseUrl(process.env[key]);
+    if (base) return base;
+  }
+  return 'http://localhost:5000';
+};
+
+const isAbsolutePublicLogoUrl = (value) => {
+  if (/^data:image\//i.test(value)) return true;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (_err) {
+    return false;
+  }
+};
+
+const toPublicAssetUrl = (value) => {
+  const logoUrl = typeof value === 'string' ? value.trim() : '';
+  if (!logoUrl) return '';
+  if (isAbsolutePublicLogoUrl(logoUrl)) return logoUrl;
+  if (logoUrl.startsWith('/uploads/')) {
+    return `${getPublicAssetBaseUrl()}${logoUrl}`;
+  }
+  return '';
+};
+
+const pickFirstPublicAssetUrl = (...values) => {
+  for (const value of values) {
+    const publicUrl = toPublicAssetUrl(value);
+    if (publicUrl) return publicUrl;
+  }
+  return '';
+};
+
 /**
  * Map shop/studio address columns to printable organization address shape.
  * @param {object|null} location
@@ -46,7 +101,7 @@ const loadTenantOrganization = async (tenantId) => {
     email: pickFirstNonEmpty(orgSettings.email, tenantMetadata.email, tenantMetadata.companyEmail, ''),
     phone: pickFirstNonEmpty(orgSettings.phone, tenantMetadata.phone, tenantMetadata.companyPhone, ''),
     website: pickFirstNonEmpty(orgSettings.website, tenantMetadata.website, tenantMetadata.companyWebsite, ''),
-    logoUrl: pickFirstNonEmpty(orgSettings.logoUrl, tenantMetadata.logo, getTenantLogoUrl(tenant)),
+    logoUrl: pickFirstPublicAssetUrl(orgSettings.logoUrl, tenantMetadata.logo, getTenantLogoUrl(tenant)),
     invoiceFooter: orgSettings.invoiceFooter || '',
     paymentDetails: orgSettings.paymentDetails || '',
     paymentDetailsEnabled: orgSettings.paymentDetailsEnabled === true,
@@ -88,7 +143,7 @@ const resolveDocumentOrganization = async ({ tenantId, shop = null, studioLocati
     email: pickFirstNonEmpty(branch.email, tenantOrg.email),
     phone: pickFirstNonEmpty(branch.phone, tenantOrg.phone),
     website: tenantOrg.website,
-    logoUrl: pickFirstNonEmpty(branch.logoUrl, tenantOrg.logoUrl),
+    logoUrl: pickFirstPublicAssetUrl(branch.logoUrl, tenantOrg.logoUrl),
     address: hasBranchAddress ? branchAddress : tenantOrg.address,
     source: branchType,
     branchId: branch.id,
@@ -100,12 +155,18 @@ const resolveDocumentOrganization = async ({ tenantId, shop = null, studioLocati
 /**
  * Email template company block from resolved organization.
  * @param {object} organization
- * @returns {{ name: string, logo: string, primaryColor: string }}
+ * @returns {{ name: string, logo: string, logoUrl: string, primaryColor: string, email: string, phone: string, website: string, address: object, invoiceFooter: string }}
  */
 const organizationToEmailCompany = (organization) => ({
   name: organization?.name || 'African Business Suite',
-  logo: organization?.logoUrl || '',
+  logo: toPublicAssetUrl(organization?.logoUrl),
+  logoUrl: toPublicAssetUrl(organization?.logoUrl),
   primaryColor: organization?.primaryColor || '#166534',
+  email: organization?.email || '',
+  phone: organization?.phone || '',
+  website: organization?.website || '',
+  address: organization?.address || {},
+  invoiceFooter: organization?.invoiceFooter || '',
 });
 
 module.exports = {
@@ -113,4 +174,6 @@ module.exports = {
   loadTenantOrganization,
   resolveDocumentOrganization,
   organizationToEmailCompany,
+  toPublicAssetUrl,
+  pickFirstPublicAssetUrl,
 };

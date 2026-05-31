@@ -119,7 +119,7 @@ const normalizeMarketingPlans = (apiRows, enterprisePricing) => {
 
 const Plans = () => {
   const navigate = useNavigate();
-  const [billingPeriod, setBillingPeriod] = useState('monthly');
+  const [billingPeriod, setBillingPeriod] = useState('yearly');
   const [plans, setPlans] = useState(FALLBACK_PLANS);
   const [loading, setLoading] = useState(true);
 

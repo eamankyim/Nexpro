@@ -82,14 +82,13 @@ export function WorkspaceScopeSwitcher({ embedded = false }: WorkspaceScopeSwitc
 
   if (!config || config.loading) return null;
 
-  const borderColor = resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb';
   const cardBg = resolvedTheme === 'dark' ? '#27272a' : '#fff';
   const mutedColor = resolvedTheme === 'dark' ? '#a1a1aa' : '#6b7280';
   const textColor = resolvedTheme === 'dark' ? '#fff' : '#111';
 
   const rowStyle = embedded
-    ? [styles.staticRow, styles.embeddedRow, { borderColor, backgroundColor: resolvedTheme === 'dark' ? '#27272a' : '#f3f4f6' }]
-    : [styles.staticRow, { borderColor, backgroundColor: resolvedTheme === 'dark' ? '#27272a' : '#f3f4f6' }];
+    ? [styles.staticRow, styles.embeddedRow]
+    : styles.staticRow;
 
   if (!config.showPicker) {
     return (
@@ -103,14 +102,14 @@ export function WorkspaceScopeSwitcher({ embedded = false }: WorkspaceScopeSwitc
   }
 
   const triggerStyle = embedded
-    ? [styles.trigger, styles.embeddedTrigger, { borderColor, backgroundColor: resolvedTheme === 'dark' ? '#27272a' : '#f3f4f6' }]
-    : [styles.trigger, { borderColor, backgroundColor: resolvedTheme === 'dark' ? '#27272a' : '#f3f4f6' }];
+    ? [styles.trigger, styles.embeddedTrigger]
+    : styles.trigger;
 
   return (
     <>
       <Pressable
         onPress={() => setOpen(true)}
-        style={triggerStyle}
+        style={({ pressed }) => [triggerStyle, pressed && styles.pressed]}
       >
         <AppIcon name={config.icon} size={14} color={mutedColor} />
         <Text style={[styles.triggerLabel, { color: textColor }]} numberOfLines={1}>
@@ -147,7 +146,7 @@ export function WorkspaceScopeSwitcher({ embedded = false }: WorkspaceScopeSwitc
                 );
               }}
             />
-            <Pressable onPress={() => setOpen(false)} style={[styles.closeBtn, { borderColor }]}>
+            <Pressable onPress={() => setOpen(false)} style={[styles.closeBtn, { borderColor: resolvedTheme === 'dark' ? '#3f3f46' : '#e5e7eb' }]}>
               <Text style={{ color: textColor, fontWeight: '600' }}>Close</Text>
             </Pressable>
           </Pressable>
@@ -212,26 +211,24 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 12,
+    paddingHorizontal: 0,
     paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
     marginBottom: 10,
     alignSelf: 'flex-start',
     maxWidth: '100%',
+    minHeight: 44,
   },
   staticLabel: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
   trigger: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: 0,
     paddingVertical: 8,
-    borderRadius: 999,
-    borderWidth: 1,
     marginBottom: 10,
     alignSelf: 'flex-start',
     maxWidth: '100%',
+    minHeight: 44,
   },
   triggerLabel: { fontSize: 13, fontWeight: '600', flexShrink: 1 },
   embeddedRow: {
@@ -245,6 +242,9 @@ const styles = StyleSheet.create({
     alignSelf: 'stretch',
     flex: 1,
     minWidth: 0,
+  },
+  pressed: {
+    opacity: 0.7,
   },
   overlay: {
     flex: 1,

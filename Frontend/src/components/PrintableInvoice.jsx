@@ -32,6 +32,19 @@ const getPrintStyles = (printConfig) => {
   return { isThermal, showLogo, titleSize, bodySize, tableSize, grayscale, pageWidth, contentWidth, fontSize };
 };
 
+const getItemProductCode = (item) => {
+  const alias = item?.metadata?.productCode
+    || item?.productCode
+    || item?.product?.productCode
+    || item?.variant?.productCode
+    || item?.product?.barcodeAliases?.[0]
+    || item?.variant?.barcodeAliases?.[0]
+    || item?.product?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode
+    || item?.variant?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode;
+
+  return String(alias || '').trim();
+};
+
 const PrintableInvoice = ({
   invoice,
   documentTitle = 'INVOICE',
@@ -673,9 +686,11 @@ const PrintableInvoice = ({
                   const qty = item.quantity || 1;
                   const total = maskAmounts ? 'XXX' : parseFloat(item.total || item.unitPrice * qty || 0).toFixed(2);
                   const unitPrice = maskAmounts ? 'XXX' : parseFloat(item.unitPrice || 0).toFixed(2);
+                  const productCode = getItemProductCode(item);
                   return (
                     <div key={index} className="thermal-item-list">
                       <span className="thermal-item-name">{item.description || item.category || 'Item'}</span>
+                      {productCode && <span className="thermal-item-name">Product Code: {productCode}</span>}
                       <span className="thermal-item-amount">{qty} × ₵ {unitPrice} = ₵ {total}</span>
                     </div>
                   );
@@ -851,10 +866,12 @@ const PrintableInvoice = ({
                 const qty = item.quantity || 1;
                 const total = maskAmounts ? 'XXX' : parseFloat(item.total || item.unitPrice * qty || 0).toFixed(2);
                 const unitPrice = maskAmounts ? 'XXX' : parseFloat(item.unitPrice || 0).toFixed(2);
+                const productCode = getItemProductCode(item);
                 return (
                   <div key={index} className="receipt-item-row" style={{ display: 'block', padding: '6px 0', borderBottom: '1px solid #eee', fontSize: '12px' }}>
                     <div style={{ fontWeight: 500, marginBottom: 2 }}>{item.description || item.category || 'Item'}</div>
                     <div style={{ fontSize: '11px', color: '#555' }}>{qty} × ₵ {unitPrice} = ₵ {total}</div>
+                    {productCode && <div style={{ fontSize: '11px', color: '#555' }}>Product Code: {productCode}</div>}
                   </div>
                 );
               })
@@ -868,33 +885,38 @@ const PrintableInvoice = ({
             <thead>
               <tr>
                 <th style={{ width: '48%' }}>Description</th>
+                <th style={{ width: '16%' }}>Product Code</th>
                 <th className="text-center" style={{ width: '14%' }}>QTY</th>
-                <th className="text-right" style={{ width: '19%' }}>Unit Price</th>
-                <th className="text-right" style={{ width: '19%' }}>Amount</th>
+                <th className="text-right" style={{ width: '11%' }}>Unit Price</th>
+                <th className="text-right" style={{ width: '11%' }}>Amount</th>
               </tr>
             </thead>
             <tbody>
               {invoice.items && invoice.items.length > 0 ? (
-                invoice.items.map((item, index) => (
-                  <tr key={index}>
-                    <td>
-                      <div>{item.description || item.category || 'Item'}</div>
-                      {item.paperSize && (
-                        <div style={{ fontSize: '10px', color: '#666' }}>
-                          Size: {item.paperSize}
-                        </div>
-                      )}
-                    </td>
-                    <td className="text-center">{item.quantity || 1}</td>
-                    <td className="text-right">{amountDisplay(item.unitPrice)}</td>
-                    <td className="text-right">
-                      <strong>{amountDisplay(item.total || item.unitPrice * (item.quantity || 1))}</strong>
-                    </td>
-                  </tr>
-                ))
+                invoice.items.map((item, index) => {
+                  const productCode = getItemProductCode(item);
+                  return (
+                    <tr key={index}>
+                      <td>
+                        <div>{item.description || item.category || 'Item'}</div>
+                        {item.paperSize && (
+                          <div style={{ fontSize: '10px', color: '#666' }}>
+                            Size: {item.paperSize}
+                          </div>
+                        )}
+                      </td>
+                      <td>{productCode || '-'}</td>
+                      <td className="text-center">{item.quantity || 1}</td>
+                      <td className="text-right">{amountDisplay(item.unitPrice)}</td>
+                      <td className="text-right">
+                        <strong>{amountDisplay(item.total || item.unitPrice * (item.quantity || 1))}</strong>
+                      </td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
-                  <td colSpan="4" className="text-center">No items</td>
+                  <td colSpan="5" className="text-center">No items</td>
                 </tr>
               )}
             </tbody>

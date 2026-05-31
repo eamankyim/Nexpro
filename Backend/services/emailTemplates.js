@@ -1319,74 +1319,277 @@ const paystackBankLinkedEmail = ({ businessName, last4Digits }, company = {}) =>
  * @param {string} [closingNote] - extra plain line(s) after table
  * @returns {{ subject: string, html: string, text: string }}
  */
+const isReceiptLogoUrl = (value) => {
+  const logoUrl = typeof value === 'string' ? value.trim() : '';
+  if (!logoUrl) return false;
+  if (/^data:image\//i.test(logoUrl)) return true;
+  try {
+    const parsed = new URL(logoUrl);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch (_err) {
+    return false;
+  }
+};
+
+const getReceiptLogoInitials = (companyName) => {
+  const words = String(companyName || 'African Business Suite')
+    .replace(/[^A-Za-z0-9\s]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (!words.length) return 'ABS';
+  return words.slice(0, 3).map((word) => word.charAt(0).toUpperCase()).join('');
+};
+
 const saleReceiptEmail = (sale, company = {}, closingNote = '') => {
   const companyName = company.name || 'African Business Suite';
   const primaryColor = company.primaryColor || EMAIL_DESIGN.primaryColor;
-  const logoUrl = company.logoUrl || company.logo || '';
-  const d = EMAIL_DESIGN;
+  const logoCandidate = company.logoUrl || company.logo || '';
+  const logoUrl = isReceiptLogoUrl(logoCandidate) ? String(logoCandidate).trim() : '';
+  const logoInitials = getReceiptLogoInitials(companyName);
   const items = Array.isArray(sale?.items) ? sale.items : [];
-  const rows = items
-    .map(
-      (item) => `
+  const currency = sale?.currency || 'GHS';
+  const borderColor = EMAIL_DESIGN.borderColor;
+  const mutedColor = EMAIL_DESIGN.mutedColor;
+  const headingColor = EMAIL_DESIGN.headingColor;
+  const bodyColor = EMAIL_DESIGN.bodyColor;
+  const receiptBg = '#f7f8f5';
+  const total = parseFloat(sale?.total ?? 0) || 0;
+  const amountPaid = sale?.amountPaid != null ? parseFloat(sale.amountPaid) || 0 : null;
+  const balance = Math.max(0, total - (amountPaid ?? total));
+  const change = parseFloat(sale?.change ?? 0) || 0;
+  const legacyClosingNote = typeof closingNote === 'string' ? closingNote.trim() : '';
+  const customClosingNote = legacyClosingNote && !/```|SALES RECEIPT|Receipt No\./i.test(legacyClosingNote)
+    ? legacyClosingNote
+    : '';
+  const saleNumRaw = sale?.saleNumber || 'Sale';
+  const saleNum = escapeHtml(saleNumRaw);
+  const dateStr = sale?.createdAt ? formatDate(sale.createdAt) : 'N/A';
+  const currentYear = new Date().getFullYear();
+  const money = (value) => formatCurrency(value, currency);
+  const formatQuantity = (value) => {
+    const number = parseFloat(value ?? 0);
+    if (!Number.isFinite(number)) return '0';
+    return number.toFixed(2);
+  };
+  const formatPaymentMethod = (value) => {
+    const label = String(value || '').replace(/[_-]+/g, ' ').trim();
+    return label ? label.replace(/\b\w/g, (char) => char.toUpperCase()) : 'Not recorded';
+  };
+  const compact = (...values) => values.map((value) => String(value || '').trim()).filter(Boolean);
+  const formatAddress = (address) => {
+    if (!address) return '';
+    if (typeof address === 'string') return address.trim();
+    return compact(
+      address.line1 || address.address,
+      address.line2,
+      compact(address.city, address.state).join(', '),
+      address.postalCode,
+      address.country
+    ).join(', ');
+  };
+  const getItemProductCode = (item) => {
+    const alias = item?.metadata?.productCode
+      || item?.productCode
+      || item?.product?.productCode
+      || item?.variant?.productCode
+      || item?.product?.barcodeAliases?.[0]
+      || item?.variant?.barcodeAliases?.[0]
+      || item?.product?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode
+      || item?.variant?.barcodes?.find?.((barcode) => barcode?.isActive !== false)?.barcode;
+    const fallback = item?.sku || item?.product?.sku || item?.variant?.sku || item?.product?.barcode || item?.variant?.barcode;
+    return String(alias || fallback || 'N/A').trim();
+  };
+  const addressText = formatAddress(company.address);
+  const contactParts = compact(addressText, company.phone, company.email);
+  const contactLine = contactParts.length ? contactParts.map(escapeHtml).join('&nbsp;&nbsp;|&nbsp;&nbsp;') : 'Contact details not available';
+  const itemRows = items
+    .map((item) => {
+      const quantity = parseFloat(item.quantity ?? 0) || 0;
+      const unitPrice = parseFloat(item.unitPrice ?? 0) || 0;
+      const lineTotal = item.total != null ? parseFloat(item.total) || 0 : quantity * unitPrice;
+      const productCode = getItemProductCode(item);
+      const itemName = item.name || item.product?.name || item.variant?.name || 'Item';
+      return `
       <tr>
-        <td style="padding: 10px; border-bottom: 1px solid ${d.borderColor}; text-align: left;">${escapeHtml(item.name)}</td>
-        <td style="padding: 10px; border-bottom: 1px solid ${d.borderColor}; text-align: right;">${escapeHtml(String(item.quantity ?? ''))}</td>
-        <td style="padding: 10px; border-bottom: 1px solid ${d.borderColor}; text-align: right;">GHS ${parseFloat(item.unitPrice || 0).toFixed(2)}</td>
-        <td style="padding: 10px; border-bottom: 1px solid ${d.borderColor}; text-align: right;">GHS ${(parseFloat(item.quantity || 0) * parseFloat(item.unitPrice || 0)).toFixed(2)}</td>
-      </tr>`
-    )
+        <td style="padding: 18px 16px; border-bottom: 1px solid ${borderColor}; text-align: left; color: ${headingColor}; font-size: 14px; line-height: 1.4;">${escapeHtml(itemName)}</td>
+        <td style="padding: 18px 12px; border-bottom: 1px solid ${borderColor}; text-align: left; color: ${bodyColor}; font-size: 13px; line-height: 1.4;">${escapeHtml(productCode)}</td>
+        <td style="padding: 18px 12px; border-bottom: 1px solid ${borderColor}; text-align: center; color: ${bodyColor}; font-size: 13px; line-height: 1.4;">${escapeHtml(formatQuantity(quantity))}</td>
+        <td style="padding: 18px 12px; border-bottom: 1px solid ${borderColor}; text-align: right; color: ${bodyColor}; font-size: 13px; line-height: 1.4; white-space: nowrap;">${escapeHtml(money(unitPrice))}</td>
+        <td style="padding: 18px 16px 18px 12px; border-bottom: 1px solid ${borderColor}; text-align: right; color: ${headingColor}; font-size: 13px; line-height: 1.4; white-space: nowrap;">${escapeHtml(money(lineTotal))}</td>
+      </tr>`;
+    })
     .join('');
 
-  const total = parseFloat(sale?.total ?? 0).toFixed(2);
-  const saleNum = escapeHtml(sale?.saleNumber || 'Sale');
-  const dateStr = sale?.createdAt ? formatDate(sale.createdAt) : 'N/A';
-
-  const inner = `
-    <h1 style="margin: 0 0 24px 0; font-size: ${d.headingSize}; font-weight: bold; color: ${d.headingColor}; line-height: 1.3;">Receipt</h1>
-    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse; margin: 8px 0 16px; font-size: 14px;">
-      <tr><td style="padding: 8px 0; color: ${d.bodyColor};"><strong>Sale number</strong></td><td style="padding: 8px 0; text-align: right; color: ${d.bodyColor};">${saleNum}</td></tr>
-      <tr><td style="padding: 8px 0; color: ${d.bodyColor};"><strong>Date</strong></td><td style="padding: 8px 0; text-align: right; color: ${d.bodyColor};">${escapeHtml(dateStr)}</td></tr>
+  const html = `<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Receipt ${saleNum}</title>
+  <style type="text/css">
+    body, table, td, p { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
+    body { margin: 0; padding: 0; background-color: #eeeeee; color: ${headingColor}; }
+    table { border-collapse: collapse; }
+  </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #eeeeee;">
+  <center style="width: 100%; background-color: #eeeeee; padding: 32px 12px;">
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width: 720px; width: 100%; background-color: #ffffff; border: 1px solid ${borderColor};">
+      <tr>
+        <td style="padding: 40px 36px 28px; text-align: center;">
+          ${logoUrl ? `<p style="margin: 0 0 16px 0;"><img src="${escapeHtml(logoUrl)}" alt="${escapeHtml(companyName)}" style="display: inline-block; max-height: 72px; max-width: 180px; height: auto; width: auto; border: 0;" /></p>` : `<p style="margin: 0 0 16px 0;"><span style="display: inline-block; min-width: 72px; height: 72px; padding: 0 12px; border: 1px solid ${borderColor}; border-radius: 9999px; background-color: ${receiptBg}; color: ${primaryColor}; font-size: 24px; line-height: 72px; font-weight: 700; letter-spacing: 2px; text-align: center;">${escapeHtml(logoInitials)}</span></p>`}
+          <p style="margin: 0; color: ${primaryColor}; font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: 4px; text-transform: uppercase;">${escapeHtml(companyName)}</p>
+          <p style="margin: 14px 0 0 0; color: ${bodyColor}; font-size: 14px; line-height: 1.6;">${contactLine}</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 0 36px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%;">
+            <tr>
+              <td style="width: 38%; border-top: 1px solid ${primaryColor}; line-height: 1px; font-size: 1px;">&nbsp;</td>
+              <td style="width: 24%; text-align: center; color: ${primaryColor}; font-size: 18px; line-height: 1;">&#9670;</td>
+              <td style="width: 38%; border-top: 1px solid ${primaryColor}; line-height: 1px; font-size: 1px;">&nbsp;</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 28px 36px 34px; text-align: center;">
+          <p style="margin: 0; color: #111111; font-family: Georgia, 'Times New Roman', serif; font-size: 48px; line-height: 1.1; font-weight: 700; letter-spacing: 10px;">RECEIPT</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 0 36px 34px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%;">
+            <tr>
+              <td style="width: 50%; padding: 0 24px 0 30px; text-align: left;">
+                <p style="margin: 0 0 12px 0; color: ${bodyColor}; font-size: 13px; line-height: 1.2; text-transform: uppercase;">Receipt No.</p>
+                <p style="margin: 0; color: #111111; font-size: 18px; line-height: 1.3; font-weight: 700;">${saleNum}</p>
+              </td>
+              <td style="width: 1px; background-color: ${borderColor}; line-height: 1px; font-size: 1px;">&nbsp;</td>
+              <td style="width: 50%; padding: 0 30px 0 60px; text-align: left;">
+                <p style="margin: 0 0 12px 0; color: ${bodyColor}; font-size: 13px; line-height: 1.2; text-transform: uppercase;">Date</p>
+                <p style="margin: 0; color: #111111; font-size: 18px; line-height: 1.3; font-weight: 700;">${escapeHtml(dateStr)}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 0 36px 26px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="background-color: ${receiptBg};">
+                <th align="left" style="padding: 16px; border-top: 1px solid ${borderColor}; border-bottom: 1px solid ${borderColor}; color: ${primaryColor}; font-size: 13px; line-height: 1.2; text-transform: uppercase;">Item</th>
+                <th align="left" style="padding: 16px 12px; border-top: 1px solid ${borderColor}; border-bottom: 1px solid ${borderColor}; color: ${primaryColor}; font-size: 13px; line-height: 1.2; text-transform: uppercase;">Product Code</th>
+                <th align="center" style="padding: 16px 12px; border-top: 1px solid ${borderColor}; border-bottom: 1px solid ${borderColor}; color: ${primaryColor}; font-size: 13px; line-height: 1.2; text-transform: uppercase;">Qty</th>
+                <th align="right" style="padding: 16px 12px; border-top: 1px solid ${borderColor}; border-bottom: 1px solid ${borderColor}; color: ${primaryColor}; font-size: 13px; line-height: 1.2; text-transform: uppercase; white-space: nowrap;">Unit Price</th>
+                <th align="right" style="padding: 16px 16px 16px 12px; border-top: 1px solid ${borderColor}; border-bottom: 1px solid ${borderColor}; color: ${primaryColor}; font-size: 13px; line-height: 1.2; text-transform: uppercase;">Total</th>
+              </tr>
+            </thead>
+            <tbody>${itemRows || `<tr><td colspan="5" style="padding: 18px 16px; border-bottom: 1px solid ${borderColor}; color: ${mutedColor}; font-size: 14px; text-align: center;">No line items</td></tr>`}</tbody>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 0 36px 30px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%;">
+            <tr>
+              <td style="border-top: 1px solid ${borderColor}; line-height: 1px; font-size: 1px;">&nbsp;</td>
+            </tr>
+            <tr>
+              <td align="right" style="padding: 32px 0 28px;">
+                <span style="display: inline-block; margin-right: 24px; color: #111111; font-size: 14px; font-weight: 700; text-transform: uppercase;">Grand Total</span>
+                <span style="display: inline-block; color: ${primaryColor}; font-size: 28px; line-height: 1.2; font-weight: 700;">${escapeHtml(money(total))}</span>
+              </td>
+            </tr>
+            <tr>
+              <td style="border-top: 2px solid ${primaryColor}; line-height: 1px; font-size: 1px;">&nbsp;</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 0 36px 34px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%;">
+            <tr>
+              <td style="width: 50%; padding: 0 24px 0 66px; text-align: left;">
+                <p style="margin: 0 0 12px 0; color: ${bodyColor}; font-size: 13px; line-height: 1.2; text-transform: uppercase;">Payment Method</p>
+                <p style="margin: 0; color: #111111; font-size: 18px; line-height: 1.3;">${escapeHtml(formatPaymentMethod(sale?.paymentMethod))}</p>
+              </td>
+              <td style="width: 1px; background-color: ${borderColor}; line-height: 1px; font-size: 1px;">&nbsp;</td>
+              <td style="width: 50%; padding: 0 24px 0 60px; text-align: left;">
+                <p style="margin: 0 0 12px 0; color: ${bodyColor}; font-size: 13px; line-height: 1.2; text-transform: uppercase;">Amount Paid</p>
+                <p style="margin: 0; color: #111111; font-size: 18px; line-height: 1.3;">${amountPaid == null ? 'Not recorded' : escapeHtml(money(amountPaid))}</p>
+              </td>
+            </tr>
+            ${(balance > 0.009 || change > 0.009) ? `
+            <tr>
+              <td colspan="3" style="padding: 20px 0 0 0; text-align: center; color: ${bodyColor}; font-size: 13px; line-height: 1.5;">
+                ${balance > 0.009 ? `Balance: <strong>${escapeHtml(money(balance))}</strong>` : ''}
+                ${(balance > 0.009 && change > 0.009) ? '&nbsp;&nbsp;|&nbsp;&nbsp;' : ''}
+                ${change > 0.009 ? `Change: <strong>${escapeHtml(money(change))}</strong>` : ''}
+              </td>
+            </tr>` : ''}
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding: 34px 36px 32px;">
+          <table cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%;">
+            <tr>
+              <td style="border-top: 1px solid ${borderColor}; line-height: 1px; font-size: 1px;">&nbsp;</td>
+            </tr>
+            <tr>
+              <td style="padding: 32px 0 0; text-align: center; color: ${bodyColor}; font-size: 13px; line-height: 1.6;">
+                <p style="margin: 0 0 8px 0;">Thank you for your purchase!</p>
+                ${customClosingNote ? `<p style="margin: 0 0 8px 0;">${escapeHtml(customClosingNote)}</p>` : ''}
+                <p style="margin: 0;">&copy; ${currentYear} ${escapeHtml(companyName)}. All rights reserved.</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+      <tr>
+        <td style="height: 10px; line-height: 10px; font-size: 1px; background-color: ${primaryColor};">&nbsp;</td>
+      </tr>
     </table>
-    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px;">
-      <thead>
-        <tr style="background-color: ${d.tableHeaderBg};">
-          <th style="padding: 10px; text-align: left; border-bottom: 1px solid ${d.borderColor};">Item</th>
-          <th style="padding: 10px; text-align: right; border-bottom: 1px solid ${d.borderColor};">Qty</th>
-          <th style="padding: 10px; text-align: right; border-bottom: 1px solid ${d.borderColor};">Price</th>
-          <th style="padding: 10px; text-align: right; border-bottom: 1px solid ${d.borderColor};">Total</th>
-        </tr>
-      </thead>
-      <tbody>${rows || `<tr><td colspan="4" style="padding: 12px; color: ${d.mutedColor};">No line items</td></tr>`}</tbody>
-      <tfoot>
-        <tr>
-          <td colspan="3" style="padding: 12px; text-align: right; font-weight: bold; border-top: 1px solid ${d.borderColor};">Total</td>
-          <td style="padding: 12px; text-align: right; font-weight: bold; border-top: 1px solid ${d.borderColor}; color: ${primaryColor};">GHS ${total}</td>
-        </tr>
-      </tfoot>
-    </table>
-    ${closingNote ? `<p style="margin: 16px 0 0 0; font-size: ${d.bodySize}; color: ${d.bodyColor}; text-align: center;">${escapeHtml(closingNote)}</p>` : `<p style="margin: 16px 0 0 0; font-size: ${d.bodySize}; color: ${d.bodyColor}; text-align: center;">Thank you for your purchase!</p>`}
-  `;
-  const html = sellfyCardTemplate(inner, { companyName, primaryColor, logoUrl });
+  </center>
+</body>
+</html>`;
 
   const lines = items.map(
-    (i) =>
-      `- ${i.name} x${i.quantity} @ GHS ${parseFloat(i.unitPrice || 0).toFixed(2)} = GHS ${(parseFloat(i.quantity || 0) * parseFloat(i.unitPrice || 0)).toFixed(2)}`
+    (i) => {
+      const quantity = parseFloat(i.quantity ?? 0) || 0;
+      const unitPrice = parseFloat(i.unitPrice ?? 0) || 0;
+      const lineTotal = i.total != null ? parseFloat(i.total) || 0 : quantity * unitPrice;
+      const productCode = getItemProductCode(i);
+      return `- ${i.name || i.product?.name || 'Item'} (Product Code: ${productCode}) x${formatQuantity(quantity)} @ ${money(unitPrice)} = ${money(lineTotal)}`;
+    }
   );
   const text = [
-    `Receipt — ${sale?.saleNumber || 'Sale'}`,
+    `Receipt - ${sale?.saleNumber || 'Sale'}`,
     `Date: ${dateStr}`,
+    `Business: ${companyName}`,
+    contactParts.length ? `Contact: ${contactParts.join(' | ')}` : '',
     '',
     ...lines,
     '',
-    `Total: GHS ${total}`,
+    `Grand Total: ${money(total)}`,
+    `Payment Method: ${formatPaymentMethod(sale?.paymentMethod)}`,
+    `Amount Paid: ${amountPaid == null ? 'Not recorded' : money(amountPaid)}`,
+    balance > 0.009 ? `Balance: ${money(balance)}` : '',
+    change > 0.009 ? `Change: ${money(change)}` : '',
     '',
-    closingNote || 'Thank you for your purchase!',
+    'Thank you for your purchase!',
+    customClosingNote,
     '',
     companyName
-  ].join('\n');
+  ].filter((line) => line !== '').join('\n');
 
   return {
-    subject: `Receipt — ${sale?.saleNumber || 'Purchase'}`,
+    subject: `Receipt - ${sale?.saleNumber || 'Purchase'}`,
     html,
     text
   };
