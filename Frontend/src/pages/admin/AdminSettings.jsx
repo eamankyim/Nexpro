@@ -93,7 +93,7 @@ const defaultFormValues = {
   platformEmail: {
     provider: 'sendgrid',
     sendgrid: {},
-    gmail: {},
+    smtp: {},
     envFallback: {},
   },
 };
@@ -332,7 +332,7 @@ const AdminSettings = () => {
   const handleSubmit = async (values) => {
     const platformEmail = values?.platformEmail || {};
     const hasEnteredPlatformSecret = Boolean(
-      platformEmail.sendgrid?.apiKey?.trim() || platformEmail.gmail?.password?.trim()
+      platformEmail.sendgrid?.apiKey?.trim() || platformEmail.smtp?.password?.trim()
     );
 
     if (hasEnteredPlatformSecret && platformEmail.encryptionConfigured === false) {
@@ -367,11 +367,11 @@ const AdminSettings = () => {
       }
     }
 
-    if (provider === 'gmail') {
-      const hasEnteredPassword = Boolean(platformEmail.gmail?.password?.trim());
-      const hasSavedOrEnvPassword = platformEmail.gmail?.passwordConfigured || platformEmail.envFallback?.gmailConfigured;
+    if (provider === 'smtp') {
+      const hasEnteredPassword = Boolean(platformEmail.smtp?.password?.trim());
+      const hasSavedOrEnvPassword = platformEmail.smtp?.passwordConfigured || platformEmail.envFallback?.smtpConfigured;
       if (!hasEnteredPassword && !hasSavedOrEnvPassword) {
-        showError(null, 'Enter a Gmail app password, save one first, or configure the environment fallback before testing.');
+        showError(null, 'Enter an SMTP password, save one first, or configure the environment fallback before testing.');
         return;
       }
     }
@@ -763,7 +763,7 @@ const AdminSettings = () => {
   const watchedEnterpriseTier = useWatch({ control: planForm.control, name: 'selectedEnterpriseTier' });
   const platformEmailProvider = useWatch({ control: form.control, name: 'platformEmail.provider' }) || 'sendgrid';
   const platformEmailSendgrid = useWatch({ control: form.control, name: 'platformEmail.sendgrid' }) || {};
-  const platformEmailGmail = useWatch({ control: form.control, name: 'platformEmail.gmail' }) || {};
+  const platformEmailSmtp = useWatch({ control: form.control, name: 'platformEmail.smtp' }) || {};
   const platformEmailEnvFallback = useWatch({ control: form.control, name: 'platformEmail.envFallback' }) || {};
   const platformEmailEncryptionConfigured = useWatch({ control: form.control, name: 'platformEmail.encryptionConfigured' });
   const isEnterprisePlanForm = String(watchedPlanId || '').toLowerCase() === 'enterprise';
@@ -1276,7 +1276,7 @@ const AdminSettings = () => {
                         </FormControl>
                         <SelectContent>
                           <SelectItem value="sendgrid">SendGrid</SelectItem>
-                          <SelectItem value="gmail">Gmail SMTP</SelectItem>
+                          <SelectItem value="smtp">SMTP</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormDescription>
@@ -1346,25 +1346,25 @@ const AdminSettings = () => {
                     </div>
                   </div>
                 )}
-                {platformEmailProvider === 'gmail' && (
+                {platformEmailProvider === 'smtp' && (
                   <div className="space-y-4 rounded-lg border border-border p-4 bg-muted/30">
                     <div className="flex flex-wrap gap-2">
-                      <Badge variant={platformEmailGmail.passwordConfigured ? 'secondary' : 'outline'}>
-                        Gmail password {platformEmailGmail.passwordConfigured ? `saved ${platformEmailGmail.passwordMasked || ''}` : 'not saved'}
+                      <Badge variant={platformEmailSmtp.passwordConfigured ? 'secondary' : 'outline'}>
+                        SMTP password {platformEmailSmtp.passwordConfigured ? `saved ${platformEmailSmtp.passwordMasked || ''}` : 'not saved'}
                       </Badge>
-                      <Badge variant={platformEmailEnvFallback.gmailConfigured ? 'secondary' : 'outline'}>
-                        Env fallback {platformEmailEnvFallback.gmailConfigured ? 'configured' : 'missing'}
+                      <Badge variant={platformEmailEnvFallback.smtpConfigured ? 'secondary' : 'outline'}>
+                        Env fallback {platformEmailEnvFallback.smtpConfigured ? 'configured' : 'missing'}
                       </Badge>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
-                        name="platformEmail.gmail.user"
+                        name="platformEmail.smtp.smtpHost"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Gmail address</FormLabel>
+                            <FormLabel>SMTP Host</FormLabel>
                             <FormControl>
-                              <Input type="email" placeholder="youraccount@gmail.com" {...field} value={field.value || ''} />
+                              <Input placeholder="smtp.gmail.com" {...field} value={field.value || ''} />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -1372,20 +1372,64 @@ const AdminSettings = () => {
                       />
                       <FormField
                         control={form.control}
-                        name="platformEmail.gmail.password"
+                        name="platformEmail.smtp.smtpPort"
                         render={({ field }) => (
                           <FormItem>
-                            <FormLabel>Gmail app password</FormLabel>
+                            <FormLabel>SMTP Port</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="number"
+                                placeholder="587"
+                                {...field}
+                                value={field.value === '' || field.value == null ? '' : field.value}
+                                onChange={(event) => {
+                                  const raw = event.target.value;
+                                  if (raw === '') {
+                                    field.onChange('');
+                                    return;
+                                  }
+                                  const port = parseInt(raw, 10);
+                                  field.onChange(Number.isNaN(port) ? '' : port);
+                                }}
+                              />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="platformEmail.smtp.smtpUser"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>SMTP User</FormLabel>
+                            <FormControl>
+                              <Input placeholder="icreationsghana@gmail.com" {...field} value={field.value || ''} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="platformEmail.smtp.password"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>SMTP Password</FormLabel>
                             <FormControl>
                               <Input
                                 type="password"
                                 autoComplete="off"
-                                placeholder={platformEmailGmail.passwordConfigured ? 'Leave blank to keep saved password' : 'Enter app password'}
+                                placeholder={platformEmailSmtp.passwordConfigured ? 'Leave blank to keep saved password' : 'Enter SMTP password'}
                                 {...field}
                                 value={field.value || ''}
                               />
                             </FormControl>
-                            <FormDescription>Use a Gmail App Password when 2-Step Verification is enabled.</FormDescription>
+                            <FormDescription>
+                              For Gmail SMTP, use a Gmail App Password with 2-Step Verification enabled, not the account password.
+                            </FormDescription>
                             <FormMessage />
                           </FormItem>
                         )}
@@ -1394,12 +1438,12 @@ const AdminSettings = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <FormField
                         control={form.control}
-                        name="platformEmail.gmail.fromEmail"
+                        name="platformEmail.smtp.fromEmail"
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Sender email</FormLabel>
                             <FormControl>
-                              <Input type="email" placeholder="youraccount@gmail.com" {...field} value={field.value || ''} />
+                              <Input type="email" placeholder="icreationsghana@gmail.com" {...field} value={field.value || ''} />
                             </FormControl>
                             <FormMessage />
                           </FormItem>
@@ -1407,7 +1451,7 @@ const AdminSettings = () => {
                       />
                       <FormField
                         control={form.control}
-                        name="platformEmail.gmail.fromName"
+                        name="platformEmail.smtp.fromName"
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel>Sender name</FormLabel>
