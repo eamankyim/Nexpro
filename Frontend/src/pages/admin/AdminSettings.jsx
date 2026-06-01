@@ -98,6 +98,9 @@ const defaultFormValues = {
   },
 };
 
+const PLATFORM_EMAIL_ENCRYPTION_KEY_MESSAGE =
+  'Server is missing PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY (64 hex chars). Configure it before saving platform email credentials.';
+
 const formatPlanLabel = (name = '') =>
   String(name || '')
     .replace(/\b(monthly|month|annually|annual|yearly|year)\b/gi, '')
@@ -327,6 +330,16 @@ const AdminSettings = () => {
   }
 
   const handleSubmit = async (values) => {
+    const platformEmail = values?.platformEmail || {};
+    const hasEnteredPlatformSecret = Boolean(
+      platformEmail.sendgrid?.apiKey?.trim() || platformEmail.gmail?.password?.trim()
+    );
+
+    if (hasEnteredPlatformSecret && platformEmail.encryptionConfigured === false) {
+      showError(null, PLATFORM_EMAIL_ENCRYPTION_KEY_MESSAGE);
+      return;
+    }
+
     setSaving(true);
     try {
       await adminService.updatePlatformSettings(values);
@@ -752,6 +765,7 @@ const AdminSettings = () => {
   const platformEmailSendgrid = useWatch({ control: form.control, name: 'platformEmail.sendgrid' }) || {};
   const platformEmailGmail = useWatch({ control: form.control, name: 'platformEmail.gmail' }) || {};
   const platformEmailEnvFallback = useWatch({ control: form.control, name: 'platformEmail.envFallback' }) || {};
+  const platformEmailEncryptionConfigured = useWatch({ control: form.control, name: 'platformEmail.encryptionConfigured' });
   const isEnterprisePlanForm = String(watchedPlanId || '').toLowerCase() === 'enterprise';
 
   const handleEnterpriseTierChange = useCallback((tierId) => {
@@ -1238,6 +1252,16 @@ const AdminSettings = () => {
                     Used for account and system emails such as verification, password reset, OTP, and platform invites.
                   </p>
                 </div>
+                {platformEmailEncryptionConfigured === false && (
+                  <Alert variant="destructive">
+                    <XCircle className="h-4 w-4" />
+                    <AlertTitle>Encryption key missing</AlertTitle>
+                    <AlertDescription>
+                      {PLATFORM_EMAIL_ENCRYPTION_KEY_MESSAGE} Generate one with <code>openssl rand -hex 32</code> and keep
+                      the same value across deploys so saved credentials remain decryptable.
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <FormField
                   control={form.control}
                   name="platformEmail.provider"

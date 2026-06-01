@@ -49,6 +49,22 @@ DEFAULT_PAGE_SIZE=10
 MAX_PAGE_SIZE=100
 ```
 
+### Platform Email Credential Encryption
+
+Admin Settings can save Gmail or SendGrid platform email credentials for system emails. Before saving those secrets, configure a stable 64-character hex encryption key in the backend environment:
+
+```bash
+openssl rand -hex 32
+```
+
+You can also print a key from Node without writing files:
+
+```bash
+npm run generate:platform-email-key
+```
+
+Set the printed value as `PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY`. Keep the same value across deploys and host restarts; changing or removing it means saved platform email credentials cannot be decrypted and must be re-entered.
+
 5. Start the server
 ```bash
 # Development
