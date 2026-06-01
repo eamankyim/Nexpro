@@ -80,16 +80,6 @@ const AdminLayout = () => {
   const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
   const { isMobile: isBelowTablet } = useResponsive({ mobileBreakpoint: BREAKPOINTS.TABLET });
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
-  const isSuperadminAccount =
-    user?.isSuperAdmin === true ||
-    String(user?.email || '').trim().toLowerCase() === 'superadmin@gmail.com';
-
-  const visibleMenuItems = isSuperadminAccount
-    ? menuItems.filter(
-        (item) =>
-          !['/admin/customers', '/admin/leads', '/admin/jobs', '/admin/tasks'].includes(item.path)
-      )
-    : menuItems;
 
   const handleNavigateToSabito = () => {
     const token = localStorage.getItem('token');
@@ -100,7 +90,7 @@ const AdminLayout = () => {
 
   const navContent = (
     <nav className="flex-1 overflow-y-auto p-4 space-y-1">
-      {visibleMenuItems.map((item) => {
+      {menuItems.map((item) => {
         const isActive = location.pathname === item.path;
         const Icon = item.icon;
         const permissionMap = {

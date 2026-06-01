@@ -179,6 +179,7 @@ const getPlatformAdminPermissions = async () => api.get('/platform-admin/permiss
 const getUserRoles = async (userId) => api.get(`/platform-admin/users/${userId}/roles`);
 const assignRoleToUser = async (userId, roleId) => api.post(`/platform-admin/users/${userId}/roles`, { roleId });
 const removeRoleFromUser = async (userId, roleId) => api.delete(`/platform-admin/users/${userId}/roles/${roleId}`);
+const getMyPermissions = async () => api.get('/platform-admin/me/permissions');
 const getUserPermissions = async (userId) => api.get(`/platform-admin/users/${userId}/permissions`);
 
 export default {
@@ -273,6 +274,7 @@ export default {
   getUserRoles,
   assignRoleToUser,
   removeRoleFromUser,
+  getMyPermissions,
   getUserPermissions,
 };
 

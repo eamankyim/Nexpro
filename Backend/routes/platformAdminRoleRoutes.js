@@ -12,7 +12,8 @@ const {
   getUserRoles,
   assignRoleToUser,
   removeRoleFromUser,
-  getUserPermissions
+  getUserPermissions,
+  getMyPermissions
 } = require('../controllers/platformAdminRoleController');
 
 const router = express.Router();
@@ -37,6 +38,15 @@ router.get('/permissions', requirePlatformAdminPermission('roles.view'), getPerm
 router.get('/users/:userId/roles', requirePlatformAdminPermission('roles.view'), getUserRoles);
 router.post('/users/:userId/roles', requirePlatformAdminPermission('roles.manage'), assignRoleToUser);
 router.delete('/users/:userId/roles/:roleId', requirePlatformAdminPermission('roles.manage'), removeRoleFromUser);
-router.get('/users/:userId/permissions', requirePlatformAdminPermission('roles.view'), getUserPermissions);
+/** Platform admins can always read their own effective permissions (needed to render the Control Center). */
+const requireRolesViewUnlessSelf = (req, res, next) => {
+  if (req.user?.id && req.params.userId === req.user.id) {
+    return next();
+  }
+  return requirePlatformAdminPermission('roles.view')(req, res, next);
+};
+
+router.get('/me/permissions', getMyPermissions);
+router.get('/users/:userId/permissions', requireRolesViewUnlessSelf, getUserPermissions);
 
 module.exports = router;

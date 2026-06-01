@@ -4,8 +4,13 @@ const {
   PlatformAdminPermission
 } = require('../models');
 const { cache } = require('./cache');
+const { isBootstrapPlatformSuperAdmin } = require('../utils/platformAdminBootstrap');
 
 const PERMISSION_CACHE_TTL = 5 * 60; // 5 minutes
+
+const hasBootstrapSuperAdminAccess = (user) => (
+  Boolean(user?.isPlatformAdmin) && isBootstrapPlatformSuperAdmin(user)
+);
 
 /**
  * Load platform admin permissions for a user and attach to request
@@ -22,6 +27,15 @@ const loadPlatformAdminPermissions = async (req, res, next) => {
     let permissionKeys = cache.get(cacheKey);
 
     if (!permissionKeys) {
+      if (hasBootstrapSuperAdminAccess(req.user)) {
+        const allPerms = await PlatformAdminPermission.findAll({ attributes: ['key'], raw: true });
+        permissionKeys = allPerms.map((p) => p.key);
+        cache.set(cacheKey, permissionKeys, PERMISSION_CACHE_TTL);
+        req.platformAdminPermissions = permissionKeys;
+        req.platformAdminPermissionKeys = permissionKeys;
+        return next();
+      }
+
       // Load user's roles and permissions
       const userRoles = await PlatformAdminUserRole.findAll({
         where: { userId: req.user.id },
@@ -45,12 +59,6 @@ const loadPlatformAdminPermissions = async (req, res, next) => {
           });
         }
       });
-
-      // If platform admin has no roles assigned (e.g. after DB reset), grant all permissions so bootstrap admin can access Control Center
-      if (permissionSet.size === 0) {
-        const allPerms = await PlatformAdminPermission.findAll({ attributes: ['key'], raw: true });
-        allPerms.forEach(p => permissionSet.add(p.key));
-      }
 
       permissionKeys = Array.from(permissionSet);
       cache.set(cacheKey, permissionKeys, PERMISSION_CACHE_TTL);
@@ -84,6 +92,10 @@ const requirePlatformAdminPermission = (permissionKey) => {
       });
     }
 
+    if (hasBootstrapSuperAdminAccess(req.user)) {
+      return next();
+    }
+
     if (!req.platformAdminPermissionKeys.includes(permissionKey)) {
       return res.status(403).json({
         success: false,
@@ -110,6 +122,10 @@ const requireAnyPlatformAdminPermission = (...permissionKeys) => {
         success: false,
         message: 'Platform administrator access required'
       });
+    }
+
+    if (hasBootstrapSuperAdminAccess(req.user)) {
+      return next();
     }
 
     const hasPermission = permissionKeys.some(key =>
@@ -144,6 +160,10 @@ const requireAllPlatformAdminPermissions = (...permissionKeys) => {
       });
     }
 
+    if (hasBootstrapSuperAdminAccess(req.user)) {
+      return next();
+    }
+
     const hasAllPermissions = permissionKeys.every(key =>
       req.platformAdminPermissionKeys.includes(key)
     );
@@ -163,6 +183,10 @@ const requireAllPlatformAdminPermissions = (...permissionKeys) => {
  * Helper function to check if user has permission (for use in controllers)
  */
 const hasPlatformAdminPermission = (req, permissionKey) => {
+  if (hasBootstrapSuperAdminAccess(req.user)) {
+    return true;
+  }
+
   if (!req.platformAdminPermissionKeys) {
     return false;
   }
@@ -173,6 +197,10 @@ const hasPlatformAdminPermission = (req, permissionKey) => {
  * Helper function to check if user has any of the permissions
  */
 const hasAnyPlatformAdminPermission = (req, ...permissionKeys) => {
+  if (hasBootstrapSuperAdminAccess(req.user)) {
+    return true;
+  }
+
   if (!req.platformAdminPermissionKeys) {
     return false;
   }
@@ -183,6 +211,10 @@ const hasAnyPlatformAdminPermission = (req, ...permissionKeys) => {
  * Helper function to check if user has all of the permissions
  */
 const hasAllPlatformAdminPermissions = (req, ...permissionKeys) => {
+  if (hasBootstrapSuperAdminAccess(req.user)) {
+    return true;
+  }
+
   if (!req.platformAdminPermissionKeys) {
     return false;
   }
@@ -196,5 +228,6 @@ module.exports = {
   requireAllPlatformAdminPermissions,
   hasPlatformAdminPermission,
   hasAnyPlatformAdminPermission,
-  hasAllPlatformAdminPermissions
+  hasAllPlatformAdminPermissions,
+  hasBootstrapSuperAdminAccess
 };

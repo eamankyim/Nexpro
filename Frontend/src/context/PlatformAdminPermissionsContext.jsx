@@ -1,6 +1,7 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from './AuthContext';
 import adminService from '../services/adminService';
+import { isBootstrapPlatformSuperAdmin } from '../utils/platformAdminBootstrap';
 
 const PlatformAdminPermissionsContext = createContext();
 
@@ -18,6 +19,10 @@ export const PlatformAdminPermissionsProvider = ({ children }) => {
   const [permissionKeys, setPermissionKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const isBootstrapSuperAdmin = useMemo(
+    () => Boolean(user?.isPlatformAdmin) && isBootstrapPlatformSuperAdmin(user),
+    [user]
+  );
 
   const loadPermissions = useCallback(async () => {
     if (!user?.isPlatformAdmin) {
@@ -30,7 +35,7 @@ export const PlatformAdminPermissionsProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-      const response = await adminService.getUserPermissions(user.id);
+      const response = await adminService.getMyPermissions();
       if (response?.success) {
         setPermissions(response.data || []);
         setPermissionKeys((response.data || []).map(p => p.key));
@@ -53,16 +58,19 @@ export const PlatformAdminPermissionsProvider = ({ children }) => {
   }, [loadPermissions]);
 
   const hasPermission = useCallback((permissionKey) => {
+    if (isBootstrapSuperAdmin) return true;
     return permissionKeys.includes(permissionKey);
-  }, [permissionKeys]);
+  }, [permissionKeys, isBootstrapSuperAdmin]);
 
   const hasAnyPermission = useCallback((...keys) => {
+    if (isBootstrapSuperAdmin) return true;
     return keys.some(key => permissionKeys.includes(key));
-  }, [permissionKeys]);
+  }, [permissionKeys, isBootstrapSuperAdmin]);
 
   const hasAllPermissions = useCallback((...keys) => {
+    if (isBootstrapSuperAdmin) return true;
     return keys.every(key => permissionKeys.includes(key));
-  }, [permissionKeys]);
+  }, [permissionKeys, isBootstrapSuperAdmin]);
 
   const value = {
     permissions,

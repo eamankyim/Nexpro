@@ -7,6 +7,7 @@ const {
 } = require('../models');
 const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
+const { isBootstrapPlatformSuperAdmin } = require('../utils/platformAdminBootstrap');
 
 /**
  * Get all platform admin roles
@@ -444,6 +445,14 @@ exports.removeRoleFromUser = async (req, res, next) => {
 };
 
 /**
+ * Get effective permissions for the authenticated platform admin.
+ */
+exports.getMyPermissions = async (req, res, next) => {
+  req.params.userId = req.user.id;
+  return exports.getUserPermissions(req, res, next);
+};
+
+/**
  * Get effective permissions for a user (union of all role permissions)
  */
 exports.getUserPermissions = async (req, res, next) => {
@@ -484,7 +493,12 @@ exports.getUserPermissions = async (req, res, next) => {
       }
     });
 
-    const permissions = Array.from(permissionMap.values());
+    let permissions = Array.from(permissionMap.values());
+    if (isBootstrapPlatformSuperAdmin(user)) {
+      permissions = await PlatformAdminPermission.findAll({
+        attributes: ['id', 'key', 'name', 'description', 'category']
+      });
+    }
 
     // Group by category
     const grouped = permissions.reduce((acc, perm) => {
