@@ -93,9 +93,9 @@ class EmailService {
       const pass = process.env.PLATFORM_GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASSWORD || process.env.PLATFORM_GMAIL_PASSWORD || process.env.GMAIL_PASSWORD || process.env.PLATFORM_SMTP_PASSWORD || process.env.PLATFORM_EMAIL_SMTP_PASSWORD;
       if (!user || !pass) return null;
       return {
-        provider: 'gmail',
+        provider: 'smtp',
         smtpHost: process.env.PLATFORM_GMAIL_SMTP_HOST || 'smtp.gmail.com',
-        smtpPort: parseInt(process.env.PLATFORM_GMAIL_SMTP_PORT || process.env.PLATFORM_SMTP_PORT || process.env.PLATFORM_EMAIL_SMTP_PORT || '465', 10),
+        smtpPort: parseInt(process.env.PLATFORM_GMAIL_SMTP_PORT || process.env.PLATFORM_SMTP_PORT || process.env.PLATFORM_EMAIL_SMTP_PORT || '587', 10),
         smtpUser: user,
         smtpPassword: pass,
         smtpRejectUnauthorized: process.env.PLATFORM_SMTP_REJECT_UNAUTHORIZED !== 'false',

@@ -3,7 +3,7 @@ const { decryptSecret, encryptSecret, hasKey } = require('../utils/secretCrypto'
 
 const PLATFORM_EMAIL_SETTINGS_KEY = 'platform:email';
 const PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY = 'PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY';
-const PROVIDERS = ['sendgrid', 'gmail'];
+const PROVIDERS = ['sendgrid', 'smtp'];
 
 const clean = (value) => String(value || '').trim();
 const isRealSecret = (value) => typeof value === 'string' && value.trim() !== '' && value !== '***';
@@ -12,40 +12,52 @@ const maskLast4 = (value) => (value ? `•••• ${value}` : '');
 
 function envFallbackProvider() {
   const provider = clean(process.env.PLATFORM_EMAIL_PROVIDER).toLowerCase();
+  if (provider === 'gmail') return 'smtp';
   return PROVIDERS.includes(provider) ? provider : 'sendgrid';
 }
 
 function getEnvStatus() {
   const sendgridApiKey = clean(process.env.PLATFORM_SENDGRID_API_KEY);
-  const gmailUser = clean(
-    process.env.PLATFORM_GMAIL_USER ||
-      process.env.GMAIL_USER ||
-      process.env.PLATFORM_SMTP_USER ||
-      process.env.PLATFORM_EMAIL_SMTP_USER
-  );
-  const gmailPassword = clean(
+  const legacyGmailUser = clean(process.env.PLATFORM_GMAIL_USER || process.env.GMAIL_USER);
+  const legacyGmailPassword = clean(
     process.env.PLATFORM_GMAIL_APP_PASSWORD ||
       process.env.GMAIL_APP_PASSWORD ||
       process.env.PLATFORM_GMAIL_PASSWORD ||
-      process.env.GMAIL_PASSWORD ||
+      process.env.GMAIL_PASSWORD
+  );
+  const smtpHost = clean(
+    process.env.PLATFORM_SMTP_HOST ||
+      process.env.PLATFORM_EMAIL_SMTP_HOST ||
+      process.env.PLATFORM_GMAIL_SMTP_HOST ||
+      (legacyGmailUser && legacyGmailPassword ? 'smtp.gmail.com' : '')
+  );
+  const smtpUser = clean(
+    legacyGmailUser ||
+      process.env.PLATFORM_SMTP_USER ||
+      process.env.PLATFORM_EMAIL_SMTP_USER
+  );
+  const smtpPassword = clean(
+    legacyGmailPassword ||
       process.env.PLATFORM_SMTP_PASSWORD ||
       process.env.PLATFORM_EMAIL_SMTP_PASSWORD
   );
 
   return {
     sendgridConfigured: Boolean(sendgridApiKey && clean(process.env.PLATFORM_EMAIL_FROM)),
-    gmailConfigured: Boolean(gmailUser && gmailPassword),
+    smtpConfigured: Boolean(smtpHost && smtpUser && smtpPassword),
+    gmailConfigured: Boolean(smtpUser && smtpPassword),
   };
 }
 
 function normalizeProvider(value) {
   const provider = clean(value).toLowerCase();
+  if (provider === 'gmail') return 'smtp';
   return PROVIDERS.includes(provider) ? provider : envFallbackProvider();
 }
 
 function getPublicSummary(value = {}) {
   const sendgrid = value.sendgrid || {};
-  const gmail = value.gmail || {};
+  const smtp = value.smtp || value.gmail || {};
   return {
     provider: normalizeProvider(value.provider),
     availableProviders: PROVIDERS,
@@ -58,13 +70,15 @@ function getPublicSummary(value = {}) {
       fromName: sendgrid.fromName || '',
       updatedAt: sendgrid.updatedAt || null,
     },
-    gmail: {
-      user: gmail.user || '',
-      passwordConfigured: Boolean(gmail.password),
-      passwordMasked: maskLast4(gmail.passwordLast4),
-      fromEmail: gmail.fromEmail || '',
-      fromName: gmail.fromName || '',
-      updatedAt: gmail.updatedAt || null,
+    smtp: {
+      smtpHost: smtp.smtpHost || (value.gmail ? 'smtp.gmail.com' : ''),
+      smtpPort: smtp.smtpPort || (value.gmail ? 587 : ''),
+      smtpUser: smtp.smtpUser || smtp.user || '',
+      passwordConfigured: Boolean(smtp.password),
+      passwordMasked: maskLast4(smtp.passwordLast4),
+      fromEmail: smtp.fromEmail || '',
+      fromName: smtp.fromName || '',
+      updatedAt: smtp.updatedAt || null,
     },
     updatedAt: value.updatedAt || null,
   };
@@ -95,19 +109,22 @@ function buildStoredConfig(value = {}) {
     };
   }
 
-  if (provider === 'gmail') {
-    const user = clean(value.gmail?.user);
-    const password = decryptStoredSecret(value.gmail?.password);
-    if (!user || !password) return null;
+  if (provider === 'smtp') {
+    const smtp = value.smtp || value.gmail || {};
+    const user = clean(smtp.smtpUser || smtp.user);
+    const password = decryptStoredSecret(smtp.password);
+    const host = clean(smtp.smtpHost) || (value.gmail ? 'smtp.gmail.com' : '');
+    const port = parseInt(smtp.smtpPort || (value.gmail ? '587' : '587'), 10);
+    if (!host || !user || !password) return null;
     return {
-      provider: 'gmail',
-      smtpHost: value.gmail?.smtpHost || 'smtp.gmail.com',
-      smtpPort: parseInt(value.gmail?.smtpPort || '465', 10),
+      provider: 'smtp',
+      smtpHost: host,
+      smtpPort: port,
       smtpUser: user,
       smtpPassword: password,
       smtpRejectUnauthorized: true,
-      fromEmail: clean(value.gmail?.fromEmail) || user,
-      fromName: clean(value.gmail?.fromName) || process.env.APP_NAME || 'African Business Suite',
+      fromEmail: clean(smtp.fromEmail) || user,
+      fromName: clean(smtp.fromName) || process.env.APP_NAME || 'African Business Suite',
     };
   }
 
@@ -137,7 +154,7 @@ function requireEncryptionForNewSecret(secret) {
 }
 
 function hasSubmittedSecret(payload = {}) {
-  return isRealSecret(payload.sendgrid?.apiKey) || isRealSecret(payload.gmail?.password);
+  return isRealSecret(payload.sendgrid?.apiKey) || isRealSecret(payload.smtp?.password) || isRealSecret(payload.gmail?.password);
 }
 
 function mergeProviderSettings({ existing = {}, payload = {}, userId }) {
@@ -145,13 +162,14 @@ function mergeProviderSettings({ existing = {}, payload = {}, userId }) {
   const next = {
     provider: normalizeProvider(payload.provider || existing.provider),
     sendgrid: { ...(existing.sendgrid || {}) },
-    gmail: { ...(existing.gmail || {}) },
+    smtp: { ...(existing.smtp || {}) },
     updatedAt: now,
     updatedBy: userId || null,
   };
 
   const sendgridPayload = payload.sendgrid || {};
-  const gmailPayload = payload.gmail || {};
+  const legacyGmail = existing.gmail || {};
+  const smtpPayload = payload.smtp || payload.gmail || {};
 
   if (sendgridPayload.fromEmail !== undefined) next.sendgrid.fromEmail = clean(sendgridPayload.fromEmail);
   if (sendgridPayload.fromName !== undefined) next.sendgrid.fromName = clean(sendgridPayload.fromName);
@@ -164,16 +182,32 @@ function mergeProviderSettings({ existing = {}, payload = {}, userId }) {
     next.sendgrid.updatedBy = userId || null;
   }
 
-  if (gmailPayload.user !== undefined) next.gmail.user = clean(gmailPayload.user);
-  if (gmailPayload.fromEmail !== undefined) next.gmail.fromEmail = clean(gmailPayload.fromEmail);
-  if (gmailPayload.fromName !== undefined) next.gmail.fromName = clean(gmailPayload.fromName);
-  if (isRealSecret(gmailPayload.password)) {
-    requireEncryptionForNewSecret(gmailPayload.password);
-    const password = clean(gmailPayload.password);
-    next.gmail.password = encryptSecret(password, PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY);
-    next.gmail.passwordLast4 = last4(password);
-    next.gmail.updatedAt = now;
-    next.gmail.updatedBy = userId || null;
+  if (!next.smtp.password && legacyGmail.password) {
+    next.smtp.password = legacyGmail.password;
+    next.smtp.passwordLast4 = legacyGmail.passwordLast4;
+    next.smtp.updatedAt = legacyGmail.updatedAt;
+    next.smtp.updatedBy = legacyGmail.updatedBy;
+  }
+  if (!next.smtp.smtpHost && legacyGmail.smtpHost) next.smtp.smtpHost = legacyGmail.smtpHost;
+  if (!next.smtp.smtpHost && legacyGmail.password) next.smtp.smtpHost = 'smtp.gmail.com';
+  if (!next.smtp.smtpPort && legacyGmail.smtpPort) next.smtp.smtpPort = legacyGmail.smtpPort;
+  if (!next.smtp.smtpPort && legacyGmail.password) next.smtp.smtpPort = 587;
+  if (!next.smtp.smtpUser && legacyGmail.user) next.smtp.smtpUser = legacyGmail.user;
+  if (!next.smtp.fromEmail && legacyGmail.fromEmail) next.smtp.fromEmail = legacyGmail.fromEmail;
+  if (!next.smtp.fromName && legacyGmail.fromName) next.smtp.fromName = legacyGmail.fromName;
+
+  if (smtpPayload.smtpHost !== undefined) next.smtp.smtpHost = clean(smtpPayload.smtpHost);
+  if (smtpPayload.smtpPort !== undefined) next.smtp.smtpPort = smtpPayload.smtpPort === '' ? '' : parseInt(smtpPayload.smtpPort, 10);
+  if (smtpPayload.smtpUser !== undefined || smtpPayload.user !== undefined) next.smtp.smtpUser = clean(smtpPayload.smtpUser || smtpPayload.user);
+  if (smtpPayload.fromEmail !== undefined) next.smtp.fromEmail = clean(smtpPayload.fromEmail);
+  if (smtpPayload.fromName !== undefined) next.smtp.fromName = clean(smtpPayload.fromName);
+  if (isRealSecret(smtpPayload.password)) {
+    requireEncryptionForNewSecret(smtpPayload.password);
+    const password = clean(smtpPayload.password);
+    next.smtp.password = encryptSecret(password, PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY);
+    next.smtp.passwordLast4 = last4(password);
+    next.smtp.updatedAt = now;
+    next.smtp.updatedBy = userId || null;
   }
 
   return next;
@@ -184,8 +218,9 @@ function hasActiveProviderCredentials(value = {}) {
   if (provider === 'sendgrid') {
     return Boolean(value.sendgrid?.apiKey && clean(value.sendgrid?.fromEmail));
   }
-  if (provider === 'gmail') {
-    return Boolean(value.gmail?.user && value.gmail?.password);
+  if (provider === 'smtp') {
+    const smtp = value.smtp || value.gmail || {};
+    return Boolean(clean(smtp.smtpHost || (value.gmail ? 'smtp.gmail.com' : '')) && clean(smtp.smtpUser || smtp.user) && smtp.password);
   }
   return false;
 }
@@ -205,7 +240,7 @@ async function savePlatformEmailSettings({ payload = {}, userId }) {
   if (!hasActiveProviderCredentials(value) && hasSubmittedSecret(payload)) {
     const error = new Error(provider === 'sendgrid'
       ? 'SendGrid API key and sender email are required for the active platform email provider.'
-      : 'Gmail address and app password are required for the active platform email provider.');
+      : 'SMTP host, user, and password are required for the active platform email provider.');
     error.statusCode = 400;
     throw error;
   }
@@ -263,28 +298,29 @@ function buildTestConfig({ payload = {}, existing = {} }) {
     };
   }
 
-  const gmailPayload = payload.gmail || {};
-  const gmailExisting = existing.gmail || {};
-  const user = clean(gmailPayload.user) || clean(gmailExisting.user) || clean(envConfig.smtpUser);
-  const password = isRealSecret(gmailPayload.password)
-    ? clean(gmailPayload.password)
-    : readStoredSecret(gmailExisting.password) || envConfig.smtpPassword || '';
+  const smtpPayload = payload.smtp || payload.gmail || {};
+  const smtpExisting = existing.smtp || existing.gmail || {};
+  const host = clean(smtpPayload.smtpHost) || clean(smtpExisting.smtpHost) || clean(envConfig.smtpHost) || (existing.gmail ? 'smtp.gmail.com' : '');
+  const user = clean(smtpPayload.smtpUser || smtpPayload.user) || clean(smtpExisting.smtpUser || smtpExisting.user) || clean(envConfig.smtpUser);
+  const password = isRealSecret(smtpPayload.password)
+    ? clean(smtpPayload.password)
+    : readStoredSecret(smtpExisting.password) || envConfig.smtpPassword || '';
 
-  if (!user || !password) {
-    const error = new Error('Enter a Gmail address and app password, save them first, or configure platform Gmail environment credentials.');
+  if (!host || !user || !password) {
+    const error = new Error('Enter SMTP host, user, and password; save them first; or configure platform SMTP environment credentials.');
     error.statusCode = 400;
     throw error;
   }
 
   return {
-    provider: 'gmail',
-    smtpHost: gmailPayload.smtpHost || gmailExisting.smtpHost || envConfig.smtpHost || 'smtp.gmail.com',
-    smtpPort: parseInt(gmailPayload.smtpPort || gmailExisting.smtpPort || envConfig.smtpPort || '465', 10),
+    provider: 'smtp',
+    smtpHost: host,
+    smtpPort: parseInt(smtpPayload.smtpPort || smtpExisting.smtpPort || envConfig.smtpPort || '587', 10),
     smtpUser: user,
     smtpPassword: password,
     smtpRejectUnauthorized: true,
-    fromEmail: clean(gmailPayload.fromEmail) || clean(gmailExisting.fromEmail) || clean(envConfig.fromEmail) || user,
-    fromName: clean(gmailPayload.fromName) || clean(gmailExisting.fromName) || envConfig.fromName,
+    fromEmail: clean(smtpPayload.fromEmail) || clean(smtpExisting.fromEmail) || clean(envConfig.fromEmail) || user,
+    fromName: clean(smtpPayload.fromName) || clean(smtpExisting.fromName) || envConfig.fromName,
   };
 }
 

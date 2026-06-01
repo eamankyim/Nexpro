@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -32,14 +32,16 @@ type ProfileData = {
   profilePicture?: string;
 };
 
+const getStringValue = (value: unknown) => (typeof value === 'string' ? value : '');
+
 export default function ProfileScreen() {
   const router = useRouter();
   const { user, refreshAuth } = useAuth();
   const { colors, bg, cardBg, borderColor, textColor, mutedColor, inputBg } = useScreenColors();
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(user?.name ?? '');
-  const [email, setEmail] = useState(user?.email ?? '');
-  const [profilePreview, setProfilePreview] = useState(user?.profilePicture ?? '');
+  const [name, setName] = useState(getStringValue(user?.name));
+  const [email, setEmail] = useState(getStringValue(user?.email));
+  const [profilePreview, setProfilePreview] = useState(getStringValue(user?.profilePicture));
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -53,19 +55,25 @@ export default function ProfileScreen() {
     queryFn: () => settingsService.getProfile(),
   });
 
-  const profileData: ProfileData | undefined = profileRes?.data ?? profileRes;
+  const rawProfileData = profileRes?.data ?? profileRes;
+  const profileData: ProfileData | undefined =
+    rawProfileData && typeof rawProfileData === 'object' ? rawProfileData : undefined;
+  const profilePreviewUrl = useMemo(() => {
+    const rawUrl = getStringValue(profilePreview).trim();
+    return rawUrl ? resolveImageUrl(rawUrl) : '';
+  }, [profilePreview]);
 
   useEffect(() => {
     if (!profileData) return;
-    setName(profileData.name ?? '');
-    setEmail(profileData.email ?? user?.email ?? '');
-    setProfilePreview(profileData.profilePicture ?? user?.profilePicture ?? '');
+    setName(getStringValue(profileData.name));
+    setEmail(getStringValue(profileData.email) || getStringValue(user?.email));
+    setProfilePreview(getStringValue(profileData.profilePicture) || getStringValue(user?.profilePicture));
   }, [profileData, user?.email, user?.profilePicture]);
 
   const resetForm = useCallback(() => {
-    setName(profileData?.name ?? user?.name ?? '');
-    setEmail(profileData?.email ?? user?.email ?? '');
-    setProfilePreview(profileData?.profilePicture ?? user?.profilePicture ?? '');
+    setName(getStringValue(profileData?.name) || getStringValue(user?.name));
+    setEmail(getStringValue(profileData?.email) || getStringValue(user?.email));
+    setProfilePreview(getStringValue(profileData?.profilePicture) || getStringValue(user?.profilePicture));
     setCurrentPassword('');
     setNewPassword('');
     setShowChangePassword(false);
@@ -104,7 +112,7 @@ export default function ProfileScreen() {
         asset.mimeType ?? 'image/jpeg'
       );
       const updatedUser = response?.data ?? response;
-      const imageUrl = updatedUser?.profilePicture ?? '';
+      const imageUrl = getStringValue(updatedUser?.profilePicture).trim();
       if (!imageUrl) {
         throw new Error('Upload succeeded but no image was returned');
       }
@@ -244,8 +252,8 @@ export default function ProfileScreen() {
 
         <View style={styles.avatarSection}>
           <View style={styles.avatarWrap}>
-            {profilePreview ? (
-              <Image source={{ uri: resolveImageUrl(profilePreview) }} style={styles.avatar} />
+            {profilePreviewUrl ? (
+              <Image source={{ uri: profilePreviewUrl }} style={styles.avatar} />
             ) : (
               <View style={[styles.avatarFallback, { backgroundColor: colors.tint }]}>
                 <AppIcon name="user" size={40} color="#fff" />
@@ -265,7 +273,7 @@ export default function ProfileScreen() {
               </Pressable>
             ) : null}
           </View>
-          {editing && profilePreview ? (
+          {editing && profilePreviewUrl ? (
             <Pressable
               onPress={handleRemovePhoto}
               disabled={uploadingPhoto}
@@ -274,7 +282,7 @@ export default function ProfileScreen() {
               <Text style={{ color: '#dc2626', fontWeight: '600', fontSize: 14 }}>Remove photo</Text>
             </Pressable>
           ) : null}
-          {!profilePreview && editing ? (
+          {!profilePreviewUrl && editing ? (
             <Text style={[styles.hint, { color: mutedColor, textAlign: 'center' }]}>
               Tap the camera icon to upload a profile picture.
             </Text>

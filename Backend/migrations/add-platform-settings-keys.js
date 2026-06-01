@@ -3,8 +3,9 @@ require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
 
 const { sequelize } = require('../config/database');
 
-const platformEmailProvider = ['sendgrid', 'gmail'].includes(String(process.env.PLATFORM_EMAIL_PROVIDER || '').toLowerCase())
-  ? String(process.env.PLATFORM_EMAIL_PROVIDER).toLowerCase()
+const configuredPlatformEmailProvider = String(process.env.PLATFORM_EMAIL_PROVIDER || '').toLowerCase();
+const platformEmailProvider = ['sendgrid', 'smtp', 'gmail'].includes(configuredPlatformEmailProvider)
+  ? (configuredPlatformEmailProvider === 'gmail' ? 'smtp' : configuredPlatformEmailProvider)
   : 'sendgrid';
 
 const SEED_KEYS = [

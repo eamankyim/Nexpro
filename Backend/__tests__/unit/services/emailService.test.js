@@ -68,7 +68,7 @@ describe('emailService diagnostics', () => {
     expect(JSON.stringify(diag)).not.toContain('mj_api_key_123');
   });
 
-  it('builds platform Gmail config from app-password env vars', () => {
+  it('builds platform SMTP config from legacy Gmail app-password env vars', () => {
     process.env.PLATFORM_EMAIL_PROVIDER = 'gmail';
     process.env.PLATFORM_GMAIL_USER = 'platform@gmail.com';
     process.env.PLATFORM_GMAIL_APP_PASSWORD = 'app-password';
@@ -77,9 +77,9 @@ describe('emailService diagnostics', () => {
     const config = emailService.getPlatformConfig();
 
     expect(config).toMatchObject({
-      provider: 'gmail',
+      provider: 'smtp',
       smtpHost: 'smtp.gmail.com',
-      smtpPort: 465,
+      smtpPort: 587,
       smtpUser: 'platform@gmail.com',
       smtpPassword: 'app-password',
       fromEmail: 'platform@gmail.com',
@@ -107,8 +107,9 @@ describe('emailService diagnostics', () => {
     const config = await emailService.resolvePlatformConfig();
 
     expect(config).toMatchObject({
-      provider: 'gmail',
+      provider: 'smtp',
       smtpHost: 'smtp.gmail.com',
+      smtpPort: 587,
       smtpUser: 'saved-platform@gmail.com',
       smtpPassword: 'saved-app-password',
       fromEmail: 'sender@gmail.com',
@@ -116,7 +117,7 @@ describe('emailService diagnostics', () => {
     });
   });
 
-  it('sends platform Gmail messages through nodemailer SMTP', async () => {
+  it('sends platform Gmail env messages through generic SMTP', async () => {
     const sendMail = jest.fn().mockResolvedValue({
       messageId: 'gmail-message-1',
       responseCode: 250,
@@ -138,8 +139,8 @@ describe('emailService diagnostics', () => {
     expect(result).toMatchObject({ success: true, messageId: 'gmail-message-1' });
     expect(nodemailer.createTransport).toHaveBeenCalledWith(expect.objectContaining({
       host: 'smtp.gmail.com',
-      port: 465,
-      secure: true,
+      port: 587,
+      secure: false,
       auth: {
         user: 'platform@gmail.com',
         pass: 'app-password',
@@ -266,15 +267,15 @@ describe('emailService diagnostics', () => {
     expect(output).not.toContain('secret');
   });
 
-  it('verifies Gmail SMTP connections (platform provider)', async () => {
+  it('verifies platform SMTP connections', async () => {
     const verify = jest.fn().mockResolvedValue(true);
     const close = jest.fn();
     nodemailer.createTransport.mockReturnValue({ verify, close });
 
     const result = await emailService.testConnection({
-      provider: 'gmail',
+      provider: 'smtp',
       smtpHost: 'smtp.gmail.com',
-      smtpPort: 465,
+      smtpPort: 587,
       smtpUser: 'owner@gmail.com',
       smtpPassword: 'app-password',
       fromEmail: 'owner@gmail.com',
@@ -285,7 +286,7 @@ describe('emailService diagnostics', () => {
     expect(close).toHaveBeenCalled();
     expect(nodemailer.createTransport).toHaveBeenCalledWith(expect.objectContaining({
       host: 'smtp.gmail.com',
-      port: 465,
+      port: 587,
       auth: expect.objectContaining({
         user: 'owner@gmail.com',
         pass: 'app-password',

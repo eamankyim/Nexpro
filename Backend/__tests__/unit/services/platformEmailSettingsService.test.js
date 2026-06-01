@@ -63,13 +63,15 @@ describe('platformEmailSettingsService', () => {
     expect(JSON.stringify(summary)).not.toContain('SG.secret-value-1234');
   });
 
-  it('keeps an existing Gmail password when the submitted password is blank', async () => {
+  it('keeps an existing legacy Gmail password when saving SMTP with a blank password', async () => {
     const save = jest.fn();
     Setting.findOne.mockResolvedValue({
       value: {
         provider: 'gmail',
         gmail: {
           user: 'platform@gmail.com',
+          smtpHost: 'smtp.gmail.com',
+          smtpPort: 587,
           password: 'enc:old-password',
           passwordLast4: 'word',
           fromEmail: 'platform@gmail.com',
@@ -81,9 +83,11 @@ describe('platformEmailSettingsService', () => {
     const summary = await platformEmailSettingsService.savePlatformEmailSettings({
       userId: 'admin-1',
       payload: {
-        provider: 'gmail',
-        gmail: {
-          user: 'platform@gmail.com',
+        provider: 'smtp',
+        smtp: {
+          smtpHost: 'smtp.gmail.com',
+          smtpPort: 587,
+          smtpUser: 'platform@gmail.com',
           password: '',
           fromName: 'ABS',
         },
@@ -91,9 +95,10 @@ describe('platformEmailSettingsService', () => {
     });
 
     const setting = await Setting.findOne.mock.results[0].value;
-    expect(setting.value.gmail.password).toBe('enc:old-password');
-    expect(setting.value.gmail.passwordLast4).toBe('word');
-    expect(summary.gmail.passwordConfigured).toBe(true);
+    expect(setting.value.provider).toBe('smtp');
+    expect(setting.value.smtp.password).toBe('enc:old-password');
+    expect(setting.value.smtp.passwordLast4).toBe('word');
+    expect(summary.smtp.passwordConfigured).toBe(true);
     expect(JSON.stringify(summary)).not.toContain('old-password');
   });
 
@@ -118,8 +123,8 @@ describe('platformEmailSettingsService', () => {
     expect(Setting.create).not.toHaveBeenCalled();
   });
 
-  it('tests Gmail connection with form-entered credentials', async () => {
-    Setting.findOne.mockResolvedValue({ value: { provider: 'gmail', gmail: {} } });
+  it('tests SMTP connection with form-entered credentials', async () => {
+    Setting.findOne.mockResolvedValue({ value: { provider: 'smtp', smtp: {} } });
     emailService.testConnection.mockResolvedValue({
       success: true,
       message: 'Email connection verified successfully',
@@ -127,11 +132,13 @@ describe('platformEmailSettingsService', () => {
 
     const result = await platformEmailSettingsService.testPlatformEmailConnection({
       userId: 'admin-1',
-      requestId: 'req-gmail',
+      requestId: 'req-smtp',
       payload: {
-        provider: 'gmail',
-        gmail: {
-          user: 'platform@gmail.com',
+        provider: 'smtp',
+        smtp: {
+          smtpHost: 'smtp.gmail.com',
+          smtpPort: 587,
+          smtpUser: 'platform@gmail.com',
           password: 'app-password',
           fromEmail: 'platform@gmail.com',
         },
@@ -140,8 +147,9 @@ describe('platformEmailSettingsService', () => {
 
     expect(emailService.testConnection).toHaveBeenCalledWith(
       expect.objectContaining({
-        provider: 'gmail',
+        provider: 'smtp',
         smtpHost: 'smtp.gmail.com',
+        smtpPort: 587,
         smtpUser: 'platform@gmail.com',
         smtpPassword: 'app-password',
       }),
@@ -152,7 +160,7 @@ describe('platformEmailSettingsService', () => {
         }),
       })
     );
-    expect(result.provider).toBe('gmail');
+    expect(result.provider).toBe('smtp');
   });
 
   it('allows non-secret platform email edits even when active credentials are incomplete', async () => {

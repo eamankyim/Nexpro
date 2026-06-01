@@ -29,6 +29,7 @@ const {
   savePlatformEmailSettings,
   testPlatformEmailConnection,
 } = require('../services/platformEmailSettingsService');
+const PLATFORM_EMAIL_ACCEPTED_PROVIDERS = [...PLATFORM_EMAIL_PROVIDERS, 'gmail'];
 const { sequelize } = require('../config/database');
 const { Op } = require('sequelize');
 
@@ -73,10 +74,10 @@ exports.getPlatformSettings = async (req, res, next) => {
 exports.updatePlatformSettings = async (req, res, next) => {
   try {
     const { branding, featureFlags, communications, platformEmail } = req.body || {};
-    if (platformEmail?.provider && !PLATFORM_EMAIL_PROVIDERS.includes(String(platformEmail.provider).toLowerCase())) {
+    if (platformEmail?.provider && !PLATFORM_EMAIL_ACCEPTED_PROVIDERS.includes(String(platformEmail.provider).toLowerCase())) {
       return res.status(400).json({
         success: false,
-        message: 'Unsupported platform email provider. Choose SendGrid or Gmail.'
+        message: 'Unsupported platform email provider. Choose SendGrid or SMTP.'
       });
     }
 
@@ -130,10 +131,10 @@ exports.testPlatformEmailSettings = async (req, res, next) => {
         message: 'Platform email settings are required',
       });
     }
-    if (platformEmail.provider && !PLATFORM_EMAIL_PROVIDERS.includes(String(platformEmail.provider).toLowerCase())) {
+    if (platformEmail.provider && !PLATFORM_EMAIL_ACCEPTED_PROVIDERS.includes(String(platformEmail.provider).toLowerCase())) {
       return res.status(400).json({
         success: false,
-        message: 'Unsupported platform email provider. Choose SendGrid or Gmail.',
+        message: 'Unsupported platform email provider. Choose SendGrid or SMTP.',
       });
     }
 
