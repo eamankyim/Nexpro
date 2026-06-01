@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import {
   BarChart3,
   Users,
@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import Footer from '../components/layout/Footer';
 import { useResponsive, BREAKPOINTS } from '../hooks/useResponsive';
+import { isBootstrapPlatformSuperAdmin } from '../utils/platformAdminBootstrap';
 import { Sheet, SheetContent, SheetTrigger } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 
@@ -73,6 +74,14 @@ const menuItems = [
   { path: '/admin/settings', icon: Settings, label: 'Settings' },
 ];
 
+const bootstrapSuperAdminHiddenPaths = new Set([
+  '/admin/customers',
+  '/admin/leads',
+  '/admin/jobs',
+  '/admin/expenses',
+  '/admin/tasks',
+]);
+
 const AdminLayout = () => {
   const navigate = useNavigate();
   const location = useLocation();
@@ -80,6 +89,14 @@ const AdminLayout = () => {
   const { hasPermission, loading: permissionsLoading } = usePlatformAdminPermissions();
   const { isMobile: isBelowTablet } = useResponsive({ mobileBreakpoint: BREAKPOINTS.TABLET });
   const [mobileSheetOpen, setMobileSheetOpen] = useState(false);
+  const isBootstrapSuperAdmin = useMemo(
+    () => Boolean(user?.isPlatformAdmin) && isBootstrapPlatformSuperAdmin(user),
+    [user]
+  );
+  const visibleMenuItems = useMemo(
+    () => menuItems.filter((item) => !isBootstrapSuperAdmin || !bootstrapSuperAdminHiddenPaths.has(item.path)),
+    [isBootstrapSuperAdmin]
+  );
 
   const handleNavigateToSabito = () => {
     const token = localStorage.getItem('token');
@@ -90,7 +107,7 @@ const AdminLayout = () => {
 
   const navContent = (
     <nav className="flex-1 overflow-y-auto p-4 space-y-1">
-      {menuItems.map((item) => {
+      {visibleMenuItems.map((item) => {
         const isActive = location.pathname === item.path;
         const Icon = item.icon;
         const permissionMap = {

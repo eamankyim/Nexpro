@@ -3,6 +3,7 @@ const { protect, requirePlatformAdmin } = require('../middleware/auth');
 const {
   getPlatformSettings,
   updatePlatformSettings,
+  testPlatformEmailSettings,
   getSubscriptionPlans,
   getSubscriptionPlan,
   createSubscriptionPlan,
@@ -69,6 +70,8 @@ router.get('/', getPlatformSettings);
  *         description: Platform settings updated.
  */
 router.put('/', updatePlatformSettings);
+
+router.post('/email/test', testPlatformEmailSettings);
 
 /**
  * @swagger

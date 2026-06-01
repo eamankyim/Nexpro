@@ -55,6 +55,9 @@ const getPlatformSettings = async () => api.get('/platform-settings');
 const updatePlatformSettings = async (payload) =>
   api.put('/platform-settings', payload);
 
+const testPlatformEmailSettings = async (payload) =>
+  api.post('/platform-settings/email/test', payload);
+
 const getSystemHealth = async () => api.get('/admin/health');
 
 const getPlatformAdmins = async () => api.get('/platform-admins');
@@ -209,6 +212,7 @@ export default {
   createTenantSubscriptionPayment,
   getPlatformSettings,
   updatePlatformSettings,
+  testPlatformEmailSettings,
   getSystemHealth,
   getPlatformAdmins,
   getPlatformAdminInviteRoles,

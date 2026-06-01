@@ -207,6 +207,7 @@ const AdminSettings = () => {
     mode: 'onSubmit',
   });
   const [saving, setSaving] = useState(false);
+  const [platformEmailTesting, setPlatformEmailTesting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [admins, setAdmins] = useState([]);
   const [adminModalVisible, setAdminModalVisible] = useState(false);
@@ -334,9 +335,43 @@ const AdminSettings = () => {
       showSuccess('Settings and feature table updated');
     } catch (error) {
       console.error('Failed to update platform settings', error);
-      showError(null, 'Failed to update settings');
+      showError(error, 'Failed to update settings');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleTestPlatformEmail = async () => {
+    const platformEmail = form.getValues('platformEmail') || {};
+    const provider = platformEmail.provider || 'sendgrid';
+
+    if (provider === 'sendgrid') {
+      const hasEnteredKey = Boolean(platformEmail.sendgrid?.apiKey?.trim());
+      const hasSavedOrEnvKey = platformEmail.sendgrid?.apiKeyConfigured || platformEmail.envFallback?.sendgridConfigured;
+      if (!hasEnteredKey && !hasSavedOrEnvKey) {
+        showError(null, 'Enter a SendGrid API key, save one first, or configure the environment fallback before testing.');
+        return;
+      }
+    }
+
+    if (provider === 'gmail') {
+      const hasEnteredPassword = Boolean(platformEmail.gmail?.password?.trim());
+      const hasSavedOrEnvPassword = platformEmail.gmail?.passwordConfigured || platformEmail.envFallback?.gmailConfigured;
+      if (!hasEnteredPassword && !hasSavedOrEnvPassword) {
+        showError(null, 'Enter a Gmail app password, save one first, or configure the environment fallback before testing.');
+        return;
+      }
+    }
+
+    setPlatformEmailTesting(true);
+    try {
+      const response = await adminService.testPlatformEmailSettings({ platformEmail });
+      showSuccess(response?.message || 'Platform email connection test successful');
+    } catch (error) {
+      console.error('Failed to test platform email settings', error);
+      showError(error, 'Platform email connection test failed');
+    } finally {
+      setPlatformEmailTesting(false);
     }
   };
 
@@ -1366,9 +1401,27 @@ const AdminSettings = () => {
                   <AlertTitle>Secure configuration</AlertTitle>
                   <AlertDescription>
                     Secret values are never returned to this page. If a secret field is blank when you save, the existing saved secret is kept.
+                    Test connection uses values entered here first, then saved platform credentials, then environment fallbacks.
                     Tenant business emails still use each workspace&apos;s Settings &gt; Email configuration.
                   </AlertDescription>
                 </Alert>
+                <div className="flex flex-col gap-2 rounded-lg border border-border p-4 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-sm font-medium">Verify platform email credentials</p>
+                    <p className="text-sm text-muted-foreground">
+                      Tests the selected provider without exposing saved secrets.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleTestPlatformEmail}
+                    disabled={platformEmailTesting || saving}
+                  >
+                    {platformEmailTesting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Test connection
+                  </Button>
+                </div>
               </div>
               <FormField
                 control={form.control}

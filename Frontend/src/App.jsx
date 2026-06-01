@@ -20,6 +20,7 @@ import PWAInstallBanner from './components/PWAInstallBanner';
 import PWAUpdatePrompt from './components/PWAUpdatePrompt';
 import { useSwipeBack } from './hooks/useSwipeBack';
 import { useIOSKeyboardFix } from './hooks/useKeyboardHandling';
+import { isBootstrapPlatformSuperAdmin } from './utils/platformAdminBootstrap';
 // Lazy load heavy pages for code splitting
 const Products = lazy(() => import('./pages/Products'));
 const TourProvider = lazy(() => import('./components/tour/TourProvider'));
@@ -109,6 +110,22 @@ const FeatureRoute = ({ featureKey, children, fallback = '/dashboard' }) => {
     return <Navigate to={fallback} replace />;
   }
   return children;
+};
+
+const HideForBootstrapSuperAdmin = ({ children }) => {
+  const { user } = useAuth();
+  if (Boolean(user?.isPlatformAdmin) && isBootstrapPlatformSuperAdmin(user)) {
+    return <Navigate to="/admin" replace />;
+  }
+  return children;
+};
+
+const AdminWorkspaceRedirect = () => {
+  const { user } = useAuth();
+  const redirectTo = Boolean(user?.isPlatformAdmin) && isBootstrapPlatformSuperAdmin(user)
+    ? '/admin'
+    : '/admin/tasks';
+  return <Navigate to={redirectTo} replace />;
 };
 
 const CampaignEditRedirect = () => {
@@ -294,18 +311,18 @@ function AppContent() {
           >
             <Route index element={<AdminOverview />} />
             <Route path="tenants" element={<AdminTenants />} />
-            <Route path="customers" element={<AdminCustomers />} />
+            <Route path="customers" element={<HideForBootstrapSuperAdmin><AdminCustomers /></HideForBootstrapSuperAdmin>} />
             <Route path="users" element={<AdminUsers />} />
-            <Route path="leads" element={<AdminLeads />} />
-            <Route path="jobs" element={<AdminJobs />} />
-            <Route path="expenses" element={<AdminExpenses />} />
+            <Route path="leads" element={<HideForBootstrapSuperAdmin><AdminLeads /></HideForBootstrapSuperAdmin>} />
+            <Route path="jobs" element={<HideForBootstrapSuperAdmin><AdminJobs /></HideForBootstrapSuperAdmin>} />
+            <Route path="expenses" element={<HideForBootstrapSuperAdmin><AdminExpenses /></HideForBootstrapSuperAdmin>} />
             <Route path="billing" element={<AdminBilling />} />
             <Route path="roles" element={<Navigate to="/admin/settings?tab=roles" replace />} />
             <Route path="reports" element={<AdminReports />} />
             <Route path="health" element={<AdminHealth />} />
             <Route path="support-tickets" element={<AdminSupportTickets />} />
-            <Route path="workspace" element={<Navigate to="/admin/tasks" replace />} />
-            <Route path="tasks" element={<Tasks />} />
+            <Route path="workspace" element={<AdminWorkspaceRedirect />} />
+            <Route path="tasks" element={<HideForBootstrapSuperAdmin><Tasks /></HideForBootstrapSuperAdmin>} />
             <Route path="settings" element={<AdminSettings />} />
           </Route>
 

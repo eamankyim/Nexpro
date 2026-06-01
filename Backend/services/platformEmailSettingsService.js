@@ -131,9 +131,13 @@ async function getSavedPlatformEmailConfig() {
 function requireEncryptionForNewSecret(secret) {
   if (isRealSecret(secret) && !hasKey(PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY)) {
     const error = new Error('Server is missing PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY (64 hex chars). Configure it before saving platform email credentials.');
-    error.statusCode = 503;
+    error.statusCode = 400;
     throw error;
   }
+}
+
+function hasSubmittedSecret(payload = {}) {
+  return isRealSecret(payload.sendgrid?.apiKey) || isRealSecret(payload.gmail?.password);
 }
 
 function mergeProviderSettings({ existing = {}, payload = {}, userId }) {
@@ -198,7 +202,7 @@ async function savePlatformEmailSettings({ payload = {}, userId }) {
     userId,
   });
 
-  if (!hasActiveProviderCredentials(value)) {
+  if (!hasActiveProviderCredentials(value) && hasSubmittedSecret(payload)) {
     const error = new Error(provider === 'sendgrid'
       ? 'SendGrid API key and sender email are required for the active platform email provider.'
       : 'Gmail address and app password are required for the active platform email provider.');
@@ -222,6 +226,98 @@ async function savePlatformEmailSettings({ payload = {}, userId }) {
   return getPublicSummary(value);
 }
 
+function readStoredSecret(value) {
+  try {
+    return decryptStoredSecret(value);
+  } catch (error) {
+    const err = new Error(`Saved platform email credentials cannot be decrypted. Configure ${PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY} or enter the credentials again.`);
+    err.statusCode = 400;
+    throw err;
+  }
+}
+
+function buildTestConfig({ payload = {}, existing = {} }) {
+  const provider = normalizeProvider(payload.provider || existing.provider);
+  const emailService = require('./emailService');
+  const envConfig = emailService.getPlatformConfig(provider) || {};
+
+  if (provider === 'sendgrid') {
+    const sendgridPayload = payload.sendgrid || {};
+    const sendgridExisting = existing.sendgrid || {};
+    const apiKey = isRealSecret(sendgridPayload.apiKey)
+      ? clean(sendgridPayload.apiKey)
+      : readStoredSecret(sendgridExisting.apiKey) || envConfig.sendgridApiKey || '';
+    const fromEmail = clean(sendgridPayload.fromEmail) || clean(sendgridExisting.fromEmail) || clean(envConfig.fromEmail);
+
+    if (!apiKey) {
+      const error = new Error('Enter a SendGrid API key, save one first, or configure PLATFORM_SENDGRID_API_KEY.');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return {
+      provider: 'sendgrid',
+      sendgridApiKey: apiKey,
+      fromEmail,
+      fromName: clean(sendgridPayload.fromName) || clean(sendgridExisting.fromName) || envConfig.fromName,
+    };
+  }
+
+  const gmailPayload = payload.gmail || {};
+  const gmailExisting = existing.gmail || {};
+  const user = clean(gmailPayload.user) || clean(gmailExisting.user) || clean(envConfig.smtpUser);
+  const password = isRealSecret(gmailPayload.password)
+    ? clean(gmailPayload.password)
+    : readStoredSecret(gmailExisting.password) || envConfig.smtpPassword || '';
+
+  if (!user || !password) {
+    const error = new Error('Enter a Gmail address and app password, save them first, or configure platform Gmail environment credentials.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    provider: 'gmail',
+    smtpHost: gmailPayload.smtpHost || gmailExisting.smtpHost || envConfig.smtpHost || 'smtp.gmail.com',
+    smtpPort: parseInt(gmailPayload.smtpPort || gmailExisting.smtpPort || envConfig.smtpPort || '465', 10),
+    smtpUser: user,
+    smtpPassword: password,
+    smtpRejectUnauthorized: true,
+    fromEmail: clean(gmailPayload.fromEmail) || clean(gmailExisting.fromEmail) || clean(envConfig.fromEmail) || user,
+    fromName: clean(gmailPayload.fromName) || clean(gmailExisting.fromName) || envConfig.fromName,
+  };
+}
+
+async function testPlatformEmailConnection({ payload = {}, userId, requestId }) {
+  const setting = await Setting.findOne({
+    where: { tenantId: null, key: PLATFORM_EMAIL_SETTINGS_KEY },
+  });
+  const config = buildTestConfig({
+    payload,
+    existing: setting?.value || {},
+  });
+  const emailService = require('./emailService');
+  const result = await emailService.testConnection(config, {
+    context: {
+      requestId,
+      userId,
+      source: 'platform_settings_email_test',
+      mode: hasSubmittedSecret(payload) ? 'form_values' : 'saved_or_env',
+    },
+  });
+
+  if (!result.success) {
+    const error = new Error(result.error || 'Failed to verify platform email connection');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return {
+    provider: config.provider,
+    message: result.message || 'Platform email connection verified successfully',
+  };
+}
+
 module.exports = {
   PLATFORM_EMAIL_SETTINGS_KEY,
   PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY,
@@ -230,4 +326,5 @@ module.exports = {
   getSavedPlatformEmailConfig,
   getPublicSummary,
   savePlatformEmailSettings,
+  testPlatformEmailConnection,
 };
