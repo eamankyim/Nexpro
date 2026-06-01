@@ -11,8 +11,14 @@ jest.mock('../../../utils/secretCrypto', () => ({
   hasKey: jest.fn(() => true),
 }));
 
+jest.mock('../../../services/emailService', () => ({
+  getPlatformConfig: jest.fn(() => null),
+  testConnection: jest.fn(),
+}));
+
 const { Setting } = require('../../../models');
 const { encryptSecret, hasKey } = require('../../../utils/secretCrypto');
+const emailService = require('../../../services/emailService');
 const platformEmailSettingsService = require('../../../services/platformEmailSettingsService');
 
 describe('platformEmailSettingsService', () => {
@@ -110,6 +116,43 @@ describe('platformEmailSettingsService', () => {
     });
 
     expect(Setting.create).not.toHaveBeenCalled();
+  });
+
+  it('tests Gmail connection with form-entered credentials', async () => {
+    Setting.findOne.mockResolvedValue({ value: { provider: 'gmail', gmail: {} } });
+    emailService.testConnection.mockResolvedValue({
+      success: true,
+      message: 'Email connection verified successfully',
+    });
+
+    const result = await platformEmailSettingsService.testPlatformEmailConnection({
+      userId: 'admin-1',
+      requestId: 'req-gmail',
+      payload: {
+        provider: 'gmail',
+        gmail: {
+          user: 'platform@gmail.com',
+          password: 'app-password',
+          fromEmail: 'platform@gmail.com',
+        },
+      },
+    });
+
+    expect(emailService.testConnection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'gmail',
+        smtpHost: 'smtp.gmail.com',
+        smtpUser: 'platform@gmail.com',
+        smtpPassword: 'app-password',
+      }),
+      expect.objectContaining({
+        context: expect.objectContaining({
+          source: 'platform_settings_email_test',
+          mode: 'form_values',
+        }),
+      })
+    );
+    expect(result.provider).toBe('gmail');
   });
 
   it('allows non-secret platform email edits even when active credentials are incomplete', async () => {

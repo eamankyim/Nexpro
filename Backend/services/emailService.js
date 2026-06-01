@@ -789,12 +789,15 @@ class EmailService {
       // Validate required fields based on provider
       switch (provider) {
         case 'smtp':
+        case 'gmail':
           if (!config.smtpHost || !config.smtpUser || !config.smtpPassword) {
             const missing = []; if (!config.smtpHost) missing.push('smtpHost'); if (!config.smtpUser) missing.push('smtpUser'); if (!config.smtpPassword) missing.push('smtpPassword');
             console.log(`${logPrefix}[connection_verify_skip]${contextText} provider=${provider} reason=missing_fields fields=${missing.join(',')}`);
             return {
               success: false,
-              error: 'SMTP Host, User, and Password are required'
+              error: provider === 'gmail'
+                ? 'Gmail address and app password are required'
+                : 'SMTP Host, User, and Password are required'
             };
           }
           break;

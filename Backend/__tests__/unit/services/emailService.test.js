@@ -266,6 +266,33 @@ describe('emailService diagnostics', () => {
     expect(output).not.toContain('secret');
   });
 
+  it('verifies Gmail SMTP connections (platform provider)', async () => {
+    const verify = jest.fn().mockResolvedValue(true);
+    const close = jest.fn();
+    nodemailer.createTransport.mockReturnValue({ verify, close });
+
+    const result = await emailService.testConnection({
+      provider: 'gmail',
+      smtpHost: 'smtp.gmail.com',
+      smtpPort: 465,
+      smtpUser: 'owner@gmail.com',
+      smtpPassword: 'app-password',
+      fromEmail: 'owner@gmail.com',
+    });
+
+    expect(result.success).toBe(true);
+    expect(verify).toHaveBeenCalled();
+    expect(close).toHaveBeenCalled();
+    expect(nodemailer.createTransport).toHaveBeenCalledWith(expect.objectContaining({
+      host: 'smtp.gmail.com',
+      port: 465,
+      auth: expect.objectContaining({
+        user: 'owner@gmail.com',
+        pass: 'app-password',
+      }),
+    }));
+  });
+
   it('logs verify failures with request-body source context and masked provider message', async () => {
     nodemailer.createTransport.mockReturnValue({
       verify: jest.fn().mockRejectedValue(Object.assign(new Error('Unauthorized for owner@example.com'), {
