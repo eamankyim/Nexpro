@@ -58,9 +58,7 @@ const shopContext = async (req, res, next) => {
     const requestedId = resolveHeaderShopId(req);
 
     if (requestedId) {
-      const canUseRequested =
-        req.canAccessAllShops || allowedIds.includes(requestedId);
-      if (canUseRequested) {
+      if (allowedIds.includes(requestedId)) {
         req.shopFilterId = requestedId;
       }
       // Ignore invalid/stale x-shop-id (e.g. admin shop cached in browser) — fall through to default.

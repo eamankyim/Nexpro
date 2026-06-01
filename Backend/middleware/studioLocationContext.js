@@ -59,16 +59,15 @@ const studioLocationContext = async (req, res, next) => {
     const requestedId = resolveHeaderLocationId(req);
 
     if (requestedId) {
-      if (
-        !req.canAccessAllStudioLocations &&
-        !allowedIds.includes(requestedId)
-      ) {
-        return res.status(403).json({
-          success: false,
-          message: 'You do not have access to this studio location',
-        });
-      }
-      if (req.canAccessAllStudioLocations || allowedIds.includes(requestedId)) {
+      if (!allowedIds.includes(requestedId)) {
+        if (!req.canAccessAllStudioLocations) {
+          return res.status(403).json({
+            success: false,
+            message: 'You do not have access to this studio location',
+          });
+        }
+        // Ignore invalid/stale x-studio-location-id (e.g. cached in browser) — fall through to default.
+      } else {
         req.studioLocationFilterId = requestedId;
       }
     } else if (!req.canAccessAllStudioLocations && allowedIds.length === 1) {

@@ -54,9 +54,13 @@ export function StudioLocationProvider({ children }) {
     const stored = localStorage.getItem(STORAGE_KEY);
     const validIds = locations.map((l) => l.id);
 
-    if (stored && (canAccessAll || validIds.includes(stored))) {
+    if (stored && validIds.includes(stored)) {
       setActiveStudioLocationIdState(stored);
       return;
+    }
+
+    if (stored && !validIds.includes(stored)) {
+      localStorage.removeItem(STORAGE_KEY);
     }
 
     const fallback =

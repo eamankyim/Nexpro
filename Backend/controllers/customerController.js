@@ -180,6 +180,7 @@ exports.createCustomer = async (req, res, next) => {
   try {
     const payload = sanitizePayload(req.body);
     if (payload.email === '') payload.email = null;
+    if (payload.phone === '') payload.phone = null;
     if (payload.dateOfBirth === '') payload.dateOfBirth = null;
     const customer = await Customer.create(
       attachScopedToPayload(req, {
@@ -225,6 +226,7 @@ exports.updateCustomer = async (req, res, next) => {
 
     const payload = sanitizePayload(req.body);
     if (payload.email === '') payload.email = null;
+    if (payload.phone === '') payload.phone = null;
     if (payload.dateOfBirth === '') payload.dateOfBirth = null;
     delete payload.studioLocationId;
     delete payload.shopId;
