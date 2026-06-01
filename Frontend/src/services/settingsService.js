@@ -80,6 +80,16 @@ const updateCustomerNotificationPreferences = async (payload) => {
   return res?.data?.data ?? res?.data ?? res;
 };
 
+const getMessageDeliveryRules = async () => {
+  const res = await api.get('/settings/message-delivery-rules');
+  return res?.data?.data ?? res?.data ?? res;
+};
+
+const updateMessageDeliveryRules = async (payload) => {
+  const res = await api.put('/settings/message-delivery-rules', payload);
+  return res?.data?.data ?? res?.data ?? res;
+};
+
 const getQuoteWorkflow = async () => {
   const res = await api.get('/settings/quote-workflow');
   return res?.data?.data ?? res?.data ?? { onAccept: 'record_only' };
@@ -223,6 +233,8 @@ export default {
   getLeadSources,
   getNotificationChannels,
   updateCustomerNotificationPreferences,
+  getMessageDeliveryRules,
+  updateMessageDeliveryRules,
   getQuoteWorkflow,
   updateQuoteWorkflow,
   getJobInvoice,

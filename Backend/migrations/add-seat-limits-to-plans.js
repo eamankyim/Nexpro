@@ -41,6 +41,28 @@ async function up() {
 
   await sequelize.query(`
     UPDATE subscription_plans 
+    SET "seatLimit" = :starterLimit, "seatPricePerAdditional" = :starterPrice
+    WHERE "planId" = 'starter'
+  `, {
+    replacements: {
+      starterLimit: DEFAULT_PLAN_SEAT_LIMITS.starter,
+      starterPrice: PLAN_SEAT_PRICING.starter
+    }
+  });
+
+  await sequelize.query(`
+    UPDATE subscription_plans 
+    SET "seatLimit" = :professionalLimit, "seatPricePerAdditional" = :professionalPrice
+    WHERE "planId" = 'professional'
+  `, {
+    replacements: {
+      professionalLimit: DEFAULT_PLAN_SEAT_LIMITS.professional,
+      professionalPrice: PLAN_SEAT_PRICING.professional
+    }
+  });
+
+  await sequelize.query(`
+    UPDATE subscription_plans 
     SET "seatLimit" = :launchLimit, "seatPricePerAdditional" = :launchPrice
     WHERE "planId" = 'launch'
   `, {

@@ -401,10 +401,19 @@ const FEATURE_CATEGORIES = {
 // Seat limits by plan (null = unlimited) — Paystack naming: starter, professional
 const DEFAULT_PLAN_SEAT_LIMITS = {
   trial: 5,
-  starter: 5,
-  professional: 15,
+  starter: 1,
+  professional: 3,
   enterprise: null, // unlimited
-  launch: 5, scale: 15 // legacy aliases
+  launch: 1, scale: 3 // legacy aliases
+};
+
+// Branch/location/shop limits by plan (null = unlimited)
+const DEFAULT_PLAN_BRANCH_LIMITS = {
+  trial: null,
+  starter: 1,
+  professional: 3,
+  enterprise: null,
+  launch: 1, scale: 3 // legacy aliases
 };
 
 // Seat pricing (additional cost per seat beyond base limit)
@@ -573,6 +582,7 @@ module.exports = {
   FEATURE_CATALOG,
   FEATURE_CATEGORIES,
   DEFAULT_PLAN_SEAT_LIMITS,
+  DEFAULT_PLAN_BRANCH_LIMITS,
   PLAN_SEAT_PRICING,
   DEFAULT_STORAGE_LIMITS,
   STORAGE_PRICING,

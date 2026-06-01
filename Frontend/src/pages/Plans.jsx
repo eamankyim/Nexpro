@@ -17,11 +17,12 @@ const FALLBACK_PLANS = [
   {
     id: 'starter',
     name: 'Starter',
-    description: 'Perfect for small businesses getting started.',
+    description: 'Perfect for owner-led businesses getting started.',
     monthlyPrice: 129,
     yearlyTotal: 1188,
     features: [
-      'Up to 3 users',
+      '1 user',
+      '1 branch/location/shop',
       'Dashboard & analytics',
       'Customer & vendor management',
       'Invoices & payments',
@@ -38,7 +39,8 @@ const FALLBACK_PLANS = [
     monthlyPrice: 250,
     yearlyTotal: 2388,
     features: [
-      'Up to 10 users',
+      'Up to 3 users',
+      'Up to 3 branches/locations/shops',
       'Everything in Starter',
       'Jobs & quotes management',
       'Inventory tracking',
@@ -106,7 +108,8 @@ const normalizeMarketingPlans = (apiRows, enterprisePricing) => {
       yearlyTotal: null,
       features: Array.isArray(enterprisePricing.tiers)
         ? enterprisePricing.tiers.map(
-            (tier) => `${tier.name}: GHS ${tier.licenseFeeGhs.toLocaleString()} license + GHS ${tier.cloudPlanAnnualGhs.toLocaleString()}/year cloud`
+            (tier) =>
+              `${tier.name}: ${tier.seatLimit} users, ${tier.branchLimit} branches, GHS ${tier.licenseFeeGhs.toLocaleString()} license + GHS ${tier.cloudPlanAnnualGhs.toLocaleString()}/year cloud`
           )
         : ['Manual contract and billing', 'Cloud renewal due after year 1'],
       popular: false,

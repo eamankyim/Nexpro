@@ -1,0 +1,161 @@
+jest.mock('../../../config/database', () => ({
+  sequelize: {
+    query: jest.fn(),
+    fn: jest.fn((name, ...args) => ({ fn: name, args })),
+    col: jest.fn((name) => ({ col: name })),
+    where: jest.fn((...args) => ({ where: args })),
+    literal: jest.fn((value) => ({ literal: value })),
+  },
+}));
+
+jest.mock('../../../models', () => ({
+  Tenant: { findByPk: jest.fn() },
+  User: {},
+  UserTenant: {},
+  Notification: {},
+  Vendor: {},
+  Job: {},
+  InviteToken: {},
+  SubscriptionPlan: { findOne: jest.fn(), create: jest.fn() },
+  SubscriptionPayment: {},
+  TenantAccessAudit: { create: jest.fn() },
+  Setting: { findOrCreate: jest.fn() },
+}));
+
+jest.mock('../../../services/subscriptionBillingService', () => ({
+  resolveBillingStatus: jest.fn().mockResolvedValue({ status: 'active' }),
+  recordSubscriptionPaymentAndActivate: jest.fn(),
+  toBillingPayload: jest.fn((status) => status),
+  normalizePlan: jest.fn((plan) => plan),
+  normalizeBillingPeriod: jest.fn((period) => period),
+  PAID_PLANS: ['starter', 'professional', 'enterprise'],
+}));
+
+jest.mock('../../../services/emailService', () => ({}));
+jest.mock('../../../services/emailTemplates', () => ({
+  inviteTenantEmail: jest.fn(),
+}));
+jest.mock('../../../utils/frontendUrl', () => ({
+  getFrontendBaseUrl: jest.fn(() => 'https://app.example.com'),
+}));
+jest.mock('../../../utils/deleteTenantData', () => ({
+  PLATFORM_TENANT_SLUG: 'platform',
+  deleteTenantData: jest.fn(),
+  deleteOrphanUsersWithoutTenants: jest.fn(),
+}));
+jest.mock('../../../config/enterpriseTiers', () => ({
+  ENTERPRISE_TIER_IDS: ['business', 'corporate'],
+  getEnterpriseTier: jest.fn(),
+}));
+jest.mock('../../../services/subscriptionPlanCatalogService', () => ({
+  buildEnterprisePaymentMetadata: jest.fn(),
+}));
+jest.mock('../../../utils/seatLimitHelper', () => ({
+  getSeatUsageSummary: jest.fn(),
+}));
+jest.mock('../../../utils/storageLimitHelper', () => ({
+  getStorageUsageSummary: jest.fn(),
+}));
+
+const { Tenant, SubscriptionPlan, TenantAccessAudit } = require('../../../models');
+const adminController = require('../../../controllers/adminController');
+
+const createResponse = () => {
+  const res = {
+    status: jest.fn(() => res),
+    json: jest.fn(() => res),
+  };
+  return res;
+};
+
+const createTenant = (metadata = {}) => ({
+  id: 'tenant-1',
+  plan: 'trial',
+  status: 'active',
+  metadata,
+  save: jest.fn().mockResolvedValue(undefined),
+  changed: jest.fn(),
+});
+
+describe('adminController.updateTenantAccess', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    SubscriptionPlan.findOne.mockResolvedValue({
+      id: 'plan-trial',
+      planId: 'trial',
+      name: 'Trial',
+      marketing: { featureFlags: {} },
+      seatLimit: 5,
+      storageLimitMB: 1024,
+    });
+    TenantAccessAudit.create.mockResolvedValue({});
+  });
+
+  it('persists true and false feature overrides and removes missing keys', async () => {
+    const tenant = createTenant({
+      entitlements: {
+        featureOverrides: {
+          reports: true,
+          automations: true,
+        },
+      },
+    });
+    Tenant.findByPk.mockResolvedValueOnce(tenant).mockResolvedValueOnce(tenant);
+
+    const req = {
+      params: { id: tenant.id },
+      user: { id: 'admin-1' },
+      body: {
+        featureOverrides: {
+          automations: false,
+          apiAccess: true,
+        },
+      },
+    };
+    const res = createResponse();
+    const next = jest.fn();
+
+    await adminController.updateTenantAccess(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(tenant.metadata.entitlements.featureOverrides).toEqual({
+      automations: false,
+      apiAccess: true,
+    });
+    expect(tenant.changed).toHaveBeenCalledWith('metadata', true);
+    expect(tenant.save).toHaveBeenCalledTimes(1);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json.mock.calls[0][0].data.metadata.entitlements.featureOverrides).toEqual({
+      automations: false,
+      apiAccess: true,
+    });
+  });
+
+  it('clears all feature overrides when payload is null', async () => {
+    const tenant = createTenant({
+      entitlements: {
+        featureOverrides: {
+          reports: false,
+          apiAccess: true,
+        },
+      },
+    });
+    Tenant.findByPk.mockResolvedValueOnce(tenant).mockResolvedValueOnce(tenant);
+
+    const req = {
+      params: { id: tenant.id },
+      user: { id: 'admin-1' },
+      body: { featureOverrides: null },
+    };
+    const res = createResponse();
+    const next = jest.fn();
+
+    await adminController.updateTenantAccess(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(tenant.metadata.entitlements.featureOverrides).toEqual({});
+    expect(tenant.changed).toHaveBeenCalledWith('metadata', true);
+    expect(tenant.save).toHaveBeenCalledTimes(1);
+    expect(res.json.mock.calls[0][0].data.accessControl.featureOverrides).toEqual({});
+  });
+});

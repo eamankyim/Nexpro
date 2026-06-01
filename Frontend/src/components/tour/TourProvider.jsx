@@ -7,7 +7,7 @@ import { TourContext, useTourInternal } from '../../hooks/useTour';
 import { getJoyrideConfig, TOUR_IDS } from '../../config/tours';
 import { loadTourImageByIndex, loadTourWelcomeImage } from '../../config/tourImages';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 
 const Joyride = lazy(() => import('react-joyride').then((m) => ({ default: m.default })));
 const STATUS = { FINISHED: 'finished', SKIPPED: 'skipped' };
@@ -223,9 +223,9 @@ export default function TourProvider({ children }) {
               />
             ) : null}
 
-            <h2 className="text-lg font-semibold text-foreground text-center mb-2">
+            <DialogTitle className="text-lg font-semibold text-foreground text-center mb-2">
               Welcome to African Business Suite!
-            </h2>
+            </DialogTitle>
             <p className="text-sm text-muted-foreground text-center leading-relaxed">
               You can continue the tour to learn how to use the platform. If you wish, you can exit from the tour by clicking the button.
             </p>

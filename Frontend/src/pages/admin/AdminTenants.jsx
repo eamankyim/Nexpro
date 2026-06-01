@@ -1245,7 +1245,7 @@ const AdminTenants = () => {
                             <SelectContent>
                               {ENTERPRISE_TIER_OPTIONS.map((tier) => (
                                 <SelectItem key={tier.id} value={tier.id}>
-                                  {tier.name} ({tier.seatLimit} users, {tier.storageLimitGB} GB)
+                                  {tier.name} ({tier.seatLimit} users, {tier.branchLimit} branches, {tier.storageLimitGB} GB)
                                 </SelectItem>
                               ))}
                             </SelectContent>
@@ -1348,13 +1348,13 @@ const AdminTenants = () => {
                           <SelectContent>
                             {ENTERPRISE_TIER_OPTIONS.map((tier) => (
                               <SelectItem key={tier.id} value={tier.id}>
-                                {tier.name} ({tier.seatLimit} users, {tier.storageLimitGB} GB)
+                                {tier.name} ({tier.seatLimit} users, {tier.branchLimit} branches, {tier.storageLimitGB} GB)
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
                         <p className="text-xs text-muted-foreground">
-                          Sets seat and storage limits per ABS Enterprise Terms for this workspace.
+                          Sets seat, branch, and storage limits per ABS Enterprise Terms for this workspace.
                         </p>
                       </div>
                     )}

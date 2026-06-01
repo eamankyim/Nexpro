@@ -260,6 +260,11 @@ exports.generateInvite = async (req, res, next) => {
         if (!tenantEmailConfig.ok) {
           throw new Error(`${tenantEmailConfig.error} Platform email fallback is disabled for tenant invites.`);
         }
+        const { isChannelEnabledForEvent } = require('../services/messageDeliveryRulesService');
+        const inviteEmailEnabled = await isChannelEnabledForEvent(req.tenantId, 'team_invite', 'email');
+        if (!inviteEmailEnabled) {
+          throw new Error('Team invite email is disabled in message delivery rules.');
+        }
         let result = null;
         let usedProvider = tenantEmailConfig.provider || 'smtp';
 

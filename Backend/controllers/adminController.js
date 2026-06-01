@@ -5,6 +5,13 @@ const { Op, QueryTypes } = require('sequelize');
 const { sequelize } = require('../config/database');
 const config = require('../config/config');
 const { plans: PLANS_CONFIG } = require('../config/plans');
+const {
+  DEFAULT_PLAN_SEAT_LIMITS,
+  DEFAULT_PLAN_BRANCH_LIMITS,
+  PLAN_SEAT_PRICING,
+  DEFAULT_STORAGE_LIMITS,
+  STORAGE_PRICING,
+} = require('../config/features');
 const { getPagination } = require('../utils/paginationUtils');
 const {
   Tenant,
@@ -86,6 +93,11 @@ async function ensureCanonicalSubscriptionPlan(planId) {
       highlights: def.highlights || [],
       marketing: def.marketing || {},
       onboarding: def.onboarding || {},
+      seatLimit: DEFAULT_PLAN_SEAT_LIMITS[def.id] ?? null,
+      seatPricePerAdditional: PLAN_SEAT_PRICING[def.id] ?? null,
+      branchLimit: DEFAULT_PLAN_BRANCH_LIMITS[def.id] ?? null,
+      storageLimitMB: DEFAULT_STORAGE_LIMITS[def.id] ?? null,
+      storagePrice100GB: STORAGE_PRICING[def.id] ?? null,
       isActive: true,
       metadata: {}
     });
@@ -327,7 +339,7 @@ exports.inviteTenant = async (req, res, next) => {
 
     setImmediate(async () => {
       try {
-        const platformConfig = emailService.getPlatformConfig?.();
+        const platformConfig = await emailService.resolvePlatformConfig?.();
         const platformDiag = platformConfig ? emailService.getConfigDiagnostic(platformConfig) : null;
         console.log('[Admin Invite Email] Dispatch started', {
           inviteRequestId,
@@ -852,7 +864,7 @@ exports.updateTenantAccess = async (req, res, next) => {
     if (accessState != null) {
       entitlements.accessState = accessState;
     }
-    if (featureOverrides != null) {
+    if (featureOverrides !== undefined) {
       entitlements.featureOverrides = normalizeFeatureOverrides(featureOverrides);
     }
     if (note != null) {
@@ -911,6 +923,9 @@ exports.updateTenantAccess = async (req, res, next) => {
 
     metadata.entitlements = entitlements;
     tenant.metadata = metadata;
+    if (typeof tenant.changed === 'function') {
+      tenant.changed('metadata', true);
+    }
 
     await tenant.save();
 

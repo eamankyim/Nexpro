@@ -12,6 +12,7 @@
     "db:restore-production-vercel": "node scripts/restore-production-database-on-vercel.js",
     "migrate:recurring": "node migrations/create-recurring-journals.js",
     "migrate:subscription-payments": "node migrations/create-subscription-payments-table.js",
+    "migrate:trial-defaults": "node migrations/backfill-trial-plan-defaults.js",
     "vercel:build": "npm run migrate:recurring && npm run migrate:subscription-payments",
     "seed": "node utils/seeder.js",
     "seed-admin": "node utils/seedAdmin.js",

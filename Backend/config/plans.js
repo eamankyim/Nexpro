@@ -43,7 +43,7 @@ const plans = [
     id: 'starter',
     order: 20,
     name: 'Starter',
-    description: (PLAN_DEFINITIONS.starter?.description?.monthly) || 'Up to 5 team members.',
+    description: '1 user and 1 branch/location.',
     price: {
       amount: pesewasToGhs(PLAN_DEFINITIONS.starter?.monthly ?? 12900),
       currency: 'GHS',
@@ -52,15 +52,17 @@ const plans = [
       billingDescription: `GHS ${pesewasToGhs(PLAN_DEFINITIONS.starter?.yearly ?? 118800) / 12} per month when billed annually`
     },
     highlights: [
+      '1 user',
+      '1 branch/location/shop',
       'Unlimited invoices & jobs',
       'Accounting & payroll modules',
-      'Customer & vendor portals',
       'Email + chat support'
     ],
     marketing: {
       enabled: true,
       perks: [
-        'Up to 5 seats',
+        '1 user',
+        '1 branch/location/shop',
         'Quotes turn into jobs automatically',
         'Auto-generated invoices',
         'Email support'
@@ -88,7 +90,7 @@ const plans = [
     id: 'professional',
     order: 30,
     name: 'Professional',
-    description: (PLAN_DEFINITIONS.professional?.description?.monthly) || 'Up to 20 team members.',
+    description: 'Up to 3 users and 3 branches/locations.',
     price: {
       amount: pesewasToGhs(PLAN_DEFINITIONS.professional?.monthly ?? 25000),
       currency: 'GHS',
@@ -98,14 +100,16 @@ const plans = [
     },
     highlights: [
       'Everything in Starter',
+      'Up to 3 users',
+      'Up to 3 branches/locations/shops',
       'Advanced reporting & automation',
-      'Materials controls & vendor price lists',
       'Priority support with SLA'
     ],
     marketing: {
       enabled: true,
       perks: [
-        'Up to 15 seats',
+        'Up to 3 users',
+        'Up to 3 branches/locations/shops',
         'Materials controls & vendor price lists',
         'Automated reminders & notifications',
         'Priority support'

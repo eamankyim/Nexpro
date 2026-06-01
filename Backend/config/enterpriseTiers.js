@@ -51,6 +51,7 @@ const resolveEnterpriseLimits = (tenant, planRow) => {
   if (tier) {
     return {
       seatLimit: tier.seatLimit,
+      branchLimit: tier.branchLimit,
       storageLimitMB: tier.storageLimitMB,
       tierName: tier.name,
       tierId: tier.id,
@@ -60,6 +61,7 @@ const resolveEnterpriseLimits = (tenant, planRow) => {
   if (planRow) {
     return {
       seatLimit: planRow.seatLimit,
+      branchLimit: planRow.branchLimit,
       storageLimitMB: planRow.storageLimitMB,
       tierName: planRow.name,
       tierId: planRow.metadata?.selectedEnterpriseTier || null,
@@ -68,6 +70,7 @@ const resolveEnterpriseLimits = (tenant, planRow) => {
   }
   return {
     seatLimit: null,
+    branchLimit: null,
     storageLimitMB: null,
     tierName: 'Enterprise',
     tierId: null,

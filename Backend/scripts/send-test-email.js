@@ -1,5 +1,5 @@
 /**
- * Send a test platform email (uses PLATFORM_EMAIL_PROVIDER + SendGrid/SMTP from .env).
+ * Send a test platform email (uses PLATFORM_EMAIL_PROVIDER + Gmail/SendGrid/SMTP from .env).
  * Usage: node scripts/send-test-email.js [recipient@email.com]
  */
 require('dotenv').config();

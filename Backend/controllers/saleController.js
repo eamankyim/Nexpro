@@ -1843,9 +1843,16 @@ exports.sendReceipt = async (req, res, next) => {
     // Build receipt message
     const receiptMessage = buildReceiptMessage(sale, req.tenantId);
 
+    const { isChannelEnabledForEvent } = require('../services/messageDeliveryRulesService');
+
     // Send via requested channels
     for (const channel of channels) {
       try {
+        const channelAllowed = await isChannelEnabledForEvent(req.tenantId, 'sales_receipt', channel);
+        if (!channelAllowed) {
+          results[channel] = { success: false, error: 'Channel disabled in delivery rules' };
+          continue;
+        }
         switch (channel) {
           case 'sms':
             if (!recipientPhone) {
@@ -1923,12 +1930,18 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
   });
   if (!sale?.customer) return;
 
+  const { isChannelEnabledForEvent } = require('../services/messageDeliveryRulesService');
   const smsService = require('../services/smsService');
   const whatsappService = require('../services/whatsappService');
   const emailService = require('../services/emailService');
-  const smsConfig = await smsService.getResolvedConfig(tenantId);
-  const whatsappConfig = await whatsappService.getConfig(tenantId);
-  const emailConfig = await emailService.getConfig(tenantId);
+  const [emailAllowed, smsAllowed, whatsappAllowed] = await Promise.all([
+    isChannelEnabledForEvent(tenantId, 'sales_receipt', 'email'),
+    isChannelEnabledForEvent(tenantId, 'sales_receipt', 'sms'),
+    isChannelEnabledForEvent(tenantId, 'sales_receipt', 'whatsapp'),
+  ]);
+  const smsConfig = smsAllowed ? await smsService.getResolvedConfig(tenantId) : null;
+  const whatsappConfig = whatsappAllowed ? await whatsappService.getConfig(tenantId) : null;
+  const emailConfig = emailAllowed ? await emailService.getConfig(tenantId) : null;
 
   const receiptMessage = buildReceiptMessage(sale, tenantId);
   const phone = sale.customer.phone?.trim();

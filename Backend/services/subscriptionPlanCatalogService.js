@@ -5,7 +5,15 @@
 const paystackService = require('./paystackService');
 const { SubscriptionPlan } = require('../models');
 const { plans: configPlans } = require('../config/plans');
-const { getFeatureFlagsForPlan, getFeaturesForPlan } = require('../config/features');
+const {
+  DEFAULT_PLAN_SEAT_LIMITS,
+  DEFAULT_PLAN_BRANCH_LIMITS,
+  PLAN_SEAT_PRICING,
+  DEFAULT_STORAGE_LIMITS,
+  STORAGE_PRICING,
+  getFeatureFlagsForPlan,
+  getFeaturesForPlan,
+} = require('../config/features');
 const { ENTERPRISE_TIERS } = require('../config/enterpriseTiers');
 const { setPlanCode, getPlanCode } = require('../config/paystackPlans');
 const {
@@ -235,6 +243,11 @@ async function syncCanonicalPlansToDatabase(options = {}) {
           highlights: configPlan.highlights || [],
           marketing: configPlan.marketing || { enabled: true },
           onboarding: configPlan.onboarding || {},
+          seatLimit: DEFAULT_PLAN_SEAT_LIMITS[planId] ?? null,
+          seatPricePerAdditional: PLAN_SEAT_PRICING[planId] ?? null,
+          branchLimit: DEFAULT_PLAN_BRANCH_LIMITS[planId] ?? null,
+          storageLimitMB: DEFAULT_STORAGE_LIMITS[planId] ?? null,
+          storagePrice100GB: STORAGE_PRICING[planId] ?? null,
           isActive: true,
           metadata,
         },
@@ -242,17 +255,27 @@ async function syncCanonicalPlansToDatabase(options = {}) {
 
       if (!created) {
         const prevMeta = row.metadata && typeof row.metadata === 'object' ? row.metadata : {};
+        const previousMarketing = row.marketing && typeof row.marketing === 'object' ? row.marketing : {};
         const marketing = {
           ...(configPlan.marketing || {}),
-          ...(row.marketing || {}),
           featureFlags: getFeatureFlagsForPlan(planId),
+          enabled: previousMarketing.enabled ?? configPlan.marketing?.enabled ?? true,
+          popular: previousMarketing.popular ?? configPlan.marketing?.popular ?? false,
+          badgeLabel: previousMarketing.badgeLabel ?? configPlan.marketing?.badgeLabel ?? null,
+          cta: previousMarketing.cta ?? configPlan.marketing?.cta,
         };
         await row.update({
           price,
+          highlights: configPlan.highlights || row.highlights || [],
           marketing,
+          seatLimit: DEFAULT_PLAN_SEAT_LIMITS[planId] ?? null,
+          seatPricePerAdditional: PLAN_SEAT_PRICING[planId] ?? null,
+          branchLimit: DEFAULT_PLAN_BRANCH_LIMITS[planId] ?? null,
+          storageLimitMB: row.storageLimitMB ?? DEFAULT_STORAGE_LIMITS[planId] ?? null,
+          storagePrice100GB: row.storagePrice100GB ?? STORAGE_PRICING[planId] ?? null,
           metadata: { ...prevMeta, ...metadata },
           name: row.name || configPlan.name,
-          description: row.description || configPlan.description,
+          description: configPlan.description || row.description,
         });
       }
 
@@ -381,6 +404,7 @@ function getEnterprisePublicPricing() {
       licenseFeeGhs: tier.licenseFeeGhs,
       cloudPlanAnnualGhs: tier.cloudPlanAnnualGhs,
       seatLimit: tier.seatLimit,
+      branchLimit: tier.branchLimit,
       storageLimitMB: tier.storageLimitMB,
     })),
   };

@@ -18,6 +18,7 @@ const {
   ensureManagerShopAccess,
 } = require('../utils/branchManagerUtils');
 const { fileToDataUrl } = require('../utils/branchLogoUpload');
+const { validateBranchLimit } = require('../utils/branchLimitHelper');
 
 const managerInclude = {
   model: User,
@@ -181,6 +182,9 @@ exports.createShop = async (req, res, next) => {
   try {
     const payload = await prepareShopPayload(req.tenantId, sanitizePayload(req.body));
     const isFirst = (await Shop.count({ where: { tenantId: req.tenantId } })) === 0;
+    if (!isFirst) {
+      await validateBranchLimit(req.tenantId, 'shop');
+    }
 
     const shop = await Shop.create({
       ...payload,
@@ -205,6 +209,9 @@ exports.createShop = async (req, res, next) => {
   } catch (error) {
     if (error.statusCode === 400) {
       return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error.statusCode === 403 && error.code === 'BRANCH_LIMIT_EXCEEDED') {
+      return res.status(403).json({ success: false, message: error.message, details: error.details });
     }
     if (error.name === 'SequelizeUniqueConstraintError') {
       return res.status(400).json({ success: false, message: 'Shop code already exists' });

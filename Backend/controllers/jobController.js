@@ -26,6 +26,11 @@ const WHATSAPP_TEMPLATE_COMPLETED = 'job_completed';
 
 const sendJobLifecycleWhatsApp = async ({ tenantId, job, eventType }) => {
   try {
+    const { isChannelEnabledForEvent } = require('../services/messageDeliveryRulesService');
+    const ruleEventKey = eventType === 'completed' ? 'job_completed' : 'order_status';
+    const whatsappAllowed = await isChannelEnabledForEvent(tenantId, ruleEventKey, 'whatsapp');
+    if (!whatsappAllowed) return;
+
     const whatsappService = require('../services/whatsappService');
     const config = await whatsappService.getConfig(tenantId);
     if (!config || !job?.customer?.phone) return;

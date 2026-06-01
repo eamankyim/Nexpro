@@ -14,6 +14,7 @@ const {
   ensureManagerStudioAccess,
 } = require('../utils/branchManagerUtils');
 const { fileToDataUrl } = require('../utils/branchLogoUpload');
+const { validateBranchLimit } = require('../utils/branchLimitHelper');
 
 const managerInclude = {
   model: User,
@@ -290,6 +291,9 @@ exports.createStudioLocation = async (req, res, next) => {
 
     const isFirst =
       (await StudioLocation.count({ where: { tenantId: req.tenantId } })) === 0;
+    if (!isFirst) {
+      await validateBranchLimit(req.tenantId, 'studioLocation');
+    }
 
     const location = await StudioLocation.create({
       ...payload,
@@ -329,6 +333,9 @@ exports.createStudioLocation = async (req, res, next) => {
   } catch (error) {
     if (error.statusCode === 400) {
       return res.status(400).json({ success: false, message: error.message });
+    }
+    if (error.statusCode === 403 && error.code === 'BRANCH_LIMIT_EXCEEDED') {
+      return res.status(403).json({ success: false, message: error.message, details: error.details });
     }
     const mapped = mapStudioUniqueConstraintError(error);
     if (mapped) {

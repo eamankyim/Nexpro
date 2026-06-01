@@ -1,6 +1,13 @@
 const { sequelize } = require('../config/database');
 const { plans } = require('../config/plans');
 const { SubscriptionPlan } = require('../models');
+const {
+  DEFAULT_PLAN_SEAT_LIMITS,
+  DEFAULT_PLAN_BRANCH_LIMITS,
+  PLAN_SEAT_PRICING,
+  DEFAULT_STORAGE_LIMITS,
+  STORAGE_PRICING,
+} = require('../config/features');
 
 /**
  * Seed subscription plans from config/plans.js
@@ -32,6 +39,11 @@ async function seed() {
         highlights: plan.highlights || [],
         marketing: plan.marketing || {},
         onboarding: plan.onboarding || {},
+        seatLimit: DEFAULT_PLAN_SEAT_LIMITS[plan.id] ?? null,
+        seatPricePerAdditional: PLAN_SEAT_PRICING[plan.id] ?? null,
+        branchLimit: DEFAULT_PLAN_BRANCH_LIMITS[plan.id] ?? null,
+        storageLimitMB: DEFAULT_STORAGE_LIMITS[plan.id] ?? null,
+        storagePrice100GB: STORAGE_PRICING[plan.id] ?? null,
         isActive: true,
         metadata: {}
       });

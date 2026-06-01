@@ -82,6 +82,7 @@ const addDriverRoleToUserAndInviteEnums = require('./add-driver-role-to-user-and
 const addDeliveryAssignmentFields = require('./add-delivery-assignment-fields');
 const backfillJobInvoiceStudioLocations = require('./backfill-job-invoice-studio-locations');
 const createSubscriptionPaymentsTable = require('./create-subscription-payments-table');
+const backfillTrialPlanDefaults = require('./backfill-trial-plan-defaults');
 const createSubscriptionPlansTable = require('./create-subscription-plans-table');
 
 const migrate = async () => {
@@ -323,6 +324,7 @@ const migrate = async () => {
     // SaaS subscription plan catalog + payment ledger
     await createSubscriptionPlansTable.up();
     await createSubscriptionPaymentsTable({ closeConnection: false });
+    await backfillTrialPlanDefaults.up({ closeConnection: false });
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

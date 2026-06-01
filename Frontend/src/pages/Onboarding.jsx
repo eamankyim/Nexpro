@@ -310,7 +310,10 @@ const Onboarding = () => {
       try {
         await dashboardService.getOverview();
       } catch (dashboardError) {
-        console.error('Failed to prefetch dashboard data:', dashboardError);
+        const status = dashboardError?.response?.status;
+        if (status !== 403) {
+          console.error('Failed to prefetch dashboard data:', dashboardError);
+        }
         // Continue even if prefetch fails - dashboard will load on its own
       }
 

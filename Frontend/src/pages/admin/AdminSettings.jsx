@@ -90,6 +90,12 @@ const defaultFormValues = {
   branding: {},
   featureFlags: {},
   communications: {},
+  platformEmail: {
+    provider: 'sendgrid',
+    sendgrid: {},
+    gmail: {},
+    envFallback: {},
+  },
 };
 
 const formatPlanLabel = (name = '') =>
@@ -228,7 +234,7 @@ const AdminSettings = () => {
     defaultValues: {
       planId: '', name: '', order: 0, description: '', isActive: true,
       priceAmount: '', priceCurrency: 'GHS', priceDisplay: '', priceBillingDescription: '',
-      seatLimit: '', seatPricePerAdditional: '', storageLimitMB: '', storagePrice100GB: '',
+      seatLimit: '', seatPricePerAdditional: '', branchLimit: '', storageLimitMB: '', storagePrice100GB: '',
       highlights: '', marketingEnabled: true, marketingPerks: '', marketingPopular: false,
       marketingBadgeLabel: '', onboardingEnabled: true, onboardingSubtitle: '', onboardingIsDefault: false,
     }
@@ -262,11 +268,13 @@ const AdminSettings = () => {
           'platform:branding': branding = {},
           'platform:featureFlags': featureFlags = {},
           'platform:communications': communications = {},
+          'platform:email': platformEmail = defaultFormValues.platformEmail,
         } = response.data || {};
         form.reset({
           branding,
           featureFlags,
           communications,
+          platformEmail,
         });
         setBrandingLogoPreview(branding.logoUrl || '');
       } else {
@@ -322,6 +330,7 @@ const AdminSettings = () => {
     try {
       await adminService.updatePlatformSettings(values);
       await adminService.updateFeatureMatrix(featureMatrix);
+      await loadPlatformSettings();
       showSuccess('Settings and feature table updated');
     } catch (error) {
       console.error('Failed to update platform settings', error);
@@ -661,7 +670,7 @@ const AdminSettings = () => {
     planForm.reset({
       planId: '', name: '', order: 0, description: '', isActive: true,
       priceAmount: '', priceCurrency: 'GHS', priceDisplay: '', priceBillingDescription: '',
-      seatLimit: '', seatPricePerAdditional: '', storageLimitMB: '', storagePrice100GB: '',
+      seatLimit: '', seatPricePerAdditional: '', branchLimit: '', storageLimitMB: '', storagePrice100GB: '',
       highlights: '', marketingEnabled: true, marketingPerks: '', marketingPopular: false,
       marketingBadgeLabel: '', onboardingEnabled: true, onboardingSubtitle: '', onboardingIsDefault: false,
       selectedEnterpriseTier: 'business',
@@ -683,6 +692,7 @@ const AdminSettings = () => {
       priceBillingDescription: plan.price?.billingDescription,
       seatLimit: plan.seatLimit ?? '',
       seatPricePerAdditional: plan.seatPricePerAdditional ?? '',
+      branchLimit: plan.branchLimit ?? '',
       storageLimitMB: plan.storageLimitMB ?? '',
       storagePrice100GB: plan.storagePrice100GB ?? '',
       highlights: plan.highlights?.join('\n') || '',
@@ -703,12 +713,17 @@ const AdminSettings = () => {
 
   const watchedPlanId = useWatch({ control: planForm.control, name: 'planId' });
   const watchedEnterpriseTier = useWatch({ control: planForm.control, name: 'selectedEnterpriseTier' });
+  const platformEmailProvider = useWatch({ control: form.control, name: 'platformEmail.provider' }) || 'sendgrid';
+  const platformEmailSendgrid = useWatch({ control: form.control, name: 'platformEmail.sendgrid' }) || {};
+  const platformEmailGmail = useWatch({ control: form.control, name: 'platformEmail.gmail' }) || {};
+  const platformEmailEnvFallback = useWatch({ control: form.control, name: 'platformEmail.envFallback' }) || {};
   const isEnterprisePlanForm = String(watchedPlanId || '').toLowerCase() === 'enterprise';
 
   const handleEnterpriseTierChange = useCallback((tierId) => {
     planForm.setValue('selectedEnterpriseTier', tierId);
     const limits = applyEnterpriseTierToLimits(tierId);
     planForm.setValue('seatLimit', limits.seatLimit);
+    planForm.setValue('branchLimit', limits.branchLimit);
     planForm.setValue('storageLimitMB', limits.storageLimitMB);
   }, [planForm]);
 
@@ -768,6 +783,7 @@ const AdminSettings = () => {
         },
         seatLimit: values.seatLimit || null,
         seatPricePerAdditional: values.seatPricePerAdditional || null,
+        branchLimit: values.branchLimit || null,
         storageLimitMB: values.storageLimitMB || null,
         storagePrice100GB: values.storagePrice100GB || null,
         highlights: values.highlights ? values.highlights.split('\n').filter(Boolean) : [],
@@ -797,6 +813,7 @@ const AdminSettings = () => {
         };
         if (tier) {
           planData.seatLimit = tier.seatLimit;
+          planData.branchLimit = tier.branchLimit;
           planData.storageLimitMB = tier.storageLimitMB;
         }
       }
@@ -889,6 +906,16 @@ const AdminSettings = () => {
             )}
           </span>
         );
+      },
+    },
+    {
+      title: 'Branches',
+      key: 'branches',
+      render: (_, record) => {
+        if (record.branchLimit === null || record.branchLimit === undefined) {
+          return <Badge variant="secondary">Unlimited</Badge>;
+        }
+        return <span>{record.branchLimit} branches</span>;
       },
     },
     {
@@ -1169,6 +1196,180 @@ const AdminSettings = () => {
               </div>
             </TabsContent>
             <TabsContent value="communications" className="mt-6 space-y-4">
+              <div className="rounded-lg border border-border p-4 space-y-4">
+                <div>
+                  <h3 className="font-semibold">Platform email provider</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Used for account and system emails such as verification, password reset, OTP, and platform invites.
+                  </p>
+                </div>
+                <FormField
+                  control={form.control}
+                  name="platformEmail.provider"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Provider</FormLabel>
+                      <Select value={field.value || 'sendgrid'} onValueChange={field.onChange}>
+                        <FormControl>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select provider" />
+                          </SelectTrigger>
+                        </FormControl>
+                        <SelectContent>
+                          <SelectItem value="sendgrid">SendGrid</SelectItem>
+                          <SelectItem value="gmail">Gmail SMTP</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <FormDescription>
+                        Saved credentials are encrypted at rest when the server encryption key is configured.
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                {platformEmailProvider === 'sendgrid' && (
+                  <div className="space-y-4 rounded-lg border border-border p-4 bg-muted/30">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant={platformEmailSendgrid.apiKeyConfigured ? 'secondary' : 'outline'}>
+                        SendGrid key {platformEmailSendgrid.apiKeyConfigured ? `saved ${platformEmailSendgrid.apiKeyMasked || ''}` : 'not saved'}
+                      </Badge>
+                      <Badge variant={platformEmailEnvFallback.sendgridConfigured ? 'secondary' : 'outline'}>
+                        Env fallback {platformEmailEnvFallback.sendgridConfigured ? 'configured' : 'missing'}
+                      </Badge>
+                    </div>
+                    <FormField
+                      control={form.control}
+                      name="platformEmail.sendgrid.apiKey"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>SendGrid API key</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="password"
+                              autoComplete="off"
+                              placeholder={platformEmailSendgrid.apiKeyConfigured ? 'Leave blank to keep saved API key' : 'SG.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}
+                              {...field}
+                              value={field.value || ''}
+                            />
+                          </FormControl>
+                          <FormDescription>Leaving this blank keeps the saved key.</FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="platformEmail.sendgrid.fromEmail"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Sender email</FormLabel>
+                            <FormControl>
+                              <Input type="email" placeholder="info@africanbusinesssuite.com" {...field} value={field.value || ''} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="platformEmail.sendgrid.fromName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Sender name</FormLabel>
+                            <FormControl>
+                              <Input placeholder="ABS" {...field} value={field.value || ''} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </div>
+                )}
+                {platformEmailProvider === 'gmail' && (
+                  <div className="space-y-4 rounded-lg border border-border p-4 bg-muted/30">
+                    <div className="flex flex-wrap gap-2">
+                      <Badge variant={platformEmailGmail.passwordConfigured ? 'secondary' : 'outline'}>
+                        Gmail password {platformEmailGmail.passwordConfigured ? `saved ${platformEmailGmail.passwordMasked || ''}` : 'not saved'}
+                      </Badge>
+                      <Badge variant={platformEmailEnvFallback.gmailConfigured ? 'secondary' : 'outline'}>
+                        Env fallback {platformEmailEnvFallback.gmailConfigured ? 'configured' : 'missing'}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="platformEmail.gmail.user"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Gmail address</FormLabel>
+                            <FormControl>
+                              <Input type="email" placeholder="youraccount@gmail.com" {...field} value={field.value || ''} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="platformEmail.gmail.password"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Gmail app password</FormLabel>
+                            <FormControl>
+                              <Input
+                                type="password"
+                                autoComplete="off"
+                                placeholder={platformEmailGmail.passwordConfigured ? 'Leave blank to keep saved password' : 'Enter app password'}
+                                {...field}
+                                value={field.value || ''}
+                              />
+                            </FormControl>
+                            <FormDescription>Use a Gmail App Password when 2-Step Verification is enabled.</FormDescription>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <FormField
+                        control={form.control}
+                        name="platformEmail.gmail.fromEmail"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Sender email</FormLabel>
+                            <FormControl>
+                              <Input type="email" placeholder="youraccount@gmail.com" {...field} value={field.value || ''} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                      <FormField
+                        control={form.control}
+                        name="platformEmail.gmail.fromName"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>Sender name</FormLabel>
+                            <FormControl>
+                              <Input placeholder="ABS" {...field} value={field.value || ''} />
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    </div>
+                  </div>
+                )}
+                <Alert>
+                  <AlertTitle>Secure configuration</AlertTitle>
+                  <AlertDescription>
+                    Secret values are never returned to this page. If a secret field is blank when you save, the existing saved secret is kept.
+                    Tenant business emails still use each workspace&apos;s Settings &gt; Email configuration.
+                  </AlertDescription>
+                </Alert>
+              </div>
               <FormField
                 control={form.control}
                 name="communications.supportEmail"
@@ -1636,7 +1837,7 @@ const AdminSettings = () => {
                           <SelectContent>
                             {ENTERPRISE_TIER_OPTIONS.map((tier) => (
                               <SelectItem key={tier.id} value={tier.id}>
-                                {tier.name} — GHS {tier.licenseFeeGhs.toLocaleString()} ({tier.seatLimit} users, {tier.storageLimitGB} GB)
+                                {tier.name} — GHS {tier.licenseFeeGhs.toLocaleString()} ({tier.seatLimit} users, {tier.branchLimit} branches, {tier.storageLimitGB} GB)
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -1664,7 +1865,7 @@ const AdminSettings = () => {
                     <FormItem>
                       <FormLabel>Maximum Seats</FormLabel>
                       <FormControl>
-                        <Input type="number" min={1} max={1000} placeholder="e.g., 5, 15, or leave empty" {...field} value={field.value ?? ''} onChange={(e) => field.onChange(e.target.value)} />
+                        <Input type="number" min={1} max={1000} placeholder="e.g., 1, 3, or leave empty" {...field} value={field.value ?? ''} onChange={(e) => field.onChange(e.target.value)} />
                       </FormControl>
                       <FormDescription>Leave empty for unlimited seats</FormDescription>
                       <FormMessage />
@@ -1684,6 +1885,24 @@ const AdminSettings = () => {
                         </div>
                       </FormControl>
                       <FormDescription>Cost to add seats beyond base limit</FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <p className="font-semibold mt-4">Branch Limits</p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <FormField
+                  control={planForm.control}
+                  name="branchLimit"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Maximum Branches / Locations / Shops</FormLabel>
+                      <FormControl>
+                        <Input type="number" min={1} max={1000} placeholder="e.g., 1, 3, or leave empty" {...field} value={field.value ?? ''} onChange={(e) => field.onChange(e.target.value)} />
+                      </FormControl>
+                      <FormDescription>Leave empty for unlimited branches</FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -1737,7 +1956,7 @@ const AdminSettings = () => {
                       </Button>
                     </FormLabel>
                     <FormControl>
-                      <Textarea rows={3} placeholder="Unlimited invoices & jobs&#10;Up to 5 team members" {...field} />
+                      <Textarea rows={3} placeholder="Unlimited invoices & jobs&#10;1 user&#10;1 branch/location/shop" {...field} />
                     </FormControl>
                     <FormDescription>One highlight per line (or click auto-generate)</FormDescription>
                     <FormMessage />
@@ -1798,7 +2017,7 @@ const AdminSettings = () => {
                       </Button>
                     </FormLabel>
                     <FormControl>
-                      <Textarea rows={3} placeholder="Up to 5 seats&#10;Email support" {...field} />
+                      <Textarea rows={3} placeholder="1 user&#10;1 branch/location/shop&#10;Email support" {...field} />
                     </FormControl>
                     <FormDescription>One perk per line (or click auto-generate)</FormDescription>
                     <FormMessage />

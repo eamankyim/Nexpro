@@ -3,7 +3,10 @@ const {
   FEATURE_CATALOG,
   FEATURE_CATEGORIES,
   DEFAULT_PLAN_SEAT_LIMITS,
+  DEFAULT_PLAN_BRANCH_LIMITS,
   PLAN_SEAT_PRICING,
+  DEFAULT_STORAGE_LIMITS,
+  STORAGE_PRICING,
   getFeatureFlagsForPlan,
   getFeaturesByCategory,
 } = require('../config/features');
@@ -20,13 +23,19 @@ const { MODULES, ALL_FEATURES } = require('../config/modules');
 const { getStorageUsageSummary } = require('../utils/storageLimitHelper');
 const paystackService = require('../services/paystackService');
 const { syncCanonicalPlansToDatabase } = require('../services/subscriptionPlanCatalogService');
+const {
+  PROVIDERS: PLATFORM_EMAIL_PROVIDERS,
+  getPlatformEmailSettingsSummary,
+  savePlatformEmailSettings,
+} = require('../services/platformEmailSettingsService');
 const { sequelize } = require('../config/database');
 const { Op } = require('sequelize');
 
 const CORE_SETTINGS_KEYS = [
   'platform:branding',
   'platform:featureFlags',
-  'platform:communications'
+  'platform:communications',
+  'platform:email'
 ];
 
 exports.getPlatformSettings = async (req, res, next) => {
@@ -49,6 +58,8 @@ exports.getPlatformSettings = async (req, res, next) => {
       }
     });
 
+    payload['platform:email'] = await getPlatformEmailSettingsSummary();
+
     res.status(200).json({
       success: true,
       data: payload
@@ -60,7 +71,13 @@ exports.getPlatformSettings = async (req, res, next) => {
 
 exports.updatePlatformSettings = async (req, res, next) => {
   try {
-    const { branding, featureFlags, communications } = req.body || {};
+    const { branding, featureFlags, communications, platformEmail } = req.body || {};
+    if (platformEmail?.provider && !PLATFORM_EMAIL_PROVIDERS.includes(String(platformEmail.provider).toLowerCase())) {
+      return res.status(400).json({
+        success: false,
+        message: 'Unsupported platform email provider. Choose SendGrid or Gmail.'
+      });
+    }
 
     const upserts = [
       {
@@ -76,6 +93,13 @@ exports.updatePlatformSettings = async (req, res, next) => {
         value: communications
       }
     ];
+
+    if (platformEmail !== undefined) {
+      await savePlatformEmailSettings({
+        payload: platformEmail,
+        userId: req.user?.id,
+      });
+    }
 
     await Promise.all(
       upserts.map(async ({ key, value }) => {
@@ -198,6 +222,7 @@ exports.createSubscriptionPlan = async (req, res, next) => {
       metadata,
       seatLimit,
       seatPricePerAdditional,
+      branchLimit,
       storageLimitMB,
       storagePrice100GB,
     } = req.body;
@@ -227,6 +252,7 @@ exports.createSubscriptionPlan = async (req, res, next) => {
         seatPricePerAdditional !== undefined && seatPricePerAdditional !== ''
           ? Number(seatPricePerAdditional)
           : null,
+      branchLimit: branchLimit !== undefined && branchLimit !== '' ? Number(branchLimit) : null,
       storageLimitMB:
         storageLimitMB !== undefined && storageLimitMB !== '' ? Number(storageLimitMB) : null,
       storagePrice100GB:
@@ -274,6 +300,7 @@ exports.updateSubscriptionPlan = async (req, res, next) => {
       metadata,
       seatLimit,
       seatPricePerAdditional,
+      branchLimit,
       storageLimitMB,
       storagePrice100GB,
     } = req.body;
@@ -312,6 +339,12 @@ exports.updateSubscriptionPlan = async (req, res, next) => {
             ? null
             : Number(seatPricePerAdditional)
           : plan.seatPricePerAdditional,
+      branchLimit:
+        branchLimit !== undefined
+          ? branchLimit === '' || branchLimit === null
+            ? null
+            : Number(branchLimit)
+          : plan.branchLimit,
       storageLimitMB:
         storageLimitMB !== undefined
           ? storageLimitMB === '' || storageLimitMB === null
@@ -408,6 +441,7 @@ exports.getFeatureCatalog = async (req, res, next) => {
         features: FEATURE_CATALOG,
         categories: FEATURE_CATEGORIES,
         seatLimits: DEFAULT_PLAN_SEAT_LIMITS,
+        branchLimits: DEFAULT_PLAN_BRANCH_LIMITS,
         featuresByCategory: getFeaturesByCategory()
       }
     });
@@ -556,6 +590,11 @@ exports.updateFeaturePlanMatrix = async (req, res, next) => {
           highlights: [],
           marketing: {},
           onboarding: {},
+          seatLimit: DEFAULT_PLAN_SEAT_LIMITS[planId] ?? null,
+          seatPricePerAdditional: PLAN_SEAT_PRICING[planId] ?? null,
+          branchLimit: DEFAULT_PLAN_BRANCH_LIMITS[planId] ?? null,
+          storageLimitMB: DEFAULT_STORAGE_LIMITS[planId] ?? null,
+          storagePrice100GB: STORAGE_PRICING[planId] ?? null,
           isActive: true,
           metadata: { autoCreatedFrom: 'feature-matrix' },
         },

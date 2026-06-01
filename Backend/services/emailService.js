@@ -83,10 +83,26 @@ class EmailService {
   /**
    * Get platform email configuration from environment (for system emails: password reset, welcome, etc.).
    * Platform pays for these; businesses do not configure this.
+   * @param {string} [providerOverride] - Optional persisted provider selection from platform settings.
    * @returns {Object|null} - Config object or null if not configured
    */
-  getPlatformConfig() {
-    const provider = (process.env.PLATFORM_EMAIL_PROVIDER || 'smtp').toLowerCase();
+  getPlatformConfig(providerOverride = null) {
+    const provider = (providerOverride || process.env.PLATFORM_EMAIL_PROVIDER || 'smtp').toString().toLowerCase();
+    if (provider === 'gmail') {
+      const user = process.env.PLATFORM_GMAIL_USER || process.env.GMAIL_USER || process.env.PLATFORM_SMTP_USER || process.env.PLATFORM_EMAIL_SMTP_USER;
+      const pass = process.env.PLATFORM_GMAIL_APP_PASSWORD || process.env.GMAIL_APP_PASSWORD || process.env.PLATFORM_GMAIL_PASSWORD || process.env.GMAIL_PASSWORD || process.env.PLATFORM_SMTP_PASSWORD || process.env.PLATFORM_EMAIL_SMTP_PASSWORD;
+      if (!user || !pass) return null;
+      return {
+        provider: 'gmail',
+        smtpHost: process.env.PLATFORM_GMAIL_SMTP_HOST || 'smtp.gmail.com',
+        smtpPort: parseInt(process.env.PLATFORM_GMAIL_SMTP_PORT || process.env.PLATFORM_SMTP_PORT || process.env.PLATFORM_EMAIL_SMTP_PORT || '465', 10),
+        smtpUser: user,
+        smtpPassword: pass,
+        smtpRejectUnauthorized: process.env.PLATFORM_SMTP_REJECT_UNAUTHORIZED !== 'false',
+        fromEmail: process.env.PLATFORM_EMAIL_FROM || user,
+        fromName: process.env.PLATFORM_EMAIL_FROM_NAME || process.env.APP_NAME || 'African Business Suite'
+      };
+    }
     if (provider === 'smtp') {
       const host = process.env.PLATFORM_SMTP_HOST || process.env.PLATFORM_EMAIL_SMTP_HOST;
       const user = process.env.PLATFORM_SMTP_USER || process.env.PLATFORM_EMAIL_SMTP_USER;
@@ -145,6 +161,21 @@ class EmailService {
   }
 
   /**
+   * Resolve platform email config using persisted admin settings first, then ENV for bootstrapping.
+   * @returns {Promise<Object|null>} - Config object or null if not configured
+   */
+  async resolvePlatformConfig() {
+    try {
+      const { getSavedPlatformEmailConfig } = require('./platformEmailSettingsService');
+      const savedConfig = await getSavedPlatformEmailConfig();
+      return savedConfig || this.getPlatformConfig();
+    } catch (error) {
+      console.error('[Email] Error resolving platform email config:', this.maskEmailsInText(error.message));
+      return this.getPlatformConfig();
+    }
+  }
+
+  /**
    * Send system email using platform config (password reset, welcome, etc.). Platform pays; no tenant config used.
    * @param {string} to - Recipient email
    * @param {string} subject - Subject
@@ -162,7 +193,7 @@ class EmailService {
     const subjectShort = subject ? subject.substring(0, 50) : '';
 
     try {
-      const config = this.getPlatformConfig();
+      const config = await this.resolvePlatformConfig();
       if (!config) {
         console.warn(`${logPrefix}[platform_send_skip]${contextText} to=${toMask} subject="${subjectShort}" reason=platform_not_configured`);
         return { success: false, error: 'Platform email not configured' };
@@ -430,6 +461,7 @@ class EmailService {
 
     switch (provider) {
       case 'smtp':
+      case 'gmail':
         return nodemailer.createTransport({
           ...poolOpts,
           host: config.smtpHost,

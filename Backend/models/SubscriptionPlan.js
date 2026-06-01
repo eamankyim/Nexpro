@@ -65,6 +65,11 @@ const SubscriptionPlan = sequelize.define(
       allowNull: true,
       comment: 'Price per additional seat beyond base limit (null = cannot add seats)'
     },
+    branchLimit: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      comment: 'Maximum number of branches/locations/shops allowed (null = unlimited)'
+    },
     storageLimitMB: {
       type: DataTypes.INTEGER,
       allowNull: true,

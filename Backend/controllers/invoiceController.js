@@ -1318,11 +1318,13 @@ exports.sendInvoice = async (req, res, next) => {
     });
 
     // Send WhatsApp notification if enabled, customer has phone, and auto-send is on
+    const { isChannelEnabledForEvent } = require('../services/messageDeliveryRulesService');
     if (autoSendInvoice) {
     try {
+      const whatsappAllowed = await isChannelEnabledForEvent(req.tenantId, 'invoice_sent', 'whatsapp');
       const whatsappService = require('../services/whatsappService');
       const whatsappTemplates = require('../services/whatsappTemplates');
-      const config = await whatsappService.getConfig(req.tenantId);
+      const config = whatsappAllowed ? await whatsappService.getConfig(req.tenantId) : null;
       
       if (config && updatedInvoice.customer && updatedInvoice.customer.phone) {
         const phoneNumber = whatsappService.validatePhoneNumber(updatedInvoice.customer.phone);
@@ -1361,12 +1363,13 @@ exports.sendInvoice = async (req, res, next) => {
     let emailError = null;
     if (autoSendInvoice) {
     try {
+      const emailAllowed = await isChannelEnabledForEvent(req.tenantId, 'invoice_sent', 'email');
       const emailService = require('../services/emailService');
       const emailTemplates = require('../services/emailTemplates');
       const { Tenant } = require('../models');
       
       // Check if customer has email
-      if (updatedInvoice.customer && updatedInvoice.customer.email) {
+      if (emailAllowed && updatedInvoice.customer && updatedInvoice.customer.email) {
         const company = await companyFromInvoice(updatedInvoice);
         
         // Prepare invoice items for email
@@ -1433,8 +1436,9 @@ exports.sendInvoice = async (req, res, next) => {
     let smsSent = false;
     if (autoSendInvoice) {
     try {
+      const smsAllowed = await isChannelEnabledForEvent(req.tenantId, 'invoice_sent', 'sms');
       const smsService = require('../services/smsService');
-      const smsConfig = await smsService.getResolvedConfig(req.tenantId);
+      const smsConfig = smsAllowed ? await smsService.getResolvedConfig(req.tenantId) : null;
       if (smsConfig && updatedInvoice.customer && updatedInvoice.customer.phone) {
         const smsPhone = smsService.validatePhoneNumber(updatedInvoice.customer.phone);
         if (smsPhone && smsService.checkRateLimit(req.tenantId)) {

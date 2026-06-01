@@ -1388,6 +1388,40 @@ exports.getNotificationChannels = async (req, res, next) => {
   }
 };
 
+// @desc    Get per-event message delivery rules (channel toggles; templates owned by ABS).
+// @route   GET /api/settings/message-delivery-rules
+// @access  Private (admin/manager)
+exports.getMessageDeliveryRules = async (req, res, next) => {
+  try {
+    const messageDeliveryRulesService = require('../services/messageDeliveryRulesService');
+    const data = await messageDeliveryRulesService.getDeliveryRulesResponse(req.tenantId);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update per-event message delivery rules.
+// @route   PUT /api/settings/message-delivery-rules
+// @access  Private (admin/manager)
+exports.updateMessageDeliveryRules = async (req, res, next) => {
+  try {
+    const messageDeliveryRulesService = require('../services/messageDeliveryRulesService');
+    const payload = sanitizePayload(req.body);
+    if (!payload?.events || typeof payload.events !== 'object') {
+      return res.status(400).json({
+        success: false,
+        message: 'events object is required',
+      });
+    }
+    await messageDeliveryRulesService.saveDeliveryRules(req.tenantId, payload);
+    const data = await messageDeliveryRulesService.getDeliveryRulesResponse(req.tenantId);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
 // @desc    Update customer notification preferences (auto-send invoice, auto-send receipt).
 // @route   PUT /api/settings/customer-notification-preferences
 // @access  Private

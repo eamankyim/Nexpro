@@ -89,9 +89,15 @@ class PaymentReminderService {
             : `${frontendUrl}/invoices/${invoice.id}`;
 
           let reminderSent = false;
+          const { isChannelEnabledForEvent } = require('./messageDeliveryRulesService');
+          const [whatsappRule, smsRule, emailRule] = await Promise.all([
+            isChannelEnabledForEvent(invoice.tenantId, 'payment_reminder', 'whatsapp'),
+            isChannelEnabledForEvent(invoice.tenantId, 'payment_reminder', 'sms'),
+            isChannelEnabledForEvent(invoice.tenantId, 'payment_reminder', 'email'),
+          ]);
 
           // Send WhatsApp if enabled
-          const whatsappConfig = await whatsappService.getConfig(invoice.tenantId);
+          const whatsappConfig = whatsappRule ? await whatsappService.getConfig(invoice.tenantId) : null;
           if (whatsappConfig && whatsappConfig.enabled) {
             const phoneNumber = whatsappService.validatePhoneNumber(invoice.customer.phone);
             if (phoneNumber && whatsappService.checkRateLimit(invoice.tenantId)) {
@@ -128,7 +134,7 @@ class PaymentReminderService {
           }
 
           // Send SMS if enabled (tenant or platform)
-          const smsConfig = await smsService.getResolvedConfig(invoice.tenantId);
+          const smsConfig = smsRule ? await smsService.getResolvedConfig(invoice.tenantId) : null;
           if (smsConfig) {
             const smsPhone = smsService.validatePhoneNumber(invoice.customer.phone);
             if (smsPhone && smsService.checkRateLimit(invoice.tenantId)) {
@@ -147,7 +153,7 @@ class PaymentReminderService {
           // Send email if enabled (optional setting)
           const prefsRow = await Setting.findOne({ where: { tenantId: invoice.tenantId, key: 'customer-notification-preferences' } });
           const prefs = prefsRow?.value || {};
-          if (prefs.sendPaymentReminderEmail === true && invoice.customer?.email) {
+          if (emailRule && prefs.sendPaymentReminderEmail === true && invoice.customer?.email) {
             const emailConfig = await emailService.getConfig(invoice.tenantId);
             if (emailConfig) {
               const tenant = await Tenant.findByPk(invoice.tenantId);

@@ -126,6 +126,20 @@ const parseAiInsightResponse = (message = '') => {
 const SHARP_DASHBOARD_DECLINE_PERCENTAGE = -50;
 const SIGNIFICANT_DAILY_BASELINE_PERCENTAGE = 15;
 
+const getApiStatus = (error) => error?.response?.status;
+const getApiErrorCode = (error) => error?.response?.data?.errorCode;
+const getApiMessage = (error) => error?.response?.data?.message || error?.response?.data?.error;
+
+const isSubscriptionLockedError = (error) =>
+  getApiStatus(error) === 403 && getApiErrorCode(error) === 'SUBSCRIPTION_LOCKED';
+
+const isDashboardAccessDeniedError = (error) => getApiStatus(error) === 403;
+
+const isBillingLocked = (billingStatus) =>
+  billingStatus?.canAccessApp === false ||
+  billingStatus?.billingStatus === 'locked' ||
+  billingStatus?.billingStatus === 'suspended';
+
 const toFiniteNumber = (value, fallback = 0) => {
   const numberValue = Number(value);
   return Number.isFinite(numberValue) ? numberValue : fallback;
@@ -284,7 +298,7 @@ const buildBusinessHealthOverrideInsight = ({ businessHealthContext }) => {
 
 const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, activeTenant, tenantRole, wasInvited, suppressAppGuidance } = useAuth();
+  const { user, activeTenant, tenantRole, wasInvited, suppressAppGuidance, billingStatus } = useAuth();
   const {
     activeTenantId,
     activeShopId,
@@ -307,7 +321,7 @@ const Dashboard = () => {
     };
   });
 
-  const { data: overviewResponse, isLoading: overviewLoading, isError: overviewError, refetch: refetchOverview, isFetched: overviewFetched } = useQuery({
+  const { data: overviewResponse, isLoading: overviewLoading, isError: overviewError, error: overviewQueryError, refetch: refetchOverview, isFetched: overviewFetched } = useQuery({
     queryKey: ['dashboard', 'overview', activeTenantId, activeShopId, activeStudioLocationId, overviewParams.startDate, overviewParams.endDate, overviewParams.filterType],
     queryFn: () => dashboardService.getOverview(overviewParams.startDate, overviewParams.endDate, overviewParams.filterType),
     enabled: scopeReady,
@@ -316,6 +330,7 @@ const Dashboard = () => {
     // Keep dashboard figures fresh after payments/invoice changes without manual refresh.
     refetchInterval: 2 * 60 * 1000,
     refetchIntervalInBackground: false,
+    retry: (failureCount, error) => !isDashboardAccessDeniedError(error) && failureCount < 1,
   });
   const overview = useMemo(
     () => (overviewResponse ? overviewResponse?.data || overviewResponse : null),
@@ -334,9 +349,21 @@ const Dashboard = () => {
     enabled: !!activeTenantId,
   });
 
+  const expectedDashboardAccessError = useMemo(
+    () => isDashboardAccessDeniedError(overviewQueryError),
+    [overviewQueryError]
+  );
+
+  const subscriptionLocked = useMemo(
+    () => isSubscriptionLockedError(overviewQueryError) || isBillingLocked(billingStatus),
+    [overviewQueryError, billingStatus]
+  );
+
   useEffect(() => {
-    if (overviewError) showError(null, 'Failed to load dashboard. Please try again.');
-  }, [overviewError]);
+    if (overviewError && !expectedDashboardAccessError) {
+      showError(overviewQueryError, 'Failed to load dashboard. Please try again.');
+    }
+  }, [overviewError, expectedDashboardAccessError, overviewQueryError]);
 
   const fetchDashboardData = useCallback((startDate = null, endDate = null, filterType = null) => {
     const today = dayjs();
@@ -867,7 +894,57 @@ const Dashboard = () => {
     );
   }
 
-  // Actual failure (request failed) — show error state with retry, not empty dashboard
+  if (overviewError && !overview && subscriptionLocked) {
+    const errorData = overviewQueryError?.response?.data || {};
+    const checkoutUrl = errorData.checkoutUrl || '/checkout';
+    const lockMessage =
+      errorData.message ||
+      'Your subscription needs attention before this workspace can load dashboard data.';
+
+    return (
+      <Card className="border-border">
+        <CardContent className="flex flex-col items-center justify-center py-12 px-6 text-center">
+          <Wallet className="h-12 w-12 text-primary mb-4" />
+          <h3 className="text-lg font-semibold text-foreground mb-1">Renew your subscription</h3>
+          <p className="text-sm text-muted-foreground mb-6 max-w-md">
+            {lockMessage}
+          </p>
+          <Button
+            onClick={() => {
+              if (/^https?:\/\//i.test(checkoutUrl)) {
+                window.location.assign(checkoutUrl);
+                return;
+              }
+              navigate(checkoutUrl);
+            }}
+            className="bg-brand hover:bg-brand-dark text-white"
+          >
+            Go to billing
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (overviewError && !overview && expectedDashboardAccessError) {
+    const message =
+      getApiMessage(overviewQueryError) ||
+      'You do not have permission to view this dashboard. Contact your workspace administrator.';
+
+    return (
+      <Card className="border-border">
+        <CardContent className="flex flex-col items-center justify-center py-12 px-6 text-center">
+          <AlertTriangle className="h-12 w-12 text-amber-500 mb-4" />
+          <h3 className="text-lg font-semibold text-foreground mb-1">Dashboard access unavailable</h3>
+          <p className="text-sm text-muted-foreground max-w-md">
+            {message}
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Actual failure (request failed) - show error state with retry, not empty dashboard
   if (overviewError && !overview) {
     return (
       <Card className="border-border">

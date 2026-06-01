@@ -50,6 +50,16 @@ describe('subscriptionBillingService', () => {
       expect(billing.canAccessApp).toBe(true);
     });
 
+    it('returns trialing with access when trial plan has no trialEndsAt', async () => {
+      const billing = await resolveBillingStatus(
+        baseTenant({ trialEndsAt: null }),
+        { at: new Date('2026-01-01'), subscriptionSetting: {} }
+      );
+      expect(billing.billingStatus).toBe('trialing');
+      expect(billing.canAccessApp).toBe(true);
+      expect(billing.plan).toBe('trial');
+    });
+
     it('returns manual_override when billingOverride is unlocked', async () => {
       const billing = await resolveBillingStatus(
         baseTenant({

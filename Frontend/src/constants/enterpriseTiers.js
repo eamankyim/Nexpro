@@ -42,9 +42,10 @@ export const getEnterpriseTier = (tierId) => {
 
 export const applyEnterpriseTierToLimits = (tierId) => {
   const tier = getEnterpriseTier(tierId);
-  if (!tier) return { seatLimit: '', storageLimitMB: '' };
+  if (!tier) return { seatLimit: '', branchLimit: '', storageLimitMB: '' };
   return {
     seatLimit: String(tier.seatLimit),
+    branchLimit: String(tier.branchLimit),
     storageLimitMB: String(tier.storageLimitMB),
   };
 };

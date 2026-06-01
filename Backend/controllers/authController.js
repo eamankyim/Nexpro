@@ -88,6 +88,20 @@ const toPlainJsonSafe = (value) => {
 const normalizeMembershipsForResponse = (memberships = []) =>
   (memberships || []).map((membership) => normalizeMembershipForResponse(membership));
 
+const { buildTrialSubscriptionSettingValue } = require('../utils/subscriptionDefaults');
+
+const ensureTrialSubscriptionSetting = async (tenantId, trialEndDate, options = {}) =>
+  Setting.findOrCreate({
+    where: { tenantId, key: 'subscription' },
+    defaults: {
+      tenantId,
+      key: 'subscription',
+      value: buildTrialSubscriptionSettingValue(trialEndDate),
+      description: 'Subscription and billing information',
+    },
+    transaction: options.transaction,
+  });
+
 /**
  * @desc    Check if an email is already registered
  * @route   POST /api/auth/check-email
@@ -1764,6 +1778,7 @@ exports.sabitoSSO = async (req, res, next) => {
           invitedAt: new Date(),
           joinedAt: new Date()
         });
+        await ensureTrialSubscriptionSetting(defaultTenant.id, trialEndDate);
         
         console.log('[SSO POST] ✅ UserTenant relationship created');
       }
@@ -1859,6 +1874,7 @@ exports.sabitoSSO = async (req, res, next) => {
           invitedAt: new Date(),
           joinedAt: new Date()
         });
+        await ensureTrialSubscriptionSetting(defaultTenant.id, trialEndDate);
         
         console.log('[SSO POST] ✅ UserTenant relationship created for existing user');
         

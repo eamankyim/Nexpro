@@ -24,6 +24,8 @@ const {
   updateEmailSettings,
   testEmailConnection,
   getNotificationChannels,
+  getMessageDeliveryRules,
+  updateMessageDeliveryRules,
   updateCustomerNotificationPreferences,
   getQuoteWorkflow,
   updateQuoteWorkflow,
@@ -158,6 +160,10 @@ router.post(
 );
 
 router.get('/notification-channels', getNotificationChannels);
+router
+  .route('/message-delivery-rules')
+  .get(authorize('admin', 'manager'), getMessageDeliveryRules)
+  .put(authorize('admin', 'manager'), updateMessageDeliveryRules);
 router.put(
   '/customer-notification-preferences',
   authorize('admin', 'manager'),

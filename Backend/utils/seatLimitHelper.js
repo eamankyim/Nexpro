@@ -26,35 +26,38 @@ async function getTenantSeatLimit(tenantId) {
     throw new Error('Tenant not found');
   }
 
+  const normalizedPlan = String(tenant.plan || '').trim().toLowerCase() || 'trial';
+
   // First try to get from database
   const plan = await SubscriptionPlan.findOne({
-    where: { planId: tenant.plan, isActive: true }
+    where: { planId: normalizedPlan, isActive: true }
   });
 
-  if (plan) {
-    if (tenant.plan === 'enterprise') {
-      const enterprise = resolveEnterpriseLimits(tenant, plan);
-      return {
-        limit: enterprise.seatLimit,
-        pricePerAdditional: plan.seatPricePerAdditional,
-        planName: enterprise.tierName || plan.name,
-        enterpriseTier: enterprise.tierId,
-        source: enterprise.source,
-      };
-    }
+  if (normalizedPlan === 'enterprise') {
+    const enterprise = resolveEnterpriseLimits(tenant, plan);
     return {
-      limit: plan.seatLimit,
+      limit: enterprise.seatLimit,
+      pricePerAdditional: plan?.seatPricePerAdditional,
+      planName: enterprise.tierName || plan?.name || 'Enterprise',
+      enterpriseTier: enterprise.tierId,
+      source: enterprise.source,
+    };
+  }
+
+  if (plan) {
+    return {
+      limit: plan.seatLimit ?? DEFAULT_PLAN_SEAT_LIMITS[normalizedPlan] ?? null,
       pricePerAdditional: plan.seatPricePerAdditional,
       planName: plan.name,
-      source: 'database',
+      source: plan.seatLimit != null ? 'database' : 'config',
     };
   }
 
   // Fallback to config
   return {
-    limit: DEFAULT_PLAN_SEAT_LIMITS[tenant.plan] || null,
+    limit: DEFAULT_PLAN_SEAT_LIMITS[normalizedPlan] ?? null,
     pricePerAdditional: null,
-    planName: tenant.plan,
+    planName: normalizedPlan,
     source: 'config'
   };
 }

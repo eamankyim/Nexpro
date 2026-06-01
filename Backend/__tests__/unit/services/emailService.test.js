@@ -17,12 +17,16 @@ const nodemailer = require('nodemailer');
 const { Setting } = require('../../../models');
 const emailService = require('../../../services/emailService');
 
+const ORIGINAL_ENV = process.env;
+
 describe('emailService diagnostics', () => {
   let errorSpy;
   let logSpy;
 
   beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
     jest.clearAllMocks();
+    Setting.findOne.mockResolvedValue(null);
     emailService.rateLimitCache.clear();
     errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     logSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
@@ -31,6 +35,7 @@ describe('emailService diagnostics', () => {
   afterEach(() => {
     errorSpy.mockRestore();
     logSpy.mockRestore();
+    process.env = ORIGINAL_ENV;
   });
 
   it('masks email addresses in tenant audit output', () => {
@@ -61,6 +66,90 @@ describe('emailService diagnostics', () => {
 
     expect(diag.smtpUserMasked).toBe('***');
     expect(JSON.stringify(diag)).not.toContain('mj_api_key_123');
+  });
+
+  it('builds platform Gmail config from app-password env vars', () => {
+    process.env.PLATFORM_EMAIL_PROVIDER = 'gmail';
+    process.env.PLATFORM_GMAIL_USER = 'platform@gmail.com';
+    process.env.PLATFORM_GMAIL_APP_PASSWORD = 'app-password';
+    process.env.APP_NAME = 'ABS';
+
+    const config = emailService.getPlatformConfig();
+
+    expect(config).toMatchObject({
+      provider: 'gmail',
+      smtpHost: 'smtp.gmail.com',
+      smtpPort: 465,
+      smtpUser: 'platform@gmail.com',
+      smtpPassword: 'app-password',
+      fromEmail: 'platform@gmail.com',
+      fromName: 'ABS',
+    });
+  });
+
+  it('uses persisted platform provider before env provider for system emails', async () => {
+    Setting.findOne.mockResolvedValue({
+      value: {
+        provider: 'gmail',
+        gmail: {
+          user: 'saved-platform@gmail.com',
+          password: 'saved-app-password',
+          fromEmail: 'sender@gmail.com',
+          fromName: 'Saved ABS',
+        },
+      },
+    });
+    process.env.PLATFORM_EMAIL_PROVIDER = 'sendgrid';
+    process.env.PLATFORM_SENDGRID_API_KEY = 'sendgrid-key';
+    process.env.PLATFORM_GMAIL_USER = 'platform@gmail.com';
+    process.env.PLATFORM_GMAIL_APP_PASSWORD = 'app-password';
+
+    const config = await emailService.resolvePlatformConfig();
+
+    expect(config).toMatchObject({
+      provider: 'gmail',
+      smtpHost: 'smtp.gmail.com',
+      smtpUser: 'saved-platform@gmail.com',
+      smtpPassword: 'saved-app-password',
+      fromEmail: 'sender@gmail.com',
+      fromName: 'Saved ABS',
+    });
+  });
+
+  it('sends platform Gmail messages through nodemailer SMTP', async () => {
+    const sendMail = jest.fn().mockResolvedValue({
+      messageId: 'gmail-message-1',
+      responseCode: 250,
+      response: '250 OK',
+    });
+    nodemailer.createTransport.mockReturnValue({ sendMail });
+    process.env.PLATFORM_EMAIL_PROVIDER = 'gmail';
+    process.env.PLATFORM_GMAIL_USER = 'platform@gmail.com';
+    process.env.PLATFORM_GMAIL_APP_PASSWORD = 'app-password';
+    process.env.PLATFORM_EMAIL_FROM_NAME = 'ABS';
+
+    const result = await emailService.sendPlatformMessage(
+      'user@example.com',
+      'Verify your email',
+      '<p>Hello</p>',
+      'Hello'
+    );
+
+    expect(result).toMatchObject({ success: true, messageId: 'gmail-message-1' });
+    expect(nodemailer.createTransport).toHaveBeenCalledWith(expect.objectContaining({
+      host: 'smtp.gmail.com',
+      port: 465,
+      secure: true,
+      auth: {
+        user: 'platform@gmail.com',
+        pass: 'app-password',
+      },
+    }));
+    expect(sendMail).toHaveBeenCalledWith(expect.objectContaining({
+      from: 'ABS <platform@gmail.com>',
+      to: 'user@example.com',
+      subject: 'Verify your email',
+    }));
   });
 
   it('fails tenant sends without falling back when workspace email is missing', async () => {

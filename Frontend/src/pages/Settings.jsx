@@ -9,7 +9,7 @@ import settingsService from '../services/settingsService';
 import whatsappService from '../services/whatsappService';
 import smsService from '../services/smsService';
 import emailService from '../services/emailService';
-import { Camera, User, Mail, UserCog, Loader2, Eye, EyeOff, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard, ChevronDown, Bell, CalendarDays } from 'lucide-react';
+import { Camera, User, Mail, UserCog, Loader2, Eye, EyeOff, Trash2, Moon, Lightbulb, ExternalLink, HelpCircle, CreditCard, ChevronDown, Bell, CalendarDays, Send, Lock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useResponsive } from '../hooks/useResponsive';
@@ -654,6 +654,28 @@ const Settings = () => {
     queryKey: ['settings', 'notification-channels'],
     queryFn: settingsService.getNotificationChannels,
     enabled: canManageOrganization && activeTab === 'messaging'
+  });
+
+  const {
+    data: messageDeliveryRulesData,
+    isLoading: loadingMessageDeliveryRules,
+  } = useQuery({
+    queryKey: ['settings', 'message-delivery-rules'],
+    queryFn: settingsService.getMessageDeliveryRules,
+    enabled: canManageOrganization && activeTab === 'messaging',
+  });
+
+  const updateMessageDeliveryRulesMutation = useMutation({
+    mutationFn: settingsService.updateMessageDeliveryRules,
+    onSuccess: () => {
+      dismissSavingToast();
+      showSuccess('Delivery rules saved');
+      queryClient.invalidateQueries({ queryKey: ['settings', 'message-delivery-rules'] });
+    },
+    onError: (error) => {
+      dismissSavingToast();
+      showError(error?.response?.data?.message || error?.message || 'Failed to save delivery rules');
+    },
   });
 
   const { data: quoteWorkflowData } = useQuery({
@@ -1679,6 +1701,152 @@ const Settings = () => {
       </CardContent>
     </ShadcnCard>
   );
+
+  const DELIVERY_RULE_CATEGORY_LABELS = useMemo(
+    () => ({
+      sales: 'Sales & billing',
+      operations: 'Operations',
+      account: 'Account',
+      security: 'Security',
+    }),
+    []
+  );
+
+  const deliveryRulesByCategory = useMemo(() => {
+    const catalog = messageDeliveryRulesData?.catalog;
+    const events = messageDeliveryRulesData?.events;
+    if (!Array.isArray(catalog) || !events) return [];
+    const grouped = new Map();
+    for (const item of catalog) {
+      const category = item.category || 'other';
+      if (!grouped.has(category)) grouped.set(category, []);
+      grouped.get(category).push({
+        ...item,
+        channels: events[item.key]?.channels || {},
+        locked: events[item.key]?.locked || {},
+      });
+    }
+    return Array.from(grouped.entries()).map(([category, rows]) => ({
+      category,
+      label: DELIVERY_RULE_CATEGORY_LABELS[category] || category,
+      rows,
+    }));
+  }, [messageDeliveryRulesData, DELIVERY_RULE_CATEGORY_LABELS]);
+
+  const handleDeliveryRuleToggle = useCallback(
+    (eventKey, channel, checked) => {
+      const events = messageDeliveryRulesData?.events;
+      if (!events?.[eventKey]) return;
+      if (events[eventKey].locked?.[channel]) return;
+      savingToastDismissRef.current = showLoading('Saving...');
+      updateMessageDeliveryRulesMutation.mutate({
+        events: {
+          [eventKey]: {
+            channels: {
+              ...events[eventKey].channels,
+              [channel]: checked,
+            },
+          },
+        },
+      });
+    },
+    [messageDeliveryRulesData, updateMessageDeliveryRulesMutation]
+  );
+
+  const deliveryRulesTab = canManageOrganization ? (
+    <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
+      <CardHeader className="p-0 md:p-6 pb-2 md:pb-6">
+        <CardTitle className="text-base md:text-2xl flex items-center gap-2">
+          <Send className="h-5 w-5 text-muted-foreground shrink-0" />
+          Delivery Rules
+        </CardTitle>
+        <CardDescription className="text-xs md:text-sm mt-1">
+          Choose which channels may send each system message. Message wording is managed by ABS; you only control Email, SMS, and WhatsApp per event.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-0 md:p-6 pt-0 space-y-4">
+        <Alert>
+          <AlertTitle>Templates are not editable here</AlertTitle>
+          <AlertDescription className="text-xs md:text-sm">
+            Locked toggles are required for security or account messages and cannot be turned off.
+          </AlertDescription>
+        </Alert>
+        {loadingMessageDeliveryRules ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+            <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+            Loading delivery rules…
+          </div>
+        ) : deliveryRulesByCategory.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No delivery rules available.</p>
+        ) : (
+          deliveryRulesByCategory.map(({ category, label, rows }) => (
+            <div key={category} className="rounded-lg border border-border overflow-hidden">
+              <div className="px-3 py-2 md:px-4 md:py-2.5 bg-muted/50 border-b border-border text-sm font-medium">
+                {label}
+              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-[140px]">Message</TableHead>
+                    <TableHead className="text-center w-20">Email</TableHead>
+                    <TableHead className="text-center w-20">SMS</TableHead>
+                    <TableHead className="text-center w-24">WhatsApp</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((row) => (
+                    <TableRow key={row.key}>
+                      <TableCell>
+                        <div className="font-medium text-sm">{row.label}</div>
+                        {row.description ? (
+                          <p className="text-xs text-muted-foreground mt-0.5">{row.description}</p>
+                        ) : null}
+                      </TableCell>
+                      {['email', 'sms', 'whatsapp'].map((channel) => {
+                        const allowed = row.allowedChannels?.includes(channel);
+                        const locked = row.locked?.[channel] === true;
+                        const checked = row.channels?.[channel] === true;
+                        if (!allowed) {
+                          return (
+                            <TableCell key={channel} className="text-center text-muted-foreground text-xs">
+                              —
+                            </TableCell>
+                          );
+                        }
+                        return (
+                          <TableCell key={channel} className="text-center">
+                            <div className="flex flex-col items-center gap-1">
+                              <Switch
+                                checked={checked}
+                                disabled={
+                                  locked ||
+                                  updateMessageDeliveryRulesMutation.isPending
+                                }
+                                onCheckedChange={(value) =>
+                                  handleDeliveryRuleToggle(row.key, channel, value)
+                                }
+                                aria-label={`${row.label} ${channel}`}
+                              />
+                              {locked ? (
+                                <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                  <Lock className="h-3 w-3" aria-hidden />
+                                  Required
+                                </span>
+                              ) : null}
+                            </div>
+                          </TableCell>
+                        );
+                      })}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          ))
+        )}
+      </CardContent>
+    </ShadcnCard>
+  ) : null;
 
   const notificationsTab = (
     <ShadcnCard className="border-0 shadow-none bg-transparent md:border md:bg-card">
@@ -5881,6 +6049,7 @@ const Settings = () => {
         </TabsContent>
         <TabsContent value="messaging">
           <div className="space-y-4 md:space-y-6">
+            {deliveryRulesTab}
             {notificationsTab}
             {integrationTab}
           </div>

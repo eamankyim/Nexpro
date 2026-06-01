@@ -181,6 +181,19 @@ async function resolveBillingStatus(tenantOrId, options = {}) {
   }
 
   const isTrialPlan = plan === 'trial' || !PAID_PLANS.has(plan);
+  if (isTrialPlan && !trialEndsAt) {
+    return {
+      billingStatus: 'trialing',
+      lockReason: null,
+      canAccessApp: true,
+      trialEndsAt: null,
+      currentPeriodEnd: null,
+      graceEndsAt: null,
+      daysRemaining: null,
+      plan: 'trial',
+      activePayment: null,
+    };
+  }
   if (isTrialPlan && trialEndsAt && at < trialEndsAt) {
     return {
       billingStatus: 'trialing',

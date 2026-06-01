@@ -1,5 +1,11 @@
 const { SubscriptionPlan } = require('../models');
-const { getFeatureFlagsForPlan } = require('../config/features');
+const {
+  DEFAULT_PLAN_SEAT_LIMITS,
+  DEFAULT_PLAN_BRANCH_LIMITS,
+  DEFAULT_STORAGE_LIMITS,
+  getFeatureFlagsForPlan,
+} = require('../config/features');
+const { resolveEnterpriseLimits } = require('../config/enterpriseTiers');
 const { applyFeatureGatesToFlags } = require('../config/businessTypes');
 
 const ACCESS_STATES = ['active', 'read_only', 'restricted', 'suspended'];
@@ -23,7 +29,11 @@ const normalizeFeatureOverrides = (overrides) => {
 };
 
 const buildBaseFeatureFlags = (tenantPlan, dbPlan) => {
-  const canonicalFlags = getFeatureFlagsForPlan(tenantPlan);
+  const normalizedPlan = String(tenantPlan || '').trim().toLowerCase() || 'trial';
+  const canonicalFlags = getFeatureFlagsForPlan(normalizedPlan);
+  if (normalizedPlan === 'trial') {
+    return canonicalFlags;
+  }
   if (dbPlan?.marketing?.featureFlags && typeof dbPlan.marketing.featureFlags === 'object') {
     return { ...canonicalFlags, ...dbPlan.marketing.featureFlags };
   }
@@ -54,13 +64,17 @@ const getTenantEffectiveEntitlements = async (tenant, options = {}) => {
   const { logContext } = options;
   const dbPlan = await SubscriptionPlan.findOne({
     where: { planId: tenant.plan, isActive: true },
-    attributes: ['id', 'planId', 'name', 'marketing', 'seatLimit', 'storageLimitMB'],
+    attributes: ['id', 'planId', 'name', 'marketing', 'seatLimit', 'branchLimit', 'storageLimitMB'],
   });
+  const normalizedPlan = String(tenant?.plan || '').trim().toLowerCase() || 'trial';
+  const enterpriseLimits = normalizedPlan === 'enterprise'
+    ? resolveEnterpriseLimits(tenant, dbPlan)
+    : null;
   const entitlementsMeta = getTenantEntitlementsMeta(tenant);
   const featureOverrides = normalizeFeatureOverrides(entitlementsMeta.featureOverrides);
   const baseFeatureFlags = buildBaseFeatureFlags(tenant.plan, dbPlan);
-  const rawEffectiveFeatureFlags = computeEffectiveFeatureFlags(baseFeatureFlags, featureOverrides);
-  const effectiveFeatureFlags = applyFeatureGatesToFlags(rawEffectiveFeatureFlags, tenant);
+  const gatedBaseFeatureFlags = applyFeatureGatesToFlags(baseFeatureFlags, tenant);
+  const effectiveFeatureFlags = computeEffectiveFeatureFlags(gatedBaseFeatureFlags, featureOverrides);
   const enabledFeatures = Object.keys(effectiveFeatureFlags).filter((k) => effectiveFeatureFlags[k] === true);
   const accessState = resolveTenantAccessState(tenant);
   const matrix =
@@ -92,8 +106,15 @@ const getTenantEffectiveEntitlements = async (tenant, options = {}) => {
     effectiveFeatureFlags,
     enabledFeatures,
     limits: {
-      seatLimit: dbPlan?.seatLimit ?? null,
-      storageLimitMB: dbPlan?.storageLimitMB ?? null,
+      seatLimit: enterpriseLimits
+        ? enterpriseLimits.seatLimit
+        : dbPlan?.seatLimit ?? DEFAULT_PLAN_SEAT_LIMITS[normalizedPlan] ?? null,
+      branchLimit: enterpriseLimits
+        ? enterpriseLimits.branchLimit
+        : dbPlan?.branchLimit ?? DEFAULT_PLAN_BRANCH_LIMITS[normalizedPlan] ?? null,
+      storageLimitMB: enterpriseLimits
+        ? enterpriseLimits.storageLimitMB
+        : dbPlan?.storageLimitMB ?? DEFAULT_STORAGE_LIMITS[normalizedPlan] ?? null,
     },
     sourcePlan: dbPlan
       ? { id: dbPlan.id, planId: dbPlan.planId, name: dbPlan.name }

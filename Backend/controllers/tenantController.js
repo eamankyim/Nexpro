@@ -62,7 +62,6 @@ exports.signupTenant = async (req, res, next) => {
     adminName,
     adminEmail,
     password,
-    plan = 'trial',
     businessType, // NEW: business type ('printing_press', 'shop', 'pharmacy')
     shopType, // NEW: shop type (only if businessType is 'shop')
     businessInfo, // NEW: business information object
@@ -128,8 +127,8 @@ exports.signupTenant = async (req, res, next) => {
     try {
       const slug = generateUniqueSlug(trimmedCompanyName);
 
-      const trialEndDate =
-        plan === 'trial' ? dayjs().add(1, 'month').toDate() : null;
+      const initialPlan = 'trial';
+      const trialEndDate = dayjs().add(1, 'month').toDate();
 
       // Build metadata object with business information
       const metadata = {
@@ -175,7 +174,7 @@ exports.signupTenant = async (req, res, next) => {
         {
           name: trimmedCompanyName,
           slug,
-          plan,
+          plan: initialPlan,
           businessType: finalBusinessType, // Store resolved business type ('shop', 'studio', 'pharmacy')
           status: 'active',
           metadata,
@@ -283,8 +282,8 @@ exports.signupTenant = async (req, res, next) => {
             tenantId: tenant.id,
             key: 'subscription',
             value: {
-              plan,
-              status: plan === 'trial' ? 'trialing' : 'active',
+              plan: initialPlan,
+              status: 'trialing',
               trialEndsAt: trialEndDate,
               paymentMethod: null,
               seats: 1,

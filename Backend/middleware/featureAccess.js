@@ -1,6 +1,5 @@
 const { canAccessFeature, canAccessRoute, getFeatureByKey } = require('../config/features');
 const { Tenant } = require('../models');
-const { filterFeaturesForTenant } = require('../config/businessTypes');
 const { getTenantEffectiveEntitlements, resolveTenantAccessState } = require('../utils/tenantEntitlements');
 const { normalizeTenantInstanceForRequest } = require('../utils/tenantClassification');
 
@@ -30,7 +29,7 @@ const requireFeature = (featureKey) => {
       }
 
       const entitlements = await getTenantEffectiveEntitlements(tenant);
-      const planFeatures = filterFeaturesForTenant(entitlements.enabledFeatures, tenant);
+      const planFeatures = entitlements.enabledFeatures;
 
       // Check if feature is available
       if (!canAccessFeature(planFeatures, featureKey)) {
@@ -58,7 +57,7 @@ const requireFeature = (featureKey) => {
 };
 
 /**
- * Tenant must have at least one of the listed features (after business-type filtering).
+ * Tenant must have at least one of the listed effective features.
  */
 const requireAnyFeature = (featureKeys) => {
   return async (req, res, next) => {
@@ -82,7 +81,7 @@ const requireAnyFeature = (featureKeys) => {
       }
 
       const entitlements = await getTenantEffectiveEntitlements(tenant);
-      const planFeatures = filterFeaturesForTenant(entitlements.enabledFeatures, tenant);
+      const planFeatures = entitlements.enabledFeatures;
 
       const allowed = Array.isArray(featureKeys) && featureKeys.some((k) => canAccessFeature(planFeatures, k));
       if (!allowed) {
@@ -144,7 +143,7 @@ const checkRouteAccess = async (req, res, next) => {
     }
 
     const entitlements = await getTenantEffectiveEntitlements(tenant);
-    const planFeatures = filterFeaturesForTenant(entitlements.enabledFeatures, tenant);
+    const planFeatures = entitlements.enabledFeatures;
 
     // Check if route is accessible
     const route = req.path;
@@ -175,7 +174,7 @@ const getTenantFeatures = async (tenantId) => {
   const tenant = normalizeTenantInstanceForRequest(await Tenant.findByPk(tenantId));
   if (!tenant) return [];
   const entitlements = await getTenantEffectiveEntitlements(tenant);
-  return filterFeaturesForTenant(entitlements.enabledFeatures, tenant);
+  return entitlements.enabledFeatures;
 };
 
 /**

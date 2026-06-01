@@ -2,6 +2,7 @@ const { Pharmacy } = require('../models');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
 const { getPagination } = require('../utils/paginationUtils');
+const { validateBranchLimit } = require('../utils/branchLimitHelper');
 
 // @desc    Get all pharmacies
 // @route   GET /api/pharmacies
@@ -83,6 +84,11 @@ const normalizeOptionalStrings = (obj) => {
 exports.createPharmacy = async (req, res, next) => {
   try {
     const payload = normalizeOptionalStrings(sanitizePayload(req.body));
+    const isFirst = (await Pharmacy.count({ where: { tenantId: req.tenantId } })) === 0;
+    if (!isFirst) {
+      await validateBranchLimit(req.tenantId, 'pharmacy');
+    }
+
     const pharmacy = await Pharmacy.create({
       ...payload,
       tenantId: req.tenantId
@@ -93,6 +99,9 @@ exports.createPharmacy = async (req, res, next) => {
       data: pharmacy
     });
   } catch (error) {
+    if (error.statusCode === 403 && error.code === 'BRANCH_LIMIT_EXCEEDED') {
+      return res.status(403).json({ success: false, message: error.message, details: error.details });
+    }
     next(error);
   }
 };
