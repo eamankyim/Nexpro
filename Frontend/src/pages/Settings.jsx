@@ -226,6 +226,9 @@ const paymentCollectionSchema = z.object({
   }
 });
 
+const PAYMENT_COLLECTION_TAB = 'payment-collections';
+const PAYMENT_COLLECTION_SUBTABS = ['settlements', 'mtn-collection'];
+
 // Helper function to resolve file URLs (handles base64, relative paths, and absolute URLs)
 const resolveFileUrl = (url) => {
   if (!url) return '';
@@ -239,15 +242,29 @@ const resolveFileUrl = (url) => {
   return url;
 };
 
+const unwrapApiPayload = (response) => response?.data?.data ?? response?.data ?? response ?? {};
+
+const formatLabel = (value) => {
+  if (!value) return 'Not set';
+  return String(value).replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+};
+
+const formatMinorCurrency = (amount, currency = 'GHS') => {
+  const numericAmount = Number(amount);
+  const majorAmount = Number.isFinite(numericAmount) ? numericAmount / 100 : 0;
+  return `${currency || 'GHS'} ${majorAmount.toFixed(2)}`;
+};
+
 const Settings = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const normalizeMainTab = (tab) => {
     const value = String(tab || 'profile');
-    if (['profile', 'workspace', 'operations', 'billing', 'messaging'].includes(value)) return value;
+    if (['profile', 'workspace', 'operations', 'billing', PAYMENT_COLLECTION_TAB, 'messaging'].includes(value)) return value;
     if (['organization', 'appearance'].includes(value)) return 'workspace';
-    if (['subscription', 'payments'].includes(value)) return 'billing';
+    if (value === 'subscription') return 'billing';
+    if (value === 'payments') return PAYMENT_COLLECTION_TAB;
     if (['integration', 'notifications', 'whatsapp', 'sms', 'email'].includes(value)) return 'messaging';
     if (value === 'configurations') return 'operations';
     return 'profile';
@@ -280,11 +297,12 @@ const Settings = () => {
       }
     }
 
-    if (tab === 'payments' || tab === 'billing') {
+    if (tab === 'payments' || tab === PAYMENT_COLLECTION_TAB || (tab === 'billing' && PAYMENT_COLLECTION_SUBTABS.includes(subtab))) {
       const paySub = searchParams.get('subtab');
       setPaymentsSubTab(paySub === 'mtn-collection' ? 'mtn-collection' : 'settlements');
-      if (tab === 'payments') {
-        setSearchParams({ tab: 'billing', subtab: paySub === 'mtn-collection' ? 'mtn-collection' : 'settlements' });
+      if (tab !== PAYMENT_COLLECTION_TAB) {
+        setActiveTab(PAYMENT_COLLECTION_TAB);
+        setSearchParams({ tab: PAYMENT_COLLECTION_TAB, subtab: paySub === 'mtn-collection' ? 'mtn-collection' : 'settlements' });
         return;
       }
     }
@@ -563,7 +581,10 @@ const Settings = () => {
     staleTime: QUERY_CACHE.STALE_TIME_DEFAULT,
   });
 
-  const { data: subscriptionPaymentsData } = useQuery({
+  const {
+    data: subscriptionPaymentsData,
+    isLoading: loadingSubscriptionPayments
+  } = useQuery({
     queryKey: ['subscription', 'payments'],
     queryFn: settingsService.getSubscriptionPayments,
     enabled: activeTab === 'billing',
@@ -620,7 +641,7 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'payment-collection', activeTenant?.id],
     queryFn: settingsService.getPaymentCollectionSettings,
-    enabled: canManageOrganization && !!activeTenant?.id && activeTab === 'billing',
+    enabled: canManageOrganization && !!activeTenant?.id && activeTab === PAYMENT_COLLECTION_TAB,
     staleTime: QUERY_CACHE.STALE_TIME_VOLATILE,
     refetchOnMount: 'always'
   });
@@ -633,7 +654,7 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'payment-collection-banks', activeTenant?.id],
     queryFn: settingsService.getPaymentCollectionBanks,
-    enabled: canManageOrganization && !!activeTenant?.id && activeTab === 'billing'
+    enabled: canManageOrganization && !!activeTenant?.id && activeTab === PAYMENT_COLLECTION_TAB
   });
 
   useEffect(() => {
@@ -665,7 +686,7 @@ const Settings = () => {
     enabled:
       canManageOrganization &&
       !!activeTenant?.id &&
-      activeTab === 'billing' &&
+      activeTab === PAYMENT_COLLECTION_TAB &&
       paymentsSubTab === 'settlements'
   });
 
@@ -1484,11 +1505,17 @@ const Settings = () => {
       return;
     }
     const otp = (paymentVerifyOtp || '').replace(/\D/g, '');
-    if (isGoogleUser && otp.length !== 6) {
+    if (isGoogleUser && !paymentVerificationDone && otp.length !== 6) {
       showError(null, 'Verify the email code before linking a payment account');
       return;
     }
     const settlementType = values.settlement_type || 'bank';
+    const googleAuth =
+      isGoogleUser && otp.length === 6 ? { otp } : isGoogleUser && paymentVerificationDone ? {} : null;
+    if (isGoogleUser && !googleAuth) {
+      showError(null, 'Verify the email code before linking a payment account');
+      return;
+    }
     savingToastDismissRef.current = showLoading('Saving...');
     if (settlementType === 'momo') {
       const momoPhone = String(values.momo_phone || '').replace(/\s/g, '');
@@ -1499,7 +1526,7 @@ const Settings = () => {
         momo_phone: momoPhone,
         momo_provider: momoProvider,
         primary_contact_email: values.primary_contact_email?.trim() || undefined,
-        ...(isGoogleUser ? { otp } : { password: pwd }),
+        ...(isGoogleUser ? googleAuth : { password: pwd }),
       });
     } else {
       const bank = Array.isArray(paymentCollectionBanks) ? paymentCollectionBanks.find((b) => b.code === values.bank_code) : (paymentCollectionBanks?.data ?? []).find((b) => b.code === values.bank_code);
@@ -1510,7 +1537,7 @@ const Settings = () => {
         bank_name: bank?.name || values.bank_name || '',
         account_number: String(values.account_number).replace(/\s/g, ''),
         primary_contact_email: values.primary_contact_email?.trim() || undefined,
-        ...(isGoogleUser ? { otp } : { password: pwd }),
+        ...(isGoogleUser ? googleAuth : { password: pwd }),
       });
     }
   };
@@ -1657,7 +1684,7 @@ const Settings = () => {
     }
   };
 
-  const subscriptionBilling = subscriptionData?.data?.billing || subscriptionPaymentsData?.data?.billing;
+  const subscriptionBilling = unwrapApiPayload(subscriptionData)?.billing || unwrapApiPayload(subscriptionPaymentsData)?.billing;
 
   const { theme, setTheme } = useTheme();
   const { hintMode, setHintMode } = useHintMode();
@@ -3259,7 +3286,14 @@ const Settings = () => {
     </ShadcnCard>
   );
 
-  const currentSubscription = subscriptionData?.data || activeTenant || {};
+  const subscriptionPaymentsPayload = unwrapApiPayload(subscriptionPaymentsData);
+  const subscriptionPayments = useMemo(
+    () => (Array.isArray(subscriptionPaymentsPayload?.payments) ? subscriptionPaymentsPayload.payments : []),
+    [subscriptionPaymentsPayload?.payments]
+  );
+  const activeSubscriptionPayment = subscriptionPaymentsPayload?.activePayment;
+  const currentSubscriptionPayload = unwrapApiPayload(subscriptionData);
+  const currentSubscription = Object.keys(currentSubscriptionPayload).length > 0 ? currentSubscriptionPayload : activeTenant || {};
   const displayPlan = currentSubscription.plan || planValue || 'trial';
   const displayStatus = currentSubscription.status || statusValue || 'active';
   const displaySeats = currentSubscription.seats || subscriptionForm.getValues('seats') || 5;
@@ -3287,7 +3321,10 @@ const Settings = () => {
   const subscriptionTab = (
     <ShadcnCard className="border bg-card shadow-none">
       <CardHeader className="p-5 md:p-6 pb-4">
-        <CardTitle className="text-lg md:text-xl">Subscription & Billing</CardTitle>
+        <CardTitle className="text-lg md:text-xl">Subscription Billing</CardTitle>
+        <CardDescription>
+          Manage what this workspace pays ABS for plan access, seats, and renewals.
+        </CardDescription>
       </CardHeader>
       <CardContent className="p-5 md:p-6 pt-0 space-y-5">
         <div className="border-t pt-5">
@@ -3354,6 +3391,73 @@ const Settings = () => {
               </div>
             </div>
           </div>
+        </div>
+
+        <div className="rounded-lg border border-border p-4 space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-sm font-semibold">Payments to ABS</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Subscription billing payments this workspace made to ABS for plan access, seats, and renewals.
+              </p>
+            </div>
+            {activeSubscriptionPayment ? (
+              <div className="rounded-md border border-green-100 bg-green-50 px-3 py-2 text-xs text-green-700">
+                Active through{' '}
+                {activeSubscriptionPayment.periodEnd
+                  ? dayjs(activeSubscriptionPayment.periodEnd).format('MMM D, YYYY')
+                  : 'current period'}
+              </div>
+            ) : null}
+          </div>
+
+          {loadingSubscriptionPayments ? (
+            <div className="flex justify-center py-6">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Period</TableHead>
+                  <TableHead>Plan</TableHead>
+                  <TableHead>Provider</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {subscriptionPayments.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-muted-foreground text-center py-6">
+                      No ABS subscription payments recorded for this workspace yet.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  subscriptionPayments.map((payment) => (
+                    <TableRow key={payment.id || payment.providerReference || `${payment.plan}-${payment.periodStart}`}>
+                      <TableCell className="whitespace-nowrap text-xs">
+                        {payment.periodStart ? dayjs(payment.periodStart).format('MMM D, YYYY') : 'Not set'}
+                        {' - '}
+                        {payment.periodEnd ? dayjs(payment.periodEnd).format('MMM D, YYYY') : 'Not set'}
+                      </TableCell>
+                      <TableCell>
+                        <div className="font-medium">{formatLabel(payment.plan)}</div>
+                        <div className="text-xs text-muted-foreground">{formatLabel(payment.billingPeriod)}</div>
+                      </TableCell>
+                      <TableCell className="capitalize">{payment.provider || 'manual'}</TableCell>
+                      <TableCell>
+                        <StatusChip status={payment.status || 'success'} />
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMinorCurrency(payment.amount, payment.currency)}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          )}
         </div>
       </CardContent>
     </ShadcnCard>
@@ -5138,10 +5242,10 @@ const Settings = () => {
       <CardHeader className="p-0 md:p-6 pb-2 md:pb-6">
         <CardTitle className="text-base md:text-2xl flex items-center gap-2">
           <CreditCard className="h-5 w-5" />
-          Payments
+          Payment collections
         </CardTitle>
         <CardDescription className="mt-1 md:mt-0 text-xs md:text-sm">
-          Switch between Paystack payout settings and optional workspace keys for direct MTN MoMo collection (POS and invoices).
+          Manage how customers pay this workspace through Paystack, MoMo, invoices, and POS. This is separate from your ABS subscription billing.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0 md:p-6 pt-0">
@@ -5149,7 +5253,7 @@ const Settings = () => {
           value={paymentsSubTab}
           onValueChange={(key) => {
             setPaymentsSubTab(key);
-            setSearchParams({ tab: 'billing', subtab: key });
+            setSearchParams({ tab: PAYMENT_COLLECTION_TAB, subtab: key });
           }}
         >
           {isMobile ? (
@@ -5157,7 +5261,7 @@ const Settings = () => {
               value={paymentsSubTab}
               onValueChange={(key) => {
                 setPaymentsSubTab(key);
-                setSearchParams({ tab: 'billing', subtab: key });
+                setSearchParams({ tab: PAYMENT_COLLECTION_TAB, subtab: key });
               }}
             >
               <SelectTrigger className="w-full mb-2 md:mb-4">
@@ -5180,14 +5284,14 @@ const Settings = () => {
           )}
           <TabsContent value="settlements" className="mt-0 md:mt-1 space-y-4">
             <p className="text-sm text-muted-foreground">
-              Receive your share of card and MoMo payments from invoice and POS. Choose bank or MoMo payout. A small platform fee applies.
+              Track customer card and MoMo payments collected for this workspace, then choose where Paystack should settle your payout. ABS subscription charges are not shown here.
             </p>
             <div className="rounded-lg border border-border p-4 space-y-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
                 <div>
-                  <h3 className="text-sm font-semibold">Paystack charges (this workspace)</h3>
+                  <h3 className="text-sm font-semibold">Paystack customer charges</h3>
                   <p className="text-xs text-muted-foreground mt-1 max-w-xl">
-                    Successful Paystack card payments linked to this workspace (bank subaccount or invoice/POS metadata). Open Paystack for balances, settlements, and MoMo transfer history.
+                    Money customers paid this workspace through Paystack from invoices, POS, or payment links. Open Paystack for balances, settlements, and MoMo transfer history.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-end gap-2">
@@ -5916,7 +6020,7 @@ const Settings = () => {
   ) : (
     <ShadcnCard>
       <CardHeader>
-        <CardTitle>Payments</CardTitle>
+        <CardTitle>Payment collections</CardTitle>
         <CardDescription>You need admin or manager role to manage payment collection.</CardDescription>
       </CardHeader>
     </ShadcnCard>
@@ -5927,7 +6031,7 @@ const Settings = () => {
       <CardHeader className="p-0 md:p-6 pb-2 md:pb-6">
         <CardTitle className="text-lg md:text-2xl">Integration Settings</CardTitle>
         <CardDescription className="mt-1 md:mt-0">
-          Configure communication channels (WhatsApp, SMS, Email). Saving a channel runs a connection test and marks it verified for Marketing — you only need to do that again if you change credentials. Use the Payments tab to link bank or MoMo for receiving settlements. Customer auto-send, quotes, and job options are under the Configurations tab.
+          Configure communication channels (WhatsApp, SMS, Email). Saving a channel runs a connection test and marks it verified for Marketing — you only need to do that again if you change credentials. Use Payment collections to link bank or MoMo for receiving customer payments. Customer auto-send, quotes, and job options are under the Configurations tab.
         </CardDescription>
       </CardHeader>
       <CardContent className="p-0 md:p-6 pt-0">
@@ -5998,7 +6102,7 @@ const Settings = () => {
       <div className="mb-3 md:mb-6">
         <h2 className="text-xl md:text-2xl font-semibold mb-1 md:mb-2">Settings</h2>
         <p className="text-xs md:text-sm text-muted-foreground">
-          Manage your personal account, organization profile, and subscription information.
+          Manage your personal account, organization profile, ABS subscription, and customer payment collection settings.
         </p>
       </div>
 
@@ -6028,9 +6132,9 @@ const Settings = () => {
         if (key === 'messaging') {
           const currentSubtab = searchParams.get('subtab') || integrationSubTab || 'whatsapp';
           setSearchParams({ tab: 'messaging', subtab: currentSubtab });
-        } else if (key === 'billing') {
+        } else if (key === PAYMENT_COLLECTION_TAB) {
           const currentSubtab = searchParams.get('subtab') || paymentsSubTab || 'settlements';
-          setSearchParams({ tab: 'billing', subtab: currentSubtab });
+          setSearchParams({ tab: PAYMENT_COLLECTION_TAB, subtab: currentSubtab });
         } else {
           setSearchParams({ tab: key });
         }
@@ -6041,9 +6145,9 @@ const Settings = () => {
             if (key === 'messaging') {
               const currentSubtab = searchParams.get('subtab') || integrationSubTab || 'whatsapp';
               setSearchParams({ tab: 'messaging', subtab: currentSubtab });
-            } else if (key === 'billing') {
+            } else if (key === PAYMENT_COLLECTION_TAB) {
               const currentSubtab = searchParams.get('subtab') || paymentsSubTab || 'settlements';
-              setSearchParams({ tab: 'billing', subtab: currentSubtab });
+              setSearchParams({ tab: PAYMENT_COLLECTION_TAB, subtab: currentSubtab });
             } else {
               setSearchParams({ tab: key });
             }
@@ -6055,7 +6159,8 @@ const Settings = () => {
               <SelectItem value="profile">Profile</SelectItem>
               <SelectItem value="workspace">Workspace</SelectItem>
               <SelectItem value="operations">Operations</SelectItem>
-              <SelectItem value="billing">Billing &amp; Payments</SelectItem>
+              <SelectItem value="billing">Billing</SelectItem>
+              <SelectItem value={PAYMENT_COLLECTION_TAB}>Payment collections</SelectItem>
               <SelectItem value="messaging">Messaging</SelectItem>
             </SelectContent>
           </Select>
@@ -6071,7 +6176,10 @@ const Settings = () => {
               Operations
             </TabsTrigger>
             <TabsTrigger value="billing" className="text-xs md:text-sm shrink-0">
-              Billing &amp; Payments
+              Billing
+            </TabsTrigger>
+            <TabsTrigger value={PAYMENT_COLLECTION_TAB} className="text-xs md:text-sm shrink-0">
+              Payment collections
             </TabsTrigger>
             <TabsTrigger value="messaging" className="text-xs md:text-sm shrink-0">
               Messaging
@@ -6137,6 +6245,10 @@ const Settings = () => {
         <TabsContent value="billing">
           <div className="space-y-4 md:space-y-6">
             {subscriptionTab}
+          </div>
+        </TabsContent>
+        <TabsContent value={PAYMENT_COLLECTION_TAB}>
+          <div className="space-y-4 md:space-y-6">
             {paymentsTab}
           </div>
         </TabsContent>

@@ -35,6 +35,8 @@ const { Op } = require('sequelize');
 /** In-memory cache for payment integration OTP (best-effort); source of truth is DB for serverless safety. */
 const paymentOtpStore = new Map();
 const paymentOtpSettingKey = (userId) => `payment_collection_otp_user_${userId}`;
+const PAYMENT_OTP_TTL_MS = 10 * 60 * 1000;
+const PAYMENT_OTP_VERIFIED_TTL_MS = 15 * 60 * 1000;
 const findPaymentVerificationUser = (userId) => User.unscoped().findByPk(userId);
 
 const setStoredPaymentOtp = async ({ tenantId, userId, otp, expiresAt }) => {
@@ -46,6 +48,30 @@ const setStoredPaymentOtp = async ({ tenantId, userId, otp, expiresAt }) => {
   paymentOtpStore.set(userId, payload);
   await upsertSettingValue(tenantId, paymentOtpSettingKey(userId), payload, 'Payment collection OTP gate');
 };
+
+/** After verify-otp succeeds, allow save without resending the code until verifiedUntil. */
+const markPaymentOtpVerified = async ({ tenantId, userId }) => {
+  const stored = await getStoredPaymentOtp({ tenantId, userId });
+  if (!stored || typeof stored.otp !== 'string') {
+    return;
+  }
+  const payload = {
+    ...stored,
+    verifiedAt: Date.now(),
+    verifiedUntil: Date.now() + PAYMENT_OTP_VERIFIED_TTL_MS,
+    updatedAt: new Date().toISOString(),
+  };
+  paymentOtpStore.set(userId, payload);
+  await upsertSettingValue(tenantId, paymentOtpSettingKey(userId), payload, 'Payment collection OTP gate');
+};
+
+const isPaymentOtpRecentlyVerified = (stored) =>
+  Boolean(
+    stored &&
+      typeof stored.verifiedAt === 'number' &&
+      typeof stored.verifiedUntil === 'number' &&
+      Date.now() <= stored.verifiedUntil
+  );
 
 const getStoredPaymentOtp = async ({ tenantId, userId }) => {
   const cached = paymentOtpStore.get(userId);
@@ -80,9 +106,6 @@ const clearStoredPaymentOtp = async ({ tenantId, userId }) => {
  */
 async function verifyStoredPaymentOtp(req) {
   const { password, otp } = req.body || {};
-  if (!otp || typeof otp !== 'string') {
-    return { ok: false, status: 400, message: 'Verification code (OTP) is required' };
-  }
   const user = await findPaymentVerificationUser(req.user.id);
   if (!user) {
     return { ok: false, status: 404, message: 'User not found' };
@@ -97,17 +120,28 @@ async function verifyStoredPaymentOtp(req) {
       return { ok: false, status: 401, message: 'Invalid password' };
     }
   }
+
   const stored = await getStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
+  const receivedOtp =
+    otp && typeof otp === 'string' ? String(otp).replace(/\D/g, '').slice(0, 6) : '';
+
+  // Google users: verify-otp already confirmed identity; save may omit OTP within verified TTL.
+  if (isGoogleUser && receivedOtp.length !== 6 && isPaymentOtpRecentlyVerified(stored)) {
+    return { ok: true, user };
+  }
+
+  if (!otp || typeof otp !== 'string' || receivedOtp.length !== 6) {
+    return { ok: false, status: 400, message: 'Verification code (OTP) is required' };
+  }
   if (!stored || typeof stored.otp !== 'string') {
     return { ok: false, status: 400, message: 'Verification code expired or not requested. Please request a new code.' };
   }
-  if (Date.now() > stored.expiresAt) {
+  if (Date.now() > stored.expiresAt && !isPaymentOtpRecentlyVerified(stored)) {
     await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
     return { ok: false, status: 400, message: 'Verification code expired. Request a new code.' };
   }
   const expectedOtp = String(stored.otp).replace(/\D/g, '').slice(0, 6);
-  const receivedOtp = String(otp).replace(/\D/g, '').slice(0, 6);
-  if (expectedOtp.length !== 6 || receivedOtp.length !== 6 || receivedOtp !== expectedOtp) {
+  if (expectedOtp.length !== 6 || receivedOtp !== expectedOtp) {
     return { ok: false, status: 400, message: 'Invalid verification code' };
   }
   return { ok: true, user };
@@ -2161,7 +2195,7 @@ exports.sendPaymentCollectionOtp = async (req, res, next) => {
       console.log('[Payment OTP] send-otp: password skipped for Google user userId=', req.user?.id);
     }
     const otp = String(Math.floor(100000 + Math.random() * 900000));
-    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+    const expiresAt = Date.now() + PAYMENT_OTP_TTL_MS;
     await setStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id, otp, expiresAt });
     console.log('[Payment OTP] send-otp: stored OTP for userId=', req.user?.id, 'expiresAt=', new Date(expiresAt).toISOString());
 
@@ -2244,7 +2278,8 @@ exports.verifyPaymentCollectionOtp = async (req, res, next) => {
       console.log('[Payment OTP] verify-otp: rejected (invalid code) receivedLen=', receivedOtp.length, 'match=', receivedOtp === expectedOtp);
       return res.status(400).json({ success: false, message: 'Invalid verification code' });
     }
-    console.log('[Payment OTP] verify-otp: success (OTP correct, not consumed) userId=', req.user?.id);
+    await markPaymentOtpVerified({ tenantId: req.tenantId, userId: req.user.id });
+    console.log('[Payment OTP] verify-otp: success (OTP correct, verified until save) userId=', req.user?.id);
     res.status(200).json({ success: true, message: 'Verification code correct' });
   } catch (error) {
     next(error);

@@ -152,6 +152,43 @@ describe('settingsController payment collection verification', () => {
     expect(googleUser.comparePassword).not.toHaveBeenCalled();
   });
 
+  it('links payment collection for Google users after verify-otp without resending OTP on save', async () => {
+    const tenant = {
+      id: 'tenant-1',
+      metadata: {},
+      paystackSubaccountCode: null,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    Tenant.findByPk.mockResolvedValue(tenant);
+    Setting.findOne.mockResolvedValue({
+      value: {
+        otp: '123456',
+        expiresAt: Date.now() + 60_000,
+        verifiedAt: Date.now(),
+        verifiedUntil: Date.now() + 15 * 60_000,
+      },
+      destroy: jest.fn().mockResolvedValue(undefined),
+    });
+    const req = {
+      user: { id: 'user-1' },
+      tenantId: 'tenant-1',
+      body: {
+        settlement_type: 'bank',
+        business_name: 'Test Shop',
+        bank_code: '044',
+        bank_name: 'Test Bank',
+        account_number: '0123456789',
+      },
+    };
+    const res = mockRes();
+
+    await settingsController.updatePaymentCollectionSettings(req, res, jest.fn());
+
+    expect(paystackService.createSubaccount).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(googleUser.comparePassword).not.toHaveBeenCalled();
+  });
+
   it('links payment collection for Google users with a valid OTP and no password', async () => {
     const tenant = {
       id: 'tenant-1',

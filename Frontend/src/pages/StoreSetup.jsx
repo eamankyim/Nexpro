@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 
 import storeService from '../services/storeService';
+import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../hooks/useDebounce';
 import { showError, showSuccess, getErrorMessage } from '../utils/toast';
@@ -87,6 +88,15 @@ const CATEGORY_OPTIONS = [
   'Home and office',
   'Other',
 ];
+
+const CATEGORY_BY_BUSINESS_TYPE = {
+  shop: 'Other',
+  studio: 'Printing and creative services',
+  printing_press: 'Printing and creative services',
+  pharmacy: 'Health and pharmacy',
+  barber: 'Beauty and salon',
+  salon: 'Beauty and salon',
+};
 
 const PAYMENT_OPTIONS = [
   {
@@ -201,6 +211,108 @@ const normalizeSlug = (value) => String(value || '')
   .slice(0, 80);
 
 const getResponseData = (response) => response?.data?.data || response?.data || response;
+
+const getSettledData = (result) => (result?.status === 'fulfilled' ? getResponseData(result.value) : null);
+
+const compactString = (value) => (typeof value === 'string' ? value.trim() : '');
+
+const firstFilled = (...values) => values.map(compactString).find(Boolean) || '';
+
+const getPlainObject = (value) => (
+  value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+);
+
+const formatAddress = (address = {}) => [
+  address.line1,
+  address.line2,
+  [address.city, address.state].map(compactString).filter(Boolean).join(', '),
+  address.postalCode,
+  address.country,
+].map(compactString).filter(Boolean).join(', ');
+
+const buildStoreSetupDefaults = ({ activeTenant, user, organization, profile }) => {
+  const tenantMetadata = getPlainObject(activeTenant?.metadata);
+  const organizationAddress = getPlainObject(organization?.address || tenantMetadata.address);
+  const addressText = formatAddress(organizationAddress);
+  const localArea = [organizationAddress.city, organizationAddress.state]
+    .map(compactString)
+    .filter(Boolean)
+    .join(', ');
+  const displayName = firstFilled(
+    organization?.name,
+    organization?.legalName,
+    activeTenant?.name,
+    tenantMetadata.businessName,
+    tenantMetadata.companyName,
+  );
+  const contactPhone = firstFilled(
+    organization?.phone,
+    tenantMetadata.businessPhone,
+    tenantMetadata.companyPhone,
+    tenantMetadata.phone,
+    activeTenant?.phone,
+    profile?.phone,
+    profile?.phoneNumber,
+    user?.phone,
+    user?.phoneNumber,
+  );
+  const contactEmail = firstFilled(
+    organization?.email,
+    organization?.supportEmail,
+    tenantMetadata.businessEmail,
+    tenantMetadata.companyEmail,
+    tenantMetadata.email,
+    activeTenant?.email,
+    profile?.email,
+    user?.email,
+  );
+  const primaryColor = firstFilled(
+    organization?.primaryColor,
+    tenantMetadata.primaryColor,
+    tenantMetadata.brandColor,
+  ) || '#166534';
+
+  return {
+    displayName,
+    slug: normalizeSlug(activeTenant?.slug || displayName),
+    description: firstFilled(
+      tenantMetadata.storeDescription,
+      tenantMetadata.businessDescription,
+      tenantMetadata.description,
+      activeTenant?.description,
+    ),
+    category: firstFilled(
+      tenantMetadata.storeCategory,
+      tenantMetadata.businessCategory,
+      CATEGORY_BY_BUSINESS_TYPE[activeTenant?.businessType],
+      'Other',
+    ),
+    whatsappNumber: firstFilled(
+      tenantMetadata.whatsappNumber,
+      tenantMetadata.whatsapp,
+      contactPhone,
+    ),
+    contactPhone,
+    contactEmail,
+    primaryColor,
+    logoUrl: firstFilled(
+      organization?.logoUrl,
+      tenantMetadata.logoUrl,
+      tenantMetadata.logo,
+      activeTenant?.logoUrl,
+    ),
+    bannerImageUrl: firstFilled(tenantMetadata.bannerImageUrl, tenantMetadata.coverImageUrl),
+    currency: 'GHS',
+    paymentMethods: defaultPaymentMethods,
+    deliveryOptions: defaultDeliveryOptions,
+    deliveryFee: 0,
+    localDeliveryAreas: localArea,
+    nationwideRegions: '',
+    pickupInstructions: addressText ? `Pickup from ${addressText}` : '',
+  };
+};
+
+const savedOrDefault = (saved, fallback) => firstFilled(saved, fallback);
 
 const clampStepIndex = (step) => {
   const numericStep = Number(step);
@@ -451,7 +563,7 @@ const MobileStoreTopBar = ({ onBack }) => (
 const StoreSetup = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { activeTenant } = useAuth();
+  const { activeTenant, user } = useAuth();
   const initialStep = getStepIndexFromParam(searchParams.get('step'));
   const [currentStep, setCurrentStep] = useState(initialStep);
   const [highestStepReached, setHighestStepReached] = useState(initialStep);
@@ -466,8 +578,8 @@ const StoreSetup = () => {
   const form = useForm({
     resolver: zodResolver(setupSchema),
     defaultValues: {
-      displayName: activeTenant?.name || '',
-      slug: normalizeSlug(activeTenant?.name || ''),
+      displayName: '',
+      slug: '',
       description: '',
       category: '',
       whatsappNumber: '',
@@ -563,13 +675,26 @@ const StoreSetup = () => {
   const loadStore = useCallback(async () => {
     setLoading(true);
     try {
-      const [settingsResponse, statusResponse] = await Promise.all([
+      const [settingsResponse, statusResponse, organizationResponse, profileResponse] = await Promise.allSettled([
         storeService.getSettings(),
         storeService.getSetupStatus(),
+        settingsService.getOrganization(),
+        settingsService.getProfile(),
       ]);
-      const nextSettings = getResponseData(settingsResponse);
-      const statusData = getResponseData(statusResponse);
+      if (settingsResponse.status === 'rejected') throw settingsResponse.reason;
+      if (statusResponse.status === 'rejected') throw statusResponse.reason;
+
+      const nextSettings = getSettledData(settingsResponse);
+      const statusData = getSettledData(statusResponse);
+      const organization = getSettledData(organizationResponse);
+      const profile = getSettledData(profileResponse);
       const metadata = nextSettings?.metadata || {};
+      const inferredDefaults = buildStoreSetupDefaults({
+        activeTenant,
+        user,
+        organization,
+        profile,
+      });
       const savedPaymentMethods = mergeOptions(defaultPaymentMethods, metadata.paymentMethods);
       const savedDeliveryOptions = mergeOptions(defaultDeliveryOptions, {
         ...metadata.deliveryOptions,
@@ -586,29 +711,31 @@ const StoreSetup = () => {
       setSettings(nextSettings || null);
       setChecklist(statusData?.checklist || null);
 
+      form.reset({
+        displayName: savedOrDefault(nextSettings?.displayName, inferredDefaults.displayName),
+        slug: savedOrDefault(nextSettings?.slug, inferredDefaults.slug),
+        description: savedOrDefault(nextSettings?.description, inferredDefaults.description),
+        category: savedOrDefault(metadata.category, inferredDefaults.category),
+        whatsappNumber: savedOrDefault(nextSettings?.whatsappNumber, inferredDefaults.whatsappNumber),
+        contactPhone: savedOrDefault(nextSettings?.contactPhone, inferredDefaults.contactPhone),
+        contactEmail: savedOrDefault(nextSettings?.contactEmail, inferredDefaults.contactEmail),
+        primaryColor: savedOrDefault(nextSettings?.primaryColor, inferredDefaults.primaryColor),
+        logoUrl: savedOrDefault(nextSettings?.logoUrl, inferredDefaults.logoUrl),
+        bannerImageUrl: savedOrDefault(nextSettings?.bannerImageUrl, inferredDefaults.bannerImageUrl),
+        currency: 'GHS',
+        paymentMethods: nextSettings?.id ? savedPaymentMethods : inferredDefaults.paymentMethods,
+        deliveryOptions: nextSettings?.id ? savedDeliveryOptions : inferredDefaults.deliveryOptions,
+        deliveryFee: Number(nextSettings?.deliveryFee || inferredDefaults.deliveryFee || 0),
+        localDeliveryAreas: savedOrDefault(metadata.localDeliveryAreas, inferredDefaults.localDeliveryAreas),
+        nationwideRegions: savedOrDefault(metadata.nationwideRegions, inferredDefaults.nationwideRegions),
+        pickupInstructions: savedOrDefault(metadata.pickupInstructions, inferredDefaults.pickupInstructions),
+      });
+
       if (nextSettings?.id) {
-        form.reset({
-          displayName: nextSettings.displayName || activeTenant?.name || '',
-          slug: nextSettings.slug || normalizeSlug(activeTenant?.name || ''),
-          description: nextSettings.description || '',
-          category: metadata.category || '',
-          whatsappNumber: nextSettings.whatsappNumber || '',
-          contactPhone: nextSettings.contactPhone || '',
-          contactEmail: nextSettings.contactEmail || '',
-          primaryColor: nextSettings.primaryColor || '#166534',
-          logoUrl: nextSettings.logoUrl || '',
-          bannerImageUrl: nextSettings.bannerImageUrl || '',
-          currency: 'GHS',
-          paymentMethods: savedPaymentMethods,
-          deliveryOptions: savedDeliveryOptions,
-          deliveryFee: Number(nextSettings.deliveryFee || 0),
-          localDeliveryAreas: metadata.localDeliveryAreas || '',
-          nationwideRegions: metadata.nationwideRegions || '',
-          pickupInstructions: metadata.pickupInstructions || '',
-        });
         const savedStep = clampStepIndex(metadata.setupProgress?.currentStep || 0);
-        const requestedStep = searchParams.has('step')
-          ? getStepIndexFromParam(searchParams.get('step'))
+        const stepParam = new URLSearchParams(window.location.search).get('step');
+        const requestedStep = stepParam
+          ? getStepIndexFromParam(stepParam)
           : savedStep;
         setCurrentStep(requestedStep);
         setHighestStepReached(Math.max(
@@ -622,7 +749,7 @@ const StoreSetup = () => {
     } finally {
       setLoading(false);
     }
-  }, [activeTenant?.name, form, searchParams]);
+  }, [activeTenant, form, user]);
 
   useEffect(() => {
     loadStore();
