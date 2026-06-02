@@ -4,13 +4,16 @@ import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
 const projectRoot = path.resolve(__dirname);
-const DEMO_API_URL = 'https://demo-api.africanbusinesssuite.com';
+const LOCAL_API_URL = 'http://localhost:5000';
 
 const PRODUCTION_API_HOST = 'api.africanbusinesssuite.com';
 
-const normalizeApiOrigin = (url = DEMO_API_URL) => {
-  const normalized = url.trim().replace(/\/$/, '').replace(/\/api\/?$/i, '') || DEMO_API_URL;
-  return /^https?:\/\//i.test(normalized) ? normalized : `https://${normalized}`;
+const normalizeApiOrigin = (url = LOCAL_API_URL) => {
+  const normalized = url.trim().replace(/\/$/, '').replace(/\/api\/?$/i, '') || LOCAL_API_URL;
+  if (/^https?:\/\//i.test(normalized)) return normalized;
+
+  const localhostLike = /^(localhost|127(?:\.\d{1,3}){3}|192\.168\.)/i.test(normalized);
+  return `${localhostLike ? 'http' : 'https'}://${normalized}`;
 };
 
 const resolveDevProxyTarget = (envUrl) => {
@@ -19,13 +22,13 @@ const resolveDevProxyTarget = (envUrl) => {
     const host = new URL(normalized).hostname;
     if (host === PRODUCTION_API_HOST) {
       console.warn(
-        `[vite] VITE_API_URL is production (${normalized}); dev proxy will use ${DEMO_API_URL}. ` +
+        `[vite] VITE_API_URL is production (${normalized}); dev proxy will use ${LOCAL_API_URL}. ` +
           'Update Frontend/.env.local if you intended a different API.'
       );
-      return DEMO_API_URL;
+      return LOCAL_API_URL;
     }
   } catch {
-    return DEMO_API_URL;
+    return LOCAL_API_URL;
   }
   return normalized;
 };

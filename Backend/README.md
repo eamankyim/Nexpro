@@ -37,11 +37,11 @@ npm install
 cp env.example .env
 ```
 
-4. Configure your environment variables in `.env`:
+4. Configure your environment variables in `.env`. Local development can use the demo database by copying the demo Backend `DATABASE_URL` value from Vercel/project secrets into `Backend/.env`; do not commit the real database URL.
 ```env
 PORT=5000
 NODE_ENV=development
-DATABASE_URL=postgresql://username:password@localhost:5432/shopwise_db
+DATABASE_URL=postgresql://username:password@demo-db-host/neondb?sslmode=require
 JWT_SECRET=your_jwt_secret_key_here
 JWT_EXPIRE=7d
 CORS_ORIGIN=http://localhost:3000
@@ -282,7 +282,7 @@ Error Response:
 |----------|-------------|---------|
 | PORT | Server port | 5000 |
 | NODE_ENV | Environment | development |
-| DATABASE_URL | PostgreSQL connection string | - |
+| DATABASE_URL | PostgreSQL connection string; use the demo DB secret locally when no local DB exists | - |
 | JWT_SECRET | JWT secret key | - |
 | JWT_EXPIRE | JWT expiration time | 7d |
 | CORS_ORIGIN | Frontend URL | http://localhost:3000 |

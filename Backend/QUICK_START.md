@@ -8,12 +8,12 @@ npm install
 ```
 
 ### Step 2: Create Environment File
-Copy `env.example` to `.env` and update with your PostgreSQL credentials:
+Copy `env.example` to `.env` and set `DATABASE_URL`. If you do not have a local database, copy the demo Backend `DATABASE_URL` value from Vercel/project secrets into `Backend/.env`; do not commit the real database URL.
 
 ```env
 PORT=5000
 NODE_ENV=development
-DATABASE_URL=postgresql://postgres:YOUR_PASSWORD@localhost:5432/printing_press_db
+DATABASE_URL=postgresql://username:password@demo-db-host/neondb?sslmode=require
 JWT_SECRET=your_super_secret_key_here
 JWT_EXPIRE=7d
 CORS_ORIGIN=http://localhost:3000
@@ -21,7 +21,8 @@ DEFAULT_PAGE_SIZE=10
 MAX_PAGE_SIZE=100
 ```
 
-### Step 3: Create PostgreSQL Database
+### Step 3: Create PostgreSQL Database (optional)
+Skip this step when using the shared demo database via `DATABASE_URL`.
 Open PowerShell or Command Prompt and run:
 
 ```bash

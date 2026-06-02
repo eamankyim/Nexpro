@@ -47,14 +47,14 @@ Create a `.env` file in the root directory:
 cp env.example .env
 ```
 
-Edit `.env` file with your configuration:
+Edit `.env` file with your configuration. If you do not have a local database, copy the demo Backend `DATABASE_URL` value from Vercel/project secrets into `Backend/.env`; do not commit the real database URL.
 ```env
 # Server Configuration
 PORT=5000
 NODE_ENV=development
 
 # Database Configuration
-DATABASE_URL=postgresql://postgres:yourpassword@localhost:5432/printing_press_db
+DATABASE_URL=postgresql://username:password@demo-db-host/neondb?sslmode=require
 
 # JWT Configuration
 JWT_SECRET=your_super_secret_jwt_key_change_this_in_production

@@ -6,7 +6,7 @@ React frontend application for ABS (African Business Suite) - Business Managemen
 
 ### Prerequisites
 - Node.js (v18 or higher; v20 recommended — see `.nvmrc`)
-- Local development uses the shared demo backend at `https://demo-api.africanbusinesssuite.com`
+- Local development uses the backend at `http://localhost:5000`; configure that backend with the demo database if you do not have a local database.
 
 ### Installation
 
@@ -22,7 +22,7 @@ cp env.example .env
 
 Edit `.env`:
 ```env
-VITE_API_URL=https://demo-api.africanbusinesssuite.com
+VITE_API_URL=http://localhost:5000
 ```
 
 3. Start development server:
@@ -139,7 +139,7 @@ All API calls are centralized in the `services/` directory:
 
 ## 📱 Testing on your phone (same Wi‑Fi)
 
-1. **API** defaults to the shared demo backend (`https://demo-api.africanbusinesssuite.com`), so no local backend is required unless you explicitly override `VITE_API_URL`.
+1. **API** defaults to the local backend (`http://localhost:5000`). Start `Backend` locally and set its `DATABASE_URL` to the demo database URL from Vercel/project secrets if you do not have a local database.
 2. **Frontend** dev server listens on all interfaces (`host: true` in Vite). Start it:
    ```bash
    npm run dev
@@ -151,7 +151,7 @@ All API calls are centralized in the `services/` directory:
    Or manually: macOS/Linux `ifconfig | grep "inet "`, Windows `ipconfig` → use `192.168.x.x` or `10.x.x.x`.
 4. On your **phone**, open: `http://<your-IP>:3000`  
    Example: `http://192.168.1.42:3000`
-5. **API and uploads** use the configured demo backend/proxy, so no extra config is required.
+5. **API and uploads** use the configured local backend/proxy. For phone testing, ensure the backend CORS list includes the frontend LAN origin.
 
 Ensure phone and computer are on the same network. If the app doesn’t load, check firewall (allow port 3000).
 
@@ -173,8 +173,9 @@ Edit theme in `src/App.jsx`:
 ### API URL
 Change API URL in `.env`:
 ```env
-VITE_API_URL=https://demo-api.africanbusinesssuite.com
+VITE_API_URL=http://localhost:5000
 ```
+You may explicitly set `VITE_API_URL=https://demo-api.africanbusinesssuite.com` for debugging against the hosted demo API. Do not set `VITE_API_URL=https://api.africanbusinesssuite.com` for localhost; the app will ignore that production API override during local development.
 
 ## 🚢 Production Build
 
@@ -229,7 +230,7 @@ npm run preview
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| VITE_API_URL | Backend API URL | https://demo-api.africanbusinesssuite.com |
+| VITE_API_URL | Backend API URL | http://localhost:5000 |
 
 ## 🤝 Contributing
 

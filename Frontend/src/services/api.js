@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-/** Demo API URL used by local development when no VITE_API_URL override is set */
-const DEMO_API_URL = 'https://demo-api.africanbusinesssuite.com';
+/** Local backend URL used by local development when no VITE_API_URL override is set. */
+const LOCAL_API_URL = 'http://localhost:5000';
 
 /** Production API URL when app is served from ABS Ghana / African Business Suite production domains */
 const ABS_API_URL = 'https://api.africanbusinesssuite.com';
@@ -60,36 +60,37 @@ const normalizeEnvApiUrl = (envUrl) => {
   let url = envUrl.trim().replace(/\/$/, '');
   url = url.replace(/\/api\/?$/i, '');
   if (url && !url.match(/^https?:\/\//i)) {
-    url = `https://${url}`;
+    const localhostLike = /^(localhost|127(?:\.\d{1,3}){3}|192\.168\.)/i.test(url);
+    url = `${localhostLike ? 'http' : 'https'}://${url}`;
     if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
-      console.warn(`VITE_API_URL missing protocol, auto-added https://. Original: ${envUrl}, Fixed: ${url}`);
+      console.warn(`VITE_API_URL missing protocol, auto-added protocol. Original: ${envUrl}, Fixed: ${url}`);
     }
   }
   return url;
 };
 
 /**
- * Resolve API base URL for localhost dev: demo API unless env points at a non-production local target.
+ * Resolve API base URL for localhost dev: local backend by default; explicit non-production overrides are allowed.
  * @param {string|undefined} envUrl
  * @param {string} browserHost
  * @returns {string}
  */
 const resolveLocalDevApiBaseUrl = (envUrl, browserHost) => {
   if (!envUrl) {
-    return DEMO_API_URL;
+    return LOCAL_API_URL;
   }
   const normalized = normalizeEnvApiUrl(envUrl);
   if (isProductionApiUrl(normalized)) {
     console.warn(
       `[API] VITE_API_URL points at production (${normalized}) while the app runs on ${browserHost}; ` +
-        `using demo API ${DEMO_API_URL}. Update or remove VITE_API_URL in Frontend/.env.local.`
+        `using local backend ${LOCAL_API_URL}. Update or remove VITE_API_URL in Frontend/.env.local.`
     );
-    return DEMO_API_URL;
+    return LOCAL_API_URL;
   }
   if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
     console.log(`[API] Using base URL: ${normalized}`);
   }
-  return normalized || DEMO_API_URL;
+  return normalized || LOCAL_API_URL;
 };
 
 const deriveApiBaseUrl = () => {
@@ -136,11 +137,11 @@ const deriveApiBaseUrl = () => {
       return '';
     }
 
-    // Local development fallback: use the shared demo backend unless explicitly overridden.
-    return DEMO_API_URL;
+    // Local development fallback: use the local backend, which can point at the demo database.
+    return LOCAL_API_URL;
   }
 
-  return DEMO_API_URL;
+  return LOCAL_API_URL;
 };
 
 export const API_BASE_URL = deriveApiBaseUrl();
