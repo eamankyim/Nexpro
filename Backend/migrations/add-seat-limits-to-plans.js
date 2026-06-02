@@ -85,9 +85,14 @@ async function up() {
 
   await sequelize.query(`
     UPDATE subscription_plans 
-    SET "seatLimit" = NULL, "seatPricePerAdditional" = NULL
+    SET "seatLimit" = :enterpriseLimit, "seatPricePerAdditional" = :enterprisePrice
     WHERE "planId" = 'enterprise'
-  `);
+  `, {
+    replacements: {
+      enterpriseLimit: DEFAULT_PLAN_SEAT_LIMITS.enterprise,
+      enterprisePrice: PLAN_SEAT_PRICING.enterprise
+    }
+  });
 
   console.log('[Migration] Seat limit columns added and defaults set!');
 }

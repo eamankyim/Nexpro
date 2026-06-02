@@ -22,6 +22,7 @@ exports.initializeSubscriptionPayment = async (req, res, next) => {
     const user = req.user;
     const plan = normalizePlan(req.body?.plan);
     const billingPeriod = normalizeBillingPeriod(req.body?.billingPeriod);
+    const paymentMethod = String(req.body?.paymentMethod || 'card').trim().toLowerCase();
 
     if (!tenantId) {
       return res.status(400).json({ success: false, message: 'Tenant context is required' });
@@ -38,6 +39,9 @@ exports.initializeSubscriptionPayment = async (req, res, next) => {
     if (!['starter', 'professional'].includes(plan)) {
       return res.status(400).json({ success: false, message: 'Invalid plan selected' });
     }
+    if (!['card', 'mobile_money'].includes(paymentMethod)) {
+      return res.status(400).json({ success: false, message: 'Invalid payment method selected' });
+    }
     if (!paystackService.secretKey) {
       return res.status(503).json({ success: false, message: 'Payment provider is not configured' });
     }
@@ -50,14 +54,14 @@ exports.initializeSubscriptionPayment = async (req, res, next) => {
       });
     }
 
-    const reference = `SUB_${tenantId.slice(0, 8)}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
     const callbackUrl = `${frontendUrl}/checkout`;
 
+    const usePaystackPlan = paymentMethod === 'card' && pricing.planCode;
     const initPayload = {
       email: user.email,
       callback_url: callbackUrl,
-      reference,
+      reference: `SUB_${tenantId.slice(0, 8)}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`,
       metadata: {
         type: 'subscription',
         tenantId,
@@ -66,17 +70,31 @@ exports.initializeSubscriptionPayment = async (req, res, next) => {
         billingPeriod,
         paystackPlanCode: pricing.planCode || null,
         amountPesewas: pricing.amountPesewas,
+        paymentMethod,
         featureKeys: pricing.featureKeys || [],
       },
-      channels: ['card'],
+      channels: paymentMethod === 'mobile_money' ? ['mobile_money'] : ['card'],
     };
-    if (pricing.planCode) {
+    if (usePaystackPlan) {
       initPayload.plan = pricing.planCode;
     } else {
       initPayload.amount = pricing.amountPesewas;
     }
 
-    const result = await paystackService.initializeTransaction(initPayload);
+    let result;
+    try {
+      result = await paystackService.initializeTransaction(initPayload);
+    } catch (paystackErr) {
+      const status = paystackErr?.response?.status;
+      if (paymentMethod === 'mobile_money' && [400, 403].includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message:
+            'Mobile money checkout is not enabled for this Paystack account or currency. Enable Paystack Mobile Money for Ghana payments, or pay by card.',
+        });
+      }
+      throw paystackErr;
+    }
 
     if (!result?.status || !result?.data?.authorization_url) {
       return res.status(502).json({ success: false, message: result?.message || 'Failed to initialize payment' });
@@ -87,7 +105,7 @@ exports.initializeSubscriptionPayment = async (req, res, next) => {
       data: {
         authorization_url: result.data.authorization_url,
         access_code: result.data.access_code,
-        reference: result.data.reference || reference,
+        reference: result.data.reference || initPayload.reference,
       },
     });
   } catch (error) {

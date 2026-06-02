@@ -101,6 +101,14 @@ const defaultFormValues = {
 const PLATFORM_EMAIL_ENCRYPTION_KEY_MESSAGE =
   'Server is missing PLATFORM_EMAIL_CREDENTIALS_ENCRYPTION_KEY (64 hex chars). Configure it before saving platform email credentials.';
 
+const hasSavedPlatformEmailCredentials = (platformEmail = {}) => {
+  const provider = platformEmail.provider || 'sendgrid';
+  if (provider === 'smtp') {
+    return Boolean(platformEmail.smtp?.passwordConfigured);
+  }
+  return Boolean(platformEmail.sendgrid?.apiKeyConfigured);
+};
+
 const formatPlanLabel = (name = '') =>
   String(name || '')
     .replace(/\b(monthly|month|annually|annual|yearly|year)\b/gi, '')
@@ -224,6 +232,7 @@ const AdminSettings = () => {
   const [brandingLogoPreview, setBrandingLogoPreview] = useState('');
   const [brandingLogoPreviewVisible, setBrandingLogoPreviewVisible] = useState(false);
   const [brandingLogoUploading, setBrandingLogoUploading] = useState(false);
+  const [platformEmailEditing, setPlatformEmailEditing] = useState(false);
   
   // Get active tab from URL params, default to 'branding'
   const activeTab = searchParams.get('tab') || 'branding';
@@ -274,21 +283,25 @@ const AdminSettings = () => {
           'platform:communications': communications = {},
           'platform:email': platformEmail = defaultFormValues.platformEmail,
         } = response.data || {};
+        const normalizedPlatformEmail = platformEmail || defaultFormValues.platformEmail;
         form.reset({
           branding,
           featureFlags,
           communications,
-          platformEmail,
+          platformEmail: normalizedPlatformEmail,
         });
+        setPlatformEmailEditing(!hasSavedPlatformEmailCredentials(normalizedPlatformEmail));
         setBrandingLogoPreview(branding.logoUrl || '');
       } else {
         form.reset(defaultFormValues);
+        setPlatformEmailEditing(true);
         setBrandingLogoPreview('');
       }
     } catch (error) {
       console.error('Failed to load platform settings', error);
       showError(null, 'Failed to load settings');
       form.reset(defaultFormValues);
+      setPlatformEmailEditing(true);
       setBrandingLogoPreview('');
     } finally {
       setLoading(false);
@@ -352,6 +365,37 @@ const AdminSettings = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSavePlatformEmail = async () => {
+    const values = form.getValues();
+    const platformEmail = values?.platformEmail || {};
+    const hasEnteredPlatformSecret = Boolean(
+      platformEmail.sendgrid?.apiKey?.trim() || platformEmail.smtp?.password?.trim()
+    );
+
+    if (hasEnteredPlatformSecret && platformEmail.encryptionConfigured === false) {
+      showError(null, PLATFORM_EMAIL_ENCRYPTION_KEY_MESSAGE);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await adminService.updatePlatformSettings(values);
+      await loadPlatformSettings();
+      setPlatformEmailEditing(false);
+      showSuccess('Platform email provider updated');
+    } catch (error) {
+      console.error('Failed to update platform email settings', error);
+      showError(error, 'Failed to update platform email provider');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleCancelPlatformEmailEdit = async () => {
+    await loadPlatformSettings();
+    setPlatformEmailEditing(false);
   };
 
   const handleTestPlatformEmail = async () => {
@@ -766,6 +810,12 @@ const AdminSettings = () => {
   const platformEmailSmtp = useWatch({ control: form.control, name: 'platformEmail.smtp' }) || {};
   const platformEmailEnvFallback = useWatch({ control: form.control, name: 'platformEmail.envFallback' }) || {};
   const platformEmailEncryptionConfigured = useWatch({ control: form.control, name: 'platformEmail.encryptionConfigured' });
+  const currentPlatformEmail = useWatch({ control: form.control, name: 'platformEmail' }) || {};
+  const platformEmailHasSavedCredentials = hasSavedPlatformEmailCredentials(currentPlatformEmail);
+  const platformEmailHasAnySavedCredentials = Boolean(
+    platformEmailSendgrid.apiKeyConfigured || platformEmailSmtp.passwordConfigured
+  );
+  const platformEmailProviderLabel = platformEmailProvider === 'smtp' ? 'SMTP' : 'SendGrid';
   const isEnterprisePlanForm = String(watchedPlanId || '').toLowerCase() === 'enterprise';
 
   const handleEnterpriseTierChange = useCallback((tierId) => {
@@ -1246,11 +1296,23 @@ const AdminSettings = () => {
             </TabsContent>
             <TabsContent value="communications" className="mt-6 space-y-4">
               <div className="rounded-lg border border-border p-4 space-y-4">
-                <div>
-                  <h3 className="font-semibold">Platform email provider</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Used for account and system emails such as verification, password reset, OTP, and platform invites.
-                  </p>
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <h3 className="font-semibold">Platform email provider</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Used for account and system emails such as verification, password reset, OTP, and platform invites.
+                    </p>
+                  </div>
+                  {!platformEmailEditing && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setPlatformEmailEditing(true)}
+                    >
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Edit provider
+                    </Button>
+                  )}
                 </div>
                 {platformEmailEncryptionConfigured === false && (
                   <Alert variant="destructive">
@@ -1262,234 +1324,332 @@ const AdminSettings = () => {
                     </AlertDescription>
                   </Alert>
                 )}
-                <FormField
-                  control={form.control}
-                  name="platformEmail.provider"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Provider</FormLabel>
-                      <Select value={field.value || 'sendgrid'} onValueChange={field.onChange}>
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select provider" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="sendgrid">SendGrid</SelectItem>
-                          <SelectItem value="smtp">SMTP</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormDescription>
-                        Saved credentials are encrypted at rest when the server encryption key is configured.
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                {platformEmailProvider === 'sendgrid' && (
-                  <div className="space-y-4 rounded-lg border border-border p-4 bg-muted/30">
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant={platformEmailSendgrid.apiKeyConfigured ? 'secondary' : 'outline'}>
-                        SendGrid key {platformEmailSendgrid.apiKeyConfigured ? `saved ${platformEmailSendgrid.apiKeyMasked || ''}` : 'not saved'}
-                      </Badge>
-                      <Badge variant={platformEmailEnvFallback.sendgridConfigured ? 'secondary' : 'outline'}>
-                        Env fallback {platformEmailEnvFallback.sendgridConfigured ? 'configured' : 'missing'}
-                      </Badge>
-                    </div>
+                {platformEmailEditing ? (
+                  <>
                     <FormField
                       control={form.control}
-                      name="platformEmail.sendgrid.apiKey"
+                      name="platformEmail.provider"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>SendGrid API key</FormLabel>
-                          <FormControl>
-                            <Input
-                              type="password"
-                              autoComplete="off"
-                              placeholder={platformEmailSendgrid.apiKeyConfigured ? 'Leave blank to keep saved API key' : 'SG.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}
-                              {...field}
-                              value={field.value || ''}
-                            />
-                          </FormControl>
-                          <FormDescription>Leaving this blank keeps the saved key.</FormDescription>
+                          <FormLabel>Provider</FormLabel>
+                          <Select value={field.value || 'sendgrid'} onValueChange={field.onChange}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select provider" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              <SelectItem value="sendgrid">SendGrid</SelectItem>
+                              <SelectItem value="smtp">SMTP</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <FormDescription>
+                            Saved credentials are encrypted at rest when the server encryption key is configured.
+                          </FormDescription>
                           <FormMessage />
                         </FormItem>
                       )}
                     />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="platformEmail.sendgrid.fromEmail"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Sender email</FormLabel>
-                            <FormControl>
-                              <Input type="email" placeholder="info@africanbusinesssuite.com" {...field} value={field.value || ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="platformEmail.sendgrid.fromName"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Sender name</FormLabel>
-                            <FormControl>
-                              <Input placeholder="ABS" {...field} value={field.value || ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                  </div>
-                )}
-                {platformEmailProvider === 'smtp' && (
+                    {platformEmailProvider === 'sendgrid' && (
+                      <div className="space-y-4 rounded-lg border border-border p-4 bg-muted/30">
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant={platformEmailSendgrid.apiKeyConfigured ? 'secondary' : 'outline'}>
+                            SendGrid key {platformEmailSendgrid.apiKeyConfigured ? `saved ${platformEmailSendgrid.apiKeyMasked || ''}` : 'not saved'}
+                          </Badge>
+                          <Badge variant={platformEmailEnvFallback.sendgridConfigured ? 'secondary' : 'outline'}>
+                            Env fallback {platformEmailEnvFallback.sendgridConfigured ? 'configured' : 'missing'}
+                          </Badge>
+                        </div>
+                        <FormField
+                          control={form.control}
+                          name="platformEmail.sendgrid.apiKey"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>SendGrid API key</FormLabel>
+                              <FormControl>
+                                <Input
+                                  type="password"
+                                  autoComplete="off"
+                                  placeholder={platformEmailSendgrid.apiKeyConfigured ? 'Leave blank to keep saved API key' : 'SG.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}
+                                  {...field}
+                                  value={field.value || ''}
+                                />
+                              </FormControl>
+                              <FormDescription>Leaving this blank keeps the saved key.</FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <FormField
+                            control={form.control}
+                            name="platformEmail.sendgrid.fromEmail"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Sender email</FormLabel>
+                                <FormControl>
+                                  <Input type="email" placeholder="info@africanbusinesssuite.com" {...field} value={field.value || ''} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="platformEmail.sendgrid.fromName"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Sender name</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="ABS" {...field} value={field.value || ''} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {platformEmailProvider === 'smtp' && (
+                      <div className="space-y-4 rounded-lg border border-border p-4 bg-muted/30">
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant={platformEmailSmtp.passwordConfigured ? 'secondary' : 'outline'}>
+                            SMTP password {platformEmailSmtp.passwordConfigured ? `saved ${platformEmailSmtp.passwordMasked || ''}` : 'not saved'}
+                          </Badge>
+                          <Badge variant={platformEmailEnvFallback.smtpConfigured ? 'secondary' : 'outline'}>
+                            Env fallback {platformEmailEnvFallback.smtpConfigured ? 'configured' : 'missing'}
+                          </Badge>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <FormField
+                            control={form.control}
+                            name="platformEmail.smtp.smtpHost"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>SMTP Host</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="smtp.gmail.com" {...field} value={field.value || ''} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="platformEmail.smtp.smtpPort"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>SMTP Port</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="number"
+                                    placeholder="587"
+                                    {...field}
+                                    value={field.value === '' || field.value == null ? '' : field.value}
+                                    onChange={(event) => {
+                                      const raw = event.target.value;
+                                      if (raw === '') {
+                                        field.onChange('');
+                                        return;
+                                      }
+                                      const port = parseInt(raw, 10);
+                                      field.onChange(Number.isNaN(port) ? '' : port);
+                                    }}
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <FormField
+                            control={form.control}
+                            name="platformEmail.smtp.smtpUser"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>SMTP User</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="icreationsghana@gmail.com" {...field} value={field.value || ''} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="platformEmail.smtp.password"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>SMTP Password</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    type="password"
+                                    autoComplete="off"
+                                    placeholder={platformEmailSmtp.passwordConfigured ? 'Leave blank to keep saved password' : 'Enter SMTP password'}
+                                    {...field}
+                                    value={field.value || ''}
+                                  />
+                                </FormControl>
+                                <FormDescription>
+                                  For Gmail SMTP, use a Gmail App Password with 2-Step Verification enabled, not the account password.
+                                </FormDescription>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <FormField
+                            control={form.control}
+                            name="platformEmail.smtp.fromEmail"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Sender email</FormLabel>
+                                <FormControl>
+                                  <Input type="email" placeholder="icreationsghana@gmail.com" {...field} value={field.value || ''} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          <FormField
+                            control={form.control}
+                            name="platformEmail.smtp.fromName"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Sender name</FormLabel>
+                                <FormControl>
+                                  <Input placeholder="ABS" {...field} value={field.value || ''} />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
                   <div className="space-y-4 rounded-lg border border-border p-4 bg-muted/30">
                     <div className="flex flex-wrap gap-2">
-                      <Badge variant={platformEmailSmtp.passwordConfigured ? 'secondary' : 'outline'}>
-                        SMTP password {platformEmailSmtp.passwordConfigured ? `saved ${platformEmailSmtp.passwordMasked || ''}` : 'not saved'}
+                      <Badge variant={platformEmailHasSavedCredentials ? 'secondary' : 'outline'}>
+                        {platformEmailProviderLabel} credentials {platformEmailHasSavedCredentials ? 'saved' : 'not saved'}
                       </Badge>
-                      <Badge variant={platformEmailEnvFallback.smtpConfigured ? 'secondary' : 'outline'}>
-                        Env fallback {platformEmailEnvFallback.smtpConfigured ? 'configured' : 'missing'}
+                      <Badge variant={
+                        (platformEmailProvider === 'smtp'
+                          ? platformEmailEnvFallback.smtpConfigured
+                          : platformEmailEnvFallback.sendgridConfigured) ? 'secondary' : 'outline'
+                      }>
+                        Env fallback {(platformEmailProvider === 'smtp'
+                          ? platformEmailEnvFallback.smtpConfigured
+                          : platformEmailEnvFallback.sendgridConfigured) ? 'configured' : 'missing'}
                       </Badge>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="platformEmail.smtp.smtpHost"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>SMTP Host</FormLabel>
-                            <FormControl>
-                              <Input placeholder="smtp.gmail.com" {...field} value={field.value || ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="platformEmail.smtp.smtpPort"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>SMTP Port</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="number"
-                                placeholder="587"
-                                {...field}
-                                value={field.value === '' || field.value == null ? '' : field.value}
-                                onChange={(event) => {
-                                  const raw = event.target.value;
-                                  if (raw === '') {
-                                    field.onChange('');
-                                    return;
-                                  }
-                                  const port = parseInt(raw, 10);
-                                  field.onChange(Number.isNaN(port) ? '' : port);
-                                }}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Provider</p>
+                        <p className="text-sm text-foreground">{platformEmailProviderLabel}</p>
+                      </div>
+                      {platformEmailProvider === 'sendgrid' ? (
+                        <>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">API key</p>
+                            <p className="text-sm text-foreground">{platformEmailSendgrid.apiKeyMasked || 'Not saved'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Sender email</p>
+                            <p className="text-sm text-foreground">{platformEmailSendgrid.fromEmail || 'Not set'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Sender name</p>
+                            <p className="text-sm text-foreground">{platformEmailSendgrid.fromName || 'Not set'}</p>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">SMTP password</p>
+                            <p className="text-sm text-foreground">{platformEmailSmtp.passwordMasked || 'Not saved'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">SMTP host</p>
+                            <p className="text-sm text-foreground">{platformEmailSmtp.smtpHost || 'Not set'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">SMTP port</p>
+                            <p className="text-sm text-foreground">{platformEmailSmtp.smtpPort || 'Not set'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">SMTP user</p>
+                            <p className="text-sm text-foreground">{platformEmailSmtp.smtpUser || 'Not set'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Sender email</p>
+                            <p className="text-sm text-foreground">{platformEmailSmtp.fromEmail || 'Not set'}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Sender name</p>
+                            <p className="text-sm text-foreground">{platformEmailSmtp.fromName || 'Not set'}</p>
+                          </div>
+                        </>
+                      )}
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="platformEmail.smtp.smtpUser"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>SMTP User</FormLabel>
-                            <FormControl>
-                              <Input placeholder="icreationsghana@gmail.com" {...field} value={field.value || ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="platformEmail.smtp.password"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>SMTP Password</FormLabel>
-                            <FormControl>
-                              <Input
-                                type="password"
-                                autoComplete="off"
-                                placeholder={platformEmailSmtp.passwordConfigured ? 'Leave blank to keep saved password' : 'Enter SMTP password'}
-                                {...field}
-                                value={field.value || ''}
-                              />
-                            </FormControl>
-                            <FormDescription>
-                              For Gmail SMTP, use a Gmail App Password with 2-Step Verification enabled, not the account password.
-                            </FormDescription>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <FormField
-                        control={form.control}
-                        name="platformEmail.smtp.fromEmail"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Sender email</FormLabel>
-                            <FormControl>
-                              <Input type="email" placeholder="icreationsghana@gmail.com" {...field} value={field.value || ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name="platformEmail.smtp.fromName"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel>Sender name</FormLabel>
-                            <FormControl>
-                              <Input placeholder="ABS" {...field} value={field.value || ''} />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Saved secret values are hidden. Click Edit provider to change credentials.
+                    </p>
                   </div>
                 )}
                 <Alert>
                   <AlertTitle>Secure configuration</AlertTitle>
                   <AlertDescription>
-                    Secret values are never returned to this page. If a secret field is blank when you save, the existing saved secret is kept.
-                    Test connection uses values entered here first, then saved platform credentials, then environment fallbacks.
+                    Secret values are never returned to this page.
+                    {platformEmailEditing
+                      ? ' If a secret field is blank when you save, the existing saved secret is kept. Test connection uses values entered here first, then saved platform credentials, then environment fallbacks.'
+                      : ' Saved provider credentials remain read-only until you choose to edit them.'}
                     Tenant business emails still use each workspace&apos;s Settings &gt; Email configuration.
                   </AlertDescription>
                 </Alert>
-                <div className="flex flex-col gap-2 rounded-lg border border-border p-4 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="text-sm font-medium">Verify platform email credentials</p>
-                    <p className="text-sm text-muted-foreground">
-                      Tests the selected provider without exposing saved secrets.
-                    </p>
+                {platformEmailEditing && (
+                  <div className="flex flex-col gap-3 rounded-lg border border-border p-4 md:flex-row md:items-center md:justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Verify platform email credentials</p>
+                      <p className="text-sm text-muted-foreground">
+                        Tests the selected provider without exposing saved secrets.
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                      {platformEmailHasAnySavedCredentials && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={handleCancelPlatformEmailEdit}
+                          disabled={platformEmailTesting || saving}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleTestPlatformEmail}
+                        disabled={platformEmailTesting || saving}
+                      >
+                        {platformEmailTesting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Test connection
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={handleSavePlatformEmail}
+                        disabled={saving || loading}
+                        className="bg-brand hover:bg-brand-dark"
+                      >
+                        {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}
+                        Save provider
+                      </Button>
+                    </div>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={handleTestPlatformEmail}
-                    disabled={platformEmailTesting || saving}
-                  >
-                    {platformEmailTesting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Test connection
-                  </Button>
-                </div>
+                )}
               </div>
               <FormField
                 control={form.control}

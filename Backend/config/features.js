@@ -403,7 +403,7 @@ const DEFAULT_PLAN_SEAT_LIMITS = {
   trial: 5,
   starter: 1,
   professional: 3,
-  enterprise: null, // unlimited
+  enterprise: 10,
   launch: 1, scale: 3 // legacy aliases
 };
 
@@ -412,7 +412,7 @@ const DEFAULT_PLAN_BRANCH_LIMITS = {
   trial: null,
   starter: 1,
   professional: 3,
-  enterprise: null,
+  enterprise: 10,
   launch: 1, scale: 3 // legacy aliases
 };
 

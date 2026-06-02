@@ -5,8 +5,40 @@ const {
   getEnterprisePublicPricing,
 } = require('../services/subscriptionPlanCatalogService');
 
+const configPlanById = new Map(configPlans.map((plan) => [plan.id, plan]));
+
 const sortPlans = (collection = []) =>
   [...collection].sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
+
+const normalizeEnterprisePricingCopy = (plan) => {
+  const id = String(plan?.id || plan?.planId || '').toLowerCase();
+  if (id !== 'enterprise') return plan;
+
+  const canonical = configPlanById.get('enterprise');
+  if (!canonical) return plan;
+
+  const previousMarketing =
+    plan.marketing && typeof plan.marketing === 'object' ? plan.marketing : {};
+  const canonicalMarketing = canonical.marketing || {};
+
+  return {
+    ...plan,
+    highlights: canonical.highlights || plan.highlights || [],
+    marketing: {
+      ...previousMarketing,
+      ...canonicalMarketing,
+      enabled: previousMarketing.enabled ?? canonicalMarketing.enabled,
+      popular: previousMarketing.popular ?? canonicalMarketing.popular,
+      badgeLabel: previousMarketing.badgeLabel ?? canonicalMarketing.badgeLabel,
+      cta: previousMarketing.cta ?? canonicalMarketing.cta,
+      featureFlags: {
+        ...(canonicalMarketing.featureFlags || {}),
+        ...(previousMarketing.featureFlags || {}),
+      },
+      perks: canonicalMarketing.perks || previousMarketing.perks || [],
+    },
+  };
+};
 
 const mapPlanForOnboarding = (plan) => ({
   id: plan.id,
@@ -79,7 +111,7 @@ exports.getPublicPlans = async (req, res) => {
           marketing: record.marketing,
           onboarding: record.onboarding,
           metadata: record.metadata,
-        }));
+        })).map(normalizeEnterprisePricingCopy);
         lastUpdated = Math.max(...dbPlans.map((p) => new Date(p.updatedAt)));
         source = 'database';
       }
@@ -88,7 +120,7 @@ exports.getPublicPlans = async (req, res) => {
     }
 
     if (plans.length === 0) {
-      plans = configPlans;
+      plans = configPlans.map(normalizeEnterprisePricingCopy);
       lastUpdated = configLastUpdated;
       source = 'config';
     }

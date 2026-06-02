@@ -12,6 +12,43 @@ const PLAN_ICONS = {
   enterprise: Building2,
 };
 
+const ENTERPRISE_LIMIT_FEATURES = [
+  'Up to 10 seats',
+  'Up to 10 branches/locations/shops',
+];
+
+const uniqueFeatureList = (features = []) => {
+  const seen = new Set();
+  return features.filter((feature) => {
+    const normalized = String(feature || '').trim();
+    if (!normalized) return false;
+    const key = normalized.toLowerCase().replace(/\s+/g, ' ');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+};
+
+const normalizePlanFeatures = (planId, features = []) => {
+  if (planId !== 'enterprise') return uniqueFeatureList(features);
+
+  const filtered = features.filter(
+    (feature) => !/unlimited\s+(?:seats?|users?|team members?)/i.test(String(feature || ''))
+  );
+  const hasSeatLimit = filtered.some((feature) =>
+    /up to\s+10\s+(?:seats?|users?)/i.test(String(feature || ''))
+  );
+  const hasBranchLimit = filtered.some((feature) =>
+    /up to\s+10\s+(?:branches?|locations?|shops?)/i.test(String(feature || ''))
+  );
+
+  return uniqueFeatureList([
+    ...filtered,
+    ...(hasSeatLimit ? [] : [ENTERPRISE_LIMIT_FEATURES[0]]),
+    ...(hasBranchLimit ? [] : [ENTERPRISE_LIMIT_FEATURES[1]]),
+  ]);
+};
+
 /** Minimal fallback when public pricing API is unavailable */
 const FALLBACK_PLANS = [
   {
@@ -58,7 +95,8 @@ const FALLBACK_PLANS = [
     monthlyPrice: null,
     yearlyTotal: null,
     features: [
-      'Unlimited seats',
+      'Up to 10 seats',
+      'Up to 10 branches/locations/shops',
       'Dedicated success manager',
       'Custom workflow configuration',
       '24/7 priority support',
@@ -86,7 +124,7 @@ const normalizeMarketingPlans = (apiRows, enterprisePricing) => {
         description: row.description || '',
         monthlyPrice: null,
         yearlyTotal: null,
-        features: row.highlights?.length ? row.highlights : row.perks || [],
+        features: normalizePlanFeatures(id, row.perks?.length ? row.perks : row.highlights || []),
         popular: Boolean(row.popular),
         contactSales: id === 'enterprise' || row.priceMeta?.amount == null,
       });
@@ -118,6 +156,14 @@ const normalizeMarketingPlans = (apiRows, enterprisePricing) => {
   }
   const plans = order.map((id) => byId.get(id)).filter(Boolean);
   return plans.length ? plans : null;
+};
+
+const calculateAnnualSavingsPercent = (plan) => {
+  if (plan.monthlyPrice == null || plan.yearlyTotal == null) return 0;
+  const monthlyAnnualTotal = plan.monthlyPrice * 12;
+  const savings = monthlyAnnualTotal - plan.yearlyTotal;
+  if (monthlyAnnualTotal <= 0 || savings <= 0) return 0;
+  return Math.floor((savings / monthlyAnnualTotal) * 100);
 };
 
 const Plans = () => {
@@ -152,6 +198,11 @@ const Plans = () => {
     });
     return map;
   }, [plans]);
+
+  const maxAnnualSavingsPercent = useMemo(
+    () => plans.reduce((max, plan) => Math.max(max, calculateAnnualSavingsPercent(plan)), 0),
+    [plans]
+  );
 
   const handleSelectPlan = useCallback(
     (plan) => {
@@ -197,7 +248,9 @@ const Plans = () => {
               role="switch"
               aria-checked={billingPeriod === 'yearly'}
               onClick={() => setBillingPeriod((p) => (p === 'monthly' ? 'yearly' : 'monthly'))}
-              className="relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent bg-gray-200 transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 ${
+                billingPeriod === 'yearly' ? 'bg-brand' : 'bg-gray-200'
+              }`}
             >
               <span
                 className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white ring-0 transition duration-200 ease-in-out ${
@@ -210,7 +263,11 @@ const Plans = () => {
             >
               Yearly
             </span>
-            <span className="text-xs text-green-600 font-medium ml-1">Save up to 23%</span>
+            {maxAnnualSavingsPercent > 0 && (
+              <span className="text-xs text-green-600 font-medium ml-1">
+                Save up to {maxAnnualSavingsPercent}%
+              </span>
+            )}
           </div>
         </div>
 

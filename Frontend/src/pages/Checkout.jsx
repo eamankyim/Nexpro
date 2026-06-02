@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   CreditCard,
   CheckCircle,
   ArrowLeft,
-  Loader2
+  Loader2,
+  Smartphone
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -28,6 +29,12 @@ const DEFAULT_YEARLY_TOTAL = { starter: 1188, professional: 2388, enterprise: nu
 const DEFAULT_YEARLY_PER_MONTH = {
   starter: Math.round((1188 / 12) * 100) / 100,
   professional: Math.round((2388 / 12) * 100) / 100,
+};
+
+const formatCurrency = (amount) => {
+  if (amount == null) return '₵ 0';
+  const roundedAmount = Math.round(amount * 100) / 100;
+  return `₵ ${Number.isInteger(roundedAmount) ? roundedAmount : roundedAmount.toFixed(2)}`;
 };
 
 const Checkout = () => {
@@ -84,6 +91,13 @@ const Checkout = () => {
       : planPricing.monthly[plan];
   const yearlyPerMonth = planPricing.yearlyPerMonth[plan];
   const isEnterprise = plan === 'enterprise';
+  const yearlySavings = useMemo(() => {
+    if (billingPeriod !== 'yearly' || isEnterprise) return 0;
+    const monthlyPrice = planPricing.monthly[plan];
+    const yearlyTotal = planPricing.yearlyTotal[plan];
+    if (monthlyPrice == null || yearlyTotal == null) return 0;
+    return Math.max(0, Math.round((monthlyPrice * 12 - yearlyTotal) * 100) / 100);
+  }, [billingPeriod, isEnterprise, plan, planPricing]);
 
   const reference = searchParams.get('reference');
   const hasValidSelection =
@@ -148,9 +162,9 @@ const Checkout = () => {
     }
   }, [refreshAuthState]);
 
-  const handlePay = useCallback(() => {
+  const handlePay = useCallback((paymentMethod = 'card') => {
     if (!plan || !billingPeriod || isEnterprise) return;
-    payMutation.mutate({ plan, billingPeriod });
+    payMutation.mutate({ plan, billingPeriod, paymentMethod });
   }, [plan, billingPeriod, isEnterprise, payMutation]);
 
   if (!reference && !hasValidSelection) {
@@ -251,10 +265,10 @@ const Checkout = () => {
                 <span className="font-semibold">Billing:</span>
                 <span>{billingPeriod === 'yearly' ? 'Yearly' : 'Monthly'}</span>
               </div>
-              {billingPeriod === 'yearly' && !isEnterprise && (
+              {yearlySavings > 0 && (
                 <div className="flex justify-between text-green-600">
                   <span>Discount:</span>
-                  <span>₵ {yearlyPerMonth}/mo</span>
+                  <span>{formatCurrency(yearlySavings)}/year</span>
                 </div>
               )}
             </div>
@@ -304,31 +318,59 @@ const Checkout = () => {
             ) : (
               <>
                 <p className="text-sm text-muted-foreground">
-                  Pay securely with Paystack using your card.
+                  Choose card for recurring Paystack billing, or mobile money for a one-time payment for this billing period.
                 </p>
 
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      onClick={handlePay}
-                      className="w-full min-h-[44px] h-12 text-base font-semibold"
-                      disabled={payMutation.isPending}
-                    >
-                  {payMutation.isPending ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Opening secure card checkout…
-                    </>
-                  ) : (
-                    <>
-                      <CreditCard className="mr-2 h-4 w-4" />
-                      Pay ₵ {finalPrice} with Paystack
-                    </>
-                  )}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>Complete payment with Paystack</TooltipContent>
-                </Tooltip>
+                <div className="space-y-3">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => handlePay('mobile_money')}
+                        className="w-full min-h-[44px] h-12 text-base font-semibold"
+                        disabled={payMutation.isPending}
+                      >
+                        {payMutation.isPending && payMutation.variables?.paymentMethod === 'mobile_money' ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Opening mobile money checkout...
+                          </>
+                        ) : (
+                          <>
+                            <Smartphone className="mr-2 h-4 w-4" />
+                            Pay ₵ {finalPrice} with Mobile Money
+                          </>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Approve the payment from your mobile money wallet</TooltipContent>
+                  </Tooltip>
+
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        onClick={() => handlePay('card')}
+                        className="w-full min-h-[44px] h-12 text-base font-semibold"
+                        disabled={payMutation.isPending}
+                      >
+                        {payMutation.isPending && payMutation.variables?.paymentMethod !== 'mobile_money' ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Opening card checkout...
+                          </>
+                        ) : (
+                          <>
+                            <CreditCard className="mr-2 h-4 w-4" />
+                            Pay ₵ {finalPrice} with Card
+                          </>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Complete recurring card billing with Paystack</TooltipContent>
+                  </Tooltip>
+                </div>
 
                 <p className="text-xs text-muted-foreground text-center">
                   By completing this purchase, you agree to our Terms of Service and Privacy Policy

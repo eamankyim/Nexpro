@@ -69,12 +69,12 @@ const resolveEnterpriseLimits = (tenant, planRow) => {
     };
   }
   return {
-    seatLimit: null,
-    branchLimit: null,
+    seatLimit: 10,
+    branchLimit: 10,
     storageLimitMB: null,
     tierName: 'Enterprise',
     tierId: null,
-    source: 'fallback_unlimited',
+    source: 'fallback_default',
   };
 };
 

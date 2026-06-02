@@ -84,6 +84,7 @@ const backfillJobInvoiceStudioLocations = require('./backfill-job-invoice-studio
 const createSubscriptionPaymentsTable = require('./create-subscription-payments-table');
 const backfillTrialPlanDefaults = require('./backfill-trial-plan-defaults');
 const createSubscriptionPlansTable = require('./create-subscription-plans-table');
+const updateEnterprisePlanLimitsCopy = require('./update-enterprise-plan-limits-copy');
 
 const migrate = async () => {
   try {
@@ -312,6 +313,10 @@ const migrate = async () => {
     // Leads scoped to studio locations (multi-branch studio workspaces)
     await addStudioLocationIdToLeads();
 
+    // Customer email/phone unique per studio/shop branch (tenant-wide when unscoped)
+    const fixCustomerUniquenessPerScope = require('./fix-customer-uniqueness-per-scope');
+    await fixCustomerUniquenessPerScope();
+
     const addBranchBrandingFields = require('./add-branch-branding-fields');
     await addBranchBrandingFields();
 
@@ -325,6 +330,7 @@ const migrate = async () => {
     await createSubscriptionPlansTable.up();
     await createSubscriptionPaymentsTable({ closeConnection: false });
     await backfillTrialPlanDefaults.up({ closeConnection: false });
+    await updateEnterprisePlanLimitsCopy();
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

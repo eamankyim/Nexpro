@@ -13,6 +13,7 @@ const {
 } = require('../utils/shopUtils');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateCustomerListCache } = require('../middleware/cache');
+const { assertCustomerContactUnique } = require('../utils/customerUniquenessUtils');
 
 const customerReadWhere = (req, extra = {}) =>
   applyShopReadFilter(req, applyStudioLocationFilter(req, applyTenantFilter(req.tenantId, extra)));
@@ -182,6 +183,10 @@ exports.createCustomer = async (req, res, next) => {
     if (payload.email === '') payload.email = null;
     if (payload.phone === '') payload.phone = null;
     if (payload.dateOfBirth === '') payload.dateOfBirth = null;
+    await assertCustomerContactUnique(req, {
+      phone: payload.phone,
+      email: payload.email,
+    });
     const customer = await Customer.create(
       attachScopedToPayload(req, {
         ...payload,
@@ -230,6 +235,11 @@ exports.updateCustomer = async (req, res, next) => {
     if (payload.dateOfBirth === '') payload.dateOfBirth = null;
     delete payload.studioLocationId;
     delete payload.shopId;
+    await assertCustomerContactUnique(req, {
+      phone: payload.phone !== undefined ? payload.phone : customer.phone,
+      email: payload.email !== undefined ? payload.email : customer.email,
+      excludeCustomerId: customer.id,
+    });
     await customer.update(payload);
     invalidateCustomerListCache(req.tenantId);
 
@@ -382,6 +392,7 @@ exports.findOrCreateCustomer = async (req, res, next) => {
     let created = false;
 
     if (!customer) {
+      await assertCustomerContactUnique(req, { phone: normalizedPhone });
       customer = await Customer.create(
         attachScopedToPayload(req, {
           name: name || `Customer ${normalizedPhone.slice(-4)}`,

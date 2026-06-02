@@ -149,12 +149,14 @@ const plans = [
       'Dedicated success manager',
       'Custom workflow configuration',
       '24/7 priority support',
-      'Unlimited seats'
+      'Up to 10 seats',
+      'Up to 10 branches/locations/shops'
     ],
     marketing: {
       enabled: true,
       perks: [
-        'Unlimited seats',
+        'Up to 10 seats',
+        'Up to 10 branches/locations/shops',
         'Dedicated success manager',
         'Custom workflow configuration',
         '24/7 priority support'
