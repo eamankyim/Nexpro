@@ -1,0 +1,186 @@
+jest.mock('../../../config/database', () => ({
+  sequelize: {},
+}));
+
+jest.mock('../../../models', () => ({
+  Setting: {
+    findOne: jest.fn(),
+    findOrCreate: jest.fn(),
+  },
+  User: {
+    findByPk: jest.fn(),
+  },
+  Tenant: {
+    findByPk: jest.fn(),
+  },
+}));
+
+jest.mock('../../../middleware/upload', () => ({
+  baseUploadDir: '/tmp/uploads',
+}));
+
+jest.mock('../../../utils/tenantUtils', () => ({
+  sanitizePayload: jest.fn((body = {}) => ({ ...body })),
+}));
+
+jest.mock('../../../utils/taxConfig', () => ({
+  normalizeTaxConfig: jest.fn((value) => value || {}),
+  validateMergedTaxPayload: jest.fn(),
+  warmTaxConfigCache: jest.fn(),
+}));
+
+jest.mock('../../../utils/taskAutomationConfig', () => ({
+  normalizeTaskAutomation: jest.fn((value) => value || {}),
+}));
+
+jest.mock('../../../config/customerSourceOptions', () => ({
+  getCustomerSourceOptions: jest.fn(() => []),
+}));
+
+jest.mock('../../../config/leadSourceOptions', () => ({
+  getLeadSourceOptions: jest.fn(() => []),
+}));
+
+jest.mock('../../../services/platformAdminNotificationService', () => ({
+  notifyDataDeletionRequested: jest.fn(),
+}));
+
+jest.mock('../../../utils/tenantClassification', () => ({
+  DEFAULT_SHOP_TYPE: 'general',
+  normalizeTenantClassification: jest.fn((tenant) => tenant),
+  normalizeTenantInstanceForRequest: jest.fn((tenant) => tenant),
+}));
+
+jest.mock('../../../services/paystackService', () => ({
+  secretKey: 'sk_test',
+  createSubaccount: jest.fn(),
+  userFacingPaystackErrorMessage: jest.fn(() => null),
+  paystackResponseIsUnusableHtml: jest.fn(() => false),
+  getMoMoBankCode: jest.fn(() => 'MOMO'),
+}));
+
+jest.mock('../../../services/emailService', () => ({
+  sendPlatformMessage: jest.fn().mockResolvedValue({ success: true }),
+}));
+
+jest.mock('../../../services/emailTemplates', () => ({
+  emailOtpCode: jest.fn(() => ({ subject: 'OTP', html: '<p>OTP</p>', text: 'OTP' })),
+  paystackBankLinkedEmail: jest.fn(() => ({ subject: 'Linked', html: '<p>Linked</p>', text: 'Linked' })),
+  paystackMomoLinkedEmail: jest.fn(() => ({ subject: 'Linked', html: '<p>Linked</p>', text: 'Linked' })),
+}));
+
+const { Setting, User, Tenant } = require('../../../models');
+const paystackService = require('../../../services/paystackService');
+const settingsController = require('../../../controllers/settingsController');
+
+describe('settingsController payment collection verification', () => {
+  const mockRes = () => {
+    const res = {};
+    res.status = jest.fn().mockReturnValue(res);
+    res.json = jest.fn().mockReturnValue(res);
+    return res;
+  };
+
+  const googleUser = {
+    id: 'user-1',
+    email: 'owner@example.com',
+    name: 'Owner',
+    googleId: 'google-123',
+    comparePassword: jest.fn(),
+  };
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    User.findByPk.mockResolvedValue(googleUser);
+    Setting.findOne.mockResolvedValue(null);
+    paystackService.createSubaccount.mockResolvedValue({
+      data: { subaccount_code: 'ACCT_test123' },
+    });
+  });
+
+  it('tells Google users to use OTP instead of password verification', async () => {
+    const req = { user: { id: 'user-1' } };
+    const res = mockRes();
+
+    await settingsController.verifyPaymentCollectionPassword(req, res, jest.fn());
+
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: true,
+        data: expect.objectContaining({
+          passwordRequired: false,
+          otpRequired: true,
+          authMethod: 'otp',
+        }),
+      })
+    );
+    expect(googleUser.comparePassword).not.toHaveBeenCalled();
+  });
+
+  it('rejects Google payment collection linking without an OTP', async () => {
+    const req = {
+      user: { id: 'user-1' },
+      tenantId: 'tenant-1',
+      body: {
+        settlement_type: 'bank',
+        business_name: 'Test Shop',
+        bank_code: '044',
+        account_number: '0123456789',
+      },
+    };
+    const res = mockRes();
+
+    await settingsController.updatePaymentCollectionSettings(req, res, jest.fn());
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        message: 'Verification code (OTP) is required',
+      })
+    );
+    expect(Tenant.findByPk).not.toHaveBeenCalled();
+    expect(googleUser.comparePassword).not.toHaveBeenCalled();
+  });
+
+  it('links payment collection for Google users with a valid OTP and no password', async () => {
+    const tenant = {
+      id: 'tenant-1',
+      metadata: {},
+      paystackSubaccountCode: null,
+      save: jest.fn().mockResolvedValue(undefined),
+    };
+    Tenant.findByPk.mockResolvedValue(tenant);
+    Setting.findOne.mockResolvedValue({
+      value: { otp: '123456', expiresAt: Date.now() + 60_000 },
+      destroy: jest.fn().mockResolvedValue(undefined),
+    });
+    const req = {
+      user: { id: 'user-1' },
+      tenantId: 'tenant-1',
+      body: {
+        otp: '123456',
+        settlement_type: 'bank',
+        business_name: 'Test Shop',
+        bank_code: '044',
+        bank_name: 'Test Bank',
+        account_number: '0123456789',
+      },
+    };
+    const res = mockRes();
+
+    await settingsController.updatePaymentCollectionSettings(req, res, jest.fn());
+
+    expect(paystackService.createSubaccount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        business_name: 'Test Shop',
+        bank_code: '044',
+        account_number: '0123456789',
+      })
+    );
+    expect(tenant.save).toHaveBeenCalledWith({ fields: ['metadata', 'paystackSubaccountCode'] });
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(googleUser.comparePassword).not.toHaveBeenCalled();
+  });
+});

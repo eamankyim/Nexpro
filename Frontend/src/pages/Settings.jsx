@@ -307,6 +307,9 @@ const Settings = () => {
   const [organizationLogoPreviewVisible, setOrganizationLogoPreviewVisible] = useState(false);
   const [organizationLogoUploading, setOrganizationLogoUploading] = useState(false);
   const [paymentVerifyPassword, setPaymentVerifyPassword] = useState('');
+  const [paymentVerifyOtp, setPaymentVerifyOtp] = useState('');
+  const [paymentOtpSending, setPaymentOtpSending] = useState(false);
+  const [paymentOtpSent, setPaymentOtpSent] = useState(false);
   const [paymentVerifyModalOpen, setPaymentVerifyModalOpen] = useState(false);
   const [paymentVerificationDone, setPaymentVerificationDone] = useState(false);
   const [paymentPasswordVerifying, setPaymentPasswordVerifying] = useState(false);
@@ -1164,6 +1167,8 @@ const Settings = () => {
       dismissSavingToast();
       showSuccess(response?.message || 'Payment collection updated');
       setPaymentVerifyPassword('');
+      setPaymentVerifyOtp('');
+      setPaymentOtpSent(false);
       setPaymentVerificationDone(false);
       const data = response?.data ?? response;
       if (data && activeTenant?.id) {
@@ -1410,15 +1415,42 @@ const Settings = () => {
     updateEmailMutation.mutate(payload);
   };
 
+  const handleSendPaymentOtp = async () => {
+    const pwd = (paymentVerifyPassword || '').trim();
+    if (!isGoogleUser && !pwd) {
+      showError(null, 'Enter your account password to receive a code.');
+      return;
+    }
+    setPaymentOtpSending(true);
+    try {
+      await settingsService.sendPaymentCollectionOtp(isGoogleUser ? undefined : pwd);
+      setPaymentOtpSent(true);
+      showSuccess('Verification code sent to your account email');
+    } catch (err) {
+      showError(err, 'Could not send verification code');
+    } finally {
+      setPaymentOtpSending(false);
+    }
+  };
+
   const handleVerifyPaymentPassword = async () => {
     const pwd = (paymentVerifyPassword || '').trim();
     if (!isGoogleUser && !pwd) {
       showError(null, 'Enter your account password');
       return;
     }
+    const otp = (paymentVerifyOtp || '').replace(/\D/g, '');
+    if (isGoogleUser && otp.length !== 6) {
+      showError(null, 'Enter the 6-digit code from your email');
+      return;
+    }
     setPaymentPasswordVerifying(true);
     try {
-      await settingsService.verifyPaymentCollectionPassword(isGoogleUser ? undefined : pwd);
+      if (isGoogleUser) {
+        await settingsService.verifyPaymentCollectionOtp({ otp });
+      } else {
+        await settingsService.verifyPaymentCollectionPassword(pwd);
+      }
       setPaymentVerificationDone(true);
       setPaymentVerifyModalOpen(false);
       showSuccess('Identity verified. You can link your payment account.');
@@ -1435,6 +1467,11 @@ const Settings = () => {
       showError(null, 'Password is required to link a payment account');
       return;
     }
+    const otp = (paymentVerifyOtp || '').replace(/\D/g, '');
+    if (isGoogleUser && otp.length !== 6) {
+      showError(null, 'Verify the email code before linking a payment account');
+      return;
+    }
     const settlementType = values.settlement_type || 'bank';
     savingToastDismissRef.current = showLoading('Saving...');
     if (settlementType === 'momo') {
@@ -1446,7 +1483,7 @@ const Settings = () => {
         momo_phone: momoPhone,
         momo_provider: momoProvider,
         primary_contact_email: values.primary_contact_email?.trim() || undefined,
-        ...(isGoogleUser ? {} : { password: pwd }),
+        ...(isGoogleUser ? { otp } : { password: pwd }),
       });
     } else {
       const bank = Array.isArray(paymentCollectionBanks) ? paymentCollectionBanks.find((b) => b.code === values.bank_code) : (paymentCollectionBanks?.data ?? []).find((b) => b.code === values.bank_code);
@@ -1457,7 +1494,7 @@ const Settings = () => {
         bank_name: bank?.name || values.bank_name || '',
         account_number: String(values.account_number).replace(/\s/g, ''),
         primary_contact_email: values.primary_contact_email?.trim() || undefined,
-        ...(isGoogleUser ? {} : { password: pwd }),
+        ...(isGoogleUser ? { otp } : { password: pwd }),
       });
     }
   };
@@ -5309,10 +5346,37 @@ const Settings = () => {
                 <DialogBody className="space-y-4">
                   <p className="text-sm text-muted-foreground">
                     {isGoogleUser
-                      ? 'Continue with your signed-in account to link a payment destination.'
+                      ? 'Your account uses Google sign-in, so we will email a verification code instead of asking for a password.'
                       : 'Verify your password to continue. No email code is required.'}
                   </p>
-                  {!isGoogleUser && (
+                  {isGoogleUser ? (
+                    <div className="space-y-3">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleSendPaymentOtp}
+                        disabled={paymentOtpSending}
+                        className="w-full"
+                      >
+                        {paymentOtpSending ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
+                        {paymentOtpSent ? 'Send code again' : 'Send code to my email'}
+                      </Button>
+                      <div className="space-y-2">
+                        <Label htmlFor="payment-verify-otp-modal">Email verification code</Label>
+                        <Input
+                          id="payment-verify-otp-modal"
+                          name="payment-verification-otp"
+                          type="text"
+                          inputMode="numeric"
+                          maxLength={6}
+                          value={paymentVerifyOtp}
+                          onChange={(e) => setPaymentVerifyOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                          placeholder="123456"
+                          autoComplete="one-time-code"
+                        />
+                      </div>
+                    </div>
+                  ) : (
                     <div className="space-y-2">
                       <Label htmlFor="payment-verify-password-modal">Account password</Label>
                       <Input
@@ -5328,9 +5392,18 @@ const Settings = () => {
                       />
                     </div>
                   )}
-                  <Button type="button" onClick={handleVerifyPaymentPassword} disabled={paymentPasswordVerifying || (!isGoogleUser && !paymentVerifyPassword.trim())} className="w-full mt-2">
+                  <Button
+                    type="button"
+                    onClick={handleVerifyPaymentPassword}
+                    disabled={
+                      paymentPasswordVerifying ||
+                      (!isGoogleUser && !paymentVerifyPassword.trim()) ||
+                      (isGoogleUser && paymentVerifyOtp.replace(/\D/g, '').length !== 6)
+                    }
+                    className="w-full mt-2"
+                  >
                     {paymentPasswordVerifying ? <Loader2 className="h-4 w-4 animate-spin mr-2 inline" /> : null}
-                    {isGoogleUser ? 'Continue' : 'Verify password'}
+                    {isGoogleUser ? 'Verify code' : 'Verify password'}
                   </Button>
                 </DialogBody>
               </DialogContent>
@@ -5342,6 +5415,8 @@ const Settings = () => {
                   type="button"
                   onClick={() => {
                     setPaymentVerifyPassword('');
+                    setPaymentVerifyOtp('');
+                    setPaymentOtpSent(false);
                     setPaymentVerifyModalOpen(true);
                   }}
                 >
@@ -5367,6 +5442,8 @@ const Settings = () => {
                     className="h-auto p-0 text-primary"
                     onClick={() => {
                       setPaymentVerifyPassword('');
+                      setPaymentVerifyOtp('');
+                      setPaymentOtpSent(false);
                       setPaymentVerifyModalOpen(true);
                     }}
                   >

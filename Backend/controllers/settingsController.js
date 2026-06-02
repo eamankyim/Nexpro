@@ -2089,7 +2089,7 @@ exports.getPaymentCollectionSettings = async (req, res, next) => {
   }
 };
 
-// @desc    Verify account password only (before sending OTP). Step 1 of payment verification.
+// @desc    Verify account password only. Google accounts must use email OTP instead.
 // @route   POST /api/settings/payment-collection/verify-password
 // @access  Private (admin, manager)
 exports.verifyPaymentCollectionPassword = async (req, res, next) => {
@@ -2104,8 +2104,8 @@ exports.verifyPaymentCollectionPassword = async (req, res, next) => {
       console.log('[Payment OTP] verify-password: skipped for Google user userId=', req.user?.id);
       return res.status(200).json({
         success: true,
-        message: 'Password verification skipped for Google account',
-        data: { passwordRequired: false, authMethod: 'google' },
+        message: 'Use the email verification code for your Google account',
+        data: { passwordRequired: false, otpRequired: true, authMethod: 'otp' },
       });
     }
     const { password } = sanitizePayload(req.body);
@@ -2236,8 +2236,7 @@ exports.verifyPaymentCollectionOtp = async (req, res, next) => {
 // @access  Private (admin, manager)
 exports.updatePaymentCollectionSettings = async (req, res, next) => {
   try {
-    const { password, ...restBody } = req.body || {};
-    delete restBody.otp;
+    const { password, otp, ...restBody } = req.body || {};
     console.log('[Payment Collection] PUT: start userId=', req.user?.id, 'tenantId=', req.tenantId, 'bodyKeys=', Object.keys(req.body || {}).filter(k => k !== 'password' && k !== 'otp'), 'settlement_type(raw)=', restBody?.settlement_type ?? restBody?.settlementType);
     const user = await User.findByPk(req.user.id);
     if (!user) {
@@ -2255,7 +2254,12 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
         return res.status(401).json({ success: false, message: 'Invalid password' });
       }
     } else {
-      console.log('[Payment Collection] PUT: password skipped for Google user userId=', req.user?.id);
+      const gate = await verifyStoredPaymentOtp({ ...req, body: { ...(req.body || {}), otp } });
+      if (!gate.ok) {
+        console.log('[Payment Collection] PUT: rejected (Google OTP gate)', gate.message);
+        return res.status(gate.status).json({ success: false, message: gate.message });
+      }
+      console.log('[Payment Collection] PUT: OTP verified for Google user userId=', req.user?.id);
     }
 
     const tenant = await Tenant.findByPk(req.tenantId);

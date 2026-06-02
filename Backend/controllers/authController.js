@@ -27,9 +27,9 @@ const {
   isTermsAccepted,
 } = require('../utils/legalTerms');
 
-/** User defaultScope omits emailVerifiedAt; auth responses must include it for verify-email UI. */
+/** User defaultScope omits emailVerifiedAt/googleId; auth responses need both for verification UI. */
 const findUserForAuthResponse = (userId, options = {}) =>
-  User.scope('withEmailVerification').findByPk(userId, options);
+  User.scope('withEmailVerification', 'withGoogleId').findByPk(userId, options);
 
 // Slug utility functions (copied from tenantController)
 const slugify = (value = '') => {
