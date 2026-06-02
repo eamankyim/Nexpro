@@ -1,5 +1,8 @@
 import axios from 'axios';
 
+/** Demo API URL used by local development when no VITE_API_URL override is set */
+const DEMO_API_URL = 'https://demo-api.africanbusinesssuite.com';
+
 /** Production API URL when app is served from ABS Ghana / African Business Suite production domains */
 const ABS_API_URL = 'https://api.africanbusinesssuite.com';
 const ABS_PRODUCTION_HOSTS = new Set([
@@ -11,20 +14,95 @@ const ABS_PRODUCTION_HOSTS = new Set([
   'www.absghana.com',
 ]);
 
+/** API hosts that must not be used from localhost dev (stale .env.local overrides). */
+const PRODUCTION_API_HOSTS = new Set(['api.africanbusinesssuite.com']);
+
+/**
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+const isLocalDevBrowserHost = (hostname) => {
+  if (!hostname) return false;
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname.startsWith('127.0.0.1') ||
+    hostname.startsWith('192.168.')
+  );
+};
+
+/**
+ * @param {string} url
+ * @returns {string}
+ */
+const getUrlHostname = (url) => {
+  try {
+    const withProtocol = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    return new URL(withProtocol).hostname;
+  } catch {
+    return '';
+  }
+};
+
+/**
+ * @param {string} url
+ * @returns {boolean}
+ */
+const isProductionApiUrl = (url) => PRODUCTION_API_HOSTS.has(getUrlHostname(url));
+
+/**
+ * Normalize VITE_API_URL (trim, strip trailing /api, ensure protocol).
+ * @param {string} envUrl
+ * @returns {string}
+ */
+const normalizeEnvApiUrl = (envUrl) => {
+  if (!envUrl) return '';
+  let url = envUrl.trim().replace(/\/$/, '');
+  url = url.replace(/\/api\/?$/i, '');
+  if (url && !url.match(/^https?:\/\//i)) {
+    url = `https://${url}`;
+    if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
+      console.warn(`VITE_API_URL missing protocol, auto-added https://. Original: ${envUrl}, Fixed: ${url}`);
+    }
+  }
+  return url;
+};
+
+/**
+ * Resolve API base URL for localhost dev: demo API unless env points at a non-production local target.
+ * @param {string|undefined} envUrl
+ * @param {string} browserHost
+ * @returns {string}
+ */
+const resolveLocalDevApiBaseUrl = (envUrl, browserHost) => {
+  if (!envUrl) {
+    return DEMO_API_URL;
+  }
+  const normalized = normalizeEnvApiUrl(envUrl);
+  if (isProductionApiUrl(normalized)) {
+    console.warn(
+      `[API] VITE_API_URL points at production (${normalized}) while the app runs on ${browserHost}; ` +
+        `using demo API ${DEMO_API_URL}. Update or remove VITE_API_URL in Frontend/.env.local.`
+    );
+    return DEMO_API_URL;
+  }
+  if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
+    console.log(`[API] Using base URL: ${normalized}`);
+  }
+  return normalized || DEMO_API_URL;
+};
+
 const deriveApiBaseUrl = () => {
   const envUrl = import.meta.env.VITE_API_URL;
+  const browserHost =
+    typeof window !== 'undefined' ? window.location.hostname : '';
+
+  if (isLocalDevBrowserHost(browserHost)) {
+    return resolveLocalDevApiBaseUrl(envUrl, browserHost);
+  }
+
   if (envUrl) {
-    let url = envUrl.trim().replace(/\/$/, '');
-    // Avoid https://api.example.com/api + axios /api → /api/api/... (404)
-    url = url.replace(/\/api\/?$/i, '');
-    // Ensure URL has a protocol (http:// or https://)
-    if (url && !url.match(/^https?:\/\//i)) {
-      // Default to https for production URLs
-      url = `https://${url}`;
-      if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
-        console.warn(`VITE_API_URL missing protocol, auto-added https://. Original: ${envUrl}, Fixed: ${url}`);
-      }
-    }
+    const url = normalizeEnvApiUrl(envUrl);
     if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
       console.log(`[API] Using base URL: ${url}`);
     }
@@ -58,12 +136,11 @@ const deriveApiBaseUrl = () => {
       return '';
     }
 
-    // Development fallback: use localhost
-    const fallbackPort = import.meta.env.VITE_API_PORT ?? '5001';
-    return `http://localhost:${fallbackPort}`;
+    // Local development fallback: use the shared demo backend unless explicitly overridden.
+    return DEMO_API_URL;
   }
 
-  return 'http://localhost:5001';
+  return DEMO_API_URL;
 };
 
 export const API_BASE_URL = deriveApiBaseUrl();

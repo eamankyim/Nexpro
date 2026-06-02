@@ -88,6 +88,7 @@ const subscriptionRoutes = require('./routes/subscriptionRoutes');
 const shopRoutes = require('./routes/shopRoutes');
 const studioLocationRoutes = require('./routes/studioLocationRoutes');
 const productRoutes = require('./routes/productRoutes');
+const storeRoutes = require('./routes/storeRoutes');
 const saleRoutes = require('./routes/saleRoutes');
 const scanLogRoutes = require('./routes/scanLogRoutes');
 const stockTransferRoutes = require('./routes/stockTransferRoutes');
@@ -263,6 +264,7 @@ app.use('/api/subscription', subscriptionRoutes);
 app.use('/api/shops', shopRoutes);
 app.use('/api/studio-locations', studioLocationRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/store', storeRoutes);
 app.use('/api/sales', saleRoutes);
 app.use('/api/scan-logs', scanLogRoutes);
 app.use('/api/stock-transfers', stockTransferRoutes);
@@ -308,6 +310,7 @@ app.get('/', (req, res) => {
       invites: '/api/invites',
       reports: '/api/reports',
       inventory: '/api/inventory',
+      store: '/api/store',
       equipment: '/api/equipment',
       leads: '/api/leads',
       notifications: '/api/notifications',

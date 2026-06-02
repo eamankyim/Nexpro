@@ -35,6 +35,7 @@ const { Op } = require('sequelize');
 /** In-memory cache for payment integration OTP (best-effort); source of truth is DB for serverless safety. */
 const paymentOtpStore = new Map();
 const paymentOtpSettingKey = (userId) => `payment_collection_otp_user_${userId}`;
+const findPaymentVerificationUser = (userId) => User.unscoped().findByPk(userId);
 
 const setStoredPaymentOtp = async ({ tenantId, userId, otp, expiresAt }) => {
   const payload = {
@@ -82,7 +83,7 @@ async function verifyStoredPaymentOtp(req) {
   if (!otp || typeof otp !== 'string') {
     return { ok: false, status: 400, message: 'Verification code (OTP) is required' };
   }
-  const user = await User.findByPk(req.user.id);
+  const user = await findPaymentVerificationUser(req.user.id);
   if (!user) {
     return { ok: false, status: 404, message: 'User not found' };
   }
@@ -2094,7 +2095,7 @@ exports.getPaymentCollectionSettings = async (req, res, next) => {
 // @access  Private (admin, manager)
 exports.verifyPaymentCollectionPassword = async (req, res, next) => {
   try {
-    const user = await User.findByPk(req.user.id);
+    const user = await findPaymentVerificationUser(req.user.id);
     if (!user) {
       console.log('[Payment OTP] verify-password: rejected (user not found)', req.user?.id);
       return res.status(404).json({ success: false, message: 'User not found' });
@@ -2135,7 +2136,7 @@ exports.verifyPaymentCollectionPassword = async (req, res, next) => {
 exports.sendPaymentCollectionOtp = async (req, res, next) => {
   try {
     console.log('[Payment OTP] send-otp: request userId=', req.user?.id);
-    const user = await User.findByPk(req.user.id);
+    const user = await findPaymentVerificationUser(req.user.id);
     if (!user) {
       console.log('[Payment OTP] send-otp: rejected (user not found)');
       return res.status(404).json({ success: false, message: 'User not found' });
@@ -2190,7 +2191,7 @@ exports.verifyPaymentCollectionOtp = async (req, res, next) => {
       console.log('[Payment OTP] verify-otp: rejected (missing otp)');
       return res.status(400).json({ success: false, message: 'Verification code is required' });
     }
-    const user = await User.findByPk(req.user.id);
+    const user = await findPaymentVerificationUser(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
@@ -2238,7 +2239,7 @@ exports.updatePaymentCollectionSettings = async (req, res, next) => {
   try {
     const { password, otp, ...restBody } = req.body || {};
     console.log('[Payment Collection] PUT: start userId=', req.user?.id, 'tenantId=', req.tenantId, 'bodyKeys=', Object.keys(req.body || {}).filter(k => k !== 'password' && k !== 'otp'), 'settlement_type(raw)=', restBody?.settlement_type ?? restBody?.settlementType);
-    const user = await User.findByPk(req.user.id);
+    const user = await findPaymentVerificationUser(req.user.id);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }

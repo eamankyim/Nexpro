@@ -29,7 +29,22 @@ const {
 
 /** User defaultScope omits emailVerifiedAt/googleId; auth responses need both for verification UI. */
 const findUserForAuthResponse = (userId, options = {}) =>
-  User.scope('withEmailVerification', 'withGoogleId').findByPk(userId, options);
+  User.unscoped().findByPk(userId, {
+    ...options,
+    attributes: {
+      exclude: ['password', 'failedLoginAttempts', 'lockoutUntil'],
+      ...(options.attributes || {}),
+    },
+  });
+
+const withAuthResponseFields = (userJson = {}) => {
+  const isGoogleUser = Boolean(userJson.googleId);
+  return {
+    ...userJson,
+    authProvider: isGoogleUser ? 'google' : 'password',
+    paymentVerificationMethod: isGoogleUser ? 'otp' : 'password',
+  };
+};
 
 // Slug utility functions (copied from tenantController)
 const slugify = (value = '') => {
@@ -686,7 +701,7 @@ exports.login = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: {
-        user: userForResponse,
+        user: withAuthResponseFields(userForResponse.toJSON ? userForResponse.toJSON() : userForResponse),
         token,
         memberships: normalizeMembershipsForResponse(memberships),
         defaultTenantId: memberships[0]?.tenantId || null
@@ -791,7 +806,7 @@ exports.googleAuth = async (req, res, next) => {
       return res.status(200).json({
         success: true,
         data: {
-          user: updatedUser.toJSON ? updatedUser.toJSON() : updatedUser,
+          user: withAuthResponseFields(updatedUser.toJSON ? updatedUser.toJSON() : updatedUser),
           token,
           memberships: normalizeMembershipsForResponse(memberships),
           defaultTenantId: memberships[0]?.tenantId || null,
@@ -981,7 +996,7 @@ exports.googleAuth = async (req, res, next) => {
     res.status(201).json({
       success: true,
       data: {
-        user: user.toJSON ? user.toJSON() : user,
+        user: withAuthResponseFields(user.toJSON ? user.toJSON() : user),
         token,
         memberships: normalizeMembershipsForResponse(memberships),
         defaultTenantId: memberships[0]?.tenantId || null,
@@ -1082,7 +1097,7 @@ exports.getMe = async (req, res, next) => {
     });
 
     const { mergeNotificationPreferences } = require('../services/notificationPreferenceHelper');
-    const userJson = user.toJSON();
+    const userJson = withAuthResponseFields(user.toJSON());
     userJson.notificationPreferences = mergeNotificationPreferences(user.notificationPreferences);
     if (Array.isArray(userJson.tenantMemberships)) {
       userJson.tenantMemberships = userJson.tenantMemberships.map((membership) => {
@@ -1266,7 +1281,7 @@ exports.setInitialPassword = async (req, res, next) => {
     const userForResponse = await findUserForAuthResponse(user.id);
     res.status(200).json({
       success: true,
-      data: { user: userForResponse, token }
+      data: { user: withAuthResponseFields(userForResponse.toJSON ? userForResponse.toJSON() : userForResponse), token }
     });
   } catch (error) {
     next(error);

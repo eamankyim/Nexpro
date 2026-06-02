@@ -551,6 +551,7 @@ exports.getSales = async (req, res, next) => {
     const customerId = req.query.customerId;
     const status = req.query.status;
     const orderStatus = req.query.orderStatus;
+    const source = req.query.source;
     const activeOrders = req.query.activeOrders === 'true';
     const startDate = req.query.startDate;
     const endDate = req.query.endDate;
@@ -574,6 +575,10 @@ exports.getSales = async (req, res, next) => {
     }
     if (orderStatus) {
       where.orderStatus = orderStatus;
+    }
+    if (source) {
+      where[Op.and] = Array.isArray(where[Op.and]) ? [...where[Op.and]] : (where[Op.and] ? [where[Op.and]] : []);
+      where[Op.and].push(sequelize.where(sequelize.json('metadata.source'), source));
     }
     if (activeOrders) {
       where.orderStatus = { [Op.in]: ['received', 'preparing', 'ready'] };

@@ -85,6 +85,8 @@ const MarketingCampaign = require('./MarketingCampaign');
 const StudioLocation = require('./StudioLocation');
 const UserStudioLocation = require('./UserStudioLocation');
 const UserShop = require('./UserShop');
+const OnlineStoreSettings = require('./OnlineStoreSettings');
+const OnlineProductListing = require('./OnlineProductListing');
 
 // Define relationships
 Tenant.hasMany(Customer, { foreignKey: 'tenantId', as: 'customers' });
@@ -539,8 +541,22 @@ Shop.hasMany(Product, { foreignKey: 'shopId', as: 'products' });
 Product.belongsTo(ProductCategory, { foreignKey: 'categoryId', as: 'category' });
 ProductCategory.hasMany(Product, { foreignKey: 'categoryId', as: 'products' });
 
+Tenant.hasMany(OnlineStoreSettings, { foreignKey: 'tenantId', as: 'onlineStoreSettings' });
+OnlineStoreSettings.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(OnlineStoreSettings, { foreignKey: 'shopId', as: 'onlineStoreSettings' });
+OnlineStoreSettings.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+
+Tenant.hasMany(OnlineProductListing, { foreignKey: 'tenantId', as: 'onlineProductListings' });
+OnlineProductListing.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
+Shop.hasMany(OnlineProductListing, { foreignKey: 'shopId', as: 'onlineProductListings' });
+OnlineProductListing.belongsTo(Shop, { foreignKey: 'shopId', as: 'shop' });
+Product.hasMany(OnlineProductListing, { foreignKey: 'productId', as: 'onlineListings' });
+OnlineProductListing.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+
 Product.hasMany(ProductVariant, { foreignKey: 'productId', as: 'variants' });
 ProductVariant.belongsTo(Product, { foreignKey: 'productId', as: 'product' });
+ProductVariant.hasMany(OnlineProductListing, { foreignKey: 'productVariantId', as: 'onlineListings' });
+OnlineProductListing.belongsTo(ProductVariant, { foreignKey: 'productVariantId', as: 'variant' });
 
 Tenant.hasMany(Barcode, { foreignKey: 'tenantId', as: 'barcodes' });
 Barcode.belongsTo(Tenant, { foreignKey: 'tenantId', as: 'tenant' });
@@ -767,6 +783,8 @@ module.exports = {
   StudioLocation,
   UserStudioLocation,
   UserShop,
+  OnlineStoreSettings,
+  OnlineProductListing,
 };
 
 

@@ -30,6 +30,7 @@ const { shopContext } = require('../middleware/shopContext');
 const { cacheMiddleware, generateProductListKey } = require('../middleware/cache');
 const { bulkOperationLimiter, exportLimiter } = require('../middleware/rateLimiter');
 const { productImageUploader, importFileUploader, checkStorageLimit } = require('../middleware/upload');
+const { createOrUpdateListingFromProduct } = require('../controllers/storeController');
 
 const router = express.Router();
 
@@ -92,6 +93,9 @@ router.route('/:id/variants')
 
 router.route('/:id/sales')
   .get(getProductSales);
+
+router.route('/:id/store-listing')
+  .post(authorize('admin', 'manager', 'staff'), createOrUpdateListingFromProduct);
 
 router.route('/:id')
   .get(getProduct)

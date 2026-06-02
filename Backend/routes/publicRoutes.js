@@ -22,6 +22,10 @@ const {
   submitPublicFeedback
 } = require('../controllers/publicFeedbackController');
 const {
+  getPublicStore,
+  getPublicStoreProducts
+} = require('../controllers/storeController');
+const {
   publicTrackingLookupLimiter,
   publicTrackBrandingLimiter,
   publicFeedbackSubmitLimiter
@@ -56,6 +60,10 @@ router.post('/track/:tenantSlug/lookup', publicTrackingLookupLimiter, lookupPubl
 // End-customer feedback (no login)
 router.get('/feedback/branding/:tenantSlug', publicTrackBrandingLimiter, getPublicFeedbackBranding);
 router.post('/feedback', publicFeedbackSubmitLimiter, submitPublicFeedback);
+
+// Public online store (MVP catalog only)
+router.get('/store/:slug', getPublicStore);
+router.get('/store/:slug/products', getPublicStoreProducts);
 
 module.exports = router;
 

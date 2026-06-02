@@ -112,6 +112,10 @@ const MENU_HINTS = {
   '/pricing': 'Set your prices',
   '/tasks': 'Track follow-ups, meetings, and team tasks',
   '/automations': 'Set rules that run business actions automatically',
+  '/store': 'Manage your online shop',
+  '/store/listings': 'Products published online',
+  '/store/orders': 'Orders from your online shop',
+  '/store/settings': 'Online shop setup and contact details',
 };
 
 /**
@@ -171,6 +175,21 @@ const getMenuItems = (
       ...(hasFeature('invoices') ? [{ key: '/invoices', icon: Receipt, label: 'Invoices', tooltip: MENU_HINTS['/invoices'] }] : []),
       ...(hasFeature('expenses') ? [{ key: '/expenses', icon: Banknote, label: 'Expenses', tooltip: MENU_HINTS['/expenses'] }] : []),
     );
+  }
+
+  if (!isPlatformAdmin) {
+    baseItems.push({
+      key: 'store',
+      icon: Store,
+      label: 'Store',
+      tooltip: MENU_HINTS['/store'],
+      children: [
+        { key: '/store', label: 'Dashboard', tooltip: MENU_HINTS['/store'] },
+        { key: '/store/listings', label: 'Store listings', tooltip: MENU_HINTS['/store/listings'] },
+        { key: '/store/orders', label: 'Online orders', tooltip: MENU_HINTS['/store/orders'] },
+        { key: '/store/settings', label: 'Store settings', tooltip: MENU_HINTS['/store/settings'], managerOnly: true },
+      ],
+    });
   }
 
   // Assets: materials and equipment the business uses (not for sale)
@@ -395,6 +414,10 @@ export function Sidebar({ collapsed, onCollapse }) {
     '/prescriptions': () => import('../../pages/Prescriptions'),
     '/tasks': () => import('../../pages/Tasks'),
     '/automations': () => import('../../pages/Automations'),
+    '/store': () => import('../../pages/StoreDashboard'),
+    '/store/listings': () => import('../../pages/StoreListings'),
+    '/store/orders': () => import('../../pages/OnlineOrders'),
+    '/store/settings': () => import('../../pages/StoreSettings'),
   }), []);
 
   const handlePrefetch = useCallback((key) => {

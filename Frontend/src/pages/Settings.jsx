@@ -342,11 +342,27 @@ const Settings = () => {
   const { isMobile } = useResponsive();
   /** Must match API authorize() which uses workspace membership role (req.tenantRole), not only users.role */
   const canManageOrganization = Boolean(isManager);
+  const paymentAuthRefreshAttemptedRef = useRef(false);
   const isStudioLike = useMemo(
     () => STUDIO_LIKE_TYPES.includes(activeTenant?.businessType || 'printing_press'),
     [activeTenant?.businessType]
   );
-  const isGoogleUser = Boolean(user?.googleId);
+  const isGoogleUser = Boolean(
+    user?.paymentVerificationMethod === 'otp' ||
+    user?.authProvider === 'google' ||
+    user?.googleId
+  );
+
+  useEffect(() => {
+    if (paymentAuthRefreshAttemptedRef.current || !user?.id) return;
+    if (user.paymentVerificationMethod || user.authProvider || user.googleId) return;
+    paymentAuthRefreshAttemptedRef.current = true;
+    refreshAuthState?.().catch((error) => {
+      if (import.meta.env.DEV) {
+        console.warn('[Settings] Unable to refresh auth shape for payment verification', error);
+      }
+    });
+  }, [refreshAuthState, user?.authProvider, user?.googleId, user?.id, user?.paymentVerificationMethod]);
 
   const profileForm = useForm({
     resolver: zodResolver(profileSchema),
@@ -5347,7 +5363,7 @@ const Settings = () => {
                   <p className="text-sm text-muted-foreground">
                     {isGoogleUser
                       ? 'Your account uses Google sign-in, so we will email a verification code instead of asking for a password.'
-                      : 'Verify your password to continue. No email code is required.'}
+                      : 'Verify your password to continue.'}
                   </p>
                   {isGoogleUser ? (
                     <div className="space-y-3">

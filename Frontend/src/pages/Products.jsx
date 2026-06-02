@@ -7,7 +7,7 @@
  */
 
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
@@ -42,6 +42,7 @@ import {
   Download,
   ArrowRightLeft,
   MoreVertical,
+  Store,
 } from 'lucide-react';
 import dayjs from 'dayjs';
 import { useDebounce } from '../hooks/useDebounce';
@@ -60,6 +61,7 @@ import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import FeatureNotAvailable from '../components/FeatureNotAvailable';
 import productService from '../services/productService';
+import storeService from '../services/storeService';
 import vendorService from '../services/vendorService';
 import PhoneNumberInput from '../components/PhoneNumberInput';
 import { cn } from '@/lib/utils';
@@ -128,6 +130,8 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
+  SheetFooter,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
@@ -199,6 +203,12 @@ const resolveProductImageUrl = (url) => {
   if (!url || typeof url !== 'string') return '';
   return resolveImageUrl(url) || '';
 };
+
+const parseListingImages = (value) => String(value || '')
+  .split('\n')
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .slice(0, 5);
 
 /** Shown in product form image uploader — `stageProgress` is 0–100 within the current phase. */
 const formatProductImageProgressLabel = (phase, stageProgress) => {
@@ -351,6 +361,25 @@ const productSchema = z.object({
   path: ['alternateBarcode'],
 });
 
+const storeListingSchema = z.object({
+  title: z.string().min(1, 'Listing title is required'),
+  shortDescription: z.string().max(280, 'Keep the short description under 280 characters').optional(),
+  description: z.string().optional(),
+  publicPrice: z.coerce.number().min(0.01, 'Public price must be greater than zero'),
+  compareAtPrice: z.preprocess(
+    (value) => (value === '' || value === null ? '' : value),
+    z.union([z.coerce.number().min(0), z.literal('')]).optional(),
+  ),
+  imagesText: z.string().optional(),
+  publishNow: z.boolean().default(false),
+}).refine((data) => {
+  const count = parseListingImages(data.imagesText).length;
+  return !data.publishNow || (count >= 1 && count <= 5);
+}, {
+  path: ['imagesText'],
+  message: 'Add 1 to 5 image URLs before publishing',
+});
+
 const stockAdjustSchema = z.object({
   adjustmentMode: z.enum(['set', 'delta']),
   newQuantity: z.union([z.number().min(0), z.literal('')]).transform((v) => (v === '' ? undefined : v)).optional(),
@@ -466,6 +495,7 @@ const Products = () => {
   const { isMobile } = useResponsive();
   const { searchValue, setSearchValue, setPageSearchConfig } = useSmartSearch();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const shopType = useActiveShopType();
   const shopTypeFields = SHOP_TYPE_FIELDS[shopType] || [];
@@ -554,6 +584,9 @@ const Products = () => {
   const [vendorSelectOpen, setVendorSelectOpen] = useState(false);
   const [vendorCategories, setVendorCategories] = useState([]);
   const [addingVendor, setAddingVendor] = useState(false);
+  const [storeListingOpen, setStoreListingOpen] = useState(false);
+  const [storeListingProduct, setStoreListingProduct] = useState(null);
+  const [storeListingUploading, setStoreListingUploading] = useState(false);
 
   // Bulk import state
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -623,6 +656,19 @@ const Products = () => {
       size: '',
       ageRange: '',
       batteryRequired: false,
+    },
+  });
+
+  const storeListingForm = useForm({
+    resolver: zodResolver(storeListingSchema),
+    defaultValues: {
+      title: '',
+      shortDescription: '',
+      description: '',
+      publicPrice: 0,
+      compareAtPrice: '',
+      imagesText: '',
+      publishNow: false,
     },
   });
 
@@ -1044,6 +1090,74 @@ const Products = () => {
     
     setFormOpen(true);
   };
+
+  const handleOpenStoreListing = useCallback((product) => {
+    setStoreListingProduct(product);
+    storeListingForm.reset({
+      title: product?.name || '',
+      shortDescription: product?.description ? String(product.description).slice(0, 180) : '',
+      description: product?.description || '',
+      publicPrice: Number(product?.sellingPrice || 0),
+      compareAtPrice: '',
+      imagesText: product?.imageUrl || '',
+      publishNow: false,
+    });
+    setStoreListingOpen(true);
+  }, [storeListingForm]);
+
+  const handleStoreListingImagesUpload = useCallback(async (event) => {
+    const files = Array.from(event.target.files || []).slice(0, 5);
+    event.target.value = '';
+    if (!files.length) return;
+    setStoreListingUploading(true);
+    try {
+      const response = await storeService.uploadListingImages(files);
+      const uploaded = response?.imageUrls || response?.data?.imageUrls || [];
+      const current = parseListingImages(storeListingForm.getValues('imagesText'));
+      const nextImages = [...current, ...uploaded].slice(0, 5);
+      storeListingForm.setValue('imagesText', nextImages.join('\n'), { shouldValidate: true });
+      showSuccess('Store listing images uploaded');
+    } catch (error) {
+      showError(getErrorMessage(error, 'Failed to upload listing images'));
+    } finally {
+      setStoreListingUploading(false);
+    }
+  }, [storeListingForm]);
+
+  const handleStoreListingSubmit = useCallback(async (values) => {
+    if (!storeListingProduct?.id) return;
+    setSubmitting(true);
+    try {
+      const payload = {
+        title: values.title,
+        shortDescription: values.shortDescription || null,
+        description: values.description || null,
+        publicPrice: values.publicPrice,
+        compareAtPrice: values.compareAtPrice === '' ? null : values.compareAtPrice,
+        images: parseListingImages(values.imagesText),
+        status: values.publishNow ? 'published' : 'draft',
+      };
+      const response = await storeService.createOrUpdateProductListing(storeListingProduct.id, payload);
+      const savedListing = response?.data?.data || response?.data || response;
+      showSuccess(values.publishNow ? 'Product published to store' : 'Store listing saved as draft');
+      setStoreListingOpen(false);
+      if (values.publishNow) {
+        navigate(`/store/listings/${storeListingProduct.id}/published`, {
+          state: { listing: savedListing, product: storeListingProduct },
+        });
+      }
+    } catch (error) {
+      showError(getErrorMessage(error, 'Failed to save store listing'));
+    } finally {
+      setSubmitting(false);
+    }
+  }, [navigate, storeListingProduct]);
+
+  const handleOpenFullStoreListingEditor = useCallback(() => {
+    if (!storeListingProduct?.id) return;
+    setStoreListingOpen(false);
+    navigate(`/store/listings/${storeListingProduct.id}/edit`);
+  }, [navigate, storeListingProduct?.id]);
 
   const handleCreateProduct = () => {
     setEditingProduct(null);
@@ -1572,12 +1686,20 @@ const Products = () => {
         <ActionColumn
           onView={() => handleViewProduct(record)}
           record={record}
+          extraActions={[
+            {
+              label: 'Publish to store',
+              onClick: () => handleOpenStoreListing(record),
+              icon: <Store className="h-4 w-4" />,
+            },
+          ]}
         />
       ),
     },
   ], [
     isMobile,
     handleViewProduct,
+    handleOpenStoreListing,
   ]);
 
   const handleRefresh = () => {
@@ -2486,6 +2608,163 @@ const Products = () => {
         viewMode={tableViewMode}
         onViewModeChange={setTableViewMode}
       />
+
+      <Sheet open={storeListingOpen} onOpenChange={setStoreListingOpen}>
+        <SheetContent side="right" className="flex w-full min-w-0 flex-col overflow-hidden sm:max-w-xl">
+          <SheetHeader className="pr-8">
+            <SheetTitle>Publish to store</SheetTitle>
+            <SheetDescription>
+              Quickly create or update the public listing for {storeListingProduct?.name || 'this product'}.
+            </SheetDescription>
+          </SheetHeader>
+          <Form {...storeListingForm}>
+            <form onSubmit={storeListingForm.handleSubmit(handleStoreListingSubmit)} className="flex min-h-0 flex-1 flex-col">
+              <div className="min-h-0 flex-1 space-y-5 overflow-y-auto py-5 pr-1">
+                <div className="rounded-xl border border-border bg-muted/30 p-4">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">Inventory product</p>
+                  <div className="mt-3 flex gap-3">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-background">
+                      {storeListingProduct?.imageUrl ? (
+                        <img src={resolveProductImageUrl(storeListingProduct.imageUrl)} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <Package className="h-5 w-5 text-muted-foreground" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{storeListingProduct?.name || 'Product'}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {storeListingProduct?.sku || 'No SKU'} • {formatAmount(storeListingProduct?.sellingPrice || 0)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <FormField
+                  control={storeListingForm.control}
+                  name="title"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Listing title</FormLabel>
+                      <FormControl><Input {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={storeListingForm.control}
+                  name="shortDescription"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Short description (optional)</FormLabel>
+                      <FormControl><Input maxLength={280} {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={storeListingForm.control}
+                  name="description"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Description (optional)</FormLabel>
+                      <FormControl><Textarea rows={4} {...field} /></FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className="grid gap-4 md:grid-cols-2">
+                  <FormField
+                    control={storeListingForm.control}
+                    name="publicPrice"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Public price</FormLabel>
+                        <FormControl><Input type="number" min="0" step="0.01" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={storeListingForm.control}
+                    name="compareAtPrice"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Compare-at price (optional)</FormLabel>
+                        <FormControl><Input type="number" min="0" step="0.01" {...field} /></FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+                <FormField
+                  control={storeListingForm.control}
+                  name="imagesText"
+                  render={({ field }) => (
+                    <FormItem>
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <FormLabel>Listing images</FormLabel>
+                        <div>
+                          <input
+                            id="store-listing-images"
+                            type="file"
+                            accept="image/png,image/jpg,image/jpeg,image/webp"
+                            multiple
+                            className="hidden"
+                            onChange={handleStoreListingImagesUpload}
+                          />
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={storeListingUploading}
+                            onClick={() => document.getElementById('store-listing-images')?.click()}
+                          >
+                            {storeListingUploading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UploadCloud className="mr-2 h-4 w-4" />}
+                            Upload images
+                          </Button>
+                        </div>
+                      </div>
+                      <FormControl>
+                        <Textarea
+                          rows={4}
+                          placeholder="One image URL per line. Drafts can be saved without images."
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={storeListingForm.control}
+                  name="publishNow"
+                  render={({ field }) => (
+                    <FormItem className="flex items-center justify-between rounded-lg border border-border p-4">
+                      <div>
+                        <FormLabel>Publish now</FormLabel>
+                        <p className="text-sm text-muted-foreground">Publishing requires at least one listing image.</p>
+                      </div>
+                      <FormControl><Switch checked={field.value} onCheckedChange={field.onChange} /></FormControl>
+                    </FormItem>
+                  )}
+                />
+              </div>
+              <SheetFooter className="gap-2">
+                <Button type="button" variant="outline" onClick={() => setStoreListingOpen(false)} disabled={submitting}>
+                  Cancel
+                </Button>
+                <Button type="button" variant="outline" onClick={handleOpenFullStoreListingEditor} disabled={submitting || !storeListingProduct?.id}>
+                  Open full editor
+                </Button>
+                <Button type="submit" disabled={submitting}>
+                  {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Store className="mr-2 h-4 w-4" />}
+                  Save listing
+                </Button>
+              </SheetFooter>
+            </form>
+          </Form>
+        </SheetContent>
+      </Sheet>
 
       {/* Product Form Dialog */}
       <MobileFormDialog
@@ -3407,6 +3686,10 @@ const Products = () => {
                   <DropdownMenuItem onSelect={() => handleOpenQRGenerate(selectedProduct)}>
                     <QrCode className="h-4 w-4 mr-2" />
                     Generate QR
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => handleOpenStoreListing(selectedProduct)}>
+                    <Store className="h-4 w-4 mr-2" />
+                    Publish to store
                   </DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => handleOpenVariantForm()}>
                     <Plus className="h-4 w-4 mr-2" />

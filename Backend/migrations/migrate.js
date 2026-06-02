@@ -85,6 +85,8 @@ const createSubscriptionPaymentsTable = require('./create-subscription-payments-
 const backfillTrialPlanDefaults = require('./backfill-trial-plan-defaults');
 const createSubscriptionPlansTable = require('./create-subscription-plans-table');
 const updateEnterprisePlanLimitsCopy = require('./update-enterprise-plan-limits-copy');
+const createOnlineStoreTables = require('./create-online-store-tables');
+const addOnlineStoreOrderIndexes = require('./add-online-store-order-indexes');
 
 const migrate = async () => {
   try {
@@ -331,6 +333,8 @@ const migrate = async () => {
     await createSubscriptionPaymentsTable({ closeConnection: false });
     await backfillTrialPlanDefaults.up({ closeConnection: false });
     await updateEnterprisePlanLimitsCopy();
+    await createOnlineStoreTables.up({ closeConnection: false });
+    await addOnlineStoreOrderIndexes({ closeConnection: false });
 
     console.log('\n✅ Database migration completed successfully!');
     console.log('📊 Incremental schema updates applied.');

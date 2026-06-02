@@ -35,6 +35,7 @@ const ViewQuote = lazy(() => import('./pages/ViewQuote'));
 const TrackJob = lazy(() => import('./pages/TrackJob'));
 const TenantTrackLookup = lazy(() => import('./pages/TenantTrackLookup'));
 const PublicFeedback = lazy(() => import('./pages/PublicFeedback'));
+const PublicStoreProduct = lazy(() => import('./pages/PublicStoreProduct'));
 const Onboarding = lazy(() => import('./pages/Onboarding'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Customers = lazy(() => import('./pages/Customers'));
@@ -83,6 +84,13 @@ const AdminCustomers = lazy(() => import('./pages/admin/AdminCustomers'));
 const AdminSupportTickets = lazy(() => import('./pages/admin/AdminSupportTickets'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const Deliveries = lazy(() => import('./pages/Deliveries'));
+const StoreDashboard = lazy(() => import('./pages/StoreDashboard'));
+const StoreSetup = lazy(() => import('./pages/StoreSetup'));
+const StoreListings = lazy(() => import('./pages/StoreListings'));
+const StoreListingEditor = lazy(() => import('./pages/StoreListingEditor'));
+const StoreListingPublished = lazy(() => import('./pages/StoreListingPublished'));
+const OnlineOrders = lazy(() => import('./pages/OnlineOrders'));
+const StoreSettings = lazy(() => import('./pages/StoreSettings'));
 
 const WorkspaceRoot = () => {
   const { user, isSupportAccessActive, isDriver } = useAuth();
@@ -229,6 +237,7 @@ function AppContent() {
             <Route path="/track/:tenantSlug" element={<TenantTrackLookup />} />
             <Route path="/feedback/:tenantSlug" element={<PublicFeedback />} />
             <Route path="/review/:tenantSlug" element={<PublicFeedback />} />
+            <Route path="/store/:storeSlug/products/:productSlug" element={<PublicStoreProduct />} />
           <Route
             path="/onboarding"
             element={
@@ -285,6 +294,14 @@ function AppContent() {
             <Route path="payroll" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Payroll /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="accounting" element={<FeatureRoute featureKey="accounting"><RequireWorkspaceManager><Accounting /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="shops" element={<FeatureRoute featureKey="shopsModule"><Shops /></FeatureRoute>} />
+            <Route path="store" element={<StoreDashboard />} />
+            <Route path="store/dashboard" element={<StoreDashboard />} />
+            <Route path="store/setup" element={<RequireWorkspaceManager><StoreSetup /></RequireWorkspaceManager>} />
+            <Route path="store/listings" element={<StoreListings />} />
+            <Route path="store/listings/:productId/edit" element={<StoreListingEditor />} />
+            <Route path="store/listings/:productId/published" element={<StoreListingPublished />} />
+            <Route path="store/orders" element={<OnlineOrders />} />
+            <Route path="store/settings" element={<RequireWorkspaceManager><StoreSettings /></RequireWorkspaceManager>} />
             <Route path="studio-locations" element={<FeatureRoute featureKey="studioLocationsModule"><RequireWorkspaceManager><StudioLocations /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="pharmacies" element={<FeatureRoute featureKey="pharmacyOps"><Pharmacies /></FeatureRoute>} />
             <Route path="products" element={<FeatureRoute featureKey="products"><Products /></FeatureRoute>} />
