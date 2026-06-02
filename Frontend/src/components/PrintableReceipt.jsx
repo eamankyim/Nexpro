@@ -43,6 +43,15 @@ const getItemProductCode = (item) => {
   return String(alias || '').trim();
 };
 
+const getItemVariantLabel = (item) => {
+  const variant = item?.variant;
+  if (!variant) return '';
+  const attributeText = Object.values(variant.attributes || {})
+    .filter(Boolean)
+    .join(' / ');
+  return variant.name || attributeText || variant.sku || '';
+};
+
 const PrintableReceipt = ({
   sale,
   documentTitle = 'RECEIPT',
@@ -491,9 +500,11 @@ const PrintableReceipt = ({
                   const total = parseFloat(item.total || 0).toFixed(2);
                   const unitPrice = parseFloat(item.unitPrice || 0).toFixed(2);
                   const productCode = getItemProductCode(item);
+                  const variantLabel = getItemVariantLabel(item);
                   return (
                     <div key={item.id || index} className="thermal-item-list">
                       <span className="thermal-item-name">{item.name || item.product?.name || 'Item'}</span>
+                      {variantLabel && <span className="thermal-item-name">Variant: {variantLabel}</span>}
                       {productCode && <span className="thermal-item-name">Product Code: {productCode}</span>}
                       <span className="thermal-item-amount">₵ {total}</span>
                     </div>
@@ -638,11 +649,13 @@ const PrintableReceipt = ({
               const total = parseFloat(item.total || 0).toFixed(2);
               const unitPrice = parseFloat(item.unitPrice || 0).toFixed(2);
               const productCode = getItemProductCode(item);
+              const variantLabel = getItemVariantLabel(item);
               return (
                 <div key={item.id || index} className="receipt-item-row">
                   <div className="receipt-item-name" style={{ fontWeight: 500 }}>{item.name || item.product?.name || 'Item'}</div>
                   <div className="receipt-item-price">₵ {total}</div>
                   <div className="receipt-item-detail">{qty} × ₵ {unitPrice}</div>
+                  {variantLabel && <div className="receipt-item-detail">Variant: {variantLabel}</div>}
                   {productCode && <div className="receipt-item-detail">Product Code: {productCode}</div>}
                 </div>
               );

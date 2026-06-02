@@ -97,6 +97,15 @@ const recordPaymentSchema = z.object({
   referenceNumber: z.string().optional(),
 });
 
+const getSaleItemVariantLabel = (item) => {
+  const variant = item?.variant;
+  if (!variant) return '';
+  const attributeText = Object.values(variant.attributes || {})
+    .filter(Boolean)
+    .join(' / ');
+  return variant.name || attributeText || variant.sku || '';
+};
+
 const Sales = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1254,11 +1263,13 @@ const Sales = () => {
                       <div className="col-span-2 text-right">Unit price</div>
                       <div className="col-span-2 text-right">Total</div>
                     </div>
-                    {viewingSale.items.map((item) => (
-                      <div
-                        key={item.id}
-                        className="grid grid-cols-12 gap-2 py-3 border-b border-border/80 last:border-b-0 text-sm items-center"
-                      >
+                    {viewingSale.items.map((item) => {
+                      const variantLabel = getSaleItemVariantLabel(item);
+                      return (
+                        <div
+                          key={item.id}
+                          className="grid grid-cols-12 gap-2 py-3 border-b border-border/80 last:border-b-0 text-sm items-center"
+                        >
                         <div className="col-span-6 flex items-center gap-3">
                           {item?.product?.imageUrl ? (
                             <div className="w-12 h-12 rounded-lg overflow-hidden border border-border bg-muted flex-shrink-0">
@@ -1276,6 +1287,9 @@ const Sales = () => {
                           )}
                           <div className="min-w-0">
                             <div className="font-medium text-foreground">{item.name || item.product?.name || 'Product'}</div>
+                            {variantLabel && (
+                              <div className="text-muted-foreground text-xs mt-0.5">Variant: {variantLabel}</div>
+                            )}
                             {item.sku && (
                               <div className="text-muted-foreground text-xs mt-0.5">SKU: {item.sku}</div>
                             )}
@@ -1284,8 +1298,9 @@ const Sales = () => {
                         <div className="col-span-2 text-right text-muted-foreground">{item.quantity}</div>
                         <div className="col-span-2 text-right text-muted-foreground">{formatAmount(item.unitPrice)}</div>
                         <div className="col-span-2 text-right font-medium text-foreground">{formatAmount(item.total)}</div>
-                      </div>
-                    ))}
+                        </div>
+                      );
+                    })}
                     <div className="pt-3 mt-2 border-t border-border space-y-1 text-sm">
                       <div className="flex justify-between text-muted-foreground">
                         <span>Subtotal</span>

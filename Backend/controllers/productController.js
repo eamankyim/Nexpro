@@ -196,6 +196,7 @@ exports.getProducts = async (req, res, next) => {
     const shopId = req.query.shopId;
     const categoryId = req.query.categoryId;
     const isActive = req.query.isActive;
+    const includeVariants = req.query.includeVariants === 'true' || req.query.forPOS === 'true';
 
     let where = applyTenantFilter(req.tenantId, {});
     if (req.shopScoped) {
@@ -240,8 +241,16 @@ exports.getProducts = async (req, res, next) => {
       },
       include: [
         { model: Shop, as: 'shop', attributes: ['id', 'name'] },
-        { model: ProductCategory, as: 'category', attributes: ['id', 'name'] }
+        { model: ProductCategory, as: 'category', attributes: ['id', 'name'] },
+        ...(includeVariants ? [{
+          model: ProductVariant,
+          as: 'variants',
+          required: false,
+          where: { isActive: true },
+          attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
+        }] : [])
       ],
+      distinct: true,
       order: [['createdAt', 'DESC']]
     });
 
@@ -879,27 +888,106 @@ exports.getProductByBarcode = async (req, res, next) => {
     }
     
     const product = await Product.findOne({
-      where: productWhere
+      where: productWhere,
+      include: [{
+        model: ProductVariant,
+        as: 'variants',
+        required: false,
+        where: { isActive: true },
+        attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
+      }]
     });
 
     if (!product) {
+      const variant = await ProductVariant.findOne({
+        where: {
+          isActive: true,
+          [Op.or]: [
+            { barcode: { [Op.in]: barcodeCandidates } },
+            { sku: { [Op.in]: barcodeCandidates } }
+          ]
+        },
+        include: [{
+          model: Product,
+          as: 'product',
+          where: req.shopScoped
+            ? applyShopReadFilter(req, applyTenantFilter(req.tenantId, {}))
+            : applyTenantFilter(req.tenantId, {}),
+          required: true,
+          include: [{
+            model: ProductVariant,
+            as: 'variants',
+            required: false,
+            where: { isActive: true },
+            attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
+          }]
+        }]
+      });
+
+      if (variant?.product) {
+        const data = variant.product.get({ plain: true });
+        data.selectedVariant = variant.get({ plain: true });
+        return res.status(200).json({
+          success: true,
+          data
+        });
+      }
+
       // Try finding by barcode in Barcode table
       const barcodeRecord = await Barcode.findOne({
-        where: { barcode: { [Op.in]: barcodeCandidates }, tenantId: req.tenantId },
+        where: { barcode: { [Op.in]: barcodeCandidates }, tenantId: req.tenantId, isActive: true },
         include: [
           {
             model: Product,
             as: 'product',
-            ...(req.shopScoped ? { where: applyShopReadFilter(req, {}) } : {})
+            ...(req.shopScoped ? { where: applyShopReadFilter(req, {}) } : {}),
+            include: [{
+              model: ProductVariant,
+              as: 'variants',
+              required: false,
+              where: { isActive: true },
+              attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
+            }]
           },
-          { model: ProductVariant, as: 'productVariant' }
+          {
+            model: ProductVariant,
+            as: 'productVariant',
+            include: [{
+              model: Product,
+              as: 'product',
+              where: req.shopScoped
+                ? applyShopReadFilter(req, applyTenantFilter(req.tenantId, {}))
+                : applyTenantFilter(req.tenantId, {}),
+              required: false,
+              include: [{
+                model: ProductVariant,
+                as: 'variants',
+                required: false,
+                where: { isActive: true },
+                attributes: ['id', 'productId', 'name', 'sku', 'barcode', 'sellingPrice', 'quantityOnHand', 'attributes', 'isActive', 'trackStock']
+              }]
+            }]
+          }
         ]
       });
 
       if (barcodeRecord && barcodeRecord.product) {
+        const data = barcodeRecord.product.get({ plain: true });
+        if (barcodeRecord.productVariant) {
+          data.selectedVariant = barcodeRecord.productVariant.get({ plain: true });
+        }
         return res.status(200).json({
           success: true,
-          data: barcodeRecord.product
+          data
+        });
+      }
+
+      if (barcodeRecord?.productVariant?.product) {
+        const data = barcodeRecord.productVariant.product.get({ plain: true });
+        data.selectedVariant = barcodeRecord.productVariant.get({ plain: true });
+        return res.status(200).json({
+          success: true,
+          data
         });
       }
 

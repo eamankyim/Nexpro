@@ -41,6 +41,14 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Switch } from '@/components/ui/switch';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { parseProductQRPayload } from '../../utils/productQR';
 import { resolveImageUrl } from '../../utils/fileUtils';
 import { QRCodeScanner } from './POSProductSearch';
@@ -65,6 +73,100 @@ const formatCurrency = (amount) => {
  */
 const generateCartItemId = () => {
   return `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+};
+
+const getActiveVariants = (product) => (
+  Array.isArray(product?.variants)
+    ? product.variants.filter((variant) => variant?.isActive !== false)
+    : []
+);
+
+const getVariantLabel = (variant) => {
+  if (!variant) return '';
+  const attributeText = Object.values(variant.attributes || {})
+    .filter(Boolean)
+    .join(' / ');
+  return variant.name || attributeText || variant.sku || 'Variant';
+};
+
+const isVariantOutOfStock = (product, variant) => {
+  if (!variant || product?.trackStock === false || variant.trackStock === false) return false;
+  const qty = Number(variant.quantityOnHand);
+  return Number.isFinite(qty) && qty <= 0;
+};
+
+const isProductOutOfStock = (product) => {
+  if (!product || product.trackStock === false) return false;
+  const qty = Number(product.quantityOnHand);
+  return Number.isFinite(qty) && qty <= 0;
+};
+
+const buildCartItem = (product, variant = null) => {
+  const variantLabel = getVariantLabel(variant);
+  return {
+    id: generateCartItemId(),
+    productId: product.id,
+    productVariantId: variant?.id || null,
+    name: variant ? `${product.name} - ${variantLabel}` : product.name,
+    sku: variant?.sku || product.sku,
+    imageUrl: product.imageUrl,
+    unitPrice: variant?.sellingPrice ?? product.sellingPrice,
+    quantity: 1,
+    discount: 0,
+    tax: 0
+  };
+};
+
+const ProductVariantDialog = ({ product, open, onClose, onSelect }) => {
+  const variants = useMemo(() => getActiveVariants(product), [product]);
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="sm:w-[var(--modal-w-sm)]">
+        <DialogHeader>
+          <DialogTitle>Select Variant</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <div className="space-y-2">
+            {variants.map((variant) => {
+              const outOfStock = isVariantOutOfStock(product, variant);
+              return (
+                <button
+                  key={variant.id}
+                  type="button"
+                  disabled={outOfStock}
+                  onClick={() => onSelect(variant)}
+                  className={`w-full rounded-lg border border-border p-3 text-left ${
+                    outOfStock ? 'bg-muted opacity-60 cursor-not-allowed' : 'hover:bg-green-50 hover:border-green-200'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <div className="font-medium text-foreground">{getVariantLabel(variant)}</div>
+                      <div className="text-xs text-muted-foreground">{variant.sku || 'No SKU'}</div>
+                    </div>
+                    <div className="text-right text-sm">
+                      <div className="font-semibold text-green-700">{formatCurrency(variant.sellingPrice ?? product?.sellingPrice)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {product?.trackStock === false || variant.trackStock === false
+                          ? 'Made to order'
+                          : outOfStock
+                            ? 'Out of stock'
+                            : `Stock: ${Number(variant.quantityOnHand || 0)}`}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 };
 
 /**
@@ -183,6 +285,7 @@ const POSScanMode = ({
   // Cart state
   const [cart, setCart] = useState([]);
   const [lastScannedItem, setLastScannedItem] = useState(null);
+  const [variantPickerProduct, setVariantPickerProduct] = useState(null);
   
   // Customer state
   const [customerName, setCustomerName] = useState('');
@@ -211,6 +314,7 @@ const POSScanMode = ({
       setCurrentStep(STEPS.SCANNING);
       setCart([]);
       setLastScannedItem(null);
+      setVariantPickerProduct(null);
       setCustomerName('');
       setCustomerPhone('');
       setSelectedCustomerId(null);
@@ -293,6 +397,33 @@ const POSScanMode = ({
     setCart(prev => prev.filter(item => item.id !== itemId));
   }, []);
 
+  const addProductToCart = useCallback((product, variant = null) => {
+    if (variant ? isVariantOutOfStock(product, variant) : isProductOutOfStock(product)) {
+      showError(`${product.name || 'Product'} is out of stock`);
+      return;
+    }
+
+    setCart(prev => {
+      const variantId = variant?.id || null;
+      const existing = prev.find(item =>
+        item.productId === product.id && (item.productVariantId || null) === variantId
+      );
+      if (existing) {
+        return prev.map(item =>
+          item.id === existing.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
+      }
+      return [...prev, buildCartItem(product, variant)];
+    });
+    setLastScannedItem(variant ? `${product.name} - ${getVariantLabel(variant)}` : product.name);
+  }, []);
+
+  const handleSelectVariant = useCallback((variant) => {
+    if (!variantPickerProduct) return;
+    addProductToCart(variantPickerProduct, variant);
+    setVariantPickerProduct(null);
+  }, [addProductToCart, variantPickerProduct]);
+
   // Handle barcode or QR scan: resolve product and add to cart
   const handleScan = useCallback(async (decodedText) => {
     const text = (decodedText || '').trim();
@@ -309,32 +440,21 @@ const POSScanMode = ({
         product = await getProductByBarcode(text);
       }
       if (product) {
-        setCart(prev => {
-          const existing = prev.find(item => item.productId === product.id && !item.productVariantId);
-          if (existing) {
-            return prev.map(item =>
-              item.id === existing.id ? { ...item, quantity: item.quantity + 1 } : item
-            );
+        if (product.selectedVariant?.id) {
+          addProductToCart(product, product.selectedVariant);
+        } else {
+          const variants = getActiveVariants(product);
+          if (variants.length > 0) {
+            setVariantPickerProduct(product);
+          } else {
+            addProductToCart(product);
           }
-          return [...prev, {
-            id: generateCartItemId(),
-            productId: product.id,
-            productVariantId: null,
-            name: product.name,
-            sku: product.sku,
-            imageUrl: product.imageUrl,
-            unitPrice: product.sellingPrice,
-            quantity: 1,
-            discount: 0,
-            tax: 0
-          }];
-        });
-        setLastScannedItem(product.name);
+        }
       }
     } catch (err) {
       console.warn('Scan resolve error:', err);
     }
-  }, [getProductByBarcode, resolveProductFromQRPayload]);
+  }, [addProductToCart, getProductByBarcode, resolveProductFromQRPayload]);
 
   // Handle done scanning
   const handleDoneScanning = useCallback(() => {
@@ -369,6 +489,7 @@ const POSScanMode = ({
       const saleData = {
         items: cart.map(item => ({
           productId: item.productId,
+          productVariantId: item.productVariantId,
           name: item.name,
           sku: item.sku,
           quantity: item.quantity,
@@ -883,6 +1004,12 @@ const POSScanMode = ({
           </div>
         )}
       </div>
+      <ProductVariantDialog
+        product={variantPickerProduct}
+        open={!!variantPickerProduct}
+        onClose={() => setVariantPickerProduct(null)}
+        onSelect={handleSelectVariant}
+      />
       </div>
     </div>
   );

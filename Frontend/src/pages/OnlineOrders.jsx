@@ -146,6 +146,14 @@ const getCustomerPhone = (order) => (
   || ''
 );
 
+const getCustomerInitials = (order) => getCustomerName(order)
+  .split(' ')
+  .filter(Boolean)
+  .slice(0, 2)
+  .map((name) => name[0])
+  .join('')
+  .toUpperCase();
+
 const getOrderItems = (order) => (
   order.items
   || order.orderItems
@@ -306,7 +314,7 @@ const OnlineOrders = () => {
   const renderStatusActions = useCallback((order) => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-8 w-8">
+        <Button variant="ghost" size="icon" className="h-11 w-11 md:h-8 md:w-8">
           <MoreHorizontal className="h-4 w-4" />
           <span className="sr-only">Open order actions</span>
         </Button>
@@ -342,7 +350,7 @@ const OnlineOrders = () => {
 
   const renderLoadingSkeleton = () => (
     <div className="space-y-4">
-      <div className="grid gap-4 md:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5 md:gap-4">
         {Array.from({ length: 5 }).map((_, index) => (
           <Skeleton key={index} className="h-28 rounded-lg" />
         ))}
@@ -404,37 +412,39 @@ const OnlineOrders = () => {
   );
 
   const renderMobileCards = () => (
-    <div className="space-y-3 md:hidden">
+    <div className="space-y-2 md:hidden">
       {orders.map((order) => (
         <Card key={order.id || order.orderNumber || order.saleNumber} className="border border-border">
-          <CardContent className="space-y-4 p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-semibold">{order.orderNumber || order.orderNo || order.saleNumber || 'Online order'}</p>
-                <p className="text-sm text-muted-foreground">{dayjs(order.createdAt || order.orderDate).format('MMM D, YYYY h:mm A')}</p>
+          <CardContent className="p-3">
+            <div className="flex items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                {getCustomerInitials(order) || 'OO'}
               </div>
-              <StatusBadge status={order.status || order.orderStatus} />
-            </div>
-            <div>
-              <p className="font-medium">{getCustomerName(order)}</p>
-              <p className="text-sm text-muted-foreground">{getItemSummary(order)}</p>
-            </div>
-            <div className="flex items-center justify-between border-t border-border pt-3">
-              <div>
-                <p className="text-xs text-muted-foreground">Amount</p>
-                <p className="font-semibold">{formatAmount(order.total || order.amount || order.grandTotal || 0)}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                {getWhatsAppHref(order) && (
-                  <Button variant="outline" size="icon" asChild>
-                    <a href={getWhatsAppHref(order)} target="_blank" rel="noreferrer">
-                      <MessageCircle className="h-4 w-4" />
-                      <span className="sr-only">WhatsApp customer</span>
-                    </a>
-                  </Button>
-                )}
-                <Button variant="outline" size="sm" onClick={() => handleViewOrder(order)}>View</Button>
-                {renderStatusActions(order)}
+              <div className="min-w-0 flex-1 space-y-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">{order.orderNumber || order.orderNo || order.saleNumber || 'Online order'}</p>
+                    <p className="truncate text-xs text-muted-foreground">{getCustomerName(order)}</p>
+                  </div>
+                  <p className="shrink-0 text-sm font-semibold">{formatAmount(order.total || order.amount || order.grandTotal || 0)}</p>
+                </div>
+                <p className="truncate text-xs text-muted-foreground">{getItemSummary(order)}</p>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <StatusBadge status={order.status || order.orderStatus} />
+                  <span className="text-xs text-muted-foreground">{dayjs(order.createdAt || order.orderDate).format('MMM D, YYYY h:mm A')}</span>
+                </div>
+                <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
+                  {getWhatsAppHref(order) && (
+                    <Button variant="outline" size="icon" className="h-11 w-11" asChild>
+                      <a href={getWhatsAppHref(order)} target="_blank" rel="noreferrer">
+                        <MessageCircle className="h-4 w-4" />
+                        <span className="sr-only">WhatsApp customer</span>
+                      </a>
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" className="min-w-16" onClick={() => handleViewOrder(order)}>View</Button>
+                  {renderStatusActions(order)}
+                </div>
               </div>
             </div>
           </CardContent>
@@ -444,15 +454,16 @@ const OnlineOrders = () => {
   );
 
   const renderPagination = () => (
-    <div className="flex flex-col gap-3 border-t border-border pt-4 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-      <span>
+    <div className="flex flex-col gap-3 border-t border-border pt-4 text-center text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:text-left">
+      <span className="block">
         Page {pagination.page} of {pagination.totalPages}
         {pagination.total ? ` · ${pagination.total} orders` : ''}
       </span>
-      <div className="flex gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:flex">
         <Button
           variant="outline"
           size="sm"
+          className="w-full sm:w-auto"
           disabled={page <= 1 || isFetching}
           onClick={() => setPage((currentPage) => Math.max(currentPage - 1, 1))}
         >
@@ -460,6 +471,7 @@ const OnlineOrders = () => {
         </Button>
         <Button
           size="sm"
+          className="w-full sm:w-auto"
           disabled={page >= pagination.totalPages || isFetching}
           onClick={() => setPage((currentPage) => currentPage + 1)}
         >
@@ -534,14 +546,14 @@ const OnlineOrders = () => {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold">Online orders</h1>
-          <p className="text-muted-foreground">Track storefront orders, payments, fulfillment, and customer follow-up.</p>
+        <div className="space-y-1">
+          <h1 className="text-xl font-semibold sm:text-2xl">Online orders</h1>
+          <p className="max-w-2xl text-sm text-muted-foreground sm:text-base">Track storefront orders, payments, fulfillment, and customer follow-up.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" disabled={!previewUrl} asChild={Boolean(previewUrl)}>
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
+          <Button variant="outline" className="w-full sm:w-auto" disabled={!previewUrl} asChild={Boolean(previewUrl)}>
             {previewUrl ? (
               <Link to={previewUrl}>
                 <ArrowUpRight className="mr-2 h-4 w-4" />
@@ -554,13 +566,13 @@ const OnlineOrders = () => {
               </span>
             )}
           </Button>
-          <Button variant="outline" onClick={handleExportPlaceholder}>
+          <Button variant="outline" className="w-full sm:w-auto" onClick={handleExportPlaceholder}>
             <Download className="mr-2 h-4 w-4" />
             Export
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline">
+              <Button variant="outline" className="w-full sm:w-auto">
                 <Filter className="mr-2 h-4 w-4" />
                 Filter
                 <ChevronDown className="ml-2 h-4 w-4" />
@@ -575,7 +587,7 @@ const OnlineOrders = () => {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button onClick={handleRefresh} disabled={isFetching}>
+          <Button className="w-full sm:w-auto" onClick={handleRefresh} disabled={isFetching}>
             <RefreshCw className={`mr-2 h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
@@ -584,17 +596,19 @@ const OnlineOrders = () => {
 
       {isLoading ? renderLoadingSkeleton() : (
         <>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            {kpiCards.map((card) => {
+          <div className="grid grid-cols-2 gap-3 md:gap-4 xl:grid-cols-5">
+            {kpiCards.map((card, index) => {
               const Icon = card.icon;
               return (
-                <Card key={card.label} className="border border-border">
-                  <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">{card.label}</CardTitle>
-                    <Icon className="h-4 w-4 text-muted-foreground" />
+                <Card key={card.label} className={`border border-border ${index === kpiCards.length - 1 ? 'col-span-2 md:col-span-1' : ''}`}>
+                  <CardHeader className="flex flex-row items-start justify-between gap-2 p-4 pb-2 sm:p-6 sm:pb-2">
+                    <CardTitle className="text-xs font-medium leading-snug text-muted-foreground sm:text-sm">{card.label}</CardTitle>
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                      <Icon className="h-4 w-4" />
+                    </span>
                   </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-semibold">{card.value}</div>
+                  <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
+                    <div className="text-2xl font-semibold leading-none">{card.value}</div>
                   </CardContent>
                 </Card>
               );
@@ -603,37 +617,37 @@ const OnlineOrders = () => {
 
           <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
             <Card className="border border-border">
-              <CardHeader>
-                <CardTitle className="text-base">Today&apos;s Online Sales</CardTitle>
+              <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-2">
+                <CardTitle className="text-base text-primary">Today&apos;s Online Sales</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-semibold">{formatAmount(stats.todayRevenue || 0)}</div>
+              <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
+                <div className="text-3xl font-semibold sm:text-4xl">{formatAmount(stats.todayRevenue || 0)}</div>
                 <p className="mt-1 text-sm text-muted-foreground">{stats.todayOrderCount || 0} orders today · Trend coming soon</p>
               </CardContent>
             </Card>
             <Card className="border border-border">
-              <CardHeader>
+              <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-2">
                 <CardTitle className="text-base">Store Activity</CardTitle>
               </CardHeader>
-              <CardContent className="grid gap-3 text-sm">
-                <div className="flex items-center justify-between">
+              <CardContent className="grid grid-cols-3 divide-x divide-border p-4 pt-0 text-center text-xs sm:p-6 sm:pt-0 sm:text-sm lg:grid-cols-1 lg:divide-x-0 lg:text-left">
+                <div className="space-y-1 px-2 first:pl-0 lg:flex lg:items-center lg:justify-between lg:px-0 lg:py-2">
                   <span className="text-muted-foreground">Today&apos;s orders</span>
-                  <span className="font-semibold">{stats.todayOrderCount || 0}</span>
+                  <span className="block font-semibold lg:inline">{stats.todayOrderCount || 0}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="space-y-1 px-2 lg:flex lg:items-center lg:justify-between lg:px-0 lg:py-2">
                   <span className="text-muted-foreground">Visitors</span>
-                  <span className="font-semibold text-muted-foreground">Not tracked yet</span>
+                  <span className="block font-semibold text-muted-foreground lg:inline">Not tracked</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="space-y-1 px-2 last:pr-0 lg:flex lg:items-center lg:justify-between lg:px-0 lg:py-2">
                   <span className="text-muted-foreground">Conversion</span>
-                  <span className="font-semibold text-muted-foreground">Not tracked yet</span>
+                  <span className="block font-semibold text-muted-foreground lg:inline">Not tracked</span>
                 </div>
               </CardContent>
             </Card>
           </div>
 
           <Card className="border border-border">
-            <CardContent className="space-y-4 p-4 sm:p-6">
+            <CardContent className="space-y-4 p-3 sm:p-6">
               <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                 <div className="relative w-full lg:max-w-md">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -641,15 +655,16 @@ const OnlineOrders = () => {
                     value={searchValue}
                     onChange={handleSearchChange}
                     placeholder="Search by order, customer, phone..."
-                    className="pl-9"
+                    className="h-11 pl-9"
                   />
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="-mx-3 flex gap-2 overflow-x-auto px-3 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 sm:pb-0">
                   {STATUS_FILTERS.map((filter) => (
                     <Button
                       key={filter.value}
                       variant={statusFilter === filter.value ? 'default' : 'outline'}
                       size="sm"
+                      className="shrink-0"
                       onClick={() => handleStatusFilterChange(filter.value)}
                     >
                       {filter.label}

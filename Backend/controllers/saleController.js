@@ -360,6 +360,78 @@ const findExistingSaleByClientId = (tenantId, clientId) =>
     attributes: SALE_RESPONSE_ATTRIBUTES
   });
 
+const resolveSaleItemCatalogData = async ({ items, tenantId, shopId, transaction }) => {
+  const productIds = [...new Set(items.map((item) => item.productId).filter(Boolean))];
+  const variantIds = [...new Set(items.map((item) => item.productVariantId).filter(Boolean))];
+
+  const [products, variants] = await Promise.all([
+    productIds.length
+      ? Product.findAll({
+        where: applyTenantFilter(tenantId, { id: { [Op.in]: productIds } }),
+        transaction
+      })
+      : [],
+    variantIds.length
+      ? ProductVariant.findAll({
+        where: { id: { [Op.in]: variantIds } },
+        include: [{
+          model: Product,
+          as: 'product',
+          where: applyTenantFilter(tenantId, {}),
+          required: true
+        }],
+        transaction
+      })
+      : []
+  ]);
+
+  const productsById = new Map(products.map((product) => [product.id, product]));
+  const variantsById = new Map(variants.map((variant) => [variant.id, variant]));
+
+  return items.map((item) => {
+    const product = productsById.get(item.productId);
+    const variant = item.productVariantId ? variantsById.get(item.productVariantId) : null;
+    const catalogProduct = variant?.product || product;
+
+    if (!catalogProduct) {
+      throw new Error('Sale item product not found');
+    }
+
+    if (shopId && catalogProduct.shopId && catalogProduct.shopId !== shopId) {
+      throw new Error('Sale item product does not belong to this shop');
+    }
+
+    if (item.productVariantId && !variant) {
+      throw new Error('Sale item variant not found');
+    }
+
+    if (variant && item.productId && variant.productId !== item.productId) {
+      throw new Error('Sale item variant does not belong to product');
+    }
+
+    const variantName = variant?.name ? String(variant.name).trim() : '';
+    const productName = catalogProduct.name || item.name || 'Sale item';
+    const resolvedName = variantName && !String(productName).includes(variantName)
+      ? `${productName} - ${variantName}`
+      : productName;
+    const resolvedPrice = variant && variant.sellingPrice != null
+      ? variant.sellingPrice
+      : catalogProduct.sellingPrice;
+    const resolvedSku = variant?.sku || catalogProduct.sku || item.sku || null;
+    const resolvedProductCode = item.productCode || variant?.barcode || catalogProduct.barcode || null;
+
+    return {
+      ...item,
+      productId: catalogProduct.id,
+      productVariantId: variant?.id || null,
+      name: resolvedName,
+      sku: resolvedSku,
+      unitPrice: resolvedPrice,
+      productCode: resolvedProductCode
+    };
+  });
+};
+
 const buildLightweightSaleResponse = (sale, items = []) => {
   const plainSale = typeof sale?.get === 'function' ? sale.get({ plain: true }) : sale;
   return {
@@ -756,8 +828,17 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
     throw new Error('Sale must have at least one item');
   }
 
+  timer?.mark('catalog-resolve:start', { itemCount: items.length });
+  const resolvedItems = await resolveSaleItemCatalogData({
+    items,
+    tenantId,
+    shopId: saleData.shopId || null,
+    transaction
+  });
+  timer?.mark('catalog-resolve:end', { itemCount: resolvedItems.length });
+
   const taxCacheHit = hasTaxConfigCache(tenantId);
-  timer?.mark('tax-config-and-sale-number:start', { itemCount: items.length, taxCacheHit });
+  timer?.mark('tax-config-and-sale-number:start', { itemCount: resolvedItems.length, taxCacheHit });
   const taxConfigPromise = getTaxConfigForTenant(tenantId).then((config) => {
     timer?.mark('tax-config:end', { taxEnabled: !!config.enabled, taxCacheHit });
     return config;
@@ -771,7 +852,7 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
   });
   const [taxConfig, saleNumber] = await Promise.all([taxConfigPromise, saleNumberPromise]);
   const cartDiscount = Math.max(0, parseFloat(bodyCartDiscount) || 0);
-  const lines = items.map((item) => ({
+  const lines = resolvedItems.map((item) => ({
     quantity: item.quantity,
     unitPrice: item.unitPrice,
     discount: item.discount || 0
@@ -781,7 +862,7 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
     cartDiscount,
     config: taxConfig
   });
-  timer?.mark('tax-compute:end', { itemCount: items.length });
+  timer?.mark('tax-compute:end', { itemCount: resolvedItems.length });
   const subtotal = computed.subtotal;
   const totalDiscount = computed.discount;
   const totalTax = computed.taxAmount;
@@ -822,15 +903,15 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
   }, { transaction });
   timer?.mark('sale-insert:end', { saleId: sale.id });
 
-  timer?.mark('items-and-stock:start', { itemCount: items.length });
+  timer?.mark('items-and-stock:start', { itemCount: resolvedItems.length });
   const productQuantityById = new Map();
   const variantQuantityById = new Map();
-  const saleItemRows = items.map((item, index) => {
+  const saleItemRows = resolvedItems.map((item, index) => {
     const lr = computed.lineResults[index] || { exclusive: 0, tax: 0, gross: 0 };
     const lineSub = (parseFloat(item.quantity) || 0) * (parseFloat(item.unitPrice) || 0);
     const lineItemTotal = Math.round((lr.exclusive + lr.tax) * 100) / 100;
     const quantity = parseFloat(item.quantity || 0);
-    if (item.productId) {
+    if (item.productId && !item.productVariantId) {
       productQuantityById.set(
         item.productId,
         (productQuantityById.get(item.productId) || 0) + quantity
@@ -879,7 +960,7 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
     transaction
   });
   timer?.mark('stock-variants-update:end', { variantCount: updatedVariantCount });
-  timer?.mark('items-and-stock:end', { itemCount: items.length });
+  timer?.mark('items-and-stock:end', { itemCount: resolvedItems.length });
 
   return { sale, items: createdItems };
 };
@@ -1485,7 +1566,7 @@ exports.cancelSale = async (req, res, next) => {
     // Restore product stock (skip when trackStock is false - made-to-order)
     for (const item of sale.items) {
       const product = await Product.findByPk(item.productId, { transaction });
-      if (product && product.trackStock !== false) {
+      if (!item.productVariantId && product && product.trackStock !== false) {
         const newQuantity = parseFloat(product.quantityOnHand || 0) + parseFloat(item.quantity);
         await product.update({ quantityOnHand: newQuantity }, { transaction });
       }
@@ -2205,7 +2286,7 @@ exports.deleteSale = async (req, res, next) => {
     if (sale.status !== 'cancelled' && sale.status !== 'refunded') {
       for (const item of sale.items) {
         const product = await Product.findByPk(item.productId, { transaction });
-        if (product && product.trackStock !== false) {
+        if (!item.productVariantId && product && product.trackStock !== false) {
           const newQuantity = parseFloat(product.quantityOnHand || 0) + parseFloat(item.quantity);
           await product.update({ quantityOnHand: newQuantity }, { transaction });
         }

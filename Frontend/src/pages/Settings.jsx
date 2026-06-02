@@ -5235,6 +5235,15 @@ const Settings = () => {
   const hasPaymentSubaccount = pc?.hasSubaccount === true;
   const isMomoLinked = pc?.settlement_type === 'momo' && (pc?.momo_phone_masked || pc?.momo_provider || pc?.configured);
   const paymentAlreadyLinked = Boolean(pc?.hasSubaccount || pc?.configured || isMomoLinked);
+  const paymentSettlementMethod = pc?.settlement_type === 'momo'
+    ? 'MoMo'
+    : pc?.settlement_type === 'bank'
+      ? 'Bank account'
+      : 'Configured payout';
+  const paymentDestinationLabel = pc?.settlement_type === 'momo' ? 'MoMo wallet' : 'Bank account';
+  const paymentDestinationValue = pc?.settlement_type === 'momo'
+    ? [pc?.momo_provider, pc?.momo_phone_masked].filter(Boolean).join(' · ') || 'Linked MoMo wallet'
+    : [pc?.bank_name, pc?.account_number_masked].filter(Boolean).join(' · ') || 'Linked bank account';
   const banksList = Array.isArray(paymentCollectionBanks) ? paymentCollectionBanks : (paymentCollectionBanks?.data ?? []);
 
   const paymentsTab = canManageOrganization ? (
@@ -5452,7 +5461,7 @@ const Settings = () => {
           <div className="flex items-center justify-center py-6 md:py-12">
             <Loader2 className="h-8 w-8 animate-spin" />
           </div>
-        ) : !hasPaymentSubaccount ? (
+        ) : !paymentAlreadyLinked ? (
           <>
             <Dialog
               open={paymentVerifyModalOpen}
@@ -5528,7 +5537,7 @@ const Settings = () => {
                 </DialogBody>
               </DialogContent>
             </Dialog>
-            {!paymentAlreadyLinked && !paymentVerificationDone ? (
+            {!paymentVerificationDone ? (
               <div className="space-y-4 py-4">
                 <p className="text-sm text-muted-foreground">To receive card and MoMo payments from customers, link a bank account or MoMo number. You will verify your identity in the next step.</p>
                 <Button
@@ -5778,41 +5787,34 @@ const Settings = () => {
         </div>
         )}
           </>
-        ) : pc?.settlement_type === 'momo' ? (
-          <div className="space-y-4">
-            <Alert>
-              <AlertTitle>MoMo wallet linked</AlertTitle>
-              <AlertDescription>
-                Your share of card and MoMo payments from Paystack is settled to your linked mobile money wallet (Paystack
-                subaccount).
-                {pc?.business_name ? (
-                  <> Business name: <strong>{pc.business_name}</strong>.</>
-                ) : null}
-                {pc?.momo_provider ? (
-                  <> Provider: <strong>{pc.momo_provider}</strong>.</>
-                ) : null}
-                {pc?.momo_phone_masked ? (
-                  <> Number: <strong>{pc.momo_phone_masked}</strong>.</>
-                ) : null}
-                {' '}To change payout details, contact support.
-              </AlertDescription>
-            </Alert>
-          </div>
         ) : (
-          <div className="space-y-4">
+          <div className="rounded-lg border border-border p-4 space-y-4">
             <Alert>
-              <AlertTitle>Bank account linked</AlertTitle>
+              <AlertTitle>Payout destination linked</AlertTitle>
               <AlertDescription>
-                Your share of card and MoMo payments from Paystack is settled to your linked bank account.
-                {pc?.business_name ? (
-                  <> Business name: <strong>{pc.business_name}</strong>.</>
-                ) : null}
-                {pc?.account_number_masked ? (
-                  <> Account number (last 4 digits): <strong>{pc.account_number_masked}</strong>.</>
-                ) : null}
-                {' '}To change the account, contact support.
+                Your share of customer card and MoMo payments is settled to the linked payout destination below.
+                To change it, contact support.
               </AlertDescription>
             </Alert>
+            <ShadcnDescriptions>
+              <DescriptionItem label="Status">Linked</DescriptionItem>
+              <DescriptionItem label="Settlement method">{paymentSettlementMethod}</DescriptionItem>
+              <DescriptionItem label="Business / account name">{pc?.business_name || 'Not set'}</DescriptionItem>
+              <DescriptionItem label={paymentDestinationLabel}>{paymentDestinationValue}</DescriptionItem>
+              {pc?.settlement_type === 'momo' && (
+                <DescriptionItem label="MoMo provider">{pc?.momo_provider || 'Not set'}</DescriptionItem>
+              )}
+              {pc?.settlement_type === 'bank' && pc?.bank_code ? (
+                <DescriptionItem label="Bank code">{pc.bank_code}</DescriptionItem>
+              ) : null}
+              <DescriptionItem label="Contact email">{pc?.primary_contact_email || 'Not set'}</DescriptionItem>
+              <DescriptionItem label="Paystack subaccount">
+                {hasPaymentSubaccount ? pc?.paystack_subaccount_code_masked || 'Linked' : 'Not linked'}
+              </DescriptionItem>
+            </ShadcnDescriptions>
+            <p className="text-xs text-muted-foreground">
+              This Payment collections setup is separate from Billing and ABS subscription charges.
+            </p>
           </div>
         )}
           </TabsContent>

@@ -86,6 +86,102 @@ const isProductOutOfStock = (product) => {
   return Number.isFinite(qty) && qty <= 0;
 };
 
+const getActiveVariants = (product) => (
+  Array.isArray(product?.variants)
+    ? product.variants.filter((variant) => variant?.isActive !== false)
+    : []
+);
+
+const isVariantOutOfStock = (product, variant) => {
+  if (!variant || product?.trackStock === false || variant.trackStock === false) return false;
+  const qty = Number(variant.quantityOnHand);
+  return Number.isFinite(qty) && qty <= 0;
+};
+
+const getVariantLabel = (variant) => {
+  if (!variant) return '';
+  const attributeText = Object.values(variant.attributes || {})
+    .filter(Boolean)
+    .join(' / ');
+  return variant.name || attributeText || variant.sku || 'Variant';
+};
+
+const buildCartItemFromProduct = (product, variant = null) => {
+  const variantLabel = getVariantLabel(variant);
+  const name = variant ? `${product.name} - ${variantLabel}` : product.name;
+
+  return {
+    id: generateCartItemId(),
+    productId: product.id,
+    productVariantId: variant?.id || null,
+    name,
+    sku: variant?.sku || product.sku,
+    productCode: variant?.barcode || getProductCode(product),
+    unitPrice: variant?.sellingPrice ?? product.sellingPrice,
+    quantity: 1,
+    discount: 0,
+    tax: 0
+  };
+};
+
+const ProductVariantDialog = ({ product, open, onClose, onSelect }) => {
+  const variants = useMemo(() => getActiveVariants(product), [product]);
+
+  return (
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent className="sm:w-[var(--modal-w-sm)]">
+        <DialogHeader>
+          <DialogTitle>Select Variant</DialogTitle>
+        </DialogHeader>
+        <DialogBody>
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">
+              Choose a variant for {product?.name || 'this product'}.
+            </p>
+            {variants.map((variant) => {
+              const outOfStock = isVariantOutOfStock(product, variant);
+              return (
+                <button
+                  key={variant.id}
+                  type="button"
+                  disabled={outOfStock}
+                  onClick={() => onSelect(variant)}
+                  className={`w-full rounded-lg border border-border p-3 text-left transition-colors ${
+                    outOfStock ? 'bg-muted opacity-60 cursor-not-allowed' : 'hover:bg-green-50 hover:border-green-200'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground">{getVariantLabel(variant)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {variant.sku ? `SKU: ${variant.sku}` : 'No SKU'}
+                        {variant.barcode ? ` • ${variant.barcode}` : ''}
+                      </div>
+                    </div>
+                    <div className="text-right text-sm">
+                      <div className="font-semibold text-green-700">{formatAmount(variant.sellingPrice ?? product?.sellingPrice)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {variant.trackStock === false || product?.trackStock === false
+                          ? 'Made to order'
+                          : outOfStock
+                            ? 'Out of stock'
+                            : `Stock: ${Number(variant.quantityOnHand || 0)}`}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </DialogBody>
+        <DialogFooter>
+          <SecondaryButton onClick={onClose}>Cancel</SecondaryButton>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 /**
  * Customer selection dialog: search existing, walk-in, or quick-add (phone + name)
  */
@@ -324,6 +420,7 @@ const POS = () => {
   const [mobileMoneyState, setMobileMoneyState] = useState('idle'); // idle | initiating | waiting | success | failed
   const [mobileMoneyError, setMobileMoneyError] = useState('');
   const [mobileMoneyFallbackMode, setMobileMoneyFallbackMode] = useState(null); // null | 'manual'
+  const [variantPickerProduct, setVariantPickerProduct] = useState(null);
 
   useEffect(() => {
     if (!isOnline) {
@@ -455,20 +552,19 @@ const POS = () => {
   }, [cart, cartDiscount, posTaxConfig, organizationSettings?.tax?.displayLabel]);
 
   // Add product to cart
-  const addToCart = useCallback((product) => {
-    if (isProductOutOfStock(product)) {
+  const addResolvedItemToCart = useCallback((product, variant = null) => {
+    if (variant ? isVariantOutOfStock(product, variant) : isProductOutOfStock(product)) {
       showError(null, `${product.name || 'Product'} is out of stock and cannot be sold.`);
       return;
     }
 
     setCart(prevCart => {
-      // Check if product already in cart
+      const variantId = variant?.id || null;
       const existingIndex = prevCart.findIndex(item => 
-        item.productId === product.id && !item.productVariantId
+        item.productId === product.id && (item.productVariantId || null) === variantId
       );
 
       if (existingIndex >= 0) {
-        // Increase quantity
         const newCart = [...prevCart];
         newCart[existingIndex] = {
           ...newCart[existingIndex],
@@ -477,24 +573,40 @@ const POS = () => {
         return newCart;
       }
 
-      // Add new item
-      return [...prevCart, {
-        id: generateCartItemId(),
-        productId: product.id,
-        productVariantId: null,
-        name: product.name,
-        sku: product.sku,
-        productCode: getProductCode(product),
-        unitPrice: product.sellingPrice,
-        quantity: 1,
-        discount: 0,
-        tax: 0
-      }];
+      return [...prevCart, buildCartItemFromProduct(product, variant)];
     });
   }, []);
 
+  const addToCart = useCallback((product) => {
+    const selectedVariant = product?.selectedVariant;
+    if (selectedVariant?.id) {
+      addResolvedItemToCart(product, selectedVariant);
+      return;
+    }
+
+    const variants = getActiveVariants(product);
+    if (variants.length > 0) {
+      setVariantPickerProduct(product);
+      return;
+    }
+
+    addResolvedItemToCart(product, null);
+  }, [addResolvedItemToCart]);
+
+  const handleSelectVariant = useCallback((variant) => {
+    if (!variantPickerProduct) return;
+    addResolvedItemToCart(variantPickerProduct, variant);
+    setVariantPickerProduct(null);
+  }, [addResolvedItemToCart, variantPickerProduct]);
+
   const adjustProductQuantity = useCallback((productId, delta) => {
     if (!delta) return;
+    const product = allProducts.find((p) => p.id === productId);
+    if (delta > 0 && product && getActiveVariants(product).length > 0) {
+      setVariantPickerProduct(product);
+      return;
+    }
+
     setCart((prevCart) => {
       const index = prevCart.findIndex(
         (item) => item.productId === productId && !item.productVariantId
@@ -502,22 +614,10 @@ const POS = () => {
       if (index === -1) {
         // If item not in cart yet and delta is positive, add one unit
         if (delta > 0) {
-          const product = allProducts.find((p) => p.id === productId);
           if (!product) return prevCart;
           return [
             ...prevCart,
-            {
-              id: generateCartItemId(),
-              productId: product.id,
-              productVariantId: null,
-              name: product.name,
-              sku: product.sku,
-              productCode: getProductCode(product),
-              unitPrice: product.sellingPrice,
-              quantity: 1,
-              discount: 0,
-              tax: 0,
-            },
+            buildCartItemFromProduct(product),
           ];
         }
         return prevCart;
@@ -1195,6 +1295,13 @@ const POS = () => {
           setQuickCustomerPhone('');
         }}
         onFindOrCreate={handleFindOrCreateCustomer}
+      />
+
+      <ProductVariantDialog
+        product={variantPickerProduct}
+        open={!!variantPickerProduct}
+        onClose={() => setVariantPickerProduct(null)}
+        onSelect={handleSelectVariant}
       />
 
       {/* Payment modal */}

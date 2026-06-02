@@ -148,6 +148,7 @@ const productService = {
     params.append('search', query);
     params.append('limit', options.limit || 50);
     params.append('isActive', true);
+    params.append('includeVariants', true);
     return api.get(`/products?${params.toString()}`);
   },
 
@@ -157,7 +158,7 @@ const productService = {
    */
   getAllActiveProducts: async () => {
     const params = new URLSearchParams();
-    const scoped = withActiveShopScope({ isActive: true, limit: 1000 });
+    const scoped = withActiveShopScope({ isActive: true, includeVariants: true, forPOS: true, limit: 1000 });
     Object.entries(scoped).forEach(([key, value]) => {
       if (value === undefined || value === null || value === '') return;
       params.append(key, value);

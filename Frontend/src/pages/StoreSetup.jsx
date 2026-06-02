@@ -26,6 +26,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 
+import OnlineStoreWelcome from '../components/store/OnlineStoreWelcome';
 import storeService from '../services/storeService';
 import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
@@ -574,6 +575,7 @@ const StoreSetup = () => {
   const [slugStatus, setSlugStatus] = useState({ state: 'idle', message: '' });
   const [uploadingField, setUploadingField] = useState(null);
   const [previewMode, setPreviewMode] = useState('desktop');
+  const [introDismissed, setIntroDismissed] = useState(false);
 
   const form = useForm({
     resolver: zodResolver(setupSchema),
@@ -658,6 +660,13 @@ const StoreSetup = () => {
     return Math.round((highestStepReached / (STEPS.length - 1)) * 100);
   }, [highestStepReached]);
 
+  const showWelcomeIntro = useMemo(() => (
+    !introDismissed &&
+    !searchParams.has('step') &&
+    !settings?.id &&
+    !loading
+  ), [introDismissed, loading, searchParams, settings?.id]);
+
   const moveToStep = useCallback((step, options = {}) => {
     const nextStep = clampStepIndex(step);
     setCurrentStep(nextStep);
@@ -671,6 +680,11 @@ const StoreSetup = () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   }, [setSearchParams]);
+
+  const handleStartSetup = useCallback(() => {
+    setIntroDismissed(true);
+    moveToStep(0, { replace: true });
+  }, [moveToStep]);
 
   const loadStore = useCallback(async () => {
     setLoading(true);
@@ -756,13 +770,14 @@ const StoreSetup = () => {
   }, [loadStore]);
 
   useEffect(() => {
+    if (showWelcomeIntro) return;
     if (searchParams.has('step')) return;
     setSearchParams((previousParams) => {
       const nextParams = new URLSearchParams(previousParams);
       nextParams.set('step', STEPS[currentStep].id);
       return nextParams;
     }, { replace: true });
-  }, [currentStep, searchParams, setSearchParams]);
+  }, [currentStep, searchParams, setSearchParams, showWelcomeIntro]);
 
   useEffect(() => {
     if (!searchParams.has('step')) return;
@@ -1381,6 +1396,18 @@ const StoreSetup = () => {
     uploadingField,
     values,
   ]);
+
+  if (loading && !settings?.id && !searchParams.has('step')) {
+    return (
+      <div className="flex min-h-[420px] items-center justify-center">
+        <Loader2 className="h-7 w-7 animate-spin text-emerald-700" />
+      </div>
+    );
+  }
+
+  if (showWelcomeIntro) {
+    return <OnlineStoreWelcome onStartSetup={handleStartSetup} />;
+  }
 
   return (
     <div className="space-y-5 md:space-y-6">
