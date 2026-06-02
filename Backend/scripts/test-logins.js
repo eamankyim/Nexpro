@@ -7,7 +7,7 @@ const emails = [
   'eamankyim@gmail.com',
   'famankyim@gmail.com',
   'my@email.com',
-  'superadmin@gmail.com',
+  'info@absghana.com',
 ];
 const password = '111111@1A';
 const baseUrl = (process.argv[2] || 'http://localhost:5001').replace(/\/$/, '');

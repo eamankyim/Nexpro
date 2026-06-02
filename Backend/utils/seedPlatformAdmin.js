@@ -19,7 +19,7 @@ const seedPlatformAdmin = async () => {
     const transaction = await sequelize.transaction();
     
     try {
-      const targetEmail = 'superadmin@nexpro.com';
+      const targetEmail = process.env.SUPERADMIN_EMAIL || 'info@absghana.com';
       
       // Check if platform admin already exists
       const existingPlatformAdmin = await User.findOne({ 
@@ -133,7 +133,7 @@ const seedPlatformAdmin = async () => {
       
       console.log('\n👑 Platform Admin Credentials:');
       console.log('   Name: Eric Amankyim');
-      console.log('   Email: superadmin@nexpro.com');
+      console.log(`   Email: ${targetEmail}`);
       console.log('   Password: 199855@EricAdmin');
       console.log('   Role: Platform Admin (Superadmin)');
       console.log('\n🎯 Platform Admin Capabilities:');

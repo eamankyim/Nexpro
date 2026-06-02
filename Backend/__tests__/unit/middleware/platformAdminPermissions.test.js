@@ -45,7 +45,7 @@ describe('platformAdminPermissions middleware', () => {
     const req = {
       user: {
         id: 'admin-1',
-        email: 'superadmin@gmail.com',
+        email: 'info@absghana.com',
         isPlatformAdmin: true,
       },
       platformAdminPermissionKeys: ['overview.view'],

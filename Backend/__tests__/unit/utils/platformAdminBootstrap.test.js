@@ -2,7 +2,7 @@ const { isBootstrapPlatformSuperAdmin } = require('../../../utils/platformAdminB
 
 describe('platformAdminBootstrap', () => {
   it('recognizes bootstrap superadmin emails', () => {
-    expect(isBootstrapPlatformSuperAdmin({ email: 'superadmin@gmail.com' })).toBe(true);
+    expect(isBootstrapPlatformSuperAdmin({ email: 'info@absghana.com' })).toBe(true);
     expect(isBootstrapPlatformSuperAdmin({ email: 'SuperAdmin@Nexpro.com' })).toBe(true);
   });
 

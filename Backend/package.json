@@ -23,6 +23,7 @@
     "test-reports": "node scripts/test-report-date-filters.js",
     "generate:platform-email-key": "node scripts/generate-platform-email-encryption-key.js",
     "update:platform-email-key": "node scripts/update-platform-email-encryption-key.js",
+    "update:superadmin-email": "node scripts/update-superadmin-email.js",
     "import:sulas-products": "node scripts/import-sulas-products.js",
     "test": "jest",
     "test:watch": "jest --watch",

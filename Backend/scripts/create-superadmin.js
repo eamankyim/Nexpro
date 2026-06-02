@@ -10,7 +10,7 @@ const { User, Tenant, UserTenant } = require('../models');
 const { Op } = require('sequelize');
 const dayjs = require('dayjs');
 
-const SUPERADMIN_EMAIL = 'superadmin@gmail.com';
+const SUPERADMIN_EMAIL = process.env.SUPERADMIN_EMAIL || 'info@absghana.com';
 const SUPERADMIN_PASSWORD = '111111@1A';
 const SUPERADMIN_NAME = 'Super Admin';
 

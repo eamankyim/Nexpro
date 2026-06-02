@@ -1,6 +1,6 @@
 /** Platform admin accounts that always receive full Control Center access. */
 const BOOTSTRAP_SUPERADMIN_EMAILS = new Set([
-  'superadmin@gmail.com',
+  'info@absghana.com',
   'superadmin@nexpro.com',
 ]);
 

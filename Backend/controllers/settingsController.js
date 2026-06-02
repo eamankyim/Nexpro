@@ -2141,6 +2141,10 @@ exports.sendPaymentCollectionOtp = async (req, res, next) => {
       console.log('[Payment OTP] send-otp: rejected (user not found)');
       return res.status(404).json({ success: false, message: 'User not found' });
     }
+    if (!user.email || typeof user.email !== 'string') {
+      console.log('[Payment OTP] send-otp: rejected (missing account email) userId=', req.user?.id);
+      return res.status(400).json({ success: false, message: 'Your account email is required to send a verification code' });
+    }
     const isGoogleUser = Boolean(user.googleId);
     if (!isGoogleUser) {
       const { password } = sanitizePayload(req.body);
@@ -2160,7 +2164,6 @@ exports.sendPaymentCollectionOtp = async (req, res, next) => {
     const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
     await setStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id, otp, expiresAt });
     console.log('[Payment OTP] send-otp: stored OTP for userId=', req.user?.id, 'expiresAt=', new Date(expiresAt).toISOString());
-    console.log('\n[Payment OTP] ========== Code:', otp, '========== (copy for testing, expires in 10 min)\n');
 
     const emailService = require('../services/emailService');
     const { emailOtpCode } = require('../services/emailTemplates');
@@ -2171,7 +2174,23 @@ exports.sendPaymentCollectionOtp = async (req, res, next) => {
       minutesValid: 10,
       company: { name: process.env.APP_NAME || 'African Business Suite' }
     });
-    await emailService.sendPlatformMessage(user.email, subject, html, text);
+    const emailResult = await emailService.sendPlatformMessage(user.email, subject, html, text, [], {
+      categories: ['payment-collection-otp'],
+      context: {
+        requestId: req.requestId,
+        tenantId: req.tenantId,
+        userId: req.user.id,
+        source: 'payment_collection_otp',
+      },
+    });
+    if (!emailResult?.success) {
+      await clearStoredPaymentOtp({ tenantId: req.tenantId, userId: req.user.id });
+      console.log('[Payment OTP] send-otp: email provider rejected send userId=', req.user?.id, 'reason=', emailResult?.error || 'unknown');
+      return res.status(503).json({
+        success: false,
+        message: 'Could not send verification code. Please contact support or try again later.',
+      });
+    }
     console.log('[Payment OTP] send-otp: email sent to', user.email ? `${user.email.slice(0, 3)}***` : '?');
     res.status(200).json({ success: true, message: 'Verification code sent to your email' });
   } catch (error) {

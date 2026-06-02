@@ -70,6 +70,7 @@ jest.mock('../../../services/emailTemplates', () => ({
 }));
 
 const { Setting, User, Tenant } = require('../../../models');
+const emailService = require('../../../services/emailService');
 const paystackService = require('../../../services/paystackService');
 const settingsController = require('../../../controllers/settingsController');
 
@@ -93,6 +94,13 @@ describe('settingsController payment collection verification', () => {
     jest.clearAllMocks();
     User.findByPk.mockResolvedValue(googleUser);
     Setting.findOne.mockResolvedValue(null);
+    Setting.findOrCreate.mockResolvedValue([
+      {
+        value: null,
+        save: jest.fn().mockResolvedValue(undefined),
+      },
+      true,
+    ]);
     paystackService.createSubaccount.mockResolvedValue({
       data: { subaccount_code: 'ACCT_test123' },
     });
@@ -182,5 +190,60 @@ describe('settingsController payment collection verification', () => {
     expect(tenant.save).toHaveBeenCalledWith({ fields: ['metadata', 'paystackSubaccountCode'] });
     expect(res.status).toHaveBeenCalledWith(200);
     expect(googleUser.comparePassword).not.toHaveBeenCalled();
+  });
+
+  it('sends payment collection OTP to the account email for Google users without requiring password', async () => {
+    const req = {
+      user: { id: 'user-1' },
+      tenantId: 'tenant-1',
+      body: {},
+    };
+    const res = mockRes();
+
+    await settingsController.sendPaymentCollectionOtp(req, res, jest.fn());
+
+    expect(emailService.sendPlatformMessage).toHaveBeenCalledWith(
+      'owner@example.com',
+      'OTP',
+      '<p>OTP</p>',
+      'OTP',
+      [],
+      expect.objectContaining({
+        categories: ['payment-collection-otp'],
+        context: expect.objectContaining({
+          tenantId: 'tenant-1',
+          userId: 'user-1',
+          source: 'payment_collection_otp',
+        }),
+      })
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(googleUser.comparePassword).not.toHaveBeenCalled();
+  });
+
+  it('returns an error when the payment collection OTP email provider fails', async () => {
+    const storedOtp = { destroy: jest.fn().mockResolvedValue(undefined) };
+    emailService.sendPlatformMessage.mockResolvedValueOnce({
+      success: false,
+      error: 'Platform email not configured',
+    });
+    Setting.findOne.mockResolvedValue(storedOtp);
+    const req = {
+      user: { id: 'user-1' },
+      tenantId: 'tenant-1',
+      body: {},
+    };
+    const res = mockRes();
+
+    await settingsController.sendPaymentCollectionOtp(req, res, jest.fn());
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        success: false,
+        message: 'Could not send verification code. Please contact support or try again later.',
+      })
+    );
+    expect(storedOtp.destroy).toHaveBeenCalledTimes(1);
   });
 });

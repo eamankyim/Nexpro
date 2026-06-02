@@ -9,7 +9,7 @@ const resetSuperadminPassword = async () => {
     // Test and establish database connection
     await testConnection();
     
-    const superadminEmail = 'superadmin@nexpro.com';
+    const superadminEmail = process.env.SUPERADMIN_EMAIL || 'info@absghana.com';
     const newPassword = '111111@1A';
     
     // Find the superadmin user

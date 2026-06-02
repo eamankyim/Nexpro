@@ -56,7 +56,7 @@ const seedAdmin = async () => {
         // User exists - check if it's a platform admin
         if (existingUser.isPlatformAdmin) {
           console.log('⚠️  User with email', targetEmail, 'already exists as Platform Admin.');
-          console.log('   Skipping tenant admin creation. Platform admin should use superadmin@nexpro.com');
+          console.log('   Skipping tenant admin creation. Platform admin should use info@absghana.com');
           console.log('   If you want to create a tenant admin, use a different email address.');
           await transaction.commit();
           await sequelize.close();
@@ -163,7 +163,7 @@ const seedAdmin = async () => {
       console.log('   Slug:', tenant.slug);
       console.log('   Plan:', tenant.plan);
       console.log('\n⚠️  IMPORTANT: Change the password after first login!');
-      console.log('\n💡 Note: Platform Admin (superadmin@nexpro.com) is separate and should be seeded using: npm run seed-platform-admin');
+      console.log('\n💡 Note: Platform Admin (info@absghana.com) is separate and should be seeded using: npm run seed-platform-admin');
       console.log('\n🎉 Tenant admin is ready to use!\n');
       
       await sequelize.close();
