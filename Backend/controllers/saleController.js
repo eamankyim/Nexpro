@@ -30,6 +30,29 @@ const PAYSTACK_CHECK_THROTTLE_MS = 4000;
 const productBarcodeInclude = [
   { model: Barcode, as: 'barcodes', where: { isActive: true }, required: false }
 ];
+const ACTIVE_KITCHEN_ORDER_STATUSES = ['received', 'preparing', 'ready'];
+
+const getTodayDateRange = () => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setHours(23, 59, 59, 999);
+  return { [Op.between]: [start, end] };
+};
+
+const isActiveKitchenOrderRow = (sale) => {
+  const plainSale = typeof sale?.get === 'function' ? sale.get({ plain: true }) : sale;
+  if (!plainSale || !ACTIVE_KITCHEN_ORDER_STATUSES.includes(plainSale.orderStatus)) return false;
+
+  const createdAt = plainSale.createdAt ? new Date(plainSale.createdAt) : null;
+  if (!createdAt || Number.isNaN(createdAt.getTime())) return false;
+
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setHours(23, 59, 59, 999);
+  return createdAt >= start && createdAt <= end;
+};
 
 const getSaleItemProductCode = (item) => {
   const alias = item?.metadata?.productCode
@@ -752,7 +775,9 @@ exports.getSales = async (req, res, next) => {
       where[Op.and].push(sequelize.where(sequelize.json('metadata.source'), source));
     }
     if (activeOrders) {
-      where.orderStatus = { [Op.in]: ['received', 'preparing', 'ready'] };
+      where.orderStatus = ACTIVE_KITCHEN_ORDER_STATUSES.includes(orderStatus)
+        ? orderStatus
+        : { [Op.in]: ACTIVE_KITCHEN_ORDER_STATUSES };
     }
     if (startDate && endDate) {
       const start = new Date(startDate);
@@ -789,6 +814,12 @@ exports.getSales = async (req, res, next) => {
       order: [['createdAt', 'DESC']]
     });
 
+    rows.forEach((row) => {
+      const activeKitchenOrder = isActiveKitchenOrderRow(row);
+      row.setDataValue('isActiveKitchenOrder', activeKitchenOrder);
+      row.setDataValue('kitchenQueueStatus', activeKitchenOrder ? row.orderStatus : null);
+    });
+
     // Cast status enum to text in CASE expressions — PostgreSQL does not match enum columns
     // to string literals inside CASE WHEN without ::text, which zeroed completed/revenue stats.
     const summary = await Sale.findOne({
@@ -797,11 +828,21 @@ exports.getSales = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.col('id')), 'totalSales'],
         [sequelize.literal(`COUNT(CASE WHEN "Sale"."status"::text = 'completed' THEN 1 END)`), 'completedCount'],
         [sequelize.literal(`COUNT(CASE WHEN "Sale"."status"::text = 'pending' THEN 1 END)`), 'pendingCount'],
-        [sequelize.literal(`COUNT(CASE WHEN "Sale"."orderStatus" IN ('received', 'preparing', 'ready') THEN 1 END)`), 'kitchenPendingCount'],
+        [sequelize.literal(`COUNT(CASE WHEN "Sale"."orderStatus" IN ('${ACTIVE_KITCHEN_ORDER_STATUSES.join("','")}') THEN 1 END)`), 'kitchenPendingCount'],
         [sequelize.literal(`COALESCE(SUM(CASE WHEN "Sale"."status"::text = 'completed' THEN "Sale"."total" ELSE 0 END), 0)`), 'completedRevenue']
       ],
       raw: true
     });
+    const shopType = req.tenant?.metadata?.businessSubType || req.tenant?.metadata?.shopType;
+    const isRestaurant = shopType === 'restaurant';
+    const activeKitchenWhere = {
+      ...where,
+      orderStatus: { [Op.in]: ACTIVE_KITCHEN_ORDER_STATUSES },
+      createdAt: getTodayDateRange()
+    };
+    const activeKitchenPendingCount = isRestaurant
+      ? await Sale.count({ where: activeKitchenWhere })
+      : Number(summary?.kitchenPendingCount || 0);
 
     res.status(200).json({
       success: true,
@@ -810,7 +851,7 @@ exports.getSales = async (req, res, next) => {
         totalSales: Number(summary?.totalSales || count || 0),
         completedCount: Number(summary?.completedCount || 0),
         pendingCount: Number(summary?.pendingCount || 0),
-        kitchenPendingCount: Number(summary?.kitchenPendingCount || 0),
+        kitchenPendingCount: activeKitchenPendingCount,
         completedRevenue: Number(summary?.completedRevenue || 0)
       },
       pagination: {

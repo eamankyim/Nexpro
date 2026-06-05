@@ -5,8 +5,9 @@ jest.mock('../../../config/database', () => ({
 }));
 
 jest.mock('../../../models', () => ({
-  Invoice: { findOne: jest.fn() },
-  Job: {},
+  Invoice: { findOne: jest.fn(), destroy: jest.fn() },
+  Job: { findAll: jest.fn().mockResolvedValue([]) },
+  Sale: { findAll: jest.fn().mockResolvedValue([]) },
   Customer: {},
   JobItem: {},
   Payment: { create: jest.fn() },
@@ -96,7 +97,8 @@ jest.mock('../../../services/emailService', () => ({
   sendMessage: jest.fn(),
 }));
 
-const { Invoice, Payment, Setting } = require('../../../models');
+const { Invoice, Payment, Setting, Job, Sale } = require('../../../models');
+const { updateCustomerBalance } = require('../../../services/customerBalanceService');
 const emailService = require('../../../services/emailService');
 const { createInvoicePaymentJournal } = require('../../../services/invoiceAccountingService');
 const invoiceController = require('../../../controllers/invoiceController');
@@ -333,6 +335,96 @@ describe('invoiceController markInvoicePaid payment date', () => {
     });
     expect(Invoice.findOne).not.toHaveBeenCalled();
     expect(Payment.create).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe('invoiceController cancelled invoice access', () => {
+  const buildRes = () => ({
+    status: jest.fn().mockReturnThis(),
+    json: jest.fn().mockReturnThis(),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    Job.findAll.mockResolvedValue([]);
+    Sale.findAll.mockResolvedValue([]);
+    updateCustomerBalance.mockResolvedValue(undefined);
+  });
+
+  it('getInvoice returns a cancelled invoice visible in list scope', async () => {
+    const cancelledInvoice = {
+      id: 'inv-cancelled',
+      tenantId: 'tenant-1',
+      status: 'cancelled',
+      jobId: null,
+      saleId: 'sale-1',
+      prescriptionId: null,
+      shopId: null,
+      job: null,
+      sale: { soldBy: 'user-1' },
+      shop: null,
+      studioLocation: null,
+      customer: { id: 'customer-1', name: 'Alex' },
+      toJSON() {
+        return { id: this.id, status: this.status };
+      },
+    };
+
+    Invoice.findOne.mockResolvedValue(cancelledInvoice);
+
+    const req = {
+      params: { id: 'inv-cancelled' },
+      tenantId: 'tenant-1',
+      tenant: { businessType: 'shop' },
+      shopScoped: true,
+      shopFilterId: 'shop-a',
+      user: { id: 'user-1', role: 'admin' },
+      tenantRole: 'admin',
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await invoiceController.getInvoice(req, res, next);
+
+    expect(Invoice.findOne).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      data: expect.objectContaining({ id: 'inv-cancelled' }),
+    }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('deleteCancelledInvoice removes a cancelled invoice with no payments', async () => {
+    const cancelledInvoice = {
+      id: 'inv-cancelled',
+      tenantId: 'tenant-1',
+      status: 'cancelled',
+      amountPaid: 0,
+      balance: 120,
+      customerId: 'customer-1',
+      shopId: null,
+      destroy: jest.fn().mockResolvedValue(undefined),
+    };
+
+    Invoice.findOne.mockResolvedValue(cancelledInvoice);
+
+    const req = {
+      params: { id: 'inv-cancelled' },
+      tenantId: 'tenant-1',
+      shopScoped: true,
+      shopFilterId: 'shop-a',
+      user: { id: 'user-1', role: 'admin' },
+      tenantRole: 'admin',
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await invoiceController.deleteCancelledInvoice(req, res, next);
+
+    expect(cancelledInvoice.destroy).toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
     expect(next).not.toHaveBeenCalled();
   });
 });

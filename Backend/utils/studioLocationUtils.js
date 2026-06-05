@@ -133,6 +133,41 @@ const applyStudioLocationFilter = (req, where = {}) => {
 };
 
 /**
+ * Studio read filter: include legacy rows with null studioLocationId (pre multi-location).
+ * @param {object} req
+ * @param {object} [where]
+ */
+const applyStudioLocationReadFilter = (req, where = {}) => {
+  if (!req.studioLocationScoped) return where;
+
+  if (req.studioLocationFilterId) {
+    return {
+      ...where,
+      [Op.or]: [
+        { studioLocationId: req.studioLocationFilterId },
+        { studioLocationId: null },
+      ],
+    };
+  }
+
+  if (req.canAccessAllStudioLocations) {
+    return where;
+  }
+
+  if (req.allowedStudioLocationIds?.length) {
+    return {
+      ...where,
+      [Op.or]: [
+        { studioLocationId: { [Op.in]: req.allowedStudioLocationIds } },
+        { studioLocationId: null },
+      ],
+    };
+  }
+
+  return where;
+};
+
+/**
  * SQL fragment for raw dashboard/report queries.
  * @param {object} req
  * @param {string} [tableAlias]
@@ -223,6 +258,7 @@ module.exports = {
   setAsOnlyDefaultStudioLocation,
   getUserStudioLocationIds,
   applyStudioLocationFilter,
+  applyStudioLocationReadFilter,
   getStudioLocationSqlFragment,
   getStudioLocationIdForWrite,
   attachStudioLocationToPayload,

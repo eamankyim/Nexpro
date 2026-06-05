@@ -35,12 +35,12 @@ router.route('/')
 
 router.get('/export', exportLimiter, authorize('admin', 'manager'), exportInvoices);
 
+router.delete('/:id/cancelled', authorize('admin'), deleteCancelledInvoice);
+
 router.route('/:id')
   .get(getInvoice)
   .put(authorize('admin', 'manager', 'staff'), updateInvoice)
   .delete(authorize('admin'), deleteInvoice);
-
-router.delete('/:id/cancelled', authorize('admin'), deleteCancelledInvoice);
 
 router.post('/:id/payment', authorize('admin', 'manager', 'staff'), recordPayment);
 router.post('/:id/send', authorize('admin', 'manager', 'staff'), sendInvoice);

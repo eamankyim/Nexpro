@@ -27,6 +27,7 @@ const {
 } = require('../utils/studioLocationUtils');
 const {
   applyScopedFilters,
+  applyScopedReadFilters,
   attachScopedToPayload,
   assertShopRecordAccess,
 } = require('../utils/shopUtils');
@@ -257,11 +258,29 @@ const buildInvoiceVisibilityWhere = async (req) => {
     }
   }
 
-  return applyScopedFilters(req, where);
+  return applyScopedReadFilters(req, where);
 };
 
 const invoiceWhere = (req, extra = {}) =>
   applyScopedFilters(req, applyTenantFilter(req.tenantId, extra));
+
+const invoiceReadWhere = (req, extra = {}) =>
+  applyScopedReadFilters(req, applyTenantFilter(req.tenantId, extra));
+
+/**
+ * Load one invoice using the same visibility rules as the list endpoint.
+ * @param {import('express').Request} req
+ * @param {string} id
+ * @param {Array} [include]
+ * @returns {Promise<import('../models').Invoice|null>}
+ */
+const findVisibleInvoiceById = async (req, id, include = []) => {
+  const visibilityWhere = await buildInvoiceVisibilityWhere(req);
+  return Invoice.findOne({
+    where: { ...visibilityWhere, id },
+    include,
+  });
+};
 
 /**
  * Send invoice paid confirmation to customer (email + optional SMS). Fire-and-forget; errors are logged only.
@@ -490,10 +509,7 @@ exports.getInvoice = async (req, res, next) => {
     }
     include.push(...invoiceBranchIncludes());
 
-    const invoice = await Invoice.findOne({
-      where: invoiceWhere(req, { id: req.params.id }),
-      include
-    });
+    const invoice = await findVisibleInvoiceById(req, req.params.id, include);
 
     if (!invoice) {
       return res.status(404).json({
@@ -827,7 +843,7 @@ exports.createInvoice = async (req, res, next) => {
 exports.updateInvoice = async (req, res, next) => {
   try {
     const invoice = await Invoice.findOne({
-      where: invoiceWhere(req, { id: req.params.id })
+      where: invoiceReadWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -881,7 +897,7 @@ exports.updateInvoice = async (req, res, next) => {
 exports.deleteInvoice = async (req, res, next) => {
   try {
     const invoice = await Invoice.findOne({
-      where: invoiceWhere(req, { id: req.params.id })
+      where: invoiceReadWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -928,7 +944,7 @@ exports.deleteInvoice = async (req, res, next) => {
 exports.deleteCancelledInvoice = async (req, res, next) => {
   try {
     const invoice = await Invoice.findOne({
-      where: invoiceWhere(req, { id: req.params.id })
+      where: invoiceReadWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -980,7 +996,7 @@ exports.recordPayment = async (req, res, next) => {
     const { amount, paymentMethod, referenceNumber, paymentDate } = sanitizePayload(req.body);
 
     const invoice = await Invoice.findOne({
-      where: invoiceWhere(req, { id: req.params.id })
+      where: invoiceReadWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -1188,7 +1204,7 @@ exports.markInvoicePaid = async (req, res, next) => {
     }
 
     const invoice = await Invoice.findOne({
-      where: invoiceWhere(req, { id: req.params.id })
+      where: invoiceReadWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -1301,7 +1317,7 @@ exports.markInvoicePaid = async (req, res, next) => {
 exports.sendInvoice = async (req, res, next) => {
   try {
     const invoice = await Invoice.findOne({
-      where: invoiceWhere(req, { id: req.params.id })
+      where: invoiceReadWhere(req, { id: req.params.id })
     });
 
     if (!invoice) {
@@ -2852,9 +2868,7 @@ exports.pollMobileMoneyForPublicInvoice = async (req, res, next) => {
 // @access  Private
 exports.cancelInvoice = async (req, res, next) => {
   try {
-    const invoice = await Invoice.findOne({
-      where: invoiceWhere(req, { id: req.params.id })
-    });
+    const invoice = await findVisibleInvoiceById(req, req.params.id);
 
     if (!invoice) {
       return res.status(404).json({

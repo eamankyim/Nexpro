@@ -86,9 +86,15 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
-import { DELIVERY_STATUS_ORDER, DELIVERY_STATUS_LABELS } from '../constants';
+import { DELIVERY_STATUS_ORDER, DELIVERY_STATUS_LABELS, ORDER_STATUSES } from '../constants';
 import { EMPTY_STATES, FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
+
+const ACTIVE_KITCHEN_ORDER_STATUSES = [
+  ORDER_STATUSES.RECEIVED,
+  ORDER_STATUSES.PREPARING,
+  ORDER_STATUSES.READY,
+];
 
 const recordPaymentSchema = z.object({
   amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Payment amount must be greater than 0'),
@@ -130,6 +136,16 @@ const getSaleDelivery = (sale) => {
     minKm: metadataDelivery.minKm,
     maxKm: metadataDelivery.maxKm,
   };
+};
+
+const getKitchenQueueStatus = (sale) => {
+  if (sale?.kitchenQueueStatus && ACTIVE_KITCHEN_ORDER_STATUSES.includes(sale.kitchenQueueStatus)) {
+    return sale.kitchenQueueStatus;
+  }
+  if (sale?.isActiveKitchenOrder === true && ACTIVE_KITCHEN_ORDER_STATUSES.includes(sale.orderStatus)) {
+    return sale.orderStatus;
+  }
+  return null;
 };
 
 const Sales = () => {
@@ -239,7 +255,7 @@ const Sales = () => {
   }, [hasProducts, hasActiveFilters, navigate, handleClearFilters]);
 
   // Stats use API summary across the full filtered result set (not the current table page).
-  // Completed/revenue follow sale.status (same field as the table). Restaurant kitchen pending uses orderStatus.
+  // Completed/revenue follow sale.status. Restaurant kitchen pending follows the active Kitchen Orders queue.
   const completedCount = useMemo(
     () => Number(salesSummary.completedCount || 0),
     [salesSummary.completedCount]
@@ -590,13 +606,16 @@ const Sales = () => {
     ...(isRestaurant ? [{
       key: 'orderStatus',
       label: 'Kitchen',
-      render: (_, record) => (
-        record.orderStatus ? (
-          <StatusChip status={record.orderStatus} />
+      render: (_, record) => {
+        const queueStatus = getKitchenQueueStatus(record);
+        return queueStatus ? (
+          <StatusChip status={queueStatus} />
+        ) : record.orderStatus ? (
+          <span className="text-muted-foreground text-sm">Not in queue</span>
         ) : (
           <span className="text-muted-foreground text-sm">—</span>
-        )
-      )
+        );
+      }
     }] : []),
     {
       key: 'createdAt',
@@ -822,10 +841,10 @@ const Sales = () => {
           loading={loading}
         />
         <DashboardStatsCard
-          tooltip={isRestaurant ? 'Kitchen queue (Received, Preparing, or Ready). Uses the Kitchen column, not Payment. May be on another page.' : 'Sales with no payment received yet, across all filtered results'}
+          tooltip={isRestaurant ? 'Active Kitchen Orders queue for today (Received, Preparing, or Ready). Uses the same queue as Kitchen Orders, not Payment.' : 'Sales with no payment received yet, across all filtered results'}
           title={isRestaurant ? 'Pending (in kitchen)' : 'Pending'}
           value={pendingCount}
-          subtitle={isRestaurant ? 'Kitchen queue · all pages' : 'All filtered sales'}
+          subtitle={isRestaurant ? "Today's active queue" : 'All filtered sales'}
           icon={Clock}
           iconBgColor="rgba(59, 130, 246, 0.1)"
           iconColor="#3b82f6"

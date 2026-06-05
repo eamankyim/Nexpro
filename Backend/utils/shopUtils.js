@@ -357,6 +357,16 @@ const applyScopedFilters = (req, where = {}) => {
 };
 
 /**
+ * Read scope: shop/studio filters include legacy rows with null branch ids.
+ * @param {object} req
+ * @param {object} [where]
+ */
+const applyScopedReadFilters = (req, where = {}) => {
+  const { applyStudioLocationReadFilter } = require('./studioLocationUtils');
+  return applyShopReadFilter(req, applyStudioLocationReadFilter(req, where));
+};
+
+/**
  * Attach studio location and/or shop on create payloads.
  * @param {object} req
  * @param {object} [payload]
@@ -432,6 +442,7 @@ module.exports = {
   applyShopFilter,
   applyShopReadFilter,
   applyScopedFilters,
+  applyScopedReadFilters,
   getShopIdForWrite,
   attachShopToPayload,
   attachScopedToPayload,
