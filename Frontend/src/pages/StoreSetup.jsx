@@ -32,6 +32,7 @@ import settingsService from '../services/settingsService';
 import { useAuth } from '../context/AuthContext';
 import { useDebounce } from '../hooks/useDebounce';
 import { showError, showSuccess, getErrorMessage } from '../utils/toast';
+import { resolveImageUrl } from '../utils/fileUtils';
 import { cn } from '@/lib/utils';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -439,7 +440,9 @@ const Stepper = ({ currentStep, completion, highestStepReached, onStepClick }) =
   </div>
 );
 
-const UploadField = ({ label, description, value, onChange, onUpload, uploading, previewClassName = 'h-32' }) => (
+const UploadField = ({ label, description, value, onChange, onUpload, uploading, previewClassName = 'h-32' }) => {
+  const previewSrc = resolveImageUrl(value);
+  return (
   <div className="rounded-xl border border-border p-4">
     <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div>
@@ -458,9 +461,9 @@ const UploadField = ({ label, description, value, onChange, onUpload, uploading,
         />
       </label>
     </div>
-    {value ? (
+    {previewSrc ? (
       <div className="mt-4 overflow-hidden rounded-xl border border-border bg-muted/30">
-        <img src={value} alt="" className={cn('w-full object-cover', previewClassName)} />
+        <img src={previewSrc} alt="" className={cn('w-full object-cover', previewClassName)} />
       </div>
     ) : (
       <div className={cn('mt-4 flex items-center justify-center rounded-xl border border-dashed border-border bg-muted/30 text-sm text-muted-foreground', previewClassName)}>
@@ -470,11 +473,14 @@ const UploadField = ({ label, description, value, onChange, onUpload, uploading,
     )}
     <Input className="mt-3 h-11 rounded-xl" placeholder="/uploads/... or https://..." value={value || ''} onChange={(event) => onChange(event.target.value)} />
   </div>
-);
+  );
+};
 
 const StorePreview = ({ values, previewMode, enabledPaymentMethods, enabledDeliveryOptions, className, sticky = false }) => {
   const whatsapp = values.whatsappNumber || values.contactPhone;
   const containerClass = previewMode === 'mobile' ? 'mx-auto max-w-[320px]' : 'w-full';
+  const logoSrc = resolveImageUrl(values.logoUrl);
+  const bannerSrc = resolveImageUrl(values.bannerImageUrl);
 
   return (
     <Card className={cn('border border-border', sticky && 'sticky top-4', className)}>
@@ -490,13 +496,13 @@ const StorePreview = ({ values, previewMode, enabledPaymentMethods, enabledDeliv
           <div className="overflow-hidden rounded-2xl border border-border bg-background">
             <div
               className="h-28 bg-muted"
-              style={{ background: values.bannerImageUrl ? `url(${values.bannerImageUrl}) center/cover` : values.primaryColor }}
+              style={{ background: bannerSrc ? `url(${bannerSrc}) center/cover` : values.primaryColor }}
             />
             <div className="p-5">
               <div className="mb-4 flex items-center gap-3">
                 <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-2xl border border-border bg-muted">
-                  {values.logoUrl ? (
-                    <img src={values.logoUrl} alt="" className="h-full w-full object-cover" />
+                  {logoSrc ? (
+                    <img src={logoSrc} alt="" className="h-full w-full object-cover" />
                   ) : (
                     <Store className="h-6 w-6 text-muted-foreground" />
                   )}
@@ -663,9 +669,8 @@ const StoreSetup = () => {
   const showWelcomeIntro = useMemo(() => (
     !introDismissed &&
     !searchParams.has('step') &&
-    !settings?.id &&
     !loading
-  ), [introDismissed, loading, searchParams, settings?.id]);
+  ), [introDismissed, loading, searchParams]);
 
   const moveToStep = useCallback((step, options = {}) => {
     const nextStep = clampStepIndex(step);
@@ -770,14 +775,14 @@ const StoreSetup = () => {
   }, [loadStore]);
 
   useEffect(() => {
-    if (showWelcomeIntro) return;
+    if (!introDismissed) return;
     if (searchParams.has('step')) return;
     setSearchParams((previousParams) => {
       const nextParams = new URLSearchParams(previousParams);
       nextParams.set('step', STEPS[currentStep].id);
       return nextParams;
     }, { replace: true });
-  }, [currentStep, searchParams, setSearchParams, showWelcomeIntro]);
+  }, [currentStep, introDismissed, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!searchParams.has('step')) return;

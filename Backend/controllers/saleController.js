@@ -42,6 +42,17 @@ const getSaleItemProductCode = (item) => {
   return String(alias || '').trim();
 };
 
+const parseSaleUnitPriceOverride = (value) => {
+  if (value === undefined || value === null || value === '') return null;
+  const numericValue = parseFloat(value);
+  if (!Number.isFinite(numericValue) || numericValue < 0) return null;
+  return Math.round(numericValue * 100) / 100;
+};
+
+const salePricesDiffer = (left, right) => (
+  Math.round((parseFloat(left) || 0) * 100) !== Math.round((parseFloat(right) || 0) * 100)
+);
+
 const maskEmailForLogs = (email) => {
   if (!email || typeof email !== 'string') return null;
   const [localPart, domainPart] = email.trim().split('@');
@@ -417,8 +428,12 @@ const resolveSaleItemCatalogData = async ({ items, tenantId, shopId, transaction
     const resolvedPrice = variant && variant.sellingPrice != null
       ? variant.sellingPrice
       : catalogProduct.sellingPrice;
+    const catalogUnitPrice = parseSaleUnitPriceOverride(resolvedPrice) ?? 0;
+    const clientUnitPrice = parseSaleUnitPriceOverride(item.unitPrice);
+    const effectiveUnitPrice = clientUnitPrice ?? catalogUnitPrice;
     const resolvedSku = variant?.sku || catalogProduct.sku || item.sku || null;
     const resolvedProductCode = item.productCode || variant?.barcode || catalogProduct.barcode || null;
+    const priceOverridden = salePricesDiffer(effectiveUnitPrice, catalogUnitPrice);
 
     return {
       ...item,
@@ -426,7 +441,11 @@ const resolveSaleItemCatalogData = async ({ items, tenantId, shopId, transaction
       productVariantId: variant?.id || null,
       name: resolvedName,
       sku: resolvedSku,
-      unitPrice: resolvedPrice,
+      baseUnitPrice: catalogUnitPrice,
+      catalogUnitPrice,
+      originalUnitPrice: catalogUnitPrice,
+      unitPrice: effectiveUnitPrice,
+      priceOverridden,
       productCode: resolvedProductCode
     };
   });
@@ -462,6 +481,9 @@ const buildLightweightSaleResponse = (sale, items = []) => {
         name: plainItem.name,
         sku: plainItem.sku,
         productCode: plainItem.metadata?.productCode || null,
+        originalUnitPrice: plainItem.metadata?.originalUnitPrice ?? null,
+        catalogUnitPrice: plainItem.metadata?.catalogUnitPrice ?? plainItem.metadata?.originalUnitPrice ?? null,
+        priceOverridden: plainItem.metadata?.priceOverridden === true,
         metadata: plainItem.metadata || {},
         quantity: plainItem.quantity,
         unitPrice: plainItem.unitPrice,
@@ -936,7 +958,11 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
       subtotal: lineSub,
       total: lineItemTotal,
       metadata: {
-        productCode: item.productCode || null
+        ...(item.metadata && typeof item.metadata === 'object' ? item.metadata : {}),
+        productCode: item.productCode || null,
+        originalUnitPrice: item.originalUnitPrice,
+        catalogUnitPrice: item.catalogUnitPrice,
+        priceOverridden: item.priceOverridden === true
       }
     };
   });

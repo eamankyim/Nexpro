@@ -70,12 +70,30 @@ const normalizeEnvApiUrl = (envUrl) => {
 };
 
 /**
- * Resolve API base URL for localhost dev: local backend by default; explicit non-production overrides are allowed.
+ * Whether to call the API via same-origin /api (Vite dev proxy) instead of cross-origin localhost:5000.
+ * Avoids CORS and macOS AirPlay occupying port 5000 when the backend binds to 5001+.
+ * @returns {boolean}
+ */
+const useViteDevProxy = () =>
+  import.meta.env.DEV && import.meta.env.VITE_API_DIRECT !== 'true';
+
+/**
+ * Resolve API base URL for localhost dev: Vite proxy by default; explicit non-production overrides when VITE_API_DIRECT=true.
  * @param {string|undefined} envUrl
  * @param {string} browserHost
  * @returns {string}
  */
 const resolveLocalDevApiBaseUrl = (envUrl, browserHost) => {
+  if (useViteDevProxy()) {
+    if (import.meta.env.VITE_DEBUG_API === 'true') {
+      console.log(
+        `[API] Dev mode on ${browserHost}: using same-origin /api (Vite proxy). ` +
+          'Set VITE_API_DIRECT=true and VITE_API_URL for direct backend calls.'
+      );
+    }
+    return '';
+  }
+
   if (!envUrl) {
     return LOCAL_API_URL;
   }
@@ -87,7 +105,7 @@ const resolveLocalDevApiBaseUrl = (envUrl, browserHost) => {
     );
     return LOCAL_API_URL;
   }
-  if (import.meta.env.DEV && import.meta.env.VITE_DEBUG_API === 'true') {
+  if (import.meta.env.VITE_DEBUG_API === 'true') {
     console.log(`[API] Using base URL: ${normalized}`);
   }
   return normalized || LOCAL_API_URL;

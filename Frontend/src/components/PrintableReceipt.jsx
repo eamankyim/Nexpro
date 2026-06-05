@@ -52,6 +52,18 @@ const getItemVariantLabel = (item) => {
   return variant.name || attributeText || variant.sku || '';
 };
 
+const getItemCatalogUnitPrice = (item) => {
+  const value = item?.metadata?.catalogUnitPrice
+    ?? item?.metadata?.originalUnitPrice
+    ?? item?.catalogUnitPrice
+    ?? item?.originalUnitPrice
+    ?? null;
+  const amount = parseFloat(value);
+  return Number.isFinite(amount) ? amount : null;
+};
+
+const isItemPriceOverridden = (item) => item?.metadata?.priceOverridden === true || item?.priceOverridden === true;
+
 const PrintableReceipt = ({
   sale,
   documentTitle = 'RECEIPT',
@@ -501,11 +513,14 @@ const PrintableReceipt = ({
                   const unitPrice = parseFloat(item.unitPrice || 0).toFixed(2);
                   const productCode = getItemProductCode(item);
                   const variantLabel = getItemVariantLabel(item);
+                  const catalogUnitPrice = getItemCatalogUnitPrice(item);
+                  const priceOverridden = isItemPriceOverridden(item) && catalogUnitPrice !== null;
                   return (
                     <div key={item.id || index} className="thermal-item-list">
                       <span className="thermal-item-name">{item.name || item.product?.name || 'Item'}</span>
                       {variantLabel && <span className="thermal-item-name">Variant: {variantLabel}</span>}
                       {productCode && <span className="thermal-item-name">Product Code: {productCode}</span>}
+                      {priceOverridden && <span className="thermal-item-name">Catalog: ₵ {catalogUnitPrice.toFixed(2)}</span>}
                       <span className="thermal-item-amount">₵ {total}</span>
                     </div>
                   );
@@ -650,11 +665,16 @@ const PrintableReceipt = ({
               const unitPrice = parseFloat(item.unitPrice || 0).toFixed(2);
               const productCode = getItemProductCode(item);
               const variantLabel = getItemVariantLabel(item);
+              const catalogUnitPrice = getItemCatalogUnitPrice(item);
+              const priceOverridden = isItemPriceOverridden(item) && catalogUnitPrice !== null;
               return (
                 <div key={item.id || index} className="receipt-item-row">
                   <div className="receipt-item-name" style={{ fontWeight: 500 }}>{item.name || item.product?.name || 'Item'}</div>
                   <div className="receipt-item-price">₵ {total}</div>
                   <div className="receipt-item-detail">{qty} × ₵ {unitPrice}</div>
+                  {priceOverridden && (
+                    <div className="receipt-item-detail">Catalog price: ₵ {catalogUnitPrice.toFixed(2)}</div>
+                  )}
                   {variantLabel && <div className="receipt-item-detail">Variant: {variantLabel}</div>}
                   {productCode && <div className="receipt-item-detail">Product Code: {productCode}</div>}
                 </div>

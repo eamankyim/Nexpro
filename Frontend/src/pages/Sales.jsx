@@ -106,6 +106,18 @@ const getSaleItemVariantLabel = (item) => {
   return variant.name || attributeText || variant.sku || '';
 };
 
+const getSaleItemCatalogUnitPrice = (item) => {
+  const value = item?.metadata?.catalogUnitPrice
+    ?? item?.metadata?.originalUnitPrice
+    ?? item?.catalogUnitPrice
+    ?? item?.originalUnitPrice
+    ?? null;
+  const amount = parseFloat(value);
+  return Number.isFinite(amount) ? amount : null;
+};
+
+const isSaleItemPriceOverridden = (item) => item?.metadata?.priceOverridden === true || item?.priceOverridden === true;
+
 const Sales = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1265,6 +1277,8 @@ const Sales = () => {
                     </div>
                     {viewingSale.items.map((item) => {
                       const variantLabel = getSaleItemVariantLabel(item);
+                      const catalogUnitPrice = getSaleItemCatalogUnitPrice(item);
+                      const priceOverridden = isSaleItemPriceOverridden(item) && catalogUnitPrice !== null;
                       return (
                         <div
                           key={item.id}
@@ -1296,7 +1310,14 @@ const Sales = () => {
                           </div>
                         </div>
                         <div className="col-span-2 text-right text-muted-foreground">{item.quantity}</div>
-                        <div className="col-span-2 text-right text-muted-foreground">{formatAmount(item.unitPrice)}</div>
+                        <div className="col-span-2 text-right text-muted-foreground">
+                          <div>{formatAmount(item.unitPrice)}</div>
+                          {priceOverridden && (
+                            <div className="text-xs text-amber-700">
+                              Catalog {formatAmount(catalogUnitPrice)}
+                            </div>
+                          )}
+                        </div>
                         <div className="col-span-2 text-right font-medium text-foreground">{formatAmount(item.total)}</div>
                         </div>
                       );

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, Package, Settings, ShoppingBag, Store } from 'lucide-react';
 import storeService from '../services/storeService';
@@ -8,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
 const StoreDashboard = () => {
-  const navigate = useNavigate();
   const { data: statusResponse, isLoading } = useQuery({
     queryKey: ['store', 'setup-status'],
     queryFn: () => storeService.getSetupStatus(),
@@ -24,18 +23,7 @@ const StoreDashboard = () => {
   ]), [checklist.launched, checklist.listingsCount]);
 
   if (!isLoading && !checklist.hasSettings) {
-    return (
-      <div className="space-y-6">
-        <div className="rounded-xl border border-border bg-card p-6">
-          <Badge variant="outline">Online Store</Badge>
-          <h1 className="mt-4 text-2xl font-semibold">Set up your store</h1>
-          <p className="mt-2 max-w-2xl text-muted-foreground">
-            Add store details, branding, payments, delivery options, then launch when your first listings are ready.
-          </p>
-          <Button className="mt-5" onClick={() => navigate('/store/setup')}>Start setup</Button>
-        </div>
-      </div>
-    );
+    return <Navigate to="/store/setup" replace />;
   }
 
   return (

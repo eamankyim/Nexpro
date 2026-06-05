@@ -60,8 +60,11 @@ DATABASE_URL=postgresql://username:password@demo-db-host/neondb?sslmode=require
 JWT_SECRET=your_super_secret_jwt_key_change_this_in_production
 JWT_EXPIRE=7d
 
-# CORS Configuration
-CORS_ORIGIN=http://localhost:3000
+# CORS Configuration (comma-separated; include 127.0.0.1 if you open the app that way)
+CORS_ORIGIN=http://localhost:3000,http://127.0.0.1:3000
+FRONTEND_URL=http://localhost:3000
+
+# macOS: if port 5000 is taken by AirPlay, set PORT=5001 or disable AirPlay Receiver in System Settings
 
 # Pagination
 DEFAULT_PAGE_SIZE=10

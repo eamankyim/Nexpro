@@ -6,7 +6,7 @@ React frontend application for ABS (African Business Suite) - Business Managemen
 
 ### Prerequisites
 - Node.js (v18 or higher; v20 recommended — see `.nvmrc`)
-- Local development uses the backend at `http://localhost:5000`; configure that backend with the demo database if you do not have a local database.
+- Start the Backend locally (see `Backend/README.md`). Dev uses a Vite proxy to `/api` so you usually do not need `VITE_API_URL`; on macOS, AirPlay may occupy `:5000` and the API may listen on `:5001+`.
 
 ### Installation
 
@@ -20,10 +20,7 @@ npm install
 cp env.example .env
 ```
 
-Edit `.env`:
-```env
-VITE_API_URL=http://localhost:5000
-```
+For local dev, `.env` can be empty (or copy `env.example`); API calls go to same-origin `/api` via the Vite proxy. Set `VITE_API_DIRECT=true` and `VITE_API_URL=http://127.0.0.1:5001` only if you need direct cross-origin calls.
 
 3. Start development server:
 ```bash

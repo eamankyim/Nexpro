@@ -13,7 +13,7 @@ module.exports = {
   cors: {
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
-      if (isOriginAllowed(origin)) return callback(null, true);
+      if (isOriginAllowed(origin)) return callback(null, origin);
       callback(new Error('Not allowed by CORS'));
     },
     credentials: true,

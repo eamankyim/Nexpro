@@ -4,7 +4,14 @@
  * Standardizes error responses and provides better error handling
  * with error codes, structured logging, and request context.
  */
+const { setCorsHeaders } = require('../utils/corsUtils');
+
 const errorHandler = (err, req, res, next) => {
+  const origin = req.get('Origin');
+  if (origin) {
+    setCorsHeaders(res, origin);
+  }
+
   let error = { ...err };
   error.message = err.message;
 

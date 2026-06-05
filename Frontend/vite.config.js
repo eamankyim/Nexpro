@@ -4,7 +4,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
 const projectRoot = path.resolve(__dirname);
-const LOCAL_API_URL = 'http://localhost:5000';
+const LOCAL_API_URL = 'http://127.0.0.1:5000';
 
 const PRODUCTION_API_HOST = 'api.africanbusinesssuite.com';
 
@@ -16,13 +16,14 @@ const normalizeApiOrigin = (url = LOCAL_API_URL) => {
   return `${localhostLike ? 'http' : 'https'}://${normalized}`;
 };
 
-const resolveDevProxyTarget = (envUrl) => {
+const resolveDevProxyTargetFromEnv = (envUrl) => {
+  if (!envUrl?.trim()) return LOCAL_API_URL;
   const normalized = normalizeApiOrigin(envUrl);
   try {
     const host = new URL(normalized).hostname;
     if (host === PRODUCTION_API_HOST) {
       console.warn(
-        `[vite] VITE_API_URL is production (${normalized}); dev proxy will use ${LOCAL_API_URL}. ` +
+        `[vite] VITE_API_URL is production (${normalized}); dev proxy will probe local ports. ` +
           'Update Frontend/.env.local if you intended a different API.'
       );
       return LOCAL_API_URL;
@@ -33,13 +34,39 @@ const resolveDevProxyTarget = (envUrl) => {
   return normalized;
 };
 
+/** Probe 5000–5010 for ABS /health (macOS AirPlay often blocks :5000). */
+function localBackendProxyPlugin(envUrl) {
+  const initialTarget = resolveDevProxyTargetFromEnv(envUrl);
+  return {
+    name: 'local-backend-proxy',
+    async configureServer(server) {
+      let target = initialTarget;
+      try {
+        const { resolveLocalBackendUrl } = await import('./scripts/resolveLocalBackendUrl.mjs');
+        target = await resolveLocalBackendUrl({ envUrl: envUrl?.trim() || undefined });
+      } catch (err) {
+        console.warn('[vite] Could not probe local backend; using', initialTarget, err?.message || err);
+      }
+      const applyTarget = (key) => {
+        if (server.config.server?.proxy?.[key]) {
+          server.config.server.proxy[key].target = target;
+        }
+      };
+      applyTarget('/api');
+      applyTarget('/uploads');
+      console.log(`[vite] Dev proxy /api, /uploads → ${target}`);
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, projectRoot, '');
-  const devApiTarget = resolveDevProxyTarget(env.VITE_API_URL);
+  const devApiTarget = resolveDevProxyTargetFromEnv(env.VITE_API_URL);
 
   return {
     plugins: [
       react(),
+      ...(mode === 'development' ? [localBackendProxyPlugin(env.VITE_API_URL)] : []),
       VitePWA({
         registerType: 'prompt',
         strategies: 'injectManifest',

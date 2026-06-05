@@ -377,6 +377,16 @@ if (!IS_VERCEL_SERVERLESS) {
   const PORT_MAX = PORT_BASE + 10;
 
   const onListen = (port) => {
+    const configuredPort = Number(process.env.PORT) || config.port || 5000;
+    if (port !== configuredPort) {
+      console.warn(
+        `[Server] Port ${configuredPort} was in use; listening on ${port} instead. ` +
+          'On macOS, AirPlay Receiver often uses :5000 — disable it in System Settings or set PORT=5001 in Backend/.env.'
+      );
+      console.warn(
+        `[Server] Frontend dev uses the Vite proxy (/api). For direct API calls: VITE_API_DIRECT=true VITE_API_URL=http://localhost:${port}`
+      );
+    }
     if (config.nodeEnv === 'development') {
       console.log(`[Server] Running in ${config.nodeEnv} mode on port ${port}`);
       const openaiKey = process.env.OPENAI_API_KEY?.trim();

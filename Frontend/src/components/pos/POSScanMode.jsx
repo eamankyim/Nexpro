@@ -29,7 +29,8 @@ import {
   Banknote,
   Smartphone,
   CreditCard,
-  ChefHat
+  ChefHat,
+  Pencil
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -89,6 +90,12 @@ const getVariantLabel = (variant) => {
   return variant.name || attributeText || variant.sku || 'Variant';
 };
 
+const getCatalogUnitPrice = (product, variant = null) => {
+  const value = variant?.sellingPrice ?? product?.sellingPrice ?? 0;
+  const price = Number(value);
+  return Number.isFinite(price) ? price : 0;
+};
+
 const isVariantOutOfStock = (product, variant) => {
   if (!variant || product?.trackStock === false || variant.trackStock === false) return false;
   const qty = Number(variant.quantityOnHand);
@@ -103,6 +110,7 @@ const isProductOutOfStock = (product) => {
 
 const buildCartItem = (product, variant = null) => {
   const variantLabel = getVariantLabel(variant);
+  const catalogUnitPrice = getCatalogUnitPrice(product, variant);
   return {
     id: generateCartItemId(),
     productId: product.id,
@@ -110,7 +118,10 @@ const buildCartItem = (product, variant = null) => {
     name: variant ? `${product.name} - ${variantLabel}` : product.name,
     sku: variant?.sku || product.sku,
     imageUrl: product.imageUrl,
-    unitPrice: variant?.sellingPrice ?? product.sellingPrice,
+    baseUnitPrice: catalogUnitPrice,
+    catalogUnitPrice,
+    unitPrice: catalogUnitPrice,
+    priceOverridden: false,
     quantity: 1,
     discount: 0,
     tax: 0
@@ -191,10 +202,12 @@ const PAYMENT_METHODS = [
 /**
  * Cart Item Component for Review Screen – with image
  */
-const CartItemRow = ({ item, onUpdateQuantity, onRemove }) => {
+const CartItemRow = ({ item, onUpdateQuantity, onRemove, onEditPrice }) => {
   const { isMobile } = useResponsive();
   const itemTotal = item.unitPrice * item.quantity;
   const imageSrc = item.imageUrl ? resolveImageUrl(item.imageUrl) : null;
+  const catalogUnitPrice = Number(item.catalogUnitPrice ?? item.baseUnitPrice ?? item.unitPrice);
+  const priceOverridden = item.priceOverridden === true;
 
   return (
     <div className={`flex items-center ${isMobile ? 'gap-2 py-2' : 'gap-3 py-3'} border-b border-border last:border-0`}>
@@ -212,6 +225,11 @@ const CartItemRow = ({ item, onUpdateQuantity, onRemove }) => {
         <p className={`${isMobile ? 'text-xs' : 'text-xs'} text-muted-foreground`}>
           {formatCurrency(item.unitPrice)} each
         </p>
+        {priceOverridden && Number.isFinite(catalogUnitPrice) && (
+          <p className="text-xs text-amber-700">
+            Catalog: {formatCurrency(catalogUnitPrice)}
+          </p>
+        )}
       </div>
 
       <div className="flex items-center gap-1">
@@ -238,6 +256,14 @@ const CartItemRow = ({ item, onUpdateQuantity, onRemove }) => {
         <span className={`font-semibold text-foreground ${isMobile ? 'text-xs w-16' : 'text-sm w-20'} text-right`}>
           {formatCurrency(itemTotal)}
         </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className={`${isMobile ? 'h-9 w-9' : 'h-8 w-8'} text-muted-foreground hover:text-green-700`}
+          onClick={() => onEditPrice(item)}
+        >
+          <Pencil className={`${isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'}`} />
+        </Button>
         <Button
           variant="ghost"
           size="icon"
@@ -286,6 +312,8 @@ const POSScanMode = ({
   const [cart, setCart] = useState([]);
   const [lastScannedItem, setLastScannedItem] = useState(null);
   const [variantPickerProduct, setVariantPickerProduct] = useState(null);
+  const [priceDialogItem, setPriceDialogItem] = useState(null);
+  const [priceValue, setPriceValue] = useState('');
   
   // Customer state
   const [customerName, setCustomerName] = useState('');
@@ -315,6 +343,8 @@ const POSScanMode = ({
       setCart([]);
       setLastScannedItem(null);
       setVariantPickerProduct(null);
+      setPriceDialogItem(null);
+      setPriceValue('');
       setCustomerName('');
       setCustomerPhone('');
       setSelectedCustomerId(null);
@@ -396,6 +426,32 @@ const POSScanMode = ({
   const removeCartItem = useCallback((itemId) => {
     setCart(prev => prev.filter(item => item.id !== itemId));
   }, []);
+
+  const openPriceDialog = useCallback((item) => {
+    setPriceDialogItem(item);
+    setPriceValue((item.unitPrice ?? 0).toString());
+  }, []);
+
+  const updateCartItemPrice = useCallback(() => {
+    const nextUnitPrice = parseDecimalInput(priceValue);
+    if (!Number.isFinite(nextUnitPrice) || nextUnitPrice < 0 || !priceDialogItem) return;
+
+    setCart(prev => prev.map((item) => {
+      if (item.id !== priceDialogItem.id) return item;
+      const catalogUnitPrice = Number(item.catalogUnitPrice ?? item.baseUnitPrice ?? item.unitPrice ?? 0);
+      const priceOverridden = Math.round(nextUnitPrice * 100) !== Math.round(catalogUnitPrice * 100);
+
+      return {
+        ...item,
+        baseUnitPrice: Number.isFinite(catalogUnitPrice) ? catalogUnitPrice : nextUnitPrice,
+        catalogUnitPrice: Number.isFinite(catalogUnitPrice) ? catalogUnitPrice : nextUnitPrice,
+        unitPrice: nextUnitPrice,
+        priceOverridden
+      };
+    }));
+    setPriceDialogItem(null);
+    setPriceValue('');
+  }, [priceDialogItem, priceValue]);
 
   const addProductToCart = useCallback((product, variant = null) => {
     if (variant ? isVariantOutOfStock(product, variant) : isProductOutOfStock(product)) {
@@ -493,7 +549,10 @@ const POSScanMode = ({
           name: item.name,
           sku: item.sku,
           quantity: item.quantity,
+          baseUnitPrice: item.baseUnitPrice,
+          catalogUnitPrice: item.catalogUnitPrice,
           unitPrice: item.unitPrice,
+          priceOverridden: item.priceOverridden === true,
           discount: 0,
           tax: 0
         })),
@@ -656,6 +715,7 @@ const POSScanMode = ({
                         item={item}
                         onUpdateQuantity={updateCartItemQuantity}
                         onRemove={removeCartItem}
+                        onEditPrice={openPriceDialog}
                       />
                     ))}
                   </div>
@@ -1010,6 +1070,33 @@ const POSScanMode = ({
         onClose={() => setVariantPickerProduct(null)}
         onSelect={handleSelectVariant}
       />
+      <Dialog open={!!priceDialogItem} onOpenChange={(nextOpen) => !nextOpen && setPriceDialogItem(null)}>
+        <DialogContent className="sm:w-[var(--modal-w-sm)]">
+          <DialogHeader>
+            <DialogTitle>Price for {priceDialogItem?.name}</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <div className="text-center">
+              <div className="text-3xl font-bold text-foreground">
+                {CURRENCY.SYMBOL} {priceValue || '0'}
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">
+                Catalog price: {formatCurrency(priceDialogItem?.catalogUnitPrice ?? priceDialogItem?.baseUnitPrice ?? priceDialogItem?.unitPrice ?? 0)}
+              </p>
+            </div>
+            <POSNumpad
+              value={priceValue}
+              onChange={setPriceValue}
+              allowDecimal={true}
+              maxLength={8}
+            />
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPriceDialogItem(null)}>Cancel</Button>
+            <Button className="bg-brand hover:bg-brand-dark" onClick={updateCartItemPrice}>Set Price</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       </div>
     </div>
   );

@@ -7,7 +7,7 @@
  */
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import { Minus, Plus, Trash2, User, UserPlus, Percent, ShoppingCart, Phone, X, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react';
+import { Minus, Plus, Trash2, User, UserPlus, Percent, ShoppingCart, Phone, X, ChevronDown, ChevronUp, AlertCircle, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Input } from '@/components/ui/input';
@@ -45,11 +45,13 @@ import { formatAmount, parseDecimalInput } from '../../utils/formatNumber';
 /**
  * Cart item component
  */
-const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount }) => {
+const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPrice }) => {
   const unitPrice = Number(item.unitPrice);
+  const catalogUnitPrice = Number(item.catalogUnitPrice ?? item.baseUnitPrice ?? item.unitPrice);
   const quantity = Number(item.quantity) || 0;
   const discount = Number(item.discount) || 0;
   const itemTotal = (Number.isFinite(unitPrice) ? unitPrice : 0) * quantity - discount;
+  const priceOverridden = item.priceOverridden === true;
 
   return (
     <div className="flex items-start gap-3 py-3 border-b border-border last:border-0">
@@ -59,6 +61,11 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount }) => {
         <p className="text-sm text-muted-foreground">
           {formatAmount(unitPrice)} × {quantity}
         </p>
+        {priceOverridden && Number.isFinite(catalogUnitPrice) && (
+          <p className="text-xs text-amber-700">
+            Catalog: {formatAmount(catalogUnitPrice)}
+          </p>
+        )}
         {discount > 0 && (
           <p className="text-sm text-green-600">
             Discount: -{formatAmount(discount)}
@@ -108,6 +115,19 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount }) => {
               <Button
                 variant="ghost"
                 size="icon"
+                className="h-8 w-8 text-muted-foreground hover:text-green-700"
+                onClick={() => onEditPrice(item)}
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Edit sale price for this item</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
                 className="h-8 w-8 text-muted-foreground hover:text-blue-600"
                 onClick={() => onEditDiscount(item)}
               >
@@ -142,6 +162,7 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount }) => {
  * @param {function} props.onUpdateQuantity - Called when item quantity changes
  * @param {function} props.onRemoveItem - Called when item is removed
  * @param {function} props.onUpdateItemDiscount - Called when item discount changes
+ * @param {function} props.onUpdateItemPrice - Called when item sale price changes
  * @param {Object} [props.customer] - Selected customer
  * @param {Array} [props.customers] - List of customers for "Select existing" dropdown
  * @param {function} props.onSelectCustomer - Called when a customer is selected (from dropdown)
@@ -162,6 +183,7 @@ const POSCart = ({
   onUpdateQuantity,
   onRemoveItem,
   onUpdateItemDiscount,
+  onUpdateItemPrice,
   customer,
   customers = [],
   onSelectCustomer,
@@ -180,6 +202,8 @@ const POSCart = ({
   const [discountDialogOpen, setDiscountDialogOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [discountValue, setDiscountValue] = useState('');
+  const [priceDialogOpen, setPriceDialogOpen] = useState(false);
+  const [priceValue, setPriceValue] = useState('');
   const [isCartDiscount, setIsCartDiscount] = useState(false);
   const [quickFormExpanded, setQuickFormExpanded] = useState(false);
   const [customerSelectValue, setCustomerSelectValue] = useState('');
@@ -228,6 +252,12 @@ const POSCart = ({
     setDiscountDialogOpen(true);
   }, []);
 
+  const handleEditItemPrice = useCallback((item) => {
+    setEditingItem(item);
+    setPriceValue((item.unitPrice ?? 0).toString());
+    setPriceDialogOpen(true);
+  }, []);
+
   const handleEditCartDiscount = useCallback(() => {
     setEditingItem(null);
     setDiscountValue(cartDiscount.toString());
@@ -248,6 +278,16 @@ const POSCart = ({
     setEditingItem(null);
     setDiscountValue('');
   }, [discountValue, isCartDiscount, editingItem, onUpdateCartDiscount, onUpdateItemDiscount]);
+
+  const handleApplyPrice = useCallback(() => {
+    const nextPrice = parseDecimalInput(priceValue);
+    if (!Number.isFinite(nextPrice) || nextPrice < 0 || !editingItem) return;
+
+    onUpdateItemPrice?.(editingItem.id, nextPrice);
+    setPriceDialogOpen(false);
+    setEditingItem(null);
+    setPriceValue('');
+  }, [priceValue, editingItem, onUpdateItemPrice]);
 
   const isEmpty = items.length === 0;
 
@@ -461,6 +501,7 @@ const POSCart = ({
                   onUpdateQuantity={onUpdateQuantity}
                   onRemove={onRemoveItem}
                   onEditDiscount={handleEditItemDiscount}
+                  onEditPrice={handleEditItemPrice}
                 />
               ))}
             </ScrollArea>
@@ -568,6 +609,43 @@ const POSCart = ({
             </SecondaryButton>
             <Button onClick={handleApplyDiscount} className="bg-green-700 hover:bg-green-800">
               Apply Discount
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Price Dialog */}
+      <Dialog open={priceDialogOpen} onOpenChange={setPriceDialogOpen}>
+        <DialogContent className="sm:w-[var(--modal-w-sm)] sm:min-h-[var(--modal-min-h)] sm:max-h-[var(--modal-max-h)]">
+          <DialogHeader>
+            <DialogTitle>
+              Price for {editingItem?.name}
+            </DialogTitle>
+          </DialogHeader>
+
+          <DialogBody className="space-y-4">
+            <div className="text-center">
+              <div className="text-3xl font-bold text-foreground">
+                {CURRENCY.SYMBOL} {priceValue || '0'}
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">
+                Catalog price: {formatAmount(editingItem?.catalogUnitPrice ?? editingItem?.baseUnitPrice ?? editingItem?.unitPrice ?? 0)}
+              </p>
+            </div>
+
+            <POSNumpad
+              value={priceValue}
+              onChange={setPriceValue}
+              allowDecimal={true}
+              maxLength={8}
+            />
+          </DialogBody>
+          <DialogFooter className="mt-4">
+            <SecondaryButton onClick={() => setPriceDialogOpen(false)}>
+              Cancel
+            </SecondaryButton>
+            <Button onClick={handleApplyPrice} className="bg-green-700 hover:bg-green-800">
+              Set Price
             </Button>
           </DialogFooter>
         </DialogContent>

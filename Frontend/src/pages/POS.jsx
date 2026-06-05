@@ -106,9 +106,16 @@ const getVariantLabel = (variant) => {
   return variant.name || attributeText || variant.sku || 'Variant';
 };
 
+const getCatalogUnitPrice = (product, variant = null) => {
+  const value = variant?.sellingPrice ?? product?.sellingPrice ?? 0;
+  const price = Number(value);
+  return Number.isFinite(price) ? price : 0;
+};
+
 const buildCartItemFromProduct = (product, variant = null) => {
   const variantLabel = getVariantLabel(variant);
   const name = variant ? `${product.name} - ${variantLabel}` : product.name;
+  const catalogUnitPrice = getCatalogUnitPrice(product, variant);
 
   return {
     id: generateCartItemId(),
@@ -117,7 +124,10 @@ const buildCartItemFromProduct = (product, variant = null) => {
     name,
     sku: variant?.sku || product.sku,
     productCode: variant?.barcode || getProductCode(product),
-    unitPrice: variant?.sellingPrice ?? product.sellingPrice,
+    baseUnitPrice: catalogUnitPrice,
+    catalogUnitPrice,
+    unitPrice: catalogUnitPrice,
+    priceOverridden: false,
     quantity: 1,
     discount: 0,
     tax: 0
@@ -687,6 +697,24 @@ const POS = () => {
     ));
   }, []);
 
+  const updateCartItemPrice = useCallback((itemId, unitPrice) => {
+    setCart(prev => prev.map((item) => {
+      if (item.id !== itemId) return item;
+      const catalogUnitPrice = Number(item.catalogUnitPrice ?? item.baseUnitPrice ?? item.unitPrice ?? 0);
+      const nextUnitPrice = Number(unitPrice);
+      const priceOverridden = Number.isFinite(nextUnitPrice)
+        && Math.round(nextUnitPrice * 100) !== Math.round(catalogUnitPrice * 100);
+
+      return {
+        ...item,
+        baseUnitPrice: Number.isFinite(catalogUnitPrice) ? catalogUnitPrice : nextUnitPrice,
+        catalogUnitPrice: Number.isFinite(catalogUnitPrice) ? catalogUnitPrice : nextUnitPrice,
+        unitPrice: nextUnitPrice,
+        priceOverridden
+      };
+    }));
+  }, []);
+
   // Clear cart
   const clearCart = useCallback(() => {
     setCart([]);
@@ -755,7 +783,10 @@ const POS = () => {
           sku: item.sku,
           productCode: item.productCode,
           quantity: item.quantity,
+          baseUnitPrice: item.baseUnitPrice,
+          catalogUnitPrice: item.catalogUnitPrice,
           unitPrice: item.unitPrice,
+          priceOverridden: item.priceOverridden === true,
           discount: item.discount || 0,
           tax: item.tax || 0
         })),
@@ -863,7 +894,10 @@ const POS = () => {
             sku: item.sku,
             productCode: item.productCode,
             quantity: item.quantity,
+            baseUnitPrice: item.baseUnitPrice,
+            catalogUnitPrice: item.catalogUnitPrice,
             unitPrice: item.unitPrice,
+            priceOverridden: item.priceOverridden === true,
             discount: item.discount || 0,
             tax: item.tax || 0
           })),
@@ -1260,6 +1294,7 @@ const POS = () => {
             onUpdateQuantity={updateCartItemQuantity}
             onRemoveItem={removeCartItem}
             onUpdateItemDiscount={updateCartItemDiscount}
+            onUpdateItemPrice={updateCartItemPrice}
             customer={selectedCustomer}
             customers={customersList}
             onSelectCustomer={(customer) => {
