@@ -57,13 +57,18 @@ const email = (getArgValue('--email', '') || '').trim().toLowerCase();
 const explicitTenantId = (getArgValue('--tenant-id', '') || '').trim() || null;
 const explicitShopId = (getArgValue('--shop-id', '') || '').trim() || null;
 const explicitShopName = normalizeText(getArgValue('--shop-name', 'JOSFAA Ent. (Warehouse)')) || null;
-const stocksPath = path.resolve(getArgValue('--stocks-path', DEFAULT_STOCKS_PATH));
-const firstShipmentPath = path.resolve(getArgValue('--first-shipment-path', DEFAULT_FIRST_SHIPMENT_PATH));
-const secondShipmentPath = path.resolve(getArgValue('--second-shipment-path', DEFAULT_SECOND_SHIPMENT_PATH));
+const stocksPathArg = getArgValue('--stocks-path', null);
+const firstShipmentPathArg = getArgValue('--first-shipment-path', null);
+const secondShipmentPathArg = getArgValue('--second-shipment-path', null);
+const stocksPath = path.resolve(stocksPathArg || DEFAULT_STOCKS_PATH);
+const firstShipmentPath = path.resolve(firstShipmentPathArg || DEFAULT_FIRST_SHIPMENT_PATH);
+const secondShipmentPath = path.resolve(secondShipmentPathArg || DEFAULT_SECOND_SHIPMENT_PATH);
+const usingDefaultSourcePaths = !stocksPathArg && !firstShipmentPathArg && !secondShipmentPathArg;
 
 const USAGE = `
 Usage:
   node scripts/import-josfaa-products.js --email <user-email> [--shop-name <name> | --shop-id <uuid>] [--tenant-id <uuid>] [--dry-run | --execute --confirm-import]
+  [--stocks-path <path>] [--first-shipment-path <path>] [--second-shipment-path <path>]
 
 Examples:
   node scripts/import-josfaa-products.js --email raphine19@gmail.com --shop-name "JOSFAA Ent. (Warehouse)"
@@ -71,6 +76,9 @@ Examples:
   node scripts/import-josfaa-products.js \\
     --email raphine19@gmail.com \\
     --shop-name "JOSFAA Ent. (Warehouse)" \\
+    --stocks-path "/root/nexpro/imports/STOCKS JOSFAA lateest.xlsx" \\
+    --first-shipment-path "/root/nexpro/imports/1ST SHIPMENT.xlsx" \\
+    --second-shipment-path "/root/nexpro/imports/2ND SHIPMENT.xlsx" \\
     --execute --confirm-import
 `;
 
@@ -146,6 +154,47 @@ function getCellText(row, columnIndex) {
     return cell.value.richText.map((part) => part.text || '').join('');
   }
   return String(cell.value);
+}
+
+function validateSourcePaths() {
+  const sources = [
+    { label: 'Stocks', flag: '--stocks-path', filePath: stocksPath },
+    { label: '1st shipment', flag: '--first-shipment-path', filePath: firstShipmentPath },
+    { label: '2nd shipment', flag: '--second-shipment-path', filePath: secondShipmentPath },
+  ];
+  const missing = sources.filter(({ filePath }) => !fs.existsSync(filePath));
+  if (!missing.length) return;
+
+  const isMacDefaultPath = (filePath) => filePath.startsWith('/Users/');
+  const onNonMac = process.platform !== 'darwin';
+  const usingMacDefaults = usingDefaultSourcePaths
+    && sources.some(({ filePath }) => isMacDefaultPath(filePath));
+
+  console.error('\nERROR: Source workbook(s) not found:');
+  missing.forEach(({ label, filePath }) => {
+    console.error(`- ${label}: ${filePath}`);
+  });
+
+  if (onNonMac || usingMacDefaults) {
+    console.error('\nThis script defaults to macOS Desktop paths. On a Linux server, upload the 3 .xlsx files and pass explicit paths, for example:');
+    console.error('  mkdir -p ~/nexpro/imports');
+    console.error('  # upload: "STOCKS JOSFAA lateest.xlsx", "1ST SHIPMENT.xlsx", "2ND SHIPMENT.xlsx"');
+    console.error('');
+    console.error('  node scripts/import-josfaa-products.js \\');
+    console.error('    --email raphine19@gmail.com \\');
+    console.error('    --shop-name "JOSFAA Ent. (Warehouse)" \\');
+    console.error('    --stocks-path "/root/nexpro/imports/STOCKS JOSFAA lateest.xlsx" \\');
+    console.error('    --first-shipment-path "/root/nexpro/imports/1ST SHIPMENT.xlsx" \\');
+    console.error('    --second-shipment-path "/root/nexpro/imports/2ND SHIPMENT.xlsx" \\');
+    console.error('    --dry-run');
+  } else {
+    missing.forEach(({ flag, filePath }) => {
+      console.error(`\nRe-run with ${flag} "${filePath}"`);
+    });
+  }
+
+  console.error(USAGE);
+  process.exit(1);
 }
 
 async function readWorkbook(filePath) {
@@ -703,6 +752,8 @@ async function main() {
   if (explicitTenantId) printSummary('Tenant override', explicitTenantId);
   if (explicitShopId) printSummary('Shop override', explicitShopId);
   if (explicitShopName) printSummary('Shop name', explicitShopName);
+
+  validateSourcePaths();
 
   const stockRows = await parseStockRows(stocksPath);
   const firstShipmentRows = await parseShipmentRows(firstShipmentPath, 1);
