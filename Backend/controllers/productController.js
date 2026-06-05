@@ -16,6 +16,67 @@ const {
   userCanAccessShopId,
 } = require('../utils/shopUtils');
 
+const PRODUCT_STAFF_SENSITIVE_FIELDS = [
+  'costPrice',
+  'supplier',
+  'vendor',
+  'stockValue',
+  'inventoryValue',
+  'totalValue',
+  'totalCost',
+  'costValue',
+];
+
+const canViewProductSensitiveFields = (req) => {
+  const role = req.tenantRole || req.user?.role || null;
+  return role !== 'staff';
+};
+
+const stripSensitiveProductFields = (record, req) => {
+  if (canViewProductSensitiveFields(req) || !record) return record;
+
+  const product = typeof record.get === 'function'
+    ? record.get({ plain: true })
+    : { ...record };
+
+  PRODUCT_STAFF_SENSITIVE_FIELDS.forEach((field) => {
+    delete product[field];
+  });
+
+  if (Array.isArray(product.variants)) {
+    product.variants = product.variants.map((variant) => {
+      const safeVariant = typeof variant?.get === 'function'
+        ? variant.get({ plain: true })
+        : { ...(variant || {}) };
+      PRODUCT_STAFF_SENSITIVE_FIELDS.forEach((field) => {
+        delete safeVariant[field];
+      });
+      return safeVariant;
+    });
+  }
+
+  if (product.selectedVariant) {
+    PRODUCT_STAFF_SENSITIVE_FIELDS.forEach((field) => {
+      delete product.selectedVariant[field];
+    });
+  }
+
+  return product;
+};
+
+const stripSensitiveProductListFields = (records, req) => {
+  if (canViewProductSensitiveFields(req) || !Array.isArray(records)) return records;
+  return records.map((record) => stripSensitiveProductFields(record, req));
+};
+
+const stripStaffProductWritePayload = (payload, req) => {
+  if (canViewProductSensitiveFields(req) || !payload) return payload;
+  PRODUCT_STAFF_SENSITIVE_FIELDS.forEach((field) => {
+    delete payload[field];
+  });
+  return payload;
+};
+
 const normalizeBarcodeCandidates = (...sources) => {
   const candidates = [];
   const seen = new Set();
@@ -262,7 +323,7 @@ exports.getProducts = async (req, res, next) => {
         limit,
         totalPages: Math.ceil(count / limit)
       },
-      data: rows
+      data: stripSensitiveProductListFields(rows, req)
     });
   } catch (error) {
     next(error);
@@ -288,6 +349,7 @@ exports.getProductStats = async (req, res, next) => {
       trackStock: { [Op.ne]: false },
     };
 
+    const includeSensitiveValues = canViewProductSensitiveFields(req);
     const [total, lowStock, outOfStock, valueRows] = await Promise.all([
       Product.count({ where }),
       Product.count({
@@ -309,16 +371,20 @@ exports.getProductStats = async (req, res, next) => {
           quantityOnHand: { [Op.lte]: 0 },
         },
       }),
-      Product.findAll({
-        where,
-        attributes: ['costPrice', 'quantityOnHand'],
-        raw: true,
-      }),
+      includeSensitiveValues
+        ? Product.findAll({
+            where,
+            attributes: ['costPrice', 'quantityOnHand'],
+            raw: true,
+          })
+        : Promise.resolve([]),
     ]);
 
-    const totalValue = valueRows.reduce((sum, product) => {
-      return sum + (parseFloat(product.costPrice || 0) * parseFloat(product.quantityOnHand || 0));
-    }, 0);
+    const totalValue = includeSensitiveValues
+      ? valueRows.reduce((sum, product) => {
+          return sum + (parseFloat(product.costPrice || 0) * parseFloat(product.quantityOnHand || 0));
+        }, 0)
+      : undefined;
 
     res.status(200).json({
       success: true,
@@ -326,7 +392,7 @@ exports.getProductStats = async (req, res, next) => {
         total,
         lowStock,
         outOfStock,
-        totalValue,
+        ...(includeSensitiveValues ? { totalValue } : {}),
       },
     });
   } catch (error) {
@@ -367,7 +433,7 @@ exports.getProduct = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: product
+      data: stripSensitiveProductFields(product, req)
     });
   } catch (error) {
     next(error);
@@ -635,6 +701,7 @@ exports.createProduct = async (req, res, next) => {
     const payload = sanitizePayload(
       attachShopToPayload(req, req.body)
     );
+    stripStaffProductWritePayload(payload, req);
     const { hasAliasPayload, aliases } = extractProductAliasBarcodes(payload);
     const product = await Product.create({
       ...payload,
@@ -669,7 +736,7 @@ exports.createProduct = async (req, res, next) => {
     }
     res.status(201).json({
       success: true,
-      data: product
+      data: stripSensitiveProductFields(product, req)
     });
   } catch (error) {
     if (!transactionFinished) {
@@ -710,6 +777,7 @@ exports.updateProduct = async (req, res, next) => {
     }
 
     const payload = sanitizePayload(req.body);
+    stripStaffProductWritePayload(payload, req);
     const { hasAliasPayload, aliases } = extractProductAliasBarcodes(payload);
     if (payload.shopId && !userCanAccessShopId(req, payload.shopId)) {
       await transaction.rollback();
@@ -810,7 +878,7 @@ exports.updateProduct = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: product
+      data: stripSensitiveProductFields(product, req)
     });
   } catch (error) {
     if (!transactionFinished) {
@@ -929,7 +997,7 @@ exports.getProductByBarcode = async (req, res, next) => {
         data.selectedVariant = variant.get({ plain: true });
         return res.status(200).json({
           success: true,
-          data
+          data: stripSensitiveProductFields(data, req)
         });
       }
 
@@ -978,7 +1046,7 @@ exports.getProductByBarcode = async (req, res, next) => {
         }
         return res.status(200).json({
           success: true,
-          data
+          data: stripSensitiveProductFields(data, req)
         });
       }
 
@@ -987,7 +1055,7 @@ exports.getProductByBarcode = async (req, res, next) => {
         data.selectedVariant = barcodeRecord.productVariant.get({ plain: true });
         return res.status(200).json({
           success: true,
-          data
+          data: stripSensitiveProductFields(data, req)
         });
       }
 
@@ -999,7 +1067,7 @@ exports.getProductByBarcode = async (req, res, next) => {
 
     res.status(200).json({
       success: true,
-      data: product
+      data: stripSensitiveProductFields(product, req)
     });
   } catch (error) {
     next(error);
@@ -1035,7 +1103,7 @@ exports.getProductVariants = async (req, res, next) => {
     res.status(200).json({
       success: true,
       count: variants.length,
-      data: variants
+      data: stripSensitiveProductListFields(variants, req)
     });
   } catch (error) {
     next(error);
@@ -1060,6 +1128,7 @@ exports.createProductVariant = async (req, res, next) => {
     }
 
     const payload = sanitizePayload(req.body);
+    stripStaffProductWritePayload(payload, req);
     
     // Create the variant
     const variant = await ProductVariant.create({
@@ -1074,7 +1143,7 @@ exports.createProductVariant = async (req, res, next) => {
 
     res.status(201).json({
       success: true,
-      data: variant
+      data: stripSensitiveProductFields(variant, req)
     });
   } catch (error) {
     next(error);
@@ -1106,11 +1175,12 @@ exports.updateProductVariant = async (req, res, next) => {
     }
 
     const payload = sanitizePayload(req.body);
+    stripStaffProductWritePayload(payload, req);
     await variant.update(payload);
 
     res.status(200).json({
       success: true,
-      data: variant
+      data: stripSensitiveProductFields(variant, req)
     });
   } catch (error) {
     next(error);

@@ -113,11 +113,12 @@ const getWorkspaceScopeCacheSegment = (req) =>
  */
 const generateProductListKey = (req) => {
   const tenantId = req.tenantId || '';
+  const role = req.tenantRole || req.user?.role || '';
   const params = Object.keys(req.query || {})
     .sort()
     .map(k => `${k}=${req.query[k]}`)
     .join('&');
-  return `products:list:${tenantId}${getWorkspaceScopeCacheSegment(req)}:${params}`;
+  return `products:list:${tenantId}:role:${role}${getWorkspaceScopeCacheSegment(req)}:${params}`;
 };
 
 /** Generic list cache key (prefix e.g. customers, sales, invoices) */

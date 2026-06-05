@@ -1143,43 +1143,45 @@ const Dashboard = () => {
         showProfitCard={canViewProfitMetrics}
       />
 
-      <Card className="border border-gray-200 bg-green-50/70">
-        <CardContent className="py-1 px-3 sm:px-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand">
-              <Sparkles className="h-5 w-5 text-white" aria-hidden />
+      {canViewProfitMetrics && (
+        <Card className="border border-gray-200 bg-green-50/70">
+          <CardContent className="py-1 px-3 sm:px-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand">
+                <Sparkles className="h-5 w-5 text-white" aria-hidden />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-brand mb-1">AI Insight</p>
+                <h3 className="text-base font-semibold text-foreground">
+                  {dashboardInsightLoading ? 'AI is reviewing your numbers' : visibleDashboardInsight.title}
+                </h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {dashboardInsightLoading
+                    ? 'Generating a quick business insight from your latest dashboard data.'
+                    : visibleDashboardInsight.body}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="shrink-0 bg-white"
+                onClick={() =>
+                  navigate(buildAskAiUrl({
+                    from: 'dashboard',
+                    prompt: 'Explain my dashboard insight and what I should do next.',
+                    startDate: overviewParams.startDate,
+                    endDate: overviewParams.endDate,
+                    periodLabel,
+                  }))
+                }
+              >
+                Ask AI
+                <ChevronRight className="h-4 w-4 ml-1" />
+              </Button>
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold text-brand mb-1">AI Insight</p>
-              <h3 className="text-base font-semibold text-foreground">
-                {dashboardInsightLoading ? 'AI is reviewing your numbers' : visibleDashboardInsight.title}
-              </h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {dashboardInsightLoading
-                  ? 'Generating a quick business insight from your latest dashboard data.'
-                  : visibleDashboardInsight.body}
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              className="shrink-0 bg-white"
-              onClick={() =>
-                navigate(buildAskAiUrl({
-                  from: 'dashboard',
-                  prompt: 'Explain my dashboard insight and what I should do next.',
-                  startDate: overviewParams.startDate,
-                  endDate: overviewParams.endDate,
-                  periodLabel,
-                }))
-              }
-            >
-              Ask AI
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       {isShop && (displayData?.shopData?.shopBreakdown?.length ?? 0) > 0 && (
         <Card className="border border-gray-200">

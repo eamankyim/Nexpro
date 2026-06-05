@@ -16,6 +16,20 @@ import { cn } from '@/lib/utils';
 
 const ITEMS_PREVIEW_COUNT = 3;
 
+const isCancelledInvoice = (invoice) => Boolean(
+  String(invoice?.status || '').toLowerCase() === 'cancelled' ||
+  invoice?.cancelledAt ||
+  invoice?.canceledAt ||
+  invoice?.isCancelled ||
+  invoice?.isCanceled ||
+  invoice?.metadata?.cancelled ||
+  invoice?.metadata?.canceled
+);
+
+const getInvoiceDisplayStatus = (invoice) => (
+  isCancelledInvoice(invoice) ? 'cancelled' : invoice?.status
+);
+
 /**
  * Label/value row for invoice detail drawer section cards.
  */
@@ -74,7 +88,7 @@ function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true }) {
           {invoice.invoiceNumber}
         </DrawerFieldRow>
         <DrawerFieldRow label="Status">
-          <StatusChip status={invoice.status} />
+          <StatusChip status={getInvoiceDisplayStatus(invoice)} />
         </DrawerFieldRow>
         <DrawerFieldRow label="Invoice Date">{formatDate(invoice.invoiceDate)}</DrawerFieldRow>
         <DrawerFieldRow label="Due Date">{formatDate(invoice.dueDate)}</DrawerFieldRow>

@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 
 /**
  * Restricts children to workspace manager, admin, or owner (see AuthContext.isManager).
- * Staff cannot access settings, reports, export, or team directory via direct URL.
+ * Staff cannot access manager-only reports, exports, team directory, or workspace settings via direct URL.
  *
  * @param {Object} props
  * @param {React.ReactNode} props.children
@@ -33,7 +33,7 @@ export default function RequireWorkspaceManager({ children }) {
             </div>
             <CardDescription>
               This area is only available to workspace managers and administrators. Use{' '}
-              <strong>Profile</strong> for your personal account settings.
+              <strong>Settings</strong> for your personal profile and appearance settings.
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-2 sm:flex-row sm:justify-end">
@@ -41,7 +41,7 @@ export default function RequireWorkspaceManager({ children }) {
               <Link to="/dashboard">Back to dashboard</Link>
             </Button>
             <Button asChild>
-              <Link to="/profile">Go to profile</Link>
+              <Link to="/settings">Go to settings</Link>
             </Button>
           </CardContent>
         </Card>

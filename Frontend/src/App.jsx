@@ -293,7 +293,7 @@ function AppContent() {
             <Route path="employees" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Employees /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="payroll" element={<FeatureRoute featureKey="payroll"><RequireWorkspaceManager><Payroll /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="accounting" element={<FeatureRoute featureKey="accounting"><RequireWorkspaceManager><Accounting /></RequireWorkspaceManager></FeatureRoute>} />
-            <Route path="shops" element={<FeatureRoute featureKey="shopsModule"><Shops /></FeatureRoute>} />
+            <Route path="shops" element={<FeatureRoute featureKey="shopsModule"><RequireWorkspaceManager><Shops /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="store" element={<StoreDashboard />} />
             <Route path="store/dashboard" element={<StoreDashboard />} />
             <Route path="store/setup" element={<RequireWorkspaceManager><StoreSetup /></RequireWorkspaceManager>} />
@@ -309,7 +309,7 @@ function AppContent() {
             <Route path="prescriptions" element={<FeatureRoute featureKey="pharmacyOps"><Prescriptions /></FeatureRoute>} />
             <Route path="users" element={<FeatureRoute featureKey="roleManagement"><RequireWorkspaceManager><Users /></RequireWorkspaceManager></FeatureRoute>} />
             <Route path="profile" element={<Profile />} />
-            <Route path="settings" element={<RequireWorkspaceManager><Settings /></RequireWorkspaceManager>} />
+            <Route path="settings" element={<Settings />} />
             <Route path="plans" element={<RequireWorkspaceManager><Plans /></RequireWorkspaceManager>} />
             <Route path="checkout" element={<RequireWorkspaceManager><Checkout /></RequireWorkspaceManager>} />
           </Route>

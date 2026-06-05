@@ -273,8 +273,13 @@ const Settings = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const { user, updateUser, activeTenant, refreshAuthState, needsEmailVerification, isManager, wasInvited, hasFeature, suppressAppGuidance } = useAuth();
+  const { isMobile } = useResponsive();
+  /** Must match API authorize() which uses workspace membership role (req.tenantRole), not only users.role */
+  const canManageOrganization = Boolean(isManager);
   const normalizeMainTab = (tab) => {
     const value = String(tab || 'profile');
+    if (!canManageOrganization) return 'profile';
     if (['profile', 'workspace', 'operations', 'billing', PAYMENT_COLLECTION_TAB, 'messaging'].includes(value)) return value;
     if (['organization', 'appearance'].includes(value)) return 'workspace';
     if (value === 'subscription') return 'billing';
@@ -294,6 +299,13 @@ const Settings = () => {
     const subtab = searchParams.get('subtab');
     const mappedTab = normalizeMainTab(tab);
     setActiveTab(mappedTab);
+
+    if (!canManageOrganization) {
+      if (tab !== 'profile' || subtab) {
+        setSearchParams({ tab: 'profile' });
+      }
+      return;
+    }
 
     if (['whatsapp', 'sms', 'email'].includes(tab)) {
       setIntegrationSubTab(tab);
@@ -324,7 +336,7 @@ const Settings = () => {
     if (tab !== mappedTab && !['whatsapp', 'sms', 'email', 'integration', 'payments'].includes(tab)) {
       setSearchParams({ tab: mappedTab });
     }
-  }, [searchParams, setSearchParams]);
+  }, [canManageOrganization, searchParams, setSearchParams]);
   const [profilePreview, setProfilePreview] = useState('');
   const [profileEditing, setProfileEditing] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -372,10 +384,6 @@ const Settings = () => {
   const [loadingUsage, setLoadingUsage] = useState(false);
   const [whatsappTemplateLearnMoreOpen, setWhatsappTemplateLearnMoreOpen] = useState(false);
   const [notificationPrefsDraft, setNotificationPrefsDraft] = useState(null);
-  const { user, updateUser, activeTenant, refreshAuthState, needsEmailVerification, isManager, wasInvited, hasFeature, suppressAppGuidance } = useAuth();
-  const { isMobile } = useResponsive();
-  /** Must match API authorize() which uses workspace membership role (req.tenantRole), not only users.role */
-  const canManageOrganization = Boolean(isManager);
   const paymentAuthRefreshAttemptedRef = useRef(false);
   const isStudioLike = useMemo(
     () => STUDIO_LIKE_TYPES.includes(activeTenant?.businessType || 'printing_press'),
@@ -546,7 +554,7 @@ const Settings = () => {
   } = useQuery({
     queryKey: ['settings', 'organization', activeTenant?.id],
     queryFn: settingsService.getOrganization,
-    enabled: !!activeTenant?.id,
+    enabled: canManageOrganization && !!activeTenant?.id,
   });
 
   const organizationRecord = useMemo(() => organizationData?.data || {}, [organizationData]);
@@ -581,11 +589,12 @@ const Settings = () => {
   ]);
 
   const showOnboardingBanner = useMemo(() => {
+    if (!canManageOrganization) return false;
     if (wasInvited) return false;
     if (suppressAppGuidance) return false;
     if (organizationSettingsPending) return false;
     return !onboardingCompleted;
-  }, [wasInvited, suppressAppGuidance, organizationSettingsPending, onboardingCompleted]);
+  }, [canManageOrganization, wasInvited, suppressAppGuidance, organizationSettingsPending, onboardingCompleted]);
 
   const {
     data: subscriptionData,
@@ -998,7 +1007,7 @@ const Settings = () => {
 
   // Fetch only the seat count needed by the billing summary, and only when visible.
   useEffect(() => {
-    if (!activeTenant?.id || activeTab !== 'billing') return;
+    if (!canManageOrganization || !activeTenant?.id || activeTab !== 'billing') return;
     let cancelled = false;
     const fetchUsage = async () => {
       try {
@@ -1019,7 +1028,7 @@ const Settings = () => {
     return () => {
       cancelled = true;
     };
-  }, [activeTenant?.id, activeTab]);
+  }, [activeTenant?.id, activeTab, canManageOrganization]);
 
   useEffect(() => {
     if (profileData?.data) {
@@ -1879,24 +1888,28 @@ const Settings = () => {
           />
         </div>
 
-        <Separator className="my-3 md:my-0" />
+        {canManageOrganization && (
+          <>
+            <Separator className="my-3 md:my-0" />
 
-        <div>
-          <h3 className="text-sm font-medium mb-2 md:mb-4">Invoice Preview</h3>
-          <p className="text-xs md:text-sm text-muted-foreground mb-2 md:mb-4">
-            Preview how your invoice will look with your current branding
-          </p>
-          <div className="border rounded-lg p-2 md:p-4 bg-card" style={{ maxHeight: '800px', overflow: 'auto' }}>
-            <PrintableInvoice
-              invoice={mockInvoice}
-              organization={{
-                ...organization,
-                logoUrl: organizationLogo || organization.logoUrl
-              }}
-              maskAmounts
-            />
-          </div>
-        </div>
+            <div>
+              <h3 className="text-sm font-medium mb-2 md:mb-4">Invoice Preview</h3>
+              <p className="text-xs md:text-sm text-muted-foreground mb-2 md:mb-4">
+                Preview how your invoice will look with your current branding
+              </p>
+              <div className="border rounded-lg p-2 md:p-4 bg-card" style={{ maxHeight: '800px', overflow: 'auto' }}>
+                <PrintableInvoice
+                  invoice={mockInvoice}
+                  organization={{
+                    ...organization,
+                    logoUrl: organizationLogo || organization.logoUrl
+                  }}
+                  maskAmounts
+                />
+              </div>
+            </div>
+          </>
+        )}
       </CardContent>
     </ShadcnCard>
   );
@@ -6599,6 +6612,11 @@ const Settings = () => {
       )}
 
       <Tabs value={activeTab} onValueChange={(key) => {
+        if (!canManageOrganization) {
+          setActiveTab('profile');
+          setSearchParams({ tab: 'profile' });
+          return;
+        }
         setActiveTab(key);
         if (key === 'messaging') {
           const currentSubtab = searchParams.get('subtab') || integrationSubTab || 'whatsapp';
@@ -6612,6 +6630,11 @@ const Settings = () => {
       }}>
         {isMobile ? (
           <Select value={activeTab} onValueChange={(key) => {
+            if (!canManageOrganization) {
+              setActiveTab('profile');
+              setSearchParams({ tab: 'profile' });
+              return;
+            }
             setActiveTab(key);
             if (key === 'messaging') {
               const currentSubtab = searchParams.get('subtab') || integrationSubTab || 'whatsapp';
@@ -6628,11 +6651,15 @@ const Settings = () => {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="profile">Profile</SelectItem>
-              <SelectItem value="workspace">Workspace</SelectItem>
-              <SelectItem value="operations">Operations</SelectItem>
-              <SelectItem value="billing">Billing</SelectItem>
-              <SelectItem value={PAYMENT_COLLECTION_TAB}>Payment collections</SelectItem>
-              <SelectItem value="messaging">Messaging</SelectItem>
+              {canManageOrganization && (
+                <>
+                  <SelectItem value="workspace">Workspace</SelectItem>
+                  <SelectItem value="operations">Operations</SelectItem>
+                  <SelectItem value="billing">Billing</SelectItem>
+                  <SelectItem value={PAYMENT_COLLECTION_TAB}>Payment collections</SelectItem>
+                  <SelectItem value="messaging">Messaging</SelectItem>
+                </>
+              )}
             </SelectContent>
           </Select>
         ) : (
@@ -6640,24 +6667,33 @@ const Settings = () => {
             <TabsTrigger value="profile" className="text-xs md:text-sm shrink-0">
               Profile
             </TabsTrigger>
-            <TabsTrigger value="workspace" className="text-xs md:text-sm shrink-0">
-              Workspace
-            </TabsTrigger>
-            <TabsTrigger value="operations" className="text-xs md:text-sm shrink-0">
-              Operations
-            </TabsTrigger>
-            <TabsTrigger value="billing" className="text-xs md:text-sm shrink-0">
-              Billing
-            </TabsTrigger>
-            <TabsTrigger value={PAYMENT_COLLECTION_TAB} className="text-xs md:text-sm shrink-0">
-              Payment collections
-            </TabsTrigger>
-            <TabsTrigger value="messaging" className="text-xs md:text-sm shrink-0">
-              Messaging
-            </TabsTrigger>
+            {canManageOrganization && (
+              <>
+                <TabsTrigger value="workspace" className="text-xs md:text-sm shrink-0">
+                  Workspace
+                </TabsTrigger>
+                <TabsTrigger value="operations" className="text-xs md:text-sm shrink-0">
+                  Operations
+                </TabsTrigger>
+                <TabsTrigger value="billing" className="text-xs md:text-sm shrink-0">
+                  Billing
+                </TabsTrigger>
+                <TabsTrigger value={PAYMENT_COLLECTION_TAB} className="text-xs md:text-sm shrink-0">
+                  Payment collections
+                </TabsTrigger>
+                <TabsTrigger value="messaging" className="text-xs md:text-sm shrink-0">
+                  Messaging
+                </TabsTrigger>
+              </>
+            )}
           </TabsList>
         )}
-        <TabsContent value="profile">{profileTab}</TabsContent>
+        <TabsContent value="profile">
+          <div className="space-y-4 md:space-y-6">
+            {profileTab}
+            {!canManageOrganization && appearanceTab}
+          </div>
+        </TabsContent>
         <TabsContent value="workspace">
           <div className="space-y-4 md:space-y-6">
             {canManageOrganization && jobInvoiceData?.customerJobTrackingEnabled === true && publicTrackingUrl ? (

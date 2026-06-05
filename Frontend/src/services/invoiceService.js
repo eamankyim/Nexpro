@@ -39,12 +39,12 @@ const invoiceService = {
     return await api.post(`/invoices/${id}/cancel`);
   },
 
-  markPaid: async (id) => {
-    return await api.post(`/invoices/${id}/mark-paid`);
+  markPaid: async (id, paymentData = {}) => {
+    return await api.post(`/invoices/${id}/mark-paid`, paymentData);
   },
 
-  markAsPaid: async (id) => {
-    return await api.post(`/invoices/${id}/mark-paid`);
+  markAsPaid: async (id, paymentData = {}) => {
+    return await api.post(`/invoices/${id}/mark-paid`, paymentData);
   },
 
   getStats: async (params = {}) => {

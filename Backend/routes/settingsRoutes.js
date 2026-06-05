@@ -124,7 +124,7 @@ router
 
 router
   .route('/ai')
-  .get(getAISettings)
+  .get(authorize('admin', 'manager'), getAISettings)
   .put(authorize('admin', 'manager'), updateAISettings)
   .delete(authorize('admin', 'manager'), deleteAISettings);
 

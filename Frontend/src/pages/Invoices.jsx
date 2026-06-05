@@ -76,14 +76,28 @@ import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../ut
 import { useResponsive } from '../hooks/useResponsive';
 
 const getInvoiceStatus = (invoice) => String(invoice?.status || '').toLowerCase();
-const isCancelledInvoice = (invoice) => getInvoiceStatus(invoice) === INVOICE_STATUSES.CANCELLED;
+const hasCancellationMarker = (invoice) => Boolean(
+  invoice?.cancelledAt ||
+  invoice?.canceledAt ||
+  invoice?.isCancelled ||
+  invoice?.isCanceled ||
+  invoice?.metadata?.cancelled ||
+  invoice?.metadata?.canceled
+);
+const isCancelledInvoice = (invoice) => (
+  getInvoiceStatus(invoice) === INVOICE_STATUSES.CANCELLED ||
+  hasCancellationMarker(invoice)
+);
+const getInvoiceDisplayStatus = (invoice) => (
+  isCancelledInvoice(invoice) ? INVOICE_STATUSES.CANCELLED : getInvoiceStatus(invoice)
+);
 const isDraftInvoice = (invoice) => getInvoiceStatus(invoice) === INVOICE_STATUSES.DRAFT;
 const canDeleteInvoice = (invoice) => isDraftInvoice(invoice) || isCancelledInvoice(invoice);
 const canCancelInvoice = (invoice) => [
   INVOICE_STATUSES.SENT,
   INVOICE_STATUSES.PARTIAL,
   INVOICE_STATUSES.OVERDUE,
-].includes(getInvoiceStatus(invoice));
+].includes(getInvoiceStatus(invoice)) && !isCancelledInvoice(invoice);
 
 const paymentSchema = z.object({
   amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Payment amount must be greater than 0'),
@@ -94,6 +108,7 @@ const paymentSchema = z.object({
 
 const markAsPaidSchema = z.object({
   paymentType: z.enum(['full', 'partial']),
+  paymentDate: z.date(),
   partialAmount: numberOrEmptySchema(z).optional(),
 }).superRefine((values, ctx) => {
   if (values.paymentType === 'partial') {
@@ -179,6 +194,7 @@ const Invoices = () => {
     resolver: zodResolver(markAsPaidSchema),
     defaultValues: {
       paymentType: 'full',
+      paymentDate: new Date(),
       partialAmount: 0,
     },
   });
@@ -488,6 +504,7 @@ const Invoices = () => {
     const balance = parseFloat(invoice?.balance || 0);
     markAsPaidForm.reset({
       paymentType: 'full',
+      paymentDate: new Date(),
       partialAmount: balance > 0 ? balance : 0,
     });
     setMarkAsPaidModalVisible(true);
@@ -498,6 +515,7 @@ const Invoices = () => {
     try {
       setMarkingAsPaid(true);
       let response;
+      const selectedPaymentDate = dayjs(values.paymentDate).format('YYYY-MM-DD');
       if (values.paymentType === 'partial') {
         const partialAmount = parseFloat(values.partialAmount || 0);
         const currentBalance = parseFloat(viewingInvoice.balance || 0);
@@ -508,10 +526,12 @@ const Invoices = () => {
         response = await invoiceService.recordPayment(viewingInvoice.id, {
           amount: partialAmount,
           paymentMethod: 'cash',
-          paymentDate: dayjs().format('YYYY-MM-DD'),
+          paymentDate: selectedPaymentDate,
         });
       } else {
-        response = await invoiceService.markAsPaid(viewingInvoice.id);
+        response = await invoiceService.markAsPaid(viewingInvoice.id, {
+          paymentDate: selectedPaymentDate,
+        });
       }
       const updatedInvoice = response?.data;
 
@@ -604,7 +624,7 @@ const Invoices = () => {
   const invoiceDrawerMoreMenuItems = useMemo(() => {
     if (!viewingInvoice || !isManager) return [];
     const status = getInvoiceStatus(viewingInvoice);
-    const unpaid = status !== INVOICE_STATUSES.PAID && status !== INVOICE_STATUSES.CANCELLED;
+    const unpaid = status !== INVOICE_STATUSES.PAID && !isCancelledInvoice(viewingInvoice);
     const items = [];
     if (unpaid) {
       items.push({
@@ -746,7 +766,7 @@ const Invoices = () => {
       key: 'status',
       label: 'Status',
       mobileDashboardPlacement: 'headerEnd',
-      render: (_, record) => <StatusChip status={record.status} />,
+      render: (_, record) => <StatusChip status={getInvoiceDisplayStatus(record)} />,
     },
     {
       key: 'actions',
@@ -1126,6 +1146,23 @@ const Invoices = () => {
                         <SelectItem value="partial">Partially Paid</SelectItem>
                       </SelectContent>
                     </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={markAsPaidForm.control}
+                name="paymentDate"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Payment Date</FormLabel>
+                    <FormControl>
+                      <DatePicker
+                        date={field.value}
+                        onSelect={(date) => field.onChange(date)}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

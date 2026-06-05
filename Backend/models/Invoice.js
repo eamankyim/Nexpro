@@ -228,6 +228,11 @@ const Invoice = sequelize.define('Invoice', {
       const PAID_TOLERANCE = 0.01;
       const isFullyPaid = paid > 0 && (invoice.balance <= PAID_TOLERANCE || paid >= total - PAID_TOLERANCE);
 
+      // Preserve cancelled as a terminal state; payment-derived status should not revive it.
+      if (invoice.status === 'cancelled') {
+        return;
+      }
+
       // Update status based on payment
       if (isFullyPaid) {
         invoice.status = 'paid';

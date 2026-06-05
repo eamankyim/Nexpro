@@ -9,7 +9,7 @@ jest.mock('../../../models', () => ({
   Job: {},
   Customer: {},
   JobItem: {},
-  Payment: {},
+  Payment: { create: jest.fn() },
   Sale: {},
   SaleItem: {},
   Prescription: {},
@@ -31,6 +31,7 @@ jest.mock('../../../middleware/cache', () => ({
 
 jest.mock('../../../services/activityLogger', () => ({
   logInvoiceSent: jest.fn(),
+  logInvoicePaid: jest.fn(),
 }));
 
 jest.mock('../../../services/customerBalanceService', () => ({
@@ -95,8 +96,9 @@ jest.mock('../../../services/emailService', () => ({
   sendMessage: jest.fn(),
 }));
 
-const { Invoice, Setting } = require('../../../models');
+const { Invoice, Payment, Setting } = require('../../../models');
 const emailService = require('../../../services/emailService');
+const { createInvoicePaymentJournal } = require('../../../services/invoiceAccountingService');
 const invoiceController = require('../../../controllers/invoiceController');
 
 describe('invoiceController sendInvoiceToCustomer logging', () => {
@@ -214,5 +216,123 @@ describe('invoiceController sendInvoiceToCustomer logging', () => {
       event: 'invoice_email_skipped',
       reason: 'auto_send_disabled',
     }));
+  });
+});
+
+describe('invoiceController markInvoicePaid payment date', () => {
+  let errorSpy;
+  let setImmediateSpy;
+
+  const buildRes = () => ({
+    status: jest.fn().mockReturnThis(),
+    json: jest.fn().mockReturnThis(),
+  });
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    setImmediateSpy = jest.spyOn(global, 'setImmediate').mockImplementation(() => 1);
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+    setImmediateSpy.mockRestore();
+  });
+
+  it('persists the selected payment date on invoice, payment, and journal records', async () => {
+    const invoice = {
+      id: 'invoice-1',
+      tenantId: 'tenant-1',
+      invoiceNumber: 'INV-001',
+      customerId: 'customer-1',
+      jobId: 'job-1',
+      totalAmount: 250,
+      amountPaid: 50,
+      status: 'sent',
+      update: jest.fn().mockResolvedValue(undefined),
+    };
+    const updatedInvoice = {
+      ...invoice,
+      amountPaid: 250,
+      balance: 0,
+      status: 'paid',
+      paidDate: new Date('2026-05-15T00:00:00.000Z'),
+      toJSON() {
+        return {
+          id: this.id,
+          tenantId: this.tenantId,
+          invoiceNumber: this.invoiceNumber,
+          customerId: this.customerId,
+          jobId: this.jobId,
+          amountPaid: this.amountPaid,
+          balance: this.balance,
+          status: this.status,
+          paidDate: this.paidDate,
+        };
+      },
+    };
+
+    Invoice.findOne
+      .mockResolvedValueOnce(invoice)
+      .mockResolvedValueOnce(updatedInvoice);
+    Payment.create.mockResolvedValue({ id: 'payment-1', paymentNumber: 'PAY-1' });
+
+    const req = {
+      params: { id: 'invoice-1' },
+      body: { paymentDate: '2026-05-15' },
+      tenantId: 'tenant-1',
+      user: { id: 'user-1' },
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await invoiceController.markInvoicePaid(req, res, next);
+
+    const expectedDate = new Date('2026-05-15');
+    expect(invoice.update).toHaveBeenCalledWith(expect.objectContaining({
+      amountPaid: 250,
+      balance: 0,
+      status: 'paid',
+      paidDate: expectedDate,
+    }));
+    expect(Payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      amount: 200,
+      paymentDate: expectedDate,
+    }));
+    expect(createInvoicePaymentJournal).toHaveBeenCalledWith(expect.objectContaining({
+      amount: 200,
+      paymentDate: expectedDate,
+    }));
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      success: true,
+      data: expect.objectContaining({
+        id: 'invoice-1',
+        paidDate: expectedDate,
+      }),
+    }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid payment dates before marking an invoice paid', async () => {
+    const req = {
+      params: { id: 'invoice-1' },
+      body: { paymentDate: 'not-a-date' },
+      tenantId: 'tenant-1',
+      user: { id: 'user-1' },
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await invoiceController.markInvoicePaid(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(res.json).toHaveBeenCalledWith({
+      success: false,
+      message: 'Payment date is invalid',
+    });
+    expect(Invoice.findOne).not.toHaveBeenCalled();
+    expect(Payment.create).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
   });
 });

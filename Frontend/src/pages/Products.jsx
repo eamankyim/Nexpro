@@ -487,7 +487,7 @@ const quickVendorSchema = z.object({
 // =============================================
 
 const Products = () => {
-  const { user, activeTenant, activeTenantId, isAdmin, isManager } = useAuth();
+  const { activeTenant, activeTenantId, tenantRole, isAdmin } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const { scopeReady } = useWorkspaceScope();
@@ -499,6 +499,7 @@ const Products = () => {
 
   const shopType = useActiveShopType();
   const shopTypeFields = SHOP_TYPE_FIELDS[shopType] || [];
+  const canViewProductSensitiveFields = tenantRole !== 'staff';
 
   // Shop-type-specific unit options (restaurant gets extra units)
   const unitOptions = useMemo(() => {
@@ -951,10 +952,12 @@ const Products = () => {
   useEffect(() => {
     if (formOpen && activeTenantId) {
       fetchCategories();
-      fetchVendors();
-      fetchVendorCategories();
+      if (canViewProductSensitiveFields) {
+        fetchVendors();
+        fetchVendorCategories();
+      }
     }
-  }, [formOpen, activeTenantId, fetchCategories, fetchVendors, fetchVendorCategories]);
+  }, [formOpen, activeTenantId, canViewProductSensitiveFields, fetchCategories, fetchVendors, fetchVendorCategories]);
 
   // Clear vendor list when tenant changes so we don't show another tenant's vendors
   useEffect(() => {
@@ -1339,11 +1342,13 @@ const Products = () => {
         name: variantName,
         sku: values.sku || undefined,
         barcode: values.barcode || undefined,
-        costPrice: values.costPrice !== undefined && values.costPrice !== '' ? Number(values.costPrice) : undefined,
         sellingPrice: values.sellingPrice !== undefined && values.sellingPrice !== '' ? Number(values.sellingPrice) : undefined,
         quantityOnHand: Number(values.quantityOnHand) || 0,
         attributes: {},
       };
+      if (canViewProductSensitiveFields) {
+        payload.costPrice = values.costPrice !== undefined && values.costPrice !== '' ? Number(values.costPrice) : undefined;
+      }
       if (values.size) payload.attributes.size = values.size;
       if (values.color) payload.attributes.color = values.color;
       if (values.model) payload.attributes.model = values.model;
@@ -1401,20 +1406,22 @@ const Products = () => {
         barcodeAliases: alternateBarcode ? [alternateBarcode] : [],
         description: values.description || undefined,
         categoryId: values.categoryId || undefined,
-        costPrice: values.costPrice === '' ? 0 : (Number(values.costPrice) ?? 0),
         sellingPrice: values.sellingPrice === '' ? 0 : (Number(values.sellingPrice) ?? 0),
         quantityOnHand: values.quantityOnHand === '' ? 0 : (Number(values.quantityOnHand) ?? 0),
         reorderLevel: values.reorderLevel === '' ? 0 : (Number(values.reorderLevel) ?? 0),
         reorderQuantity: values.reorderQuantity === '' ? 0 : (Number(values.reorderQuantity) ?? 0),
         unit: values.unit,
         brand: values.brand || undefined,
-        supplier: values.supplier || undefined,
         hasVariants: values.hasVariants,
         isActive: values.isActive,
         trackStock: values.trackStock,
         imageUrl: values.imageUrl || undefined,
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
       };
+      if (canViewProductSensitiveFields) {
+        payload.costPrice = values.costPrice === '' ? 0 : (Number(values.costPrice) ?? 0);
+        payload.supplier = values.supplier || undefined;
+      }
 
       if (!guardOnline(showError)) return;
 
@@ -1650,7 +1657,7 @@ const Products = () => {
       key: 'costPrice',
       title: 'Cost',
       render: (value) => valueFormatter(value),
-      hidden: isMobile,
+      hidden: isMobile || !canViewProductSensitiveFields,
     },
     {
       key: 'sellingPrice',
@@ -1669,7 +1676,7 @@ const Products = () => {
           </Badge>
         );
       },
-      hidden: isMobile,
+      hidden: isMobile || !canViewProductSensitiveFields,
     },
     {
       key: 'isActive',
@@ -1698,6 +1705,7 @@ const Products = () => {
     },
   ], [
     isMobile,
+    canViewProductSensitiveFields,
     handleViewProduct,
     handleOpenStoreListing,
   ]);
@@ -2495,7 +2503,7 @@ const Products = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-2 md:gap-4">
+      <div className={cn('grid grid-cols-2 gap-2 md:gap-4', canViewProductSensitiveFields ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3 lg:grid-cols-3')}>
         <DashboardStatsCard
           tooltip="Total number of products in your catalog"
           title="Total Products"
@@ -2520,14 +2528,16 @@ const Products = () => {
           iconBgColor={stats.outOfStock > 0 ? '#fee2e2' : '#e0f2fe'}
           iconColor={stats.outOfStock > 0 ? '#dc2626' : '#0284c7'}
         />
-        <DashboardStatsCard
-          tooltip="Total value of all products at cost price"
-          title="Total Value"
-          value={statsLoading ? '...' : valueFormatter(stats.totalValue)}
-          icon={Currency}
-          iconBgColor="#dcfce7"
-          iconColor="#166534"
-        />
+        {canViewProductSensitiveFields && (
+          <DashboardStatsCard
+            tooltip="Total value of all products at cost price"
+            title="Total Value"
+            value={statsLoading ? '...' : valueFormatter(stats.totalValue)}
+            icon={Currency}
+            iconBgColor="#dcfce7"
+            iconColor="#166534"
+          />
+        )}
       </div>
 
       {/* Filters */}
@@ -2993,29 +3003,31 @@ const Products = () => {
               {/* Pricing */}
               <div className="space-y-4">
                 <h4 className="font-medium text-sm text-muted-foreground">Pricing</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <FormField
-                    control={form.control}
-                    name="costPrice"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>
-                          Cost Price {shopType === SHOP_TYPES.RESTAURANT ? '(optional)' : '*'}
-                        </FormLabel>
-                        <FormControl>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            {...field}
-                            value={numberInputValue(field.value)}
-                            onChange={(e) => handleNumberChange(e, field.onChange)}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                <div className={cn('grid grid-cols-1 gap-4', canViewProductSensitiveFields ? 'md:grid-cols-3' : 'md:grid-cols-2')}>
+                  {canViewProductSensitiveFields && (
+                    <FormField
+                      control={form.control}
+                      name="costPrice"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>
+                            Cost Price {shopType === SHOP_TYPES.RESTAURANT ? '(optional)' : '*'}
+                          </FormLabel>
+                          <FormControl>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              {...field}
+                              value={numberInputValue(field.value)}
+                              onChange={(e) => handleNumberChange(e, field.onChange)}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
                   <FormField
                     control={form.control}
                     name="sellingPrice"
@@ -3036,14 +3048,16 @@ const Products = () => {
                       </FormItem>
                     )}
                   />
-                  <div>
-                    <Label className="mb-2 block">Profit Margin</Label>
-                    <div className="h-10 flex items-center">
-                      <Badge variant="outline" className={getMarginColor(calculatedMargin)}>
-                        {calculatedMargin.toFixed(1)}%
-                      </Badge>
+                  {canViewProductSensitiveFields && (
+                    <div>
+                      <Label className="mb-2 block">Profit Margin</Label>
+                      <div className="h-10 flex items-center">
+                        <Badge variant="outline" className={getMarginColor(calculatedMargin)}>
+                          {calculatedMargin.toFixed(1)}%
+                        </Badge>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
 
@@ -3207,63 +3221,65 @@ const Products = () => {
                       </FormItem>
                     )}
                   />
-                  <FormField
-                      control={form.control}
-                      name="supplier"
-                      render={({ field }) => {
-                        const supplierValue = field.value || '';
-                        const vendorNames = vendors.map((v) => v.name || v.company).filter(Boolean);
-                        const hasCustomSupplier = supplierValue && !vendorNames.includes(supplierValue);
-                        const selectValue = supplierValue === '' ? '_none_' : supplierValue;
-                        return (
-                          <FormItem>
-                            <FormLabel>Supplier/Vendor (optional)</FormLabel>
-                            <Select
-                              value={selectValue}
-                              onValueChange={(v) => field.onChange(v === '_none_' ? '' : v)}
-                              open={vendorSelectOpen}
-                              onOpenChange={setVendorSelectOpen}
-                            >
-                              <FormControl>
-                                <SelectTrigger className="h-10 min-h-[44px] md:min-h-[40px]">
-                                  <SelectValue placeholder="Select supplier/vendor" />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent>
-                                <SelectItem value="_none_">None</SelectItem>
-                                {hasCustomSupplier && (
-                                  <SelectItem value={supplierValue}>{supplierValue}</SelectItem>
-                                )}
-                                {vendors.map((vendor) => {
-                                  const name = (vendor.name || vendor.company || 'Unnamed').trim() || '_unnamed';
-                                  return (
-                                    <SelectItem key={vendor.id} value={name}>
-                                      {vendor.name || vendor.company || 'Unnamed'}
-                                    </SelectItem>
-                                  );
-                                })}
-                                <SelectSeparator className="my-2" />
-                                <div
-                                  className="px-2 py-1.5"
-                                  onPointerDown={(e) => e.preventDefault()}
-                                >
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    className="w-full justify-start"
-                                    onClick={handleAddNewVendor}
+                  {canViewProductSensitiveFields && (
+                    <FormField
+                        control={form.control}
+                        name="supplier"
+                        render={({ field }) => {
+                          const supplierValue = field.value || '';
+                          const vendorNames = vendors.map((v) => v.name || v.company).filter(Boolean);
+                          const hasCustomSupplier = supplierValue && !vendorNames.includes(supplierValue);
+                          const selectValue = supplierValue === '' ? '_none_' : supplierValue;
+                          return (
+                            <FormItem>
+                              <FormLabel>Supplier/Vendor (optional)</FormLabel>
+                              <Select
+                                value={selectValue}
+                                onValueChange={(v) => field.onChange(v === '_none_' ? '' : v)}
+                                open={vendorSelectOpen}
+                                onOpenChange={setVendorSelectOpen}
+                              >
+                                <FormControl>
+                                  <SelectTrigger className="h-10 min-h-[44px] md:min-h-[40px]">
+                                    <SelectValue placeholder="Select supplier/vendor" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="_none_">None</SelectItem>
+                                  {hasCustomSupplier && (
+                                    <SelectItem value={supplierValue}>{supplierValue}</SelectItem>
+                                  )}
+                                  {vendors.map((vendor) => {
+                                    const name = (vendor.name || vendor.company || 'Unnamed').trim() || '_unnamed';
+                                    return (
+                                      <SelectItem key={vendor.id} value={name}>
+                                        {vendor.name || vendor.company || 'Unnamed'}
+                                      </SelectItem>
+                                    );
+                                  })}
+                                  <SelectSeparator className="my-2" />
+                                  <div
+                                    className="px-2 py-1.5"
+                                    onPointerDown={(e) => e.preventDefault()}
                                   >
-                                    <Plus className="h-4 w-4 mr-2" />
-                                    Add Vendor
-                                  </Button>
-                                </div>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        );
-                      }}
-                    />
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      className="w-full justify-start"
+                                      onClick={handleAddNewVendor}
+                                    >
+                                      <Plus className="h-4 w-4 mr-2" />
+                                      Add Vendor
+                                    </Button>
+                                  </div>
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          );
+                        }}
+                      />
+                  )}
                 </div>
                 )}
               </div>
@@ -3721,15 +3737,11 @@ const Products = () => {
                 <DescriptionItem label="Brand">
                   {selectedProduct.brand || '-'}
                 </DescriptionItem>
-                <DescriptionItem label="Supplier/Vendor">
-                  {selectedProduct.supplier || '-'}
-                </DescriptionItem>
-                <DescriptionItem label="Barcode">
-                  {selectedProduct.barcode || '-'}
-                </DescriptionItem>
-                <DescriptionItem label="Product Code">
-                  {selectedProduct.supplier || '-'}
-                </DescriptionItem>
+                {canViewProductSensitiveFields && (
+                  <DescriptionItem label="Supplier/Vendor">
+                    {selectedProduct.supplier || '-'}
+                  </DescriptionItem>
+                )}
                 <DescriptionItem label="Barcode">
                   {selectedProduct.barcode || '-'}
                 </DescriptionItem>
@@ -3741,20 +3753,24 @@ const Products = () => {
 
             <DrawerSectionCard title="Pricing">
               <Descriptions column={1} className="space-y-0">
-                <DescriptionItem label="Cost Price">
-                  {valueFormatter(selectedProduct.costPrice)}
-                </DescriptionItem>
                 <DescriptionItem label="Selling Price">
                   {valueFormatter(selectedProduct.sellingPrice)}
                 </DescriptionItem>
-                <DescriptionItem label="Profit Margin">
-                  <Badge
-                    variant="outline"
-                    className={getMarginColor(calculateMargin(selectedProduct.costPrice, selectedProduct.sellingPrice))}
-                  >
-                    {marginFormatter(selectedProduct.costPrice, selectedProduct.sellingPrice)}
-                  </Badge>
-                </DescriptionItem>
+                {canViewProductSensitiveFields && (
+                  <>
+                    <DescriptionItem label="Cost Price">
+                      {valueFormatter(selectedProduct.costPrice)}
+                    </DescriptionItem>
+                    <DescriptionItem label="Profit Margin">
+                      <Badge
+                        variant="outline"
+                        className={getMarginColor(calculateMargin(selectedProduct.costPrice, selectedProduct.sellingPrice))}
+                      >
+                        {marginFormatter(selectedProduct.costPrice, selectedProduct.sellingPrice)}
+                      </Badge>
+                    </DescriptionItem>
+                  </>
+                )}
               </Descriptions>
             </DrawerSectionCard>
 
@@ -3781,9 +3797,11 @@ const Products = () => {
                     <DescriptionItem label="Reorder Quantity">
                       {selectedProduct.reorderQuantity} {selectedProduct.unit}
                     </DescriptionItem>
-                    <DescriptionItem label="Stock Value">
-                      {valueFormatter(parseFloat(selectedProduct.sellingPrice || 0) * parseFloat(selectedProduct.quantityOnHand || 0))}
-                    </DescriptionItem>
+                    {canViewProductSensitiveFields && (
+                      <DescriptionItem label="Stock Value">
+                        {valueFormatter(parseFloat(selectedProduct.sellingPrice || 0) * parseFloat(selectedProduct.quantityOnHand || 0))}
+                      </DescriptionItem>
+                    )}
                   </>
                 )}
               </Descriptions>
@@ -4023,7 +4041,7 @@ const Products = () => {
                     )}
                   />
                 )}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className={cn('grid grid-cols-1 gap-4', canViewProductSensitiveFields ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
                   <FormField
                     control={variantForm.control}
                     name="sellingPrice"
@@ -4051,33 +4069,35 @@ const Products = () => {
                       </FormItem>
                     )}
                   />
-                  <FormField
-                    control={variantForm.control}
-                    name="costPrice"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Cost Price</FormLabel>
-                        <FormControl>
-                          <Input
-                            type="text"
-                            inputMode="decimal"
-                            step="0.01"
-                            min="0"
-                            {...field}
-                            value={field.value ?? ''}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              if (raw === '') return field.onChange('');
-                              const normalized = raw.replace(/,/g, '.');
-                              const n = parseFloat(normalized);
-                              field.onChange(Number.isNaN(n) ? raw : n);
-                            }}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  {canViewProductSensitiveFields && (
+                    <FormField
+                      control={variantForm.control}
+                      name="costPrice"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Cost Price</FormLabel>
+                          <FormControl>
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0"
+                              {...field}
+                              value={field.value ?? ''}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                if (raw === '') return field.onChange('');
+                                const normalized = raw.replace(/,/g, '.');
+                                const n = parseFloat(normalized);
+                                field.onChange(Number.isNaN(n) ? raw : n);
+                              }}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  )}
                   <FormField
                     control={variantForm.control}
                     name="quantityOnHand"

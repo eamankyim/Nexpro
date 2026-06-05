@@ -219,7 +219,12 @@ const getMenuItems = (
     ...(hasFeature('payroll') ? [{ key: '/employees', label: 'Employees', tooltip: MENU_HINTS['/employees'], managerOnly: true }] : []),
   ];
   if (businessType === 'shop' && hasFeature('shopsModule')) {
-    advancedChildren.splice(2, 0, { key: '/shops', label: 'Shops', tooltip: MENU_HINTS['/shops'] });
+    advancedChildren.splice(2, 0, {
+      key: '/shops',
+      label: 'Shops',
+      tooltip: MENU_HINTS['/shops'],
+      managerOnly: true,
+    });
   }
   if (businessType === 'pharmacy') {
     if (hasFeature('pharmacyOps')) {
@@ -271,7 +276,7 @@ const getMenuItems = (
   if (hasFeature('roleManagement')) {
     baseItems.push({ key: '/users', icon: UserCog, label: 'Users', managerOnly: true, tooltip: MENU_HINTS['/users'] });
   }
-  baseItems.push({ key: '/settings', icon: Settings, label: 'Settings', managerOnly: true, tooltip: MENU_HINTS['/settings'] });
+  baseItems.push({ key: '/settings', icon: Settings, label: 'Settings', tooltip: MENU_HINTS['/settings'] });
 
   return filterNavItems(baseItems, { isAdmin, isManager });
 };
@@ -323,7 +328,7 @@ export function Sidebar({ collapsed, onCollapse }) {
   const { data: organizationData } = useQuery({
     queryKey: ['settings', 'organization'],
     queryFn: () => settingsService.getOrganizationSettings(),
-    enabled: !!activeTenant?.id,
+    enabled: isManager && !!activeTenant?.id,
   });
   const organization = organizationData?.data ?? organizationData;
   const orgName = (organization?.name || activeTenant?.name || '').trim();
@@ -731,7 +736,7 @@ export function MobileSidebar() {
   const { data: organizationData } = useQuery({
     queryKey: ['settings', 'organization'],
     queryFn: () => settingsService.getOrganizationSettings(),
-    enabled: !!activeTenant?.id,
+    enabled: isManager && !!activeTenant?.id,
   });
   const organization = organizationData?.data ?? organizationData;
   const orgName = (organization?.name || activeTenant?.name || '').trim();

@@ -134,6 +134,15 @@ const invoiceToResponsePayload = async (invoice) => {
   return payload;
 };
 
+const parsePaymentDateInput = (value) => {
+  if (value == null || value === '') {
+    return new Date();
+  }
+
+  const paymentDate = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(paymentDate.getTime()) ? null : paymentDate;
+};
+
 const maskEmailForLogs = (email) => {
   if (!email || typeof email !== 'string') return null;
   const [localPart, domainPart] = email.trim().split('@');
@@ -1001,7 +1010,14 @@ exports.recordPayment = async (req, res, next) => {
     }
 
     // Update invoice
-    const effectivePaymentDate = paymentDate ? new Date(paymentDate) : new Date();
+    const effectivePaymentDate = parsePaymentDateInput(paymentDate);
+    if (!effectivePaymentDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment date is invalid'
+      });
+    }
+
     const updatePayload = {
       amountPaid: newAmountPaid,
       balance: newBalance
@@ -1162,6 +1178,15 @@ exports.recordPayment = async (req, res, next) => {
 // @access  Private
 exports.markInvoicePaid = async (req, res, next) => {
   try {
+    const { paymentDate, paidAt } = sanitizePayload(req.body || {});
+    const effectivePaymentDate = parsePaymentDateInput(paymentDate || paidAt);
+    if (!effectivePaymentDate) {
+      return res.status(400).json({
+        success: false,
+        message: 'Payment date is invalid'
+      });
+    }
+
     const invoice = await Invoice.findOne({
       where: invoiceWhere(req, { id: req.params.id })
     });
@@ -1196,12 +1221,11 @@ exports.markInvoicePaid = async (req, res, next) => {
     const totalAmount = parseFloat(invoice.totalAmount || 0);
     const currentPaid = parseFloat(invoice.amountPaid || 0);
     const outstanding = Math.max(totalAmount - currentPaid, 0);
-    const now = new Date();
     await invoice.update({
       amountPaid: totalAmount,
       balance: 0,
       status: 'paid',
-      paidDate: now
+      paidDate: effectivePaymentDate
     });
 
     let manualPayment = null;
@@ -1216,7 +1240,7 @@ exports.markInvoicePaid = async (req, res, next) => {
         tenantId: req.tenantId,
         amount: outstanding,
         paymentMethod: 'other',
-        paymentDate: now,
+        paymentDate: effectivePaymentDate,
         status: 'completed',
         notes: `Invoice ${invoice.invoiceNumber} manually marked as paid`
       });
@@ -1232,7 +1256,7 @@ exports.markInvoicePaid = async (req, res, next) => {
         await createInvoicePaymentJournal({
           invoice: updatedInvoice,
           amount: outstanding,
-          paymentDate: now,
+          paymentDate: effectivePaymentDate,
           paymentMethod: 'other',
           paymentRecordNumber: manualPayment.paymentNumber,
           metadata: { paymentId: manualPayment.id, markedPaid: true },
