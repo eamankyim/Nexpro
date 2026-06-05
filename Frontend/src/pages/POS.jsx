@@ -882,6 +882,9 @@ const POS = () => {
           mobileMoneyProvider: paymentDetails.mobileMoneyProvider,
           mobileMoneyPhone: paymentDetails.mobileMoneyPhone,
           mobileMoneyReference: paymentDetails.mobileMoneyReference,
+          paymentMethodUi: paymentDetails.paymentMethodUi,
+          paymentCollectionMode: paymentDetails.paymentCollectionMode,
+          paymentGroup: paymentDetails.paymentGroup,
           posTaxConfigSnapshot: posTaxConfig
         },
         delivery: paymentDetails.delivery || { required: false, bandId: null, fee: 0 }
@@ -976,7 +979,10 @@ const POS = () => {
           amountPaid: 0,
           metadata: {
             mobileMoneyProvider: logicalProvider,
-            mobileMoneyPhone: phoneNumber
+            mobileMoneyPhone: phoneNumber,
+            paymentMethodUi: 'momo_prompt',
+            paymentCollectionMode: 'momo_prompt',
+            paymentGroup: 'automatic'
           },
           delivery: delivery || { required: false, bandId: null, fee: 0 }
         };
@@ -1422,50 +1428,52 @@ const POS = () => {
           <DialogHeader>
             <DialogTitle>Add custom item</DialogTitle>
           </DialogHeader>
-          <DialogBody className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="custom-item-name">Name</Label>
-              <Input
-                id="custom-item-name"
-                value={customItemForm.name}
-                onChange={(event) => setCustomItemForm((prev) => ({ ...prev, name: event.target.value }))}
-                placeholder="e.g. Special order"
-              />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <DialogBody>
+            <div className="space-y-5">
               <div className="space-y-2">
-                <Label htmlFor="custom-item-price">Unit price</Label>
+                <Label htmlFor="custom-item-name">Name</Label>
                 <Input
-                  id="custom-item-price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={customItemForm.unitPrice}
-                  onChange={(event) => setCustomItemForm((prev) => ({ ...prev, unitPrice: event.target.value }))}
-                  placeholder="0.00"
+                  id="custom-item-name"
+                  value={customItemForm.name}
+                  onChange={(event) => setCustomItemForm((prev) => ({ ...prev, name: event.target.value }))}
+                  placeholder="e.g. Special order"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="custom-item-quantity">Quantity</Label>
-                <Input
-                  id="custom-item-quantity"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={customItemForm.quantity}
-                  onChange={(event) => setCustomItemForm((prev) => ({ ...prev, quantity: event.target.value }))}
-                />
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="custom-item-price">Unit price</Label>
+                  <Input
+                    id="custom-item-price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={customItemForm.unitPrice}
+                    onChange={(event) => setCustomItemForm((prev) => ({ ...prev, unitPrice: event.target.value }))}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="custom-item-quantity">Quantity</Label>
+                  <Input
+                    id="custom-item-quantity"
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={customItemForm.quantity}
+                    onChange={(event) => setCustomItemForm((prev) => ({ ...prev, quantity: event.target.value }))}
+                  />
+                </div>
               </div>
-            </div>
-            <div className="flex items-center gap-2 rounded-lg border border-border p-3">
-              <Checkbox
-                id="custom-item-save"
-                checked={customItemForm.saveAsProduct}
-                onCheckedChange={(checked) => setCustomItemForm((prev) => ({ ...prev, saveAsProduct: checked === true }))}
-              />
-              <Label htmlFor="custom-item-save" className="cursor-pointer font-normal">
-                Save to products (optional)
-              </Label>
+              <div className="flex items-center gap-2 rounded-lg border border-border p-3">
+                <Checkbox
+                  id="custom-item-save"
+                  checked={customItemForm.saveAsProduct}
+                  onCheckedChange={(checked) => setCustomItemForm((prev) => ({ ...prev, saveAsProduct: checked === true }))}
+                />
+                <Label htmlFor="custom-item-save" className="cursor-pointer font-normal">
+                  Save to products (optional)
+                </Label>
+              </div>
             </div>
           </DialogBody>
           <DialogFooter>

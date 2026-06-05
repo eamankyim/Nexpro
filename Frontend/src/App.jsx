@@ -280,7 +280,7 @@ function AppContent() {
             <Route path="pricing" element={<FeatureRoute featureKey="pricingTemplates"><Pricing /></FeatureRoute>} />
             <Route path="leads" element={<FeatureRoute featureKey="leadPipeline"><Leads /></FeatureRoute>} />
             <Route path="reports">
-              <Route index element={<FeatureRoute featureKey="reports"><Navigate to="/reports/overview" replace /></FeatureRoute>} />
+              <Route index element={<FeatureRoute featureKey="reports"><RequireWorkspaceManager><Navigate to="/reports/overview" replace /></RequireWorkspaceManager></FeatureRoute>} />
               <Route path="overview" element={<FeatureRoute featureKey="reports"><RequireWorkspaceManager><Reports /></RequireWorkspaceManager></FeatureRoute>} />
               <Route path="smart-report" element={<FeatureRoute featureKey="reports"><RequireWorkspaceManager><Reports /></RequireWorkspaceManager></FeatureRoute>} />
               <Route path="compliance" element={<FeatureRoute featureKey="reports"><RequireWorkspaceManager><Reports /></RequireWorkspaceManager></FeatureRoute>} />

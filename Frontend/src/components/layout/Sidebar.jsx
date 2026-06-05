@@ -748,7 +748,10 @@ export function MobileSidebar() {
   const businessType = STUDIO_LIKE_TYPES.includes(activeStudioType)
     ? activeStudioType
     : activeTenant?.businessType || null;
-  const shopType = activeTenant?.metadata?.shopType || null;
+  const shopType =
+    activeTenant?.metadata?.businessSubType ||
+    activeTenant?.metadata?.shopType ||
+    null;
   const menuItems = useMemo(
     () => getMenuItems(businessType, isAdmin, isManager, isDriver, shopType, hasFeature, hidePlatformAdminNav),
     [businessType, isAdmin, isManager, isDriver, shopType, hasFeature, hidePlatformAdminNav]

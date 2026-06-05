@@ -22,6 +22,7 @@ const BUSINESS_TYPE_FEATURES = {
     'payroll',
     'roleManagement',
     'tasks',
+    'orders',
     // Feature keys must match `Backend/config/features.js` registry.
     'shopsModule',
     'pos',
@@ -100,6 +101,7 @@ const DEFAULT_SHOP_TYPE = 'other';
 
 /** Shop types that hide Quotes (aligned with web/mobile QUOTES_HIDDEN_SHOP_TYPES). */
 const QUOTES_HIDDEN_SHOP_TYPES = ['restaurant'];
+const ORDERS_ENABLED_SHOP_TYPES = ['restaurant'];
 
 const getTenantShopType = (tenant) => {
   const metadata = tenant?.metadata && typeof tenant.metadata === 'object' ? tenant.metadata : {};
@@ -137,6 +139,9 @@ const filterFeaturesForTenant = (enabledFeatures, tenant) => {
   const shopType = getTenantShopType(tenant);
   if (!isQuotesEnabledForTenant(tenant?.businessType, shopType)) {
     filtered = filtered.filter((f) => f !== 'quoteAutomation');
+  }
+  if (resolveBusinessType(tenant?.businessType) === 'shop' && !ORDERS_ENABLED_SHOP_TYPES.includes(shopType || '')) {
+    filtered = filtered.filter((f) => f !== 'orders');
   }
   return filtered;
 };
@@ -207,6 +212,7 @@ module.exports = {
   DEFAULT_BUSINESS_TYPE,
   DEFAULT_SHOP_TYPE,
   QUOTES_HIDDEN_SHOP_TYPES,
+  ORDERS_ENABLED_SHOP_TYPES,
   resolveBusinessType,
   getFeaturesForBusinessType,
   isFeatureAvailableForBusinessType,

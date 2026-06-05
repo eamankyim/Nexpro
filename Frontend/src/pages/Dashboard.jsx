@@ -297,6 +297,48 @@ const buildBusinessHealthOverrideInsight = ({ businessHealthContext }) => {
   };
 };
 
+const buildStaffDashboardInsight = ({ businessHealthContext }) => {
+  const {
+    metrics,
+    lowStockCount,
+    isRetail,
+    comparisonLabel,
+  } = businessHealthContext;
+
+  if (lowStockCount > 0 && isRetail) {
+    return {
+      title: 'Stock needs attention',
+      body: `${lowStockCount} item${lowStockCount === 1 ? ' is' : 's are'} low on stock. Restock priority products first.`,
+    };
+  }
+
+  if (metrics.revenue.isUnhealthy) {
+    return {
+      title: 'Sales are below baseline',
+      body: `Revenue is below its ${comparisonLabel} baseline. Check customer activity and recent sales.`,
+    };
+  }
+
+  if (metrics.revenue.isHealthy) {
+    return {
+      title: 'Sales are ahead',
+      body: `Revenue is ${formatPercent(metrics.revenue.dailyAverageChangePercentage)} above its recent daily average.`,
+    };
+  }
+
+  if (metrics.newCustomers.isHealthy) {
+    return {
+      title: 'Customer growth is up',
+      body: `New customers are ${formatPercent(metrics.newCustomers.dailyAverageChangePercentage)} above recent averages.`,
+    };
+  }
+
+  return {
+    title: 'Your dashboard is ready',
+    body: 'Review sales, customers, stock, and next steps for this period.',
+  };
+};
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const { user, activeTenant, tenantRole, wasInvited, suppressAppGuidance, billingStatus } = useAuth();
@@ -631,6 +673,8 @@ const Dashboard = () => {
     () => (isShop || isPharmacy) && tenantRole === 'staff',
     [isShop, isPharmacy, tenantRole]
   );
+  const isStaff = tenantRole === 'staff';
+  const canViewProfitMetrics = !isStaff;
 
   const { data: staffProductsRaw, isLoading: staffProductsLoading } = useQuery({
     queryKey: ['products', 'active', activeTenantId, activeShopId],
@@ -788,14 +832,21 @@ const Dashboard = () => {
     [businessHealthContext]
   );
 
+  const staffDashboardInsight = useMemo(
+    () => buildStaffDashboardInsight({ businessHealthContext }),
+    [businessHealthContext]
+  );
+
   const businessHealthOverrideInsight = useMemo(
     () => buildBusinessHealthOverrideInsight({ businessHealthContext }),
     [businessHealthContext]
   );
 
   const aiInsightPrompt = useMemo(
-    () =>
-      [
+    () => {
+      if (!canViewProfitMetrics) return '';
+
+      return [
         'Create one short web dashboard insight for this business.',
         'Return only JSON in this exact shape: {"title":"...","body":"..."}',
         'Keep the title under 7 words and body under 18 words.',
@@ -818,8 +869,10 @@ const Dashboard = () => {
         `All-time profit: ${CURRENCY.SYMBOL} ${businessHealthContext.allTime.profit.toFixed(2)}`,
         `Total customers: ${businessHealthContext.totalCustomers}`,
         `Low stock items: ${(stockAlerts?.lowStock || []).length}`,
-      ].join('\n'),
+      ].join('\n');
+    },
     [
+      canViewProfitMetrics,
       businessType,
       periodLabel,
       overviewParams.startDate,
@@ -863,14 +916,16 @@ const Dashboard = () => {
       });
       return parseAiInsightResponse(result?.message || '');
     },
-    enabled: scopeReady && !!overview,
+    enabled: scopeReady && !!overview && canViewProfitMetrics,
     staleTime: 10 * 60 * 1000,
     gcTime: 60 * 60 * 1000,
     retry: 1,
   });
 
-  const visibleDashboardInsight = businessHealthOverrideInsight || aiDashboardInsight || fallbackDashboardInsight;
-  const dashboardInsightLoading = !businessHealthOverrideInsight && aiDashboardInsightLoading;
+  const visibleDashboardInsight = canViewProfitMetrics
+    ? businessHealthOverrideInsight || aiDashboardInsight || fallbackDashboardInsight
+    : staffDashboardInsight;
+  const dashboardInsightLoading = canViewProfitMetrics && !businessHealthOverrideInsight && aiDashboardInsightLoading;
 
   // Full-page skeletons only on initial load when we have no data yet
   if (loading && !overview) {
@@ -1085,6 +1140,7 @@ const Dashboard = () => {
         comparisonLoading={comparisonLoading}
         activeFilter={activeFilter}
         loading={overviewLoading}
+        showProfitCard={canViewProfitMetrics}
       />
 
       <Card className="border border-gray-200 bg-green-50/70">

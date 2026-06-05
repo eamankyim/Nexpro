@@ -20,6 +20,7 @@ const ABS_PRIMARY = '#166534';
  * @param {boolean} comparisonLoading - Whether comparison is still being computed
  * @param {string} activeFilter - Active filter type (today, thisWeek, etc.)
  * @param {boolean} [loading] - When true, stats cards show skeleton loaders
+ * @param {boolean} [showProfitCard] - When false, hides profit metrics from staff views
  */
 const DashboardStatsCards = memo(({
   revenueValue = 0,
@@ -31,7 +32,8 @@ const DashboardStatsCards = memo(({
   comparisonData = null,
   comparisonLoading = false,
   activeFilter = null,
-  loading = false
+  loading = false,
+  showProfitCard = true
 }) => {
   const comparingColor = '#666';
   const showComparing = comparisonLoading;
@@ -82,7 +84,10 @@ const DashboardStatsCards = memo(({
 
   return (
     <div
-      className="grid grid-cols-2 lg:grid-cols-4 gap-1.5 md:gap-4 mb-3 md:mb-8"
+      className={showProfitCard
+        ? 'grid grid-cols-2 lg:grid-cols-4 gap-1.5 md:gap-4 mb-3 md:mb-8'
+        : 'grid grid-cols-2 lg:grid-cols-3 gap-1.5 md:gap-4 mb-3 md:mb-8'
+      }
       data-tour="dashboard-stats"
     >
       {/* Total Revenue Card */}
@@ -115,20 +120,21 @@ const DashboardStatsCards = memo(({
         loading={loading}
       />
 
-      {/* Profit Made Card */}
-      <DashboardStatsCard
-        tooltip="Revenue minus expenses. Shows how much your business is making."
-        title="Profit made:"
-        value={profitValue}
-        valuePrefix="₵ "
-        icon={TrendingUp}
-        iconBgColor="rgba(132, 204, 22, 0.1)"
-        iconColor="#84cc16"
-        comparisonText={profitComparison}
-        comparisonColor={profitComparisonColor}
-        trend={profitTrend}
-        loading={loading}
-      />
+      {showProfitCard && (
+        <DashboardStatsCard
+          tooltip="Revenue minus expenses. Shows how much your business is making."
+          title="Profit made:"
+          value={profitValue}
+          valuePrefix="₵ "
+          icon={TrendingUp}
+          iconBgColor="rgba(132, 204, 22, 0.1)"
+          iconColor="#84cc16"
+          comparisonText={profitComparison}
+          comparisonColor={profitComparisonColor}
+          trend={profitTrend}
+          loading={loading}
+        />
+      )}
 
       {/* New Customers Card */}
       <DashboardStatsCard

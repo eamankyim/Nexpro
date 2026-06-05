@@ -103,4 +103,33 @@ describe('tenantEntitlements', () => {
     expect(entitlements.limits.seatLimit).toBe(3);
     expect(entitlements.limits.branchLimit).toBe(3);
   });
+
+  it('enables kitchen orders for restaurant shops', async () => {
+    SubscriptionPlan.findOne.mockResolvedValue(null);
+
+    const entitlements = await getTenantEffectiveEntitlements({
+      id: 'tenant-restaurant',
+      plan: 'trial',
+      businessType: 'shop',
+      metadata: { shopType: 'restaurant' },
+    });
+
+    expect(entitlements.effectiveFeatureFlags.orders).toBe(true);
+    expect(entitlements.enabledFeatures).toContain('orders');
+  });
+
+  it('keeps kitchen orders disabled for non-restaurant shops', async () => {
+    SubscriptionPlan.findOne.mockResolvedValue(null);
+
+    const entitlements = await getTenantEffectiveEntitlements({
+      id: 'tenant-retail',
+      plan: 'trial',
+      businessType: 'shop',
+      metadata: { shopType: 'retail' },
+    });
+
+    expect(entitlements.baseFeatureFlags.orders).toBe(true);
+    expect(entitlements.effectiveFeatureFlags.orders).toBe(false);
+    expect(entitlements.enabledFeatures).not.toContain('orders');
+  });
 });

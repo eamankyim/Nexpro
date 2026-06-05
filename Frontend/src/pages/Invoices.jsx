@@ -69,11 +69,21 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { DEBOUNCE_DELAYS, SEARCH_PLACEHOLDERS, STUDIO_LIKE_TYPES } from '../constants';
+import { DEBOUNCE_DELAYS, INVOICE_STATUSES, SEARCH_PLACEHOLDERS, STUDIO_LIKE_TYPES } from '../constants';
 import { EMPTY_STATES } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
 import { useResponsive } from '../hooks/useResponsive';
+
+const getInvoiceStatus = (invoice) => String(invoice?.status || '').toLowerCase();
+const isCancelledInvoice = (invoice) => getInvoiceStatus(invoice) === INVOICE_STATUSES.CANCELLED;
+const isDraftInvoice = (invoice) => getInvoiceStatus(invoice) === INVOICE_STATUSES.DRAFT;
+const canDeleteInvoice = (invoice) => isDraftInvoice(invoice) || isCancelledInvoice(invoice);
+const canCancelInvoice = (invoice) => [
+  INVOICE_STATUSES.SENT,
+  INVOICE_STATUSES.PARTIAL,
+  INVOICE_STATUSES.OVERDUE,
+].includes(getInvoiceStatus(invoice));
 
 const paymentSchema = z.object({
   amount: numberOrEmptySchema(z).refine((v) => v >= 0.01, 'Payment amount must be greater than 0'),
@@ -593,7 +603,8 @@ const Invoices = () => {
 
   const invoiceDrawerMoreMenuItems = useMemo(() => {
     if (!viewingInvoice || !isManager) return [];
-    const unpaid = viewingInvoice.status !== 'paid' && viewingInvoice.status !== 'cancelled';
+    const status = getInvoiceStatus(viewingInvoice);
+    const unpaid = status !== INVOICE_STATUSES.PAID && status !== INVOICE_STATUSES.CANCELLED;
     const items = [];
     if (unpaid) {
       items.push({
@@ -620,6 +631,8 @@ const Invoices = () => {
         onClick: () => handleOpenMarkAsPaid(viewingInvoice),
         disabled: markingAsPaid,
       });
+    }
+    if (canCancelInvoice(viewingInvoice)) {
       items.push({
         key: 'cancel',
         label: 'Cancel Invoice',
@@ -628,7 +641,7 @@ const Invoices = () => {
         destructive: true,
       });
     }
-    if (isAdmin && viewingInvoice.status === 'draft') {
+    if (isAdmin && isDraftInvoice(viewingInvoice)) {
       items.push({
         key: 'delete',
         label: 'Delete draft',
@@ -637,7 +650,7 @@ const Invoices = () => {
         destructive: true,
       });
     }
-    if (isAdmin && viewingInvoice.status === 'cancelled') {
+    if (isAdmin && isCancelledInvoice(viewingInvoice)) {
       items.push({
         key: 'delete-cancelled',
         label: 'Delete cancelled invoice',
@@ -664,7 +677,7 @@ const Invoices = () => {
   const handleDeleteInvoice = async (id) => {
     try {
       if (!guardOnline(showError)) return;
-      if (invoiceToDelete?.status === 'cancelled') {
+      if (isCancelledInvoice(invoiceToDelete)) {
         await invoiceService.deleteCancelled(id);
         showSuccess('Cancelled invoice deleted');
       } else {
@@ -743,9 +756,9 @@ const Invoices = () => {
           onView={handleView}
           record={record}
           extraActions={[
-            isAdmin && ['draft', 'cancelled'].includes(record.status) && {
+            isAdmin && canDeleteInvoice(record) && {
               key: 'delete',
-              label: record.status === 'cancelled' ? 'Delete cancelled invoice' : 'Delete draft invoice',
+              label: isCancelledInvoice(record) ? 'Delete cancelled invoice' : 'Delete draft invoice',
               icon: <Trash2 className="h-4 w-4" />,
               onClick: () => setInvoiceToDelete(record),
               destructive: true,
@@ -1332,11 +1345,11 @@ const Invoices = () => {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {invoiceToDelete?.status === 'cancelled' ? 'Delete cancelled invoice?' : 'Delete draft invoice?'}
+              {isCancelledInvoice(invoiceToDelete) ? 'Delete cancelled invoice?' : 'Delete draft invoice?'}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {invoiceToDelete
-                ? `Are you sure you want to delete ${invoiceToDelete.status === 'cancelled' ? 'cancelled' : 'draft'} invoice "${invoiceToDelete.invoiceNumber || invoiceToDelete.id}"? This cannot be undone.`
+                ? `Are you sure you want to delete ${isCancelledInvoice(invoiceToDelete) ? 'cancelled' : 'draft'} invoice "${invoiceToDelete.invoiceNumber || invoiceToDelete.id}"? This cannot be undone.`
                 : ''}
             </AlertDialogDescription>
           </AlertDialogHeader>
