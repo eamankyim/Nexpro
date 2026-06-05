@@ -32,6 +32,7 @@ const {
   toBillingPayload,
   normalizePlan,
   normalizeBillingPeriod,
+  normalizePaymentStatus,
   PAID_PLANS,
 } = require('../services/subscriptionBillingService');
 const emailService = require('../services/emailService');
@@ -68,6 +69,37 @@ const PLAN_ALIASES = {
 };
 
 const normalizePlanId = (plan = '') => PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
+const MANUAL_PAYMENT_METHODS = new Set(['bank_transfer', 'mobile_money', 'card', 'cash', 'cheque', 'other']);
+
+const parseOptionalDate = (value, fieldName) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw Object.assign(new Error(`${fieldName} must be a valid date`), { statusCode: 400 });
+  }
+  return parsed;
+};
+
+const amountGhsToPesewas = (value) => {
+  if (value == null || value === '') return null;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw Object.assign(new Error('amount must be a valid non-negative number'), { statusCode: 400 });
+  }
+  return Math.round(amount * 100);
+};
+
+const resolveManualPaymentAmountPesewas = (body, fallbackAmountGhs = null) => {
+  if (body?.amountPesewas != null && body.amountPesewas !== '') {
+    const amountPesewas = Number(body.amountPesewas);
+    if (!Number.isInteger(amountPesewas) || amountPesewas < 0) {
+      throw Object.assign(new Error('amountPesewas must be a valid non-negative integer'), { statusCode: 400 });
+    }
+    return amountPesewas;
+  }
+  const amountGhs = body?.amount ?? fallbackAmountGhs;
+  return amountGhsToPesewas(amountGhs);
+};
 
 /**
  * Ensures a SubscriptionPlan row exists for canonical plan IDs from config/plans.js
@@ -1021,6 +1053,24 @@ exports.createTenantSubscriptionPayment = async (req, res, next) => {
 
     const plan = normalizePlan(req.body?.plan);
     const billingPeriod = normalizeBillingPeriod(req.body?.billingPeriod);
+    const statusInput = req.body?.status == null ? 'success' : String(req.body.status).trim().toLowerCase();
+    const status = normalizePaymentStatus(statusInput);
+    if (status !== statusInput) {
+      return res.status(400).json({
+        success: false,
+        message: 'status must be one of: success, pending, failed, refunded',
+      });
+    }
+    const paymentMethod = String(req.body?.paymentMethod || 'bank_transfer').trim().toLowerCase();
+    if (!MANUAL_PAYMENT_METHODS.has(paymentMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: 'paymentMethod must be one of: bank_transfer, mobile_money, card, cash, cheque, other',
+      });
+    }
+    const paymentDate = parseOptionalDate(req.body?.paymentDate || req.body?.date, 'paymentDate') || new Date();
+    const periodStart = parseOptionalDate(req.body?.periodStart, 'periodStart') || paymentDate;
+    const requestedPeriodEnd = parseOptionalDate(req.body?.periodEnd, 'periodEnd');
     const enterpriseTier = req.body?.enterpriseTier;
     if (!PAID_PLANS.has(plan)) {
       return res.status(400).json({
@@ -1040,10 +1090,12 @@ exports.createTenantSubscriptionPayment = async (req, res, next) => {
 
     let paymentMetadata = {
       source: 'admin_manual',
+      paymentMethod,
+      paymentDate: paymentDate.toISOString(),
       enterpriseTier: plan === 'enterprise' ? String(enterpriseTier).toLowerCase() : null,
     };
-    let periodEnd = req.body?.periodEnd;
-    let amount = req.body?.amount;
+    let periodEnd = requestedPeriodEnd;
+    let fallbackAmountGhs = null;
 
     if (plan === 'enterprise') {
       const tierKey = String(enterpriseTier).toLowerCase();
@@ -1052,6 +1104,7 @@ exports.createTenantSubscriptionPayment = async (req, res, next) => {
       const enterpriseMeta = buildEnterprisePaymentMetadata({
         enterpriseTier: tierKey,
         paymentType: req.body?.paymentType || 'enterprise_license',
+        at: paymentDate,
         existingCloudNextDueAt: existingMeta.cloudNextDueAt,
         existingCloudRenewalStartsAt: existingMeta.cloudRenewalStartsAt,
       });
@@ -1059,10 +1112,10 @@ exports.createTenantSubscriptionPayment = async (req, res, next) => {
       if (periodEnd == null && enterpriseMeta.periodEnd) {
         periodEnd = enterpriseMeta.periodEnd;
       }
-      if (amount == null && enterpriseMeta.suggestedAmountGhs != null) {
-        amount = enterpriseMeta.suggestedAmountGhs;
-      }
+      fallbackAmountGhs = enterpriseMeta.suggestedAmountGhs ?? null;
     }
+
+    const amount = resolveManualPaymentAmountPesewas(req.body, fallbackAmountGhs);
 
     const activation = await recordSubscriptionPaymentAndActivate({
       tenantId: tenant.id,
@@ -1071,15 +1124,16 @@ exports.createTenantSubscriptionPayment = async (req, res, next) => {
       amount,
       currency: req.body?.currency || 'GHS',
       provider: 'manual',
-      providerReference: req.body?.providerReference || null,
+      providerReference: req.body?.providerReference || req.body?.reference || null,
+      status,
       recordedBy: req.user?.id || null,
       notes: req.body?.notes || null,
-      periodStart: req.body?.periodStart,
+      periodStart,
       periodEnd,
       metadata: paymentMetadata,
     });
 
-    if (plan === 'enterprise') {
+    if (plan === 'enterprise' && status === 'success') {
       const metadata = tenant.metadata && typeof tenant.metadata === 'object' ? { ...tenant.metadata } : {};
       const entitlements = metadata.entitlements && typeof metadata.entitlements === 'object'
         ? { ...metadata.entitlements }

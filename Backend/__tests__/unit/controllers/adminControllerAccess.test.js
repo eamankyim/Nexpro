@@ -28,6 +28,7 @@ jest.mock('../../../services/subscriptionBillingService', () => ({
   toBillingPayload: jest.fn((status) => status),
   normalizePlan: jest.fn((plan) => plan),
   normalizeBillingPeriod: jest.fn((period) => period),
+  normalizePaymentStatus: jest.fn((status) => status || 'success'),
   PAID_PLANS: ['starter', 'professional', 'enterprise'],
 }));
 

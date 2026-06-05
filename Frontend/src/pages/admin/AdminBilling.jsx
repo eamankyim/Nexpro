@@ -1,15 +1,37 @@
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { useEffect, useState, lazy, Suspense, useCallback } from 'react';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useResponsive } from '../../hooks/useResponsive';
 import adminService from '../../services/adminService';
 import { usePlatformAdminPermissions } from '../../context/PlatformAdminPermissionsContext';
+import { ENTERPRISE_TIER_OPTIONS, getEnterpriseTier } from '../../constants/enterpriseTiers';
+import { handleApiError, showSuccess } from '../../utils/toast';
 import StatusChip from '../../components/StatusChip';
 import DashboardStatsCard from '../../components/DashboardStatsCard';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Empty } from '@/components/ui/empty';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -18,7 +40,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Currency, Users, CreditCard } from 'lucide-react';
+import { Currency, Users, CreditCard, Receipt } from 'lucide-react';
 
 dayjs.extend(relativeTime);
 
@@ -33,6 +55,41 @@ const PLAN_ALIASES = {
 };
 
 const normalizePlanId = (plan = '') => PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
+
+const getInitialPaymentForm = (tenant = null) => {
+  const plan = normalizePlanId(tenant?.plan || 'enterprise');
+  const enterpriseTier = tenant?.metadata?.entitlements?.enterpriseTier || 'business';
+  const tier = getEnterpriseTier(enterpriseTier);
+  return {
+    plan: ['starter', 'professional', 'enterprise'].includes(plan) ? plan : 'enterprise',
+    billingPeriod: plan === 'enterprise' ? 'yearly' : 'monthly',
+    enterpriseTier,
+    paymentType: 'enterprise_license',
+    amount: plan === 'enterprise' && tier?.licenseFeeGhs ? String(tier.licenseFeeGhs) : '',
+    paymentMethod: 'bank_transfer',
+    providerReference: '',
+    paymentDate: dayjs().format('YYYY-MM-DD'),
+    status: 'success',
+    notes: '',
+  };
+};
+
+const getPaymentMethodLabel = (method) => {
+  switch (method) {
+    case 'bank_transfer':
+      return 'Bank transfer';
+    case 'mobile_money':
+      return 'Mobile money';
+    case 'card':
+      return 'Card';
+    case 'cash':
+      return 'Cash';
+    case 'cheque':
+      return 'Cheque';
+    default:
+      return 'Other';
+  }
+};
 
 const getPlanLabel = (plan) => {
   const normalized = normalizePlanId(plan);
@@ -56,25 +113,81 @@ const AdminBilling = () => {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState(null);
   const [tenants, setTenants] = useState([]);
+  const [paymentDialogOpen, setPaymentDialogOpen] = useState(false);
+  const [selectedTenant, setSelectedTenant] = useState(null);
+  const [paymentForm, setPaymentForm] = useState(getInitialPaymentForm());
+  const [paymentSaving, setPaymentSaving] = useState(false);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [summaryRes, tenantsRes] = await Promise.all([
+        adminService.getBillingSummary(),
+        adminService.getBillingTenants(),
+      ]);
+      if (summaryRes?.success) setSummary(summaryRes.data);
+      if (tenantsRes?.success) setTenants(tenantsRes.data || []);
+    } catch (error) {
+      handleApiError(error, { context: 'load billing data' });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      try {
-        const [summaryRes, tenantsRes] = await Promise.all([
-          adminService.getBillingSummary(),
-          adminService.getBillingTenants(),
-        ]);
-        if (summaryRes?.success) setSummary(summaryRes.data);
-        if (tenantsRes?.success) setTenants(tenantsRes.data || []);
-      } catch (error) {
-        console.error('Failed to load billing data', error);
-      } finally {
-        setLoading(false);
-      }
-    };
     loadData();
-  }, []);
+  }, [loadData]);
+
+  const openPaymentDialog = (tenant) => {
+    setSelectedTenant(tenant);
+    setPaymentForm(getInitialPaymentForm(tenant));
+    setPaymentDialogOpen(true);
+  };
+
+  const handlePaymentFormChange = (key, value) => {
+    setPaymentForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === 'plan') {
+        next.billingPeriod = normalizePlanId(value) === 'enterprise' ? 'yearly' : prev.billingPeriod;
+      }
+      if (key === 'enterpriseTier' || key === 'paymentType' || key === 'plan') {
+        const plan = key === 'plan' ? normalizePlanId(value) : normalizePlanId(next.plan);
+        if (plan === 'enterprise') {
+          const tier = getEnterpriseTier(key === 'enterpriseTier' ? value : next.enterpriseTier);
+          next.amount = key === 'paymentType' && value === 'enterprise_cloud_renewal'
+            ? String(tier?.cloudPlanAnnualGhs || '')
+            : String(tier?.licenseFeeGhs || '');
+        }
+      }
+      return next;
+    });
+  };
+
+  const handleRecordPayment = async (event) => {
+    event.preventDefault();
+    if (!selectedTenant?.id) return;
+    setPaymentSaving(true);
+    try {
+      const normalizedPlan = normalizePlanId(paymentForm.plan);
+      await adminService.createTenantSubscriptionPayment(selectedTenant.id, {
+        ...paymentForm,
+        plan: normalizedPlan,
+        enterpriseTier: normalizedPlan === 'enterprise' ? paymentForm.enterpriseTier : null,
+        paymentType: normalizedPlan === 'enterprise' ? paymentForm.paymentType : null,
+        amount: paymentForm.amount === '' ? undefined : paymentForm.amount,
+        providerReference: paymentForm.providerReference.trim() || undefined,
+        notes: paymentForm.notes.trim() || undefined,
+      });
+      showSuccess('Tenant billing payment recorded');
+      setPaymentDialogOpen(false);
+      setSelectedTenant(null);
+      await loadData();
+    } catch (error) {
+      handleApiError(error, { context: 'record tenant billing payment' });
+    } finally {
+      setPaymentSaving(false);
+    }
+  };
 
   // Check permission after all hooks
   if (!permissionsLoading && !hasPermission('billing.view')) {
@@ -177,6 +290,17 @@ const AdminBilling = () => {
                         {dayjs(tenant.updatedAt).fromNow()}
                       </span>
                     </div>
+                    {hasPermission('billing.manage') && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="mt-3 w-full"
+                        onClick={() => openPaymentDialog(tenant)}
+                      >
+                        <Receipt className="mr-2 h-4 w-4" />
+                        Record payment
+                      </Button>
+                    )}
                   </Card>
                 ))
               )}
@@ -194,6 +318,7 @@ const AdminBilling = () => {
                       <TableHead>Status</TableHead>
                       <TableHead>Billing Method</TableHead>
                       <TableHead>Last Update</TableHead>
+                      {hasPermission('billing.manage') && <TableHead className="text-right">Action</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -219,6 +344,13 @@ const AdminBilling = () => {
                           {tenant.metadata?.paymentMethod || 'Not on file'}
                         </TableCell>
                         <TableCell>{dayjs(tenant.updatedAt).fromNow()}</TableCell>
+                        {hasPermission('billing.manage') && (
+                          <TableCell className="text-right">
+                            <Button type="button" variant="outline" size="sm" onClick={() => openPaymentDialog(tenant)}>
+                              Record payment
+                            </Button>
+                          </TableCell>
+                        )}
                       </TableRow>
                     ))}
                   </TableBody>
@@ -228,6 +360,184 @@ const AdminBilling = () => {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
+        <DialogContent className="sm:max-w-2xl [--modal-w:min(92vw,42rem)]">
+          <form onSubmit={handleRecordPayment}>
+            <DialogHeader>
+              <DialogTitle>Record tenant billing payment</DialogTitle>
+              <DialogDescription>
+                Add a manual subscription payment for {selectedTenant?.name || 'this tenant'}.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogBody>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Plan</Label>
+                    <Select value={paymentForm.plan} onValueChange={(value) => handlePaymentFormChange('plan', value)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="starter">Starter</SelectItem>
+                        <SelectItem value="professional">Professional</SelectItem>
+                        <SelectItem value="enterprise">Enterprise</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Billing period</Label>
+                    <Select
+                      value={paymentForm.billingPeriod}
+                      onValueChange={(value) => handlePaymentFormChange('billingPeriod', value)}
+                      disabled={normalizePlanId(paymentForm.plan) === 'enterprise'}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                        <SelectItem value="yearly">Yearly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {normalizePlanId(paymentForm.plan) === 'enterprise' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label>Enterprise tier</Label>
+                      <Select
+                        value={paymentForm.enterpriseTier}
+                        onValueChange={(value) => handlePaymentFormChange('enterpriseTier', value)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ENTERPRISE_TIER_OPTIONS.map((tier) => (
+                            <SelectItem key={tier.id} value={tier.id}>
+                              {tier.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Enterprise payment type</Label>
+                      <Select
+                        value={paymentForm.paymentType}
+                        onValueChange={(value) => handlePaymentFormChange('paymentType', value)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="enterprise_license">License fee</SelectItem>
+                          <SelectItem value="enterprise_cloud_renewal">Cloud renewal</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="tenant-payment-amount">Amount (GHS)</Label>
+                    <Input
+                      id="tenant-payment-amount"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={paymentForm.amount}
+                      onChange={(event) => handlePaymentFormChange('amount', event.target.value)}
+                      placeholder="0.00"
+                      required
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Payment method</Label>
+                    <Select
+                      value={paymentForm.paymentMethod}
+                      onValueChange={(value) => handlePaymentFormChange('paymentMethod', value)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {['bank_transfer', 'mobile_money', 'card', 'cash', 'cheque', 'other'].map((method) => (
+                          <SelectItem key={method} value={method}>
+                            {getPaymentMethodLabel(method)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="tenant-payment-reference">Reference (optional)</Label>
+                    <Input
+                      id="tenant-payment-reference"
+                      value={paymentForm.providerReference}
+                      onChange={(event) => handlePaymentFormChange('providerReference', event.target.value)}
+                      placeholder="Bank, MoMo, or invoice reference"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="tenant-payment-date">Payment date</Label>
+                    <Input
+                      id="tenant-payment-date"
+                      type="date"
+                      value={paymentForm.paymentDate}
+                      onChange={(event) => handlePaymentFormChange('paymentDate', event.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Status</Label>
+                  <Select value={paymentForm.status} onValueChange={(value) => handlePaymentFormChange('status', value)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="success">Success</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="failed">Failed</SelectItem>
+                      <SelectItem value="refunded">Refunded</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Only successful payments activate or renew tenant billing.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="tenant-payment-notes">Notes (optional)</Label>
+                  <Textarea
+                    id="tenant-payment-notes"
+                    value={paymentForm.notes}
+                    onChange={(event) => handlePaymentFormChange('notes', event.target.value)}
+                    placeholder="Internal note for this payment"
+                  />
+                </div>
+              </div>
+            </DialogBody>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setPaymentDialogOpen(false)} disabled={paymentSaving}>
+                Cancel
+              </Button>
+              <Button type="submit" loading={paymentSaving}>
+                Record payment
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

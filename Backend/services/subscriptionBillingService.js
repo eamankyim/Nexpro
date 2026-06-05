@@ -4,11 +4,16 @@ const { normalizeTenantInstanceForRequest } = require('../utils/tenantClassifica
 const { getFallbackAmountPesewas } = require('../config/paystackPlans');
 
 const PAID_PLANS = new Set(['starter', 'professional', 'enterprise']);
+const PAYMENT_STATUSES = new Set(['success', 'pending', 'failed', 'refunded']);
 const DEFAULT_GRACE_DAYS = Number(process.env.SUBSCRIPTION_GRACE_DAYS || 7);
 
 const normalizePlan = (plan = '') => String(plan || '').trim().toLowerCase();
 const normalizeBillingPeriod = (value = '') =>
   String(value).trim().toLowerCase() === 'yearly' ? 'yearly' : 'monthly';
+const normalizePaymentStatus = (value = '') => {
+  const status = String(value || '').trim().toLowerCase();
+  return PAYMENT_STATUSES.has(status) ? status : 'success';
+};
 
 const startOfDay = (date) => {
   const d = new Date(date);
@@ -252,6 +257,7 @@ async function resolveBillingStatus(tenantOrId, options = {}) {
  * @param {string} [params.currency]
  * @param {string} params.provider
  * @param {string} [params.providerReference]
+ * @param {string} [params.status]
  * @param {string} [params.recordedBy]
  * @param {string} [params.notes]
  * @param {Date} [params.periodStart]
@@ -264,6 +270,7 @@ async function recordSubscriptionPaymentAndActivate(params) {
   const billingPeriod = normalizeBillingPeriod(params.billingPeriod);
   const provider = params.provider || 'manual';
   const providerReference = params.providerReference || null;
+  const status = normalizePaymentStatus(params.status);
 
   if (!tenantId || !PAID_PLANS.has(plan)) {
     throw Object.assign(new Error('Invalid tenant or plan for subscription payment'), { statusCode: 400 });
@@ -271,7 +278,7 @@ async function recordSubscriptionPaymentAndActivate(params) {
 
   if (providerReference) {
     const existing = await SubscriptionPayment.findOne({
-      where: { provider, providerReference, status: 'success' },
+      where: { provider, providerReference },
     });
     if (existing) {
       return { payment: existing, alreadyRecorded: true };
@@ -293,7 +300,7 @@ async function recordSubscriptionPaymentAndActivate(params) {
     periodEnd,
     amount,
     currency: params.currency || 'GHS',
-    status: 'success',
+    status,
     provider,
     providerReference,
     recordedBy: params.recordedBy || null,
@@ -301,13 +308,15 @@ async function recordSubscriptionPaymentAndActivate(params) {
     metadata: params.metadata || {},
   });
 
-  await syncTenantSubscriptionState(tenantId, {
-    plan,
-    billingPeriod,
-    currentPeriodEnd: periodEnd,
-    lastPaymentReference: providerReference,
-    payment,
-  });
+  if (status === 'success') {
+    await syncTenantSubscriptionState(tenantId, {
+      plan,
+      billingPeriod,
+      currentPeriodEnd: periodEnd,
+      lastPaymentReference: providerReference,
+      payment,
+    });
+  }
 
   return { payment, alreadyRecorded: false };
 }
@@ -439,6 +448,7 @@ module.exports = {
   DEFAULT_GRACE_DAYS,
   normalizePlan,
   normalizeBillingPeriod,
+  normalizePaymentStatus,
   addPeriod,
   getSubscriptionSetting,
   getActivePaymentForTenant,

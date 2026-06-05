@@ -12,8 +12,10 @@ jest.mock('../../../models', () => ({
 const {
   resolveBillingStatus,
   normalizePlan,
+  normalizePaymentStatus,
   addPeriod,
   DEFAULT_GRACE_DAYS,
+  recordSubscriptionPaymentAndActivate,
 } = require('../../../services/subscriptionBillingService');
 
 const baseTenant = (overrides = {}) => ({
@@ -26,9 +28,24 @@ const baseTenant = (overrides = {}) => ({
 });
 
 describe('subscriptionBillingService', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   describe('normalizePlan', () => {
     it('lowercases plan ids', () => {
       expect(normalizePlan(' Starter ')).toBe('starter');
+    });
+  });
+
+  describe('normalizePaymentStatus', () => {
+    it('allows supported manual payment statuses', () => {
+      expect(normalizePaymentStatus(' Pending ')).toBe('pending');
+      expect(normalizePaymentStatus('refunded')).toBe('refunded');
+    });
+
+    it('defaults unsupported statuses to success for backwards compatibility', () => {
+      expect(normalizePaymentStatus('unknown')).toBe('success');
     });
   });
 
@@ -127,6 +144,41 @@ describe('subscriptionBillingService', () => {
       expect(billing.lockReason).toBe('tenant_not_found');
       expect(Setting.findOne).not.toHaveBeenCalled();
       expect(SubscriptionPayment.findOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('recordSubscriptionPaymentAndActivate', () => {
+    it('records pending payments without activating tenant billing', async () => {
+      const { Setting, SubscriptionPayment } = require('../../../models');
+      const payment = {
+        id: 'payment-1',
+        tenantId: 'tenant-1',
+        plan: 'enterprise',
+        billingPeriod: 'yearly',
+        amount: 2000000,
+        status: 'pending',
+      };
+      SubscriptionPayment.findOne.mockResolvedValue(null);
+      SubscriptionPayment.create.mockResolvedValue(payment);
+
+      const result = await recordSubscriptionPaymentAndActivate({
+        tenantId: 'tenant-1',
+        plan: 'enterprise',
+        billingPeriod: 'yearly',
+        amount: 2000000,
+        status: 'pending',
+        provider: 'manual',
+        providerReference: 'INV-100',
+      });
+
+      expect(result).toEqual({ payment, alreadyRecorded: false });
+      expect(SubscriptionPayment.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'pending',
+          providerReference: 'INV-100',
+        })
+      );
+      expect(Setting.findOrCreate).not.toHaveBeenCalled();
     });
   });
 });
