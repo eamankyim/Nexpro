@@ -1243,6 +1243,7 @@ function POSVirtualProductGrid({
  * @param {Object} [props.cartQuantityByProductId] - Map of productId -> quantity in cart (for in-cart indicator)
  * @param {boolean} [props.fillHeight] - If true, the results area uses flex-1 to fill available height (e.g. in POS layout)
  * @param {function} [props.onAdjustProductQuantity] - Optional: (productId, delta) => void, for mobile +/- quantity controls
+ * @param {function} [props.onAddCustomItem] - Optional: open custom item flow
  */
 const POSProductSearch = ({
   onSearch,
@@ -1255,6 +1256,7 @@ const POSProductSearch = ({
   cartQuantityByProductId = {},
   fillHeight = false,
   onAdjustProductQuantity,
+  onAddCustomItem,
 }) => {
   const navigate = useNavigate();
   const { isMobile } = useResponsive();
@@ -1442,6 +1444,23 @@ const POSProductSearch = ({
               ))}
             </SelectContent>
           </Select>
+          {onAddCustomItem && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-12 flex-shrink-0 border border-[#166534] text-[#166534] hover:bg-green-50 hover:text-[#166534]"
+                  onClick={onAddCustomItem}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  <span className="hidden sm:inline">Add custom item</span>
+                  <span className="sm:hidden">Custom</span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Add a one-off item to this sale</TooltipContent>
+            </Tooltip>
+          )}
           {!isMobile && (
             <div className="flex items-center border border-border rounded-md overflow-hidden flex-shrink-0">
               <Button

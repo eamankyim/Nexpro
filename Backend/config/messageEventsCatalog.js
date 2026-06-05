@@ -33,6 +33,15 @@ const MESSAGE_EVENTS_CATALOG = {
     requiredChannels: [],
     defaultChannels: { email: true, sms: true, whatsapp: true },
   },
+  order_created: {
+    key: 'order_created',
+    label: 'Order created',
+    category: 'sales',
+    description: 'Customer alert when an order is created.',
+    allowedChannels: ['email', 'sms', 'whatsapp'],
+    requiredChannels: [],
+    defaultChannels: { email: true, sms: true, whatsapp: true },
+  },
   order_status: {
     key: 'order_status',
     label: 'Order status update',

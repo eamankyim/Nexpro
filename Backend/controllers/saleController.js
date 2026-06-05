@@ -14,6 +14,8 @@ const { notifyOrderStatusChanged, notifyNewOrder } = require('../services/notifi
 const { getTaxConfigForTenant, hasTaxConfigCache } = require('../utils/taxConfig');
 const { computeDocumentTax } = require('../utils/taxCalculation');
 const { getTenantLogoUrl } = require('../utils/tenantLogo');
+const { resolveDeliveryForSale } = require('../services/deliverySettingsService');
+const { notifyOrderCreatedForCustomer } = require('../services/orderCustomerNotificationService');
 const {
   applyShopFilter,
   attachShopToPayload,
@@ -358,6 +360,9 @@ const SALE_RESPONSE_ATTRIBUTES = [
   'discount',
   'tax',
   'total',
+  'deliveryRequired',
+  'deliveryFee',
+  'deliveryBandId',
   'amountPaid',
   'change',
   'soldBy',
@@ -399,7 +404,65 @@ const resolveSaleItemCatalogData = async ({ items, tenantId, shopId, transaction
   const productsById = new Map(products.map((product) => [product.id, product]));
   const variantsById = new Map(variants.map((variant) => [variant.id, variant]));
 
-  return items.map((item) => {
+  return Promise.all(items.map(async (item) => {
+    const hasCatalogReference = !!(item.productId || item.productVariantId);
+    if (!hasCatalogReference) {
+      const name = String(item.name || '').trim();
+      const quantity = parseFloat(item.quantity);
+      const unitPrice = parseSaleUnitPriceOverride(item.unitPrice);
+
+      if (!name) {
+        throw new Error('Custom sale item name is required');
+      }
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        throw new Error('Custom sale item quantity must be greater than 0');
+      }
+      if (unitPrice === null) {
+        throw new Error('Custom sale item unitPrice must be greater than or equal to 0');
+      }
+
+      let savedProduct = null;
+      if (item.saveAsProduct === true) {
+        savedProduct = await Product.create({
+          tenantId,
+          shopId: shopId || null,
+          name,
+          sku: item.sku || null,
+          barcode: item.barcode || null,
+          description: item.description || null,
+          costPrice: 0,
+          sellingPrice: unitPrice,
+          quantityOnHand: 0,
+          unit: item.unit || 'pcs',
+          trackStock: false,
+          metadata: {
+            ...(item.metadata && typeof item.metadata === 'object' ? item.metadata : {}),
+            source: 'pos_custom_item'
+          }
+        }, { transaction });
+      }
+
+      return {
+        ...item,
+        productId: savedProduct?.id || null,
+        productVariantId: null,
+        name,
+        sku: savedProduct?.sku || item.sku || null,
+        baseUnitPrice: unitPrice,
+        catalogUnitPrice: savedProduct ? unitPrice : null,
+        originalUnitPrice: savedProduct ? unitPrice : null,
+        unitPrice,
+        priceOverridden: false,
+        productCode: item.productCode || savedProduct?.barcode || null,
+        metadata: {
+          ...(item.metadata && typeof item.metadata === 'object' ? item.metadata : {}),
+          customItem: true,
+          saveAsProduct: item.saveAsProduct === true,
+          ...(savedProduct ? { savedProductId: savedProduct.id } : {})
+        }
+      };
+    }
+
     const product = productsById.get(item.productId);
     const variant = item.productVariantId ? variantsById.get(item.productVariantId) : null;
     const catalogProduct = variant?.product || product;
@@ -448,7 +511,7 @@ const resolveSaleItemCatalogData = async ({ items, tenantId, shopId, transaction
       priceOverridden,
       productCode: resolvedProductCode
     };
-  });
+  }));
 };
 
 const buildLightweightSaleResponse = (sale, items = []) => {
@@ -466,6 +529,9 @@ const buildLightweightSaleResponse = (sale, items = []) => {
     discount: plainSale.discount,
     tax: plainSale.tax,
     total: plainSale.total,
+    deliveryRequired: plainSale.deliveryRequired === true,
+    deliveryFee: plainSale.deliveryFee,
+    deliveryBandId: plainSale.deliveryBandId || null,
     amountPaid: plainSale.amountPaid,
     change: plainSale.change,
     balance: plainSale.balance,
@@ -565,7 +631,7 @@ const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaura
       mark('journals:end');
     }
 
-    const needsFullSale = !!sale.customerId || isRestaurant;
+    const needsFullSale = sale.status === 'completed' || isRestaurant;
     let createdSale = sale;
     if (needsFullSale) {
       mark('fetch-relations:start');
@@ -591,6 +657,17 @@ const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaura
       mark('invoice:end');
     } else if (sale.status === 'completed') {
       console.log(`[CreateSale] Skipping auto-invoice for walk-in sale ${sale.id}`);
+    }
+
+    if (createdSale.customer) {
+      mark('customer-order-alert:start');
+      await notifyOrderCreatedForCustomer({
+        tenantId,
+        sale: createdSale
+      }).catch((alertError) =>
+        console.error('[CreateSale] Customer order-created alert failed:', alertError?.message || alertError)
+      );
+      mark('customer-order-alert:end');
     }
 
     if (isRestaurant && createdSale.orderStatus) {
@@ -623,7 +700,7 @@ const runPostSaleAutomation = async ({ sale, items, tenantId, userId, isRestaura
     }
     mark('emit:end');
 
-    if (createdSale.status === 'completed' && sale.customerId) {
+    if (createdSale.status === 'completed') {
       mark('auto-receipt:start');
       await autoSendReceiptIfEnabled(tenantId, createdSale.id).catch((err) =>
         console.error('[CreateSale] Auto-send receipt failed:', err?.message || err)
@@ -712,13 +789,16 @@ exports.getSales = async (req, res, next) => {
       order: [['createdAt', 'DESC']]
     });
 
+    // Cast status enum to text in CASE expressions — PostgreSQL does not match enum columns
+    // to string literals inside CASE WHEN without ::text, which zeroed completed/revenue stats.
     const summary = await Sale.findOne({
       where,
       attributes: [
         [sequelize.fn('COUNT', sequelize.col('id')), 'totalSales'],
-        [sequelize.literal(`COUNT(CASE WHEN "Sale"."status" = 'completed' THEN 1 END)`), 'completedCount'],
-        [sequelize.literal(`COUNT(CASE WHEN "Sale"."status" = 'pending' THEN 1 END)`), 'pendingCount'],
-        [sequelize.literal(`COALESCE(SUM(CASE WHEN "Sale"."status" = 'completed' THEN "Sale"."total" ELSE 0 END), 0)`), 'completedRevenue']
+        [sequelize.literal(`COUNT(CASE WHEN "Sale"."status"::text = 'completed' THEN 1 END)`), 'completedCount'],
+        [sequelize.literal(`COUNT(CASE WHEN "Sale"."status"::text = 'pending' THEN 1 END)`), 'pendingCount'],
+        [sequelize.literal(`COUNT(CASE WHEN "Sale"."orderStatus" IN ('received', 'preparing', 'ready') THEN 1 END)`), 'kitchenPendingCount'],
+        [sequelize.literal(`COALESCE(SUM(CASE WHEN "Sale"."status"::text = 'completed' THEN "Sale"."total" ELSE 0 END), 0)`), 'completedRevenue']
       ],
       raw: true
     });
@@ -730,6 +810,7 @@ exports.getSales = async (req, res, next) => {
         totalSales: Number(summary?.totalSales || count || 0),
         completedCount: Number(summary?.completedCount || 0),
         pendingCount: Number(summary?.pendingCount || 0),
+        kitchenPendingCount: Number(summary?.kitchenPendingCount || 0),
         completedRevenue: Number(summary?.completedRevenue || 0)
       },
       pagination: {
@@ -845,7 +926,7 @@ exports.getSale = async (req, res, next) => {
 };
 
 const createSaleCore = async (transaction, tenantId, userId, body, clientId = null, tenant = null, timer = null) => {
-  const { items, cartDiscount: bodyCartDiscount, ...saleData } = sanitizePayload(body);
+  const { items, cartDiscount: bodyCartDiscount, delivery, ...saleData } = sanitizePayload(body);
   if (!items || !Array.isArray(items) || items.length === 0) {
     throw new Error('Sale must have at least one item');
   }
@@ -888,7 +969,9 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
   const subtotal = computed.subtotal;
   const totalDiscount = computed.discount;
   const totalTax = computed.taxAmount;
-  const total = computed.total;
+  const deliveryResult = await resolveDeliveryForSale(tenantId, delivery);
+  const deliveryFee = deliveryResult.fee;
+  const total = Math.round((computed.total + deliveryFee) * 100) / 100;
   const amountPaid = saleData.amountPaid != null ? parseFloat(saleData.amountPaid) : total;
   const change = amountPaid > total ? Math.round((amountPaid - total) * 100) / 100 : 0;
   const shopType = tenant?.metadata?.shopType;
@@ -908,6 +991,9 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
     discount: totalDiscount,
     tax: totalTax,
     total,
+    deliveryRequired: deliveryResult.required,
+    deliveryFee,
+    deliveryBandId: deliveryResult.bandId,
     amountPaid,
     change,
     soldBy: userId,
@@ -920,7 +1006,8 @@ const createSaleCore = async (transaction, tenantId, userId, body, clientId = nu
         pricesAreTaxInclusive: taxConfig.pricesAreTaxInclusive,
         taxableExclusive: computed.netTaxable,
         taxAmount: totalTax
-      }
+      },
+      delivery: deliveryResult.snapshot
     }
   }, { transaction });
   timer?.mark('sale-insert:end', { saleId: sale.id });
@@ -1136,6 +1223,9 @@ exports.batchSyncSales = async (req, res, next) => {
           }
           await createSaleRevenueJournal(req.tenantId, sale.id, req.user?.id);
           await createSaleCogsJournal(req.tenantId, sale.id, req.user?.id);
+          await autoSendReceiptIfEnabled(req.tenantId, sale.id).catch((receiptErr) =>
+            console.error('[batchSyncSales] Auto-send receipt failed:', receiptErr?.message || receiptErr)
+          );
         }
       } catch (postErr) {
         console.error('[batchSyncSales] Post-commit failed for sale', sale.id, postErr?.message);
@@ -1336,16 +1426,18 @@ exports.updateSale = async (req, res, next) => {
 
     await transaction.commit();
 
-    // Auto-create invoice after transaction commit (outside transaction)
-    if (updateData.status === 'completed' && !sale.invoiceId) {
-      try {
-        console.log(`[UpdateSale] Attempting to auto-create invoice for sale ${sale.id}`);
-        const autoGeneratedInvoice = await autoCreateInvoiceFromSale(sale.id, req.tenantId);
-        if (autoGeneratedInvoice) {
-          console.log(`[UpdateSale] ✅ Invoice auto-created: ${autoGeneratedInvoice.invoiceNumber}`);
+    // Auto-create invoice and send receipt after transaction commit (outside transaction)
+    if (updateData.status === 'completed') {
+      if (!sale.invoiceId) {
+        try {
+          console.log(`[UpdateSale] Attempting to auto-create invoice for sale ${sale.id}`);
+          const autoGeneratedInvoice = await autoCreateInvoiceFromSale(sale.id, req.tenantId);
+          if (autoGeneratedInvoice) {
+            console.log(`[UpdateSale] ✅ Invoice auto-created: ${autoGeneratedInvoice.invoiceNumber}`);
+          }
+        } catch (invoiceError) {
+          console.error('[UpdateSale] ❌ Failed to auto-create invoice:', invoiceError?.message);
         }
-      } catch (invoiceError) {
-        console.error('[UpdateSale] ❌ Failed to auto-create invoice:', invoiceError?.message);
       }
       try {
         await createSaleRevenueJournal(req.tenantId, sale.id, req.user?.id);
@@ -1357,6 +1449,9 @@ exports.updateSale = async (req, res, next) => {
       } catch (cogsError) {
         console.error('[UpdateSale] Failed to create COGS journal:', cogsError?.message);
       }
+      await autoSendReceiptIfEnabled(req.tenantId, sale.id).catch((receiptErr) =>
+        console.error('[UpdateSale] Auto-send receipt failed:', receiptErr?.message || receiptErr)
+      );
     }
 
     // Fetch updated sale
@@ -1523,6 +1618,9 @@ exports.recordPayment = async (req, res, next) => {
       } catch (cogsError) {
         console.error('[RecordPayment] Failed to create COGS journal:', cogsError?.message);
       }
+      await autoSendReceiptIfEnabled(req.tenantId, sale.id).catch((receiptErr) =>
+        console.error('[RecordPayment] Auto-send receipt failed:', receiptErr?.message || receiptErr)
+      );
     }
 
     const updatedSale = await Sale.findByPk(sale.id, {
@@ -1591,6 +1689,9 @@ exports.cancelSale = async (req, res, next) => {
 
     // Restore product stock (skip when trackStock is false - made-to-order)
     for (const item of sale.items) {
+      if (!item.productId && !item.productVariantId) {
+        continue;
+      }
       const product = await Product.findByPk(item.productId, { transaction });
       if (!item.productVariantId && product && product.trackStock !== false) {
         const newQuantity = parseFloat(product.quantityOnHand || 0) + parseFloat(item.quantity);
@@ -2022,7 +2123,7 @@ exports.sendReceipt = async (req, res, next) => {
 
 /**
  * If tenant has "auto send receipt to customer" enabled, send receipt via all configured channels.
- * Called from createSale (setImmediate) so it does not block the response.
+ * Used by sale creation and completion paths; skips quietly when no customer contact is available.
  */
 async function autoSendReceiptIfEnabled(tenantId, saleId) {
   const prefs = await Setting.findOne({ where: { tenantId, key: 'customer-notification-preferences' } });
@@ -2202,7 +2303,7 @@ async function sendWhatsAppReceipt(tenantId, phone, sale, fallbackMessage = '') 
     tenantId,
     phone,
     templateName,
-    parameters.length ? parameters : [message.slice(0, 900)],
+    parameters.length ? parameters : [String(fallbackMessage || '').slice(0, 900)],
     whatsappConfig.receiptTemplateLanguage || 'en',
     { category: 'transactional', metadata: { source: 'sale_receipt' } }
   );
@@ -2361,8 +2462,10 @@ exports.deleteSale = async (req, res, next) => {
   }
 };
 
-// Export autoCreateInvoiceFromSale for use in other controllers
+// Export post-sale helpers for use in other controllers
 exports.autoCreateInvoiceFromSale = autoCreateInvoiceFromSale;
+exports.autoSendReceiptIfEnabled = autoSendReceiptIfEnabled;
+exports.createSaleCore = createSaleCore;
 
 // @desc    Initialize Paystack payment for a pending sale (POS card/MoMo)
 // @route   POST /api/sales/:id/initialize-paystack
@@ -2719,6 +2822,9 @@ exports.checkPaystackChargeForSale = async (req, res, next) => {
     } catch (invErr) {
       console.error('[MoMo] Auto-invoice failed for POS sale (check-paystack):', invErr.message);
     }
+    await autoSendReceiptIfEnabled(sale.tenantId, sale.id).catch((receiptErr) =>
+      console.error('[MoMo] Auto-send receipt failed for POS sale (check-paystack):', receiptErr?.message || receiptErr)
+    );
     try {
       invalidateSaleListCache(sale.tenantId);
       emitNewSale(sale.tenantId, sale);

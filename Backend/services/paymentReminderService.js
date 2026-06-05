@@ -12,7 +12,7 @@ const { getTenantLogoUrl } = require('../utils/tenantLogo');
 
 /**
  * Payment Reminder Service
- * Sends WhatsApp and/or SMS reminders for overdue invoices
+ * Sends WhatsApp, SMS, and/or email reminders for overdue invoices
  * Runs daily at 9 AM
  */
 class PaymentReminderService {
@@ -32,7 +32,7 @@ class PaymentReminderService {
   }
 
   /**
-   * Check for overdue invoices and send reminders (WhatsApp and/or SMS)
+   * Check for overdue invoices and send reminders (WhatsApp, SMS, and/or email)
    */
   async checkAndSendReminders() {
     if (this.isRunning) {
@@ -78,7 +78,7 @@ class PaymentReminderService {
             console.error('[PaymentReminder] Failed to auto-create overdue invoice task:', taskError?.message);
           }
 
-          if (!invoice.customer || !invoice.customer.phone) {
+          if (!invoice.customer) {
             skippedCount++;
             continue;
           }
@@ -96,10 +96,13 @@ class PaymentReminderService {
             isChannelEnabledForEvent(invoice.tenantId, 'payment_reminder', 'email'),
           ]);
 
+          const customerPhone = invoice.customer.phone;
+          const customerEmail = String(invoice.customer.email || '').trim();
+
           // Send WhatsApp if enabled
           const whatsappConfig = whatsappRule ? await whatsappService.getConfig(invoice.tenantId) : null;
-          if (whatsappConfig && whatsappConfig.enabled) {
-            const phoneNumber = whatsappService.validatePhoneNumber(invoice.customer.phone);
+          if (whatsappConfig && whatsappConfig.enabled && customerPhone) {
+            const phoneNumber = whatsappService.validatePhoneNumber(customerPhone);
             if (phoneNumber && whatsappService.checkRateLimit(invoice.tenantId)) {
               const reminderCooldownHours = Math.max(1, Number(whatsappConfig.paymentReminderCooldownHours || 24));
               const recentWhatsAppReminder = await WhatsAppMessageEvent.findOne({
@@ -135,8 +138,8 @@ class PaymentReminderService {
 
           // Send SMS if enabled (tenant or platform)
           const smsConfig = smsRule ? await smsService.getResolvedConfig(invoice.tenantId) : null;
-          if (smsConfig) {
-            const smsPhone = smsService.validatePhoneNumber(invoice.customer.phone);
+          if (smsConfig && customerPhone) {
+            const smsPhone = smsService.validatePhoneNumber(customerPhone);
             if (smsPhone && smsService.checkRateLimit(invoice.tenantId)) {
               const smsMessage = this.buildPaymentReminderSms(invoice, paymentLink);
               const smsResult = await smsService.sendMessage(invoice.tenantId, smsPhone, smsMessage);
@@ -153,7 +156,7 @@ class PaymentReminderService {
           // Send email if enabled (optional setting)
           const prefsRow = await Setting.findOne({ where: { tenantId: invoice.tenantId, key: 'customer-notification-preferences' } });
           const prefs = prefsRow?.value || {};
-          if (emailRule && prefs.sendPaymentReminderEmail === true && invoice.customer?.email) {
+          if (emailRule && prefs.sendPaymentReminderEmail === true && customerEmail) {
             const emailConfig = await emailService.getConfig(invoice.tenantId);
             if (emailConfig) {
               const tenant = await Tenant.findByPk(invoice.tenantId);
@@ -171,7 +174,7 @@ class PaymentReminderService {
                 dueDate: invoice.dueDate
               };
               const { subject, html, text } = emailTemplates.paymentReminder(invoiceForEmail, invoice.customer, paymentLink, company, 'overdue');
-              const emailResult = await emailService.sendMessage(invoice.tenantId, invoice.customer.email, subject, html, text);
+              const emailResult = await emailService.sendMessage(invoice.tenantId, customerEmail, subject, html, text);
               if (emailResult.success) {
                 reminderSent = true;
                 console.log(`[PaymentReminder] Email reminder sent for invoice ${invoice.invoiceNumber}`);

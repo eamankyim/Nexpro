@@ -6,7 +6,7 @@ import { usePullToRefresh } from '../hooks/usePullToRefresh';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { Plus, XCircle, Loader2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, Currency, Eye, ChevronLeft, ChevronRight, Filter, RefreshCw, Briefcase, AlertCircle, Archive } from 'lucide-react';
+import { Plus, XCircle, Loader2, MinusCircle, FileText, Clock, CheckCircle, User, Edit, PauseCircle, X, Upload, Paperclip, Download, Currency, Eye, ChevronLeft, ChevronRight, Filter, RefreshCw, Briefcase, AlertCircle, Trash2 } from 'lucide-react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import jobService from '../services/jobService';
@@ -192,7 +192,7 @@ const uploadMaxSizeMb = Number.parseFloat(import.meta.env.VITE_UPLOAD_MAX_SIZE_M
 const Jobs = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { activeTenantId, activeTenant } = useAuth();
+  const { activeTenantId, activeTenant, isAdmin } = useAuth();
   const {
     scopeReady,
     activeShopId,
@@ -1754,10 +1754,19 @@ useEffect(() => {
         <ActionColumn
           onView={handleView}
           record={record}
+          extraActions={[
+            isAdmin && {
+              key: 'delete',
+              label: 'Delete job',
+              icon: <Trash2 className="h-4 w-4" />,
+              onClick: () => setJobToDelete(record),
+              destructive: true
+            }
+          ].filter(Boolean)}
         />
       )
     }
-  ], [handleView, formatAmount]);
+  ], [handleView, formatAmount, isAdmin]);
 
   const handleClearFilters = useCallback(() => {
     setFilters({
@@ -2048,16 +2057,16 @@ useEffect(() => {
             icon: <FileText className="h-4 w-4" />,
             onClick: () => navigate('/invoices', { state: { openInvoiceId: jobInvoices[viewingJob.id].id } })
           }] : []),
-          {
-            key: 'archive',
-            label: 'Archive',
-            icon: <Archive className="h-4 w-4" />,
+          ...(isAdmin ? [{
+            key: 'delete',
+            label: 'Delete job',
+            icon: <Trash2 className="h-4 w-4" />,
             destructive: true,
             onClick: () => {
               setJobToDelete(viewingJob);
               handleCloseDrawer();
             }
-          }
+          }] : [])
         ] : []}
         tabs={viewingJob ? [
           {

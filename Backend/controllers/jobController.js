@@ -1,7 +1,7 @@
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
-const { Job, Customer, User, Payment, Expense, JobItem, Invoice, Quote, JobStatusHistory, Setting, StudioLocation } = require('../models');
+const { Job, Customer, User, Payment, Expense, JobItem, Invoice, Quote, JobStatusHistory, MaterialMovement, Lead, Setting, StudioLocation } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { getPagination } = require('../utils/paginationUtils');
@@ -1135,27 +1135,71 @@ exports.updateJob = async (req, res, next) => {
 
 // @desc    Delete job
 // @route   DELETE /api/jobs/:id
-// @access  Private
+// @access  Private (Admin only)
 exports.deleteJob = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
   try {
     const job = await Job.findOne({
-      where: jobWhere(req, { id: req.params.id })
+      where: jobWhere(req, { id: req.params.id }),
+      transaction
     });
 
     if (!job) {
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: 'Job not found'
       });
     }
 
-    await job.destroy();
+    const [
+      linkedInvoices,
+      linkedPayments,
+      linkedExpenses,
+      linkedMaterialMovements,
+      linkedLeads
+    ] = await Promise.all([
+      Invoice.count({ where: applyTenantFilter(req.tenantId, { jobId: job.id }), transaction }),
+      Payment.count({ where: applyTenantFilter(req.tenantId, { jobId: job.id }), transaction }),
+      Expense.count({ where: applyTenantFilter(req.tenantId, { jobId: job.id }), transaction }),
+      MaterialMovement.count({ where: applyTenantFilter(req.tenantId, { jobId: job.id }), transaction }),
+      Lead.count({ where: applyTenantFilter(req.tenantId, { convertedJobId: job.id }), transaction })
+    ]);
+
+    if (
+      linkedInvoices > 0 ||
+      linkedPayments > 0 ||
+      linkedExpenses > 0 ||
+      linkedMaterialMovements > 0 ||
+      linkedLeads > 0
+    ) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete job with linked invoices, payments, expenses, material movements, or leads'
+      });
+    }
+
+    await JobStatusHistory.destroy({
+      where: applyTenantFilter(req.tenantId, { jobId: job.id }),
+      transaction
+    });
+    await JobItem.destroy({
+      where: applyTenantFilter(req.tenantId, { jobId: job.id }),
+      transaction
+    });
+    await job.destroy({ transaction });
+    await transaction.commit();
 
     res.status(200).json({
       success: true,
       data: {}
     });
   } catch (error) {
+    if (!transaction.finished) {
+      await transaction.rollback();
+    }
     next(error);
   }
 };

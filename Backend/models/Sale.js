@@ -87,6 +87,20 @@ const Sale = sequelize.define('Sale', {
     type: DataTypes.STRING(32),
     allowNull: true
   },
+  deliveryRequired: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,
+    defaultValue: false
+  },
+  deliveryFee: {
+    type: DataTypes.DECIMAL(12, 2),
+    allowNull: false,
+    defaultValue: 0
+  },
+  deliveryBandId: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
   deliveryAssignedTo: {
     type: DataTypes.UUID,
     allowNull: true,

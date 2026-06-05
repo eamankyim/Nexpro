@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { Quote, QuoteItem, Customer, User, Job, JobItem, JobStatusHistory, QuoteActivity, Sale, SaleItem, SaleActivity, Setting, Tenant, Shop, StudioLocation } = require('../models');
+const { Quote, QuoteItem, Customer, User, Job, JobItem, JobStatusHistory, QuoteActivity, Invoice, Sale, SaleItem, SaleActivity, Setting, Tenant, Shop, StudioLocation } = require('../models');
 const { Op } = require('sequelize');
 const { sequelize } = require('../config/database');
 const { getPagination } = require('../utils/paginationUtils');
@@ -1084,12 +1084,16 @@ exports.updateQuoteStatus = async (req, res, next) => {
 };
 
 exports.deleteQuote = async (req, res, next) => {
+  const transaction = await sequelize.transaction();
+
   try {
     const quote = await Quote.findOne({
-      where: quoteWhere(req, { id: req.params.id })
+      where: quoteWhere(req, { id: req.params.id }),
+      transaction
     });
 
     if (!quote) {
+      await transaction.rollback();
       return res.status(404).json({
         success: false,
         message: 'Quote not found'
@@ -1097,19 +1101,51 @@ exports.deleteQuote = async (req, res, next) => {
     }
 
     if (quote.status === 'accepted') {
+      await transaction.rollback();
       return res.status(400).json({
         success: false,
         message: 'Accepted quotes cannot be deleted'
       });
     }
 
-    await quote.destroy();
+    const [linkedJobs, linkedInvoices] = await Promise.all([
+      Job.count({
+        where: applyTenantFilter(req.tenantId, { quoteId: quote.id }),
+        transaction
+      }),
+      Invoice.count({
+        where: applyTenantFilter(req.tenantId, { quoteId: quote.id }),
+        transaction
+      })
+    ]);
+
+    if (linkedJobs > 0 || linkedInvoices > 0) {
+      await transaction.rollback();
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete quote with linked jobs or invoices'
+      });
+    }
+
+    await QuoteActivity.destroy({
+      where: applyTenantFilter(req.tenantId, { quoteId: quote.id }),
+      transaction
+    });
+    await QuoteItem.destroy({
+      where: applyTenantFilter(req.tenantId, { quoteId: quote.id }),
+      transaction
+    });
+    await quote.destroy({ transaction });
+    await transaction.commit();
 
     res.status(200).json({
       success: true,
       data: {}
     });
   } catch (error) {
+    if (!transaction.finished) {
+      await transaction.rollback();
+    }
     console.error(`Error deleting quote ${req.params.id}:`, error);
     next(error);
   }

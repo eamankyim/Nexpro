@@ -1457,6 +1457,38 @@ exports.updateMessageDeliveryRules = async (req, res, next) => {
   }
 };
 
+// @desc    Get delivery fee band settings
+// @route   GET /api/settings/delivery
+// @access  Private
+exports.getDeliverySettings = async (req, res, next) => {
+  try {
+    const deliverySettingsService = require('../services/deliverySettingsService');
+    const data = await deliverySettingsService.getDeliverySettings(req.tenantId);
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update delivery fee band settings
+// @route   PUT /api/settings/delivery
+// @access  Private (admin/manager)
+exports.updateDeliverySettings = async (req, res, next) => {
+  try {
+    const deliverySettingsService = require('../services/deliverySettingsService');
+    const data = await deliverySettingsService.saveDeliverySettings(
+      req.tenantId,
+      sanitizePayload(req.body || {})
+    );
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      message: error.message || 'Invalid delivery settings'
+    });
+  }
+};
+
 // @desc    Update customer notification preferences (auto-send invoice, auto-send receipt).
 // @route   PUT /api/settings/customer-notification-preferences
 // @access  Private

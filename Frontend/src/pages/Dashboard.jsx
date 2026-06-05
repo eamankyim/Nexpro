@@ -12,6 +12,7 @@ import { showSuccess, showError, showWarning } from '../utils/toast';
 import { formatPeriodLabel } from '../utils/formatPeriodLabel';
 import { buildAskAiUrl } from '../utils/buildAskAiUrl';
 import { getCoreTypeForBusinessSubType } from '@/constants/businessTypes';
+import { cn } from '@/lib/utils';
 import {
   Currency,
   ShoppingCart,

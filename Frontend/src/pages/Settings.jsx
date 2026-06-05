@@ -205,6 +205,20 @@ const posConfigSchema = z.object({
   }),
 });
 
+const DEFAULT_DELIVERY_SETTINGS = {
+  enabled: false,
+  requireSelectionAtCheckout: false,
+  bands: [],
+};
+
+const createDeliveryBand = (index = 0) => ({
+  id: `band_${Date.now()}_${index}`,
+  label: '',
+  minKm: '',
+  maxKm: '',
+  fee: '',
+});
+
 const paymentCollectionSchema = z.object({
   settlement_type: z.enum(['bank', 'momo']),
   business_name: z.string().min(1, 'Business / account name is required'),
@@ -352,6 +366,8 @@ const Settings = () => {
   /** Dismiss "Saving..." toast when mutation completes (success or error). */
   const savingToastDismissRef = useRef(null);
   const [posConfigEditing, setPosConfigEditing] = useState(false);
+  const [deliverySettingsEditing, setDeliverySettingsEditing] = useState(false);
+  const [deliveryDraft, setDeliveryDraft] = useState(DEFAULT_DELIVERY_SETTINGS);
   const [seatUsage, setSeatUsage] = useState(null);
   const [loadingUsage, setLoadingUsage] = useState(false);
   const [whatsappTemplateLearnMoreOpen, setWhatsappTemplateLearnMoreOpen] = useState(false);
@@ -627,6 +643,15 @@ const Settings = () => {
   });
 
   const {
+    data: deliverySettingsData,
+    isLoading: loadingDeliverySettings
+  } = useQuery({
+    queryKey: ['settings', 'delivery'],
+    queryFn: settingsService.getDeliverySettings,
+    enabled: canManageOrganization && activeTab === 'operations'
+  });
+
+  const {
     data: aiSettingsData,
     isLoading: loadingAISettings
   } = useQuery({
@@ -861,6 +886,26 @@ const Settings = () => {
       });
     }
   }, [posConfigData, posConfigForm, canManageOrganization]);
+
+  useEffect(() => {
+    if (!canManageOrganization || deliverySettingsEditing) return;
+    const settings = deliverySettingsData?.data?.data ?? deliverySettingsData?.data ?? deliverySettingsData;
+    if (settings && typeof settings === 'object') {
+      setDeliveryDraft({
+        enabled: settings.enabled === true,
+        requireSelectionAtCheckout: settings.requireSelectionAtCheckout === true,
+        bands: Array.isArray(settings.bands)
+          ? settings.bands.map((band, index) => ({
+            id: band.id || `band_${index + 1}`,
+            label: band.label || '',
+            minKm: band.minKm ?? '',
+            maxKm: band.maxKm ?? '',
+            fee: band.fee ?? '',
+          }))
+          : [],
+      });
+    }
+  }, [deliverySettingsData, canManageOrganization, deliverySettingsEditing]);
 
   useEffect(() => {
     const rawPc = paymentCollectionData?.data ?? paymentCollectionData;
@@ -1243,6 +1288,28 @@ const Settings = () => {
     },
   });
 
+  const updateDeliverySettingsMutation = useMutation({
+    mutationFn: settingsService.updateDeliverySettings,
+    onSuccess: async (data) => {
+      dismissSavingToast();
+      showSuccess('Delivery settings saved');
+      await queryClient.invalidateQueries({ queryKey: ['settings', 'delivery'] });
+      const next = data?.data?.data ?? data?.data ?? data;
+      if (next && typeof next === 'object') {
+        setDeliveryDraft({
+          enabled: next.enabled === true,
+          requireSelectionAtCheckout: next.requireSelectionAtCheckout === true,
+          bands: Array.isArray(next.bands) ? next.bands : [],
+        });
+      }
+      setDeliverySettingsEditing(false);
+    },
+    onError: (error) => {
+      dismissSavingToast();
+      showError(error, error?.response?.data?.message || 'Failed to update delivery settings');
+    },
+  });
+
   const updateAISettingsMutation = useMutation({
     mutationFn: settingsService.updateAISettings,
     onSuccess: () => {
@@ -1559,6 +1626,58 @@ const Settings = () => {
     savingToastDismissRef.current = showLoading('Saving...');
     updatePOSConfigMutation.mutate(payload);
   };
+
+  const handleDeliveryDraftChange = useCallback((patch) => {
+    setDeliveryDraft((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  const handleDeliveryBandChange = useCallback((id, field, value) => {
+    setDeliveryDraft((prev) => ({
+      ...prev,
+      bands: (prev.bands || []).map((band) => (
+        band.id === id ? { ...band, [field]: value } : band
+      )),
+    }));
+  }, []);
+
+  const handleAddDeliveryBand = useCallback(() => {
+    setDeliveryDraft((prev) => ({
+      ...prev,
+      bands: [...(prev.bands || []), createDeliveryBand((prev.bands || []).length)],
+    }));
+  }, []);
+
+  const handleRemoveDeliveryBand = useCallback((id) => {
+    setDeliveryDraft((prev) => ({
+      ...prev,
+      bands: (prev.bands || []).filter((band) => band.id !== id),
+    }));
+  }, []);
+
+  const handleResetDeliveryDraft = useCallback(() => {
+    const settings = deliverySettingsData?.data?.data ?? deliverySettingsData?.data ?? deliverySettingsData ?? DEFAULT_DELIVERY_SETTINGS;
+    setDeliveryDraft({
+      enabled: settings.enabled === true,
+      requireSelectionAtCheckout: settings.requireSelectionAtCheckout === true,
+      bands: Array.isArray(settings.bands) ? settings.bands : [],
+    });
+  }, [deliverySettingsData]);
+
+  const handleSaveDeliverySettings = useCallback(() => {
+    const payload = {
+      enabled: deliveryDraft.enabled === true,
+      requireSelectionAtCheckout: deliveryDraft.requireSelectionAtCheckout === true,
+      bands: (deliveryDraft.bands || []).map((band, index) => ({
+        id: String(band.id || `band_${index + 1}`),
+        label: String(band.label || '').trim(),
+        minKm: Number(band.minKm),
+        maxKm: Number(band.maxKm),
+        fee: Number(band.fee),
+      })),
+    };
+    savingToastDismissRef.current = showLoading('Saving...');
+    updateDeliverySettingsMutation.mutate(payload);
+  }, [deliveryDraft, updateDeliverySettingsMutation]);
 
   const handleSaveAISettings = () => {
     const trimmedKey = aiApiKey.trim();
@@ -4412,6 +4531,7 @@ const Settings = () => {
   );
 
   const configData = posConfigData?.data?.data ?? posConfigData?.data;
+  const deliverySettings = deliverySettingsData?.data?.data ?? deliverySettingsData?.data ?? deliverySettingsData ?? DEFAULT_DELIVERY_SETTINGS;
   const modeLabels = { ask: 'Ask staff', auto_send: 'Auto send', auto_print: 'Auto print', auto_both: 'Auto send + print' };
   const formatLabels = { a4: 'A4 (full page)', thermal_58: '58mm Thermal', thermal_80: '80mm Thermal' };
   const channelLabels = { sms: 'SMS', whatsapp: 'WhatsApp', email: 'Email', print: 'Print' };
@@ -5010,6 +5130,206 @@ const Settings = () => {
                 </div>
               </div>
 
+              <div>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+                  <div>
+                    <p className="text-sm font-semibold mb-1">Delivery Settings</p>
+                    <p className="text-xs text-muted-foreground">
+                      Configure delivery availability and fee bands for POS checkout.
+                    </p>
+                  </div>
+                  {!loadingDeliverySettings && !deliverySettingsEditing && (
+                    <Button
+                      type="button"
+                      variant="secondaryStroke"
+                      size="sm"
+                      onClick={() => {
+                        handleResetDeliveryDraft();
+                        setDeliverySettingsEditing(true);
+                      }}
+                    >
+                      Edit Delivery
+                    </Button>
+                  )}
+                </div>
+                {loadingDeliverySettings ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground rounded-lg border border-border p-3">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Loading delivery settings...
+                  </div>
+                ) : deliverySettingsEditing ? (
+                  <div className="space-y-4">
+                    <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                      <div className="space-y-0.5">
+                        <Label className="text-base">Enable delivery</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Allow staff to add a delivery fee during POS checkout.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={deliveryDraft.enabled}
+                        onCheckedChange={(checked) => handleDeliveryDraftChange(
+                          checked
+                            ? { enabled: true }
+                            : { enabled: false, requireSelectionAtCheckout: false }
+                        )}
+                      />
+                    </div>
+                    <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                      <div className="space-y-0.5">
+                        <Label className="text-base">Require selection at checkout</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Require staff to select a delivery band before completing a sale.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={deliveryDraft.requireSelectionAtCheckout}
+                        onCheckedChange={(checked) => handleDeliveryDraftChange({ requireSelectionAtCheckout: checked })}
+                        disabled={!deliveryDraft.enabled}
+                      />
+                    </div>
+                    <div className="rounded-lg border border-border p-3">
+                      <div className="flex items-center justify-between gap-3 mb-3">
+                        <div>
+                          <Label className="text-base">Delivery bands</Label>
+                          <p className="text-xs text-muted-foreground">
+                            Set distance ranges and fees in GHS.
+                          </p>
+                        </div>
+                        <Button type="button" variant="secondaryStroke" size="sm" onClick={handleAddDeliveryBand}>
+                          <Plus className="h-4 w-4 mr-1" />
+                          Add band
+                        </Button>
+                      </div>
+                      <div className="space-y-3">
+                        {(deliveryDraft.bands || []).length === 0 ? (
+                          <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border p-3">
+                            No delivery bands yet.
+                          </p>
+                        ) : (
+                          deliveryDraft.bands.map((band) => (
+                            <div key={band.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 rounded-lg border border-border p-3">
+                              <div className="md:col-span-4">
+                                <Label className="text-xs text-muted-foreground">Label</Label>
+                                <Input
+                                  value={band.label}
+                                  onChange={(event) => handleDeliveryBandChange(band.id, 'label', event.target.value)}
+                                  placeholder="Nearby"
+                                  className="mt-1"
+                                />
+                              </div>
+                              <div className="md:col-span-2">
+                                <Label className="text-xs text-muted-foreground">Min km</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={band.minKm}
+                                  onChange={(event) => handleDeliveryBandChange(band.id, 'minKm', event.target.value)}
+                                  placeholder="0"
+                                  className="mt-1"
+                                />
+                              </div>
+                              <div className="md:col-span-2">
+                                <Label className="text-xs text-muted-foreground">Max km</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={band.maxKm}
+                                  onChange={(event) => handleDeliveryBandChange(band.id, 'maxKm', event.target.value)}
+                                  placeholder="5"
+                                  className="mt-1"
+                                />
+                              </div>
+                              <div className="md:col-span-3">
+                                <Label className="text-xs text-muted-foreground">Fee (GHS)</Label>
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  value={band.fee}
+                                  onChange={(event) => handleDeliveryBandChange(band.id, 'fee', event.target.value)}
+                                  placeholder="12.50"
+                                  className="mt-1"
+                                />
+                              </div>
+                              <div className="md:col-span-1 flex md:items-end">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-10 w-10 text-red-600 hover:text-red-700"
+                                  onClick={() => handleRemoveDeliveryBand(band.id)}
+                                  aria-label="Remove delivery band"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          handleResetDeliveryDraft();
+                          setDeliverySettingsEditing(false);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        type="button"
+                        className="bg-[#166534] hover:bg-[#14532d]"
+                        loading={updateDeliverySettingsMutation.isPending || updateDeliverySettingsMutation.isLoading}
+                        onClick={handleSaveDeliverySettings}
+                      >
+                        Save Delivery Settings
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                      <div className="space-y-0.5">
+                        <Label className="text-base">Enable delivery</Label>
+                        <p className="text-xs text-muted-foreground">Allow delivery fees during checkout.</p>
+                      </div>
+                      <span className="text-sm font-medium shrink-0">{deliverySettings.enabled ? 'Yes' : 'No'}</span>
+                    </div>
+                    <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                      <div className="space-y-0.5">
+                        <Label className="text-base">Require selection at checkout</Label>
+                        <p className="text-xs text-muted-foreground">Require staff to pick a delivery band before sale completion.</p>
+                      </div>
+                      <span className="text-sm font-medium shrink-0">{deliverySettings.requireSelectionAtCheckout ? 'Yes' : 'No'}</span>
+                    </div>
+                    <div className="rounded-lg border border-border p-3">
+                      <Label className="text-base">Delivery bands</Label>
+                      <div className="mt-3 space-y-2">
+                        {(deliverySettings.bands || []).length === 0 ? (
+                          <p className="text-sm text-muted-foreground">No delivery bands configured.</p>
+                        ) : (
+                          deliverySettings.bands.map((band) => (
+                            <div key={band.id} className="flex flex-col gap-1 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+                              <div>
+                                <p className="text-sm font-medium text-foreground">{band.label}</p>
+                                <p className="text-xs text-muted-foreground">{band.minKm} km - {band.maxKm} km</p>
+                              </div>
+                              <span className="text-sm font-semibold text-[#166534]">GHS {Number(band.fee || 0).toFixed(2)}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <Alert>
                 <AlertDescription>
                   For SMS, WhatsApp, or Email receipts, configure those channels under Settings → Integration.
@@ -5123,6 +5443,155 @@ const Settings = () => {
                   <span className="text-sm font-medium shrink-0">{configData?.customer?.nameRequired ? 'Yes' : 'No'}</span>
                 </div>
               </div>
+            </div>
+            <div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+                <div>
+                  <p className="text-sm font-semibold mb-1">Delivery Settings</p>
+                  <p className="text-xs text-muted-foreground">
+                    Delivery availability and fee bands for POS checkout.
+                  </p>
+                </div>
+                {!loadingDeliverySettings && (
+                  <Button
+                    type="button"
+                    variant="secondaryStroke"
+                    size="sm"
+                    onClick={() => {
+                      handleResetDeliveryDraft();
+                      setDeliverySettingsEditing(true);
+                    }}
+                  >
+                    Edit Delivery
+                  </Button>
+                )}
+              </div>
+              {loadingDeliverySettings ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground rounded-lg border border-border p-3">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading delivery settings...
+                </div>
+              ) : deliverySettingsEditing ? (
+                <div className="space-y-4">
+                  <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                    <div className="space-y-0.5">
+                      <Label className="text-base">Enable delivery</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Allow staff to add a delivery fee during POS checkout.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={deliveryDraft.enabled}
+                      onCheckedChange={(checked) => handleDeliveryDraftChange(
+                        checked
+                          ? { enabled: true }
+                          : { enabled: false, requireSelectionAtCheckout: false }
+                      )}
+                    />
+                  </div>
+                  <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                    <div className="space-y-0.5">
+                      <Label className="text-base">Require selection at checkout</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Require staff to select a delivery band before completing a sale.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={deliveryDraft.requireSelectionAtCheckout}
+                      onCheckedChange={(checked) => handleDeliveryDraftChange({ requireSelectionAtCheckout: checked })}
+                      disabled={!deliveryDraft.enabled}
+                    />
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div>
+                        <Label className="text-base">Delivery bands</Label>
+                        <p className="text-xs text-muted-foreground">Set distance ranges and fees in GHS.</p>
+                      </div>
+                      <Button type="button" variant="secondaryStroke" size="sm" onClick={handleAddDeliveryBand}>
+                        <Plus className="h-4 w-4 mr-1" />
+                        Add band
+                      </Button>
+                    </div>
+                    <div className="space-y-3">
+                      {(deliveryDraft.bands || []).length === 0 ? (
+                        <p className="text-sm text-muted-foreground rounded-lg border border-dashed border-border p-3">
+                          No delivery bands yet.
+                        </p>
+                      ) : (
+                        deliveryDraft.bands.map((band) => (
+                          <div key={band.id} className="grid grid-cols-1 md:grid-cols-12 gap-3 rounded-lg border border-border p-3">
+                            <div className="md:col-span-4">
+                              <Label className="text-xs text-muted-foreground">Label</Label>
+                              <Input value={band.label} onChange={(event) => handleDeliveryBandChange(band.id, 'label', event.target.value)} placeholder="Nearby" className="mt-1" />
+                            </div>
+                            <div className="md:col-span-2">
+                              <Label className="text-xs text-muted-foreground">Min km</Label>
+                              <Input type="number" min="0" step="0.01" value={band.minKm} onChange={(event) => handleDeliveryBandChange(band.id, 'minKm', event.target.value)} placeholder="0" className="mt-1" />
+                            </div>
+                            <div className="md:col-span-2">
+                              <Label className="text-xs text-muted-foreground">Max km</Label>
+                              <Input type="number" min="0" step="0.01" value={band.maxKm} onChange={(event) => handleDeliveryBandChange(band.id, 'maxKm', event.target.value)} placeholder="5" className="mt-1" />
+                            </div>
+                            <div className="md:col-span-3">
+                              <Label className="text-xs text-muted-foreground">Fee (GHS)</Label>
+                              <Input type="number" min="0" step="0.01" value={band.fee} onChange={(event) => handleDeliveryBandChange(band.id, 'fee', event.target.value)} placeholder="12.50" className="mt-1" />
+                            </div>
+                            <div className="md:col-span-1 flex md:items-end">
+                              <Button type="button" variant="outline" size="icon" className="h-10 w-10 text-red-600 hover:text-red-700" onClick={() => handleRemoveDeliveryBand(band.id)} aria-label="Remove delivery band">
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => { handleResetDeliveryDraft(); setDeliverySettingsEditing(false); }}>
+                      Cancel
+                    </Button>
+                    <Button type="button" className="bg-[#166534] hover:bg-[#14532d]" loading={updateDeliverySettingsMutation.isPending || updateDeliverySettingsMutation.isLoading} onClick={handleSaveDeliverySettings}>
+                      Save Delivery Settings
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                    <div className="space-y-0.5">
+                      <Label className="text-base">Enable delivery</Label>
+                      <p className="text-xs text-muted-foreground">Allow delivery fees during checkout.</p>
+                    </div>
+                    <span className="text-sm font-medium shrink-0">{deliverySettings.enabled ? 'Yes' : 'No'}</span>
+                  </div>
+                  <div className="flex flex-row items-center justify-between rounded-lg border border-border p-3">
+                    <div className="space-y-0.5">
+                      <Label className="text-base">Require selection at checkout</Label>
+                      <p className="text-xs text-muted-foreground">Require staff to pick a delivery band before sale completion.</p>
+                    </div>
+                    <span className="text-sm font-medium shrink-0">{deliverySettings.requireSelectionAtCheckout ? 'Yes' : 'No'}</span>
+                  </div>
+                  <div className="rounded-lg border border-border p-3">
+                    <Label className="text-base">Delivery bands</Label>
+                    <div className="mt-3 space-y-2">
+                      {(deliverySettings.bands || []).length === 0 ? (
+                        <p className="text-sm text-muted-foreground">No delivery bands configured.</p>
+                      ) : (
+                        deliverySettings.bands.map((band) => (
+                          <div key={band.id} className="flex flex-col gap-1 rounded-lg border border-border p-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <p className="text-sm font-medium text-foreground">{band.label}</p>
+                              <p className="text-xs text-muted-foreground">{band.minKm} km - {band.maxKm} km</p>
+                            </div>
+                            <span className="text-sm font-semibold text-[#166534]">GHS {Number(band.fee || 0).toFixed(2)}</span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
             <Alert>
               <AlertDescription>

@@ -21,6 +21,7 @@ import { SecondaryButton } from '@/components/ui/secondary-button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Switch } from '@/components/ui/switch';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogBody,
@@ -30,6 +31,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 // POS Components
 import POSCart from '../components/pos/POSCart';
@@ -431,6 +433,13 @@ const POS = () => {
   const [mobileMoneyError, setMobileMoneyError] = useState('');
   const [mobileMoneyFallbackMode, setMobileMoneyFallbackMode] = useState(null); // null | 'manual'
   const [variantPickerProduct, setVariantPickerProduct] = useState(null);
+  const [customItemDialogOpen, setCustomItemDialogOpen] = useState(false);
+  const [customItemForm, setCustomItemForm] = useState({
+    name: '',
+    unitPrice: '',
+    quantity: '1',
+    saveAsProduct: false,
+  });
 
   useEffect(() => {
     if (!isOnline) {
@@ -603,6 +612,62 @@ const POS = () => {
     addResolvedItemToCart(product, null);
   }, [addResolvedItemToCart]);
 
+  const resetCustomItemForm = useCallback(() => {
+    setCustomItemForm({
+      name: '',
+      unitPrice: '',
+      quantity: '1',
+      saveAsProduct: false,
+    });
+  }, []);
+
+  const handleOpenCustomItemDialog = useCallback(() => {
+    resetCustomItemForm();
+    setCustomItemDialogOpen(true);
+  }, [resetCustomItemForm]);
+
+  const handleAddCustomItem = useCallback(() => {
+    const name = customItemForm.name.trim();
+    const unitPrice = Number(customItemForm.unitPrice);
+    const quantity = Number(customItemForm.quantity);
+
+    if (!name) {
+      showError('Custom item name is required');
+      return;
+    }
+    if (!Number.isFinite(unitPrice) || unitPrice < 0) {
+      showError('Unit price must be greater than or equal to 0');
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      showError('Quantity must be greater than 0');
+      return;
+    }
+
+    setCart((prevCart) => [
+      ...prevCart,
+      {
+        id: generateCartItemId(),
+        type: 'custom',
+        productId: null,
+        productVariantId: null,
+        name,
+        sku: null,
+        productCode: null,
+        baseUnitPrice: unitPrice,
+        catalogUnitPrice: null,
+        unitPrice,
+        priceOverridden: false,
+        quantity,
+        discount: 0,
+        tax: 0,
+        saveAsProduct: customItemForm.saveAsProduct === true,
+      },
+    ]);
+    setCustomItemDialogOpen(false);
+    resetCustomItemForm();
+  }, [customItemForm, resetCustomItemForm]);
+
   const handleSelectVariant = useCallback((variant) => {
     if (!variantPickerProduct) return;
     addResolvedItemToCart(variantPickerProduct, variant);
@@ -769,6 +834,35 @@ const POS = () => {
     setPaymentModalOpen(true);
   }, [cart, selectedCustomer, quickCustomerPhone, quickCustomerName, handleFindOrCreateCustomer]);
 
+  const buildSaleItemPayload = useCallback((item) => {
+    if (item.type === 'custom' || !item.productId) {
+      return {
+        type: 'custom',
+        name: item.name,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        saveAsProduct: item.saveAsProduct === true,
+        discount: item.discount || 0,
+        tax: item.tax || 0,
+      };
+    }
+
+    return {
+      productId: item.productId,
+      productVariantId: item.productVariantId,
+      name: item.name,
+      sku: item.sku,
+      productCode: item.productCode,
+      quantity: item.quantity,
+      baseUnitPrice: item.baseUnitPrice,
+      catalogUnitPrice: item.catalogUnitPrice,
+      unitPrice: item.unitPrice,
+      priceOverridden: item.priceOverridden === true,
+      discount: item.discount || 0,
+      tax: item.tax || 0
+    };
+  }, []);
+
   // Handle payment confirmation
   const handleConfirmPayment = useCallback(async (paymentDetails) => {
     setIsProcessingPayment(true);
@@ -776,20 +870,7 @@ const POS = () => {
     try {
       // Prepare sale data
       const saleData = {
-        items: cart.map(item => ({
-          productId: item.productId,
-          productVariantId: item.productVariantId,
-          name: item.name,
-          sku: item.sku,
-          productCode: item.productCode,
-          quantity: item.quantity,
-          baseUnitPrice: item.baseUnitPrice,
-          catalogUnitPrice: item.catalogUnitPrice,
-          unitPrice: item.unitPrice,
-          priceOverridden: item.priceOverridden === true,
-          discount: item.discount || 0,
-          tax: item.tax || 0
-        })),
+        items: cart.map(buildSaleItemPayload),
         customerId: selectedCustomer?.id || null,
         paymentMethod: paymentDetails.paymentMethod,
         amountPaid: paymentDetails.amountPaid,
@@ -802,7 +883,8 @@ const POS = () => {
           mobileMoneyPhone: paymentDetails.mobileMoneyPhone,
           mobileMoneyReference: paymentDetails.mobileMoneyReference,
           posTaxConfigSnapshot: posTaxConfig
-        }
+        },
+        delivery: paymentDetails.delivery || { required: false, bandId: null, fee: 0 }
       };
       if (isRestaurant) {
         saleData.sendToKitchen = paymentDetails.sendToKitchen ?? true;
@@ -812,7 +894,7 @@ const POS = () => {
 
       if (result.success) {
         const saleObj = result.sale || {
-          total: cartTotals.total,
+          total: paymentDetails.total ?? cartTotals.total,
           change: paymentDetails.change || 0,
           items: cart,
           paymentMethod: paymentDetails.paymentMethod,
@@ -852,11 +934,11 @@ const POS = () => {
     } finally {
       setIsProcessingPayment(false);
     }
-  }, [cart, selectedCustomer, cartTotals, processSale, clearCart, isRestaurant, posConfig, cartDiscount, posTaxConfig]);
+  }, [cart, selectedCustomer, cartTotals, processSale, clearCart, isRestaurant, posConfig, cartDiscount, posTaxConfig, buildSaleItemPayload]);
 
   // Handle Paystack Mobile Money payment request (POS)
   const handleRequestMobileMoneyPayment = useCallback(
-    async ({ phone, provider }) => {
+    async ({ phone, provider, delivery }) => {
       const phoneNumber = (phone || '').trim();
       const logicalProvider = String(provider || 'MTN').toUpperCase();
 
@@ -887,20 +969,7 @@ const POS = () => {
       try {
         // 1. Create pending sale
         const saleData = {
-          items: cart.map((item) => ({
-            productId: item.productId,
-            productVariantId: item.productVariantId,
-            name: item.name,
-            sku: item.sku,
-            productCode: item.productCode,
-            quantity: item.quantity,
-            baseUnitPrice: item.baseUnitPrice,
-            catalogUnitPrice: item.catalogUnitPrice,
-            unitPrice: item.unitPrice,
-            priceOverridden: item.priceOverridden === true,
-            discount: item.discount || 0,
-            tax: item.tax || 0
-          })),
+          items: cart.map(buildSaleItemPayload),
           customerId: selectedCustomer?.id || null,
           paymentMethod: 'mobile_money',
           status: 'pending',
@@ -908,7 +977,8 @@ const POS = () => {
           metadata: {
             mobileMoneyProvider: logicalProvider,
             mobileMoneyPhone: phoneNumber
-          }
+          },
+          delivery: delivery || { required: false, bandId: null, fee: 0 }
         };
 
         const result = await processSale(saleData);
@@ -1079,7 +1149,8 @@ const POS = () => {
       posConfig,
       quickCustomerName,
       quickCustomerPhone,
-      clearCart
+      clearCart,
+      buildSaleItemPayload
     ]
   );
 
@@ -1283,6 +1354,7 @@ const POS = () => {
             cartQuantityByProductId={cartQuantityByProductId}
             fillHeight
             onAdjustProductQuantity={adjustProductQuantity}
+            onAddCustomItem={handleOpenCustomItemDialog}
           />
         </div>
 
@@ -1338,6 +1410,74 @@ const POS = () => {
         onClose={() => setVariantPickerProduct(null)}
         onSelect={handleSelectVariant}
       />
+
+      <Dialog
+        open={customItemDialogOpen}
+        onOpenChange={(open) => {
+          setCustomItemDialogOpen(open);
+          if (!open) resetCustomItemForm();
+        }}
+      >
+        <DialogContent className="sm:w-[var(--modal-w-sm)]">
+          <DialogHeader>
+            <DialogTitle>Add custom item</DialogTitle>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="custom-item-name">Name</Label>
+              <Input
+                id="custom-item-name"
+                value={customItemForm.name}
+                onChange={(event) => setCustomItemForm((prev) => ({ ...prev, name: event.target.value }))}
+                placeholder="e.g. Special order"
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="custom-item-price">Unit price</Label>
+                <Input
+                  id="custom-item-price"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={customItemForm.unitPrice}
+                  onChange={(event) => setCustomItemForm((prev) => ({ ...prev, unitPrice: event.target.value }))}
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="custom-item-quantity">Quantity</Label>
+                <Input
+                  id="custom-item-quantity"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  value={customItemForm.quantity}
+                  onChange={(event) => setCustomItemForm((prev) => ({ ...prev, quantity: event.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 rounded-lg border border-border p-3">
+              <Checkbox
+                id="custom-item-save"
+                checked={customItemForm.saveAsProduct}
+                onCheckedChange={(checked) => setCustomItemForm((prev) => ({ ...prev, saveAsProduct: checked === true }))}
+              />
+              <Label htmlFor="custom-item-save" className="cursor-pointer font-normal">
+                Save to products (optional)
+              </Label>
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCustomItemDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" className="bg-[#166534] hover:bg-[#14532d]" onClick={handleAddCustomItem}>
+              Add item
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Payment modal */}
       <POSPaymentModal

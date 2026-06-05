@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { LayoutGrid, List, RefreshCw, Loader2, Clock, ChefHat, CheckCircle, User, Package, GripVertical } from 'lucide-react';
+import { LayoutGrid, List, RefreshCw, Loader2, Clock, ChefHat, CheckCircle, User, Package, GripVertical, Trash2 } from 'lucide-react';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import saleService from '../services/saleService';
 import { useAuth } from '../context/AuthContext';
@@ -10,6 +10,16 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   ORDER_STATUSES,
   ORDER_STATUS_LABELS,
@@ -100,7 +110,7 @@ function DeliveryStatusSelect({ order, loadingId, onDeliveryChange, triggerClass
   );
 }
 
-const OrderCard = ({ order, onStatusChange, onDeliveryChange, loadingId, dragHandleProps, touchFriendly }) => {
+const OrderCard = ({ order, onStatusChange, onDeliveryChange, onDelete, canDelete, loadingId, dragHandleProps, touchFriendly }) => {
   const groupedItems = groupOrderItems(order.items);
   const customerName = order.customer?.name || 'Walk-in';
   const timeAgo = order.createdAt ? dayjs(order.createdAt).fromNow() : '';
@@ -195,6 +205,18 @@ const OrderCard = ({ order, onStatusChange, onDeliveryChange, loadingId, dragHan
             onDeliveryChange={onDeliveryChange}
             triggerClassName={touchFriendly ? 'h-10 text-sm w-full max-w-none' : 'h-8 text-xs w-full max-w-[220px]'}
           />
+          {canDelete && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="mt-2 text-destructive hover:text-destructive"
+              disabled={loadingId === order.id}
+              onClick={() => onDelete(order)}
+            >
+              <Trash2 className="h-3 w-3 mr-1" />
+              Delete
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -202,7 +224,7 @@ const OrderCard = ({ order, onStatusChange, onDeliveryChange, loadingId, dragHan
 };
 
 const Orders = () => {
-  const { activeTenant } = useAuth();
+  const { activeTenant, isAdmin } = useAuth();
   const { isMobile } = useResponsive();
   const shopType =
     activeTenant?.metadata?.businessSubType ||
@@ -215,6 +237,7 @@ const Orders = () => {
   const [viewMode, setViewMode] = useState('kanban'); // 'kanban' | 'list'
   const [statusFilter, setStatusFilter] = useState('all');
   const [loadingId, setLoadingId] = useState(null);
+  const [orderToDelete, setOrderToDelete] = useState(null);
   const lastOrderIds = useRef(new Set());
   const [hasInteracted, setHasInteracted] = useState(false);
   const isDraggingRef = useRef(false);
@@ -292,6 +315,20 @@ const Orders = () => {
     },
     [fetchOrders]
   );
+
+  const handleDeleteOrder = useCallback(async (order) => {
+    setLoadingId(order.id);
+    try {
+      await saleService.deleteSale(order.id);
+      showSuccess('Order deleted successfully');
+      setOrderToDelete(null);
+      await fetchOrders();
+    } catch (err) {
+      showError(err, 'Failed to delete order');
+    } finally {
+      setLoadingId(null);
+    }
+  }, [fetchOrders]);
 
   const handleDragStart = useCallback(() => {
     isDraggingRef.current = true;
@@ -424,6 +461,8 @@ const Orders = () => {
                                   order={order}
                                   onStatusChange={handleStatusChange}
                                   onDeliveryChange={handleDeliveryChange}
+                                  onDelete={setOrderToDelete}
+                                  canDelete={isAdmin}
                                   loadingId={loadingId}
                                   dragHandleProps={draggableProvided.dragHandleProps}
                                   touchFriendly={isMobile}
@@ -522,6 +561,18 @@ const Orders = () => {
                     onDeliveryChange={handleDeliveryChange}
                     triggerClassName="h-8 text-xs w-[min(200px,100%)]"
                   />
+                  {isAdmin && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-destructive hover:text-destructive"
+                      disabled={loadingId === order.id}
+                      onClick={() => setOrderToDelete(order)}
+                    >
+                      <Trash2 className="h-3 w-3 mr-1" />
+                      Delete
+                    </Button>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -532,6 +583,27 @@ const Orders = () => {
           )}
         </div>
       )}
+      <AlertDialog open={!!orderToDelete} onOpenChange={(open) => !open && setOrderToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete order?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {orderToDelete
+                ? `Are you sure you want to delete order "${orderToDelete.saleNumber || orderToDelete.id}"? This action cannot be undone.`
+                : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => orderToDelete && handleDeleteOrder(orderToDelete)}
+            >
+              Delete order
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

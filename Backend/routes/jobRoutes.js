@@ -35,7 +35,7 @@ router.route('/')
 router.route('/:id')
   .get(getJob)
   .put(authorize('admin', 'manager', 'staff'), updateJob)
-  .delete(authorize('admin', 'manager', 'staff'), deleteJob);
+  .delete(authorize('admin'), deleteJob);
 
 // Use memory storage for job attachments since we store base64 in database
 const jobAttachmentUploader = multer({

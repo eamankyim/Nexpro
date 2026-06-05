@@ -1,0 +1,94 @@
+const { Tenant } = require('../models');
+const emailService = require('./emailService');
+const emailTemplates = require('./emailTemplates');
+const smsService = require('./smsService');
+const whatsappService = require('./whatsappService');
+const whatsappTemplates = require('./whatsappTemplates');
+const { isChannelEnabledForEvent } = require('./messageDeliveryRulesService');
+const { getTenantLogoUrl } = require('../utils/tenantLogo');
+const { formatCedi } = require('../utils/formatNumber');
+
+const EVENT_KEY = 'order_created';
+
+const customerName = (customer = {}) => customer.name || customer.company || 'Customer';
+
+const buildSmsMessage = (sale, companyName) => {
+  const orderNumber = sale?.saleNumber || 'your order';
+  const total = formatCedi(sale?.total || 0);
+  const delivery = sale?.metadata?.delivery;
+  const deliveryText = delivery?.required
+    ? ` Delivery: ${delivery.label || 'selected'} (${formatCedi(delivery.fee || 0)}).`
+    : '';
+  return `Hello ${customerName(sale?.customer)}, your order ${orderNumber} from ${companyName} has been received. Total: ${total}.${deliveryText}`;
+};
+
+const notifyOrderCreatedForCustomer = async ({ tenantId, sale }) => {
+  if (!tenantId || !sale?.customer) {
+    return { sent: false, results: [] };
+  }
+
+  const customer = sale.customer;
+  const tenant = await Tenant.findByPk(tenantId);
+  const company = {
+    name: sale.shop?.name || tenant?.name || 'Business',
+    primaryColor: tenant?.metadata?.primaryColor || '#166534',
+    logoUrl: getTenantLogoUrl(tenant)
+  };
+  const results = [];
+
+  const [emailAllowed, smsAllowed, whatsappAllowed] = await Promise.all([
+    isChannelEnabledForEvent(tenantId, EVENT_KEY, 'email'),
+    isChannelEnabledForEvent(tenantId, EVENT_KEY, 'sms'),
+    isChannelEnabledForEvent(tenantId, EVENT_KEY, 'whatsapp')
+  ]);
+
+  const email = String(customer.email || '').trim();
+  if (emailAllowed && email) {
+    const emailConfig = await emailService.getConfig(tenantId);
+    if (emailConfig) {
+      const { subject, html, text } = emailTemplates.orderCreatedEmail(sale, customer, company);
+      const result = await emailService.sendMessage(tenantId, email, subject, html, text);
+      results.push({ channel: 'email', success: result.success === true, error: result.error || null });
+    }
+  }
+
+  const phone = String(customer.phone || '').trim();
+  if (smsAllowed && phone) {
+    const smsConfig = await smsService.getConfig(tenantId);
+    const smsPhone = smsService.validatePhoneNumber(phone);
+    if (smsConfig && smsPhone) {
+      const result = await smsService.sendMessage(tenantId, smsPhone, buildSmsMessage(sale, company.name));
+      results.push({ channel: 'sms', success: result.success === true, error: result.error || null });
+    }
+  }
+
+  if (whatsappAllowed && phone) {
+    const whatsappConfig = await whatsappService.getConfig(tenantId);
+    const whatsappPhone = whatsappService.validatePhoneNumber(phone);
+    if (whatsappConfig?.enabled && whatsappPhone) {
+      const templateName = whatsappConfig.orderCreatedTemplateName || 'order_created';
+      const salePlain = typeof sale.toJSON === 'function' ? sale.toJSON() : sale;
+      const result = await whatsappService.sendMessage(
+        tenantId,
+        whatsappPhone,
+        templateName,
+        templateName === 'order_created'
+          ? whatsappTemplates.prepareOrderCreated({ ...salePlain, tenant })
+          : [buildSmsMessage(sale, company.name).slice(0, 900)],
+        whatsappConfig.orderCreatedTemplateLanguage || 'en',
+        { category: 'transactional', metadata: { source: EVENT_KEY, saleId: sale.id } }
+      );
+      results.push({ channel: 'whatsapp', success: result.success === true, error: result.error || null });
+    }
+  }
+
+  return {
+    sent: results.some((result) => result.success),
+    results
+  };
+};
+
+module.exports = {
+  EVENT_KEY,
+  notifyOrderCreatedForCustomer
+};

@@ -183,7 +183,7 @@ const convertToJobSchema = z.object({
 const Quotes = () => {
   const { searchValue, setPageSearchConfig } = useSmartSearch();
   const debouncedSearch = useDebounce(searchValue, DEBOUNCE_DELAYS.SEARCH);
-  const { activeTenantId } = useAuth();
+  const { activeTenantId, activeTenant, isAdmin } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const { activeStudioLocationId, scopeReady } = useWorkspaceScope();
@@ -587,10 +587,10 @@ const Quotes = () => {
     setQuoteModalVisible(true);
   };
 
-  const handleDeleteQuote = async (quote) => {
+  const handleDeleteQuote = useCallback((quote) => {
     setDeleteQuoteId(quote.id);
     setDeleteDialogOpen(true);
-  };
+  }, []);
 
   const handleDeleteConfirm = async () => {
     if (!deleteQuoteId) return;
@@ -692,7 +692,6 @@ const Quotes = () => {
     }
   };
 
-  const { activeTenant } = useAuth();
   const businessType = activeTenant?.businessType || 'printing_press';
   const isShop = businessType === 'shop';
   const isPharmacy = businessType === 'pharmacy';
@@ -872,11 +871,19 @@ const Quotes = () => {
         <ActionColumn
           record={record}
           onView={handleView}
-          extraActions={[]}
+          extraActions={[
+            isAdmin && record.status !== 'accepted' && {
+              key: 'delete',
+              label: 'Delete quote',
+              icon: <Trash2 className="h-4 w-4" />,
+              onClick: () => handleDeleteQuote(record),
+              destructive: true
+            }
+          ].filter(Boolean)}
         />
       )
     }
-  ], [handleView]);
+  ], [handleView, handleDeleteQuote, isAdmin]);
 
   const handleClearFilters = () => {
     setFilters({
@@ -1148,7 +1155,9 @@ const Quotes = () => {
             disabled: updatingStatus
           }] : []),
           { key: 'edit', label: 'Edit', icon: <Pencil className="h-4 w-4" />, onClick: () => handleEditQuote(viewingQuote) },
-          { key: 'delete', label: 'Delete', icon: <Trash2 className="h-4 w-4" />, onClick: () => handleDeleteQuote(viewingQuote), destructive: true }
+          ...(isAdmin && viewingQuote.status !== 'accepted' ? [
+            { key: 'delete', label: 'Delete quote', icon: <Trash2 className="h-4 w-4" />, onClick: () => handleDeleteQuote(viewingQuote), destructive: true }
+          ] : [])
         ] : []}
         tabs={viewingQuote ? [
           {

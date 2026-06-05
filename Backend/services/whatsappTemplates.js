@@ -46,6 +46,13 @@ const TEMPLATES = {
     description: 'Send POS sale receipt summary',
     parameters: ['customerName', 'saleNumber', 'amount', 'businessName'],
     example: 'Hello {{1}}, receipt {{2}} for {{3}} from {{4}} is ready. Thank you for your purchase.'
+  },
+  order_created: {
+    name: 'order_created',
+    language: 'en',
+    description: 'Notify customer when an order is created',
+    parameters: ['customerName', 'orderNumber', 'amount', 'businessName'],
+    example: 'Hello {{1}}, your order {{2}} for {{3}} from {{4}} has been received.'
   }
 };
 
@@ -144,6 +151,17 @@ function prepareSaleReceipt(sale) {
   ];
 }
 
+function prepareOrderCreated(sale) {
+  const customer = sale.customer || {};
+  const business = sale.shop?.name || sale.tenant?.name || 'Business';
+  return [
+    customer.name || customer.company || 'Customer',
+    sale.saleNumber || 'N/A',
+    formatCurrency(sale.total || 0),
+    business
+  ];
+}
+
 /**
  * Get template definition
  * @param {string} templateName - Template name
@@ -175,6 +193,7 @@ module.exports = {
   preparePaymentReminder,
   prepareLowStockAlert,
   prepareSaleReceipt,
+  prepareOrderCreated,
   getTemplate,
   validateParameters
 };

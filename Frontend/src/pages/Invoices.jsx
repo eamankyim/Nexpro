@@ -729,10 +729,22 @@ const Invoices = () => {
       key: 'actions',
       label: 'Actions',
       render: (_, record) => (
-        <ActionColumn onView={handleView} record={record} extraActions={[]} />
+        <ActionColumn
+          onView={handleView}
+          record={record}
+          extraActions={[
+            isAdmin && ['draft', 'cancelled'].includes(record.status) && {
+              key: 'delete',
+              label: record.status === 'cancelled' ? 'Delete cancelled invoice' : 'Delete draft invoice',
+              icon: <Trash2 className="h-4 w-4" />,
+              onClick: () => setInvoiceToDelete(record),
+              destructive: true,
+            },
+          ].filter(Boolean)}
+        />
       ),
     },
-  ], [isPrintingPress, handleView]);
+  ], [isPrintingPress, handleView, isAdmin]);
 
   const invoicesEmptyState = useMemo(() => {
     if (filters.status || debouncedSearch.trim()) {

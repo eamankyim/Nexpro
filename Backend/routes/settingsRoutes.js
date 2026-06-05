@@ -26,6 +26,8 @@ const {
   getNotificationChannels,
   getMessageDeliveryRules,
   updateMessageDeliveryRules,
+  getDeliverySettings,
+  updateDeliverySettings,
   updateCustomerNotificationPreferences,
   getQuoteWorkflow,
   updateQuoteWorkflow,
@@ -164,6 +166,10 @@ router
   .route('/message-delivery-rules')
   .get(authorize('admin', 'manager'), getMessageDeliveryRules)
   .put(authorize('admin', 'manager'), updateMessageDeliveryRules);
+router
+  .route('/delivery')
+  .get(getDeliverySettings)
+  .put(authorize('admin', 'manager'), updateDeliverySettings);
 router.put(
   '/customer-notification-preferences',
   authorize('admin', 'manager'),

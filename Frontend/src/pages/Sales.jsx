@@ -8,7 +8,7 @@ const POS = lazy(() => import('./POS'));
 import { useDebounce } from '../hooks/useDebounce';
 import { usePOSConfig } from '../hooks/usePOSConfig';
 import { useResponsive } from '../hooks/useResponsive';
-import { ShoppingCart, Filter, RefreshCw, Printer, Receipt, FileText, Loader2, X, CheckCircle, Clock, XCircle, Download, Plus, Archive } from 'lucide-react';
+import { ShoppingCart, Filter, RefreshCw, Printer, Receipt, FileText, Loader2, X, CheckCircle, Clock, XCircle, Download, Plus, Trash2 } from 'lucide-react';
 import { generatePDF, openPrintDialog } from '../utils/pdfUtils';
 import saleService from '../services/saleService';
 import customerService from '../services/customerService';
@@ -118,6 +118,20 @@ const getSaleItemCatalogUnitPrice = (item) => {
 
 const isSaleItemPriceOverridden = (item) => item?.metadata?.priceOverridden === true || item?.priceOverridden === true;
 
+const getSaleDelivery = (sale) => {
+  const metadataDelivery = sale?.metadata?.delivery || {};
+  const fee = Number(sale?.deliveryFee ?? metadataDelivery.fee ?? 0);
+  const required = sale?.deliveryRequired === true || metadataDelivery.required === true || fee > 0;
+  if (!required) return null;
+  return {
+    fee: Number.isFinite(fee) ? fee : 0,
+    bandId: sale?.deliveryBandId || metadataDelivery.bandId || '',
+    label: metadataDelivery.label || sale?.deliveryBand?.label || '',
+    minKm: metadataDelivery.minKm,
+    maxKm: metadataDelivery.maxKm,
+  };
+};
+
 const Sales = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -129,6 +143,7 @@ const Sales = () => {
   const [salesSummary, setSalesSummary] = useState({
     completedCount: 0,
     pendingCount: 0,
+    kitchenPendingCount: 0,
     completedRevenue: 0,
   });
   const [saleForPayment, setSaleForPayment] = useState(null);
@@ -154,7 +169,7 @@ const Sales = () => {
   const [loadingReceipt, setLoadingReceipt] = useState(false);
   const [saleToDelete, setSaleToDelete] = useState(null);
   const [updatingSaleDelivery, setUpdatingSaleDelivery] = useState(false);
-  const { activeTenant, activeTenantId } = useAuth();
+  const { activeTenant, activeTenantId, isAdmin } = useAuth();
   const shopContext = useShopOptional();
   const activeShopId = shopContext?.activeShopId ?? null;
   const businessType = activeTenant?.businessType || 'printing_press';
@@ -223,34 +238,20 @@ const Sales = () => {
     });
   }, [hasProducts, hasActiveFilters, navigate, handleClearFilters]);
 
-  // For restaurants: Pending = orders in kitchen (not completed); Completed = kitchen done or never sent
-  const KITCHEN_PENDING_STATUSES = ['received', 'preparing', 'ready'];
-  const completedCount = useMemo(() => {
-    if (!isRestaurant) return Number(salesSummary.completedCount || 0);
-    if (isRestaurant) {
-      return sales.filter(s =>
-        s.orderStatus === 'completed' ||
-        (s.orderStatus == null && s.status === 'completed')
-      ).length;
-    }
-    return sales.filter(s => s.status === 'completed').length;
-  }, [sales, isRestaurant, salesSummary.completedCount]);
-  const pendingCount = useMemo(() => {
-    if (!isRestaurant) return Number(salesSummary.pendingCount || 0);
-    if (isRestaurant) {
-      return sales.filter(s => KITCHEN_PENDING_STATUSES.includes(s.orderStatus)).length;
-    }
-    return sales.filter(s => s.status === 'pending').length;
-  }, [sales, isRestaurant, salesSummary.pendingCount]);
-
-  // Revenue = completed sales only for the full filtered result set (aligns with Dashboard definition)
-  const totalRevenueCompleted = useMemo(() => {
-    if (!isRestaurant) return Number(salesSummary.completedRevenue || 0);
-    const completed = isRestaurant
-      ? sales.filter(s => s.orderStatus === 'completed' || (s.orderStatus == null && s.status === 'completed'))
-      : sales.filter(s => s.status === 'completed');
-    return completed.reduce((sum, s) => sum + parseFloat(s.total || 0), 0);
-  }, [sales, isRestaurant, salesSummary.completedRevenue]);
+  // Stats use API summary across the full filtered result set (not the current table page).
+  // Completed/revenue follow sale.status (same field as the table). Restaurant kitchen pending uses orderStatus.
+  const completedCount = useMemo(
+    () => Number(salesSummary.completedCount || 0),
+    [salesSummary.completedCount]
+  );
+  const pendingCount = useMemo(
+    () => Number(isRestaurant ? salesSummary.kitchenPendingCount : salesSummary.pendingCount) || 0,
+    [isRestaurant, salesSummary.kitchenPendingCount, salesSummary.pendingCount]
+  );
+  const totalRevenueCompleted = useMemo(
+    () => Number(salesSummary.completedRevenue || 0),
+    [salesSummary.completedRevenue]
+  );
 
   const fetchSales = useCallback(async (isRefresh = false) => {
     if (isRefresh) {
@@ -290,6 +291,7 @@ const Sales = () => {
       setSalesSummary({
         completedCount: Number(summary.completedCount || 0),
         pendingCount: Number(summary.pendingCount || 0),
+        kitchenPendingCount: Number(summary.kitchenPendingCount || 0),
         completedRevenue: Number(summary.completedRevenue || 0),
       });
       if (response?.data?.pagination) {
@@ -300,7 +302,7 @@ const Sales = () => {
     } catch (error) {
       showError(error, 'Failed to load sales');
       setSales([]);
-      setSalesSummary({ completedCount: 0, pendingCount: 0, completedRevenue: 0 });
+      setSalesSummary({ completedCount: 0, pendingCount: 0, kitchenPendingCount: 0, completedRevenue: 0 });
     } finally {
       if (isRefresh) {
         setRefreshingSales(false);
@@ -581,10 +583,21 @@ const Sales = () => {
     },
     {
       key: 'status',
-      label: 'Status',
+      label: isRestaurant ? 'Payment' : 'Status',
       mobileDashboardPlacement: 'headerEnd',
       render: (_, record) => <StatusChip status={record.status} />
     },
+    ...(isRestaurant ? [{
+      key: 'orderStatus',
+      label: 'Kitchen',
+      render: (_, record) => (
+        record.orderStatus ? (
+          <StatusChip status={record.orderStatus} />
+        ) : (
+          <span className="text-muted-foreground text-sm">—</span>
+        )
+      )
+    }] : []),
     {
       key: 'createdAt',
       label: 'Date',
@@ -615,12 +628,20 @@ const Sales = () => {
               variant: 'secondary',
               icon: <FileText className="h-4 w-4" />,
               onClick: () => handleViewInvoice(record)
+            },
+            isAdmin && {
+              key: 'delete',
+              label: 'Delete sale',
+              variant: 'outline',
+              icon: <Trash2 className="h-4 w-4" />,
+              onClick: () => setSaleToDelete(record),
+              destructive: true
             }
           ].filter(Boolean)}
         />
       )
     }
-  ], [handleView, handleViewInvoice, handleOpenRecordPayment]);
+  ], [handleView, handleViewInvoice, handleOpenRecordPayment, isAdmin, isRestaurant]);
 
   const drawerFields = useMemo(() => viewingSale ? [
     { label: 'Sale Number', value: viewingSale.saleNumber },
@@ -657,6 +678,21 @@ const Sales = () => {
     {
       label: 'Tax',
       value: formatAmount(viewingSale.tax)
+    },
+    getSaleDelivery(viewingSale) && {
+      label: 'Delivery',
+      value: (() => {
+        const delivery = getSaleDelivery(viewingSale);
+        return (
+          <div>
+            <div className="font-medium">{formatAmount(delivery.fee)}</div>
+            <div className="text-muted-foreground text-sm">
+              {delivery.label || delivery.bandId || 'Delivery band'}
+              {delivery.minKm != null && delivery.maxKm != null ? ` (${delivery.minKm}-${delivery.maxKm} km)` : ''}
+            </div>
+          </div>
+        );
+      })()
     },
     {
       label: 'Total',
@@ -766,36 +802,40 @@ const Sales = () => {
 
       <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <DashboardStatsCard
-          tooltip="Total number of sales matching the current filters"
+          tooltip="Total sales matching your current filters, across all pages"
           title="Total Sales"
           value={totalSalesCount}
+          subtitle="All filtered sales"
           icon={ShoppingCart}
           iconBgColor="rgba(22, 101, 52, 0.1)"
           iconColor="#166534"
           loading={loading}
         />
         <DashboardStatsCard
-          tooltip={isRestaurant ? 'Orders completed (kitchen done or not sent to kitchen)' : 'Sales that have been paid and completed'}
+          tooltip={isRestaurant ? 'Paid sales (Payment column). Counts all matching sales, not only this page.' : 'Sales that have been paid and completed across all filtered results'}
           title="Completed"
           value={completedCount}
+          subtitle="All filtered sales"
           icon={CheckCircle}
           iconBgColor="rgba(132, 204, 22, 0.1)"
           iconColor="#84cc16"
           loading={loading}
         />
         <DashboardStatsCard
-          tooltip={isRestaurant ? 'Orders in kitchen (received, preparing, or ready)' : 'Sales with no payment received yet'}
+          tooltip={isRestaurant ? 'Kitchen queue (Received, Preparing, or Ready). Uses the Kitchen column, not Payment. May be on another page.' : 'Sales with no payment received yet, across all filtered results'}
           title={isRestaurant ? 'Pending (in kitchen)' : 'Pending'}
           value={pendingCount}
+          subtitle={isRestaurant ? 'Kitchen queue · all pages' : 'All filtered sales'}
           icon={Clock}
           iconBgColor="rgba(59, 130, 246, 0.1)"
           iconColor="#3b82f6"
           loading={loading}
         />
         <DashboardStatsCard
-          tooltip="Revenue from completed sales only (matches Dashboard). Pending and partially paid sales are not counted until completed."
+          tooltip="Revenue from completed sales only (matches Dashboard). Counts all matching sales, not only this page."
           title="Total Revenue"
           value={formatAmount(totalRevenueCompleted)}
+          subtitle="Completed sales only"
           icon={Receipt}
           iconBgColor="rgba(22, 101, 52, 0.1)"
           iconColor="#166534"
@@ -1122,8 +1162,7 @@ const Sales = () => {
         onClose={handleCloseDrawer}
         title="Sale Details"
         width={720}
-        onDelete={viewingSale ? () => handleDeleteSale(viewingSale.id) : null}
-        deleteConfirmText="Are you sure you want to delete this sale? This action cannot be undone."
+        onDelete={null}
         primaryAction={viewingSale ? (() => {
           const canPrint = viewingSale.status === 'completed' && ((viewingSale.invoiceId && viewingSale.invoice?.status === 'paid') || (viewingSale.paymentMethod !== 'credit' && !viewingSale.invoiceId));
           const hasInvoice = !!viewingSale.invoiceId;
@@ -1186,7 +1225,15 @@ const Sales = () => {
               onClick: () => handleOpenRecordPayment(viewingSale)
             });
           }
-          items.push({ key: 'archive', label: 'Archive', icon: <Archive className="h-4 w-4" />, destructive: true });
+          if (isAdmin) {
+            items.push({
+              key: 'delete',
+              label: 'Delete sale',
+              icon: <Trash2 className="h-4 w-4" />,
+              onClick: () => setSaleToDelete(viewingSale),
+              destructive: true
+            });
+          }
           return items;
         })() : []}
         tabs={viewingSale ? [
@@ -1335,6 +1382,15 @@ const Sales = () => {
                         <span>Tax</span>
                         <span className="text-foreground">{formatAmount(viewingSale.tax)}</span>
                       </div>
+                      {getSaleDelivery(viewingSale) && (
+                        <div className="flex justify-between text-muted-foreground">
+                          <span>
+                            Delivery
+                            {getSaleDelivery(viewingSale)?.label ? ` - ${getSaleDelivery(viewingSale).label}` : ''}
+                          </span>
+                          <span className="text-foreground">{formatAmount(getSaleDelivery(viewingSale).fee)}</span>
+                        </div>
+                      )}
                       <div className="flex justify-between text-base font-semibold text-foreground pt-2">
                         <span>Total</span>
                         <span>{formatAmount(viewingSale.total)}</span>

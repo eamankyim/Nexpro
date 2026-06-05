@@ -19,6 +19,8 @@ const addImageUrlToProducts = require('./add-imageUrl-to-products');
 const alterProductsImageUrlToText = require('./alter-products-imageUrl-to-text');
 const addTrackStockToProducts = require('./add-trackStock-to-products');
 const addOrderStatusToSales = require('./add-orderStatus-to-sales');
+const allowNullProductIdOnSaleItems = require('./allow-null-productId-on-sale-items');
+const addDeliveryFeeFieldsToSales = require('./add-delivery-fee-fields-to-sales');
 const addClientIdToSales = require('./add-clientId-to-sales');
 const createProductCategoriesAndSwitchProducts = require('./create-product-categories-and-switch-products');
 const addBusinessTypeToProductCategories = require('./add-business-type-to-product-categories');
@@ -138,6 +140,10 @@ const migrate = async () => {
 
     // Add orderStatus column for restaurant order tracking
     await addOrderStatusToSales();
+
+    // POS custom items and delivery fee checkout fields
+    await allowNullProductIdOnSaleItems();
+    await addDeliveryFeeFieldsToSales();
 
     // Add clientId column for offline sale idempotency (safe if already exists)
     await addClientIdToSales();

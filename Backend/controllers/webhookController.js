@@ -506,12 +506,15 @@ exports.handlePaystackWebhook = async (req, res) => {
             }
           }
 
+          const { autoCreateInvoiceFromSale, autoSendReceiptIfEnabled } = require('./saleController');
           try {
-            const { autoCreateInvoiceFromSale } = require('./saleController');
             await autoCreateInvoiceFromSale(sale.id, metadata.tenant_id);
           } catch (invErr) {
             console.error('[Paystack Webhook] Auto-invoice failed for POS sale:', invErr.message);
           }
+          await autoSendReceiptIfEnabled(metadata.tenant_id, sale.id).catch((receiptErr) =>
+            console.error('[Paystack Webhook] Auto-send receipt failed for POS sale:', receiptErr?.message || receiptErr)
+          );
           const { emitNewSale } = require('../services/websocketService');
           try {
             emitNewSale(metadata.tenant_id, sale);

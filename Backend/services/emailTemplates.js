@@ -1596,6 +1596,55 @@ const saleReceiptEmail = (sale, company = {}, closingNote = '') => {
 };
 
 /**
+ * Customer order-created email (tenant sendMessage).
+ * @returns {{ subject: string, html: string, text: string }}
+ */
+const orderCreatedEmail = (sale, customer = {}, company = {}) => {
+  const companyName = company.name || 'African Business Suite';
+  const primaryColor = company.primaryColor || EMAIL_DESIGN.primaryColor;
+  const logoUrl = company.logoUrl || company.logo || '';
+  const d = EMAIL_DESIGN;
+  const customerName = customer?.name || customer?.company || 'Customer';
+  const orderNumber = sale?.saleNumber || 'your order';
+  const total = formatCurrency(sale?.total || 0, sale?.currency || 'GHS');
+  const delivery = sale?.metadata?.delivery;
+  const deliveryLine = delivery?.required
+    ? `<tr><td style="padding: 12px; border-bottom: 1px solid ${d.borderColor};"><strong>Delivery</strong></td><td style="padding: 12px; border-bottom: 1px solid ${d.borderColor};">${escapeHtml(delivery.label || 'Selected')} - ${formatCurrency(delivery.fee || 0, sale?.currency || 'GHS')}</td></tr>`
+    : '';
+
+  const inner = `
+    <h1 style="margin: 0 0 24px 0; font-size: ${d.headingSize}; font-weight: bold; color: ${d.headingColor}; line-height: 1.3;">Order received</h1>
+    <p style="margin: 0 0 16px 0; font-size: ${d.bodySize}; line-height: 1.6; color: ${d.bodyColor}; text-align: center;">Hi ${escapeHtml(customerName)},</p>
+    <p style="margin: 0 0 24px 0; font-size: ${d.bodySize}; line-height: 1.6; color: ${d.bodyColor}; text-align: center;">We have received your order from ${escapeHtml(companyName)}.</p>
+    <table cellpadding="0" cellspacing="0" border="0" width="100%" style="width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px;">
+      <tr><td style="padding: 12px; border-bottom: 1px solid ${d.borderColor};"><strong>Order number</strong></td><td style="padding: 12px; border-bottom: 1px solid ${d.borderColor};">${escapeHtml(orderNumber)}</td></tr>
+      <tr><td style="padding: 12px; border-bottom: 1px solid ${d.borderColor};"><strong>Total</strong></td><td style="padding: 12px; border-bottom: 1px solid ${d.borderColor};">${escapeHtml(total)}</td></tr>
+      ${deliveryLine}
+    </table>
+    <p style="margin: 0; font-size: ${d.smallSize}; color: ${d.mutedColor}; text-align: center;">We will contact you with any updates.</p>
+  `;
+  const html = sellfyCardTemplate(inner, { companyName, primaryColor, logoUrl });
+  const text = [
+    `Hi ${customerName},`,
+    '',
+    `We have received your order from ${companyName}.`,
+    `Order number: ${orderNumber}`,
+    `Total: ${total}`,
+    delivery?.required ? `Delivery: ${delivery.label || 'Selected'} - ${formatCurrency(delivery.fee || 0, sale?.currency || 'GHS')}` : '',
+    '',
+    'We will contact you with any updates.',
+    '',
+    companyName
+  ].filter((line) => line !== '').join('\n');
+
+  return {
+    subject: `Order received - ${orderNumber}`,
+    html,
+    text
+  };
+};
+
+/**
  * Workspace task assigned (tenant sendMessage).
  * @returns {{ subject: string, html: string, text: string }}
  */
@@ -1655,6 +1704,7 @@ module.exports = {
   paystackMomoLinkedEmail,
   paystackBankLinkedEmail,
   saleReceiptEmail,
+  orderCreatedEmail,
   workspaceTaskAssignedEmail,
   formatCurrency,
   formatDate,

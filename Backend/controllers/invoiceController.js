@@ -882,11 +882,11 @@ exports.deleteInvoice = async (req, res, next) => {
       });
     }
 
-    // Don't allow deleting paid invoices
-    if (invoice.status === 'paid') {
+    // Don't allow deleting invoices with recorded payments
+    if (invoice.status === 'paid' || parseFloat(invoice.amountPaid || 0) > 0) {
       return res.status(400).json({
         success: false,
-        message: 'Cannot delete paid invoice'
+        message: 'Cannot delete invoice with recorded payments'
       });
     }
 
@@ -933,6 +933,13 @@ exports.deleteCancelledInvoice = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         message: 'Only cancelled invoices can be deleted with this action'
+      });
+    }
+
+    if (parseFloat(invoice.amountPaid || 0) > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete invoice with recorded payments'
       });
     }
 

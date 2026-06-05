@@ -14,7 +14,9 @@ import {
   ChefHat,
   ShoppingBag,
   Pencil,
+  Truck,
 } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -41,6 +43,7 @@ import { CURRENCY } from '../../constants';
 import { formatAmount, parseDecimalInput } from '../../utils/formatNumber';
 import { useResponsive } from '../../hooks/useResponsive';
 import mobileMoneyService from '../../services/mobileMoneyService';
+import settingsService from '../../services/settingsService';
 
 /** 1px card borders + consistent section spacing */
 const SECTION_CARD = 'rounded-lg border border-[#e5e7eb] bg-card';
@@ -125,10 +128,11 @@ function buildQuickCashAmounts(total) {
 /**
  * Summary cards: Amount Due + breakdown.
  */
-function PaymentSummaryCards({ total, taxSummary }) {
+function PaymentSummaryCards({ total, taxSummary, deliveryFee = 0, deliveryLabel = '' }) {
   const subtotal = Number(taxSummary?.subtotal ?? total) || 0;
   const taxAmount = Number(taxSummary?.taxAmount ?? 0) || 0;
   const taxLabel = taxSummary?.taxLabel || (taxAmount > 0 ? 'Tax' : 'Tax (0%)');
+  const deliveryAmount = Number(deliveryFee) || 0;
 
   return (
     <div className="grid grid-cols-2 gap-4">
@@ -145,6 +149,14 @@ function PaymentSummaryCards({ total, taxSummary }) {
           <span className="text-muted-foreground">{taxLabel}</span>
           <span className="text-foreground">{formatAmount(taxAmount)}</span>
         </div>
+        {deliveryAmount > 0 && (
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">
+              Delivery{deliveryLabel ? ` - ${deliveryLabel}` : ''}
+            </span>
+            <span className="text-foreground">{formatAmount(deliveryAmount)}</span>
+          </div>
+        )}
         <Separator />
         <div className="flex items-center justify-between text-sm font-semibold text-foreground">
           <span>Total Due</span>
@@ -325,10 +337,84 @@ function SaleItemsSection({ items, onEditItems }) {
   );
 }
 
+function DeliveryCheckoutSection({
+  deliverySettings,
+  deliveryRequired,
+  onDeliveryRequiredChange,
+  selectedBandId,
+  onSelectedBandIdChange,
+  selectedBand,
+  validationMessage,
+}) {
+  if (deliverySettings?.enabled !== true) return null;
+
+  const bands = Array.isArray(deliverySettings.bands) ? deliverySettings.bands : [];
+  const requireSelection = deliverySettings.requireSelectionAtCheckout === true;
+
+  return (
+    <div className={cn(SECTION_CARD, 'p-3 space-y-3')}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Truck className="h-4 w-4 text-muted-foreground" aria-hidden />
+          <div>
+            <Label htmlFor="delivery-required" className="text-sm font-medium cursor-pointer">
+              Delivery required
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {requireSelection ? 'A delivery band is required at checkout.' : 'Add delivery when this sale needs dispatch.'}
+            </p>
+          </div>
+        </div>
+        <Switch
+          id="delivery-required"
+          checked={deliveryRequired}
+          disabled={requireSelection}
+          onCheckedChange={onDeliveryRequiredChange}
+        />
+      </div>
+
+      {deliveryRequired && (
+        <div className="space-y-2">
+          <Label className="text-xs text-muted-foreground">Delivery band</Label>
+          <Select value={selectedBandId || ''} onValueChange={onSelectedBandIdChange}>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select delivery band" />
+            </SelectTrigger>
+            <SelectContent>
+              {bands.length === 0 ? (
+                <SelectItem value="__none__" disabled>No delivery bands configured</SelectItem>
+              ) : (
+                bands.map((band) => (
+                  <SelectItem key={band.id} value={String(band.id)}>
+                    {band.label} ({band.minKm}-{band.maxKm} km) - {formatAmount(band.fee)}
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
+          </Select>
+          {selectedBand && (
+            <div className="flex items-center justify-between rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm">
+              <span className="text-green-800">{selectedBand.label}</span>
+              <span className="font-semibold text-[#166534]">{formatAmount(selectedBand.fee)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {validationMessage && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-sm text-amber-800">
+          <AlertCircle className="h-4 w-4 shrink-0" aria-hidden />
+          {validationMessage}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Cash payment flow.
  */
-const CashPayment = ({ total, items, onConfirm, isProcessing, onEditItems }) => {
+const CashPayment = ({ total, items, onConfirm, isProcessing, onEditItems, canComplete = true }) => {
   const [amountTendered, setAmountTendered] = useState('');
 
   useEffect(() => {
@@ -402,7 +488,7 @@ const CashPayment = ({ total, items, onConfirm, isProcessing, onEditItems }) => 
       <Button
         type="button"
         className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
-        disabled={!isValid}
+        disabled={!isValid || !canComplete}
         loading={isProcessing}
         onClick={() => onConfirm({
           paymentMethod: 'cash',
@@ -433,6 +519,7 @@ const MobileMoneyPayment = ({
   mobileMoneyState = 'idle',
   mobileMoneyError = '',
   mobileMoneyFallbackMode = null,
+  canComplete = true,
 }) => {
   const [provider, setProvider] = useState('mtn');
   const [phone, setPhone] = useState(customer?.phone || '');
@@ -533,7 +620,7 @@ const MobileMoneyPayment = ({
           <Button
             type="button"
             className="w-full h-12 bg-green-700 hover:bg-green-800"
-            disabled={isProcessing}
+            disabled={isProcessing || !canComplete}
             loading={isProcessing}
             onClick={() => onConfirm({
               paymentMethod: 'mobile_money',
@@ -553,7 +640,7 @@ const MobileMoneyPayment = ({
         <Button
           type="button"
           className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
-          disabled={!isPhoneValid || isWaiting || isProcessing}
+          disabled={!isPhoneValid || isWaiting || isProcessing || !canComplete}
           loading={isProcessing || isWaiting}
           onClick={() => onRequestMobileMoney?.({ phone: phone.trim(), provider: logicalProvider })}
         >
@@ -568,7 +655,7 @@ const MobileMoneyPayment = ({
 /**
  * Card payment flow.
  */
-const CardPayment = ({ total, onConfirm, isProcessing }) => {
+const CardPayment = ({ total, onConfirm, isProcessing, canComplete = true }) => {
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
 
   return (
@@ -612,7 +699,7 @@ const CardPayment = ({ total, onConfirm, isProcessing }) => {
       <Button
         type="button"
         className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
-        disabled={!paymentConfirmed}
+        disabled={!paymentConfirmed || !canComplete}
         loading={isProcessing}
         onClick={() => onConfirm({ paymentMethod: 'card', amountPaid: total })}
       >
@@ -630,7 +717,7 @@ const CardPayment = ({ total, onConfirm, isProcessing }) => {
 /**
  * Credit payment flow.
  */
-const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
+const CreditPayment = ({ total, customer, onConfirm, isProcessing, canComplete = true }) => {
   const hasCustomer = !!customer;
   const totalSafe = Number.isFinite(Number(total)) ? Number(total) : 0;
   const creditLimit = Number(customer?.creditLimit);
@@ -705,7 +792,7 @@ const CreditPayment = ({ total, customer, onConfirm, isProcessing }) => {
       <Button
         type="button"
         className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
-        disabled={!hasCustomer}
+        disabled={!hasCustomer || !canComplete}
         loading={isProcessing}
         onClick={() => onConfirm({ paymentMethod: 'credit', amountPaid: 0 })}
       >
@@ -741,7 +828,64 @@ const POSPaymentModal = ({
   const [activeTab, setActiveTab] = useState('cash');
   const [sendToKitchen, setSendToKitchen] = useState(true);
   const [customerSearchTerm, setCustomerSearchTerm] = useState('');
+  const [deliveryRequired, setDeliveryRequired] = useState(false);
+  const [selectedDeliveryBandId, setSelectedDeliveryBandId] = useState('');
   const { isMobile } = useResponsive();
+
+  const { data: deliverySettingsData } = useQuery({
+    queryKey: ['settings', 'delivery'],
+    queryFn: settingsService.getDeliverySettings,
+    enabled: isOpen,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const deliverySettings = useMemo(
+    () => deliverySettingsData?.data?.data ?? deliverySettingsData?.data ?? deliverySettingsData ?? { enabled: false, requireSelectionAtCheckout: false, bands: [] },
+    [deliverySettingsData]
+  );
+
+  const deliveryBands = useMemo(
+    () => (Array.isArray(deliverySettings?.bands) ? deliverySettings.bands : []),
+    [deliverySettings]
+  );
+
+  useEffect(() => {
+    if (!isOpen) {
+      setDeliveryRequired(false);
+      setSelectedDeliveryBandId('');
+      return;
+    }
+    if (deliverySettings?.enabled === true && deliverySettings.requireSelectionAtCheckout === true) {
+      setDeliveryRequired(true);
+    }
+  }, [isOpen, deliverySettings?.enabled, deliverySettings?.requireSelectionAtCheckout]);
+
+  const selectedDeliveryBand = useMemo(
+    () => deliveryBands.find((band) => String(band.id) === String(selectedDeliveryBandId)) || null,
+    [deliveryBands, selectedDeliveryBandId]
+  );
+
+  const deliveryFee = deliveryRequired && selectedDeliveryBand ? Number(selectedDeliveryBand.fee) || 0 : 0;
+  const checkoutTotal = useMemo(
+    () => Math.max(0, (Number(total) || 0) + deliveryFee),
+    [total, deliveryFee]
+  );
+
+  const deliveryValidationMessage = useMemo(() => {
+    if (deliverySettings?.enabled !== true) return '';
+    if (!deliveryRequired) return '';
+    if (deliveryBands.length === 0) return 'Configure at least one delivery band in Settings before using delivery.';
+    if (!selectedDeliveryBand) return 'Select a delivery band before completing checkout.';
+    return '';
+  }, [deliverySettings?.enabled, deliveryRequired, deliveryBands.length, selectedDeliveryBand]);
+
+  const deliveryPayload = useMemo(() => ({
+    required: deliveryRequired,
+    bandId: deliveryRequired ? (selectedDeliveryBand?.id || null) : null,
+    fee: deliveryRequired ? deliveryFee : 0,
+  }), [deliveryRequired, selectedDeliveryBand, deliveryFee]);
+
+  const canCompletePayment = !deliveryValidationMessage;
 
   const filteredCustomers = useMemo(() => {
     if (!Array.isArray(customers) || customers.length === 0) return [];
@@ -757,8 +901,12 @@ const POSPaymentModal = ({
   }, [customers, customerSearchTerm]);
 
   const handleConfirm = useCallback((details) => {
-    onConfirmPayment({ ...details, sendToKitchen });
-  }, [onConfirmPayment, sendToKitchen]);
+    onConfirmPayment({ ...details, sendToKitchen, delivery: deliveryPayload, total: checkoutTotal });
+  }, [onConfirmPayment, sendToKitchen, deliveryPayload, checkoutTotal]);
+
+  const handleRequestMobileMoneyWithDelivery = useCallback((details) => {
+    onRequestMobileMoney?.({ ...details, delivery: deliveryPayload, total: checkoutTotal });
+  }, [onRequestMobileMoney, deliveryPayload, checkoutTotal]);
 
   const handleEditItems = useCallback(() => {
     onClose(false);
@@ -770,13 +918,18 @@ const POSPaymentModal = ({
         <DialogHeader className="pb-2 mb-2">
           <DialogTitle className="text-lg font-semibold text-foreground pr-10">Payment</DialogTitle>
           <DialogDescription className="sr-only">
-            Choose payment method and complete payment for {formatAmount(total)}.
+            Choose payment method and complete payment for {formatAmount(checkoutTotal)}.
           </DialogDescription>
         </DialogHeader>
 
         <DialogBody className="flex-1 min-h-0 overflow-y-auto pb-4">
           <div className={SECTION_STACK}>
-          <PaymentSummaryCards total={total} taxSummary={taxSummary} />
+          <PaymentSummaryCards
+            total={checkoutTotal}
+            taxSummary={taxSummary}
+            deliveryFee={deliveryFee}
+            deliveryLabel={selectedDeliveryBand?.label || ''}
+          />
 
           <PaymentCustomerRow
             customer={customer}
@@ -788,6 +941,19 @@ const POSPaymentModal = ({
             setCustomerSearchTerm={setCustomerSearchTerm}
             onSelectExistingCustomer={onSelectExistingCustomer}
             onRequestChangeCustomer={onRequestChangeCustomer}
+          />
+
+          <DeliveryCheckoutSection
+            deliverySettings={deliverySettings}
+            deliveryRequired={deliveryRequired}
+            onDeliveryRequiredChange={(checked) => {
+              setDeliveryRequired(checked);
+              if (!checked) setSelectedDeliveryBandId('');
+            }}
+            selectedBandId={selectedDeliveryBandId}
+            onSelectedBandIdChange={setSelectedDeliveryBandId}
+            selectedBand={selectedDeliveryBand}
+            validationMessage={deliveryValidationMessage}
           />
 
           <PaymentMethodGrid activeTab={activeTab} onChange={setActiveTab} isMobile={isMobile} />
@@ -811,33 +977,35 @@ const POSPaymentModal = ({
 
           {activeTab === 'cash' && (
             <CashPayment
-              total={total}
+              total={checkoutTotal}
               items={items}
               onConfirm={handleConfirm}
               isProcessing={isProcessing}
               onEditItems={handleEditItems}
+              canComplete={canCompletePayment}
             />
           )}
 
           {activeTab === 'mobile' && (
             <MobileMoneyPayment
-              total={total}
+              total={checkoutTotal}
               customer={customer}
-              onRequestMobileMoney={onRequestMobileMoney}
+              onRequestMobileMoney={handleRequestMobileMoneyWithDelivery}
               onConfirm={handleConfirm}
               isProcessing={isProcessing}
               mobileMoneyState={mobileMoneyState}
               mobileMoneyError={mobileMoneyError}
               mobileMoneyFallbackMode={mobileMoneyFallbackMode}
+              canComplete={canCompletePayment}
             />
           )}
 
           {activeTab === 'card' && (
-            <CardPayment total={total} onConfirm={handleConfirm} isProcessing={isProcessing} />
+            <CardPayment total={checkoutTotal} onConfirm={handleConfirm} isProcessing={isProcessing} canComplete={canCompletePayment} />
           )}
 
           {activeTab === 'credit' && (
-            <CreditPayment total={total} customer={customer} onConfirm={handleConfirm} isProcessing={isProcessing} />
+            <CreditPayment total={checkoutTotal} customer={customer} onConfirm={handleConfirm} isProcessing={isProcessing} canComplete={canCompletePayment} />
           )}
           </div>
         </DialogBody>

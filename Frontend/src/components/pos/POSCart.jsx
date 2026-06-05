@@ -52,12 +52,20 @@ const CartItem = ({ item, onUpdateQuantity, onRemove, onEditDiscount, onEditPric
   const discount = Number(item.discount) || 0;
   const itemTotal = (Number.isFinite(unitPrice) ? unitPrice : 0) * quantity - discount;
   const priceOverridden = item.priceOverridden === true;
+  const isCustomItem = item.type === 'custom' || item.metadata?.customItem === true || !item.productId;
 
   return (
     <div className="flex items-start gap-3 py-3 border-b border-border last:border-0">
       {/* Item details */}
       <div className="flex-1 min-w-0">
-        <p className="font-medium text-foreground truncate">{item.name}</p>
+        <div className="flex items-center gap-2 min-w-0">
+          <p className="font-medium text-foreground truncate">{item.name}</p>
+          {isCustomItem && (
+            <Badge variant="outline" className="shrink-0 text-[10px] uppercase tracking-wide text-[#166534] border-[#166534]">
+              Custom
+            </Badge>
+          )}
+        </div>
         <p className="text-sm text-muted-foreground">
           {formatAmount(unitPrice)} × {quantity}
         </p>
@@ -629,7 +637,9 @@ const POSCart = ({
                 {CURRENCY.SYMBOL} {priceValue || '0'}
               </div>
               <p className="text-sm text-muted-foreground mt-1">
-                Catalog price: {formatAmount(editingItem?.catalogUnitPrice ?? editingItem?.baseUnitPrice ?? editingItem?.unitPrice ?? 0)}
+                {editingItem?.type === 'custom' || !editingItem?.productId
+                  ? 'Custom item price'
+                  : `Catalog price: ${formatAmount(editingItem?.catalogUnitPrice ?? editingItem?.baseUnitPrice ?? editingItem?.unitPrice ?? 0)}`}
               </p>
             </div>
 

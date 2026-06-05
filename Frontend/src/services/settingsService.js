@@ -114,6 +114,16 @@ const getPOSConfig = async () => api.get('/settings/pos-config');
 
 const updatePOSConfig = async (payload) => api.put('/settings/pos-config', payload);
 
+const getDeliverySettings = async () => {
+  const res = await api.get('/settings/delivery');
+  return res?.data?.data ?? res?.data ?? res;
+};
+
+const updateDeliverySettings = async (payload) => {
+  const res = await api.put('/settings/delivery', payload);
+  return res?.data?.data ?? res?.data ?? res;
+};
+
 const getAISettings = async () => {
   const res = await api.get('/settings/ai');
   return res?.data?.data ?? res?.data ?? res;
@@ -226,6 +236,8 @@ export default {
   getSubscriptionPayments,
   getPOSConfig,
   updatePOSConfig,
+  getDeliverySettings,
+  updateDeliverySettings,
   getAISettings,
   updateAISettings,
   deleteAISettings,

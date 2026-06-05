@@ -34,7 +34,7 @@ router.route('/')
 router.route('/:id')
   .get(getQuote)
   .put(authorize('admin', 'manager', 'staff'), updateQuote)
-  .delete(authorize('admin', 'manager'), deleteQuote);
+  .delete(authorize('admin'), deleteQuote);
 
 router.patch('/:id/status', authorize('admin', 'manager', 'staff'), updateQuoteStatus);
 
