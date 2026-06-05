@@ -44,7 +44,7 @@ router.delete('/:id/cancelled', authorize('admin'), deleteCancelledInvoice);
 
 router.post('/:id/payment', authorize('admin', 'manager', 'staff'), recordPayment);
 router.post('/:id/send', authorize('admin', 'manager', 'staff'), sendInvoice);
-router.post('/:id/cancel', authorize('admin', 'manager', 'staff'), cancelInvoice);
+router.post('/:id/cancel', authorize('admin', 'manager'), cancelInvoice);
 router.post('/:id/mark-paid', authorize('admin', 'manager', 'staff'), markInvoicePaid);
 
 module.exports = router;

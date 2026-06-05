@@ -571,6 +571,16 @@ const Invoices = () => {
     navigator.clipboard.writeText(paymentLink).then(() => showSuccess('Payment link copied to clipboard')).catch(() => showError('Could not copy link'));
   }, [paymentLink]);
 
+  const handleRequestDrawerInvoiceCancel = useCallback((invoice) => {
+    setInvoiceToCancel(invoice);
+    setDrawerVisible(false);
+  }, []);
+
+  const handleRequestDrawerInvoiceDelete = useCallback((invoice) => {
+    setInvoiceToDelete(invoice);
+    setDrawerVisible(false);
+  }, []);
+
   const invoiceDrawerPrimaryAction = useMemo(() => {
     if (!viewingInvoice) return null;
     return {
@@ -614,7 +624,7 @@ const Invoices = () => {
         key: 'cancel',
         label: 'Cancel Invoice',
         icon: <Archive className="h-4 w-4" />,
-        onClick: () => setInvoiceToCancel(viewingInvoice),
+        onClick: () => handleRequestDrawerInvoiceCancel(viewingInvoice),
         destructive: true,
       });
     }
@@ -623,7 +633,7 @@ const Invoices = () => {
         key: 'delete',
         label: 'Delete draft',
         icon: <Trash2 className="h-4 w-4" />,
-        onClick: () => setInvoiceToDelete(viewingInvoice),
+        onClick: () => handleRequestDrawerInvoiceDelete(viewingInvoice),
         destructive: true,
       });
     }
@@ -632,12 +642,12 @@ const Invoices = () => {
         key: 'delete-cancelled',
         label: 'Delete cancelled invoice',
         icon: <Trash2 className="h-4 w-4" />,
-        onClick: () => setInvoiceToDelete(viewingInvoice),
+        onClick: () => handleRequestDrawerInvoiceDelete(viewingInvoice),
         destructive: true,
       });
     }
     return items;
-  }, [viewingInvoice, isAdmin, isManager, paymentLink, sendingInvoice, markingAsPaid, handleSendInvoice, handleCopyPaymentLink]);
+  }, [viewingInvoice, isAdmin, isManager, paymentLink, sendingInvoice, markingAsPaid, handleSendInvoice, handleCopyPaymentLink, handleRequestDrawerInvoiceCancel, handleRequestDrawerInvoiceDelete]);
 
   const handleCancelInvoice = async (id) => {
     try {
