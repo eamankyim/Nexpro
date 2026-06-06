@@ -32,11 +32,13 @@ import DashboardStatsCard from '../components/DashboardStatsCard';
 import WelcomeSection from '../components/WelcomeSection';
 import FeatureNotAvailable from '../components/FeatureNotAvailable';
 import { showSuccess, showError } from '../utils/toast';
+import { resolvePaymentNotePayload } from '../utils/paymentNotes';
 import { resolveImageUrl } from '../utils/fileUtils';
 import { formatAmount } from '../utils/formatNumber';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -61,6 +63,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -101,6 +104,7 @@ const recordPaymentSchema = z.object({
   paymentMethod: z.string().min(1, 'Payment method is required'),
   paymentDate: z.date(),
   referenceNumber: z.string().optional(),
+  notes: z.string().optional(),
 });
 
 const getSaleItemVariantLabel = (item) => {
@@ -202,6 +206,7 @@ const Sales = () => {
       paymentMethod: 'cash',
       paymentDate: new Date(),
       referenceNumber: '',
+      notes: '',
     },
   });
 
@@ -524,6 +529,7 @@ const Sales = () => {
       paymentMethod: sale.paymentMethod || 'cash',
       paymentDate: new Date(),
       referenceNumber: '',
+      notes: '',
     });
   }, [recordPaymentForm]);
 
@@ -535,6 +541,7 @@ const Sales = () => {
         paymentMethod: values.paymentMethod,
         referenceNumber: values.referenceNumber || undefined,
         paymentDate: values.paymentDate,
+        notes: resolvePaymentNotePayload(values),
       });
       showSuccess('Payment recorded successfully');
       setSaleForPayment(null);
@@ -1032,133 +1039,157 @@ const Sales = () => {
             const isFullyPaid = balanceDue <= 0;
             return (
               <>
-                {/* Sale summary — clear card with balance due prominent */}
-                <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">Sale</span>
-                    <span className="font-medium">{saleForPayment.saleNumber}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-muted-foreground">Customer</span>
-                    <span className="font-medium">{saleForPayment.customer?.name || 'Walk-in'}</span>
-                  </div>
-                  <Separator />
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">Total</span>
-                    <span>{formatAmount(total)}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-sm">
-                    <span className="text-muted-foreground">Amount paid</span>
-                    <span>{formatAmount(amountPaid)}</span>
-                  </div>
-                  <div className="flex justify-between items-center pt-1">
-                    <span className="font-medium text-foreground">Balance due</span>
-                    <span className={`text-lg font-semibold ${balanceDue > 0 ? 'text-orange-600' : 'text-green-600'}`}>
-                      {formatAmount(balanceDue)}
-                    </span>
-                  </div>
-                </div>
+                <DialogBody>
+                  <div className="space-y-6">
+                    {/* Sale summary — clear card with balance due prominent */}
+                    <div className="rounded-lg border border-border bg-muted/30 p-4 space-y-3">
+                      <div className="flex justify-between items-center gap-4">
+                        <span className="text-muted-foreground">Sale</span>
+                        <span className="font-medium text-right">{saleForPayment.saleNumber}</span>
+                      </div>
+                      <div className="flex justify-between items-center gap-4">
+                        <span className="text-muted-foreground">Customer</span>
+                        <span className="font-medium text-right">{saleForPayment.customer?.name || 'Walk-in'}</span>
+                      </div>
+                      <Separator />
+                      <div className="flex justify-between items-center gap-4 text-sm">
+                        <span className="text-muted-foreground">Total</span>
+                        <span>{formatAmount(total)}</span>
+                      </div>
+                      <div className="flex justify-between items-center gap-4 text-sm">
+                        <span className="text-muted-foreground">Amount paid</span>
+                        <span>{formatAmount(amountPaid)}</span>
+                      </div>
+                      <div className="flex justify-between items-center gap-4 pt-1">
+                        <span className="font-medium text-foreground">Balance due</span>
+                        <span className={`text-lg font-semibold ${balanceDue > 0 ? 'text-orange-600' : 'text-green-600'}`}>
+                          {formatAmount(balanceDue)}
+                        </span>
+                      </div>
+                    </div>
 
-                {isFullyPaid ? (
-                  <p className="text-sm text-muted-foreground py-2">
-                    This sale is already fully paid. No payment to record.
-                  </p>
-                ) : (
-                  <Form {...recordPaymentForm}>
-                    <form
-                      id="record-payment-form"
-                      onSubmit={recordPaymentForm.handleSubmit(handleRecordPaymentSubmit)}
-                      className="space-y-4"
-                    >
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <FormField
-                          control={recordPaymentForm.control}
-                          name="amount"
-                          rules={[
-                            {
-                              validate: (value) => {
-                                if (value > balanceDue) return 'Amount exceeds balance due';
-                                return true;
-                              },
-                            },
-                          ]}
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Payment amount</FormLabel>
-                              <FormControl>
-                                <div className="relative">
-                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">₵</span>
-                                  <Input
-                                    type="number"
-                                    min={0.01}
-                                    max={balanceDue}
-                                    step={0.01}
-                                    className="pl-8"
-                                    value={numberInputValue(field.value)}
-                                    onChange={(e) => handleNumberChange(e, field.onChange)}
-                                  />
-                                </div>
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={recordPaymentForm.control}
-                          name="paymentMethod"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Payment method</FormLabel>
-                              <Select value={field.value} onValueChange={field.onChange}>
-                                <FormControl>
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                </FormControl>
-                                <SelectContent>
-                                  <SelectItem value="cash">Cash</SelectItem>
-                                  <SelectItem value="card">Card</SelectItem>
-                                  <SelectItem value="mobile_money">Mobile Money</SelectItem>
-                                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                                  <SelectItem value="other">Other</SelectItem>
-                                </SelectContent>
-                              </Select>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <FormField
-                          control={recordPaymentForm.control}
-                          name="paymentDate"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Payment date</FormLabel>
-                              <FormControl>
-                                <DatePicker date={field.value} onDateChange={field.onChange} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                        <FormField
-                          control={recordPaymentForm.control}
-                          name="referenceNumber"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Reference (optional)</FormLabel>
-                              <FormControl>
-                                <Input placeholder="e.g. receipt or transfer ref" {...field} value={field.value || ''} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
-                      </div>
-                    </form>
-                  </Form>
-                )}
+                    {isFullyPaid ? (
+                      <p className="text-sm text-muted-foreground py-2">
+                        This sale is already fully paid. No payment to record.
+                      </p>
+                    ) : (
+                      <Form {...recordPaymentForm}>
+                        <form
+                          id="record-payment-form"
+                          onSubmit={recordPaymentForm.handleSubmit(handleRecordPaymentSubmit)}
+                          className="space-y-5"
+                        >
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-5">
+                            <FormField
+                              control={recordPaymentForm.control}
+                              name="amount"
+                              rules={[
+                                {
+                                  validate: (value) => {
+                                    if (value > balanceDue) return 'Amount exceeds balance due';
+                                    return true;
+                                  },
+                                },
+                              ]}
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Payment amount</FormLabel>
+                                  <FormControl>
+                                    <div className="relative">
+                                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" aria-hidden="true">₵</span>
+                                      <Input
+                                        type="number"
+                                        min={0.01}
+                                        max={balanceDue}
+                                        step={0.01}
+                                        inputMode="decimal"
+                                        placeholder="0.00"
+                                        className="pl-8"
+                                        value={numberInputValue(field.value)}
+                                        onFocus={(e) => e.target.select()}
+                                        onChange={(e) => handleNumberChange(e, field.onChange)}
+                                      />
+                                    </div>
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={recordPaymentForm.control}
+                              name="paymentMethod"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Payment method</FormLabel>
+                                  <Select value={field.value} onValueChange={field.onChange}>
+                                    <FormControl>
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                    </FormControl>
+                                    <SelectContent>
+                                      <SelectItem value="cash">Cash</SelectItem>
+                                      <SelectItem value="card">Card</SelectItem>
+                                      <SelectItem value="mobile_money">Mobile Money</SelectItem>
+                                      <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                                      <SelectItem value="other">Other</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-5">
+                            <FormField
+                              control={recordPaymentForm.control}
+                              name="paymentDate"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Payment date</FormLabel>
+                                  <FormControl>
+                                    <DatePicker date={field.value} onDateChange={field.onChange} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={recordPaymentForm.control}
+                              name="referenceNumber"
+                              render={({ field }) => (
+                                <FormItem>
+                                  <FormLabel>Reference (optional)</FormLabel>
+                                  <FormControl>
+                                    <Input placeholder="e.g. receipt or transfer ref" {...field} value={field.value || ''} />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                            <FormField
+                              control={recordPaymentForm.control}
+                              name="notes"
+                              render={({ field }) => (
+                                <FormItem className="sm:col-span-2">
+                                  <FormLabel>Payment note (optional)</FormLabel>
+                                  <FormControl>
+                                    <Textarea
+                                      {...field}
+                                      placeholder="Add an internal note about this payment"
+                                      rows={3}
+                                    />
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+                        </form>
+                      </Form>
+                    )}
+                  </div>
+                </DialogBody>
                 <DialogFooter className="gap-2 sm:gap-0">
                   <Button type="button" variant="outline" onClick={() => setSaleForPayment(null)}>
                     Cancel

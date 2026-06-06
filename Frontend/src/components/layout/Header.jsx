@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Lightbulb,
@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Search,
   Sparkles,
+  RefreshCw,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -66,6 +67,10 @@ export function Header() {
     // Optionally clear search on close
     // setSearchValue('');
   };
+
+  const handleHardRefresh = useCallback(() => {
+    window.location.reload();
+  }, []);
 
   // Auto-focus input when expanded
   useEffect(() => {
@@ -244,6 +249,26 @@ export function Header() {
             )}
             */}
             
+            {/* Hard refresh */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleHardRefresh}
+                  aria-label="Hard refresh"
+                  title="Hard refresh"
+                  className={cn(
+                    isMobile ? 'min-h-[44px] min-w-[44px]' : 'h-9 w-9',
+                    'border-border'
+                  )}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Hard refresh</TooltipContent>
+            </Tooltip>
+
             {/* Ask AI */}
             {isManager && (
               <Tooltip>

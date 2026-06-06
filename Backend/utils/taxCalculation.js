@@ -170,27 +170,51 @@ function computeTotalsFromSubtotalAndDiscount({ subtotal, discountTotal, config,
  * When catalog prices are tax-inclusive, convert line totals to tax-exclusive for invoice storage.
  * @param {Array<{ quantity?: number, unitPrice?: number, total?: number }>} items
  * @param {number} ratePercent
- * @returns {{ items: typeof items, subtotal: number }}
+ * @returns {{ items: typeof items, subtotal: number, discountTotal: number }}
  */
 function convertLineItemsFromTaxInclusive(items, ratePercent) {
   const r = parseFloat(ratePercent) || 0;
+  const round2 = (value) => Math.round((parseFloat(value) || 0) * 100) / 100;
   if (!Array.isArray(items) || items.length === 0) {
-    return { items: items ? [...items] : [], subtotal: 0 };
+    return { items: items ? [...items] : [], subtotal: 0, discountTotal: 0 };
   }
   if (r <= 0) {
     const sub = items.reduce((s, it) => s + (parseFloat(it.total) || 0), 0);
-    return { items: [...items], subtotal: Math.round(sub * 100) / 100 };
+    const discountTotal = items.reduce((s, it) => s + (parseFloat(it.discountAmount || it.discount || 0) || 0), 0);
+    return { items: [...items], subtotal: round2(sub), discountTotal: round2(discountTotal) };
   }
   const f = 1 / (1 + r / 100);
-  let sum = 0;
+  let subtotal = 0;
+  let discountTotal = 0;
   const out = items.map((it) => {
-    const t = Math.round((parseFloat(it.total) || 0) * f * 100) / 100;
     const qty = parseFloat(it.quantity) || 1;
-    sum += t;
-    const unitPrice = qty > 0 ? Math.round((t / qty) * 100) / 100 : t;
-    return { ...it, unitPrice, total: t };
+    const grossUnitPrice = parseFloat(it.unitPrice) || 0;
+    const grossLineSubtotal = round2(qty * grossUnitPrice);
+    const providedTotal = it.total !== undefined && it.total !== null
+      ? parseFloat(it.total)
+      : grossLineSubtotal;
+    const explicitDiscount = parseFloat(it.discountAmount || it.discount || 0) || 0;
+    const derivedDiscount = Math.max(0, grossLineSubtotal - (Number.isFinite(providedTotal) ? providedTotal : grossLineSubtotal));
+    const grossDiscount = explicitDiscount > 0 ? explicitDiscount : derivedDiscount;
+    const exclusiveLineSubtotal = round2(grossLineSubtotal * f);
+    const exclusiveDiscount = round2(grossDiscount * f);
+    const total = Math.max(0, round2(exclusiveLineSubtotal - exclusiveDiscount));
+    const unitPrice = qty > 0 ? round2(exclusiveLineSubtotal / qty) : exclusiveLineSubtotal;
+
+    subtotal += exclusiveLineSubtotal;
+    discountTotal += exclusiveDiscount;
+    return {
+      ...it,
+      unitPrice,
+      discountAmount: exclusiveDiscount,
+      total
+    };
   });
-  return { items: out, subtotal: Math.round(sum * 100) / 100 };
+  return {
+    items: out,
+    subtotal: round2(subtotal),
+    discountTotal: round2(discountTotal)
+  };
 }
 
 function computeQuoteTaxSummary(subtotal, discountTotal, taxConfig, taxRateOverride) {

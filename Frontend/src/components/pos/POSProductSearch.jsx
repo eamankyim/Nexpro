@@ -151,7 +151,7 @@ const ProductCard = memo(function ProductCard({ product, onSelect, quantityInCar
       <TooltipTrigger asChild>
         <div
           className={cn(
-            'rounded-lg border p-3 flex flex-col transition-colors cursor-pointer min-h-[140px] relative',
+            'rounded-lg border p-3 flex flex-col transition-colors cursor-pointer min-h-[220px] relative',
             isOutOfStock
               ? 'border-muted bg-muted opacity-60 cursor-not-allowed'
               : inCart
@@ -194,7 +194,7 @@ const ProductCard = memo(function ProductCard({ product, onSelect, quantityInCar
           )}
         </div>
       )}
-      <div className="w-full aspect-square bg-muted rounded-md flex items-center justify-center flex-shrink-0 mb-2 relative overflow-hidden">
+      <div className="w-full h-24 sm:h-28 bg-muted rounded-md flex items-center justify-center flex-shrink-0 mb-2 relative overflow-hidden">
         <div className="absolute inset-0 flex items-center justify-center bg-muted pointer-events-none" aria-hidden>
           <Package className="h-8 w-8 text-muted-foreground" />
         </div>
@@ -202,12 +202,12 @@ const ProductCard = memo(function ProductCard({ product, onSelect, quantityInCar
           <img
             src={resolveImageUrl(product.imageUrl) || ''}
             alt={product.name}
-            className="relative z-10 w-full h-full object-cover aspect-square"
+            className="relative z-10 w-full h-full object-cover"
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
         )}
       </div>
-      <p className="font-medium text-foreground text-sm truncate flex-1" title={product.name}>
+      <p className="font-medium text-foreground text-sm leading-5 line-clamp-2 min-h-[2.5rem]" title={product.name}>
         {product.name}
       </p>
       <p className="font-semibold text-green-700 text-sm mt-1">
@@ -1127,7 +1127,7 @@ const QRCodeScanner = ({
 const BROWSE_LIST_SIZE = 60;
 const POS_RESULTS_VIRT_MIN = 32;
 const POS_LIST_ROW_EST = 92;
-const POS_GRID_ROW_EST = 172;
+const POS_GRID_ROW_EST = 236;
 
 function POSVirtualProductList({ scrollRef, results, onSelect, cartQuantityByProductId }) {
   const virtualizer = useVirtualizer({

@@ -13,6 +13,7 @@ const {
   STORAGE_PRICING,
 } = require('../config/features');
 const { getPagination } = require('../utils/paginationUtils');
+const { resolvePaymentNotesFromBody } = require('../utils/paymentNoteUtils');
 const {
   Tenant,
   User,
@@ -1726,7 +1727,7 @@ exports.createTenantSubscriptionPayment = async (req, res, next) => {
       providerReference: req.body?.providerReference || req.body?.reference || null,
       status,
       recordedBy: req.user?.id || null,
-      notes: req.body?.notes || null,
+      notes: resolvePaymentNotesFromBody(req.body || {}) || null,
       periodStart,
       periodEnd,
       metadata: paymentMetadata,

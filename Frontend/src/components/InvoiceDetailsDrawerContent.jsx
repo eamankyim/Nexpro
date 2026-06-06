@@ -13,6 +13,8 @@ import {
 import DrawerSectionCard from './DrawerSectionCard';
 import StatusChip from './StatusChip';
 import { cn } from '@/lib/utils';
+import { getInvoiceTaxDisplay } from '../utils/invoiceTaxDisplay';
+import { getDisplayPaymentNote } from '../utils/paymentNotes';
 
 const ITEMS_PREVIEW_COUNT = 3;
 
@@ -87,8 +89,9 @@ function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true }) {
 
   if (!invoice) return null;
 
-  const showTax = parseFloat(invoice.taxAmount || 0) > 0;
-  const showDiscount = parseFloat(invoice.discountAmount || 0) > 0;
+  const taxDisplay = getInvoiceTaxDisplay(invoice);
+  const showTax = taxDisplay.hasTax;
+  const showDiscount = taxDisplay.discountAmount > 0;
 
   return (
     <div className="space-y-4 px-4 py-4 sm:px-6 sm:py-6">
@@ -208,14 +211,16 @@ function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true }) {
         cardVariant="white"
         icon={<CircleDollarSign className="h-4 w-4 text-brand" aria-hidden />}
       >
-        <DrawerFieldRow label="Subtotal">{formatCurrency(invoice.subtotal)}</DrawerFieldRow>
+        <DrawerFieldRow label={taxDisplay.isTaxInclusive ? 'Subtotal (net)' : 'Subtotal'}>
+          {formatCurrency(taxDisplay.subtotal)}
+        </DrawerFieldRow>
         {showDiscount && (
           <DrawerFieldRow label="Discount" valueClassName="text-green-600">
-            -{formatCurrency(invoice.discountAmount)}
+            -{formatCurrency(taxDisplay.discountAmount)}
           </DrawerFieldRow>
         )}
         {showTax && (
-          <DrawerFieldRow label="Tax">{formatCurrency(invoice.taxAmount)}</DrawerFieldRow>
+          <DrawerFieldRow label={taxDisplay.taxLabel}>{formatCurrency(taxDisplay.taxAmount)}</DrawerFieldRow>
         )}
         <DrawerFieldRow label="Amount Paid" valueClassName="font-semibold text-green-600">
           {formatCurrency(invoice.amountPaid)}
@@ -238,7 +243,7 @@ function InvoiceDetailsDrawerContent({ invoice, showJobDetails = true }) {
         >
           <ul className="divide-y divide-gray-100">
             {payments.map((payment) => {
-              const note = String(payment.notes || '').trim();
+              const note = getDisplayPaymentNote(payment);
               const rawReference = String(payment.referenceNumber || '').trim();
               const reference = rawReference.startsWith('INV-')
                 ? String(payment.paymentNumber || '').trim()

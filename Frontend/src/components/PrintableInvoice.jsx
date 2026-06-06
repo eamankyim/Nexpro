@@ -2,6 +2,7 @@ import React from 'react';
 import dayjs from 'dayjs';
 import { MapPin, Phone, Globe, Mail } from 'lucide-react';
 import { API_BASE_URL } from '../services/api';
+import { getInvoiceTaxDisplay } from '../utils/invoiceTaxDisplay';
 
 const DEFAULT_TERMS_TEXT =
   'Payment is due within the specified payment terms. Late payments may incur additional charges.';
@@ -95,6 +96,11 @@ const PrintableInvoice = ({
     tin: organization.tax?.tin || '',
     taxDisplayLabel: organization.tax?.displayLabel || 'Tax'
   };
+  const taxDisplay = getInvoiceTaxDisplay(invoice, organization);
+  const taxLabel = taxDisplay.isTaxInclusive
+    ? taxDisplay.taxLabel
+    : `${companyInfo.taxDisplayLabel} (${invoice.taxRate || 0}%)`;
+  const subtotalLabel = taxDisplay.isTaxInclusive ? 'Subtotal (net)' : 'Subtotal';
 
   return (
     <>
@@ -704,19 +710,19 @@ const PrintableInvoice = ({
             </div>
             <hr className="thermal-separator" />
             <div className="thermal-total-row">
-              <span>Sub-total</span>
-              <span>{amountDisplay(invoice.subtotal)}</span>
+              <span>{subtotalLabel}</span>
+              <span>{amountDisplay(taxDisplay.subtotal)}</span>
             </div>
-            {invoice.discountAmount > 0 && (
+            {taxDisplay.discountAmount > 0 && (
               <div className="thermal-total-row">
                 <span>Discount</span>
-                <span>{maskAmounts ? 'XXX' : `-₵ ${parseFloat(invoice.discountAmount || 0).toFixed(2)}`}</span>
+                <span>{maskAmounts ? 'XXX' : `-₵ ${parseFloat(taxDisplay.discountAmount || 0).toFixed(2)}`}</span>
               </div>
             )}
-            {invoice.taxAmount > 0 && (
+            {taxDisplay.hasTax && (
               <div className="thermal-total-row">
-                <span>{companyInfo.taxDisplayLabel}</span>
-                <span>{amountDisplay(invoice.taxAmount)}</span>
+                <span>{taxLabel}</span>
+                <span>{amountDisplay(taxDisplay.taxAmount)}</span>
               </div>
             )}
             <div className="thermal-total-row bold">
@@ -927,10 +933,10 @@ const PrintableInvoice = ({
         {/* Totals */}
         <div className="totals-section">
           <div className="total-row">
-            <span>Subtotal:</span>
-            <span>{amountDisplay(invoice.subtotal)}</span>
+            <span>{subtotalLabel}:</span>
+            <span>{amountDisplay(taxDisplay.subtotal)}</span>
           </div>
-          {invoice.discountAmount > 0 && (
+          {taxDisplay.discountAmount > 0 && (
             <div className="total-row" style={{ color: '#52c41a', fontWeight: '500' }}>
               <span>
                 Discount {invoice.discountType === 'percentage' ? `(${invoice.discountValue}%)` : ''}
@@ -940,15 +946,15 @@ const PrintableInvoice = ({
                   </div>
                 )}
               </span>
-              <span>{maskAmounts ? 'XXX' : `-₵ ${parseFloat(invoice.discountAmount || 0).toFixed(2)}`}</span>
+              <span>{maskAmounts ? 'XXX' : `-₵ ${parseFloat(taxDisplay.discountAmount || 0).toFixed(2)}`}</span>
             </div>
           )}
-          {invoice.taxAmount > 0 && (
+          {taxDisplay.hasTax && (
             <div className="total-row">
               <span>
-                {companyInfo.taxDisplayLabel} ({invoice.taxRate || 0}%):
+                {taxLabel}:
               </span>
-              <span>{amountDisplay(invoice.taxAmount)}</span>
+              <span>{amountDisplay(taxDisplay.taxAmount)}</span>
             </div>
           )}
           <div className="total-row bold">

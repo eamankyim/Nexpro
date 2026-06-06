@@ -18,6 +18,7 @@ const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
 const { createInvoicePaymentJournal, createInvoiceRevenueJournal } = require('../services/invoiceAccountingService');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { resolvePaymentNotesFromBody } = require('../utils/paymentNoteUtils');
 const {
   applyStudioLocationFilter,
   attachStudioLocationToPayload,
@@ -142,11 +143,6 @@ const parsePaymentDateInput = (value) => {
 
   const paymentDate = value instanceof Date ? value : new Date(value);
   return Number.isNaN(paymentDate.getTime()) ? null : paymentDate;
-};
-
-const normalizePaymentNotes = (value) => {
-  if (value == null) return '';
-  return String(value).trim().slice(0, 1000);
 };
 
 const normalizePaymentReference = (referenceNumber, clientRequestId) => {
@@ -861,20 +857,25 @@ exports.createInvoice = async (req, res, next) => {
       totalItemDiscount = items.reduce((sum, item) => sum + parseFloat(item.discountAmount || 0), 0);
     }
 
-    if (taxConfig.enabled && taxConfig.pricesAreTaxInclusive && (taxRate || 0) > 0) {
+    const pricesAreTaxInclusive = taxConfig.enabled && taxConfig.pricesAreTaxInclusive && (taxRate || 0) > 0;
+    if (pricesAreTaxInclusive) {
       const conv = convertLineItemsFromTaxInclusive(items, taxRate);
       items = conv.items;
       subtotal = conv.subtotal;
+      totalItemDiscount = conv.discountTotal;
     }
 
     // Preserve direct-invoice line-item discounts in invoice header totals.
     // For job-linked invoices, also reconcile against job.finalPrice so discounts
     // applied at job-level (but not persisted on each item) are still honored.
     // Invoice model computes total using subtotal - discountValue (+ tax).
+    const comparableJobFinalPrice = pricesAreTaxInclusive
+      ? Math.round((parseFloat(job?.finalPrice || 0) / (1 + taxRate / 100)) * 100) / 100
+      : parseFloat(job?.finalPrice || 0);
     const jobLevelDiscountFallback = isJobLinked
       ? Math.max(
           0,
-          (parseFloat(subtotal || 0) - parseFloat(job?.finalPrice || 0))
+          (parseFloat(subtotal || 0) - comparableJobFinalPrice)
         )
       : 0;
     const hasHeaderDiscount = discountValue !== undefined && discountValue !== null && discountValue !== '';
@@ -1142,8 +1143,9 @@ exports.deleteCancelledInvoice = async (req, res, next) => {
 // @access  Private
 exports.recordPayment = async (req, res, next) => {
   try {
-    const { amount, paymentMethod, referenceNumber, clientRequestId, paymentDate, notes } = sanitizePayload(req.body);
-    const paymentNotes = normalizePaymentNotes(notes);
+    const body = sanitizePayload(req.body);
+    const { amount, paymentMethod, referenceNumber, clientRequestId, paymentDate } = body;
+    const paymentNotes = resolvePaymentNotesFromBody(body);
     const paymentReference = normalizePaymentReference(referenceNumber, clientRequestId);
 
     const invoice = await Invoice.findOne({
@@ -1243,7 +1245,7 @@ exports.recordPayment = async (req, res, next) => {
       referenceNumber: paymentReference || referenceNumber,
       status: 'completed',
       description: `invoice:${invoice.id}`,
-      notes: paymentNotes || `Payment for invoice ${invoice.invoiceNumber}`
+      notes: paymentNotes || null
     });
 
     const updatedInvoice = await Invoice.findOne({
@@ -1288,8 +1290,9 @@ exports.recordPayment = async (req, res, next) => {
 // @access  Private
 exports.markInvoicePaid = async (req, res, next) => {
   try {
-    const { paymentDate, paidAt, notes, clientRequestId } = sanitizePayload(req.body || {});
-    const paymentNotes = normalizePaymentNotes(notes);
+    const body = sanitizePayload(req.body || {});
+    const { paymentDate, paidAt, clientRequestId } = body;
+    const paymentNotes = resolvePaymentNotesFromBody(body);
     const paymentReference = normalizePaymentReference(null, clientRequestId);
     const effectivePaymentDate = parsePaymentDateInput(paymentDate || paidAt);
     if (!effectivePaymentDate) {
@@ -1383,7 +1386,7 @@ exports.markInvoicePaid = async (req, res, next) => {
         referenceNumber: paymentReference || undefined,
         status: 'completed',
         description: `invoice:${invoice.id}`,
-        notes: paymentNotes || `Invoice ${invoice.invoiceNumber} manually marked as paid`
+        notes: paymentNotes || null
       });
     }
 
@@ -1698,8 +1701,9 @@ async function createInvoiceFromJobInternal(tenantId, jobId, userId = null) {
 
   const taxConfigJob = await getTaxConfigForTenant(tenantId);
   const jobTaxRate = taxConfigJob.enabled ? taxConfigJob.defaultRatePercent || 0 : 0;
+  const jobPricesAreTaxInclusive = taxConfigJob.enabled && taxConfigJob.pricesAreTaxInclusive && jobTaxRate > 0;
 
-  if (taxConfigJob.enabled && taxConfigJob.pricesAreTaxInclusive && jobTaxRate > 0) {
+  if (jobPricesAreTaxInclusive) {
     const conv = convertLineItemsFromTaxInclusive(items, jobTaxRate);
     items = conv.items;
     subtotal = conv.subtotal;
@@ -1708,9 +1712,12 @@ async function createInvoiceFromJobInternal(tenantId, jobId, userId = null) {
   const totalItemDiscount = (job.items && job.items.length > 0)
     ? items.reduce((sum, item) => sum + parseFloat(item.discountAmount || 0), 0)
     : 0;
+  const comparableFinalPrice = jobPricesAreTaxInclusive
+    ? Math.round((parseFloat(job?.finalPrice || 0) / (1 + jobTaxRate / 100)) * 100) / 100
+    : parseFloat(job?.finalPrice || 0);
   const jobLevelDiscountFallback = Math.max(
     0,
-    (parseFloat(subtotal || 0) - parseFloat(job?.finalPrice || 0))
+    (parseFloat(subtotal || 0) - comparableFinalPrice)
   );
   const effectiveDiscount = totalItemDiscount > 0 ? totalItemDiscount : jobLevelDiscountFallback;
 
@@ -1793,6 +1800,7 @@ async function createInvoiceFromQuoteInternal(tenantId, quoteId, userId = null) 
   const invoiceNumber = await generateInvoiceNumber(tenantId);
   const items = [];
   let headerSubtotal = parseFloat(quote.subtotal || 0);
+  let discountTotal = parseFloat(quote.discountTotal || 0);
   if (quote.items && quote.items.length > 0) {
     for (const qi of quote.items) {
       const qty = parseFloat(qi.quantity || 0);
@@ -1808,23 +1816,24 @@ async function createInvoiceFromQuoteInternal(tenantId, quoteId, userId = null) 
       });
     }
   } else {
-    headerSubtotal = parseFloat(quote.totalAmount || 0);
+    headerSubtotal = parseFloat(quote.subtotal || quote.totalAmount || 0);
+    const fallbackLineTotal = Math.max(0, headerSubtotal - discountTotal);
     items.push({
       description: quote.title,
       quantity: 1,
       unitPrice: headerSubtotal,
-      total: headerSubtotal
+      total: fallbackLineTotal
     });
   }
 
-  const discountTotal = parseFloat(quote.discountTotal || 0);
   const taxRate = parseFloat(quote.taxRate || 0);
   const taxCfgQuote = await getTaxConfigForTenant(tenantId);
   if (taxCfgQuote.enabled && taxCfgQuote.pricesAreTaxInclusive && taxRate > 0 && items.length > 0) {
     const conv = convertLineItemsFromTaxInclusive(items, taxRate);
     items.length = 0;
     conv.items.forEach((row) => items.push(row));
-    headerSubtotal = Math.round((conv.subtotal + discountTotal) * 100) / 100;
+    headerSubtotal = conv.subtotal;
+    discountTotal = conv.discountTotal;
   }
 
   const invoice = await Invoice.create({
@@ -2065,7 +2074,12 @@ exports.getInvoiceByToken = async (req, res, next) => {
         paymentDetails: resolved.paymentDetails ?? '',
         paymentDetailsEnabled: resolved.paymentDetailsEnabled === true,
         tax: resolved.tax
-          ? { vatNumber: resolved.tax.vatNumber, tin: resolved.tax.tin, displayLabel: resolved.tax.displayLabel }
+          ? {
+              vatNumber: resolved.tax.vatNumber,
+              tin: resolved.tax.tin,
+              displayLabel: resolved.tax.displayLabel,
+              pricesAreTaxInclusive: resolved.tax.pricesAreTaxInclusive === true
+            }
           : {},
       };
     } catch (e) {

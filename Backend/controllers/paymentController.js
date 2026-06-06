@@ -2,6 +2,7 @@ const { Payment, Customer, Vendor, Job } = require('../models');
 const { Op } = require('sequelize');
 const { getPagination } = require('../utils/paginationUtils');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { resolvePaymentNotesFromBody } = require('../utils/paymentNoteUtils');
 
 // Generate unique payment number
 const generatePaymentNumber = async (tenantId, type) => {
@@ -107,9 +108,13 @@ exports.getPayment = async (req, res, next) => {
 exports.createPayment = async (req, res, next) => {
   try {
     const payload = sanitizePayload(req.body);
+    const paymentNotes = resolvePaymentNotesFromBody(payload);
+    delete payload.comment;
+    delete payload.comments;
     const paymentNumber = await generatePaymentNumber(req.tenantId, payload.type);
     const payment = await Payment.create({
       ...payload,
+      notes: paymentNotes || null,
       tenantId: req.tenantId,
       paymentNumber
     });
@@ -171,7 +176,14 @@ exports.updatePayment = async (req, res, next) => {
       });
     }
 
-    await payment.update(sanitizePayload(req.body));
+    const payload = sanitizePayload(req.body);
+    const paymentNotes = resolvePaymentNotesFromBody(payload);
+    if (paymentNotes || payload.notes != null || payload.comment != null || payload.comments != null) {
+      payload.notes = paymentNotes || null;
+    }
+    delete payload.comment;
+    delete payload.comments;
+    await payment.update(payload);
 
     const updatedPayment = await Payment.findOne({
       where: applyTenantFilter(req.tenantId, { id: payment.id }),

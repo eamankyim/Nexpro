@@ -25,6 +25,7 @@ import PrintableInvoice from '../components/PrintableInvoice';
 import StatusChip from '../components/StatusChip';
 import DetailSkeleton from '../components/DetailSkeleton';
 import { showSuccess, showError } from '../utils/toast';
+import { resolvePaymentNotePayload } from '../utils/paymentNotes';
 import dayjs from 'dayjs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -553,7 +554,7 @@ const Invoices = () => {
           paymentMethod: 'cash',
           paymentDate: selectedPaymentDate,
           clientRequestId: markAsPaidClientRequestIdRef.current,
-          notes: values.notes?.trim() || undefined,
+          notes: resolvePaymentNotePayload(values),
         });
       } else {
         if (!markAsPaidClientRequestIdRef.current) {
@@ -562,7 +563,7 @@ const Invoices = () => {
         response = await invoiceService.markAsPaid(viewingInvoice.id, {
           paymentDate: selectedPaymentDate,
           clientRequestId: markAsPaidClientRequestIdRef.current,
-          notes: values.notes?.trim() || undefined,
+          notes: resolvePaymentNotePayload(values),
         });
       }
       const updatedInvoice = response?.data;
@@ -604,7 +605,7 @@ const Invoices = () => {
         ...values,
         paymentDate: dayjs(values.paymentDate).format('YYYY-MM-DD'),
         clientRequestId: paymentClientRequestIdRef.current,
-        notes: values.notes?.trim() || undefined,
+        notes: resolvePaymentNotePayload(values),
       });
       const updatedInvoice = response?.data;
       if (updatedInvoice && viewingInvoice?.id === updatedInvoice.id) {

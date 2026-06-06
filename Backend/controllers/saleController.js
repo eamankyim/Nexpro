@@ -5,6 +5,7 @@ const { syncSaleInvoiceAndRefreshCustomerBalance } = require('../services/invoic
 const { createSaleCogsJournal, createSaleRevenueJournal } = require('../services/saleAccountingService');
 const { Op } = require('sequelize');
 const { applyTenantFilter, sanitizePayload } = require('../utils/tenantUtils');
+const { resolvePaymentNotesFromBody } = require('../utils/paymentNoteUtils');
 const { parseDeliveryStatusInput } = require('../utils/deliveryStatus');
 const { getPagination } = require('../utils/paginationUtils');
 const { invalidateSaleListCache } = require('../middleware/cache');
@@ -1639,7 +1640,9 @@ const salePaymentMethodToPaymentModel = (method) => {
 // @access  Private
 exports.recordPayment = async (req, res, next) => {
   try {
-    const { amount, paymentMethod, referenceNumber, paymentDate } = sanitizePayload(req.body);
+    const body = sanitizePayload(req.body);
+    const { amount, paymentMethod, referenceNumber, paymentDate } = body;
+    const paymentNotes = resolvePaymentNotesFromBody(body);
 
     const sale = await Sale.findOne({
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
@@ -1739,15 +1742,19 @@ exports.recordPayment = async (req, res, next) => {
       paymentDate: effectivePaymentDate,
       referenceNumber: referenceNumber || null,
       status: 'completed',
-      notes: `Payment for sale ${sale.saleNumber || sale.id}`
+      description: `sale:${sale.id}`,
+      notes: paymentNotes || null
     });
+
+    const activityNote = paymentNotes
+      || `₵ ${paymentAmount.toFixed(2)} received (${paymentMethod || sale.paymentMethod || 'cash'}). Total paid: ₵ ${newAmountPaid.toFixed(2)}${isNowCompleted ? ' – Sale completed' : ''}`;
 
     await SaleActivity.create({
       saleId: sale.id,
       tenantId: req.tenantId,
       type: 'payment',
       subject: 'Payment recorded',
-      notes: `₵ ${paymentAmount.toFixed(2)} received (${paymentMethod || sale.paymentMethod || 'cash'}). Total paid: ₵ ${newAmountPaid.toFixed(2)}${isNowCompleted ? ' – Sale completed' : ''}`,
+      notes: activityNote,
       createdBy: req.user?.id || null,
       metadata: {
         amount: paymentAmount,

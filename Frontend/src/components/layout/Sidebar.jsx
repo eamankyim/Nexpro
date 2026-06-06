@@ -257,13 +257,19 @@ const getMenuItems = (
 
   // Data & Reports section with children
   const reportsChildren = [
-    { key: '/reports/overview', label: 'Overview', tooltip: MENU_HINTS['/reports'] },
-    { key: '/reports/smart-report', label: 'Smart report', tooltip: 'Generate and view smart reports' },
-    { key: '/reports/compliance', label: 'Compliance', tooltip: 'Reports for submission to revenue centers and tax authorities' },
-    { key: '/export-data', label: 'Export data', tooltip: MENU_HINTS['/export-data'] },
+    ...(hasFeature('reports')
+      ? [
+          { key: '/reports/overview', label: 'Overview', tooltip: MENU_HINTS['/reports'] },
+          { key: '/reports/smart-report', label: 'Smart report', tooltip: 'Generate and view smart reports' },
+          { key: '/reports/compliance', label: 'Compliance', tooltip: 'Reports for submission to revenue centers and tax authorities' },
+        ]
+      : []),
+    ...(hasFeature('advancedReporting')
+      ? [{ key: '/export-data', label: 'Export data', tooltip: MENU_HINTS['/export-data'] }]
+      : []),
   ];
 
-  if (hasFeature('reports')) {
+  if (reportsChildren.length > 0) {
     baseItems.push({
       key: 'reports',
       icon: BarChart3,

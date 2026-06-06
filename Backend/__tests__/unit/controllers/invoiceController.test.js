@@ -304,6 +304,7 @@ describe('invoiceController recordPayment notes', () => {
     expect(Payment.create).toHaveBeenCalledWith(expect.objectContaining({
       amount: 75,
       notes: 'Customer paid at front desk',
+      description: 'invoice:invoice-1',
     }));
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
@@ -313,6 +314,101 @@ describe('invoiceController recordPayment notes', () => {
         id: 'payment-1',
         notes: 'Customer paid at front desk',
       }),
+    }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('accepts comment alias and stores null when no user note is provided', async () => {
+    const invoice = {
+      id: 'invoice-1',
+      tenantId: 'tenant-1',
+      invoiceNumber: 'INV-001',
+      customerId: 'customer-1',
+      jobId: null,
+      totalAmount: 100,
+      amountPaid: 0,
+      status: 'sent',
+      update: jest.fn().mockResolvedValue(undefined),
+    };
+    const updatedInvoice = {
+      ...invoice,
+      amountPaid: 50,
+      balance: 50,
+      toJSON() {
+        return { id: this.id, tenantId: this.tenantId, invoiceNumber: this.invoiceNumber };
+      },
+    };
+
+    Invoice.findOne
+      .mockResolvedValueOnce(invoice)
+      .mockResolvedValueOnce(updatedInvoice);
+    Payment.create.mockResolvedValue({ id: 'payment-2', paymentNumber: 'PAY-2', notes: 'MoMo ref 123' });
+
+    const req = {
+      params: { id: 'invoice-1' },
+      body: {
+        amount: 50,
+        paymentMethod: 'cash',
+        paymentDate: '2026-05-15',
+        comment: 'MoMo ref 123',
+      },
+      tenantId: 'tenant-1',
+      user: { id: 'user-1' },
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await invoiceController.recordPayment(req, res, next);
+
+    expect(Payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      notes: 'MoMo ref 123',
+    }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('stores null notes when payment comment fields are omitted', async () => {
+    const invoice = {
+      id: 'invoice-1',
+      tenantId: 'tenant-1',
+      invoiceNumber: 'INV-001',
+      customerId: 'customer-1',
+      jobId: null,
+      totalAmount: 100,
+      amountPaid: 0,
+      status: 'sent',
+      update: jest.fn().mockResolvedValue(undefined),
+    };
+    const updatedInvoice = {
+      ...invoice,
+      amountPaid: 25,
+      balance: 75,
+      toJSON() {
+        return { id: this.id, tenantId: this.tenantId, invoiceNumber: this.invoiceNumber };
+      },
+    };
+
+    Invoice.findOne
+      .mockResolvedValueOnce(invoice)
+      .mockResolvedValueOnce(updatedInvoice);
+    Payment.create.mockResolvedValue({ id: 'payment-3', paymentNumber: 'PAY-3', notes: null });
+
+    const req = {
+      params: { id: 'invoice-1' },
+      body: {
+        amount: 25,
+        paymentMethod: 'cash',
+        paymentDate: '2026-05-15',
+      },
+      tenantId: 'tenant-1',
+      user: { id: 'user-1' },
+    };
+    const res = buildRes();
+    const next = jest.fn();
+
+    await invoiceController.recordPayment(req, res, next);
+
+    expect(Payment.create).toHaveBeenCalledWith(expect.objectContaining({
+      notes: null,
     }));
     expect(next).not.toHaveBeenCalled();
   });
