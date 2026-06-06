@@ -4,7 +4,6 @@
 
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import {
-  Banknote,
   Smartphone,
   CreditCard,
   FileText,
@@ -49,18 +48,18 @@ import settingsService from '../../services/settingsService';
 /** 1px card borders + consistent section spacing */
 const SECTION_CARD = 'rounded-lg border border-[#e5e7eb] bg-card';
 const SECTION_STACK = 'flex flex-col gap-6';
+const STICKY_ACTION_BAR =
+  'sticky bottom-0 z-20 -mx-4 sm:-mx-6 mt-2 border-t border-[#e5e7eb] bg-background px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:px-6 sm:py-4';
 
 const PAYMENT_GROUPS = [
   {
     id: 'manual',
     label: 'Manual',
-    description: 'Tenant confirms payment themselves',
     defaultMethod: 'cash',
   },
   {
     id: 'automatic',
     label: 'Automatic',
-    description: 'ABS/payment processor verifies',
     defaultMethod: 'momo_prompt',
   },
 ];
@@ -70,42 +69,30 @@ const PAYMENT_METHOD_GROUPS = {
     {
       id: 'cash',
       label: 'Cash',
-      description: 'Receive cash and mark sale complete',
-      icon: Banknote,
     },
     {
       id: 'momo_direct',
       label: 'Mobile Money Direct',
-      description: "Customer sends to tenant's own MoMo number",
-      icon: Smartphone,
     },
     {
       id: 'credit',
       label: 'Credit Sale',
-      description: 'Pay later with customer balance',
-      icon: FileText,
     },
   ],
   automatic: [
     {
       id: 'momo_prompt',
       label: 'MoMo Prompt',
-      description: 'Send a payment prompt to the customer',
-      icon: Smartphone,
     },
     {
       id: 'card',
       label: 'Card',
-      description: 'Processor-verified card payment',
-      icon: CreditCard,
       disabled: true,
       badge: 'Coming soon',
     },
     {
       id: 'bank_transfer',
       label: 'Bank',
-      description: 'Processor-verified bank payment',
-      icon: Banknote,
       disabled: true,
       badge: 'Coming soon',
     },
@@ -164,6 +151,12 @@ const getContinueButtonText = (methodId) => {
   return 'Continue to Payment';
 };
 
+const StickyPaymentAction = ({ children }) => (
+  <div className={STICKY_ACTION_BAR}>
+    {children}
+  </div>
+);
+
 const buildPaymentDetails = (methodId, details = {}) => ({
   ...details,
   paymentMethod: getBackendPaymentMethod(methodId),
@@ -183,39 +176,29 @@ const getAvailableMethodForGroup = (groupId) => (
   'cash'
 );
 
-const MethodRadioCard = ({ method, isSelected }) => {
-  const Icon = method.icon;
-
+const PaymentMethodOption = ({ method, isSelected }) => {
   return (
     <div
       className={cn(
-        'flex items-start gap-3 rounded-lg border p-3 transition-colors',
+        'flex h-10 items-center gap-2 rounded-md border px-3 text-sm transition-colors',
         method.disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer',
         isSelected
-          ? 'border-green-700 bg-green-50'
-          : 'border-[#e5e7eb] bg-card hover:border-green-300'
+          ? 'border-green-700 bg-green-50 text-green-800'
+          : 'border-[#e5e7eb] bg-card text-foreground hover:border-green-300'
       )}
     >
       <RadioGroupItem
         value={method.id}
         id={`payment-method-${method.id}`}
         disabled={method.disabled}
-        className="mt-1 border-green-700 text-green-700"
+        className="border-green-700 text-green-700"
       />
-      <Icon className={cn('mt-0.5 h-5 w-5 shrink-0', isSelected ? 'text-green-700' : 'text-muted-foreground')} aria-hidden />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className={cn('text-sm font-medium', isSelected ? 'text-green-800' : 'text-foreground')}>
-            {method.label}
-          </span>
-          {method.badge && (
-            <span className="rounded-full border border-[#e5e7eb] px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-              {method.badge}
-            </span>
-          )}
-        </div>
-        <p className="mt-0.5 text-xs text-muted-foreground">{method.description}</p>
-      </div>
+      <span className="truncate font-medium">{method.label}</span>
+      {method.badge && (
+        <span className="ml-auto rounded-full border border-[#e5e7eb] px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+          {method.badge}
+        </span>
+      )}
     </div>
   );
 };
@@ -227,46 +210,44 @@ function PaymentMethodSelection({ activeGroup, activeMethod, onGroupChange, onMe
   const methods = PAYMENT_METHOD_GROUPS[activeGroup] || [];
 
   return (
-    <div className={cn(SECTION_CARD, 'p-4 space-y-4')}>
-      <div>
+    <div className={cn(SECTION_CARD, 'space-y-3 p-3')}>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Label className="text-sm font-medium text-foreground">Payment Method</Label>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Choose who verifies the payment, then select the method.
-        </p>
+
+        <RadioGroup
+          value={activeGroup}
+          onValueChange={onGroupChange}
+          className="inline-flex rounded-md border border-[#e5e7eb] bg-muted/40 p-1"
+        >
+          {PAYMENT_GROUPS.map((group) => {
+            const isSelected = activeGroup === group.id;
+            return (
+              <label
+                key={group.id}
+                htmlFor={`payment-group-${group.id}`}
+                className={cn(
+                  'flex h-8 cursor-pointer items-center gap-2 rounded-sm px-3 text-sm font-medium transition-colors',
+                  isSelected ? 'bg-green-700 text-white' : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <RadioGroupItem
+                  value={group.id}
+                  id={`payment-group-${group.id}`}
+                  className="sr-only"
+                />
+                <span>
+                  {group.label}
+                </span>
+              </label>
+            );
+          })}
+        </RadioGroup>
       </div>
 
-      <RadioGroup value={activeGroup} onValueChange={onGroupChange} className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {PAYMENT_GROUPS.map((group) => {
-          const isSelected = activeGroup === group.id;
-          return (
-            <label
-              key={group.id}
-              htmlFor={`payment-group-${group.id}`}
-              className={cn(
-                'flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors',
-                isSelected ? 'border-green-700 bg-green-50' : 'border-[#e5e7eb] bg-card hover:border-green-300'
-              )}
-            >
-              <RadioGroupItem
-                value={group.id}
-                id={`payment-group-${group.id}`}
-                className="mt-1 border-green-700 text-green-700"
-              />
-              <div>
-                <p className={cn('text-sm font-semibold', isSelected ? 'text-green-800' : 'text-foreground')}>
-                  {group.label}
-                </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">{group.description}</p>
-              </div>
-            </label>
-          );
-        })}
-      </RadioGroup>
-
-      <RadioGroup value={activeMethod} onValueChange={onMethodChange} className="grid grid-cols-1 gap-3">
+      <RadioGroup value={activeMethod} onValueChange={onMethodChange} className="flex flex-wrap gap-2 sm:flex-nowrap">
         {methods.map((method) => (
-          <label key={method.id} htmlFor={`payment-method-${method.id}`}>
-            <MethodRadioCard method={method} isSelected={activeMethod === method.id} />
+          <label key={method.id} htmlFor={`payment-method-${method.id}`} className="min-w-[11rem] flex-1">
+            <PaymentMethodOption method={method} isSelected={activeMethod === method.id} />
           </label>
         ))}
       </RadioGroup>
@@ -655,24 +636,26 @@ const CashPayment = ({ total, items, onConfirm, isProcessing, onEditItems, canCo
         </div>
       </div>
 
-      <Button
-        type="button"
-        className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
-        disabled={!isValid || !canComplete}
-        loading={isProcessing}
-        onClick={() => onConfirm({
-          ...buildPaymentDetails('cash'),
-          amountPaid: parsedAmount,
-          change,
-        })}
-      >
-        <span className="inline-flex items-center gap-2">
-          <span className="h-5 w-5 rounded-full border border-white/70 flex items-center justify-center">
-            <Check className="h-3 w-3" aria-hidden />
+      <StickyPaymentAction>
+        <Button
+          type="button"
+          className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
+          disabled={!isValid || !canComplete}
+          loading={isProcessing}
+          onClick={() => onConfirm({
+            ...buildPaymentDetails('cash'),
+            amountPaid: parsedAmount,
+            change,
+          })}
+        >
+          <span className="inline-flex items-center gap-2">
+            <span className="h-5 w-5 rounded-full border border-white/70 flex items-center justify-center">
+              <Check className="h-3 w-3" aria-hidden />
+            </span>
+            Complete Sale
           </span>
-          Complete Sale
-        </span>
-      </Button>
+        </Button>
+      </StickyPaymentAction>
     </div>
   );
 };
@@ -726,19 +709,21 @@ const ManualMobileMoneyPayment = ({ total, onConfirm, isProcessing, canComplete 
         </CardContent>
       </Card>
 
-      <Button
-        type="button"
-        className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
-        disabled={isProcessing || !canComplete}
-        loading={isProcessing}
-        onClick={() => onConfirm(buildPaymentDetails('momo_direct', {
-          amountPaid: total,
-          mobileMoneyProvider: logicalProvider,
-        }))}
-      >
-        <Check className="h-5 w-5 mr-2" aria-hidden />
-        {getContinueButtonText('momo_direct')}
-      </Button>
+      <StickyPaymentAction>
+        <Button
+          type="button"
+          className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
+          disabled={isProcessing || !canComplete}
+          loading={isProcessing}
+          onClick={() => onConfirm(buildPaymentDetails('momo_direct', {
+            amountPaid: total,
+            mobileMoneyProvider: logicalProvider,
+          }))}
+        >
+          <Check className="h-5 w-5 mr-2" aria-hidden />
+          {getContinueButtonText('momo_direct')}
+        </Button>
+      </StickyPaymentAction>
     </div>
   );
 };
@@ -853,42 +838,46 @@ const MobileMoneyPayment = ({
               </ol>
             </CardContent>
           </Card>
-          <Button
-            type="button"
-            className="w-full h-12 bg-green-700 hover:bg-green-800"
-            disabled={isProcessing || !canComplete}
-            loading={isProcessing}
-            onClick={() => onConfirm({
-              ...buildPaymentDetails('momo_direct'),
-              amountPaid: total,
-              mobileMoneyPhone: phone.trim(),
-              mobileMoneyProvider: logicalProvider,
-            })}
-          >
-            <Check className="h-5 w-5 mr-2" aria-hidden />
-            Confirm payment received
-          </Button>
-          {mobileMoneyError && <p className="text-xs text-red-600">{mobileMoneyError}</p>}
+          <StickyPaymentAction>
+            <Button
+              type="button"
+              className="w-full h-12 bg-green-700 hover:bg-green-800"
+              disabled={isProcessing || !canComplete}
+              loading={isProcessing}
+              onClick={() => onConfirm({
+                ...buildPaymentDetails('momo_direct'),
+                amountPaid: total,
+                mobileMoneyPhone: phone.trim(),
+                mobileMoneyProvider: logicalProvider,
+              })}
+            >
+              <Check className="h-5 w-5 mr-2" aria-hidden />
+              Confirm payment received
+            </Button>
+            {mobileMoneyError && <p className="text-xs text-red-600 mt-2">{mobileMoneyError}</p>}
+          </StickyPaymentAction>
         </>
       )}
 
       {!isFallbackManual && (
-        <Button
-          type="button"
-          className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
-          disabled={!isPhoneValid || isWaiting || isProcessing || !canComplete}
-          loading={isProcessing || isWaiting}
-          onClick={() => onRequestMobileMoney?.({
-            phone: phone.trim(),
-            provider: logicalProvider,
-            paymentMethodUi: 'momo_prompt',
-            paymentCollectionMode: getPaymentFlowMetadata('momo_prompt').paymentCollectionMode,
-            paymentGroup: getPaymentFlowMetadata('momo_prompt').paymentGroup,
-          })}
-        >
-          <Smartphone className="h-5 w-5 mr-2" aria-hidden />
-          {isWaiting ? 'Waiting for Approval…' : getContinueButtonText('momo_prompt')}
-        </Button>
+        <StickyPaymentAction>
+          <Button
+            type="button"
+            className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
+            disabled={!isPhoneValid || isWaiting || isProcessing || !canComplete}
+            loading={isProcessing || isWaiting}
+            onClick={() => onRequestMobileMoney?.({
+              phone: phone.trim(),
+              provider: logicalProvider,
+              paymentMethodUi: 'momo_prompt',
+              paymentCollectionMode: getPaymentFlowMetadata('momo_prompt').paymentCollectionMode,
+              paymentGroup: getPaymentFlowMetadata('momo_prompt').paymentGroup,
+            })}
+          >
+            <Smartphone className="h-5 w-5 mr-2" aria-hidden />
+            {isWaiting ? 'Waiting for Approval…' : getContinueButtonText('momo_prompt')}
+          </Button>
+        </StickyPaymentAction>
       )}
     </div>
   );
@@ -969,16 +958,18 @@ const CreditPayment = ({ total, customer, onConfirm, isProcessing, canComplete =
         </>
       )}
 
-      <Button
-        type="button"
-        className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
-        disabled={!hasCustomer || !canComplete}
-        loading={isProcessing}
-        onClick={() => onConfirm(buildPaymentDetails('credit', { amountPaid: 0 }))}
-      >
-        <FileText className="h-5 w-5 mr-2" aria-hidden />
-        Create Credit Sale
-      </Button>
+      <StickyPaymentAction>
+        <Button
+          type="button"
+          className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
+          disabled={!hasCustomer || !canComplete}
+          loading={isProcessing}
+          onClick={() => onConfirm(buildPaymentDetails('credit', { amountPaid: 0 }))}
+        >
+          <FileText className="h-5 w-5 mr-2" aria-hidden />
+          Create Credit Sale
+        </Button>
+      </StickyPaymentAction>
     </div>
   );
 };
@@ -1006,13 +997,15 @@ const AutomaticPaymentPlaceholder = ({ methodId, total }) => {
         </CardContent>
       </Card>
 
-      <Button
-        type="button"
-        className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
-        disabled
-      >
-        {getContinueButtonText(methodId)}
-      </Button>
+      <StickyPaymentAction>
+        <Button
+          type="button"
+          className="w-full h-12 text-base font-medium bg-green-700 hover:bg-green-800"
+          disabled
+        >
+          {getContinueButtonText(methodId)}
+        </Button>
+      </StickyPaymentAction>
     </div>
   );
 };
