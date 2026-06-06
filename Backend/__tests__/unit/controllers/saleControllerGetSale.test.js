@@ -12,9 +12,7 @@ jest.mock('../../../config/database', () => ({
 
 jest.mock('../../../models', () => ({
   Sale: {
-    findAndCountAll: jest.fn(),
     findOne: jest.fn(),
-    count: jest.fn(),
   },
   SaleItem: {},
   Product: {},
@@ -74,34 +72,25 @@ jest.mock('../../../config/config', () => ({
   },
 }));
 
-const { Op } = require('sequelize');
 const { Sale } = require('../../../models');
 const saleController = require('../../../controllers/saleController');
 
-describe('saleController getSales summary', () => {
+describe('saleController getSale', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    Sale.findAndCountAll.mockResolvedValue({ count: 15, rows: [] });
     Sale.findOne.mockResolvedValue({
-      totalSales: 15,
-      completedCount: 15,
-      pendingCount: 0,
-      completedRevenue: '998.00',
+      id: 'sale-1',
+      soldBy: 'user-1',
+      toJSON: () => ({ id: 'sale-1' }),
     });
-    Sale.count.mockResolvedValue(0);
   });
 
-  it('uses today active kitchen queue count (not payment pending or filtered totals)', async () => {
+  it('loads sale items in a separate query with product and variant includes', async () => {
     const req = {
-      query: { status: 'completed' },
+      params: { id: 'sale-1' },
       tenantId: 'tenant-1',
       tenantRole: 'owner',
       user: { id: 'user-1', role: 'admin' },
-      shopScoped: false,
-      tenant: {
-        businessType: 'shop',
-        metadata: { businessSubType: 'restaurant' },
-      },
     };
     const res = {
       status: jest.fn().mockReturnThis(),
@@ -109,31 +98,21 @@ describe('saleController getSales summary', () => {
     };
     const next = jest.fn();
 
-    await saleController.getSales(req, res, next);
+    await saleController.getSale(req, res, next);
 
     expect(next).not.toHaveBeenCalled();
-    expect(Sale.count).toHaveBeenCalledWith({
-      where: expect.objectContaining({
-        tenantId: 'tenant-1',
-        orderStatus: { [Op.in]: ['received', 'preparing', 'ready'] },
-        createdAt: { [Op.between]: [expect.any(Date), expect.any(Date)] },
-      }),
-    });
-    expect(Sale.count).toHaveBeenCalledWith({
-      where: expect.not.objectContaining({
-        status: 'completed',
-      }),
-    });
-    expect(res.status).toHaveBeenCalledWith(200);
-    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-      count: 15,
-      summary: expect.objectContaining({
-        totalSales: 15,
-        completedCount: 15,
-        pendingCount: 0,
-        kitchenPendingCount: 0,
-        completedRevenue: 998,
-      }),
+    expect(Sale.findOne).toHaveBeenCalledWith(expect.objectContaining({
+      include: expect.arrayContaining([
+        expect.objectContaining({
+          as: 'items',
+          separate: true,
+          include: expect.arrayContaining([
+            expect.objectContaining({ as: 'product' }),
+            expect.objectContaining({ as: 'variant' }),
+          ]),
+        }),
+      ]),
     }));
+    expect(res.status).toHaveBeenCalledWith(200);
   });
 });

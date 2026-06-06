@@ -86,7 +86,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { numberInputValue, handleNumberChange, numberOrEmptySchema } from '../utils/formUtils';
-import { DELIVERY_STATUS_ORDER, DELIVERY_STATUS_LABELS, ORDER_STATUSES } from '../constants';
+import { DELIVERY_STATUS_ORDER, DELIVERY_STATUS_LABELS, ORDER_STATUSES, SHOP_TYPES } from '../constants';
 import { EMPTY_STATES, FEATURE_NOT_AVAILABLE } from '../constants/microcopy';
 import { getEmptyStateProps } from '../components/ui/empty-state';
 
@@ -193,7 +193,7 @@ const Sales = () => {
   const isRestaurant =
     isShop &&
     (activeTenant?.metadata?.businessSubType ||
-      activeTenant?.metadata?.shopType) === 'restaurant';
+      activeTenant?.metadata?.shopType) === SHOP_TYPES.RESTAURANT;
 
   const recordPaymentForm = useForm({
     resolver: zodResolver(recordPaymentSchema),
@@ -831,20 +831,20 @@ const Sales = () => {
           loading={loading}
         />
         <DashboardStatsCard
-          tooltip={isRestaurant ? 'Paid sales (Payment column). Counts all matching sales, not only this page.' : 'Sales that have been paid and completed across all filtered results'}
+          tooltip={isRestaurant ? 'Paid sales (Payment column). Counts completed sales matching your filters, across all pages.' : 'Sales that have been paid and completed across all filtered results'}
           title="Completed"
           value={completedCount}
-          subtitle="All filtered sales"
+          subtitle="Completed filtered sales"
           icon={CheckCircle}
           iconBgColor="rgba(132, 204, 22, 0.1)"
           iconColor="#84cc16"
           loading={loading}
         />
         <DashboardStatsCard
-          tooltip={isRestaurant ? 'Active Kitchen Orders queue for today (Received, Preparing, or Ready). Uses the same queue as Kitchen Orders, not Payment.' : 'Sales with no payment received yet, across all filtered results'}
+          tooltip={isRestaurant ? 'Active kitchen orders today (Received, Preparing, or Ready). Matches Kitchen Orders — not payment status or list filters.' : 'Sales with no payment received yet, across all filtered results'}
           title={isRestaurant ? 'Pending (in kitchen)' : 'Pending'}
           value={pendingCount}
-          subtitle={isRestaurant ? "Today's active queue" : 'All filtered sales'}
+          subtitle={isRestaurant ? 'Active kitchen orders today' : 'Unpaid filtered sales'}
           icon={Clock}
           iconBgColor="rgba(59, 130, 246, 0.1)"
           iconColor="#3b82f6"

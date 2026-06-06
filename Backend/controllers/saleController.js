@@ -28,9 +28,23 @@ const {
 const paystackCheckLastBySaleId = new Map();
 const PAYSTACK_CHECK_THROTTLE_MS = 4000;
 
-const productBarcodeInclude = [
-  { model: Barcode, as: 'barcodes', where: { isActive: true }, required: false }
+const saleItemBarcodeInclude = {
+  model: Barcode,
+  as: 'barcodes',
+  where: { isActive: true },
+  required: false,
+};
+const saleItemCatalogIncludes = [
+  { model: Product, as: 'product', required: false, include: [saleItemBarcodeInclude] },
+  { model: ProductVariant, as: 'variant', required: false, include: [saleItemBarcodeInclude] },
 ];
+/** Separate query avoids Sequelize join alias errors (items->variant) on nested barcode includes. */
+const saleItemDetailInclude = {
+  model: SaleItem,
+  as: 'items',
+  separate: true,
+  include: saleItemCatalogIncludes,
+};
 const ACTIVE_KITCHEN_ORDER_STATUSES = ['received', 'preparing', 'ready'];
 const isRestaurantTenant = (tenant) => getTenantShopType(tenant) === 'restaurant';
 
@@ -40,6 +54,28 @@ const getTodayDateRange = () => {
   const end = new Date(start);
   end.setHours(23, 59, 59, 999);
   return { [Op.between]: [start, end] };
+};
+
+/**
+ * Scope for today's active kitchen queue (matches Kitchen Orders board and table row flags).
+ * Uses tenant/shop/staff scope only — not list filters like payment status or date range.
+ * @param {import('express').Request} req
+ * @param {object} [listWhere]
+ */
+const buildActiveKitchenOrderScopeWhere = (req, listWhere = {}) => {
+  let where = applyTenantFilter(req.tenantId, {});
+  const effectiveRole = (req.tenantRole && ['owner', 'admin'].includes(req.tenantRole)) ? 'admin' : req.user?.role;
+  if (effectiveRole === 'staff') {
+    where.soldBy = req.user.id;
+  }
+  if (req.shopScoped) {
+    where = applyShopFilter(req, where);
+  } else if (listWhere.shopId) {
+    where.shopId = listWhere.shopId;
+  }
+  where.orderStatus = { [Op.in]: ACTIVE_KITCHEN_ORDER_STATUSES };
+  where.createdAt = getTodayDateRange();
+  return where;
 };
 
 const isActiveKitchenOrderRow = (sale) => {
@@ -360,14 +396,7 @@ const fetchSaleWithReceiptRelations = (saleId) => Sale.findByPk(saleId, {
       as: 'invoice',
       include: [{ model: Customer, as: 'customer' }]
     },
-    {
-      model: SaleItem,
-      as: 'items',
-      include: [
-        { model: Product, as: 'product', include: productBarcodeInclude },
-        { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
-      ]
-    }
+    saleItemDetailInclude
   ]
 });
 
@@ -830,20 +859,13 @@ exports.getSales = async (req, res, next) => {
         [sequelize.fn('COUNT', sequelize.col('id')), 'totalSales'],
         [sequelize.literal(`COUNT(CASE WHEN "Sale"."status"::text = 'completed' THEN 1 END)`), 'completedCount'],
         [sequelize.literal(`COUNT(CASE WHEN "Sale"."status"::text = 'pending' THEN 1 END)`), 'pendingCount'],
-        [sequelize.literal(`COUNT(CASE WHEN "Sale"."orderStatus" IN ('${ACTIVE_KITCHEN_ORDER_STATUSES.join("','")}') THEN 1 END)`), 'kitchenPendingCount'],
         [sequelize.literal(`COALESCE(SUM(CASE WHEN "Sale"."status"::text = 'completed' THEN "Sale"."total" ELSE 0 END), 0)`), 'completedRevenue']
       ],
       raw: true
     });
-    const isRestaurant = isRestaurantTenant(req.tenant);
-    const activeKitchenWhere = {
-      ...where,
-      orderStatus: { [Op.in]: ACTIVE_KITCHEN_ORDER_STATUSES },
-      createdAt: getTodayDateRange()
-    };
-    const activeKitchenPendingCount = isRestaurant
-      ? await Sale.count({ where: activeKitchenWhere })
-      : Number(summary?.kitchenPendingCount || 0);
+    const activeKitchenPendingCount = await Sale.count({
+      where: buildActiveKitchenOrderScopeWhere(req, where),
+    });
 
     res.status(200).json({
       success: true,
@@ -922,14 +944,7 @@ exports.getSale = async (req, res, next) => {
           as: 'invoice',
           include: [{ model: Customer, as: 'customer' }]
         },
-        {
-          model: SaleItem,
-          as: 'items',
-          include: [
-            { model: Product, as: 'product', include: productBarcodeInclude },
-            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
-          ]
-        }
+        saleItemDetailInclude
       ]
     });
 
@@ -1502,12 +1517,7 @@ exports.updateSale = async (req, res, next) => {
         { model: User, as: 'seller' },
         { model: Invoice, as: 'invoice' },
         {
-          model: SaleItem,
-          as: 'items',
-          include: [
-            { model: Product, as: 'product', include: productBarcodeInclude },
-            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
-          ]
+          saleItemDetailInclude
         }
       ]
     });
@@ -1670,12 +1680,7 @@ exports.recordPayment = async (req, res, next) => {
         { model: User, as: 'seller' },
         { model: Invoice, as: 'invoice' },
         {
-          model: SaleItem,
-          as: 'items',
-          include: [
-            { model: Product, as: 'product', include: productBarcodeInclude },
-            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
-          ]
+          saleItemDetailInclude
         }
       ]
     });
@@ -1864,12 +1869,7 @@ exports.printReceipt = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         {
-          model: SaleItem,
-          as: 'items',
-          include: [
-            { model: Product, as: 'product', include: productBarcodeInclude },
-            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
-          ]
+          saleItemDetailInclude
         },
         { model: Customer, as: 'customer', attributes: ['id', 'name', 'phone', 'email'] },
         {
@@ -1950,12 +1950,7 @@ exports.updateOrderStatus = async (req, res, next) => {
         { model: Customer, as: 'customer' },
         { model: User, as: 'seller' },
         {
-          model: SaleItem,
-          as: 'items',
-          include: [
-            { model: Product, as: 'product', include: productBarcodeInclude },
-            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
-          ]
+          saleItemDetailInclude
         }
       ]
     });
@@ -2059,12 +2054,7 @@ exports.sendReceipt = async (req, res, next) => {
       where: applyTenantFilter(req.tenantId, { id: req.params.id }),
       include: [
         {
-          model: SaleItem,
-          as: 'items',
-          include: [
-            { model: Product, as: 'product', include: productBarcodeInclude },
-            { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
-          ]
+          saleItemDetailInclude
         },
         { model: Customer, as: 'customer' },
         { model: Shop, as: 'shop' },
@@ -2171,10 +2161,7 @@ async function autoSendReceiptIfEnabled(tenantId, saleId) {
   const sale = await Sale.findOne({
     where: { tenantId, id: saleId },
     include: [
-      { model: SaleItem, as: 'items', include: [
-        { model: Product, as: 'product', include: productBarcodeInclude },
-        { model: ProductVariant, as: 'variant', include: productBarcodeInclude }
-      ] },
+      saleItemDetailInclude,
       { model: Customer, as: 'customer' },
       { model: Shop, as: 'shop' },
       { model: Tenant, as: 'tenant', attributes: ['id', 'name'] }
