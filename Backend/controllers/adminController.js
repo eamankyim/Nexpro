@@ -70,6 +70,17 @@ const PLAN_ALIASES = {
 
 const normalizePlanId = (plan = '') => PLAN_ALIASES[String(plan).trim().toLowerCase()] || String(plan).trim().toLowerCase();
 const MANUAL_PAYMENT_METHODS = new Set(['bank_transfer', 'mobile_money', 'card', 'cash', 'cheque', 'other']);
+const TRIAL_PLAN_IDS = ['trial', 'free'];
+
+const roundCurrency = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+const pesewasToGhs = (amount) => roundCurrency((Number(amount) || 0) / 100);
+
+const getPaymentEstimatedMrrGhs = (payment) => {
+  const amountGhs = pesewasToGhs(payment?.amount);
+  return payment?.billingPeriod === 'yearly' ? roundCurrency(amountGhs / 12) : amountGhs;
+};
+
+const getPaymentMethodFromPayment = (payment) => payment?.metadata?.paymentMethod || payment?.provider || null;
 
 const parseOptionalDate = (value, fieldName) => {
   if (!value) return null;
@@ -1318,45 +1329,95 @@ exports.updateTenantStatus = async (req, res, next) => {
 
 exports.getBillingSummary = async (req, res, next) => {
   try {
-    const planBreakdownRaw = await Tenant.findAll({
-      where: {
-        plan: {
-          [Op.ne]: 'trial'
+    const now = new Date();
+    const [planBreakdownRaw, enterpriseActivePayments] = await Promise.all([
+      Tenant.findAll({
+        where: {
+          plan: {
+            [Op.notIn]: TRIAL_PLAN_IDS
+          },
+          status: 'active'
         },
-        status: 'active'
-      },
-      attributes: [
-        'plan',
-        [sequelize.fn('COUNT', sequelize.col('id')), 'count']
-      ],
-      group: ['plan'],
-      raw: true
-    });
+        attributes: [
+          'plan',
+          [sequelize.fn('COUNT', sequelize.col('id')), 'count']
+        ],
+        group: ['plan'],
+        raw: true
+      }),
+      SubscriptionPayment.findAll({
+        where: {
+          plan: 'enterprise',
+          status: 'success',
+          periodStart: { [Op.lte]: now },
+          periodEnd: { [Op.gt]: now },
+        },
+        include: [
+          {
+            model: Tenant,
+            as: 'tenant',
+            attributes: [],
+            where: {
+              plan: 'enterprise',
+              status: 'active',
+            },
+            required: true,
+          },
+        ],
+      }),
+    ]);
 
     const trialingCount = await Tenant.count({
       where: {
-        plan: 'trial',
+        plan: { [Op.in]: TRIAL_PLAN_IDS },
         status: 'active'
       }
     });
 
-    const planBreakdown = planBreakdownRaw.map((row) => {
+    const planBreakdownByPlan = new Map();
+    planBreakdownRaw.forEach((row) => {
       const normalizedPlan = normalizePlanId(row.plan);
-      return {
-      plan: normalizedPlan,
-      count: Number(row.count) || 0,
-      price: PLAN_PRICING[normalizedPlan] || 0,
-      mrr: (PLAN_PRICING[normalizedPlan] || 0) * (Number(row.count) || 0)
-    };
+      if (normalizedPlan === 'trial') return;
+      const count = Number(row.count) || 0;
+      const price = PLAN_PRICING[normalizedPlan] || 0;
+      const existing = planBreakdownByPlan.get(normalizedPlan) || {
+        plan: normalizedPlan,
+        count: 0,
+        price,
+        mrr: 0,
+      };
+      existing.count += count;
+      existing.price = price;
+      existing.mrr = roundCurrency(existing.mrr + (price * count));
+      planBreakdownByPlan.set(normalizedPlan, existing);
     });
 
+    const enterpriseMrr = enterpriseActivePayments.reduce(
+      (sum, payment) => roundCurrency(sum + getPaymentEstimatedMrrGhs(payment)),
+      0
+    );
+    if (enterpriseMrr > 0 || planBreakdownByPlan.has('enterprise')) {
+      const enterpriseBreakdown = planBreakdownByPlan.get('enterprise') || {
+        plan: 'enterprise',
+        count: 0,
+        price: 0,
+        mrr: 0,
+      };
+      enterpriseBreakdown.mrr = enterpriseMrr;
+      enterpriseBreakdown.recordedRevenue = roundCurrency(
+        enterpriseActivePayments.reduce((sum, payment) => sum + pesewasToGhs(payment.amount), 0)
+      );
+      planBreakdownByPlan.set('enterprise', enterpriseBreakdown);
+    }
+
+    const planBreakdown = Array.from(planBreakdownByPlan.values());
     const estimatedMRR = planBreakdown.reduce((acc, item) => acc + item.mrr, 0);
     const payingTenants = planBreakdown.reduce((acc, item) => acc + item.count, 0);
 
     const upcomingRenewals = await Tenant.findAll({
       where: {
         plan: {
-          [Op.ne]: 'trial'
+          [Op.notIn]: TRIAL_PLAN_IDS
         },
         status: 'active'
       },
@@ -1385,12 +1446,13 @@ exports.getBillingTenants = async (req, res, next) => {
     const tenants = await Tenant.findAll({
       where: {
         plan: {
-          [Op.ne]: 'trial'
+          [Op.notIn]: TRIAL_PLAN_IDS
         }
       },
       order: [['updatedAt', 'DESC']],
       attributes: [
         'id',
+        'slug',
         'name',
         'plan',
         'status',
@@ -1400,9 +1462,49 @@ exports.getBillingTenants = async (req, res, next) => {
       ]
     });
 
+    const tenantIds = tenants.map((tenant) => tenant.id).filter(Boolean);
+    const latestPayments = tenantIds.length
+      ? await SubscriptionPayment.findAll({
+          where: { tenantId: { [Op.in]: tenantIds } },
+          order: [['createdAt', 'DESC']],
+        })
+      : [];
+    const latestPaymentByTenant = new Map();
+    latestPayments.forEach((payment) => {
+      if (!latestPaymentByTenant.has(payment.tenantId)) {
+        latestPaymentByTenant.set(payment.tenantId, payment);
+      }
+    });
+    const tenantsWithBilling = tenants.map((tenant) => {
+      const tenantData = tenant.toJSON ? tenant.toJSON() : { ...tenant };
+      const latestPayment = latestPaymentByTenant.get(tenantData.id);
+      return {
+        ...tenantData,
+        billingMethod: getPaymentMethodFromPayment(latestPayment) || tenantData.metadata?.paymentMethod || null,
+        lastSubscriptionPayment: latestPayment
+          ? {
+              id: latestPayment.id,
+              amount: latestPayment.amount,
+              amountGhs: pesewasToGhs(latestPayment.amount),
+              currency: latestPayment.currency,
+              status: latestPayment.status,
+              plan: latestPayment.plan,
+              billingPeriod: latestPayment.billingPeriod,
+              provider: latestPayment.provider,
+              paymentMethod: getPaymentMethodFromPayment(latestPayment),
+              providerReference: latestPayment.providerReference,
+              periodStart: latestPayment.periodStart,
+              periodEnd: latestPayment.periodEnd,
+              paymentDate: latestPayment.metadata?.paymentDate || latestPayment.createdAt,
+              createdAt: latestPayment.createdAt,
+            }
+          : null,
+      };
+    });
+
     res.status(200).json({
       success: true,
-      data: tenants
+      data: tenantsWithBilling
     });
   } catch (error) {
     next(error);

@@ -1,0 +1,108 @@
+{
+  "source": "/Users/us/Desktop/JOSFAA STOCKS selling price.xlsx",
+  "output": "/Users/us/Desktop/Development/Nexpro/Backend/scripts/data/josfaa-product-price-updates-for-raphine19.csv",
+  "intendedAccount": "raphine19@gmail.com",
+  "intendedShop": "warehouse",
+  "dryRunCommand": "node scripts/update-product-prices-csv-for-tenant.js --email raphine19@gmail.com --source scripts/data/josfaa-product-price-updates-for-raphine19.csv --shop-name warehouse",
+  "executeCommand": "node scripts/update-product-prices-csv-for-tenant.js --email raphine19@gmail.com --source scripts/data/josfaa-product-price-updates-for-raphine19.csv --shop-name warehouse --execute --confirm-update",
+  "sheet": "OPENING STOCK",
+  "sourceRowsWithData": 147,
+  "outputRows": 147,
+  "sourceColumns": [
+    "SL. NO.",
+    "DESCRIPTION",
+    "BRAND",
+    "PART NO.",
+    "BAL QTY",
+    "COST PRICE",
+    "SELLING PRICE"
+  ],
+  "outputColumns": [
+    "Product Name",
+    "SKU",
+    "Barcode",
+    "Cost Price",
+    "Selling Price",
+    "Brand",
+    "Part No",
+    "Source Row"
+  ],
+  "matchingStrategy": "Match warehouse products by existing Raphine import SKU/barcode first. The price CSV reuses SKU and Barcode values from scripts/data/josfaa-products-for-raphine19.csv row-by-row after validating Product Name and Brand alignment with the new workbook. Exact normalized product name is used only by the updater for rows without SKU/barcode.",
+  "fieldsUpdated": [
+    "costPrice",
+    "sellingPrice"
+  ],
+  "fieldsNotUpdated": [
+    "quantityOnHand",
+    "reorderLevel",
+    "reorderQuantity",
+    "categoryId",
+    "name",
+    "sku",
+    "barcode"
+  ],
+  "duplicateSourcePartNos": [
+    {
+      "partNo": "36AA4132",
+      "count": 2
+    },
+    {
+      "partNo": "AA191093",
+      "count": 2
+    },
+    {
+      "partNo": "AA191094",
+      "count": 2
+    },
+    {
+      "partNo": "30151059",
+      "count": 2
+    },
+    {
+      "partNo": "24171118",
+      "count": 2
+    },
+    {
+      "partNo": "59200012",
+      "count": 2
+    },
+    {
+      "partNo": "GKI",
+      "count": 2
+    },
+    {
+      "partNo": "HF",
+      "count": 2
+    }
+  ],
+  "duplicateOutputSkus": [],
+  "duplicateOutputBarcodes": [],
+  "existingRaphineCsvValidation": {
+    "existingCsvPath": "/Users/us/Desktop/Development/Nexpro/Backend/scripts/data/josfaa-products-for-raphine19.csv",
+    "existingRows": 147,
+    "alignmentMismatches": 0,
+    "mismatchExamples": []
+  },
+  "priceStats": {
+    "rowsWithCostPrice": 147,
+    "rowsWithSellingPrice": 147,
+    "zeroCostPriceRows": 0,
+    "zeroSellingPriceRows": 0,
+    "minCostPrice": 0.25,
+    "maxCostPrice": 429.38,
+    "minSellingPrice": 0.4,
+    "maxSellingPrice": 614.44
+  },
+  "localDryRunResult": {
+    "command": "node scripts/update-product-prices-csv-for-tenant.js --email raphine19@gmail.com --source scripts/data/josfaa-product-price-updates-for-raphine19.csv --shop-name warehouse",
+    "csvRowsParsed": 147,
+    "parseErrors": 0,
+    "databaseConnected": true,
+    "completed": false,
+    "blockedBy": "No user found for email: raphine19@gmail.com in the local database"
+  },
+  "caveats": [
+    "CSV generation does not update stock quantities.",
+    "Execute mode is blocked if any CSV row is unmatched, duplicated, or ambiguous in the selected shop."
+  ]
+}

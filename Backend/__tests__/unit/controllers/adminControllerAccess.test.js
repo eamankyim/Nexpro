@@ -9,7 +9,7 @@ jest.mock('../../../config/database', () => ({
 }));
 
 jest.mock('../../../models', () => ({
-  Tenant: { findByPk: jest.fn() },
+  Tenant: { findByPk: jest.fn(), findAll: jest.fn(), count: jest.fn() },
   User: {},
   UserTenant: {},
   Notification: {},
@@ -17,7 +17,7 @@ jest.mock('../../../models', () => ({
   Job: {},
   InviteToken: {},
   SubscriptionPlan: { findOne: jest.fn(), create: jest.fn() },
-  SubscriptionPayment: {},
+  SubscriptionPayment: { findAll: jest.fn() },
   TenantAccessAudit: { create: jest.fn() },
   Setting: { findOrCreate: jest.fn() },
 }));
@@ -58,7 +58,7 @@ jest.mock('../../../utils/storageLimitHelper', () => ({
   getStorageUsageSummary: jest.fn(),
 }));
 
-const { Tenant, SubscriptionPlan, TenantAccessAudit } = require('../../../models');
+const { Tenant, SubscriptionPayment, SubscriptionPlan, TenantAccessAudit } = require('../../../models');
 const adminController = require('../../../controllers/adminController');
 
 const createResponse = () => {
@@ -158,5 +158,76 @@ describe('adminController.updateTenantAccess', () => {
     expect(tenant.changed).toHaveBeenCalledWith('metadata', true);
     expect(tenant.save).toHaveBeenCalledTimes(1);
     expect(res.json.mock.calls[0][0].data.accessControl.featureOverrides).toEqual({});
+  });
+});
+
+describe('adminController.getBillingSummary', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('uses current successful Enterprise ledger payments for estimated MRR', async () => {
+    Tenant.findAll
+      .mockResolvedValueOnce([
+        { plan: 'starter', count: '2' },
+        { plan: 'enterprise', count: '1' },
+      ])
+      .mockResolvedValueOnce([]);
+    Tenant.count.mockResolvedValue(3);
+    SubscriptionPayment.findAll.mockResolvedValue([
+      {
+        amount: 2400000,
+        billingPeriod: 'yearly',
+      },
+      {
+        amount: 120000,
+        billingPeriod: 'monthly',
+      },
+    ]);
+
+    const res = createResponse();
+    const next = jest.fn();
+
+    await adminController.getBillingSummary({}, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(SubscriptionPayment.findAll).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          plan: 'enterprise',
+          status: 'success',
+        }),
+      })
+    );
+    expect(res.status).toHaveBeenCalledWith(200);
+    const data = res.json.mock.calls[0][0].data;
+    expect(data.estimatedMRR).toBe(3458);
+    expect(data.planBreakdown).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ plan: 'starter', count: 2, mrr: 258 }),
+        expect.objectContaining({
+          plan: 'enterprise',
+          count: 1,
+          mrr: 3200,
+          recordedRevenue: 25200,
+        }),
+      ])
+    );
+  });
+
+  it('excludes trial and free tenants from paying totals', async () => {
+    Tenant.findAll.mockResolvedValueOnce([{ plan: 'free', count: '4' }]).mockResolvedValueOnce([]);
+    Tenant.count.mockResolvedValue(4);
+    SubscriptionPayment.findAll.mockResolvedValue([]);
+
+    const res = createResponse();
+    const next = jest.fn();
+
+    await adminController.getBillingSummary({}, res, next);
+
+    const data = res.json.mock.calls[0][0].data;
+    expect(data.estimatedMRR).toBe(0);
+    expect(data.payingTenants).toBe(0);
+    expect(data.planBreakdown).toEqual([]);
   });
 });

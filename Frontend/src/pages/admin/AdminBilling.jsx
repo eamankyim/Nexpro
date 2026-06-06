@@ -91,6 +91,14 @@ const getPaymentMethodLabel = (method) => {
   }
 };
 
+const getTenantBillingMethodLabel = (tenant) => {
+  const method = tenant?.billingMethod || tenant?.lastSubscriptionPayment?.paymentMethod || tenant?.metadata?.paymentMethod;
+  return method ? getPaymentMethodLabel(method) : 'Not on file';
+};
+
+const getTenantBillingUpdatedAt = (tenant) =>
+  tenant?.lastSubscriptionPayment?.paymentDate || tenant?.lastSubscriptionPayment?.createdAt || tenant?.updatedAt;
+
 const getPlanLabel = (plan) => {
   const normalized = normalizePlanId(plan);
   switch (normalized) {
@@ -284,10 +292,10 @@ const AdminBilling = () => {
                       </Badge>
                       <StatusChip status={tenant.status} />
                       <span className="text-xs text-muted-foreground">
-                        {tenant.metadata?.paymentMethod || 'Not on file'}
+                        {getTenantBillingMethodLabel(tenant)}
                       </span>
                       <span className="text-xs text-muted-foreground">
-                        {dayjs(tenant.updatedAt).fromNow()}
+                        {dayjs(getTenantBillingUpdatedAt(tenant)).fromNow()}
                       </span>
                     </div>
                     {hasPermission('billing.manage') && (
@@ -341,9 +349,9 @@ const AdminBilling = () => {
                           <StatusChip status={tenant.status} />
                         </TableCell>
                         <TableCell>
-                          {tenant.metadata?.paymentMethod || 'Not on file'}
+                          {getTenantBillingMethodLabel(tenant)}
                         </TableCell>
-                        <TableCell>{dayjs(tenant.updatedAt).fromNow()}</TableCell>
+                        <TableCell>{dayjs(getTenantBillingUpdatedAt(tenant)).fromNow()}</TableCell>
                         {hasPermission('billing.manage') && (
                           <TableCell className="text-right">
                             <Button type="button" variant="outline" size="sm" onClick={() => openPaymentDialog(tenant)}>
